@@ -22,10 +22,13 @@ Parser (src/parser.ts)
     │
     ▼
 Expr (src/ast.ts)
-    Union type. Nodes: OperatorCall, FieldRef, NumberLiteral,
+    Union type. Core nodes: OperatorCall, FieldRef, NumberLiteral,
     StringLiteral, BooleanLiteral, NullLiteral, ArrayLiteral,
-    ObjectLiteral. Spread elements and key-value entries are
-    auxiliary types used inside array/object nodes.
+    ObjectLiteral. v2 nodes: BinaryExpr, UnaryExpr, TernaryExpr,
+    IndexAccess. v3 nodes: MemberAccess, MethodCall, Lambda,
+    ParamRef, RegexLiteral, TypeofExpr, NewDate, TypeCast,
+    MathCall, ObjectCall. Spread/key-value are auxiliary types
+    used inside array/object nodes.
     │
     ▼
 generate() (src/codegen.ts)

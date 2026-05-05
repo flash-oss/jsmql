@@ -112,19 +112,19 @@ export class Parser {
   }
 
   /**
-   * comparison:  additive [ (==|!=|===|!==|>|>=|<|<=|in) additive ]
-   * Non-chainable: a < b < c is a parse error.
+   * comparison:  relational [ (==|!=|===|!==) relational ]
+   * Non-chainable. Lower precedence than relational (<, <=, >, >=, in) to match JS.
    */
   private parseComparison(): Expr {
-    const left = this.parseAdditive();
-    const op = this.peekComparisonOp();
+    const left = this.parseRelational();
+    const op = this.peekEqualityOp();
     if (!op) return left;
     this.lexer.next();
-    const right = this.parseAdditive();
+    const right = this.parseRelational();
     return { type: "BinaryExpr", op, left, right };
   }
 
-  private peekComparisonOp(): BinaryOp | null {
+  private peekEqualityOp(): BinaryOp | null {
     switch (this.lexer.peek().type) {
       case TokenType.EqEq:
         return "==";
@@ -134,6 +134,26 @@ export class Parser {
         return "!=";
       case TokenType.BangEqEq:
         return "!==";
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * relational:  additive [ (<|<=|>|>=|in) additive ]
+   * Non-chainable. Higher precedence than equality to match JS.
+   */
+  private parseRelational(): Expr {
+    const left = this.parseAdditive();
+    const op = this.peekRelationalOp();
+    if (!op) return left;
+    this.lexer.next();
+    const right = this.parseAdditive();
+    return { type: "BinaryExpr", op, left, right };
+  }
+
+  private peekRelationalOp(): BinaryOp | null {
+    switch (this.lexer.peek().type) {
       case TokenType.Gt:
         return ">";
       case TokenType.GtEq:
@@ -330,6 +350,9 @@ export class Parser {
         return { type: "ParamRef", name };
       }
       default:
+        if (t.type === TokenType.EOF) {
+          throw new ParseError(`Unexpected end of expression`, t.pos);
+        }
         throw new ParseError(`Unexpected token '${t.value}' at position ${t.pos}`, t.pos);
     }
   }

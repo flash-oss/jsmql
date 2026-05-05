@@ -17,7 +17,10 @@ or             = and ("||" and)*
 
 and            = comparison ("&&" comparison)*
 
-comparison     = additive [ ("==" | "!=" | "===" | "!==" | ">" | ">=" | "<" | "<=" | "in") additive ]
+comparison     = relational [ ("==" | "!=" | "===" | "!==") relational ]
+                 (* non-chainable; lower precedence than relational *)
+
+relational     = additive [ ("<" | "<=" | ">" | ">=" | "in") additive ]
                  (* non-chainable: a < b < c is a parse error *)
 
 additive       = multiplicative (("+"|"-") multiplicative)*
@@ -157,7 +160,8 @@ $let({ d: $.price * 0.1 }, (d) => $.price - d)
 | Power | `**` | right |
 | Multiplicative | `*` `/` `%` | left |
 | Additive | `+` `-` | left |
-| Comparison | `==` `!=` `===` `!==` `>` `>=` `<` `<=` `in` | none (non-chainable) |
+| Relational | `<` `<=` `>` `>=` `in` | none (non-chainable) |
+| Equality | `==` `!=` `===` `!==` | none (non-chainable) |
 | Logical AND | `&&` | left |
 | Logical OR | `\|\|` | left |
 | Nullish | `??` | left |
@@ -173,6 +177,16 @@ When any operand of a `+` chain is **string-producing**, the entire chain emits 
 - `TypeCast` with cast `"String"` (i.e. `String(x)`)
 - `TypeofExpr` (`typeof x` always returns a string)
 - A nested `+` sub-expression where at least one of its own operands is string-producing
+
+## `in` operator — RHS validation
+
+The `in` operator is parsed like any relational operator, but **codegen validates the right-hand side**: if the RHS is a scalar literal (`StringLiteral`, `NumberLiteral`, `BooleanLiteral`, `NullLiteral`), codegen throws:
+
+```
+Right-hand side of 'in' must be an array literal or field reference, not a scalar value
+```
+
+Array literals, field refs, operator calls, and any other expression are accepted. This catches the common mistake `$.x in "value"` at transpile time rather than producing silently invalid MQL.
 
 ## What is NOT in v3
 

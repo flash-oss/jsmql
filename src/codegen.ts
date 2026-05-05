@@ -233,8 +233,19 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
       return { $or: flattenChain("||", left, right, ctx) };
     case "??":
       return { $ifNull: flattenChain("??", left, right, ctx) };
-    case "in":
+    case "in": {
+      if (
+        right.type === "StringLiteral" ||
+        right.type === "NumberLiteral" ||
+        right.type === "BooleanLiteral" ||
+        right.type === "NullLiteral"
+      ) {
+        throw new CodegenError(
+          "Right-hand side of 'in' must be an array literal or field reference, not a scalar value",
+        );
+      }
       return { $in: [_generate(left, ctx), _generate(right, ctx)] };
+    }
   }
 }
 
@@ -425,10 +436,13 @@ function generateMethodCall(object: Expr, method: string, args: Expr[], ctx: Gen
     case "toUpperCase":
       return { $toUpper: genObj };
     case "substr": {
-      if (args.length !== 2) {
-        throw new CodegenError(`.substr() requires exactly 2 arguments (start, count)`);
+      if (args.length === 1) {
+        return { $substrCP: [genObj, _generate(args[0], ctx), { $strLenCP: genObj }] };
       }
-      return { $substrCP: [genObj, _generate(args[0], ctx), _generate(args[1], ctx)] };
+      if (args.length === 2) {
+        return { $substrCP: [genObj, _generate(args[0], ctx), _generate(args[1], ctx)] };
+      }
+      throw new CodegenError(`.substr() requires 1 or 2 arguments (start[, count])`);
     }
     case "split": {
       if (args.length !== 1) {

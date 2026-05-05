@@ -41,11 +41,10 @@ mql`$.age > ${oldEnoughAge} && $.status == 'active'`;
 9. [Type Casting](#type-casting)
 10. [Date Operations](#date-operations)
 11. [Utility Functions](#utility-functions)
-12. [Pipeline Stages](#pipeline-stages)
-13. [Template Tag (`mql`)](#template-tag-mql)
-14. [Validation](#validation)
-15. [Error Messages](#error-messages)
-16. [Examples](#examples)
+12. [Template Tag (`mql`)](#template-tag-mql)
+13. [Validation](#validation)
+14. [Error Messages](#error-messages)
+15. [Examples](#examples)
 
 ---
 
@@ -68,15 +67,15 @@ An mjsql expression is a JavaScript-like syntax that transpiles to MongoDB aggre
 - Type casting: `Number()`, `String()`, `typeof`, etc.
 - Date operations: `new Date()`, `.getFullYear()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
-- Assignments: `x = 5`, `$.a = $.b + 1`
-- Fallback: `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc
+- Fallback: `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
 
 ### Invalid Constructs
 
 - Control flow: `if`, `for`, `while`, `break`, etc.
-- Statements: function definitions
+- Statements: function definitions, assignments
 - Object/array mutations: `.push()`, `.splice()`
 - Destructuring: `{ a, b } = obj`
+- Pipeline stages: `$match`, `$project`, `$group`, etc.
 
 ---
 
@@ -260,6 +259,7 @@ $.name.trimStart()                 // { $ltrim: { input: "$name" } }
 $.name.trimEnd()                   // { $rtrim: { input: "$name" } }
 $.name.toLowerCase()               // { $toLower: "$name" }
 $.name.toUpperCase()               // { $toUpper: "$name" }
+$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.email.indexOf("@")               // { $indexOfCP: ["$email", "@"] }
@@ -415,7 +415,9 @@ $toDecimal($.value)                // { $toDecimal: "$value" }
 For controlled conversion with a fallback on error, use `$convert()`:
 
 ```js
-$convert($.field, "int")           // { $convert: { input: "$field", to: "int" } }
+$convert($.field, "int")                // { $convert: { input: "$field", to: "int" } }
+$convert($.field, "int", 0)             // { $convert: { input: "$field", to: "int", onError: 0 } }
+$convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "int", onError: 0, onNull: null } }
 ```
 
 Valid target types: `"double"`, `"string"`, `"objectId"`, `"bool"`, `"date"`, `"int"`, `"long"`, `"decimal"`.
@@ -466,6 +468,9 @@ $dateFromParts($.year, $.month, $.day)
 
 $dateFromParts($.year, $.month, $.day, $.hour, $.min, $.sec, $.ms)
 // { $dateFromParts: { year: ..., month: ..., day: ..., hour: ..., minute: ..., second: ..., millisecond: ... } }
+
+$dateFromParts($.year, $.month, $.day, $.hour, $.min, $.sec, $.ms, "America/New_York")
+// { $dateFromParts: { year: ..., month: ..., day: ..., hour: ..., minute: ..., second: ..., millisecond: ..., timezone: "America/New_York" } }
 
 $dateFromString($.dateString)
 // { $dateFromString: { dateString: "$dateString" } }
@@ -526,8 +531,8 @@ $setEquals($.a, $.b)               // { $setEquals: ["$a", "$b"] }
 ### Object Operations
 
 ```js
-Object.keys($.obj)                 // { $objectToArray: "$obj" } → filtered to keys
-Object.values($.obj)               // { $objectToArray: "$obj" } → filtered to values
+Object.keys($.obj)                 // { $map: { input: { $objectToArray: "$obj" }, as: "kv", in: "$$kv.k" } }
+Object.values($.obj)               // { $map: { input: { $objectToArray: "$obj" }, as: "kv", in: "$$kv.v" } }
 Object.entries($.obj)              // { $objectToArray: "$obj" }
 Object.assign($.a, $.b)            // { $mergeObjects: ["$a", "$b"] }
 Object.assign($.a, $.b, $.c)       // { $mergeObjects: ["$a", "$b", "$c"] }
@@ -601,11 +606,8 @@ validate("age > 18");
 //     valid: false,
 //     errors: [{
 //       message: "Unknown identifier 'age'. Did you mean '$.age'?",
-//       position: 0,
-//       line: 1,
-//       column: 1,
-//       code: "UNKNOWN_IDENTIFIER",
-//       suggestions: ["$.age"]
+//       pos: 0,
+//       code: "CODEGEN_ERROR"
 //     }]
 //   }
 ```
@@ -623,20 +625,19 @@ When you write invalid mjsql, you get clear error messages with suggestions:
 
 ```js
 mjsql("age > 18");
-// SyntaxError: Unknown identifier 'age'. Did you mean '$.age'?
+// CodegenError: Unknown identifier 'age'. Did you mean '$.age'?
 
 mjsql("$.age > 18 &&");
-// SyntaxError: Unexpected end of expression
-
-mjsql("$foo($.a)");
-// SyntaxError: Unknown utility function '$foo'
-// Suggestions: $cmp, $concat, $log, $round, $regexMatch
+// ParseError: Unexpected end of expression
 
 mjsql("$.age >>");
-// SyntaxError: Unexpected token '>' at position 7
+// ParseError: Unexpected token '>' at position 7
 
 mjsql('$.status in "active"');
-// SyntaxError: Right-hand side of 'in' must be an array literal or field reference
+// CodegenError: Right-hand side of 'in' must be an array literal or field reference, not a scalar value
+
+mjsql("$.name.frobulate()");
+// CodegenError: Unknown method '.frobulate()'. String methods: trim, trimStart, ...
 ```
 
 ---
@@ -764,7 +765,9 @@ logical_or  = logical_and ("||" logical_and)*
 
 logical_and = comparison ("&&" comparison)*
 
-comparison  = additive ((==|!=|===|!==|<|<=|>|>=|in) additive)*
+comparison  = relational ((==|!=|===|!==) relational)?
+
+relational  = additive ((<|<=|>|>=|in) additive)?
 
 additive    = multiplicative ((+|-) multiplicative)*
 
@@ -772,7 +775,7 @@ multiplicative = power ((*|/|%) power)*
 
 power       = unary ("**" power)?
 
-unary       = (!|-) unary | postfix
+unary       = "typeof" unary | (!|-) unary | postfix
 
 postfix     = primary (member_access | method_call | index_access)*
 
@@ -781,7 +784,7 @@ primary     = number | string | boolean | null
             | utility_call | math_call | type_cast | date_new
             | "(" expression ")"
 
-field_ref   = "$" "." identifier ("." (identifier | number))*
+field_ref   = "$" "." identifier
 
 array_literal = "[" (spread | expression) ("," (spread | expression))* "]"
 
@@ -832,7 +835,7 @@ null        = "null"
 | 7 | `==`, `!=`, `===`, `!==` | Left |
 | 8 | `&&` | Left |
 | 9 | `\|\|` | Left |
-| 10 | `??` | Right |
+| 10 | `??` | Left |
 | 11 | `? :` (ternary) | Right |
 
 ---

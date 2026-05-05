@@ -29,6 +29,7 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.trimEnd()` / `.trimRight()` | `{ $rtrim: { input: expr } }` |
 | `.toLowerCase()` | `{ $toLower: expr }` |
 | `.toUpperCase()` | `{ $toUpper: expr }` |
+| `.substr(start)` | `{ $substrCP: [expr, start, { $strLenCP: expr }] }` |
 | `.substr(start, count)` | `{ $substrCP: [expr, start, count] }` |
 | `.split(sep)` | `{ $split: [expr, sep] }` |
 | `.indexOf(str)` | `{ $indexOfCP: [expr, str] }` |

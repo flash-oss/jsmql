@@ -840,3 +840,75 @@ describe("v3: error cases", () => {
     expect(() => mjsql("$abs(x => x)")).toThrow(/Lambda expression/);
   });
 });
+
+describe("v3: 1-arg substr", () => {
+  it("substr(start) slices to end of string", () => {
+    expect(mjsql("$.email.substr(1)")).toEqual({
+      $substrCP: ["$email", 1, { $strLenCP: "$email" }],
+    });
+  });
+  it("substr(start, count) keeps 2-arg form", () => {
+    expect(mjsql("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
+  });
+  it("substr with expression start", () => {
+    expect(mjsql('$.email.substr($.email.indexOf("@") + 1)')).toEqual({
+      $substrCP: [
+        "$email",
+        { $add: [{ $indexOfCP: ["$email", "@"] }, 1] },
+        { $strLenCP: "$email" },
+      ],
+    });
+  });
+});
+
+describe("comparison precedence: relational higher than equality", () => {
+  it("a < b == true parses as (a < b) == true", () => {
+    expect(mjsql("$.a < $.b == true")).toEqual({
+      $eq: [{ $lt: ["$a", "$b"] }, true],
+    });
+  });
+  it("a > 0 == b > 0 parses as (a > 0) == (b > 0)", () => {
+    expect(mjsql("$.a > 0 == $.b > 0")).toEqual({
+      $eq: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
+    });
+  });
+  it("simple relational still works", () => {
+    expect(mjsql("$.x < 5")).toEqual({ $lt: ["$x", 5] });
+  });
+  it("simple equality still works", () => {
+    expect(mjsql("$.x == 5")).toEqual({ $eq: ["$x", 5] });
+  });
+});
+
+describe("in operator RHS validation", () => {
+  it("throws on string RHS", () => {
+    expect(() => mjsql('$.x in "abc"')).toThrow(/Right-hand side of 'in'/);
+  });
+  it("throws on number RHS", () => {
+    expect(() => mjsql("$.x in 42")).toThrow(/Right-hand side of 'in'/);
+  });
+  it("throws on boolean RHS", () => {
+    expect(() => mjsql("$.x in true")).toThrow(/Right-hand side of 'in'/);
+  });
+  it("throws on null RHS", () => {
+    expect(() => mjsql("$.x in null")).toThrow(/Right-hand side of 'in'/);
+  });
+  it("accepts array literal RHS", () => {
+    expect(mjsql('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
+  });
+  it("accepts field ref RHS", () => {
+    expect(mjsql("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });
+  });
+});
+
+describe("EOF error message", () => {
+  it("empty string gives Unexpected end of expression", () => {
+    expect(() => mjsql("")).toThrow(/Unexpected end of expression/);
+  });
+  it("trailing operator gives Unexpected end of expression", () => {
+    expect(() => mjsql("$.a &&")).toThrow(/Unexpected end of expression/);
+  });
+  it("incomplete ternary gives Unexpected end of expression", () => {
+    expect(() => mjsql("$.a ? $.b")).toThrow(/Expected ':'/);
+  });
+});
