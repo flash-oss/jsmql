@@ -56,6 +56,42 @@ const STRING_RETURNING_METHODS = new Set([
   "replaceAll",
 ]);
 
+// ── Array-producing helpers ───────────────────────────────────────────────────
+
+// Operators whose return type is always an array
+const ARRAY_OUTPUT_OPS = new Set([
+  "$split",
+  "$range",
+  "$reverseArray",
+  "$slice",
+  "$map",
+  "$filter",
+  "$concatArrays",
+  "$setUnion",
+  "$setIntersection",
+  "$setDifference",
+  "$zip",
+  "$objectToArray",
+]);
+
+// Method names that always return an array
+const ARRAY_RETURNING_METHODS = new Set(["split", "map", "filter", "slice", "reverse"]);
+
+function isArrayProducing(expr: Expr): boolean {
+  switch (expr.type) {
+    case "ArrayLiteral":
+      return true;
+    case "OperatorCall":
+      return ARRAY_OUTPUT_OPS.has(expr.name);
+    case "MethodCall":
+      return ARRAY_RETURNING_METHODS.has(expr.method);
+    case "ObjectCall":
+      return expr.method === "entries";
+    default:
+      return false;
+  }
+}
+
 function isStringProducing(expr: Expr): boolean {
   switch (expr.type) {
     case "StringLiteral":
@@ -143,9 +179,12 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
     }
 
     case "MemberAccess": {
-      // .length is always string length
       if (expr.member === "length") {
-        return { $strLenCP: _generate(expr.object, ctx) };
+        const obj = _generate(expr.object, ctx);
+        if (isStringProducing(expr.object)) return { $strLenCP: obj };
+        if (isArrayProducing(expr.object)) return { $size: obj };
+        // Type unknown at compile time — dispatch at runtime
+        return { $cond: [{ $isArray: obj }, { $size: obj }, { $strLenCP: obj }] };
       }
       const path = asFieldPath(expr, ctx);
       if (path !== null) return path;

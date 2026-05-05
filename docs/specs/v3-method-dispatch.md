@@ -38,7 +38,7 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.includes(str)` | `{ $gte: [{ $indexOfCP: [expr, str] }, 0] }` |
 | `.match(/pat/flags)` | `{ $regexMatch: { input, regex: "pat", options: "flags" } }` |
 | `.match("pat")` | `{ $regexMatch: { input, regex: "pat" } }` |
-| `.length` (property) | `{ $strLenCP: expr }` — always string length |
+| `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: [{ $isArray: expr }, { $size: expr }, { $strLenCP: expr }] }` otherwise |
 
 ### Array methods (no lambda)
 

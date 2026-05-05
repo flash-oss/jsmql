@@ -576,8 +576,21 @@ describe("v3: string methods", () => {
       $regexMatch: { input: "$str", regex: "^[a-z]" },
     });
   });
-  it("length property", () => {
-    expect(mjsql("$.name.length")).toEqual({ $strLenCP: "$name" });
+  it("length on string-producing expression → $strLenCP", () => {
+    expect(mjsql("$.name.trim().length")).toEqual({ $strLenCP: { $trim: { input: "$name" } } });
+  });
+  it("length on array-producing expression → $size", () => {
+    expect(mjsql('$.csv.split(",").length')).toEqual({ $size: { $split: ["$csv", ","] } });
+  });
+  it("length on map result → $size", () => {
+    expect(mjsql("$.items.map(x => x).length")).toEqual({
+      $size: { $map: { input: "$items", as: "x", in: "$$x" } },
+    });
+  });
+  it("length on unknown field → runtime dispatch", () => {
+    expect(mjsql("$.items.length")).toEqual({
+      $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }],
+    });
   });
   it("chained trim then toLowerCase", () => {
     expect(mjsql("$.name.trim().toLowerCase()")).toEqual({

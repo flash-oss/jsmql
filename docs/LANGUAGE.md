@@ -272,8 +272,11 @@ $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " "
 $.email.includes("@")              // { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] }
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
 
-// Property access
-$.name.length                       // { $strLenCP: "$name" }
+// Property access — type-aware dispatch
+$.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
+$.csv.split(",").length             // { $size: ... }           — known array  → $size
+$.field.length                      // { $cond: [{ $isArray: "$field" }, { $size: ... }, { $strLenCP: ... }] }
+                                    //                          — unknown type → runtime dispatch
 
 // Chaining
 $.name.trim().toLowerCase()         // { $toLower: { $trim: { input: "$name" } } }
@@ -374,7 +377,7 @@ Math.log($.value)                  // { $ln: "$value" } (natural log)
 Math.trunc($.avg)                  // { $trunc: "$avg" }
 ```
 
-**Note:** `Math.round()` takes exactly 1 argument (rounds to integer). For rounding to N decimal places, use the `$round()` utility:
+**Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). For rounding to N decimal places, use the `$round()` utility — there is no JS equivalent:
 ```js
 $round($.value, 2)                 // { $round: ["$value", 2] } (round to 2 decimal places)
 ```
