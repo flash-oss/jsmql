@@ -329,6 +329,53 @@ describe("user display: full name with null fallback", () => {
   });
 });
 
+// ── Location ──────────────────────────────────────────────────────────────────
+
+describe("location: full address formatter", () => {
+  it("builds a formatted address string using filter + reduce, server-side", () => {
+    // Assembles up to 7 address fields into a single space-separated string.
+    // The optional building name (e.g. "Suite 4,") is included only when present.
+    // MongoDB executes this entirely — no need to fetch all fields to the client.
+    const result = mjsql(`
+      [
+        $.building ? $.building + "," : null,
+        $.streetNo,
+        $.street,
+        $.suburb,
+        $.state,
+        $.country,
+        $.postcode
+      ]
+        .filter(x => x != null)
+        .reduce((acc, x) => acc == "" ? x : acc + " " + x, "")
+    `);
+
+    expect(result).toEqual({
+      $reduce: {
+        input: {
+          $filter: {
+            input: [
+              { $cond: ["$building", { $concat: ["$building", ","] }, null] },
+              "$streetNo",
+              "$street",
+              "$suburb",
+              "$state",
+              "$country",
+              "$postcode",
+            ],
+            as: "x",
+            cond: { $ne: ["$$x", null] },
+          },
+        },
+        initialValue: "",
+        in: {
+          $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }],
+        },
+      },
+    });
+  });
+});
+
 // ── Data quality ──────────────────────────────────────────────────────────────
 
 describe("data quality: CSV field word count", () => {
