@@ -253,3 +253,247 @@ describe("single-char negative numbers", () => {
     expect(mjsql("$abs(-5)")).toEqual({ $abs: -5 });
   });
 });
+
+// ── v2: JS infix operators ────────────────────────────────────────────────────
+
+describe("v2: arithmetic operators", () => {
+  it("+ numeric", () => {
+    expect(mjsql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("- binary", () => {
+    expect(mjsql("$.a - $.b")).toEqual({ $subtract: ["$a", "$b"] });
+  });
+  it("* multiply", () => {
+    expect(mjsql("$.a * 1.1")).toEqual({ $multiply: ["$a", 1.1] });
+  });
+  it("/ divide", () => {
+    expect(mjsql("$.a / $.b")).toEqual({ $divide: ["$a", "$b"] });
+  });
+  it("% modulo", () => {
+    expect(mjsql("$.a % 2")).toEqual({ $mod: ["$a", 2] });
+  });
+  it("** power", () => {
+    expect(mjsql("$.base ** 2")).toEqual({ $pow: ["$base", 2] });
+  });
+  it("** is right-associative", () => {
+    expect(mjsql("2 ** 3 ** 2")).toEqual({ $pow: [2, { $pow: [3, 2] }] });
+  });
+});
+
+describe("v2: comparison operators", () => {
+  it("==", () => {
+    expect(mjsql("$.status == 'active'")).toEqual({ $eq: ["$status", "active"] });
+  });
+  it("===", () => {
+    expect(mjsql("$.status === 'active'")).toEqual({ $eq: ["$status", "active"] });
+  });
+  it("!=", () => {
+    expect(mjsql("$.status != null")).toEqual({ $ne: ["$status", null] });
+  });
+  it("!==", () => {
+    expect(mjsql("$.status !== null")).toEqual({ $ne: ["$status", null] });
+  });
+  it(">", () => {
+    expect(mjsql("$.age > 18")).toEqual({ $gt: ["$age", 18] });
+  });
+  it(">=", () => {
+    expect(mjsql("$.age >= 21")).toEqual({ $gte: ["$age", 21] });
+  });
+  it("<", () => {
+    expect(mjsql("$.score < 50")).toEqual({ $lt: ["$score", 50] });
+  });
+  it("<=", () => {
+    expect(mjsql("$.score <= 100")).toEqual({ $lte: ["$score", 100] });
+  });
+  it("in", () => {
+    expect(mjsql('$.status in ["active", "pending"]')).toEqual({
+      $in: ["$status", ["active", "pending"]],
+    });
+  });
+});
+
+describe("v2: logical operators", () => {
+  it("&&", () => {
+    expect(mjsql("$.a && $.b")).toEqual({ $and: ["$a", "$b"] });
+  });
+  it("||", () => {
+    expect(mjsql("$.a || $.b")).toEqual({ $or: ["$a", "$b"] });
+  });
+  it("! unary", () => {
+    expect(mjsql("!$.active")).toEqual({ $not: "$active" });
+  });
+  it("!! double negation", () => {
+    expect(mjsql("!!$.active")).toEqual({ $not: { $not: "$active" } });
+  });
+});
+
+describe("v2: ternary", () => {
+  it("basic ternary", () => {
+    expect(mjsql("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
+      $cond: [{ $gte: ["$age", 18] }, "adult", "minor"],
+    });
+  });
+  it("nested ternary (right-associative)", () => {
+    expect(mjsql("$.a ? 'x' : $.b ? 'y' : 'z'")).toEqual({
+      $cond: ["$a", "x", { $cond: ["$b", "y", "z"] }],
+    });
+  });
+});
+
+describe("v2: nullish coalescing", () => {
+  it("??", () => {
+    expect(mjsql("$.nickname ?? $.name")).toEqual({ $ifNull: ["$nickname", "$name"] });
+  });
+  it("?? flattened chain", () => {
+    expect(mjsql("$.a ?? $.b ?? 'unknown'")).toEqual({
+      $ifNull: ["$a", "$b", "unknown"],
+    });
+  });
+});
+
+describe("v2: unary minus", () => {
+  it("unary - on field", () => {
+    expect(mjsql("-$.amount")).toEqual({ $multiply: ["$amount", -1] });
+  });
+  it("unary - on number literal optimised to negative number", () => {
+    expect(mjsql("-5")).toEqual(-5);
+  });
+  it("unary - on number inside operator", () => {
+    expect(mjsql("$abs(-5)")).toEqual({ $abs: -5 });
+  });
+  it("unary - on expression", () => {
+    expect(mjsql("-($.a + $.b)")).toEqual({ $multiply: [{ $add: ["$a", "$b"] }, -1] });
+  });
+});
+
+describe("v2: operator flattening", () => {
+  it("+ flattened to $add", () => {
+    expect(mjsql("$.a + $.b + $.c")).toEqual({ $add: ["$a", "$b", "$c"] });
+  });
+  it("* flattened to $multiply", () => {
+    expect(mjsql("$.a * $.b * $.c")).toEqual({ $multiply: ["$a", "$b", "$c"] });
+  });
+  it("&& flattened to $and", () => {
+    expect(mjsql("$.a && $.b && $.c")).toEqual({ $and: ["$a", "$b", "$c"] });
+  });
+  it("|| flattened to $or", () => {
+    expect(mjsql("$.a || $.b || $.c")).toEqual({ $or: ["$a", "$b", "$c"] });
+  });
+  it("?? flattened to $ifNull (4 operands)", () => {
+    expect(mjsql("$.a ?? $.b ?? $.c ?? 0")).toEqual({ $ifNull: ["$a", "$b", "$c", 0] });
+  });
+  it("- is NOT flattened (left-assoc, not same operator)", () => {
+    expect(mjsql("$.a - $.b - $.c")).toEqual({
+      $subtract: [{ $subtract: ["$a", "$b"] }, "$c"],
+    });
+  });
+});
+
+describe("v2: string-context +", () => {
+  it("string literal in chain → $concat", () => {
+    expect(mjsql('$.first + " " + $.last')).toEqual({
+      $concat: ["$first", " ", "$last"],
+    });
+  });
+  it("empty string → $concat", () => {
+    expect(mjsql('$.a + ""')).toEqual({ $concat: ["$a", ""] });
+  });
+  it("no string literal → $add", () => {
+    expect(mjsql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("string-output operator → $concat", () => {
+    expect(mjsql("$toString($.n) + $.s")).toEqual({
+      $concat: [{ $toString: "$n" }, "$s"],
+    });
+  });
+  it("$toLower result in chain → $concat", () => {
+    expect(mjsql("$.prefix + $toLower($.name)")).toEqual({
+      $concat: ["$prefix", { $toLower: "$name" }],
+    });
+  });
+  it("mixed numeric + string-output op → $concat", () => {
+    expect(mjsql('$.count + " items"')).toEqual({ $concat: ["$count", " items"] });
+  });
+});
+
+describe("v2: bracket access", () => {
+  it("constant index", () => {
+    expect(mjsql("$.items[0]")).toEqual({ $arrayElemAt: ["$items", 0] });
+  });
+  it("field index", () => {
+    expect(mjsql("$.items[$.idx]")).toEqual({ $arrayElemAt: ["$items", "$idx"] });
+  });
+  it("chained bracket access", () => {
+    expect(mjsql("$.m[$.r][$.c]")).toEqual({
+      $arrayElemAt: [{ $arrayElemAt: ["$m", "$r"] }, "$c"],
+    });
+  });
+  it("bracket access on operator result", () => {
+    expect(mjsql("$reverseArray($.items)[0]")).toEqual({
+      $arrayElemAt: [{ $reverseArray: "$items" }, 0],
+    });
+  });
+});
+
+describe("v2: grouped expressions", () => {
+  it("grouping changes precedence", () => {
+    expect(mjsql("($.a + $.b) * 2")).toEqual({
+      $multiply: [{ $add: ["$a", "$b"] }, 2],
+    });
+  });
+  it("without grouping * binds tighter", () => {
+    expect(mjsql("$.a + $.b * 2")).toEqual({
+      $add: ["$a", { $multiply: ["$b", 2] }],
+    });
+  });
+});
+
+describe("v2: operator precedence", () => {
+  it("* before +", () => {
+    expect(mjsql("$.a + $.b * $.c")).toEqual({
+      $add: ["$a", { $multiply: ["$b", "$c"] }],
+    });
+  });
+  it("comparison before &&", () => {
+    expect(mjsql("$.age > 18 && $.active")).toEqual({
+      $and: [{ $gt: ["$age", 18] }, "$active"],
+    });
+  });
+  it("&& before ||", () => {
+    expect(mjsql("$.a || $.b && $.c")).toEqual({
+      $or: ["$a", { $and: ["$b", "$c"] }],
+    });
+  });
+  it("! before &&", () => {
+    expect(mjsql("!$.a && $.b")).toEqual({
+      $and: [{ $not: "$a" }, "$b"],
+    });
+  });
+});
+
+describe("v2: mixed v1 $operator() and v2 infix", () => {
+  it("infix inside $operator args", () => {
+    expect(mjsql("$and($.age > 18, $.status == 'active')")).toEqual({
+      $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
+    });
+  });
+  it("$operator wrapping infix", () => {
+    expect(mjsql("$abs($.a - $.b)")).toEqual({
+      $abs: { $subtract: ["$a", "$b"] },
+    });
+  });
+  it("$round on arithmetic", () => {
+    expect(mjsql("$round($.price * 1.1, 2)")).toEqual({
+      $round: [{ $multiply: ["$price", 1.1] }, 2],
+    });
+  });
+});
+
+describe("v2: $.in field ref still works", () => {
+  it("field named 'in'", () => {
+    expect(mjsql("$.in == 'test'")).toEqual({ $eq: ["$in", "test"] });
+  });
+  it("nested field with 'in' segment", () => {
+    expect(mjsql("$size($.in)")).toEqual({ $size: "$in" });
+  });
+});

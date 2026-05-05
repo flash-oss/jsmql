@@ -13,12 +13,43 @@ export const enum TokenType {
   Dollar = "Dollar", // $ (standalone, before IDENT for operator)
   Spread = "Spread", // ...
 
+  // Arithmetic operators
+  Plus = "Plus", // +
+  Minus = "Minus", // -
+  Star = "Star", // *
+  StarStar = "StarStar", // **
+  Slash = "Slash", // /
+  Percent = "Percent", // %
+
+  // Comparison operators
+  EqEq = "EqEq", // ==
+  EqEqEq = "EqEqEq", // ===
+  BangEq = "BangEq", // !=
+  BangEqEq = "BangEqEq", // !==
+  Gt = "Gt", // >
+  GtEq = "GtEq", // >=
+  Lt = "Lt", // <
+  LtEq = "LtEq", // <=
+
+  // Logical operators
+  AmpAmp = "AmpAmp", // &&
+  PipePipe = "PipePipe", // ||
+  Bang = "Bang", // !
+
+  // Misc operators
+  QuestQuest = "QuestQuest", // ??
+  Quest = "Quest", // ?
+  Arrow = "Arrow", // => (reserved for v3 lambdas)
+
   // Literals
   Number = "Number",
   String = "String",
   True = "True",
   False = "False",
   Null = "Null",
+
+  // Keywords
+  In = "In", // in
 
   // Identifier
   Ident = "Ident",
@@ -82,77 +113,180 @@ export class Lexer {
 
       const start = this.pos;
       const ch = src[this.pos];
+      const ch2 = src[this.pos + 1] ?? "";
+      const ch3 = src[this.pos + 2] ?? "";
 
       // Single-char punctuation
       if (ch === "(") {
-        this.tokens.push({ type: TokenType.LParen, value: "(", pos: start });
-        this.pos++;
+        this.emit(TokenType.LParen, "(", start, 1);
         continue;
       }
       if (ch === ")") {
-        this.tokens.push({ type: TokenType.RParen, value: ")", pos: start });
-        this.pos++;
+        this.emit(TokenType.RParen, ")", start, 1);
         continue;
       }
       if (ch === "[") {
-        this.tokens.push({ type: TokenType.LBracket, value: "[", pos: start });
-        this.pos++;
+        this.emit(TokenType.LBracket, "[", start, 1);
         continue;
       }
       if (ch === "]") {
-        this.tokens.push({ type: TokenType.RBracket, value: "]", pos: start });
-        this.pos++;
+        this.emit(TokenType.RBracket, "]", start, 1);
         continue;
       }
       if (ch === "{") {
-        this.tokens.push({ type: TokenType.LBrace, value: "{", pos: start });
-        this.pos++;
+        this.emit(TokenType.LBrace, "{", start, 1);
         continue;
       }
       if (ch === "}") {
-        this.tokens.push({ type: TokenType.RBrace, value: "}", pos: start });
-        this.pos++;
+        this.emit(TokenType.RBrace, "}", start, 1);
         continue;
       }
       if (ch === ",") {
-        this.tokens.push({ type: TokenType.Comma, value: ",", pos: start });
-        this.pos++;
+        this.emit(TokenType.Comma, ",", start, 1);
         continue;
       }
       if (ch === ":") {
-        this.tokens.push({ type: TokenType.Colon, value: ":", pos: start });
-        this.pos++;
+        this.emit(TokenType.Colon, ":", start, 1);
         continue;
       }
 
-      // Spread ...
-      if (ch === "." && src[this.pos + 1] === "." && src[this.pos + 2] === ".") {
-        this.tokens.push({ type: TokenType.Spread, value: "...", pos: start });
-        this.pos += 3;
+      // Spread ... (must come before single dot)
+      if (ch === "." && ch2 === "." && ch3 === ".") {
+        this.emit(TokenType.Spread, "...", start, 3);
         continue;
       }
-
-      // Plain dot
       if (ch === ".") {
-        this.tokens.push({ type: TokenType.Dot, value: ".", pos: start });
-        this.pos++;
+        this.emit(TokenType.Dot, ".", start, 1);
         continue;
       }
 
       // $ — either $. (field ref prefix) or $ (operator prefix)
       if (ch === "$") {
-        if (src[this.pos + 1] === ".") {
-          this.tokens.push({ type: TokenType.DollarDot, value: "$.", pos: start });
-          this.pos += 2;
+        if (ch2 === ".") {
+          this.emit(TokenType.DollarDot, "$.", start, 2);
         } else {
-          this.tokens.push({ type: TokenType.Dollar, value: "$", pos: start });
-          this.pos++;
+          this.emit(TokenType.Dollar, "$", start, 1);
         }
         continue;
       }
 
-      // Numbers (including negative handled by parser as unary)
-      if (this.isDigit(ch) || (ch === "-" && this.isDigit(src[this.pos + 1] ?? ""))) {
+      // ** before *
+      if (ch === "*" && ch2 === "*") {
+        this.emit(TokenType.StarStar, "**", start, 2);
+        continue;
+      }
+      if (ch === "*") {
+        this.emit(TokenType.Star, "*", start, 1);
+        continue;
+      }
+
+      // === before == before => (bare = is an error)
+      if (ch === "=") {
+        if (ch2 === "=" && ch3 === "=") {
+          this.emit(TokenType.EqEqEq, "===", start, 3);
+          continue;
+        }
+        if (ch2 === "=") {
+          this.emit(TokenType.EqEq, "==", start, 2);
+          continue;
+        }
+        if (ch2 === ">") {
+          this.emit(TokenType.Arrow, "=>", start, 2);
+          continue;
+        }
+        throw new LexError(
+          `Unexpected character '=' at position ${start} (did you mean '==' ?)`,
+          start,
+        );
+      }
+
+      // !== before != before !
+      if (ch === "!") {
+        if (ch2 === "=" && ch3 === "=") {
+          this.emit(TokenType.BangEqEq, "!==", start, 3);
+          continue;
+        }
+        if (ch2 === "=") {
+          this.emit(TokenType.BangEq, "!=", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Bang, "!", start, 1);
+        continue;
+      }
+
+      // >= before >
+      if (ch === ">") {
+        if (ch2 === "=") {
+          this.emit(TokenType.GtEq, ">=", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Gt, ">", start, 1);
+        continue;
+      }
+
+      // <= before <
+      if (ch === "<") {
+        if (ch2 === "=") {
+          this.emit(TokenType.LtEq, "<=", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Lt, "<", start, 1);
+        continue;
+      }
+
+      // && (bare & is an error)
+      if (ch === "&") {
+        if (ch2 === "&") {
+          this.emit(TokenType.AmpAmp, "&&", start, 2);
+          continue;
+        }
+        throw new LexError(
+          `Unexpected character '&' at position ${start} (did you mean '&&' ?)`,
+          start,
+        );
+      }
+
+      // || (bare | is an error)
+      if (ch === "|") {
+        if (ch2 === "|") {
+          this.emit(TokenType.PipePipe, "||", start, 2);
+          continue;
+        }
+        throw new LexError(
+          `Unexpected character '|' at position ${start} (did you mean '||' ?)`,
+          start,
+        );
+      }
+
+      // ?? before ?
+      if (ch === "?") {
+        if (ch2 === "?") {
+          this.emit(TokenType.QuestQuest, "??", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Quest, "?", start, 1);
+        continue;
+      }
+
+      if (ch === "+") {
+        this.emit(TokenType.Plus, "+", start, 1);
+        continue;
+      }
+      if (ch === "-") {
+        this.emit(TokenType.Minus, "-", start, 1);
+        continue;
+      }
+      if (ch === "/") {
+        this.emit(TokenType.Slash, "/", start, 1);
+        continue;
+      }
+      if (ch === "%") {
+        this.emit(TokenType.Percent, "%", start, 1);
+        continue;
+      }
+
+      // Numbers (no longer consume leading minus — unary minus is the parser's job)
+      if (this.isDigit(ch)) {
         this.tokens.push(this.readNumber(start));
         continue;
       }
@@ -177,6 +311,11 @@ export class Lexer {
     this.tokens.push({ type: TokenType.EOF, value: "", pos: len });
   }
 
+  private emit(type: TokenType, value: string, pos: number, len: number): void {
+    this.tokens.push({ type, value, pos });
+    this.pos += len;
+  }
+
   private skipWhitespace(): void {
     while (this.pos < this.src.length && /\s/.test(this.src[this.pos])) {
       this.pos++;
@@ -198,7 +337,6 @@ export class Lexer {
   private readNumber(start: number): Token {
     const src = this.src;
     let i = this.pos;
-    if (src[i] === "-") i++;
     while (i < src.length && this.isDigit(src[i])) i++;
     if (i < src.length && src[i] === ".") {
       i++;
@@ -217,7 +355,7 @@ export class Lexer {
   private readString(start: number): Token {
     const src = this.src;
     const quote = src[this.pos];
-    this.pos++; // skip opening quote
+    this.pos++;
     let result = "";
     while (this.pos < src.length && src[this.pos] !== quote) {
       if (src[this.pos] === "\\") {
@@ -253,7 +391,7 @@ export class Lexer {
     if (this.pos >= src.length) {
       throw new LexError(`Unterminated string at position ${start}`, start);
     }
-    this.pos++; // skip closing quote
+    this.pos++;
     return { type: TokenType.String, value: result, pos: start };
   }
 
@@ -274,6 +412,8 @@ export class Lexer {
         return { type: TokenType.False, value: "false", pos };
       case "null":
         return { type: TokenType.Null, value: "null", pos };
+      case "in":
+        return { type: TokenType.In, value: "in", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }

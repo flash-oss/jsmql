@@ -1,4 +1,6 @@
-# mjsql — CLAUDE.md
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this project is
 
@@ -23,6 +25,10 @@ Every decision should be evaluated through the lens of DX for the people **using
 npm test          # run all tests (vitest)
 npm run format    # format all src/ and test/ files with oxfmt (always run before committing)
 npm run build     # tsc → dist/
+
+# Run a single test file or a named test during development:
+npx vitest run test/codegen.test.ts
+npx vitest run -t "string context"
 ```
 
 **Before every commit:** run `npm run format` then `npm test`. Both must succeed.

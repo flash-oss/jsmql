@@ -234,6 +234,96 @@ describe("mql template tag: parameterised threshold query", () => {
   });
 });
 
+describe("e-commerce: v2 infix — discount with eligibility check", () => {
+  it("mixes JS infix operators with $operator() calls", () => {
+    // 20% off if item is in sale category AND quantity > 1 AND price >= 10
+    const result = mjsql(`
+      $.quantity > 1 && $.price >= 10 && $.category in ["sale", "clearance"]
+        ? $.price * 0.8
+        : $.price
+    `);
+
+    expect(result).toEqual({
+      $cond: [
+        {
+          $and: [
+            { $gt: ["$quantity", 1] },
+            { $gte: ["$price", 10] },
+            { $in: ["$category", ["sale", "clearance"]] },
+          ],
+        },
+        { $multiply: ["$price", 0.8] },
+        "$price",
+      ],
+    });
+  });
+});
+
+describe("user display: v2 infix — full name with null fallback", () => {
+  it("uses string-context +, ??, and bracket access", () => {
+    // Display "First Last" falling back to email username if name is null
+    const result = mjsql(`
+      $.firstName ?? $.aliases[0] ?? "anonymous"
+    `);
+
+    expect(result).toEqual({
+      $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
+    });
+  });
+});
+
+describe("analytics: v2 infix — score normalisation", () => {
+  it("uses arithmetic infix and grouped expressions", () => {
+    // Normalise score to 0–100 range: (score - min) / (max - min) * 100
+    const result = mjsql(`
+      ($.score - $.minScore) / ($.maxScore - $.minScore) * 100
+    `);
+
+    expect(result).toEqual({
+      $multiply: [
+        {
+          $divide: [
+            { $subtract: ["$score", "$minScore"] },
+            { $subtract: ["$maxScore", "$minScore"] },
+          ],
+        },
+        100,
+      ],
+    });
+  });
+});
+
+describe("content: v2 infix — full name string concatenation", () => {
+  it("uses string-context + infix with field refs and $toLower", () => {
+    // Build display name: "FirstName LastName" then lowercase slug
+    const result = mjsql(`
+      $toLower($.firstName + " " + $.lastName)
+    `);
+
+    expect(result).toEqual({
+      $toLower: { $concat: ["$firstName", " ", "$lastName"] },
+    });
+  });
+});
+
+describe("inventory: v2 infix — reorder alert with unary and power", () => {
+  it("uses unary !, ** power, and comparison infix", () => {
+    // Alert if: not discontinued AND stock below reorder threshold (exponential decay model)
+    const result = mjsql(`
+      !$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel
+    `);
+
+    expect(result).toEqual({
+      $and: [
+        { $not: "$discontinued" },
+        {
+          $lt: ["$stock", { $multiply: ["$baseReorder", { $pow: [2, "$urgencyLevel"] }] }],
+        },
+      ],
+    });
+  });
+});
+
 describe("validate(): realistic invalid expressions", () => {
   it("rejects bare field name without $. prefix", () => {
     // A common mistake: forgetting the $. prefix

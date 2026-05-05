@@ -12,6 +12,28 @@ export type KeyValueEntry = {
 export type ObjectEntry = KeyValueEntry | SpreadElement;
 export type ArrayElement = Expr | SpreadElement;
 
+export type BinaryOp =
+  | "+"
+  | "-"
+  | "*"
+  | "/"
+  | "%"
+  | "**"
+  | "=="
+  | "!="
+  | "==="
+  | "!=="
+  | ">"
+  | ">="
+  | "<"
+  | "<="
+  | "&&"
+  | "||"
+  | "??"
+  | "in";
+
+export type UnaryOp = "!" | "-";
+
 export type Expr =
   | {
       type: "OperatorCall";
@@ -26,4 +48,8 @@ export type Expr =
   | { type: "BooleanLiteral"; value: boolean }
   | { type: "NullLiteral" }
   | { type: "ArrayLiteral"; elements: ArrayElement[] }
-  | { type: "ObjectLiteral"; entries: ObjectEntry[] };
+  | { type: "ObjectLiteral"; entries: ObjectEntry[] }
+  | { type: "BinaryExpr"; op: BinaryOp; left: Expr; right: Expr }
+  | { type: "UnaryExpr"; op: UnaryOp; operand: Expr }
+  | { type: "TernaryExpr"; condition: Expr; consequent: Expr; alternate: Expr }
+  | { type: "IndexAccess"; object: Expr; index: Expr };
