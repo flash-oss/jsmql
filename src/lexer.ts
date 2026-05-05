@@ -39,7 +39,7 @@ export const enum TokenType {
   // Misc operators
   QuestQuest = "QuestQuest", // ??
   Quest = "Quest", // ?
-  Arrow = "Arrow", // => (reserved for v3 lambdas)
+  Arrow = "Arrow", // =>
 
   // Literals
   Number = "Number",
@@ -47,9 +47,12 @@ export const enum TokenType {
   True = "True",
   False = "False",
   Null = "Null",
+  RegexLiteral = "RegexLiteral", // /pattern/flags
 
   // Keywords
   In = "In", // in
+  New = "New", // new
+  Typeof = "Typeof", // typeof
 
   // Identifier
   Ident = "Ident",
@@ -61,6 +64,7 @@ export type Token = {
   type: TokenType;
   value: string;
   pos: number;
+  flags?: string; // only set for RegexLiteral tokens
 };
 
 export class LexError extends Error {
@@ -73,10 +77,24 @@ export class LexError extends Error {
   }
 }
 
+// Token types that end a "value" — after these, `/` is a divide operator.
+// After anything else, `/` starts a regex literal.
+const VALUE_ENDING_TYPES = new Set<TokenType>([
+  TokenType.Number,
+  TokenType.String,
+  TokenType.True,
+  TokenType.False,
+  TokenType.Null,
+  TokenType.Ident,
+  TokenType.RParen,
+  TokenType.RBracket,
+]);
+
 export class Lexer {
   private pos = 0;
   private readonly tokens: Token[] = [];
   private tokenIdx = 0;
+  private lastTokenType: TokenType | null = null;
 
   constructor(private readonly src: string) {
     this.tokenize();
@@ -92,6 +110,16 @@ export class Lexer {
     return t;
   }
 
+  lookahead(offset: number): Token {
+    return (
+      this.tokens[this.tokenIdx + offset] ?? {
+        type: TokenType.EOF,
+        value: "",
+        pos: this.src.length,
+      }
+    );
+  }
+
   expect(type: TokenType): Token {
     const t = this.next();
     if (t.type !== type) {
@@ -101,6 +129,11 @@ export class Lexer {
       );
     }
     return t;
+  }
+
+  private pushToken(tok: Token): void {
+    this.tokens.push(tok);
+    this.lastTokenType = tok.type;
   }
 
   private tokenize(): void {
@@ -276,24 +309,30 @@ export class Lexer {
         this.emit(TokenType.Minus, "-", start, 1);
         continue;
       }
-      if (ch === "/") {
-        this.emit(TokenType.Slash, "/", start, 1);
-        continue;
-      }
       if (ch === "%") {
         this.emit(TokenType.Percent, "%", start, 1);
         continue;
       }
 
-      // Numbers (no longer consume leading minus — unary minus is the parser's job)
+      // / — context-sensitive: divide or regex literal
+      if (ch === "/") {
+        if (this.lastTokenType !== null && VALUE_ENDING_TYPES.has(this.lastTokenType)) {
+          this.emit(TokenType.Slash, "/", start, 1);
+        } else {
+          this.pushToken(this.readRegex(start));
+        }
+        continue;
+      }
+
+      // Numbers
       if (this.isDigit(ch)) {
-        this.tokens.push(this.readNumber(start));
+        this.pushToken(this.readNumber(start));
         continue;
       }
 
       // Strings
       if (ch === '"' || ch === "'") {
-        this.tokens.push(this.readString(start));
+        this.pushToken(this.readString(start));
         continue;
       }
 
@@ -301,7 +340,7 @@ export class Lexer {
       if (this.isIdentStart(ch)) {
         const ident = this.readIdent();
         const tok = this.keywordToken(ident, start);
-        this.tokens.push(tok);
+        this.pushToken(tok);
         continue;
       }
 
@@ -312,7 +351,7 @@ export class Lexer {
   }
 
   private emit(type: TokenType, value: string, pos: number, len: number): void {
-    this.tokens.push({ type, value, pos });
+    this.pushToken({ type, value, pos });
     this.pos += len;
   }
 
@@ -338,7 +377,8 @@ export class Lexer {
     const src = this.src;
     let i = this.pos;
     while (i < src.length && this.isDigit(src[i])) i++;
-    if (i < src.length && src[i] === ".") {
+    // Only consume the dot if the next char is also a digit — prevents 0.name being lexed as float
+    if (i < src.length && src[i] === "." && i + 1 < src.length && this.isDigit(src[i + 1])) {
       i++;
       while (i < src.length && this.isDigit(src[i])) i++;
     }
@@ -395,6 +435,56 @@ export class Lexer {
     return { type: TokenType.String, value: result, pos: start };
   }
 
+  private readRegex(start: number): Token {
+    const src = this.src;
+    this.pos++; // consume opening /
+    let pattern = "";
+    let inClass = false; // inside [...] character class
+
+    while (this.pos < src.length) {
+      const ch = src[this.pos];
+      if (ch === "\\") {
+        // Escape sequence — consume both chars
+        this.pos++;
+        if (this.pos < src.length) {
+          pattern += "\\" + src[this.pos];
+          this.pos++;
+        }
+        continue;
+      }
+      if (ch === "[") {
+        inClass = true;
+        pattern += ch;
+        this.pos++;
+        continue;
+      }
+      if (ch === "]") {
+        inClass = false;
+        pattern += ch;
+        this.pos++;
+        continue;
+      }
+      if (ch === "/" && !inClass) {
+        this.pos++; // consume closing /
+        break;
+      }
+      if (ch === "\n") {
+        throw new LexError(`Unterminated regex literal at position ${start}`, start);
+      }
+      pattern += ch;
+      this.pos++;
+    }
+
+    // Read optional flags
+    let flags = "";
+    while (this.pos < src.length && /[gimsuy]/.test(src[this.pos])) {
+      flags += src[this.pos];
+      this.pos++;
+    }
+
+    return { type: TokenType.RegexLiteral, value: pattern, flags, pos: start };
+  }
+
   private readIdent(): string {
     const src = this.src;
     let i = this.pos;
@@ -414,6 +504,10 @@ export class Lexer {
         return { type: TokenType.Null, value: "null", pos };
       case "in":
         return { type: TokenType.In, value: "in", pos };
+      case "new":
+        return { type: TokenType.New, value: "new", pos };
+      case "typeof":
+        return { type: TokenType.Typeof, value: "typeof", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }

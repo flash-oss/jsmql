@@ -232,7 +232,7 @@ describe("validate()", () => {
   it("returns error for unknown identifier", () => {
     const result = validate("$eq(age, 18)");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/Unexpected token/);
+    expect(result.errors[0].message).toMatch(/Did you mean/);
   });
 
   it("returns error for unclosed paren", () => {
@@ -495,5 +495,348 @@ describe("v2: $.in field ref still works", () => {
   });
   it("nested field with 'in' segment", () => {
     expect(mjsql("$size($.in)")).toEqual({ $size: "$in" });
+  });
+});
+
+// ── v3 tests ─────────────────────────────────────────────────────────────────
+
+describe("v3: field path regression (FieldRef stops at first segment)", () => {
+  it("$.a.b.c produces $a.b.c", () => {
+    expect(mjsql("$.a.b.c")).toEqual("$a.b.c");
+  });
+  it("$.items.0.name produces $items.0.name", () => {
+    expect(mjsql("$.items.0.name")).toEqual("$items.0.name");
+  });
+  it("deep path inside $abs", () => {
+    expect(mjsql("$abs($.a.b.c)")).toEqual({ $abs: "$a.b.c" });
+  });
+  it("dotted path in comparison", () => {
+    expect(mjsql("$.loyalty.years >= 2")).toEqual({ $gte: ["$loyalty.years", 2] });
+  });
+});
+
+describe("v3: string methods", () => {
+  it("trim", () => {
+    expect(mjsql("$.name.trim()")).toEqual({ $trim: { input: "$name" } });
+  });
+  it("trimStart", () => {
+    expect(mjsql("$.name.trimStart()")).toEqual({ $ltrim: { input: "$name" } });
+  });
+  it("trimLeft alias", () => {
+    expect(mjsql("$.name.trimLeft()")).toEqual({ $ltrim: { input: "$name" } });
+  });
+  it("trimEnd", () => {
+    expect(mjsql("$.name.trimEnd()")).toEqual({ $rtrim: { input: "$name" } });
+  });
+  it("trimRight alias", () => {
+    expect(mjsql("$.name.trimRight()")).toEqual({ $rtrim: { input: "$name" } });
+  });
+  it("toLowerCase", () => {
+    expect(mjsql("$.name.toLowerCase()")).toEqual({ $toLower: "$name" });
+  });
+  it("toUpperCase", () => {
+    expect(mjsql("$.name.toUpperCase()")).toEqual({ $toUpper: "$name" });
+  });
+  it("substr", () => {
+    expect(mjsql("$.name.substr(0, 5)")).toEqual({ $substrCP: ["$name", 0, 5] });
+  });
+  it("split", () => {
+    expect(mjsql('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
+  });
+  it("indexOf", () => {
+    expect(mjsql('$.name.indexOf("@")')).toEqual({ $indexOfCP: ["$name", "@"] });
+  });
+  it("replace", () => {
+    expect(mjsql('$.name.replace("a", "b")')).toEqual({
+      $replaceOne: { input: "$name", find: "a", replacement: "b" },
+    });
+  });
+  it("replaceAll", () => {
+    expect(mjsql('$.slug.replaceAll(" ", "-")')).toEqual({
+      $replaceAll: { input: "$slug", find: " ", replacement: "-" },
+    });
+  });
+  it("includes", () => {
+    expect(mjsql('$.email.includes("@")')).toEqual({
+      $gte: [{ $indexOfCP: ["$email", "@"] }, 0],
+    });
+  });
+  it("match with regex literal", () => {
+    expect(mjsql("$.str.match(/^[A-Z]/)")).toEqual({
+      $regexMatch: { input: "$str", regex: "^[A-Z]" },
+    });
+  });
+  it("match with regex literal and flags", () => {
+    expect(mjsql("$.str.match(/^[a-z]/i)")).toEqual({
+      $regexMatch: { input: "$str", regex: "^[a-z]", options: "i" },
+    });
+  });
+  it("match with string pattern", () => {
+    expect(mjsql('$.str.match("^[a-z]")')).toEqual({
+      $regexMatch: { input: "$str", regex: "^[a-z]" },
+    });
+  });
+  it("length property", () => {
+    expect(mjsql("$.name.length")).toEqual({ $strLenCP: "$name" });
+  });
+  it("chained trim then toLowerCase", () => {
+    expect(mjsql("$.name.trim().toLowerCase()")).toEqual({
+      $toLower: { $trim: { input: "$name" } },
+    });
+  });
+  it("chained toLowerCase then trim", () => {
+    expect(mjsql("$.name.toLowerCase().trim()")).toEqual({
+      $trim: { input: { $toLower: "$name" } },
+    });
+  });
+});
+
+describe("v3: array methods (no lambda)", () => {
+  it("at(n)", () => {
+    expect(mjsql("$.items.at(0)")).toEqual({ $arrayElemAt: ["$items", 0] });
+  });
+  it("at(-1)", () => {
+    expect(mjsql("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
+  });
+  it("slice(start)", () => {
+    expect(mjsql("$.items.slice(2)")).toEqual({ $slice: ["$items", 2] });
+  });
+  it("slice(start, count)", () => {
+    expect(mjsql("$.items.slice(0, 3)")).toEqual({ $slice: ["$items", 0, 3] });
+  });
+  it("reverse()", () => {
+    expect(mjsql("$.items.reverse()")).toEqual({ $reverseArray: "$items" });
+  });
+});
+
+describe("v3: array methods (with lambda)", () => {
+  it("map with single param", () => {
+    expect(mjsql("$.prices.map(p => p * 1.1)")).toEqual({
+      $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
+    });
+  });
+  it("map with parenthesized param", () => {
+    expect(mjsql("$.prices.map((p) => p * 1.1)")).toEqual({
+      $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
+    });
+  });
+  it("filter", () => {
+    expect(mjsql("$.items.filter(x => x > 0)")).toEqual({
+      $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } },
+    });
+  });
+  it("find", () => {
+    expect(mjsql("$.items.find(x => x > 0)")).toEqual({
+      $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } } }, 0],
+    });
+  });
+  it("some", () => {
+    expect(mjsql("$.items.some(x => x > 0)")).toEqual({
+      $anyElementTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } },
+    });
+  });
+  it("every", () => {
+    expect(mjsql("$.items.every(x => x > 0)")).toEqual({
+      $allElementsTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } },
+    });
+  });
+  it("reduce", () => {
+    expect(mjsql("$.ns.reduce((acc, x) => acc + x, 0)")).toEqual({
+      $reduce: { input: "$ns", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+    });
+  });
+  it("lambda accessing doc field via $.", () => {
+    expect(mjsql("$.items.map(x => x * $.taxRate)")).toEqual({
+      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$taxRate"] } },
+    });
+  });
+  it("lambda accessing nested field on element (x.status → $$x.status)", () => {
+    expect(mjsql('$.orders.filter(o => o.status == "active")')).toEqual({
+      $filter: { input: "$orders", as: "o", cond: { $eq: ["$$o.status", "active"] } },
+    });
+  });
+  it("reduce accessing element field ($$this.price)", () => {
+    expect(mjsql("$.orders.reduce((sum, o) => sum + o.price, 0)")).toEqual({
+      $reduce: {
+        input: "$orders",
+        initialValue: 0,
+        in: { $add: ["$$value", "$$this.price"] },
+      },
+    });
+  });
+});
+
+describe("v3: date methods", () => {
+  it("getFullYear", () => {
+    expect(mjsql("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
+  });
+  it("getMonth (0-based)", () => {
+    expect(mjsql("$.ts.getMonth()")).toEqual({ $subtract: [{ $month: "$ts" }, 1] });
+  });
+  it("getDate", () => {
+    expect(mjsql("$.ts.getDate()")).toEqual({ $dayOfMonth: "$ts" });
+  });
+  it("getDay (0-based)", () => {
+    expect(mjsql("$.ts.getDay()")).toEqual({ $subtract: [{ $dayOfWeek: "$ts" }, 1] });
+  });
+  it("getHours", () => {
+    expect(mjsql("$.ts.getHours()")).toEqual({ $hour: "$ts" });
+  });
+  it("getMinutes", () => {
+    expect(mjsql("$.ts.getMinutes()")).toEqual({ $minute: "$ts" });
+  });
+  it("getSeconds", () => {
+    expect(mjsql("$.ts.getSeconds()")).toEqual({ $second: "$ts" });
+  });
+  it("getMilliseconds", () => {
+    expect(mjsql("$.ts.getMilliseconds()")).toEqual({ $millisecond: "$ts" });
+  });
+});
+
+describe("v3: typeof", () => {
+  it("typeof fieldref", () => {
+    expect(mjsql("typeof $.x")).toEqual({ $type: "$x" });
+  });
+  it("typeof in comparison", () => {
+    expect(mjsql('typeof $.x == "string"')).toEqual({ $eq: [{ $type: "$x" }, "string"] });
+  });
+});
+
+describe("v3: new Date()", () => {
+  it("no-arg maps to $$NOW", () => {
+    expect(mjsql("new Date()")).toEqual({ $toDate: "$$NOW" });
+  });
+  it("with field arg", () => {
+    expect(mjsql("new Date($.ts)")).toEqual({ $toDate: "$ts" });
+  });
+  it("with string literal", () => {
+    expect(mjsql('new Date("2024-01-01")')).toEqual({ $toDate: "2024-01-01" });
+  });
+});
+
+describe("v3: type casts", () => {
+  it("Number()", () => {
+    expect(mjsql("Number($.str)")).toEqual({ $toDouble: "$str" });
+  });
+  it("String()", () => {
+    expect(mjsql("String($.n)")).toEqual({ $toString: "$n" });
+  });
+  it("Boolean()", () => {
+    expect(mjsql("Boolean($.x)")).toEqual({ $toBool: "$x" });
+  });
+  it("parseInt()", () => {
+    expect(mjsql("parseInt($.s)")).toEqual({ $toInt: "$s" });
+  });
+  it("parseFloat()", () => {
+    expect(mjsql("parseFloat($.s)")).toEqual({ $toDouble: "$s" });
+  });
+});
+
+describe("v3: Math.*", () => {
+  it("Math.abs", () => {
+    expect(mjsql("Math.abs($.x)")).toEqual({ $abs: "$x" });
+  });
+  it("Math.ceil", () => {
+    expect(mjsql("Math.ceil($.x)")).toEqual({ $ceil: "$x" });
+  });
+  it("Math.floor", () => {
+    expect(mjsql("Math.floor($.x)")).toEqual({ $floor: "$x" });
+  });
+  it("Math.round adds 0 precision", () => {
+    expect(mjsql("Math.round($.x)")).toEqual({ $round: ["$x", 0] });
+  });
+  it("Math.pow", () => {
+    expect(mjsql("Math.pow(2, $.n)")).toEqual({ $pow: [2, "$n"] });
+  });
+  it("Math.sqrt", () => {
+    expect(mjsql("Math.sqrt($.x)")).toEqual({ $sqrt: "$x" });
+  });
+  it("Math.exp", () => {
+    expect(mjsql("Math.exp($.x)")).toEqual({ $exp: "$x" });
+  });
+  it("Math.log (natural log → $ln)", () => {
+    expect(mjsql("Math.log($.x)")).toEqual({ $ln: "$x" });
+  });
+  it("Math.trunc", () => {
+    expect(mjsql("Math.trunc($.x)")).toEqual({ $trunc: "$x" });
+  });
+});
+
+describe("v3: Object.*", () => {
+  it("Object.keys", () => {
+    expect(mjsql("Object.keys($.doc)")).toEqual({
+      $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.k" },
+    });
+  });
+  it("Object.values", () => {
+    expect(mjsql("Object.values($.doc)")).toEqual({
+      $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.v" },
+    });
+  });
+  it("Object.entries", () => {
+    expect(mjsql("Object.entries($.doc)")).toEqual({ $objectToArray: "$doc" });
+  });
+  it("Object.assign (2 args)", () => {
+    expect(mjsql("Object.assign($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
+  });
+  it("Object.assign (3 args)", () => {
+    expect(mjsql("Object.assign($.a, $.b, $.c)")).toEqual({ $mergeObjects: ["$a", "$b", "$c"] });
+  });
+});
+
+describe("v3: $let with lambda", () => {
+  it("single var lambda", () => {
+    expect(mjsql("$let({ d: $.price * 0.1 }, (d) => $.price - d)")).toEqual({
+      $let: {
+        vars: { d: { $multiply: ["$price", 0.1] } },
+        in: { $subtract: ["$price", "$$d"] },
+      },
+    });
+  });
+});
+
+describe("v3: string-context + with method calls", () => {
+  it("trim() in + chain is string-producing", () => {
+    expect(mjsql('$.first.trim() + " " + $.last')).toEqual({
+      $concat: [{ $trim: { input: "$first" } }, " ", "$last"],
+    });
+  });
+  it("String() cast in + chain is string-producing", () => {
+    expect(mjsql('String($.n) + " items"')).toEqual({
+      $concat: [{ $toString: "$n" }, " items"],
+    });
+  });
+  it("typeof in + chain is string-producing", () => {
+    expect(mjsql('typeof $.x + " type"')).toEqual({
+      $concat: [{ $type: "$x" }, " type"],
+    });
+  });
+});
+
+describe("v3: regex literals (context-sensitive /)", () => {
+  it("regex after operator is a literal, not divide", () => {
+    expect(mjsql("$.str.match(/[a-z]+/)")).toEqual({
+      $regexMatch: { input: "$str", regex: "[a-z]+" },
+    });
+  });
+  it("/ after number is divide", () => {
+    expect(mjsql("$.x / 2")).toEqual({ $divide: ["$x", 2] });
+  });
+  it("regex with multiple flags", () => {
+    expect(mjsql("$.str.match(/pattern/gi)")).toEqual({
+      $regexMatch: { input: "$str", regex: "pattern", options: "gi" },
+    });
+  });
+});
+
+describe("v3: error cases", () => {
+  it("bare identifier outside lambda throws Did you mean", () => {
+    expect(() => mjsql("x > 0")).toThrow(/Did you mean/);
+  });
+  it("unknown method throws with helpful message", () => {
+    expect(() => mjsql("$.name.frobulate()")).toThrow(/Unknown method/);
+  });
+  it("lambda in non-method context throws", () => {
+    expect(() => mjsql("$abs(x => x)")).toThrow(/Lambda expression/);
   });
 });

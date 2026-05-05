@@ -324,12 +324,108 @@ describe("inventory: v2 infix — reorder alert with unary and power", () => {
   });
 });
 
+describe("v3: email domain via method chaining", () => {
+  it("chains split, at, toLowerCase", () => {
+    // Extract and normalise the domain part of an email address using method chains
+    const result = mjsql('$.email.split("@").at(1).toLowerCase()');
+    expect(result).toEqual({
+      $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] },
+    });
+  });
+});
+
+describe("v3: order total via map+reduce", () => {
+  it("computes sum of item prices using lambda methods", () => {
+    // Sum up all item prices: items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)
+    const result = mjsql(
+      "$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)",
+    );
+    expect(result).toEqual({
+      $reduce: {
+        input: {
+          $map: {
+            input: "$items",
+            as: "item",
+            in: { $multiply: ["$$item.qty", "$$item.price"] },
+          },
+        },
+        initialValue: 0,
+        in: { $add: ["$$value", "$$this"] },
+      },
+    });
+  });
+});
+
+describe("v3: slug via method chain", () => {
+  it("builds URL slug by chaining toLowerCase, trim, replaceAll", () => {
+    // Normalise title to a URL slug
+    const result = mjsql('$.title.toLowerCase().trim().replaceAll(" ", "-")');
+    expect(result).toEqual({
+      $replaceAll: {
+        input: { $trim: { input: { $toLower: "$title" } } },
+        find: " ",
+        replacement: "-",
+      },
+    });
+  });
+});
+
+describe("v3: age bucket via Math.floor", () => {
+  it("groups age into decade buckets", () => {
+    // Round down to nearest 10: Math.floor(age / 10) * 10
+    const result = mjsql("Math.floor($.age / 10) * 10");
+    expect(result).toEqual({
+      $multiply: [{ $floor: { $divide: ["$age", 10] } }, 10],
+    });
+  });
+});
+
+describe("v3: type check with typeof", () => {
+  it("uses typeof in ternary to normalise string vs number", () => {
+    // Return trimmed string, or toString if it's not already a string
+    const result = mjsql('typeof $.value == "string" ? $.value.trim() : String($.value)');
+    expect(result).toEqual({
+      $cond: [
+        { $eq: [{ $type: "$value" }, "string"] },
+        { $trim: { input: "$value" } },
+        { $toString: "$value" },
+      ],
+    });
+  });
+});
+
+describe("v3: new Date() in dateDiff", () => {
+  it("computes days since created using new Date()", () => {
+    // Days since document was created
+    const result = mjsql("$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: 'day' })");
+    expect(result).toEqual({
+      $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" },
+    });
+  });
+});
+
+describe("v3: mixed v2+v3 — admin check", () => {
+  it("combines infix operators with method chaining", () => {
+    // Active user with an admin role (lowercased check) and non-empty trimmed name
+    const result = mjsql(
+      '$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length > 0',
+    );
+    expect(result).toEqual({
+      $and: [
+        "$active",
+        { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
+        { $gt: [{ $strLenCP: { $trim: { input: "$name" } } }, 0] },
+      ],
+    });
+  });
+});
+
 describe("validate(): realistic invalid expressions", () => {
   it("rejects bare field name without $. prefix", () => {
     // A common mistake: forgetting the $. prefix
     const result = validate("$eq(age, 18)");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/Unexpected token/);
+    expect(result.errors[0].message).toMatch(/Did you mean/);
   });
 
   it("rejects unterminated operator call", () => {

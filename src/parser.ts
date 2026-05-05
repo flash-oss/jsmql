@@ -7,6 +7,9 @@ import type {
   ObjectEntry,
   KeyValueEntry,
   SpreadElement,
+  TypeCastOp,
+  MathMethod,
+  ObjectMethod,
 } from "./ast.js";
 
 export class ParseError extends Error {
@@ -18,6 +21,22 @@ export class ParseError extends Error {
     this.name = "ParseError";
   }
 }
+
+const MATH_METHODS = new Set<string>([
+  "abs",
+  "ceil",
+  "floor",
+  "round",
+  "pow",
+  "sqrt",
+  "exp",
+  "log",
+  "trunc",
+]);
+
+const OBJECT_METHODS = new Set<string>(["keys", "values", "entries", "assign"]);
+
+const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 
 export class Parser {
   private readonly lexer: Lexer;
@@ -170,9 +189,14 @@ export class Parser {
     return { type: "BinaryExpr", op: "**", left, right };
   }
 
-  /** unary:  ("!"|"-") unary  |  postfix  */
+  /** unary:  typeof | ("!"|"-") unary  |  postfix  */
   private parseUnary(): Expr {
     const t = this.lexer.peek();
+    if (t.type === TokenType.Typeof) {
+      this.lexer.next();
+      const operand = this.parseUnary();
+      return { type: "TypeofExpr", operand };
+    }
     if (t.type === TokenType.Bang) {
       this.lexer.next();
       const operand = this.parseUnary();
@@ -186,23 +210,80 @@ export class Parser {
     return this.parsePostfix();
   }
 
-  /** postfix:  primary ("[" expression "]")*  */
+  /** postfix:  primary ("[" expression "]" | "." member)*  */
   private parsePostfix(): Expr {
     let left = this.parsePrimary();
-    while (this.lexer.peek().type === TokenType.LBracket) {
-      this.lexer.next(); // consume [
-      const index = this.parseExpression();
-      const close = this.lexer.peek();
-      if (close.type !== TokenType.RBracket) {
-        throw new ParseError(
-          `Expected ']' after index expression at position ${close.pos}`,
-          close.pos,
-        );
+    for (;;) {
+      if (this.lexer.peek().type === TokenType.LBracket) {
+        this.lexer.next(); // consume [
+        const index = this.parseExpression();
+        const close = this.lexer.peek();
+        if (close.type !== TokenType.RBracket) {
+          throw new ParseError(
+            `Expected ']' after index expression at position ${close.pos}`,
+            close.pos,
+          );
+        }
+        this.lexer.next(); // consume ]
+        left = { type: "IndexAccess", object: left, index };
+      } else if (this.lexer.peek().type === TokenType.Dot) {
+        this.lexer.next(); // consume .
+        const member = this.lexer.peek();
+        if (!this.isFieldSegmentToken(member)) {
+          throw new ParseError(
+            `Expected property name after '.' at position ${member.pos}`,
+            member.pos,
+          );
+        }
+        this.lexer.next(); // consume member name
+        if (this.lexer.peek().type === TokenType.LParen) {
+          // Method call: left.member(args)
+          const args = this.parseMethodCallArgs();
+          left = { type: "MethodCall", object: left, method: member.value, args };
+        } else {
+          // Property access: left.member
+          left = { type: "MemberAccess", object: left, member: member.value };
+        }
+      } else {
+        break;
       }
-      this.lexer.next(); // consume ]
-      left = { type: "IndexAccess", object: left, index };
     }
     return left;
+  }
+
+  /** Parse method call argument list: "(" [argOrLambda (, argOrLambda)*] ")" */
+  private parseMethodCallArgs(): Expr[] {
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return [];
+    }
+    const args: Expr[] = [this.parseArgOrLambda()];
+    while (this.lexer.peek().type === TokenType.Comma) {
+      this.lexer.next();
+      args.push(this.parseArgOrLambda());
+    }
+    this.lexer.expect(TokenType.RParen);
+    return args;
+  }
+
+  /**
+   * Parse an argument that might be a lambda expression.
+   * Checks for lambda patterns before falling back to parseExpression().
+   */
+  private parseArgOrLambda(): Expr {
+    // x => expr  (unparenthesized single param)
+    if (
+      this.lexer.peek().type === TokenType.Ident &&
+      this.lexer.lookahead(1).type === TokenType.Arrow
+    ) {
+      return this.parseLambdaUnparen();
+    }
+    // (x) => expr  or  (x, y) => expr  or  () => expr
+    if (this.isLambdaStart()) {
+      return this.parseLambdaParen();
+    }
+    return this.parseExpression();
   }
 
   /** primary:  operator_call | field_ref | literals | "(" expr ")" | array | object  */
@@ -232,8 +313,22 @@ export class Parser {
         return this.parseArrayLiteral();
       case TokenType.LBrace:
         return this.parseObjectLiteral();
+      case TokenType.RegexLiteral:
+        this.lexer.next();
+        return { type: "RegexLiteral", pattern: t.value, flags: t.flags ?? "" };
+      case TokenType.New:
+        return this.parseNewDate();
       case TokenType.LParen:
+        if (this.isLambdaStart()) return this.parseLambdaParen();
         return this.parseGrouped();
+      case TokenType.Ident: {
+        const name = t.value;
+        if (name === "Math") return this.parseMathCall();
+        if (name === "Object") return this.parseObjectCall();
+        if (TYPE_CAST_NAMES.has(name)) return this.parseTypeCast();
+        this.lexer.next();
+        return { type: "ParamRef", name };
+      }
       default:
         throw new ParseError(`Unexpected token '${t.value}' at position ${t.pos}`, t.pos);
     }
@@ -287,27 +382,25 @@ export class Parser {
       const args: Expr[] = [obj];
       while (this.lexer.peek().type === TokenType.Comma) {
         this.lexer.next();
-        args.push(this.parseExpression());
+        args.push(this.parseArgOrLambda());
       }
       this.lexer.expect(TokenType.RParen);
       return { type: "OperatorCall", name, style: "positional", args };
     }
 
-    // Positional args
-    const args: Expr[] = [this.parseExpression()];
+    // Positional args (may include lambdas)
+    const args: Expr[] = [this.parseArgOrLambda()];
     while (this.lexer.peek().type === TokenType.Comma) {
       this.lexer.next();
-      args.push(this.parseExpression());
+      args.push(this.parseArgOrLambda());
     }
     this.lexer.expect(TokenType.RParen);
     return { type: "OperatorCall", name, style: "positional", args };
   }
 
+  /** $.field — stops at first segment; postfix handles further dots */
   private parseFieldRef(): Expr {
     const dollarDot = this.lexer.next(); // consume $.
-    const parts: string[] = [];
-
-    // First segment: must be an identifier or keyword used as field name
     const first = this.lexer.peek();
     if (!this.isFieldSegmentToken(first)) {
       throw new ParseError(
@@ -316,37 +409,162 @@ export class Parser {
       );
     }
     this.lexer.next();
-    parts.push(first.value);
-
-    // Optional continuation: .identifier, .keyword, or .number
-    while (this.lexer.peek().type === TokenType.Dot) {
-      this.lexer.next(); // consume .
-      const seg = this.lexer.peek();
-      if (this.isFieldSegmentToken(seg)) {
-        this.lexer.next();
-        parts.push(seg.value);
-      } else {
-        throw new ParseError(`Expected field name segment at position ${seg.pos}`, seg.pos);
-      }
-    }
-
-    return { type: "FieldRef", path: parts.join(".") };
+    return { type: "FieldRef", path: first.value };
   }
 
   /** Any identifier or keyword token — valid as an operator name after $ */
   private isIdentOrKeyword(t: Token): boolean {
     return (
-      t.type === TokenType.Ident || t.type === TokenType.In
-      // future keywords that could be MongoDB operator names go here
+      t.type === TokenType.Ident ||
+      t.type === TokenType.In ||
+      t.type === TokenType.New ||
+      t.type === TokenType.Typeof
     );
   }
 
   /** A token that is valid as a field-path segment (identifiers, keywords like 'in', numbers) */
   private isFieldSegmentToken(t: Token): boolean {
     return (
-      t.type === TokenType.Ident || t.type === TokenType.Number || t.type === TokenType.In // $.in is documented as valid
-      // future keywords can be added here
+      t.type === TokenType.Ident ||
+      t.type === TokenType.Number ||
+      t.type === TokenType.In ||
+      t.type === TokenType.New ||
+      t.type === TokenType.Typeof
     );
+  }
+
+  /**
+   * Non-consuming lookahead: is the current position the start of a parenthesized lambda?
+   * Matches: "(" ")" "=>" | "(" Ident ")" "=>" | "(" Ident ("," Ident)* ")" "=>"
+   */
+  private isLambdaStart(): boolean {
+    if (this.lexer.peek().type !== TokenType.LParen) return false;
+    let offset = 1;
+    // Check for () => (zero params)
+    if (this.lexer.lookahead(offset).type === TokenType.RParen) {
+      return this.lexer.lookahead(offset + 1).type === TokenType.Arrow;
+    }
+    // Collect Ident (, Ident)*
+    while (this.lexer.lookahead(offset).type === TokenType.Ident) {
+      offset++;
+      if (this.lexer.lookahead(offset).type === TokenType.RParen) {
+        return this.lexer.lookahead(offset + 1).type === TokenType.Arrow;
+      }
+      if (this.lexer.lookahead(offset).type !== TokenType.Comma) return false;
+      offset++; // consume comma
+    }
+    return false;
+  }
+
+  /** Parse "x => expr" — single unparenthesized parameter */
+  private parseLambdaUnparen(): Expr {
+    const paramTok = this.lexer.next(); // consume Ident
+    this.lexer.next(); // consume =>
+    const body = this.parseExpression();
+    return { type: "Lambda", params: [paramTok.value], body };
+  }
+
+  /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
+  private parseLambdaParen(): Expr {
+    this.lexer.next(); // consume (
+    const params: string[] = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      params.push(this.lexer.expect(TokenType.Ident).value);
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        params.push(this.lexer.expect(TokenType.Ident).value);
+      }
+    }
+    this.lexer.expect(TokenType.RParen);
+    this.lexer.expect(TokenType.Arrow);
+    const body = this.parseExpression();
+    return { type: "Lambda", params, body };
+  }
+
+  /** "new Date()" or "new Date(expr)" */
+  private parseNewDate(): Expr {
+    const newTok = this.lexer.next(); // consume 'new'
+    const className = this.lexer.peek();
+    if (className.type !== TokenType.Ident || className.value !== "Date") {
+      throw new ParseError(`Expected 'Date' after 'new' at position ${newTok.pos}`, newTok.pos);
+    }
+    this.lexer.next(); // consume 'Date'
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return { type: "NewDate", arg: null };
+    }
+    const arg = this.parseExpression();
+    this.lexer.expect(TokenType.RParen);
+    return { type: "NewDate", arg };
+  }
+
+  /** "Math.method(args)" */
+  private parseMathCall(): Expr {
+    const mathTok = this.lexer.next(); // consume 'Math'
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident || !MATH_METHODS.has(methodTok.value)) {
+      throw new ParseError(
+        `Unknown Math method '${methodTok.value}' at position ${methodTok.pos}. Supported: ${[...MATH_METHODS].join(", ")}`,
+        mathTok.pos,
+      );
+    }
+    this.lexer.next(); // consume method name
+    const method = methodTok.value as MathMethod;
+    this.lexer.expect(TokenType.LParen);
+    const args: Expr[] = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      args.push(this.parseExpression());
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        args.push(this.parseExpression());
+      }
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "MathCall", method, args };
+  }
+
+  /** "Object.method(args)" */
+  private parseObjectCall(): Expr {
+    const objectTok = this.lexer.next(); // consume 'Object'
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident || !OBJECT_METHODS.has(methodTok.value)) {
+      throw new ParseError(
+        `Unknown Object method '${methodTok.value}' at position ${methodTok.pos}. Supported: ${[...OBJECT_METHODS].join(", ")}`,
+        objectTok.pos,
+      );
+    }
+    this.lexer.next(); // consume method name
+    const method = methodTok.value as ObjectMethod;
+    this.lexer.expect(TokenType.LParen);
+    const args: Expr[] = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      args.push(this.parseExpression());
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        args.push(this.parseExpression());
+      }
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "ObjectCall", method, args };
+  }
+
+  /** "Number(x)" | "String(x)" | "Boolean(x)" | "parseInt(x)" | "parseFloat(x)" */
+  private parseTypeCast(): Expr {
+    const castTok = this.lexer.next(); // consume cast name
+    const cast = castTok.value as TypeCastOp;
+    this.lexer.expect(TokenType.LParen);
+    const arg = this.parseExpression();
+    if (this.lexer.peek().type === TokenType.Comma) {
+      throw new ParseError(
+        `Type cast '${cast}()' takes exactly 1 argument at position ${castTok.pos}`,
+        castTok.pos,
+      );
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "TypeCast", cast, arg };
   }
 
   private parseNumber(): Expr {
