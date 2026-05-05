@@ -6,24 +6,28 @@
 
 ## Quick Start
 
-mjsql lets you write MongoDB aggregation expressions using JavaScript syntax:
+mjsql is a JavaScript-subset language that compiles to MongoDB aggregation expression JSON — like SQL but for MongoDB, using JS syntax you already know.
 
 ```js
 const { mjsql } = require("mjsql");
 
-// Simple comparison
-mjsql("$.age > 18");
-// → { $gt: ["$age", 18] }
-
-// Compound expression
+// JS operators
 mjsql("$.age > 18 && $.status == 'active'");
 // → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
 
+// Method chains
+mjsql("$.email.split('@').at(1).toLowerCase()");
+// → { $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } }
+
+// Lambdas
+mjsql("$.prices.map(p => p * 1.1)");
+// → { $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } } }
+
 // With template tag (for embedded values)
 const { mql } = require("mjsql");
-const oldEnoughAge = 21;
-mql`$.age > ${oldEnoughAge} && $.status == 'active'`;
-// → { $and: [{ $gt: ["$age", 21] }, { $eq: ["$status", "active"] }] }
+const minAge = 21;
+mql`$.age >= ${minAge} && $.status == 'active'`;
+// → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$status", "active"] }] }
 ```
 
 ---
@@ -50,7 +54,7 @@ mql`$.age > ${oldEnoughAge} && $.status == 'active'`;
 
 ## Expressions
 
-An mjsql expression is a JavaScript-like syntax that transpiles to MongoDB aggregation expressions. It's a **subset of JavaScript** — not all JS is valid mjsql.
+An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas — mjsql handles the translation. For MongoDB operators without a JS equivalent, use the `$op()` fallback form.
 
 ### Valid Constructs
 
@@ -482,7 +486,7 @@ Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`
 
 ## Utility Functions
 
-For MongoDB operators without a JavaScript equivalent (aka fallback), use `$mqlFuncName()`.
+For MongoDB operators that have no JavaScript equivalent, use the `$opName()` fallback form. Every MongoDB aggregation operator is available this way — and unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.
 
 ### Examples:
 

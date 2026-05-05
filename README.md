@@ -1,12 +1,18 @@
 # mjsql
 
-Write MongoDB aggregation expressions in a readable, LISP-style syntax instead of deeply nested JSON.
+Write MongoDB aggregation expressions in JavaScript. mjsql is a JS-subset language that compiles to MQL JSON — like SQL but for MongoDB, using syntax you already know.
 
 ```js
 const { mjsql } = require("mjsql");
 
-mjsql("$and($gte($.age, 18), $eq($toLower($.status), 'active'))");
-// → { $and: [{ $gte: ["$age", 18] }, { $eq: [{ $toLower: "$status" }, "active"] }] }
+mjsql("$.age > 18 && $.status == 'active'")
+// → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
+
+mjsql("$.name.trim().toLowerCase()")
+// → { $toLower: { $trim: { input: "$name" } } }
+
+mjsql("$.items.map(item => item.price * item.qty).reduce((acc, x) => acc + x, 0)")
+// → { $reduce: { input: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.price", "$$item.qty"] } } }, initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
 ## Install
@@ -20,41 +26,59 @@ npm install mjsql
 ```js
 const { mjsql, validate, mql } = require("mjsql");
 
-// Transpile a string expression to MQL JSON
-const expr = mjsql("$gte($.price, 100)");
-// → { $gte: ["$price", 100] }
+// JS operators and method chains
+mjsql("$.price >= 100 && $.stock > 0")
+// → { $and: [{ $gte: ["$price", 100] }, { $gt: ["$stock", 0] }] }
 
-// Use as a $match stage
-db.products.aggregate([{ $match: { $expr: mjsql("$gte($.price, 100)") } }]);
+// Use in a $match stage
+db.products.aggregate([{ $match: { $expr: mjsql("$.price >= 100") } }]);
 
 // Embed JS values with the template tag
 const minAge = 21;
-const filter = mql`$and($gte($.age, ${minAge}), $eq($.active, true))`;
+const filter = mql`$.age >= ${minAge} && $.active == true`;
+// → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$active", true] }] }
 
 // Check syntax without throwing
-const result = validate("$eq($.age, 18)");
+validate("$.age > 18");
 // → { valid: true, errors: [] }
 ```
 
 ## Syntax
 
-Every MongoDB aggregation operator is available as a function call:
-
-```
-$operatorName(arg1, arg2, ...)
-```
-
-Operators that take an object in MQL accept both styles:
+mjsql accepts a JS-like expression syntax that covers the full range of JavaScript operators and methods:
 
 ```js
-// Positional (args mapped to named keys in order)
-$trim($.name, " ")
-// → { $trim: { input: "$name", chars: " " } }
+// Arithmetic, comparison, logical
+$.price * 1.1 > $.msrp
+$.age >= 18 && $.status == 'active'
+$.nickname ?? $.firstName ?? "Anonymous"
 
-// Object-style (pass the object directly)
-$trim({ input: $.name, chars: " " })
-// → { $trim: { input: "$name", chars: " " } }
+// String methods
+$.email.toLowerCase().trim()
+$.title.split(" ").at(0)
+
+// Array methods with lambdas
+$.orders.filter(o => o.total > 100).map(o => o.id)
+$.scores.reduce((acc, x) => acc + x, 0)
+
+// Math, typeof, new Date, type casts
+Math.floor($.rating)
+typeof $.field == "string" ? $.field.trim() : String($.field)
+$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })
 ```
+
+### Fallback: `$op()` utility form
+
+For MongoDB operators that have no JavaScript equivalent, use `$opName()`:
+
+```js
+$round($.price, 2)                 // { $round: ["$price", 2] }
+$dateAdd($.date, "day", 7)         // { $dateAdd: { startDate: "$date", unit: "day", amount: 7 } }
+$size($.items)                     // { $size: "$items" }
+$cond($.active, "yes", "no")       // { $cond: ["$active", "yes", "no"] }
+```
+
+Every MongoDB aggregation operator is available this way. Unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.
 
 Field references use `$.` notation:
 
@@ -86,7 +110,7 @@ Interpolate JavaScript values (numbers, strings, booleans, arrays) directly into
 
 ```js
 const statuses = ["active", "pending"];
-mql`$in($.status, ${statuses})`
+mql`$.status in ${statuses}`
 // → { $in: ["$status", ["active", "pending"]] }
 ```
 

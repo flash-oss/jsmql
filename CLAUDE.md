@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`mjsql` is a transpiler from a LISP-style expression language into MongoDB aggregation expression JSON. Users write `$op(args...)` instead of `{ $op: [...] }`.
+`mjsql` is a JavaScript-subset language for writing MongoDB aggregation expressions — like SQL but for MongoDB, using JS syntax developers already know. It compiles to MQL JSON.
+
+The primary syntax is JS: `$.age > 18`, `$.name.trim().toLowerCase()`, `$.items.map(x => x * 1.1)`. The `$op(args...)` utility form is a fallback for MongoDB operators that have no JavaScript equivalent (e.g. `$round($.price, 2)`, `$dateAdd($.date, "day", 7)`).
 
 The public API is three exports from `src/index.ts`:
 - `mjsql(str)` — parse and transpile, throws on error
