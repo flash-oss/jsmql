@@ -3,7 +3,7 @@
  *
  * Each test represents a plausible real-world MongoDB aggregation expression
  * written in mjsql's JavaScript-subset syntax. $op() utility calls appear only
- * where there is no JavaScript equivalent (e.g. $round, $dateDiff, $size).
+ * where there is no JavaScript equivalent (e.g. $round, $dateDiff).
  *
  * This file is referenced from README.md as a usage showcase.
  */
@@ -14,14 +14,14 @@ import { mjsql, validate, mql } from "../src/index.js";
 // ── E-commerce ────────────────────────────────────────────────────────────────
 
 describe("e-commerce: order eligibility for free shipping", () => {
-  it("combines &&, in, $size fallback, and method chains", () => {
+  it("combines &&, in, .length, and method chains", () => {
     // Customer qualifies for free shipping if:
     //   cart total ≥ $50, loyalty status is premium/gold/platinum,
     //   cart has < 20 items, and region (trimmed, lowercased) is "us"
     const result = mjsql(`
       $.cart.total >= 50 &&
       $.customer.status in ["premium", "gold", "platinum"] &&
-      $size($.cart.items) < 20 &&
+      $.cart.items.length < 20 &&
       $.customer.region.trim().toLowerCase() == "us"
     `);
 
@@ -29,7 +29,18 @@ describe("e-commerce: order eligibility for free shipping", () => {
       $and: [
         { $gte: ["$cart.total", 50] },
         { $in: ["$customer.status", ["premium", "gold", "platinum"]] },
-        { $lt: [{ $size: "$cart.items" }, 20] },
+        {
+          $lt: [
+            {
+              $cond: [
+                { $isArray: "$cart.items" },
+                { $size: "$cart.items" },
+                { $strLenCP: "$cart.items" },
+              ],
+            },
+            20,
+          ],
+        },
         { $eq: [{ $toLower: { $trim: { input: "$customer.region" } } }, "us"] },
       ],
     });
@@ -319,6 +330,15 @@ describe("user display: full name with null fallback", () => {
 });
 
 // ── Data quality ──────────────────────────────────────────────────────────────
+
+describe("data quality: CSV field word count", () => {
+  it("uses .split().length — known array context resolves to $size", () => {
+    // Count the number of comma-separated values in a CSV field
+    const result = mjsql('$.tags.split(",").length');
+
+    expect(result).toEqual({ $size: { $split: ["$tags", ","] } });
+  });
+});
 
 describe("data quality: normalise string vs number field", () => {
   it("uses typeof in ternary to coerce mixed-type input", () => {
