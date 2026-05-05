@@ -346,7 +346,7 @@ describe("location: full address formatter", () => {
         $.country,
         $.postcode
       ]
-        .filter(x => x != null)
+        .filter(x => typeof x === "string" && x !== "")
         .reduce((acc, x) => acc == "" ? x : acc + " " + x, "")
     `);
 
@@ -364,7 +364,9 @@ describe("location: full address formatter", () => {
               "$postcode",
             ],
             as: "x",
-            cond: { $ne: ["$$x", null] },
+            cond: {
+              $and: [{ $eq: [{ $type: "$$x" }, "string"] }, { $ne: ["$$x", ""] }],
+            },
           },
         },
         initialValue: "",
