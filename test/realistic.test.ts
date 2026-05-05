@@ -338,7 +338,7 @@ describe("location: full address formatter", () => {
     // MongoDB executes this entirely — no need to fetch all fields to the client.
     const result = mjsql(`
       [
-        $.building ? $.building + "," : null,
+        typeof $.building === "string" && $.building !== "" ? $.building + "," : null,
         $.streetNo,
         $.street,
         $.suburb,
@@ -355,7 +355,15 @@ describe("location: full address formatter", () => {
         input: {
           $filter: {
             input: [
-              { $cond: ["$building", { $concat: ["$building", ","] }, null] },
+              {
+                $cond: [
+                  {
+                    $and: [{ $eq: [{ $type: "$building" }, "string"] }, { $ne: ["$building", ""] }],
+                  },
+                  { $concat: ["$building", ","] },
+                  null,
+                ],
+              },
               "$streetNo",
               "$street",
               "$suburb",
