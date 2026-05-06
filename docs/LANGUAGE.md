@@ -122,13 +122,20 @@ Backtick-delimited strings with `${expr}` interpolation, just like JS. They comp
 
 ```js
 `hello, ${$.name}!`
-// → { $concat: ["hello, ", "$name", "!"] }
-
-`${$.first} ${$.last}`
-// → { $concat: ["$first", " ", "$last"] }
+// → { $concat: ["hello, ", { $toString: "$name" }, "!"] }
 
 `total: ${$.a + $.b}`
-// → { $concat: ["total: ", { $add: ["$a", "$b"] }] }
+// → { $concat: ["total: ", { $toString: { $add: ["$a", "$b"] } }] }
+```
+
+Interpolated expressions are wrapped with `$toString` to match JS coercion semantics —
+`` `count: ${$.n}` `` works whether `$.n` is a number or a string. Expressions that are
+statically known to produce strings (string literals, `.toLowerCase()`, `String(x)`,
+nested template literals, etc.) skip the wrap to keep the output compact:
+
+```js
+`name=${$.name.toLowerCase()}`
+// → { $concat: ["name=", { $toLower: "$name" }] }     // no $toString — already a string
 ```
 
 Templates with no expressions resolve to plain strings. Escape sequences support `\\`, `` \` ``, `\$`, `\n`, `\t`, `\r`. Templates nest: `` `outer ${`inner ${$.x}`}` `` works.

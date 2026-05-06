@@ -590,6 +590,10 @@ function assertNoSpread(args: CallArg[], name: string): void {
  *
  * `\`hello, ${name}!\`` → `{ $concat: ["hello, ", expr_for_name, "!"] }`
  *
+ * Non-string interpolations are wrapped with `$toString` to match JS semantics —
+ * `\`count: ${$.n}\`` works whether `$.n` is a number or a string. Expressions that
+ * are statically known to produce strings skip the wrap to keep output compact.
+ *
  * Special case: a template with no expressions and a single quasi just returns that
  * string (so `\`hi\`` ≡ `"hi"`).
  */
@@ -600,7 +604,8 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
   const parts: unknown[] = [];
   for (let i = 0; i < expressions.length; i++) {
     if (quasis[i] !== "") parts.push(quasis[i]);
-    parts.push(_generate(expressions[i], ctx));
+    const gen = _generate(expressions[i], ctx);
+    parts.push(isStringProducing(expressions[i]) ? gen : { $toString: gen });
   }
   const tail = quasis[expressions.length];
   if (tail !== "") parts.push(tail);

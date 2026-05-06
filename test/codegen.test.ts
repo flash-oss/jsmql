@@ -933,34 +933,36 @@ describe("v4: template literals", () => {
     expect(mjsql("`hello`")).toEqual("hello");
   });
   it("single interpolation", () => {
+    // FieldRef has unknown runtime type → wrapped in $toString to match JS coercion semantics.
     expect(mjsql("`hello, ${$.name}!`")).toEqual({
-      $concat: ["hello, ", "$name", "!"],
+      $concat: ["hello, ", { $toString: "$name" }, "!"],
     });
   });
   it("multiple interpolations", () => {
     expect(mjsql("`${$.first} ${$.last}`")).toEqual({
-      $concat: ["$first", " ", "$last"],
+      $concat: [{ $toString: "$first" }, " ", { $toString: "$last" }],
     });
   });
   it("interpolation at the start", () => {
-    expect(mjsql("`${$.x} px`")).toEqual({ $concat: ["$x", " px"] });
+    expect(mjsql("`${$.x} px`")).toEqual({ $concat: [{ $toString: "$x" }, " px"] });
   });
   it("interpolation at the end", () => {
-    expect(mjsql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", "$id"] });
+    expect(mjsql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", { $toString: "$id" }] });
   });
   it("expression inside interpolation", () => {
     expect(mjsql("`total: ${$.a + $.b}`")).toEqual({
-      $concat: ["total: ", { $add: ["$a", "$b"] }],
+      $concat: ["total: ", { $toString: { $add: ["$a", "$b"] } }],
     });
   });
   it("interpolation containing object literal (brace tracking)", () => {
     expect(mjsql("`v=${$let({ x: 1 }, x => x)}`")).toEqual({
-      $concat: ["v=", { $let: { vars: { x: 1 }, in: "$$x" } }],
+      $concat: ["v=", { $toString: { $let: { vars: { x: 1 }, in: "$$x" } } }],
     });
   });
   it("nested template literal", () => {
+    // Inner template literal is statically string-producing → no $toString wrap.
     expect(mjsql("`outer ${`inner ${$.x}`}`")).toEqual({
-      $concat: ["outer ", { $concat: ["inner ", "$x"] }],
+      $concat: ["outer ", { $concat: ["inner ", { $toString: "$x" }] }],
     });
   });
   it("escape sequences", () => {
@@ -971,7 +973,18 @@ describe("v4: template literals", () => {
   });
   it("template literal participates in string-context +", () => {
     expect(mjsql("`x=${$.x}` + ' done'")).toEqual({
-      $concat: [{ $concat: ["x=", "$x"] }, " done"],
+      $concat: [{ $concat: ["x=", { $toString: "$x" }] }, " done"],
+    });
+  });
+  it("string-producing interpolations skip the $toString wrap", () => {
+    // .toLowerCase() is statically string-producing — the wrap would be redundant.
+    expect(mjsql("`name=${$.name.toLowerCase()}`")).toEqual({
+      $concat: ["name=", { $toLower: "$name" }],
+    });
+  });
+  it("number literal interpolation gets $toString wrap", () => {
+    expect(mjsql("`n=${42}`")).toEqual({
+      $concat: ["n=", { $toString: 42 }],
     });
   });
 });

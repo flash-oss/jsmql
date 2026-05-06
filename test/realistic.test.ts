@@ -468,13 +468,15 @@ describe("v4: invoice line greeting (template literal + optional chain + .starts
     expect(result).toEqual({
       $concat: [
         "Hi ",
-        { $ifNull: ["$customer.firstName", "there"] },
+        { $toString: { $ifNull: ["$customer.firstName", "there"] } },
         " — your ",
         {
-          $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+          $toString: {
+            $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+          },
         },
         "invoice ",
-        "$invoice.id",
+        { $toString: "$invoice.id" },
         " is ready",
       ],
     });
@@ -631,7 +633,9 @@ describe("v4: audit log line (template literal + .toISOString + .charAt + .toUpp
         " [",
         { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
         "] ",
-        "$event.message",
+        // $.event.message is a FieldRef of unknown type — wrapped to avoid runtime
+        // errors if it isn't a string.
+        { $toString: "$event.message" },
       ],
     });
   });
