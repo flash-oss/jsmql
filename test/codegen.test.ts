@@ -543,8 +543,19 @@ describe("v3: string methods", () => {
   it("split", () => {
     expect(mjsql('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
   });
-  it("indexOf", () => {
-    expect(mjsql('$.name.indexOf("@")')).toEqual({ $indexOfCP: ["$name", "@"] });
+  it("indexOf on bare field → runtime $cond on $isArray", () => {
+    expect(mjsql('$.name.indexOf("@")')).toEqual({
+      $cond: [
+        { $isArray: "$name" },
+        { $indexOfArray: ["$name", "@"] },
+        { $indexOfCP: ["$name", "@"] },
+      ],
+    });
+  });
+  it("indexOf on known string → $indexOfCP", () => {
+    expect(mjsql('$.name.toLowerCase().indexOf("@")')).toEqual({
+      $indexOfCP: [{ $toLower: "$name" }, "@"],
+    });
   });
   it("replace", () => {
     expect(mjsql('$.name.replace("a", "b")')).toEqual({
@@ -556,9 +567,18 @@ describe("v3: string methods", () => {
       $replaceAll: { input: "$slug", find: " ", replacement: "-" },
     });
   });
-  it("includes", () => {
+  it("includes on bare field → runtime $cond on $isArray", () => {
     expect(mjsql('$.email.includes("@")')).toEqual({
-      $gte: [{ $indexOfCP: ["$email", "@"] }, 0],
+      $cond: [
+        { $isArray: "$email" },
+        { $in: ["@", "$email"] },
+        { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] },
+      ],
+    });
+  });
+  it("includes on known string → string form", () => {
+    expect(mjsql('$.email.toLowerCase().includes("@")')).toEqual({
+      $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0],
     });
   });
   it("match with regex literal", () => {
@@ -864,12 +884,8 @@ describe("v3: 1-arg substr", () => {
     expect(mjsql("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
   });
   it("substr with expression start", () => {
-    expect(mjsql('$.email.substr($.email.indexOf("@") + 1)')).toEqual({
-      $substrCP: [
-        "$email",
-        { $add: [{ $indexOfCP: ["$email", "@"] }, 1] },
-        { $strLenCP: "$email" },
-      ],
+    expect(mjsql("$.email.substr($.headerLength + 1)")).toEqual({
+      $substrCP: ["$email", { $add: ["$headerLength", 1] }, { $strLenCP: "$email" }],
     });
   });
 });
@@ -998,9 +1014,18 @@ describe("v4: array .includes()", () => {
       $in: ["active", { $split: ["$csv", ","] }],
     });
   });
-  it("$.field.includes() defaults to string semantics (back-compat)", () => {
-    expect(mjsql('$.email.includes("@")')).toEqual({
-      $gte: [{ $indexOfCP: ["$email", "@"] }, 0],
+  it("known string (toLowerCase result) → string form", () => {
+    expect(mjsql('$.email.toLowerCase().includes("@")')).toEqual({
+      $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0],
+    });
+  });
+  it("bare $.field → runtime $cond on $isArray (works for either type)", () => {
+    expect(mjsql("$.field.includes($.x)")).toEqual({
+      $cond: [
+        { $isArray: "$field" },
+        { $in: ["$x", "$field"] },
+        { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] },
+      ],
     });
   });
 });
@@ -1102,8 +1127,19 @@ describe("v4: array .indexOf", () => {
       $indexOfArray: [["a", "b", "c"], "$x"],
     });
   });
-  it("on string field stays $indexOfCP (back-compat)", () => {
-    expect(mjsql('$.email.indexOf("@")')).toEqual({ $indexOfCP: ["$email", "@"] });
+  it("on known string → $indexOfCP", () => {
+    expect(mjsql('$.email.toLowerCase().indexOf("@")')).toEqual({
+      $indexOfCP: [{ $toLower: "$email" }, "@"],
+    });
+  });
+  it("on bare field → runtime $cond on $isArray", () => {
+    expect(mjsql('$.email.indexOf("@")')).toEqual({
+      $cond: [
+        { $isArray: "$email" },
+        { $indexOfArray: ["$email", "@"] },
+        { $indexOfCP: ["$email", "@"] },
+      ],
+    });
   });
 });
 
@@ -1116,9 +1152,18 @@ describe("v4: array .concat", () => {
       ],
     });
   });
-  it("on string field → $concat", () => {
+  it("on known string → $concat", () => {
     expect(mjsql("$.first.trim().concat($.last)")).toEqual({
       $concat: [{ $trim: { input: "$first" } }, "$last"],
+    });
+  });
+  it("on bare field → runtime $cond on $isArray", () => {
+    expect(mjsql("$.parts.concat($.tail)")).toEqual({
+      $cond: [
+        { $isArray: "$parts" },
+        { $concatArrays: ["$parts", "$tail"] },
+        { $concat: ["$parts", "$tail"] },
+      ],
     });
   });
 });

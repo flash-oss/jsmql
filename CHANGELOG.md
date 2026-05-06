@@ -22,7 +22,10 @@ All notable changes to the public mjsql API are recorded here. The public API is
 
 ### Changed
 
-- `.includes()`, `.indexOf()`, and `.concat()` are now type-aware. When the receiver is statically known to be an array (array literal, `.split()` result, `.map()` result, etc.) they emit the array-typed MQL form (`$in`, `$indexOfArray`, `$concatArrays`). For string and unknown-type receivers, they emit the previous string-typed form unchanged.
+- `.includes()`, `.indexOf()`, and `.concat()` are now type-aware:
+  - **Known array** receiver → array form (`$in`, `$indexOfArray`, `$concatArrays`).
+  - **Known string** receiver → string form (`$indexOfCP`, etc.).
+  - **Unknown** receiver (bare `$.field`, ternary, etc.) → runtime `$cond` on `$isArray` that picks the right form at query time. Output is more verbose, but works whether the field is a string or array.
 - Object-style operator calls are now routed by the operator's registered shape: only operators with `object` shape (e.g. `$trim`, `$dateAdd`) require literal key names. For any other operator (or unknown), a single `{...}` argument is treated as a value and may use computed keys, spread, etc.
 - `.length` on a known array-producing receiver was already documented; it now also recognises `Object.keys()` and `Object.values()` outputs as arrays.
 - Template-literal interpolations are now wrapped with `$toString` unless the expression is statically known to produce a string. Matches JS coercion — `` `n=${$.n}` `` works for numeric or boolean fields without manual casting. Output is unchanged for string-producing interpolations.
@@ -31,6 +34,6 @@ All notable changes to the public mjsql API are recorded here. The public API is
 
 All v3 expressions continue to compile to identical MQL. The only place to verify if you were relying on edge behaviour:
 
-- `$.field.includes(needle)` still emits the string form (`$gte`/`$indexOfCP`). If you want array semantics on a bare field reference, use `$in($.field, needle)` explicitly.
+- `$.field.includes(needle)`, `$.field.indexOf(needle)`, and `$.field.concat(...)` no longer silently emit the string form on a bare field — they now emit a runtime `$cond` on `$isArray`. Output is more verbose but correct for either type. If you want compact output, pin the type by chaining `.toLowerCase()` (string) or `.slice()` (array), or use the explicit operator forms (`$in`, `$indexOfArray`, `$concatArrays`).
 - Object literals with a single entry passed to a non-object-shape operator previously also went through the strict-key path — this never had a user-visible reason to reject computed keys, so widening it is non-breaking in practice.
 - Template literals previously emitted bare interpolated expressions — `` `n=${$.n}` `` produced `{$concat:["n=","$n"]}`. The new output wraps non-string-producing expressions with `$toString`. The old output errored at MongoDB runtime when the field wasn't already a string, so this is closer to a fix than a behaviour change.

@@ -693,11 +693,21 @@ function generateMethodCall(
         throw new CodegenError(`.indexOf() requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
-      // Type-aware dispatch: array → $indexOfArray, string/unknown → $indexOfCP
+      // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
+      // unknown → runtime $cond on $isArray so the right form runs at query time.
       if (isArrayProducing(object)) {
         return { $indexOfArray: [genObj, needle] };
       }
-      return { $indexOfCP: [genObj, needle] };
+      if (isStringProducing(object)) {
+        return { $indexOfCP: [genObj, needle] };
+      }
+      return {
+        $cond: [
+          { $isArray: genObj },
+          { $indexOfArray: [genObj, needle] },
+          { $indexOfCP: [genObj, needle] },
+        ],
+      };
     }
     case "replace": {
       const exprArgs = exprArgsOnly(args, "replace");
@@ -731,12 +741,21 @@ function generateMethodCall(
         throw new CodegenError(`.includes() requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
-      // Arrays known at compile time use $in; strings/unknown keep the $indexOfCP form
-      // (preserves existing behaviour for string fields).
+      // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
+      // unknown → runtime $cond so a bare $.field works for either type.
       if (isArrayProducing(object)) {
         return { $in: [needle, genObj] };
       }
-      return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
+      if (isStringProducing(object)) {
+        return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
+      }
+      return {
+        $cond: [
+          { $isArray: genObj },
+          { $in: [needle, genObj] },
+          { $gte: [{ $indexOfCP: [genObj, needle] }, 0] },
+        ],
+      };
     }
     case "match": {
       const exprArgs = exprArgsOnly(args, "match");
@@ -777,7 +796,8 @@ function generateMethodCall(
       return { $reverseArray: genObj };
     }
     case "concat": {
-      // Type-aware: arrays concatenate via $concatArrays, strings via $concat
+      // Type-aware: known array → $concatArrays; known string → $concat;
+      // unknown → runtime $cond on $isArray so the right form runs at query time.
       if (args.length === 0) {
         throw new CodegenError(`.concat() requires at least 1 argument`);
       }
@@ -787,7 +807,16 @@ function generateMethodCall(
       if (isArrayProducing(object)) {
         return { $concatArrays: [genObj, ...tail] };
       }
-      return { $concat: [genObj, ...tail] };
+      if (isStringProducing(object)) {
+        return { $concat: [genObj, ...tail] };
+      }
+      return {
+        $cond: [
+          { $isArray: genObj },
+          { $concatArrays: [genObj, ...tail] },
+          { $concat: [genObj, ...tail] },
+        ],
+      };
     }
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
