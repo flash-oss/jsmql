@@ -333,6 +333,12 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
       return { $or: flattenChain("||", left, right, ctx) };
     case "??":
       return { $ifNull: flattenChain("??", left, right, ctx) };
+    case "&":
+      return { $bitAnd: flattenChain("&", left, right, ctx) };
+    case "|":
+      return { $bitOr: flattenChain("|", left, right, ctx) };
+    case "^":
+      return { $bitXor: flattenChain("^", left, right, ctx) };
     case "in": {
       if (
         right.type === "StringLiteral" ||
@@ -393,9 +399,12 @@ function collectExprChain(op: BinaryOp, expr: Expr, out: Expr[]): void {
 
 // ── Unary expressions ─────────────────────────────────────────────────────────
 
-function generateUnaryExpr(op: "!" | "-", operand: Expr, ctx: GenerateCtx): unknown {
+function generateUnaryExpr(op: "!" | "-" | "~", operand: Expr, ctx: GenerateCtx): unknown {
   if (op === "!") {
     return { $not: _generate(operand, ctx) };
+  }
+  if (op === "~") {
+    return { $bitNot: _generate(operand, ctx) };
   }
   // Unary minus: optimise -<number> to a plain negative number literal
   if (operand.type === "NumberLiteral") {
@@ -1161,6 +1170,37 @@ function generateMathCall(method: MathMethod, args: CallArg[], ctx: GenerateCtx)
         throw new CodegenError(`Math.random() takes no arguments`);
       }
       return { $rand: {} };
+    case "sin":
+      return { $sin: oneArg(method, args, ctx) };
+    case "cos":
+      return { $cos: oneArg(method, args, ctx) };
+    case "tan":
+      return { $tan: oneArg(method, args, ctx) };
+    case "asin":
+      return { $asin: oneArg(method, args, ctx) };
+    case "acos":
+      return { $acos: oneArg(method, args, ctx) };
+    case "atan":
+      return { $atan: oneArg(method, args, ctx) };
+    case "atan2": {
+      const exprArgs = exprArgsOnly(args, "atan2");
+      if (exprArgs.length !== 2) {
+        throw new CodegenError(`Math.atan2() requires exactly 2 arguments (y, x)`);
+      }
+      return { $atan2: [_generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+    }
+    case "sinh":
+      return { $sinh: oneArg(method, args, ctx) };
+    case "cosh":
+      return { $cosh: oneArg(method, args, ctx) };
+    case "tanh":
+      return { $tanh: oneArg(method, args, ctx) };
+    case "asinh":
+      return { $asinh: oneArg(method, args, ctx) };
+    case "acosh":
+      return { $acosh: oneArg(method, args, ctx) };
+    case "atanh":
+      return { $atanh: oneArg(method, args, ctx) };
   }
 }
 

@@ -876,6 +876,105 @@ describe("Math.*", () => {
   });
 });
 
+describe("Math trigonometry", () => {
+  it("Math.sin", () => {
+    expect(mjsql("Math.sin($.angle)")).toEqual({ $sin: "$angle" });
+  });
+  it("Math.cos", () => {
+    expect(mjsql("Math.cos($.angle)")).toEqual({ $cos: "$angle" });
+  });
+  it("Math.tan", () => {
+    expect(mjsql("Math.tan($.angle)")).toEqual({ $tan: "$angle" });
+  });
+  it("Math.asin", () => {
+    expect(mjsql("Math.asin($.x)")).toEqual({ $asin: "$x" });
+  });
+  it("Math.acos", () => {
+    expect(mjsql("Math.acos($.x)")).toEqual({ $acos: "$x" });
+  });
+  it("Math.atan", () => {
+    expect(mjsql("Math.atan($.x)")).toEqual({ $atan: "$x" });
+  });
+  it("Math.atan2", () => {
+    expect(mjsql("Math.atan2($.y, $.x)")).toEqual({ $atan2: ["$y", "$x"] });
+  });
+  it("Math.atan2 wrong arity", () => {
+    expect(() => mjsql("Math.atan2($.x)")).toThrow(/exactly 2 arguments/);
+  });
+  it("Math.sinh", () => {
+    expect(mjsql("Math.sinh($.x)")).toEqual({ $sinh: "$x" });
+  });
+  it("Math.cosh", () => {
+    expect(mjsql("Math.cosh($.x)")).toEqual({ $cosh: "$x" });
+  });
+  it("Math.tanh", () => {
+    expect(mjsql("Math.tanh($.x)")).toEqual({ $tanh: "$x" });
+  });
+  it("Math.asinh", () => {
+    expect(mjsql("Math.asinh($.x)")).toEqual({ $asinh: "$x" });
+  });
+  it("Math.acosh", () => {
+    expect(mjsql("Math.acosh($.x)")).toEqual({ $acosh: "$x" });
+  });
+  it("Math.atanh", () => {
+    expect(mjsql("Math.atanh($.x)")).toEqual({ $atanh: "$x" });
+  });
+});
+
+describe("bitwise infix operators", () => {
+  it("a & b", () => {
+    expect(mjsql("$.a & $.b")).toEqual({ $bitAnd: ["$a", "$b"] });
+  });
+  it("a | b", () => {
+    expect(mjsql("$.a | $.b")).toEqual({ $bitOr: ["$a", "$b"] });
+  });
+  it("a ^ b", () => {
+    expect(mjsql("$.a ^ $.b")).toEqual({ $bitXor: ["$a", "$b"] });
+  });
+  it("~a", () => {
+    expect(mjsql("~$.a")).toEqual({ $bitNot: "$a" });
+  });
+  it("a & b & c flattens", () => {
+    expect(mjsql("$.a & $.b & $.c")).toEqual({ $bitAnd: ["$a", "$b", "$c"] });
+  });
+  it("a | b | c flattens", () => {
+    expect(mjsql("$.a | $.b | $.c")).toEqual({ $bitOr: ["$a", "$b", "$c"] });
+  });
+  it("a ^ b ^ c flattens", () => {
+    expect(mjsql("$.a ^ $.b ^ $.c")).toEqual({ $bitXor: ["$a", "$b", "$c"] });
+  });
+  it("(a & b) | c precedence: & binds tighter than |", () => {
+    expect(mjsql("$.a & $.b | $.c")).toEqual({
+      $bitOr: [{ $bitAnd: ["$a", "$b"] }, "$c"],
+    });
+  });
+  it("(a ^ b) | c precedence: ^ binds tighter than |", () => {
+    expect(mjsql("$.a ^ $.b | $.c")).toEqual({
+      $bitOr: [{ $bitXor: ["$a", "$b"] }, "$c"],
+    });
+  });
+  it("(a & b) ^ c precedence: & binds tighter than ^", () => {
+    expect(mjsql("$.a & $.b ^ $.c")).toEqual({
+      $bitXor: [{ $bitAnd: ["$a", "$b"] }, "$c"],
+    });
+  });
+  it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
+    expect(mjsql("$.a | $.b && $.c")).toEqual({
+      $and: [{ $bitOr: ["$a", "$b"] }, "$c"],
+    });
+  });
+  it("== binds tighter than & (so a == b & c → (a == b) & c)", () => {
+    expect(mjsql("$.a == $.b & $.c")).toEqual({
+      $bitAnd: [{ $eq: ["$a", "$b"] }, "$c"],
+    });
+  });
+  it("unary ~ has higher precedence than &", () => {
+    expect(mjsql("~$.flags & 255")).toEqual({
+      $bitAnd: [{ $bitNot: "$flags" }, 255],
+    });
+  });
+});
+
 describe("Object.*", () => {
   it("Object.keys", () => {
     expect(mjsql("Object.keys($.doc)")).toEqual({

@@ -15,7 +15,13 @@ nullish        = or ("??" or)*
 
 or             = and ("||" and)*
 
-and            = comparison ("&&" comparison)*
+and            = bit_or ("&&" bit_or)*
+
+bit_or         = bit_xor ("|" bit_xor)*
+
+bit_xor        = bit_and ("^" bit_and)*
+
+bit_and        = comparison ("&" comparison)*
 
 comparison     = relational [ ("==" | "!=" | "===" | "!==") relational ]
                  (* non-chainable; lower precedence than relational *)
@@ -30,7 +36,7 @@ multiplicative = power (("*"|"/"|"%") power)*
 power          = unary ("**" power)?                     (* right-associative *)
 
 unary          = "typeof" unary
-               | ("!" | "-") unary
+               | ("!" | "-" | "~") unary
                | postfix
 
 postfix        = primary (
@@ -95,6 +101,8 @@ math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
 MATH_METHOD    = "abs" | "ceil" | "floor" | "round" | "pow" | "sqrt"
                | "exp" | "log" | "log2" | "log10" | "trunc"
                | "min" | "max" | "sign" | "hypot" | "cbrt" | "random"
+               | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
+               | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
 
 math_const     = "Math" "." ("PI" | "E")
 
@@ -221,12 +229,15 @@ $let({ d: $.price * 0.1 }, (d) => $.price - d)
 | Level | Operators | Associativity |
 |---|---|---|
 | Postfix | `[index]` `.prop` `.method()` | left |
-| Unary | `typeof` `!` `-` | right |
+| Unary | `typeof` `!` `-` `~` | right |
 | Power | `**` | right |
 | Multiplicative | `*` `/` `%` | left |
 | Additive | `+` `-` | left |
 | Relational | `<` `<=` `>` `>=` `in` | none (non-chainable) |
 | Equality | `==` `!=` `===` `!==` | none (non-chainable) |
+| Bitwise AND | `&` | left |
+| Bitwise XOR | `^` | left |
+| Bitwise OR | `\|` | left |
 | Logical AND | `&&` | left |
 | Logical OR | `\|\|` | left |
 | Nullish | `??` | left |
@@ -262,3 +273,4 @@ Array literals, field refs, operator calls, and any other expression are accepte
 - `padStart`/`padEnd`/`repeat` — no MQL primitive
 - `JSON.stringify`/`JSON.parse` — no MQL primitive
 - `Number.isInteger`/`isNaN`/`isFinite` — partial via `$type`, not built-in
+- `<<`, `>>`, `>>>` (bitwise shifts) — no MQL primitive

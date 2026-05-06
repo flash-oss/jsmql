@@ -42,6 +42,19 @@ const MATH_METHODS = new Set<string>([
   "hypot",
   "cbrt",
   "random",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "atan2",
+  "sinh",
+  "cosh",
+  "tanh",
+  "asinh",
+  "acosh",
+  "atanh",
 ]);
 
 const MATH_CONSTANTS = new Set<string>(["PI", "E"]);
@@ -112,13 +125,46 @@ export class Parser {
     return left;
   }
 
-  /** and:  comparison ("&&" comparison)*  */
+  /** and:  bitOr ("&&" bitOr)*  */
   private parseAnd(): Expr {
-    let left = this.parseComparison();
+    let left = this.parseBitOr();
     while (this.lexer.peek().type === TokenType.AmpAmp) {
       this.lexer.next();
-      const right = this.parseComparison();
+      const right = this.parseBitOr();
       left = { type: "BinaryExpr", op: "&&", left, right };
+    }
+    return left;
+  }
+
+  /** bitOr:  bitXor ("|" bitXor)*  */
+  private parseBitOr(): Expr {
+    let left = this.parseBitXor();
+    while (this.lexer.peek().type === TokenType.Pipe) {
+      this.lexer.next();
+      const right = this.parseBitXor();
+      left = { type: "BinaryExpr", op: "|", left, right };
+    }
+    return left;
+  }
+
+  /** bitXor:  bitAnd ("^" bitAnd)*  */
+  private parseBitXor(): Expr {
+    let left = this.parseBitAnd();
+    while (this.lexer.peek().type === TokenType.Caret) {
+      this.lexer.next();
+      const right = this.parseBitAnd();
+      left = { type: "BinaryExpr", op: "^", left, right };
+    }
+    return left;
+  }
+
+  /** bitAnd:  comparison ("&" comparison)*  */
+  private parseBitAnd(): Expr {
+    let left = this.parseComparison();
+    while (this.lexer.peek().type === TokenType.Amp) {
+      this.lexer.next();
+      const right = this.parseComparison();
+      left = { type: "BinaryExpr", op: "&", left, right };
     }
     return left;
   }
@@ -221,7 +267,7 @@ export class Parser {
     return { type: "BinaryExpr", op: "**", left, right };
   }
 
-  /** unary:  typeof | ("!"|"-") unary  |  postfix  */
+  /** unary:  typeof | ("!"|"-"|"~") unary  |  postfix  */
   private parseUnary(): Expr {
     const t = this.lexer.peek();
     if (t.type === TokenType.Typeof) {
@@ -238,6 +284,11 @@ export class Parser {
       this.lexer.next();
       const operand = this.parseUnary();
       return { type: "UnaryExpr", op: "-", operand };
+    }
+    if (t.type === TokenType.Tilde) {
+      this.lexer.next();
+      const operand = this.parseUnary();
+      return { type: "UnaryExpr", op: "~", operand };
     }
     return this.parsePostfix();
   }

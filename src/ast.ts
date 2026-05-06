@@ -34,12 +34,15 @@ export type BinaryOp =
   | ">="
   | "<"
   | "<="
+  | "&"
+  | "|"
+  | "^"
   | "&&"
   | "||"
   | "??"
   | "in";
 
-export type UnaryOp = "!" | "-";
+export type UnaryOp = "!" | "-" | "~";
 
 export type Expr =
   | {
@@ -92,6 +95,19 @@ export type MathMethod =
   | "sign"
   | "hypot"
   | "cbrt"
-  | "random";
+  | "random"
+  | "sin"
+  | "cos"
+  | "tan"
+  | "asin"
+  | "acos"
+  | "atan"
+  | "atan2"
+  | "sinh"
+  | "cosh"
+  | "tanh"
+  | "asinh"
+  | "acosh"
+  | "atanh";
 export type MathConstant = "PI" | "E";
 export type ObjectMethod = "keys" | "values" | "entries" | "assign" | "fromEntries";

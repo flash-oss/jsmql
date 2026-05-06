@@ -347,6 +347,27 @@ $.age >= 18 ? "adult" : "minor"     // { $cond: [{ $gte: ["$age", 18] }, "adult"
 $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 ```
 
+### Bitwise
+
+| Operator | MongoDB | Example |
+|---|---|---|
+| `&` | `$bitAnd` | `$.flags & $.mask` |
+| `\|` | `$bitOr` | `$.flags \| 0x10` |
+| `^` | `$bitXor` | `$.a ^ $.b` |
+| `~` | `$bitNot` | `~$.flags` |
+
+```js
+$.flags & $.mask                    // { $bitAnd: ["$flags", "$mask"] }
+$.flags & $.mask & 255              // { $bitAnd: ["$flags", "$mask", 255] }   (chains flatten)
+$.a | $.b | $.c                     // { $bitOr: ["$a", "$b", "$c"] }
+$.a ^ $.b                           // { $bitXor: ["$a", "$b"] }
+~$.flags                            // { $bitNot: "$flags" }
+```
+
+**Precedence** matches JS: `==` / `!=` bind tighter than `&` / `^` / `|`, which bind tighter than `&&` / `||`. So `$.a == $.b & $.c` parses as `($.a == $.b) & $.c`, just like in JavaScript.
+
+**No shift operators.** MongoDB has no `<<` / `>>` / `>>>`; those tokens are not accepted.
+
 ---
 
 ## String Methods
@@ -511,6 +532,32 @@ Math.min($.a, $.b, $.c)            // { $min: ["$a", "$b", "$c"] }
 Math.max($.scores)                 // { $max: "$scores" }   (single array arg)
 Math.max(...$.scores)              // { $max: "$scores" }   (spread is sugar for the above)
 Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
+```
+
+### Trigonometry
+
+All angles are in radians (matches both JS and MongoDB).
+
+```js
+Math.sin($.angle)                  // { $sin: "$angle" }
+Math.cos($.angle)                  // { $cos: "$angle" }
+Math.tan($.angle)                  // { $tan: "$angle" }
+Math.asin($.x)                     // { $asin: "$x" }
+Math.acos($.x)                     // { $acos: "$x" }
+Math.atan($.x)                     // { $atan: "$x" }
+Math.atan2($.y, $.x)               // { $atan2: ["$y", "$x"] }
+Math.sinh($.x)                     // { $sinh: "$x" }
+Math.cosh($.x)                     // { $cosh: "$x" }
+Math.tanh($.x)                     // { $tanh: "$x" }
+Math.asinh($.x)                    // { $asinh: "$x" }
+Math.acosh($.x)                    // { $acosh: "$x" }
+Math.atanh($.x)                    // { $atanh: "$x" }
+```
+
+For degree/radian conversion (no JS equivalent), drop into the escape hatch:
+```js
+$degreesToRadians($.degAngle)      // { $degreesToRadians: "$degAngle" }
+$radiansToDegrees($.radAngle)      // { $radiansToDegrees: "$radAngle" }
 ```
 
 ### Constants
@@ -1191,16 +1238,19 @@ null        = "null"
 | Precedence | Operator | Associativity |
 |---|---|---|
 | 1 | `()` grouping, `.`/`?.` member access, `[]`/`?.[]` index, method calls | — |
-| 2 | `!`, `-` (unary) | Right |
+| 2 | `!`, `-`, `~` (unary) | Right |
 | 3 | `**` (exponentiation) | Right |
 | 4 | `*`, `/`, `%` | Left |
 | 5 | `+`, `-` (binary) | Left |
 | 6 | `<`, `<=`, `>`, `>=`, `in` | Left |
 | 7 | `==`, `!=`, `===`, `!==` | Left |
-| 8 | `&&` | Left |
-| 9 | `\|\|` | Left |
-| 10 | `??` | Left |
-| 11 | `? :` (ternary) | Right |
+| 8 | `&` (bitwise AND) | Left |
+| 9 | `^` (bitwise XOR) | Left |
+| 10 | `\|` (bitwise OR) | Left |
+| 11 | `&&` | Left |
+| 12 | `\|\|` | Left |
+| 13 | `??` | Left |
+| 14 | `? :` (ternary) | Right |
 
 ---
 

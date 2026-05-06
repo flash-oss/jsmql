@@ -42,6 +42,12 @@ export const TokenType = {
   PipePipe: "PipePipe", // ||
   Bang: "Bang", // !
 
+  // Bitwise operators
+  Amp: "Amp", // &
+  Pipe: "Pipe", // |
+  Caret: "Caret", // ^
+  Tilde: "Tilde", // ~
+
   // Misc operators
   QuestQuest: "QuestQuest", // ??
   Quest: "Quest", // ?
@@ -301,28 +307,33 @@ export class Lexer {
         continue;
       }
 
-      // && (bare & is an error)
+      // && before & (bitwise AND)
       if (ch === "&") {
         if (ch2 === "&") {
           this.emit(TokenType.AmpAmp, "&&", start, 2);
           continue;
         }
-        throw new LexError(
-          `Unexpected character '&' at position ${start} (did you mean '&&' ?)`,
-          start,
-        );
+        this.emit(TokenType.Amp, "&", start, 1);
+        continue;
       }
 
-      // || (bare | is an error)
+      // || before | (bitwise OR)
       if (ch === "|") {
         if (ch2 === "|") {
           this.emit(TokenType.PipePipe, "||", start, 2);
           continue;
         }
-        throw new LexError(
-          `Unexpected character '|' at position ${start} (did you mean '||' ?)`,
-          start,
-        );
+        this.emit(TokenType.Pipe, "|", start, 1);
+        continue;
+      }
+
+      if (ch === "^") {
+        this.emit(TokenType.Caret, "^", start, 1);
+        continue;
+      }
+      if (ch === "~") {
+        this.emit(TokenType.Tilde, "~", start, 1);
+        continue;
       }
 
       // ?? before ?. before ?
