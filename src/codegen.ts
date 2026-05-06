@@ -20,6 +20,15 @@ export class CodegenError extends Error {
   }
 }
 
+export class UnknownIdentifierError extends CodegenError {
+  identifier: string;
+  constructor(identifier: string) {
+    super(`Unknown identifier '${identifier}'. Did you mean '$.${identifier}'?`);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier;
+  }
+}
+
 // ── Context ───────────────────────────────────────────────────────────────────
 
 type GenerateCtx = {
@@ -218,7 +227,7 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
       if (ctx.lambdaParams.has(expr.name)) {
         return `$$${expr.name}`;
       }
-      throw new CodegenError(`Unknown identifier '${expr.name}'. Did you mean '$.${expr.name}'?`);
+      throw new UnknownIdentifierError(expr.name);
     }
 
     case "MemberAccess": {
