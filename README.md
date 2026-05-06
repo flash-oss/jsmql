@@ -88,9 +88,9 @@ $.price <= 1_000_000
 Object.fromEntries($.metrics.map(m => [m.name, m.value]))
 ```
 
-### Fallback: `$op()` utility form
+### Escape Hatch: `$op()` (direct operator form)
 
-For MongoDB operators that have no JavaScript equivalent, use `$opName()`:
+For MongoDB operators that have no JavaScript equivalent, use the `$opName()` escape hatch — a direct call to the underlying MQL operator:
 
 ```js
 $zip([$.weeks, $.amounts])         // { $zip: { inputs: ["$weeks", "$amounts"] } }

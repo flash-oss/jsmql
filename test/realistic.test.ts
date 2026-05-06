@@ -2,8 +2,9 @@
  * Realistic integration tests.
  *
  * Each test represents a plausible real-world MongoDB aggregation expression
- * written in mjsql's JavaScript-subset syntax. $op() utility calls appear only
- * where there is no JavaScript equivalent (e.g. $dateDiff, $stdDevPop, $sampleRate).
+ * written in mjsql's JavaScript-subset syntax. $op() escape-hatch calls (the
+ * direct operator form) appear only where there is no JavaScript equivalent
+ * (e.g. $dateDiff, $stdDevPop, $sampleRate).
  *
  * This file is referenced from README.md as a usage showcase.
  */
@@ -48,7 +49,7 @@ describe("e-commerce: order eligibility for free shipping", () => {
 });
 
 describe("e-commerce: tiered loyalty discount price", () => {
-  it("uses nested ternaries, &&, >=, and $round fallback", () => {
+  it("uses nested ternaries, &&, >=, and $round escape hatch", () => {
     // Platinum (≥5 years AND ≥$10k spend): 15% off
     // Gold (≥2 years): 8% off
     // Standard: full price
@@ -177,7 +178,7 @@ describe("user analytics: age decade bucket", () => {
 });
 
 describe("user analytics: days since last login", () => {
-  it("uses Math.abs, $dateDiff fallback, ??, and new Date()", () => {
+  it("uses Math.abs, $dateDiff escape hatch, ??, and new Date()", () => {
     // Days since last login; -1 if never logged in; always non-negative
     const result = mjsql(
       "Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)",
@@ -220,7 +221,7 @@ describe("content pipeline: URL slug", () => {
 });
 
 describe("content pipeline: lowercase display name", () => {
-  it("uses string-context + and $toLower fallback", () => {
+  it("uses string-context + and $toLower escape hatch", () => {
     // Lowercase "FirstName LastName" for use as a display handle
     const result = mjsql('$toLower($.firstName + " " + $.lastName)');
 
@@ -252,7 +253,7 @@ describe("reporting: formatted date label", () => {
 });
 
 describe("reporting: days since document was created", () => {
-  it("uses $dateDiff fallback with new Date() for current time", () => {
+  it("uses $dateDiff escape hatch with new Date() for current time", () => {
     // Days since the document was first created
     const result = mjsql("$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: 'day' })");
 
@@ -298,7 +299,7 @@ describe("inventory: reorder alert", () => {
 // ── Financial ─────────────────────────────────────────────────────────────────
 
 describe("financial: invoice line total with compound tax", () => {
-  it("uses JS arithmetic operators and $round fallback", () => {
+  it("uses JS arithmetic operators and $round escape hatch", () => {
     // lineTotal = round(qty * (unitPrice + unitPrice * taxRate), 2)
     const result = mjsql("$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)");
 

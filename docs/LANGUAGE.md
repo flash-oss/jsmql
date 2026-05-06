@@ -44,7 +44,7 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 8. [Math Functions](#math-functions)
 9. [Type Casting](#type-casting)
 10. [Date Operations](#date-operations)
-11. [Utility Functions](#utility-functions)
+11. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
 12. [Template Tag (`mql`)](#template-tag-mql)
 13. [Validation](#validation)
 14. [Error Messages](#error-messages)
@@ -54,7 +54,7 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 
 ## Expressions
 
-An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas — mjsql handles the translation. For MongoDB operators without a JS equivalent, use the `$op()` fallback form.
+An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas — mjsql handles the translation. For MongoDB operators without a JS equivalent, use the `$op()` escape hatch (the direct operator form).
 
 ### Valid Constructs
 
@@ -75,7 +75,7 @@ An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 - Type casting: `Number()`, `String()`, `typeof`, etc.
 - Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
-- Fallback: `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
+- Escape hatch (direct operator form): `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
 
 ### Invalid Constructs
 
@@ -504,12 +504,12 @@ Math.PI                            // 3.141592653589793
 Math.E                             // 2.718281828459045
 ```
 
-**Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). For rounding to N decimal places, use the `$round()` utility — there is no JS equivalent:
+**Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). For rounding to N decimal places, drop into the `$round()` escape hatch — there is no JS equivalent:
 ```js
 $round($.value, 2)                 // { $round: ["$value", 2] } (round to 2 decimal places)
 ```
 
-**Note:** `Math.log()` is the natural logarithm. For arbitrary base, use `$log()` utility:
+**Note:** `Math.log()` is the natural logarithm. For arbitrary base, drop into the `$log()` escape hatch:
 ```js
 $log($.value, 10)                  // { $log: ["$value", 10] } (log base 10)
 ```
@@ -588,7 +588,7 @@ $.createdAt.toISOString()          // { $dateToString: { date: "$createdAt", for
 
 **Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; mjsql subtracts 1 automatically.
 
-### Date Utility Functions
+### Date Operator Calls
 
 ```js
 $dateAdd($.date, "day", 7)
@@ -617,9 +617,9 @@ Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`
 
 ---
 
-## Utility Functions
+## Escape Hatch (Direct Operator Form)
 
-For MongoDB operators that have no JavaScript equivalent, use the `$opName()` fallback form. Every MongoDB aggregation operator is available this way — and unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.
+For MongoDB operators that have no JavaScript equivalent, use the `$opName()` escape hatch — a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way, and unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.
 
 ### Examples:
 
@@ -964,7 +964,7 @@ postfix     = primary (member_access | method_call | index_access)*
 primary     = number | string | boolean | null
             | template_literal
             | field_ref | array_literal | object_literal
-            | utility_call | math_call | math_const | type_cast | date_new | date_now
+            | operator_call | math_call | math_const | type_cast | date_new | date_now
             | "(" expression ")"
 
 field_ref   = "$" "." identifier
@@ -982,7 +982,7 @@ key_value   = identifier ":" expression
 
 template_literal = "`" template_chunk ("${" expression "}" template_chunk)* "`"
 
-utility_call  = "$" identifier "(" call_args ")"
+operator_call = "$" identifier "(" call_args ")"   (* the "$op()" escape hatch *)
 
 math_call   = "Math" "." identifier "(" call_args ")"
 
@@ -1042,7 +1042,7 @@ null        = "null"
 ## FAQ
 
 **Q: How do I get an array's length?**
-A: Use the `$size()` utility: `$size($.items)`. String length uses `.length` property: `$.name.length`.
+A: Use `.length`: `$.items.length` works for both arrays and strings (mjsql dispatches by receiver type). The `$size()` escape hatch is also available if you want to force the array form: `$size($.items)`.
 
 **Q: Why doesn't `$.field.includes(x)` use `$in` for arrays?**
 A: A bare field reference's type is unknown at compile time, so mjsql defaults to string semantics for `.includes()`/`.indexOf()`/`.concat()`. When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — mjsql emits the array form. To force array semantics, use `$in($.items, x)` or rebuild the chain so the type is known (e.g. `$.items.map(x => x).includes(target)`).
