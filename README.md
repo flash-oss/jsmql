@@ -139,7 +139,7 @@ See **[docs/LANGUAGE.md](docs/LANGUAGE.md)** for the full language reference.
 
 ## API
 
-### `mjsql(input: MjsqlInput): object`
+### `mjsql(input: string | function): object`
 
 Parses and transpiles the expression. Throws a descriptive error on invalid input.
 
