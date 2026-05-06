@@ -10,21 +10,11 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-05-06 — Roll TypeScript back to ^5.9; pin tsconfig explicitly; ban `npx`
+## 2026-05-06 — Ban `npx`; keep TypeScript at ^6.0.0
 
-`npm install` was failing silently on this project because `package.json` listed `typescript: ^6.0.0` and TypeScript 6 isn't on npm yet. `node_modules/` didn't exist; `npm run build` was actually running ad-hoc `npx tsc` (5.9.3) and crashing because the slimmed-down `tsconfig.json` relied on TS6 defaults that 5.9 doesn't ship.
+Project rule: **never use `npx`**. It silently downloads ad-hoc package versions on first run, which masks version drift between contributors. Always use `npm run <script>` or `node_modules/.bin/<binary>` directly. Documented in [`CLAUDE.md`](../CLAUDE.md), and the single-test snippets in the Commands section now use `node_modules/.bin/vitest` directly. `npm install` is listed explicitly as the once-per-clone setup step.
 
-**What changed.**
-
-- `package.json`: `typescript: ^6.0.0` → `^5.9.0` (the latest version that exists on npm). `npm install` now succeeds.
-- `tsconfig.json`: re-added explicit `target: es2022`, `module: esnext`, `lib: ["es2023"]`, `strict: true`, `esModuleInterop: true`. The config no longer depends on which TypeScript version's defaults are in play. `moduleResolution: bundler` is now consistent with an explicit `module: esnext`, so `error TS5095` is gone.
-- [`CLAUDE.md`](../CLAUDE.md): added a **"Never use `npx`"** rule. `npx` silently downloads ad-hoc package versions on first run, which masks version drift between contributors and produces exactly the failure mode that hid this bug for so long. The single-test snippets in the Commands section now use `node_modules/.bin/vitest` directly. `npm install` is also now explicitly listed as the once-per-clone setup step.
-
-**Why explicit tsconfig.** The previous "trim it to only what differs from defaults" approach hid which version's defaults matter. Spelling out `target` / `module` / `lib` makes the config legible in isolation and survives any future TS major bump without re-bisecting.
-
-**Why roll back to 5.9.** TS6 is the *eventual* target — when it ships, this project's syntax (no version-specific features, strict-mode-only) should pick up the bump cleanly. But aspirational version pins fail the install, which is worse than just using the current stable.
-
-**Affected by reverting the TS6 publish.** The earlier "TypeScript 6, ESM-only publish" entry (below) lied about TS6 being installed — the toolchain was actually still on TS5 the whole time, falling through to npx. The ESM-only publish shape itself (`"type": "module"`, single `exports` entry) is unchanged and correct.
+I'd briefly downgraded TypeScript from `^6.0.0` to `^5.9.0` and re-added explicit `target` / `module` / `lib` to `tsconfig.json` to get `npm install` and `npm run build` working in this environment — that was reverted on user direction. `package.json` stays at `typescript: ^6.0.0` and `tsconfig.json` stays minimal (only options that differ from TS6 defaults). When the local toolchain catches up to TS6, both `npm install` and `npm run build` should work without further changes; until then, contributors needing a working build can vendor a local TS install or wait for the registry to publish 6.x.
 
 ---
 

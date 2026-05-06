@@ -1,11 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es2022",
-    "module": "esnext",
     "moduleResolution": "bundler",
-    "lib": ["es2023"],
-    "strict": true,
-    "esModuleInterop": true,
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
