@@ -21,6 +21,6 @@
   "devDependencies": {
     "oxfmt": "^0.47.0",
     "typescript": "^6.0.0",
-    "vitest": "^1.6.0"
+    "vitest": "^4.0.0"
   }
 }
