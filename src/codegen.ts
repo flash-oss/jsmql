@@ -189,8 +189,23 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
         ],
       };
 
-    case "IndexAccess":
-      return { $arrayElemAt: [_generate(expr.object, ctx), _generate(expr.index, ctx)] };
+    case "IndexAccess": {
+      // `obj[idx]` and `obj?.[idx]` produce the same AST. Type-aware dispatch:
+      //   known array → $arrayElemAt (numeric/expression index)
+      //   unknown    → runtime $cond between $arrayElemAt (array) and $getField (object)
+      const obj = _generate(expr.object, ctx);
+      const idx = _generate(expr.index, ctx);
+      if (isArrayProducing(expr.object)) {
+        return { $arrayElemAt: [obj, idx] };
+      }
+      return {
+        $cond: [
+          { $isArray: obj },
+          { $arrayElemAt: [obj, idx] },
+          { $getField: { field: idx, input: obj } },
+        ],
+      };
+    }
 
     case "RegexLiteral":
       // Used directly in .match(); as a standalone value just return the pattern string
@@ -590,6 +605,10 @@ function assertNoSpread(args: CallArg[], name: string): void {
  *
  * `\`hello, ${name}!\`` → `{ $concat: ["hello, ", expr_for_name, "!"] }`
  *
+ * Non-string interpolations are wrapped with `$toString` to match JS semantics —
+ * `\`count: ${$.n}\`` works whether `$.n` is a number or a string. Expressions that
+ * are statically known to produce strings skip the wrap to keep output compact.
+ *
  * Special case: a template with no expressions and a single quasi just returns that
  * string (so `\`hi\`` ≡ `"hi"`).
  */
@@ -600,7 +619,8 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
   const parts: unknown[] = [];
   for (let i = 0; i < expressions.length; i++) {
     if (quasis[i] !== "") parts.push(quasis[i]);
-    parts.push(_generate(expressions[i], ctx));
+    const gen = _generate(expressions[i], ctx);
+    parts.push(isStringProducing(expressions[i]) ? gen : { $toString: gen });
   }
   const tail = quasis[expressions.length];
   if (tail !== "") parts.push(tail);
@@ -688,11 +708,21 @@ function generateMethodCall(
         throw new CodegenError(`.indexOf() requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
-      // Type-aware dispatch: array → $indexOfArray, string/unknown → $indexOfCP
+      // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
+      // unknown → runtime $cond on $isArray so the right form runs at query time.
       if (isArrayProducing(object)) {
         return { $indexOfArray: [genObj, needle] };
       }
-      return { $indexOfCP: [genObj, needle] };
+      if (isStringProducing(object)) {
+        return { $indexOfCP: [genObj, needle] };
+      }
+      return {
+        $cond: [
+          { $isArray: genObj },
+          { $indexOfArray: [genObj, needle] },
+          { $indexOfCP: [genObj, needle] },
+        ],
+      };
     }
     case "replace": {
       const exprArgs = exprArgsOnly(args, "replace");
@@ -726,12 +756,21 @@ function generateMethodCall(
         throw new CodegenError(`.includes() requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
-      // Arrays known at compile time use $in; strings/unknown keep the $indexOfCP form
-      // (preserves existing behaviour for string fields).
+      // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
+      // unknown → runtime $cond so a bare $.field works for either type.
       if (isArrayProducing(object)) {
         return { $in: [needle, genObj] };
       }
-      return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
+      if (isStringProducing(object)) {
+        return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
+      }
+      return {
+        $cond: [
+          { $isArray: genObj },
+          { $in: [needle, genObj] },
+          { $gte: [{ $indexOfCP: [genObj, needle] }, 0] },
+        ],
+      };
     }
     case "match": {
       const exprArgs = exprArgsOnly(args, "match");
@@ -772,7 +811,8 @@ function generateMethodCall(
       return { $reverseArray: genObj };
     }
     case "concat": {
-      // Type-aware: arrays concatenate via $concatArrays, strings via $concat
+      // Type-aware: known array → $concatArrays; known string → $concat;
+      // unknown → runtime $cond on $isArray so the right form runs at query time.
       if (args.length === 0) {
         throw new CodegenError(`.concat() requires at least 1 argument`);
       }
@@ -782,7 +822,16 @@ function generateMethodCall(
       if (isArrayProducing(object)) {
         return { $concatArrays: [genObj, ...tail] };
       }
-      return { $concat: [genObj, ...tail] };
+      if (isStringProducing(object)) {
+        return { $concat: [genObj, ...tail] };
+      }
+      return {
+        $cond: [
+          { $isArray: genObj },
+          { $concatArrays: [genObj, ...tail] },
+          { $concat: [genObj, ...tail] },
+        ],
+      };
     }
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");

@@ -319,9 +319,11 @@ describe("financial: invoice line total with compound tax", () => {
 // ── User display ──────────────────────────────────────────────────────────────
 
 describe("user display: full name with null fallback", () => {
-  it("uses ?? chaining and bracket index access", () => {
-    // Display first name, falling back to first alias, then "anonymous"
-    const result = mjsql('$.firstName ?? $.aliases[0] ?? "anonymous"');
+  it("uses ?? chaining and .at(0) for the first alias", () => {
+    // Display first name, falling back to first alias, then "anonymous".
+    // .at(0) compiles to a compact $arrayElemAt; $.aliases[0] would emit a
+    // runtime $cond on $isArray since the receiver type isn't statically known.
+    const result = mjsql('$.firstName ?? $.aliases.at(0) ?? "anonymous"');
 
     expect(result).toEqual({
       $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
@@ -482,13 +484,15 @@ describe("v4: invoice line greeting (template literal + optional chain + .starts
     expect(result).toEqual({
       $concat: [
         "Hi ",
-        { $ifNull: ["$customer.firstName", "there"] },
+        { $toString: { $ifNull: ["$customer.firstName", "there"] } },
         " — your ",
         {
-          $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+          $toString: {
+            $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+          },
         },
         "invoice ",
-        "$invoice.id",
+        { $toString: "$invoice.id" },
         " is ready",
       ],
     });
@@ -645,7 +649,9 @@ describe("v4: audit log line (template literal + .toISOString + .charAt + .toUpp
         " [",
         { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
         "] ",
-        "$event.message",
+        // $.event.message is a FieldRef of unknown type — wrapped to avoid runtime
+        // errors if it isn't a string.
+        { $toString: "$event.message" },
       ],
     });
   });

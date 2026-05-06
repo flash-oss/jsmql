@@ -417,20 +417,82 @@ describe("v2: string-context +", () => {
 });
 
 describe("v2: bracket access", () => {
-  it("constant index", () => {
-    expect(mjsql("$.items[0]")).toEqual({ $arrayElemAt: ["$items", 0] });
-  });
-  it("field index", () => {
-    expect(mjsql("$.items[$.idx]")).toEqual({ $arrayElemAt: ["$items", "$idx"] });
-  });
-  it("chained bracket access", () => {
-    expect(mjsql("$.m[$.r][$.c]")).toEqual({
-      $arrayElemAt: [{ $arrayElemAt: ["$m", "$r"] }, "$c"],
+  it("constant index on bare field → runtime $cond on $isArray", () => {
+    // Bare $.items receiver — type unknown — dispatch at runtime to handle
+    // either array (numeric index) or object (dynamic key) at query time.
+    expect(mjsql("$.items[0]")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $arrayElemAt: ["$items", 0] },
+        { $getField: { field: 0, input: "$items" } },
+      ],
     });
   });
-  it("bracket access on operator result", () => {
+  it("field index on bare field → runtime $cond", () => {
+    expect(mjsql("$.items[$.idx]")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $arrayElemAt: ["$items", "$idx"] },
+        { $getField: { field: "$idx", input: "$items" } },
+      ],
+    });
+  });
+  it("string-literal key on bare field → runtime $cond (the $getField branch is the right one for objects)", () => {
+    expect(mjsql('$.config["host"]')).toEqual({
+      $cond: [
+        { $isArray: "$config" },
+        { $arrayElemAt: ["$config", "host"] },
+        { $getField: { field: "host", input: "$config" } },
+      ],
+    });
+  });
+  it("chained bracket access on bare field → nested $cond", () => {
+    expect(mjsql("$.m[$.r][$.c]")).toEqual({
+      $cond: [
+        {
+          $isArray: {
+            $cond: [
+              { $isArray: "$m" },
+              { $arrayElemAt: ["$m", "$r"] },
+              { $getField: { field: "$r", input: "$m" } },
+            ],
+          },
+        },
+        {
+          $arrayElemAt: [
+            {
+              $cond: [
+                { $isArray: "$m" },
+                { $arrayElemAt: ["$m", "$r"] },
+                { $getField: { field: "$r", input: "$m" } },
+              ],
+            },
+            "$c",
+          ],
+        },
+        {
+          $getField: {
+            field: "$c",
+            input: {
+              $cond: [
+                { $isArray: "$m" },
+                { $arrayElemAt: ["$m", "$r"] },
+                { $getField: { field: "$r", input: "$m" } },
+              ],
+            },
+          },
+        },
+      ],
+    });
+  });
+  it("bracket access on known-array operator result stays compact", () => {
     expect(mjsql("$reverseArray($.items)[0]")).toEqual({
       $arrayElemAt: [{ $reverseArray: "$items" }, 0],
+    });
+  });
+  it("bracket access on .map() result stays compact", () => {
+    expect(mjsql("$.items.map(x => x.id)[0]")).toEqual({
+      $arrayElemAt: [{ $map: { input: "$items", as: "x", in: "$$x.id" } }, 0],
     });
   });
 });
@@ -543,8 +605,19 @@ describe("v3: string methods", () => {
   it("split", () => {
     expect(mjsql('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
   });
-  it("indexOf", () => {
-    expect(mjsql('$.name.indexOf("@")')).toEqual({ $indexOfCP: ["$name", "@"] });
+  it("indexOf on bare field → runtime $cond on $isArray", () => {
+    expect(mjsql('$.name.indexOf("@")')).toEqual({
+      $cond: [
+        { $isArray: "$name" },
+        { $indexOfArray: ["$name", "@"] },
+        { $indexOfCP: ["$name", "@"] },
+      ],
+    });
+  });
+  it("indexOf on known string → $indexOfCP", () => {
+    expect(mjsql('$.name.toLowerCase().indexOf("@")')).toEqual({
+      $indexOfCP: [{ $toLower: "$name" }, "@"],
+    });
   });
   it("replace", () => {
     expect(mjsql('$.name.replace("a", "b")')).toEqual({
@@ -556,9 +629,18 @@ describe("v3: string methods", () => {
       $replaceAll: { input: "$slug", find: " ", replacement: "-" },
     });
   });
-  it("includes", () => {
+  it("includes on bare field → runtime $cond on $isArray", () => {
     expect(mjsql('$.email.includes("@")')).toEqual({
-      $gte: [{ $indexOfCP: ["$email", "@"] }, 0],
+      $cond: [
+        { $isArray: "$email" },
+        { $in: ["@", "$email"] },
+        { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] },
+      ],
+    });
+  });
+  it("includes on known string → string form", () => {
+    expect(mjsql('$.email.toLowerCase().includes("@")')).toEqual({
+      $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0],
     });
   });
   it("match with regex literal", () => {
@@ -864,12 +946,8 @@ describe("v3: 1-arg substr", () => {
     expect(mjsql("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
   });
   it("substr with expression start", () => {
-    expect(mjsql('$.email.substr($.email.indexOf("@") + 1)')).toEqual({
-      $substrCP: [
-        "$email",
-        { $add: [{ $indexOfCP: ["$email", "@"] }, 1] },
-        { $strLenCP: "$email" },
-      ],
+    expect(mjsql("$.email.substr($.headerLength + 1)")).toEqual({
+      $substrCP: ["$email", { $add: ["$headerLength", 1] }, { $strLenCP: "$email" }],
     });
   });
 });
@@ -933,34 +1011,36 @@ describe("v4: template literals", () => {
     expect(mjsql("`hello`")).toEqual("hello");
   });
   it("single interpolation", () => {
+    // FieldRef has unknown runtime type → wrapped in $toString to match JS coercion semantics.
     expect(mjsql("`hello, ${$.name}!`")).toEqual({
-      $concat: ["hello, ", "$name", "!"],
+      $concat: ["hello, ", { $toString: "$name" }, "!"],
     });
   });
   it("multiple interpolations", () => {
     expect(mjsql("`${$.first} ${$.last}`")).toEqual({
-      $concat: ["$first", " ", "$last"],
+      $concat: [{ $toString: "$first" }, " ", { $toString: "$last" }],
     });
   });
   it("interpolation at the start", () => {
-    expect(mjsql("`${$.x} px`")).toEqual({ $concat: ["$x", " px"] });
+    expect(mjsql("`${$.x} px`")).toEqual({ $concat: [{ $toString: "$x" }, " px"] });
   });
   it("interpolation at the end", () => {
-    expect(mjsql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", "$id"] });
+    expect(mjsql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", { $toString: "$id" }] });
   });
   it("expression inside interpolation", () => {
     expect(mjsql("`total: ${$.a + $.b}`")).toEqual({
-      $concat: ["total: ", { $add: ["$a", "$b"] }],
+      $concat: ["total: ", { $toString: { $add: ["$a", "$b"] } }],
     });
   });
   it("interpolation containing object literal (brace tracking)", () => {
     expect(mjsql("`v=${$let({ x: 1 }, x => x)}`")).toEqual({
-      $concat: ["v=", { $let: { vars: { x: 1 }, in: "$$x" } }],
+      $concat: ["v=", { $toString: { $let: { vars: { x: 1 }, in: "$$x" } } }],
     });
   });
   it("nested template literal", () => {
+    // Inner template literal is statically string-producing → no $toString wrap.
     expect(mjsql("`outer ${`inner ${$.x}`}`")).toEqual({
-      $concat: ["outer ", { $concat: ["inner ", "$x"] }],
+      $concat: ["outer ", { $concat: ["inner ", { $toString: "$x" }] }],
     });
   });
   it("escape sequences", () => {
@@ -971,7 +1051,18 @@ describe("v4: template literals", () => {
   });
   it("template literal participates in string-context +", () => {
     expect(mjsql("`x=${$.x}` + ' done'")).toEqual({
-      $concat: [{ $concat: ["x=", "$x"] }, " done"],
+      $concat: [{ $concat: ["x=", { $toString: "$x" }] }, " done"],
+    });
+  });
+  it("string-producing interpolations skip the $toString wrap", () => {
+    // .toLowerCase() is statically string-producing — the wrap would be redundant.
+    expect(mjsql("`name=${$.name.toLowerCase()}`")).toEqual({
+      $concat: ["name=", { $toLower: "$name" }],
+    });
+  });
+  it("number literal interpolation gets $toString wrap", () => {
+    expect(mjsql("`n=${42}`")).toEqual({
+      $concat: ["n=", { $toString: 42 }],
     });
   });
 });
@@ -985,9 +1076,18 @@ describe("v4: array .includes()", () => {
       $in: ["active", { $split: ["$csv", ","] }],
     });
   });
-  it("$.field.includes() defaults to string semantics (back-compat)", () => {
-    expect(mjsql('$.email.includes("@")')).toEqual({
-      $gte: [{ $indexOfCP: ["$email", "@"] }, 0],
+  it("known string (toLowerCase result) → string form", () => {
+    expect(mjsql('$.email.toLowerCase().includes("@")')).toEqual({
+      $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0],
+    });
+  });
+  it("bare $.field → runtime $cond on $isArray (works for either type)", () => {
+    expect(mjsql("$.field.includes($.x)")).toEqual({
+      $cond: [
+        { $isArray: "$field" },
+        { $in: ["$x", "$field"] },
+        { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] },
+      ],
     });
   });
 });
@@ -1050,8 +1150,20 @@ describe("v4: optional chaining (?.)", () => {
   it("optional method call", () => {
     expect(mjsql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
   });
-  it("optional bracket access", () => {
-    expect(mjsql("$.items?.[0]")).toEqual({ $arrayElemAt: ["$items", 0] });
+  it("optional bracket access on bare field → runtime $cond", () => {
+    // ?.[ ] desugars to the same node as [ ]; receiver type unknown → dispatch at runtime.
+    expect(mjsql("$.scoresByLevel?.[$.level]")).toEqual({
+      $cond: [
+        { $isArray: "$scoresByLevel" },
+        { $arrayElemAt: ["$scoresByLevel", "$level"] },
+        { $getField: { field: "$level", input: "$scoresByLevel" } },
+      ],
+    });
+  });
+  it("optional bracket access on known array stays compact", () => {
+    expect(mjsql("$.items.reverse()?.[0]")).toEqual({
+      $arrayElemAt: [{ $reverseArray: "$items" }, 0],
+    });
   });
 });
 
@@ -1089,8 +1201,19 @@ describe("v4: array .indexOf", () => {
       $indexOfArray: [["a", "b", "c"], "$x"],
     });
   });
-  it("on string field stays $indexOfCP (back-compat)", () => {
-    expect(mjsql('$.email.indexOf("@")')).toEqual({ $indexOfCP: ["$email", "@"] });
+  it("on known string → $indexOfCP", () => {
+    expect(mjsql('$.email.toLowerCase().indexOf("@")')).toEqual({
+      $indexOfCP: [{ $toLower: "$email" }, "@"],
+    });
+  });
+  it("on bare field → runtime $cond on $isArray", () => {
+    expect(mjsql('$.email.indexOf("@")')).toEqual({
+      $cond: [
+        { $isArray: "$email" },
+        { $indexOfArray: ["$email", "@"] },
+        { $indexOfCP: ["$email", "@"] },
+      ],
+    });
   });
 });
 
@@ -1103,9 +1226,18 @@ describe("v4: array .concat", () => {
       ],
     });
   });
-  it("on string field → $concat", () => {
+  it("on known string → $concat", () => {
     expect(mjsql("$.first.trim().concat($.last)")).toEqual({
       $concat: [{ $trim: { input: "$first" } }, "$last"],
+    });
+  });
+  it("on bare field → runtime $cond on $isArray", () => {
+    expect(mjsql("$.parts.concat($.tail)")).toEqual({
+      $cond: [
+        { $isArray: "$parts" },
+        { $concatArrays: ["$parts", "$tail"] },
+        { $concat: ["$parts", "$tail"] },
+      ],
     });
   });
 });
