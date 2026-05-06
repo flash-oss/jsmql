@@ -504,11 +504,10 @@ export class Parser {
     );
   }
 
-  /** A token that is valid as a field-path segment (identifiers, keywords like 'in', numbers) */
+  /** A token that is valid as a field-path segment (identifiers and reserved-word keywords). */
   private isFieldSegmentToken(t: Token): boolean {
     return (
       t.type === TokenType.Ident ||
-      t.type === TokenType.Number ||
       t.type === TokenType.In ||
       t.type === TokenType.New ||
       t.type === TokenType.Typeof

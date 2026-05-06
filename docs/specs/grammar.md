@@ -73,7 +73,7 @@ call_arg       = "..." expression                            (* spread *)
                | expression
 
 field_ref      = "$." FIELD_SEGMENT                          (* one segment only; postfix handles further dots *)
-FIELD_SEGMENT  = IDENT | NUMBER | "in" | "new" | "typeof"
+FIELD_SEGMENT  = IDENT | "in" | "new" | "typeof"             (* see "Strict-JS-subset rule" — numeric segments use [n] *)
 
 array_literal  = "[" array_elements? "]"
 array_elements = array_element ("," array_element)*
@@ -121,6 +121,10 @@ null           = "null"
 IDENT          = [a-zA-Z_][a-zA-Z0-9_]*
 IDENT_OR_KW    = IDENT | "in" | "new" | "typeof"
 ```
+
+## Strict-JS-subset rule
+
+Every expression accepted by this grammar is also valid JavaScript syntax. Adding a production that JS would reject (e.g. `obj.0`, which is why `FIELD_SEGMENT` excludes `NUMBER`) is a violation of the project's [#2 priority](../../CLAUDE.md). When a feature seems to need JS-incompatible syntax, either find a JS-syntax-equivalent surface (bracket access for numeric indices, method calls for transformations) or expose it as a `$op(...)` call — `$op` is always valid JS because it's a function name.
 
 ## Template literals
 
@@ -177,9 +181,14 @@ This rule is implemented in `Parser.parseOperatorCall()`.
 `parseFieldRef()` stops after the **first** segment. Subsequent dot accesses are handled by `parsePostfix()` as `MemberAccess` or `MethodCall` nodes. Codegen's `asFieldPath()` helper reconstructs MongoDB dotted field paths transparently:
 
 - `$.a.b.c` → AST: `MemberAccess(MemberAccess(FieldRef("a"), "b"), "c")` → codegen: `"$a.b.c"`
-- `$.items.0.name` → AST chain → codegen: `"$items.0.name"`
 
 This enables method chaining: `$.name.trim()` parses as `MethodCall(FieldRef("name"), "trim", [])`.
+
+If `asFieldPath()` can't fold the chain into a single dotted-path string — e.g. the receiver is an `IndexAccess` (`$.items[0].name`), a method call result, or a ternary — codegen falls back to `$getField`:
+
+- `$.items[0].name` → `MemberAccess(IndexAccess(FieldRef("items"), 0), "name")` → codegen: `{ $getField: { field: "name", input: <bracket-access $cond> } }`
+
+(For numeric array indices specifically, this is the supported replacement for the previously-accepted-but-not-valid-JS form `$.items.0.name`. See "Strict-JS-subset rule" above.)
 
 ## Context-sensitive `/` (regex vs divide)
 

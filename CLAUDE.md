@@ -21,6 +21,14 @@ Every decision should be evaluated through the lens of DX for the people **using
 - **Surprise should be minimised.** Behaviour that would surprise a JavaScript developer — even if technically valid — should be flagged in the docs.
 - **Proactively suggest DX improvements.** If you notice a rough edge while working in this codebase, flag it as a suggestion even if it is out of scope for the current task.
 
+## #2 priority: strict subset of JavaScript
+
+Every expression mjsql accepts must be valid JavaScript syntax. The pitch is "JS you already know" — a developer should be able to copy any mjsql expression into a JS file and have it parse. Different runtime meaning is fine; syntax errors are not.
+
+**When extending the language:** if a construct you want to add would be rejected by `node --check`, do not add it. Either find a JS-syntax-equivalent way to express the feature (e.g. bracket access `$.items[0]` instead of numeric dotted segments `$.items.0`), or expose it as a `$op(...)` call — `$op` is always valid JS because it's a function name.
+
+**Verification:** the lexer, parser, and grammar were audited against this rule when it was introduced. The one prior violation (numeric segments after `.`) was removed in favour of bracket access. If you're unsure whether a new construct violates the rule, write the construct to a file and run `node --check` on it.
+
 ## Commands
 
 ```sh

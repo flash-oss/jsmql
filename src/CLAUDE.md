@@ -18,6 +18,7 @@ Each stage has a single responsibility. Do not leak concerns across boundaries:
 - The parser's object-style detection rule: if an operator call has **exactly one argument and that argument is an object literal**, it is `style: 'object'`. If there are multiple args (even if the first is an object), it is `style: 'positional'`. Do not change this rule without updating `docs/specs/grammar.md`.
 - Field refs (`$.field`) always serialise to the string `"$field"` in MQL output. Nested paths (`$.a.b`) become `"$a.b"`.
 - Unknown operators (not in the registry) fall through gracefully — see `codegen.ts:generateUnknownOperator`. This is intentional: it future-proofs the tool against new MongoDB operators.
+- **mjsql is a strict subset of JavaScript syntax.** Every expression the parser accepts must also parse as JS (`node --check`). Before adding a new lexer token or parser production, write a representative input and run it through `node --check`; if JS rejects it, the construct is off-limits — find a JS-syntax-equivalent surface or expose the feature via `$op(...)`. See root `CLAUDE.md` for the full rule; the dropped numeric-segment case (`$.items.0`) is the canonical example of what this excludes.
 
 ## Extending the lexer
 

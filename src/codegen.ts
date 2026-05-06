@@ -231,7 +231,9 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
       }
       const path = asFieldPath(expr, ctx);
       if (path !== null) return path;
-      throw new CodegenError(`Cannot access property '${expr.member}' on a non-field expression`);
+      // Receiver isn't a foldable field path (e.g. result of $.items[0], a method call,
+      // or a ternary). Use $getField, which works on any expression result.
+      return { $getField: { field: expr.member, input: _generate(expr.object, ctx) } };
     }
 
     case "MethodCall":

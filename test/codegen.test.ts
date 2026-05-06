@@ -562,8 +562,31 @@ describe("field path regression (FieldRef stops at first segment)", () => {
   it("$.a.b.c produces $a.b.c", () => {
     expect(mjsql("$.a.b.c")).toEqual("$a.b.c");
   });
-  it("$.items.0.name produces $items.0.name", () => {
-    expect(mjsql("$.items.0.name")).toEqual("$items.0.name");
+  it("$.items[0] (unknown receiver) produces $cond bracket-access shape", () => {
+    expect(mjsql("$.items[0]")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $arrayElemAt: ["$items", 0] },
+        { $getField: { field: 0, input: "$items" } },
+      ],
+    });
+  });
+  it("$.items[0].name produces $getField on bracket-access result", () => {
+    expect(mjsql("$.items[0].name")).toEqual({
+      $getField: {
+        field: "name",
+        input: {
+          $cond: [
+            { $isArray: "$items" },
+            { $arrayElemAt: ["$items", 0] },
+            { $getField: { field: 0, input: "$items" } },
+          ],
+        },
+      },
+    });
+  });
+  it("rejects numeric field segments — $.items.0 is not valid JS syntax", () => {
+    expect(() => mjsql("$.items.0")).toThrow(/Expected property name after '\.'/);
   });
   it("deep path inside $abs", () => {
     expect(mjsql("$abs($.a.b.c)")).toEqual({ $abs: "$a.b.c" });
