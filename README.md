@@ -93,10 +93,12 @@ Object.fromEntries($.metrics.map(m => [m.name, m.value]))
 For MongoDB operators that have no JavaScript equivalent, use `$opName()`:
 
 ```js
-$round($.price, 2)                 // { $round: ["$price", 2] }
-$dateAdd($.date, "day", 7)         // { $dateAdd: { startDate: "$date", unit: "day", amount: 7 } }
-$size($.items)                     // { $size: "$items" }
-$cond($.active, "yes", "no")       // { $cond: ["$active", "yes", "no"] }
+$zip([$.weeks, $.amounts])         // { $zip: { inputs: ["$weeks", "$amounts"] } }
+$sampleRate(0.1)                   // { $sampleRate: 0.1 }
+$stdDevPop($.measurements)         // { $stdDevPop: "$measurements" }
+$dateTrunc({ date: $.createdAt, unit: "week" })
+                                   // { $dateTrunc: { date: "$createdAt", unit: "week" } }
+$round($.price, 2)                 // { $round: ["$price", 2] }   (Math.round has no precision arg)
 ```
 
 Every MongoDB aggregation operator is available this way. Unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.

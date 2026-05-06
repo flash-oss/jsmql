@@ -3,7 +3,7 @@
  *
  * Each test represents a plausible real-world MongoDB aggregation expression
  * written in mjsql's JavaScript-subset syntax. $op() utility calls appear only
- * where there is no JavaScript equivalent (e.g. $round, $dateDiff).
+ * where there is no JavaScript equivalent (e.g. $dateDiff, $stdDevPop, $sampleRate).
  *
  * This file is referenced from README.md as a usage showcase.
  */

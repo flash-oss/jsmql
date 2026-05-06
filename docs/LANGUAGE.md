@@ -624,9 +624,15 @@ For MongoDB operators that have no JavaScript equivalent, use the `$opName()` fa
 ### Examples:
 
 ```js
-$cmp($.a, $.b)                     // { $cmp: ["$a", "$b"] }   (-1, 0, or 1)
-$in($.x, [1, 2, 3])                // { $in: ["$x", [1, 2, 3]] }  (alternative to `in` operator)
-$or($.a, $.b, $.c)                 // { $or: ["$a", "$b", "$c"] }
+$zip([$.weeks, $.amounts])         // { $zip: { inputs: ["$weeks", "$amounts"] } }
+                                   //   pairs parallel arrays element-wise — no JS equivalent
+$sampleRate(0.1)                   // { $sampleRate: 0.1 }
+                                   //   probabilistic match (10% sample) — no JS equivalent
+$stdDevPop($.measurements)         // { $stdDevPop: "$measurements" }
+                                   //   population standard deviation — no JS equivalent
+$topN({ output: $.score, sortBy: { score: -1 }, n: 3 })
+                                   // { $topN: { output: "$score", sortBy: { score: -1 }, n: 3 } }
+                                   //   top-N accumulator over a group — no JS equivalent
 ```
 
 ### String
