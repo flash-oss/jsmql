@@ -216,19 +216,34 @@ $.in               // field literally named "in" (no conflict with operator)
 
 ### Bracket Access
 
-Use square brackets for computed index access on arrays:
+Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
 ```js
-$.items[0]         // first element
-$.items[$.idx]     // element at dynamic index
-$.matrix[$.row][$.col]  // nested access
+$.items.map(x => x.id)[0]     // known array → { $arrayElemAt: [{ $map: ... }, 0] }
+[1, 2, 3][$.idx]              // known array → { $arrayElemAt: [[1, 2, 3], "$idx"] }
 ```
 
-Bracket access maps to MongoDB's `$arrayElemAt`:
+For a bare `$.field`, mjsql can't tell at compile time whether you mean array indexing
+or object dynamic-key lookup, so it emits a runtime `$cond` on `$isArray` that picks
+the right form at query time:
+
 ```js
-$.items[0]         // { $arrayElemAt: ["$items", 0] }
-$.items[$.idx]     // { $arrayElemAt: ["$items", "$idx"] }
+$.items[0]
+// → { $cond: [
+//       { $isArray: "$items" },
+//       { $arrayElemAt: ["$items", 0] },
+//       { $getField: { field: 0, input: "$items" } }
+//     ] }
+
+$.config["host"]
+// → { $cond: [
+//       { $isArray: "$config" },
+//       { $arrayElemAt: ["$config", "host"] },
+//       { $getField: { field: "host", input: "$config" } }
+//     ] }
 ```
+
+If you want compact output, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
 ### Optional Chaining
 
@@ -236,7 +251,8 @@ $.items[$.idx]     // { $arrayElemAt: ["$items", "$idx"] }
 
 ```js
 $.user?.address?.city                // → "$user.address.city"
-$.items?.[0]                         // → { $arrayElemAt: ["$items", 0] }
+$.items?.[0]                         // → same as $.items[0] above (runtime $cond)
+$.items.reverse()?.[0]               // → known array → { $arrayElemAt: [{ $reverseArray: "$items" }, 0] }
 $.name?.trim()                       // → { $trim: { input: "$name" } }
 ```
 

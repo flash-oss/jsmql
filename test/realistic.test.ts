@@ -319,9 +319,11 @@ describe("financial: invoice line total with compound tax", () => {
 // ── User display ──────────────────────────────────────────────────────────────
 
 describe("user display: full name with null fallback", () => {
-  it("uses ?? chaining and bracket index access", () => {
-    // Display first name, falling back to first alias, then "anonymous"
-    const result = mjsql('$.firstName ?? $.aliases[0] ?? "anonymous"');
+  it("uses ?? chaining and .at(0) for the first alias", () => {
+    // Display first name, falling back to first alias, then "anonymous".
+    // .at(0) compiles to a compact $arrayElemAt; $.aliases[0] would emit a
+    // runtime $cond on $isArray since the receiver type isn't statically known.
+    const result = mjsql('$.firstName ?? $.aliases.at(0) ?? "anonymous"');
 
     expect(result).toEqual({
       $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],

@@ -417,20 +417,82 @@ describe("v2: string-context +", () => {
 });
 
 describe("v2: bracket access", () => {
-  it("constant index", () => {
-    expect(mjsql("$.items[0]")).toEqual({ $arrayElemAt: ["$items", 0] });
-  });
-  it("field index", () => {
-    expect(mjsql("$.items[$.idx]")).toEqual({ $arrayElemAt: ["$items", "$idx"] });
-  });
-  it("chained bracket access", () => {
-    expect(mjsql("$.m[$.r][$.c]")).toEqual({
-      $arrayElemAt: [{ $arrayElemAt: ["$m", "$r"] }, "$c"],
+  it("constant index on bare field → runtime $cond on $isArray", () => {
+    // Bare $.items receiver — type unknown — dispatch at runtime to handle
+    // either array (numeric index) or object (dynamic key) at query time.
+    expect(mjsql("$.items[0]")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $arrayElemAt: ["$items", 0] },
+        { $getField: { field: 0, input: "$items" } },
+      ],
     });
   });
-  it("bracket access on operator result", () => {
+  it("field index on bare field → runtime $cond", () => {
+    expect(mjsql("$.items[$.idx]")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $arrayElemAt: ["$items", "$idx"] },
+        { $getField: { field: "$idx", input: "$items" } },
+      ],
+    });
+  });
+  it("string-literal key on bare field → runtime $cond (the $getField branch is the right one for objects)", () => {
+    expect(mjsql('$.config["host"]')).toEqual({
+      $cond: [
+        { $isArray: "$config" },
+        { $arrayElemAt: ["$config", "host"] },
+        { $getField: { field: "host", input: "$config" } },
+      ],
+    });
+  });
+  it("chained bracket access on bare field → nested $cond", () => {
+    expect(mjsql("$.m[$.r][$.c]")).toEqual({
+      $cond: [
+        {
+          $isArray: {
+            $cond: [
+              { $isArray: "$m" },
+              { $arrayElemAt: ["$m", "$r"] },
+              { $getField: { field: "$r", input: "$m" } },
+            ],
+          },
+        },
+        {
+          $arrayElemAt: [
+            {
+              $cond: [
+                { $isArray: "$m" },
+                { $arrayElemAt: ["$m", "$r"] },
+                { $getField: { field: "$r", input: "$m" } },
+              ],
+            },
+            "$c",
+          ],
+        },
+        {
+          $getField: {
+            field: "$c",
+            input: {
+              $cond: [
+                { $isArray: "$m" },
+                { $arrayElemAt: ["$m", "$r"] },
+                { $getField: { field: "$r", input: "$m" } },
+              ],
+            },
+          },
+        },
+      ],
+    });
+  });
+  it("bracket access on known-array operator result stays compact", () => {
     expect(mjsql("$reverseArray($.items)[0]")).toEqual({
       $arrayElemAt: [{ $reverseArray: "$items" }, 0],
+    });
+  });
+  it("bracket access on .map() result stays compact", () => {
+    expect(mjsql("$.items.map(x => x.id)[0]")).toEqual({
+      $arrayElemAt: [{ $map: { input: "$items", as: "x", in: "$$x.id" } }, 0],
     });
   });
 });
@@ -1088,8 +1150,20 @@ describe("v4: optional chaining (?.)", () => {
   it("optional method call", () => {
     expect(mjsql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
   });
-  it("optional bracket access", () => {
-    expect(mjsql("$.items?.[0]")).toEqual({ $arrayElemAt: ["$items", 0] });
+  it("optional bracket access on bare field → runtime $cond", () => {
+    // ?.[ ] desugars to the same node as [ ]; receiver type unknown → dispatch at runtime.
+    expect(mjsql("$.scoresByLevel?.[$.level]")).toEqual({
+      $cond: [
+        { $isArray: "$scoresByLevel" },
+        { $arrayElemAt: ["$scoresByLevel", "$level"] },
+        { $getField: { field: "$level", input: "$scoresByLevel" } },
+      ],
+    });
+  });
+  it("optional bracket access on known array stays compact", () => {
+    expect(mjsql("$.items.reverse()?.[0]")).toEqual({
+      $arrayElemAt: [{ $reverseArray: "$items" }, 0],
+    });
   });
 });
 

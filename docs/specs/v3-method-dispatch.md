@@ -176,6 +176,17 @@ A template literal is always string-producing — it counts in the string-contex
 
 `?.` produces the same AST nodes as `.`. There is no separate "optional" marker — the codegen for member/method access is unchanged. This is correct because MongoDB's dotted-path semantics already null-pass through missing fields.
 
+`?.[expr]` produces the same `IndexAccess` node as `[expr]`, so the receiver-type dispatch (below) applies to both.
+
+## v4: type-aware dispatch for `IndexAccess` (`obj[k]` and `obj?.[k]`)
+
+JS bracket access serves two purposes that compile to different MQL operators: array indexing (`$arrayElemAt`) and object dynamic-key lookup (`$getField`). Codegen consults `isArrayProducing(expr.object)`:
+
+- **Known array** receiver → `{ $arrayElemAt: [obj, idx] }`.
+- **Unknown** receiver (bare `FieldRef`, ternary, etc.) → runtime `$cond` on `$isArray` between `$arrayElemAt` (array branch) and `$getField` (object branch). Both branches reuse the same `obj` expression; for paths this is free, and `$cond` is short-circuit so only the chosen branch executes.
+
+There is no string-literal/number-literal shortcut on the index — the receiver type alone drives the decision. If a user wants compact output for `$.field[0]`, they can use `.at(0)` (always emits `$arrayElemAt`) or pin the receiver type with `.map(x => x)` / `.slice(0)` / `.reverse()`.
+
 ## v4: object literals with computed or special entries
 
 `generateObjectLiteral(entries, ctx)` is the new entry point for object literals as values. If any entry has a computed key, it emits via `$arrayToObject` over a list of `[key, value]` pairs. Otherwise it falls through to the static-key fast path. `generateStaticObjectEntries` is still used for operator-style argument objects (`{ input, find, replacement }`) where keys are part of the wire format.

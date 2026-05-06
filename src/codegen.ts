@@ -189,8 +189,23 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
         ],
       };
 
-    case "IndexAccess":
-      return { $arrayElemAt: [_generate(expr.object, ctx), _generate(expr.index, ctx)] };
+    case "IndexAccess": {
+      // `obj[idx]` and `obj?.[idx]` produce the same AST. Type-aware dispatch:
+      //   known array → $arrayElemAt (numeric/expression index)
+      //   unknown    → runtime $cond between $arrayElemAt (array) and $getField (object)
+      const obj = _generate(expr.object, ctx);
+      const idx = _generate(expr.index, ctx);
+      if (isArrayProducing(expr.object)) {
+        return { $arrayElemAt: [obj, idx] };
+      }
+      return {
+        $cond: [
+          { $isArray: obj },
+          { $arrayElemAt: [obj, idx] },
+          { $getField: { field: idx, input: obj } },
+        ],
+      };
+    }
 
     case "RegexLiteral":
       // Used directly in .match(); as a standalone value just return the pattern string
