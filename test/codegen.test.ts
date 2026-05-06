@@ -1577,3 +1577,82 @@ describe("flex-shape operators", () => {
     });
   });
 });
+
+describe("function overload", () => {
+  it("accepts a no-param arrow", () => {
+    expect(mjsql(() => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+  });
+
+  it("accepts a $-param arrow (recommended idiom)", () => {
+    expect(mjsql(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+  });
+
+  it("produces identical MQL to the equivalent string", () => {
+    expect(mjsql(($) => $.status == "active")).toEqual(mjsql('$.status == "active"'));
+  });
+
+  it("the wrapper parameter is not bound inside the body — references resolve via $", () => {
+    // `(doc) =>` is a typing/IDE hook only. Inside the body, `doc.foo` is treated as
+    // an unknown identifier (and the user gets pointed at `$.doc` and the mql tag).
+    expect(() => mjsql((doc) => doc.foo)).toThrow(/Unknown identifier 'doc'/);
+  });
+
+  it("handles nested arrows in the body", () => {
+    expect(mjsql(($) => $.items.map((x) => x * 2))).toEqual({
+      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
+    });
+  });
+
+  it("handles a parenthesised object-literal body", () => {
+    expect(mjsql(($) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
+  });
+
+  it("rejects a block-body arrow with a clear error", () => {
+    expect(() =>
+      mjsql(($) => {
+        return $.age > 18;
+      }),
+    ).toThrow(/expression-body arrow/);
+  });
+
+  it("rejects a `function` declaration", () => {
+    expect(() =>
+      mjsql(function () {
+        return $.age > 18;
+      }),
+    ).toThrow(/arrow function/);
+  });
+
+  it("rejects an async arrow", () => {
+    expect(() => mjsql(async () => $.age > 18)).toThrow(/async/);
+  });
+
+  it("appends an mql`` hint when an outer-scope identifier is referenced", () => {
+    const minAge = 21; // referenced from the closure on purpose
+    expect(() => mjsql(($) => $.age > minAge)).toThrow(/mql`` template tag/);
+  });
+
+  it("validate() reports the augmented hint for closure refs", () => {
+    const minAge = 21;
+    const r = validate(($) => $.age > minAge);
+    expect(r.valid).toBe(false);
+    expect(r.errors[0]?.code).toBe("CODEGEN_ERROR");
+    expect(r.errors[0]?.message).toMatch(/Unknown identifier 'minAge'/);
+    expect(r.errors[0]?.message).toMatch(/mql`` template tag/);
+  });
+
+  it("validate() reports SYNTAX_ERROR for an unsupported function shape", () => {
+    const r = validate(($) => {
+      return $.age > 18;
+    });
+    expect(r.valid).toBe(false);
+    expect(r.errors[0]?.code).toBe("SYNTAX_ERROR");
+  });
+
+  it("inline arrow in a hot loop produces consistent MQL across calls (cache correctness)", () => {
+    const make = () => mjsql(($) => $.status == "active");
+    const a = make();
+    const b = make();
+    expect(a).toEqual(b);
+  });
+});

@@ -3,7 +3,15 @@
 ## Pipeline
 
 ```
-mjsql(string)
+mjsql(string | Function)
+    │
+    ▼
+Function-input adapter (src/index.ts)
+    Only when input is a function. Calls Function.prototype.toString(),
+    rejects non-arrow / async / generator / block-body shapes, splits on the
+    first `=>` and takes the right-hand side as the expression source.
+    Compiled bodies are cached in a Map<string, object> keyed on the extracted
+    body string (cache-key choice rationale: see below).
     │
     ▼
 Lexer (src/lexer.ts)
@@ -54,24 +62,35 @@ MQL JSON (plain JS object)
 ## Public API surface (`src/index.ts`)
 
 ```ts
-mjsql(expression: string): object
-// Parses and transpiles. Throws LexError | ParseError | CodegenError on failure.
+type MjsqlInput = string | (() => unknown);
 
-validate(expression: string): ValidationResult
+mjsql(input: MjsqlInput): object
+// Parses and transpiles. Throws LexError | ParseError | CodegenError | FunctionInputError.
+// For function input, the body is extracted (toString + arrow strip) and the result is cached.
+
+validate(input: MjsqlInput): ValidationResult
 // Same pipeline, but catches all errors and returns { valid, errors[] } instead.
 
 mql(strings: TemplateStringsArray, ...values: unknown[]): object
 // Template tag. Interpolates values via JSON.stringify, then calls mjsql().
 ```
 
+### Function-input cache
+
+Cache key: the **extracted body string**, not the function reference. Inline arrows like `mjsql(($) => …)` evaluate to a fresh function object on every call (JS does not intern function literals), so a `WeakMap<Function, object>` would never hit. The body string is stable across every evaluation of the same source location, which gives cache hits in hot loops, in hoisted module-top-level constants, and across identical bodies declared at different call sites.
+
+The cache is unbounded but safely so: function bodies cannot be string-interpolated, so the set of distinct bodies is bounded by source-code size. The string-input path is intentionally **not** cached, because raw strings are often built via dynamic concatenation and would leak memory.
+
 ## Error types
 
 All errors are classes with a `.message` string. Positional errors also have `.pos: number` (byte offset in the source string).
 
-| Class | Module | Has pos |
-|---|---|---|
-| `LexError` | `lexer.ts` | yes |
-| `ParseError` | `parser.ts` | yes |
-| `CodegenError` | `codegen.ts` | no |
+| Class | Module | Has pos | Notes |
+|---|---|---|---|
+| `LexError` | `lexer.ts` | yes | |
+| `ParseError` | `parser.ts` | yes | |
+| `CodegenError` | `codegen.ts` | no | |
+| `UnknownIdentifierError` | `codegen.ts` | no | Subclass of `CodegenError`. Carries `.identifier` so the function-input path can append an `mql` hint to the message. |
+| `FunctionInputError` | `index.ts` | no | Function source isn't a supported shape (block body, async, `function` keyword, missing `=>`). |
 
-`validate()` maps all three to `ValidationError` objects (`{ message, pos, code }`).
+`validate()` maps `LexError` and `ParseError` to `SYNTAX_ERROR`, `CodegenError` (and its subclasses) to `CODEGEN_ERROR`, and `FunctionInputError` to `SYNTAX_ERROR` with `pos: 0`.

@@ -126,6 +126,10 @@ IDENT_OR_KW    = IDENT | "in" | "new" | "typeof"
 
 Every expression accepted by this grammar is also valid JavaScript syntax. Adding a production that JS would reject (e.g. `obj.0`, which is why `FIELD_SEGMENT` excludes `NUMBER`) is a violation of the project's [#2 priority](../../CLAUDE.md). When a feature seems to need JS-incompatible syntax, either find a JS-syntax-equivalent surface (bracket access for numeric indices, method calls for transformations) or expose it as a `$op(...)` call — `$op` is always valid JS because it's a function name.
 
+## Function-form input is not part of the grammar
+
+`mjsql()` and `validate()` accept either a string or an arrow function (see [architecture.md](architecture.md)). When given a function, an adapter in `src/index.ts` extracts the body via `Function.prototype.toString()` and feeds the body to the parser — the arrow wrapper itself never reaches the parser and is **not** described by this grammar. The parser sees only the right-hand side of `=>`, which must conform to `expression` exactly as the string-input path does.
+
 ## Template literals
 
 A template literal is a sequence of literal chunks alternating with `${expr}` interpolations, delimited by backticks. The lexer emits a stream of tokens (`TemplateStart`, `TemplateChars`, `TemplateExprStart`, ..., `TemplateEnd`) and tracks brace depth across `${...}` regions so that an inner `}` returns the lexer to template-chunk mode rather than emitting `RBrace`. Templates may nest.

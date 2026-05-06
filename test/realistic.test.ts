@@ -339,15 +339,20 @@ describe("location: full address formatter", () => {
     // Assembles up to 7 address fields into a single space-separated string.
     // The optional building name (e.g. "Suite 4,") is included only when present.
     // MongoDB executes this entirely — no need to fetch all fields to the client.
-    const result = mjsql(`
+    const result = mjsql(($) =>
       [
         typeof $.building === "string" && $.building.trim() !== "" ? $.building.trim() + "," : null,
-        $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode
+        $.streetNo,
+        $.street,
+        $.suburb,
+        $.state,
+        $.country,
+        $.postcode,
       ]
-        .filter(x => typeof x === "string" && x !== "")
-        .map(x => x.trim())
-        .join(" ")
-    `);
+        .filter((x) => typeof x === "string" && x !== "")
+        .map((x) => x.trim())
+        .join(" "),
+    );
 
     expect(result).toEqual({
       $reduce: {

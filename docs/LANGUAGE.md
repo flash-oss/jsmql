@@ -46,10 +46,11 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 10. [Type Casting](#type-casting)
 11. [Date Operations](#date-operations)
 12. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
-13. [Template Tag (`mql`)](#template-tag-mql)
-14. [Validation](#validation)
-15. [Error Messages](#error-messages)
-16. [Examples](#examples)
+13. [Function Form](#function-form)
+14. [Template Tag (`mql`)](#template-tag-mql)
+15. [Validation](#validation)
+16. [Error Messages](#error-messages)
+17. [Examples](#examples)
 
 ---
 
@@ -752,6 +753,45 @@ $let({ discount: $.price * 0.1 }, (discount) => $.price - discount)
 $let({ x: $.a + $.b, y: $.c * 2 }, (x, y) => x + y)
 // binds multiple variables, body can reference all of them
 ```
+
+---
+
+## Function Form
+
+In addition to a string, `mjsql()` and `validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
+
+```js
+const { mjsql } = require("mjsql");
+
+mjsql(($) => $.age > 18);
+// → { $gt: ["$age", 18] }
+
+mjsql(($) =>
+  [$.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
+    .filter((x) => typeof x === "string" && x !== "")
+    .map((x) => x.trim())
+    .join(" "),
+);
+// identical MQL to the equivalent template-string form, but prettier and oxfmt
+// will indent and line-break it like any other JS — that is the whole point.
+```
+
+**Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long mjsql expressions sit as one un-broken line. Wrapping the expression in a plain arrow function lets every JS formatter handle it for free — no plugin, no config.
+
+### Restrictions
+
+- **Arrow functions only.** `function` declarations are rejected. Use `() => …`.
+- **Expression-body only.** `() => $.age > 18` works; `() => { return $.age > 18; }` does not.
+- **No `async`, no generators.**
+- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Use the [`mql` template tag](#template-tag-mql) when you need to interpolate a value:
+  ```js
+  const minAge = 21;
+  mjsql(($) => $.age > minAge);   // ❌ error: Unknown identifier 'minAge'
+  mql`$.age > ${minAge}`;         // ✓ works — value is interpolated
+  ```
+- **The wrapper's parameter is not bound inside the body.** `($) =>` is the recommended idiom because `$` is also the document context, but other names (`(doc) =>`) act as a typing/IDE hook only — `doc.foo` in the body resolves as an unknown identifier, not as `$.foo`.
+
+When an unknown identifier is encountered in the function-form path, the error message also points at the `mql` tag as the right tool for closure interpolation.
 
 ---
 
