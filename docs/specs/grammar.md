@@ -1,6 +1,6 @@
-# Grammar (v3)
+# Grammar (v4)
 
-This is the formal grammar for the v3 expression syntax accepted by the parser.
+This is the formal grammar for the expression syntax accepted by the parser. v4 added template literals, optional chaining, computed object keys, shorthand properties, numeric separators, and spread in call arguments on top of v3.
 
 ## EBNF
 
@@ -33,35 +33,44 @@ unary          = "typeof" unary
                | ("!" | "-") unary
                | postfix
 
-postfix        = primary ("[" expression "]" | "." member_call)*
+postfix        = primary (
+                   "[" expression "]"
+                 | "." member_call
+                 | "?." member_call                          (* optional chaining *)
+                 | "?." "[" expression "]"                   (* optional bracket access *)
+                 )*
 
-member_call    = FIELD_SEGMENT "(" arg_list ")"          (* method call *)
-               | FIELD_SEGMENT                           (* property access *)
+member_call    = FIELD_SEGMENT "(" call_arg_list ")"         (* method call *)
+               | FIELD_SEGMENT                               (* property access *)
 
 primary        = operator_call
                | field_ref
-               | math_call
+               | math_call | math_const
                | object_call
                | type_cast
-               | new_date
+               | new_date | date_now | array_static
                | regex_literal
+               | template_literal
                | number
                | string
                | boolean
                | null
                | array_literal
                | object_literal
-               | lambda_paren                            (* (x) => expr *)
+               | lambda_paren                                (* (x) => expr *)
                | "(" expression ")"
-               | IDENT                                   (* param_ref — lambda param or type cast name *)
+               | IDENT                                       (* param_ref — lambda param or type cast name *)
 
 operator_call  = "$" IDENT_OR_KW "(" op_arg_list ")"
 
-op_arg_list    = ""                                           (* zero args *)
-               | object_literal                               (* object-style, see note *)
-               | arg_or_lambda ("," arg_or_lambda)*           (* positional args *)
+op_arg_list    = ""                                          (* zero args *)
+               | object_literal                              (* object-style, see note *)
+               | call_arg ("," call_arg)*                    (* positional args, may include lambdas/spreads *)
 
-arg_or_lambda  = lambda_unparen | lambda_paren | expression
+call_arg_list  = (call_arg ("," call_arg)*)?
+call_arg       = "..." expression                            (* spread *)
+               | lambda_unparen | lambda_paren
+               | expression
 
 field_ref      = "$." FIELD_SEGMENT                          (* one segment only; postfix handles further dots *)
 FIELD_SEGMENT  = IDENT | NUMBER | "in" | "new" | "typeof"
@@ -72,35 +81,69 @@ array_element  = "..." expression | expression
 
 object_literal = "{" object_entries? "}"
 object_entries = object_entry ("," object_entry)*
-object_entry   = "..." expression | (IDENT | STRING) ":" expression
+object_entry   = "..." expression
+               | (IDENT | STRING) ":" expression
+               | "[" expression "]" ":" expression           (* computed key *)
+               | IDENT                                       (* shorthand: name → name: name *)
+
+template_literal = "`" template_chunk ("${" expression "}" template_chunk)* "`"
 
 lambda_unparen = IDENT "=>" expression                       (* x => expr *)
 lambda_paren   = "(" [IDENT ("," IDENT)*] ")" "=>" expression  (* (x, y) => expr *)
 
-math_call      = "Math" "." MATH_METHOD "(" [expression ("," expression)*] ")"
-MATH_METHOD    = "abs" | "ceil" | "floor" | "round" | "pow" | "sqrt" | "exp" | "log" | "trunc"
+math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
+MATH_METHOD    = "abs" | "ceil" | "floor" | "round" | "pow" | "sqrt"
+               | "exp" | "log" | "log2" | "log10" | "trunc"
+               | "min" | "max" | "sign" | "hypot" | "cbrt" | "random"
 
-object_call    = "Object" "." OBJECT_METHOD "(" [expression ("," expression)*] ")"
-OBJECT_METHOD  = "keys" | "values" | "entries" | "assign"
+math_const     = "Math" "." ("PI" | "E")
+
+object_call    = "Object" "." OBJECT_METHOD "(" call_arg_list ")"
+OBJECT_METHOD  = "keys" | "values" | "entries" | "assign" | "fromEntries"
 
 type_cast      = TYPE_CAST_NAME "(" expression ")"
 TYPE_CAST_NAME = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat"
 
 new_date       = "new" "Date" "(" expression? ")"
+date_now       = "Date" "." "now" "(" ")"
+array_static   = "Array" "." "isArray" "(" expression ")"
 
 regex_literal  = "/" REGEX_CHARS "/" REGEX_FLAGS?            (* context-sensitive: see below *)
 REGEX_FLAGS    = [gimsuy]+
 
-number         = DIGITS ("." DIGITS)? (("e"|"E") ("+"|"-")? DIGITS)?
+number         = DIGIT_SEQ ("." DIGIT_SEQ)? (("e"|"E") ("+"|"-")? DIGIT_SEQ)?
                  (* decimal point only consumed when followed by a digit *)
+DIGIT_SEQ      = [0-9]+ ("_" [0-9]+)*                         (* numeric separators *)
 string         = '"' chars '"' | "'" chars "'"
 boolean        = "true" | "false"
 null           = "null"
 
 IDENT          = [a-zA-Z_][a-zA-Z0-9_]*
 IDENT_OR_KW    = IDENT | "in" | "new" | "typeof"
-DIGITS         = [0-9]+
 ```
+
+## Template literals
+
+A template literal is a sequence of literal chunks alternating with `${expr}` interpolations, delimited by backticks. The lexer emits a stream of tokens (`TemplateStart`, `TemplateChars`, `TemplateExprStart`, ..., `TemplateEnd`) and tracks brace depth across `${...}` regions so that an inner `}` returns the lexer to template-chunk mode rather than emitting `RBrace`. Templates may nest.
+
+## Optional chaining
+
+`?.` is accepted everywhere `.` is. The parser produces the same `MemberAccess` / `MethodCall` / `IndexAccess` AST nodes — there is no separate "optional" node. This is sound because MongoDB's dotted-path semantics already null-pass through missing fields, so `$.a?.b` and `$.a.b` produce identical MQL.
+
+## Numeric separators
+
+Digit sequences may contain single `_` characters between two digits. The lexer rejects leading `_`, trailing `_`, and `__`. The parser sees the underscore-stripped numeric value.
+
+## Spread in call arguments
+
+`...expr` is a valid argument anywhere that takes positional args (operator calls, method calls, `Math.*`, `Object.*`). It is represented in the AST as a `SpreadElement` interleaved with `Expr` arguments. Codegen handles spread in:
+
+- Variadic operator/method calls — single spread → bare value; mixed → `$concatArrays`-wrapped
+- `Math.min`/`Math.max` — same as variadic
+- `Object.assign` — same
+- Unknown operators — single spread passes through
+
+Non-variadic operators (single/object/none shapes) reject spread with a clear error.
 
 > **Note on negative numbers:** The lexer never produces a negative number token.
 > A leading `-` is always lexed as a `Minus` token; unary minus is handled by the
@@ -188,9 +231,12 @@ Right-hand side of 'in' must be an array literal or field reference, not a scala
 
 Array literals, field refs, operator calls, and any other expression are accepted. This catches the common mistake `$.x in "value"` at transpile time rather than producing silently invalid MQL.
 
-## What is NOT in v3
+## What is NOT in v4
 
 - Assignment expressions (`$.a = $.b + 1`)
 - Control flow (`if`, `for`, `while`)
 - `class` or prototype methods
-- Destructuring
+- Destructuring (in lambda params or anywhere)
+- `padStart`/`padEnd`/`repeat` — no MQL primitive
+- `JSON.stringify`/`JSON.parse` — no MQL primitive
+- `Number.isInteger`/`isNaN`/`isFinite` — partial via `$type`, not built-in

@@ -22,9 +22,9 @@ When you add a new operator or syntax feature, add a table row or code example h
 | File | Covers |
 |---|---|
 | `specs/architecture.md` | End-to-end pipeline, data flow, module responsibilities |
-| `specs/grammar.md` | Formal grammar (EBNF) — updated to v3 |
+| `specs/grammar.md` | Formal grammar (EBNF) — current at v4 |
 | `specs/operator-registry.md` | How operator shapes work, how to add/modify entries |
-| `specs/v3-method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing |
+| `specs/v3-method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
 
 ### When to update specs
 

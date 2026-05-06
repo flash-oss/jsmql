@@ -9,7 +9,10 @@ import type {
   SpreadElement,
   TypeCastOp,
   MathMethod,
+  MathConstant,
   ObjectMethod,
+  ObjectKey,
+  CallArg,
 } from "./ast.js";
 
 export class ParseError extends Error {
@@ -31,10 +34,20 @@ const MATH_METHODS = new Set<string>([
   "sqrt",
   "exp",
   "log",
+  "log2",
+  "log10",
   "trunc",
+  "min",
+  "max",
+  "sign",
+  "hypot",
+  "cbrt",
+  "random",
 ]);
 
-const OBJECT_METHODS = new Set<string>(["keys", "values", "entries", "assign"]);
+const MATH_CONSTANTS = new Set<string>(["PI", "E"]);
+
+const OBJECT_METHODS = new Set<string>(["keys", "values", "entries", "assign", "fromEntries"]);
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 
@@ -230,11 +243,18 @@ export class Parser {
     return this.parsePostfix();
   }
 
-  /** postfix:  primary ("[" expression "]" | "." member)*  */
+  /**
+   * postfix:  primary ( "[" expression "]" | "." member | "?." member | "?.[" expression "]" )*
+   *
+   * Optional chaining (`?.`) is treated identically to `.` and `[]` for codegen purposes:
+   * MongoDB returns missing/null when traversing through missing fields, so JS-style
+   * null-safe access already works for free on field paths.
+   */
   private parsePostfix(): Expr {
     let left = this.parsePrimary();
     for (;;) {
-      if (this.lexer.peek().type === TokenType.LBracket) {
+      const t = this.lexer.peek().type;
+      if (t === TokenType.LBracket) {
         this.lexer.next(); // consume [
         const index = this.parseExpression();
         const close = this.lexer.peek();
@@ -246,8 +266,23 @@ export class Parser {
         }
         this.lexer.next(); // consume ]
         left = { type: "IndexAccess", object: left, index };
-      } else if (this.lexer.peek().type === TokenType.Dot) {
-        this.lexer.next(); // consume .
+      } else if (t === TokenType.Dot || t === TokenType.QuestDot) {
+        this.lexer.next(); // consume . or ?.
+        // ?.[...] form — optional bracket access
+        if (t === TokenType.QuestDot && this.lexer.peek().type === TokenType.LBracket) {
+          this.lexer.next(); // consume [
+          const index = this.parseExpression();
+          const close = this.lexer.peek();
+          if (close.type !== TokenType.RBracket) {
+            throw new ParseError(
+              `Expected ']' after index expression at position ${close.pos}`,
+              close.pos,
+            );
+          }
+          this.lexer.next();
+          left = { type: "IndexAccess", object: left, index };
+          continue;
+        }
         const member = this.lexer.peek();
         if (!this.isFieldSegmentToken(member)) {
           throw new ParseError(
@@ -272,19 +307,35 @@ export class Parser {
   }
 
   /** Parse method call argument list: "(" [argOrLambda (, argOrLambda)*] ")" */
-  private parseMethodCallArgs(): Expr[] {
+  private parseMethodCallArgs(): CallArg[] {
     this.lexer.expect(TokenType.LParen);
     if (this.lexer.peek().type === TokenType.RParen) {
       this.lexer.next();
       return [];
     }
-    const args: Expr[] = [this.parseArgOrLambda()];
+    const args: CallArg[] = [this.parseCallArg()];
     while (this.lexer.peek().type === TokenType.Comma) {
       this.lexer.next();
-      args.push(this.parseArgOrLambda());
+      args.push(this.parseCallArg());
     }
     this.lexer.expect(TokenType.RParen);
     return args;
+  }
+
+  /**
+   * Parse one argument in a call site. Allows:
+   *   - ...expr (spread)
+   *   - lambda forms (x => ..., (x) => ..., (x, y) => ...)
+   *   - any expression
+   */
+  private parseCallArg(): CallArg {
+    if (this.lexer.peek().type === TokenType.Spread) {
+      this.lexer.next();
+      const argument = this.parseExpression();
+      const spread: SpreadElement = { type: "SpreadElement", argument };
+      return spread;
+    }
+    return this.parseArgOrLambda();
   }
 
   /**
@@ -336,6 +387,8 @@ export class Parser {
       case TokenType.RegexLiteral:
         this.lexer.next();
         return { type: "RegexLiteral", pattern: t.value, flags: t.flags ?? "" };
+      case TokenType.TemplateStart:
+        return this.parseTemplateLiteral();
       case TokenType.New:
         return this.parseNewDate();
       case TokenType.LParen:
@@ -343,8 +396,14 @@ export class Parser {
         return this.parseGrouped();
       case TokenType.Ident: {
         const name = t.value;
-        if (name === "Math") return this.parseMathCall();
+        if (name === "Math") return this.parseMathReference();
         if (name === "Object") return this.parseObjectCall();
+        if (name === "Date" && this.lexer.lookahead(1).type === TokenType.Dot) {
+          return this.parseDateNow();
+        }
+        if (name === "Array" && this.lexer.lookahead(1).type === TokenType.Dot) {
+          return this.parseArrayStaticCall();
+        }
         if (TYPE_CAST_NAMES.has(name)) return this.parseTypeCast();
         this.lexer.next();
         return { type: "ParamRef", name };
@@ -402,20 +461,20 @@ export class Parser {
         return { type: "OperatorCall", name, style: "object", args: [obj] };
       }
       // First positional arg happens to be an object — collect remaining args
-      const args: Expr[] = [obj];
+      const args: CallArg[] = [obj];
       while (this.lexer.peek().type === TokenType.Comma) {
         this.lexer.next();
-        args.push(this.parseArgOrLambda());
+        args.push(this.parseCallArg());
       }
       this.lexer.expect(TokenType.RParen);
       return { type: "OperatorCall", name, style: "positional", args };
     }
 
-    // Positional args (may include lambdas)
-    const args: Expr[] = [this.parseArgOrLambda()];
+    // Positional args (may include lambdas and spreads)
+    const args: CallArg[] = [this.parseCallArg()];
     while (this.lexer.peek().type === TokenType.Comma) {
       this.lexer.next();
-      args.push(this.parseArgOrLambda());
+      args.push(this.parseCallArg());
     }
     this.lexer.expect(TokenType.RParen);
     return { type: "OperatorCall", name, style: "positional", args };
@@ -522,26 +581,69 @@ export class Parser {
     return { type: "NewDate", arg };
   }
 
-  /** "Math.method(args)" */
-  private parseMathCall(): Expr {
-    const mathTok = this.lexer.next(); // consume 'Math'
+  /** "Date.now()" — recognised as a primary; other Date.* members are not supported */
+  private parseDateNow(): Expr {
+    const dateTok = this.lexer.next(); // consume 'Date'
     this.lexer.expect(TokenType.Dot);
     const methodTok = this.lexer.peek();
-    if (methodTok.type !== TokenType.Ident || !MATH_METHODS.has(methodTok.value)) {
+    if (methodTok.type !== TokenType.Ident || methodTok.value !== "now") {
       throw new ParseError(
-        `Unknown Math method '${methodTok.value}' at position ${methodTok.pos}. Supported: ${[...MATH_METHODS].join(", ")}`,
+        `Unknown Date method '${methodTok.value}' at position ${methodTok.pos}. Supported: Date.now()`,
+        dateTok.pos,
+      );
+    }
+    this.lexer.next(); // consume 'now'
+    this.lexer.expect(TokenType.LParen);
+    this.lexer.expect(TokenType.RParen);
+    return { type: "DateNow" };
+  }
+
+  /** "Array.isArray(x)" */
+  private parseArrayStaticCall(): Expr {
+    const arrayTok = this.lexer.next(); // consume 'Array'
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident || methodTok.value !== "isArray") {
+      throw new ParseError(
+        `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}. Supported: Array.isArray()`,
+        arrayTok.pos,
+      );
+    }
+    this.lexer.next(); // consume 'isArray'
+    this.lexer.expect(TokenType.LParen);
+    const arg = this.parseExpression();
+    this.lexer.expect(TokenType.RParen);
+    // Translate to $isArray operator call directly
+    return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg] };
+  }
+
+  /** "Math.method(args)" or "Math.PI" / "Math.E" constants */
+  private parseMathReference(): Expr {
+    const mathTok = this.lexer.next(); // consume 'Math'
+    this.lexer.expect(TokenType.Dot);
+    const ident = this.lexer.peek();
+    if (ident.type !== TokenType.Ident) {
+      throw new ParseError(`Expected Math member name at position ${ident.pos}`, mathTok.pos);
+    }
+    if (MATH_CONSTANTS.has(ident.value)) {
+      this.lexer.next(); // consume constant name
+      return { type: "MathConst", name: ident.value as MathConstant };
+    }
+    if (!MATH_METHODS.has(ident.value)) {
+      throw new ParseError(
+        `Unknown Math member '${ident.value}' at position ${ident.pos}. Supported methods: ${[...MATH_METHODS].join(", ")}. Constants: PI, E.`,
         mathTok.pos,
       );
     }
     this.lexer.next(); // consume method name
-    const method = methodTok.value as MathMethod;
+    const method = ident.value as MathMethod;
     this.lexer.expect(TokenType.LParen);
-    const args: Expr[] = [];
+    const args: CallArg[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
-      args.push(this.parseExpression());
+      args.push(this.parseCallArg());
       while (this.lexer.peek().type === TokenType.Comma) {
         this.lexer.next();
-        args.push(this.parseExpression());
+        args.push(this.parseCallArg());
       }
     }
     this.lexer.expect(TokenType.RParen);
@@ -562,12 +664,12 @@ export class Parser {
     this.lexer.next(); // consume method name
     const method = methodTok.value as ObjectMethod;
     this.lexer.expect(TokenType.LParen);
-    const args: Expr[] = [];
+    const args: CallArg[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
-      args.push(this.parseExpression());
+      args.push(this.parseCallArg());
       while (this.lexer.peek().type === TokenType.Comma) {
         this.lexer.next();
-        args.push(this.parseExpression());
+        args.push(this.parseCallArg());
       }
     }
     this.lexer.expect(TokenType.RParen);
@@ -597,6 +699,38 @@ export class Parser {
       throw new ParseError(`Invalid number '${t.value}' at position ${t.pos}`, t.pos);
     }
     return { type: "NumberLiteral", value };
+  }
+
+  /** Parse a template literal: `chunk0${expr0}chunk1${expr1}chunk2` */
+  private parseTemplateLiteral(): Expr {
+    this.lexer.expect(TokenType.TemplateStart);
+    const quasis: string[] = [];
+    const expressions: Expr[] = [];
+
+    for (;;) {
+      const chunk = this.lexer.expect(TokenType.TemplateChars);
+      quasis.push(chunk.value);
+      const next = this.lexer.peek();
+      if (next.type === TokenType.TemplateEnd) {
+        this.lexer.next();
+        break;
+      }
+      if (next.type === TokenType.TemplateExprStart) {
+        this.lexer.next();
+        const expr = this.parseExpression();
+        // The closing `}` of `${...}` is consumed by the lexer's brace-tracking logic,
+        // which switches back to template-chunk reading without emitting an RBrace.
+        // So the next token should be another TemplateChars chunk.
+        expressions.push(expr);
+        continue;
+      }
+      throw new ParseError(
+        `Unexpected token in template literal at position ${next.pos}`,
+        next.pos,
+      );
+    }
+
+    return { type: "TemplateLiteral", quasis, expressions };
   }
 
   private parseArrayLiteral(): Expr {
@@ -640,15 +774,7 @@ export class Parser {
         const spread: SpreadElement = { type: "SpreadElement", argument: arg };
         entries.push(spread);
       } else {
-        const keyTok = this.lexer.peek();
-        if (keyTok.type !== TokenType.Ident && keyTok.type !== TokenType.String) {
-          throw new ParseError(`Expected object key at position ${keyTok.pos}`, keyTok.pos);
-        }
-        this.lexer.next();
-        this.lexer.expect(TokenType.Colon);
-        const value = this.parseExpression();
-        const kv: KeyValueEntry = { type: "KeyValueEntry", key: keyTok.value, value };
-        entries.push(kv);
+        entries.push(this.parseObjectEntry());
       }
       if (this.lexer.peek().type === TokenType.Comma) {
         this.lexer.next();
@@ -659,5 +785,46 @@ export class Parser {
 
     this.lexer.expect(TokenType.RBrace);
     return { type: "ObjectLiteral", entries };
+  }
+
+  /**
+   * Parse one non-spread object entry. Supports:
+   *   - Static key:    `name: expr`  or  `"name": expr`
+   *   - Computed key:  `[expr]: expr`
+   *   - Shorthand:     `name`  (sugar for `name: name`, valid in lambda scope)
+   */
+  private parseObjectEntry(): KeyValueEntry {
+    const tok = this.lexer.peek();
+
+    // Computed key: [expr]: value
+    if (tok.type === TokenType.LBracket) {
+      this.lexer.next();
+      const keyExpr = this.parseExpression();
+      this.lexer.expect(TokenType.RBracket);
+      this.lexer.expect(TokenType.Colon);
+      const value = this.parseExpression();
+      const key: ObjectKey = { kind: "computed", expr: keyExpr };
+      return { type: "KeyValueEntry", key, value };
+    }
+
+    if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
+      throw new ParseError(`Expected object key at position ${tok.pos}`, tok.pos);
+    }
+    this.lexer.next();
+    const next = this.lexer.peek();
+    // Shorthand: `{ x }` — only valid for plain identifiers; it desugars to `{ x: x }`,
+    // where the value is a ParamRef. (Codegen will reject if `x` is not a lambda param.)
+    if (
+      tok.type === TokenType.Ident &&
+      (next.type === TokenType.Comma || next.type === TokenType.RBrace)
+    ) {
+      const key: ObjectKey = { kind: "static", name: tok.value };
+      const value: Expr = { type: "ParamRef", name: tok.value };
+      return { type: "KeyValueEntry", key, value };
+    }
+    this.lexer.expect(TokenType.Colon);
+    const value = this.parseExpression();
+    const key: ObjectKey = { kind: "static", name: tok.value };
+    return { type: "KeyValueEntry", key, value };
   }
 }

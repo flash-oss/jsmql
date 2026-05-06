@@ -925,3 +925,354 @@ describe("EOF error message", () => {
     expect(() => mjsql("$.a ? $.b")).toThrow(/Expected ':'/);
   });
 });
+
+// ── v4: modern JS additions ───────────────────────────────────────────────────
+
+describe("v4: template literals", () => {
+  it("plain string template (no expressions)", () => {
+    expect(mjsql("`hello`")).toEqual("hello");
+  });
+  it("single interpolation", () => {
+    expect(mjsql("`hello, ${$.name}!`")).toEqual({
+      $concat: ["hello, ", "$name", "!"],
+    });
+  });
+  it("multiple interpolations", () => {
+    expect(mjsql("`${$.first} ${$.last}`")).toEqual({
+      $concat: ["$first", " ", "$last"],
+    });
+  });
+  it("interpolation at the start", () => {
+    expect(mjsql("`${$.x} px`")).toEqual({ $concat: ["$x", " px"] });
+  });
+  it("interpolation at the end", () => {
+    expect(mjsql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", "$id"] });
+  });
+  it("expression inside interpolation", () => {
+    expect(mjsql("`total: ${$.a + $.b}`")).toEqual({
+      $concat: ["total: ", { $add: ["$a", "$b"] }],
+    });
+  });
+  it("interpolation containing object literal (brace tracking)", () => {
+    expect(mjsql("`v=${$let({ x: 1 }, x => x)}`")).toEqual({
+      $concat: ["v=", { $let: { vars: { x: 1 }, in: "$$x" } }],
+    });
+  });
+  it("nested template literal", () => {
+    expect(mjsql("`outer ${`inner ${$.x}`}`")).toEqual({
+      $concat: ["outer ", { $concat: ["inner ", "$x"] }],
+    });
+  });
+  it("escape sequences", () => {
+    expect(mjsql("`a\\nb`")).toEqual("a\nb");
+  });
+  it("escaped backtick and dollar", () => {
+    expect(mjsql("`a\\`b\\${c}`")).toEqual("a`b${c}");
+  });
+  it("template literal participates in string-context +", () => {
+    expect(mjsql("`x=${$.x}` + ' done'")).toEqual({
+      $concat: [{ $concat: ["x=", "$x"] }, " done"],
+    });
+  });
+});
+
+describe("v4: array .includes()", () => {
+  it("array literal → $in", () => {
+    expect(mjsql('["a", "b"].includes($.x)')).toEqual({ $in: ["$x", ["a", "b"]] });
+  });
+  it("known array (split result) → $in", () => {
+    expect(mjsql('$.csv.split(",").includes("active")')).toEqual({
+      $in: ["active", { $split: ["$csv", ","] }],
+    });
+  });
+  it("$.field.includes() defaults to string semantics (back-compat)", () => {
+    expect(mjsql('$.email.includes("@")')).toEqual({
+      $gte: [{ $indexOfCP: ["$email", "@"] }, 0],
+    });
+  });
+});
+
+describe("v4: Math.min / Math.max", () => {
+  it("Math.min variadic", () => {
+    expect(mjsql("Math.min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
+  });
+  it("Math.max variadic", () => {
+    expect(mjsql("Math.max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
+  });
+  it("Math.max with single array arg", () => {
+    expect(mjsql("Math.max($.scores)")).toEqual({ $max: "$scores" });
+  });
+  it("Math.max with spread arg", () => {
+    expect(mjsql("Math.max(...$.scores)")).toEqual({ $max: "$scores" });
+  });
+  it("Math.min mixed spread + scalar", () => {
+    expect(mjsql("Math.min($.a, ...$.others)")).toEqual({
+      $min: { $concatArrays: [["$a"], "$others"] },
+    });
+  });
+});
+
+describe("v4: Date.now()", () => {
+  it("returns ms since epoch", () => {
+    expect(mjsql("Date.now()")).toEqual({ $toLong: "$$NOW" });
+  });
+});
+
+describe("v4: Object.fromEntries", () => {
+  it("from $objectToArray result", () => {
+    expect(mjsql("Object.fromEntries(Object.entries($.doc))")).toEqual({
+      $arrayToObject: { $objectToArray: "$doc" },
+    });
+  });
+  it("from array literal of pairs", () => {
+    expect(mjsql('Object.fromEntries([["a", 1], ["b", 2]])')).toEqual({
+      $arrayToObject: [
+        ["a", 1],
+        ["b", 2],
+      ],
+    });
+  });
+});
+
+describe("v4: Array.isArray", () => {
+  it("on a field", () => {
+    expect(mjsql("Array.isArray($.items)")).toEqual({ $isArray: "$items" });
+  });
+});
+
+describe("v4: optional chaining (?.)", () => {
+  it("simple optional member access", () => {
+    expect(mjsql("$.a?.b")).toEqual("$a.b");
+  });
+  it("chained optional access", () => {
+    expect(mjsql("$.a?.b?.c")).toEqual("$a.b.c");
+  });
+  it("optional method call", () => {
+    expect(mjsql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
+  });
+  it("optional bracket access", () => {
+    expect(mjsql("$.items?.[0]")).toEqual({ $arrayElemAt: ["$items", 0] });
+  });
+});
+
+describe("v4: .startsWith / .endsWith", () => {
+  it("startsWith maps to indexOf == 0", () => {
+    expect(mjsql('$.email.startsWith("admin")')).toEqual({
+      $eq: [{ $indexOfCP: ["$email", "admin"] }, 0],
+    });
+  });
+  it("endsWith maps to substring equality at the tail", () => {
+    expect(mjsql('$.file.endsWith(".pdf")')).toEqual({
+      $eq: [
+        {
+          $substrCP: [
+            "$file",
+            { $subtract: [{ $strLenCP: "$file" }, { $strLenCP: ".pdf" }] },
+            { $strLenCP: ".pdf" },
+          ],
+        },
+        ".pdf",
+      ],
+    });
+  });
+});
+
+describe("v4: .charAt", () => {
+  it("charAt(i)", () => {
+    expect(mjsql("$.name.charAt(2)")).toEqual({ $substrCP: ["$name", 2, 1] });
+  });
+});
+
+describe("v4: array .indexOf", () => {
+  it("on array literal → $indexOfArray", () => {
+    expect(mjsql('["a", "b", "c"].indexOf($.x)')).toEqual({
+      $indexOfArray: [["a", "b", "c"], "$x"],
+    });
+  });
+  it("on string field stays $indexOfCP (back-compat)", () => {
+    expect(mjsql('$.email.indexOf("@")')).toEqual({ $indexOfCP: ["$email", "@"] });
+  });
+});
+
+describe("v4: array .concat", () => {
+  it("on array literal → $concatArrays", () => {
+    expect(mjsql("[1, 2].concat([3, 4])")).toEqual({
+      $concatArrays: [
+        [1, 2],
+        [3, 4],
+      ],
+    });
+  });
+  it("on string field → $concat", () => {
+    expect(mjsql("$.first.trim().concat($.last)")).toEqual({
+      $concat: [{ $trim: { input: "$first" } }, "$last"],
+    });
+  });
+});
+
+describe("v4: .join", () => {
+  it("default separator (,)", () => {
+    expect(mjsql("$.tags.join()")).toEqual({
+      $reduce: {
+        input: "$tags",
+        initialValue: "",
+        in: {
+          $cond: [
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", ",", { $toString: "$$this" }] },
+          ],
+        },
+      },
+    });
+  });
+  it("custom separator", () => {
+    expect(mjsql('$.tags.join(" | ")')).toEqual({
+      $reduce: {
+        input: "$tags",
+        initialValue: "",
+        in: {
+          $cond: [
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", " | ", { $toString: "$$this" }] },
+          ],
+        },
+      },
+    });
+  });
+});
+
+describe("v4: .flat / .flatMap", () => {
+  it("flat() one level", () => {
+    expect(mjsql("$.nested.flat()")).toEqual({
+      $reduce: {
+        input: "$nested",
+        initialValue: [],
+        in: { $concatArrays: ["$$value", "$$this"] },
+      },
+    });
+  });
+  it("flat(1) explicit depth", () => {
+    expect(mjsql("$.nested.flat(1)")).toEqual({
+      $reduce: {
+        input: "$nested",
+        initialValue: [],
+        in: { $concatArrays: ["$$value", "$$this"] },
+      },
+    });
+  });
+  it("flat(2) is rejected", () => {
+    expect(() => mjsql("$.nested.flat(2)")).toThrow(/depth=1/);
+  });
+  it("flatMap with lambda", () => {
+    expect(mjsql("$.docs.flatMap(d => d.tags)")).toEqual({
+      $reduce: {
+        input: { $map: { input: "$docs", as: "d", in: "$$d.tags" } },
+        initialValue: [],
+        in: { $concatArrays: ["$$value", "$$this"] },
+      },
+    });
+  });
+});
+
+describe("v4: date .getTime / .toISOString", () => {
+  it("getTime", () => {
+    expect(mjsql("$.ts.getTime()")).toEqual({ $toLong: "$ts" });
+  });
+  it("toISOString", () => {
+    expect(mjsql("$.ts.toISOString()")).toEqual({
+      $dateToString: { date: "$ts", format: "%Y-%m-%dT%H:%M:%S.%LZ" },
+    });
+  });
+});
+
+describe("v4: Math.sign / log2 / log10 / hypot / cbrt / random / constants", () => {
+  it("Math.sign maps to $cmp(x, 0)", () => {
+    expect(mjsql("Math.sign($.x)")).toEqual({ $cmp: ["$x", 0] });
+  });
+  it("Math.log2", () => {
+    expect(mjsql("Math.log2($.x)")).toEqual({ $log: ["$x", 2] });
+  });
+  it("Math.log10", () => {
+    expect(mjsql("Math.log10($.x)")).toEqual({ $log10: "$x" });
+  });
+  it("Math.cbrt", () => {
+    expect(mjsql("Math.cbrt($.x)")).toEqual({ $pow: ["$x", { $divide: [1, 3] }] });
+  });
+  it("Math.hypot 2-arg", () => {
+    expect(mjsql("Math.hypot($.a, $.b)")).toEqual({
+      $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] },
+    });
+  });
+  it("Math.random", () => {
+    expect(mjsql("Math.random()")).toEqual({ $rand: {} });
+  });
+  it("Math.PI", () => {
+    expect(mjsql("Math.PI")).toEqual(Math.PI);
+  });
+  it("Math.E", () => {
+    expect(mjsql("Math.E")).toEqual(Math.E);
+  });
+});
+
+describe("v4: numeric separators", () => {
+  it("integer with separator", () => {
+    expect(mjsql("$abs(1_000_000)")).toEqual({ $abs: 1000000 });
+  });
+  it("float with separator", () => {
+    expect(mjsql("$abs(1_234.567_89)")).toEqual({ $abs: 1234.56789 });
+  });
+  it("exponent with separator", () => {
+    expect(mjsql("$abs(1_2e3)")).toEqual({ $abs: 12000 });
+  });
+  it("trailing _ rejected", () => {
+    expect(() => mjsql("1_")).toThrow(/Numeric separator/);
+  });
+  it("double __ rejected", () => {
+    expect(() => mjsql("1__0")).toThrow(/Numeric separator/);
+  });
+});
+
+describe("v4: computed object keys", () => {
+  it("single computed key", () => {
+    expect(mjsql("$abs({ [$.k]: 1 })")).toEqual({
+      $abs: { $arrayToObject: [["$k", 1]] },
+    });
+  });
+  it("mixed static and computed keys", () => {
+    expect(mjsql("$abs({ a: 1, [$.k]: 2 })")).toEqual({
+      $abs: {
+        $arrayToObject: [
+          ["a", 1],
+          ["$k", 2],
+        ],
+      },
+    });
+  });
+});
+
+describe("v4: spread in operator args", () => {
+  it("$concatArrays with spread", () => {
+    expect(mjsql("$concatArrays(...$.arrs)")).toEqual({ $concatArrays: "$arrs" });
+  });
+  it("Object.assign with spread", () => {
+    expect(mjsql("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
+  });
+});
+
+describe("v4: shorthand object properties", () => {
+  it("inside lambda body", () => {
+    expect(mjsql("$.items.map(x => ({ x }))")).toEqual({
+      $map: { input: "$items", as: "x", in: { x: "$$x" } },
+    });
+  });
+  it("two shorthand props", () => {
+    expect(mjsql("$.items.map(x => ({ x, x }))")).toEqual({
+      $map: { input: "$items", as: "x", in: { x: "$$x" } },
+    });
+  });
+  it("shorthand outside lambda scope errors", () => {
+    expect(() => mjsql("({ foo })")).toThrow(/Unknown identifier/);
+  });
+});

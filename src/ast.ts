@@ -3,14 +3,21 @@ export type SpreadElement = {
   argument: Expr;
 };
 
+export type StaticKey = { kind: "static"; name: string };
+export type ComputedKey = { kind: "computed"; expr: Expr };
+export type ObjectKey = StaticKey | ComputedKey;
+
 export type KeyValueEntry = {
   type: "KeyValueEntry";
-  key: string;
+  key: ObjectKey;
   value: Expr;
 };
 
 export type ObjectEntry = KeyValueEntry | SpreadElement;
 export type ArrayElement = Expr | SpreadElement;
+
+/** Argument position that may be a spread (call sites that allow `...x`) */
+export type CallArg = Expr | SpreadElement;
 
 export type BinaryOp =
   | "+"
@@ -40,7 +47,7 @@ export type Expr =
       name: string;
       /** positional = args are expressions; object = single ObjectLiteral arg */
       style: "positional" | "object";
-      args: Expr[];
+      args: CallArg[];
     }
   | { type: "FieldRef"; path: string }
   | { type: "NumberLiteral"; value: number }
@@ -49,6 +56,7 @@ export type Expr =
   | { type: "NullLiteral" }
   | { type: "ArrayLiteral"; elements: ArrayElement[] }
   | { type: "ObjectLiteral"; entries: ObjectEntry[] }
+  | { type: "TemplateLiteral"; quasis: string[]; expressions: Expr[] }
   | { type: "BinaryExpr"; op: BinaryOp; left: Expr; right: Expr }
   | { type: "UnaryExpr"; op: UnaryOp; operand: Expr }
   | { type: "TernaryExpr"; condition: Expr; consequent: Expr; alternate: Expr }
@@ -56,13 +64,15 @@ export type Expr =
   | { type: "RegexLiteral"; pattern: string; flags: string }
   | { type: "ParamRef"; name: string }
   | { type: "MemberAccess"; object: Expr; member: string }
-  | { type: "MethodCall"; object: Expr; method: string; args: Expr[] }
+  | { type: "MethodCall"; object: Expr; method: string; args: CallArg[] }
   | { type: "Lambda"; params: string[]; body: Expr }
   | { type: "TypeofExpr"; operand: Expr }
   | { type: "NewDate"; arg: Expr | null }
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr }
-  | { type: "MathCall"; method: MathMethod; args: Expr[] }
-  | { type: "ObjectCall"; method: ObjectMethod; args: Expr[] };
+  | { type: "MathCall"; method: MathMethod; args: CallArg[] }
+  | { type: "MathConst"; name: MathConstant }
+  | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[] }
+  | { type: "DateNow" };
 
 export type TypeCastOp = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat";
 export type MathMethod =
@@ -74,5 +84,14 @@ export type MathMethod =
   | "sqrt"
   | "exp"
   | "log"
-  | "trunc";
-export type ObjectMethod = "keys" | "values" | "entries" | "assign";
+  | "log2"
+  | "log10"
+  | "trunc"
+  | "min"
+  | "max"
+  | "sign"
+  | "hypot"
+  | "cbrt"
+  | "random";
+export type MathConstant = "PI" | "E";
+export type ObjectMethod = "keys" | "values" | "entries" | "assign" | "fromEntries";

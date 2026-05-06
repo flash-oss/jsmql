@@ -9,6 +9,7 @@ export const enum TokenType {
   Comma = "Comma", // ,
   Colon = "Colon", // :
   Dot = "Dot", // .
+  QuestDot = "QuestDot", // ?.  (optional chaining)
   DollarDot = "DollarDot", // $.
   Dollar = "Dollar", // $ (standalone, before IDENT for operator)
   Spread = "Spread", // ...
@@ -49,6 +50,12 @@ export const enum TokenType {
   Null = "Null",
   RegexLiteral = "RegexLiteral", // /pattern/flags
 
+  // Template literals
+  TemplateStart = "TemplateStart", // opening `
+  TemplateChars = "TemplateChars", // literal chunk between ` and ${ (or ` and `)
+  TemplateExprStart = "TemplateExprStart", // ${
+  TemplateEnd = "TemplateEnd", // closing `
+
   // Keywords
   In = "In", // in
   New = "New", // new
@@ -88,6 +95,7 @@ const VALUE_ENDING_TYPES = new Set<TokenType>([
   TokenType.Ident,
   TokenType.RParen,
   TokenType.RBracket,
+  TokenType.TemplateEnd,
 ]);
 
 export class Lexer {
@@ -95,6 +103,13 @@ export class Lexer {
   private readonly tokens: Token[] = [];
   private tokenIdx = 0;
   private lastTokenType: TokenType | null = null;
+
+  // Brace depth tracking for template literal expression interpolation.
+  // Each entry on templateBraceDepths is the brace depth at which a `${` was opened —
+  // when a `}` would bring us back to that depth, it closes the template expression
+  // instead of being a normal RBrace.
+  private braceDepth = 0;
+  private templateBraceDepths: number[] = [];
 
   constructor(private readonly src: string) {
     this.tokenize();
@@ -168,10 +183,22 @@ export class Lexer {
       }
       if (ch === "{") {
         this.emit(TokenType.LBrace, "{", start, 1);
+        this.braceDepth++;
         continue;
       }
       if (ch === "}") {
+        // If this } closes a template expression, switch back to template-chunk reading
+        if (
+          this.templateBraceDepths.length > 0 &&
+          this.templateBraceDepths[this.templateBraceDepths.length - 1] === this.braceDepth
+        ) {
+          this.templateBraceDepths.pop();
+          this.pos++; // consume }
+          this.readTemplateChunk(start);
+          continue;
+        }
         this.emit(TokenType.RBrace, "}", start, 1);
+        this.braceDepth--;
         continue;
       }
       if (ch === ",") {
@@ -291,10 +318,16 @@ export class Lexer {
         );
       }
 
-      // ?? before ?
+      // ?? before ?. before ?
       if (ch === "?") {
         if (ch2 === "?") {
           this.emit(TokenType.QuestQuest, "??", start, 2);
+          continue;
+        }
+        // ?. — optional chaining. Per JS, ?. followed by a digit is two tokens (?, then .digit),
+        // but our lexer rejects bare leading-dot decimals anyway. Only emit ?. when a non-digit follows.
+        if (ch2 === "." && !this.isDigit(ch3)) {
+          this.emit(TokenType.QuestDot, "?.", start, 2);
           continue;
         }
         this.emit(TokenType.Quest, "?", start, 1);
@@ -333,6 +366,14 @@ export class Lexer {
       // Strings
       if (ch === '"' || ch === "'") {
         this.pushToken(this.readString(start));
+        continue;
+      }
+
+      // Template literal
+      if (ch === "`") {
+        this.pushToken({ type: TokenType.TemplateStart, value: "`", pos: start });
+        this.pos++; // consume opening `
+        this.readTemplateChunk(start);
         continue;
       }
 
@@ -376,20 +417,54 @@ export class Lexer {
   private readNumber(start: number): Token {
     const src = this.src;
     let i = this.pos;
-    while (i < src.length && this.isDigit(src[i])) i++;
+    i = this.consumeDigitsWithSeparators(i, start);
     // Only consume the dot if the next char is also a digit — prevents 0.name being lexed as float
     if (i < src.length && src[i] === "." && i + 1 < src.length && this.isDigit(src[i + 1])) {
       i++;
-      while (i < src.length && this.isDigit(src[i])) i++;
+      i = this.consumeDigitsWithSeparators(i, start);
     }
     if (i < src.length && (src[i] === "e" || src[i] === "E")) {
       i++;
       if (i < src.length && (src[i] === "+" || src[i] === "-")) i++;
-      while (i < src.length && this.isDigit(src[i])) i++;
+      i = this.consumeDigitsWithSeparators(i, start);
     }
-    const value = src.slice(this.pos, i);
+    const raw = src.slice(this.pos, i);
+    // Numeric separators: strip underscores. _ is only valid between digits — readNumber
+    // never starts on _ (isIdentStart-routed), and consumeDigitsWithSeparators rejects
+    // trailing/adjacent underscores, so a simple replace is safe here.
+    const value = raw.replace(/_/g, "");
     this.pos = i;
     return { type: TokenType.Number, value, pos: start };
+  }
+
+  /**
+   * Consume a run of digits, allowing single underscores between them as numeric
+   * separators (1_000_000). Rejects leading, trailing, or doubled underscores.
+   */
+  private consumeDigitsWithSeparators(i: number, start: number): number {
+    const src = this.src;
+    if (i >= src.length || !this.isDigit(src[i])) return i;
+    i++;
+    while (i < src.length) {
+      const ch = src[i];
+      if (this.isDigit(ch)) {
+        i++;
+        continue;
+      }
+      if (ch === "_") {
+        const next = src[i + 1];
+        if (next === undefined || !this.isDigit(next)) {
+          throw new LexError(
+            `Numeric separator '_' must be between two digits (at position ${i})`,
+            start,
+          );
+        }
+        i++; // consume _
+        continue;
+      }
+      break;
+    }
+    return i;
   }
 
   private readString(start: number): Token {
@@ -433,6 +508,68 @@ export class Lexer {
     }
     this.pos++;
     return { type: TokenType.String, value: result, pos: start };
+  }
+
+  /**
+   * Read a chunk of a template literal — characters between the previous boundary
+   * (opening `, or `${...}`) and the next boundary (closing `, or `${`).
+   *
+   * Always emits a TemplateChars token (possibly empty) followed by either:
+   *   - TemplateExprStart for `${`, then returns to caller (main lex loop resumes
+   *     normal lexing inside the expression — the matching `}` re-enters this method)
+   *   - TemplateEnd for closing backtick, then returns
+   */
+  private readTemplateChunk(initialStart: number): void {
+    const src = this.src;
+    const chunkStart = this.pos;
+    let result = "";
+    while (this.pos < src.length) {
+      const ch = src[this.pos];
+      if (ch === "`") {
+        this.pushToken({ type: TokenType.TemplateChars, value: result, pos: chunkStart });
+        this.pushToken({ type: TokenType.TemplateEnd, value: "`", pos: this.pos });
+        this.pos++;
+        return;
+      }
+      if (ch === "$" && src[this.pos + 1] === "{") {
+        this.pushToken({ type: TokenType.TemplateChars, value: result, pos: chunkStart });
+        this.pushToken({ type: TokenType.TemplateExprStart, value: "${", pos: this.pos });
+        this.pos += 2;
+        this.templateBraceDepths.push(this.braceDepth);
+        return;
+      }
+      if (ch === "\\") {
+        this.pos++;
+        const esc = src[this.pos];
+        switch (esc) {
+          case "n":
+            result += "\n";
+            break;
+          case "t":
+            result += "\t";
+            break;
+          case "r":
+            result += "\r";
+            break;
+          case "\\":
+            result += "\\";
+            break;
+          case "`":
+            result += "`";
+            break;
+          case "$":
+            result += "$";
+            break;
+          default:
+            result += esc;
+        }
+        this.pos++;
+        continue;
+      }
+      result += ch;
+      this.pos++;
+    }
+    throw new LexError(`Unterminated template literal at position ${initialStart}`, initialStart);
   }
 
   private readRegex(start: number): Token {
