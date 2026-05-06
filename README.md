@@ -59,21 +59,32 @@ $.nickname ?? $.firstName ?? "Anonymous"
 // String methods
 $.email.toLowerCase().trim()
 $.title.split(" ").at(0)
-$.file.endsWith(".pdf")
+$.file.name.endsWith(".pdf") || $.file.name.startsWith("draft-")
+$.code.charAt(0).toUpperCase()
 
 // Array methods with lambdas
 $.orders.filter(o => o.total > 100).map(o => o.id)
 $.scores.reduce((acc, x) => acc + x, 0)
 $.docs.flatMap(d => d.tags).join(", ")
+$.posts.map(p => p.tags).flat()
+[".pdf", ".docx"].includes($.file.ext)
 
-// Math, typeof, new Date, type casts
-Math.min(...$.scores)
-Math.floor($.rating)
+// Math, typeof, type casts, constants
+Math.min(...$.scores)              // spread args
+Math.hypot($.dx, $.dy)             // Euclidean distance
+Math.log10($.amplitude) * 20       // signal in dB
+Math.PI * $.radius ** 2            // Math.PI / Math.E constants
 typeof $.field == "string" ? $.field.trim() : String($.field)
+Array.isArray($.tags) && $.tags.length > 0
+
+// Dates
+Date.now() - $.createdAt.getTime()
+$.event.ts.toISOString()
 $dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })
 
 // Numeric separators and computed object keys
 $.price <= 1_000_000
+{ [$.dynamicKey]: $.value, count: 1 }
 Object.fromEntries($.metrics.map(m => [m.name, m.value]))
 ```
 

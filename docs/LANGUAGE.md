@@ -122,13 +122,20 @@ Backtick-delimited strings with `${expr}` interpolation, just like JS. They comp
 
 ```js
 `hello, ${$.name}!`
-// → { $concat: ["hello, ", "$name", "!"] }
-
-`${$.first} ${$.last}`
-// → { $concat: ["$first", " ", "$last"] }
+// → { $concat: ["hello, ", { $toString: "$name" }, "!"] }
 
 `total: ${$.a + $.b}`
-// → { $concat: ["total: ", { $add: ["$a", "$b"] }] }
+// → { $concat: ["total: ", { $toString: { $add: ["$a", "$b"] } }] }
+```
+
+Interpolated expressions are wrapped with `$toString` to match JS coercion semantics —
+`` `count: ${$.n}` `` works whether `$.n` is a number or a string. Expressions that are
+statically known to produce strings (string literals, `.toLowerCase()`, `String(x)`,
+nested template literals, etc.) skip the wrap to keep the output compact:
+
+```js
+`name=${$.name.toLowerCase()}`
+// → { $concat: ["name=", { $toLower: "$name" }] }     // no $toString — already a string
 ```
 
 Templates with no expressions resolve to plain strings. Escape sequences support `\\`, `` \` ``, `\$`, `\n`, `\t`, `\r`. Templates nest: `` `outer ${`inner ${$.x}`}` `` works.
@@ -209,19 +216,34 @@ $.in               // field literally named "in" (no conflict with operator)
 
 ### Bracket Access
 
-Use square brackets for computed index access on arrays:
+Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
 ```js
-$.items[0]         // first element
-$.items[$.idx]     // element at dynamic index
-$.matrix[$.row][$.col]  // nested access
+$.items.map(x => x.id)[0]     // known array → { $arrayElemAt: [{ $map: ... }, 0] }
+[1, 2, 3][$.idx]              // known array → { $arrayElemAt: [[1, 2, 3], "$idx"] }
 ```
 
-Bracket access maps to MongoDB's `$arrayElemAt`:
+For a bare `$.field`, mjsql can't tell at compile time whether you mean array indexing
+or object dynamic-key lookup, so it emits a runtime `$cond` on `$isArray` that picks
+the right form at query time:
+
 ```js
-$.items[0]         // { $arrayElemAt: ["$items", 0] }
-$.items[$.idx]     // { $arrayElemAt: ["$items", "$idx"] }
+$.items[0]
+// → { $cond: [
+//       { $isArray: "$items" },
+//       { $arrayElemAt: ["$items", 0] },
+//       { $getField: { field: 0, input: "$items" } }
+//     ] }
+
+$.config["host"]
+// → { $cond: [
+//       { $isArray: "$config" },
+//       { $arrayElemAt: ["$config", "host"] },
+//       { $getField: { field: "host", input: "$config" } }
+//     ] }
 ```
+
+If you want compact output, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
 ### Optional Chaining
 
@@ -229,7 +251,8 @@ $.items[$.idx]     // { $arrayElemAt: ["$items", "$idx"] }
 
 ```js
 $.user?.address?.city                // → "$user.address.city"
-$.items?.[0]                         // → { $arrayElemAt: ["$items", 0] }
+$.items?.[0]                         // → same as $.items[0] above (runtime $cond)
+$.items.reverse()?.[0]               // → known array → { $arrayElemAt: [{ $reverseArray: "$items" }, 0] }
 $.name?.trim()                       // → { $trim: { input: "$name" } }
 ```
 
@@ -323,14 +346,14 @@ $.name.toUpperCase()               // { $toUpper: "$name" }
 $.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.csv.split(",")                   // { $split: ["$csv", ","] }
-$.email.indexOf("@")               // { $indexOfCP: ["$email", "@"] }
+$.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
-$.email.includes("@")              // { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] }
+$.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0] }
 $.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: ["$email", "admin@"] }, 0] }
 $.file.endsWith(".pdf")            // substring-equality at the tail (see below)
 $.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
-$.first.concat(" ", $.last)        // { $concat: ["$first", " ", "$last"] }
+$.first.trim().concat(" ", $.last) // { $concat: [{ $trim: ... }, " ", "$last"] }
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
 
 // Property access — type-aware dispatch
@@ -368,7 +391,22 @@ $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
 
-**Type-aware dispatch.** `.includes()`, `.indexOf()`, and `.concat()` work on both strings and arrays. When mjsql can prove the receiver is an array (e.g. an array literal, the result of `.split()`, etc.), it emits the array-typed form (`$in`, `$indexOfArray`, `$concatArrays`). Otherwise it falls back to the string-typed form. To force array semantics on an unknown field, wrap with `$first($.x)` after a `$.x.map(...)` or use the explicit `$in($.x, ...)` / `$indexOfArray($.x, ...)` operator forms.
+**Type-aware dispatch.** `.includes()`, `.indexOf()`, and `.concat()` work on both strings and arrays:
+
+- **Statically known array** (array literal, `.split()`, `.map()`, `.filter()`, `Object.values()`, etc.) → emits the array form (`$in`, `$indexOfArray`, `$concatArrays`).
+- **Statically known string** (`.toLowerCase()`, `String(x)`, `+` in string context, template literal, etc.) → emits the string form (`$indexOfCP` / `$concat`).
+- **Unknown receiver** (a bare `$.field`, a ternary, etc.) → emits a runtime `$cond` on `$isArray` so the right form runs at query time. The output is more verbose, but works whether the field is a string or an array.
+
+```js
+$.tags.includes("active")
+// → { $cond: [
+//       { $isArray: "$tags" },
+//       { $in: ["active", "$tags"] },
+//       { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] }
+//     ] }
+```
+
+If you know the type at design time and want compact output, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` for string, `$.tags.slice().includes(...)` for array), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
 
 **`.flat()` depth.** Only `flat()` and `flat(1)` are supported — MongoDB has no recursive flatten primitive, so deeper depths are rejected at compile time.
 

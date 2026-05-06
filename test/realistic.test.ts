@@ -319,9 +319,11 @@ describe("financial: invoice line total with compound tax", () => {
 // ── User display ──────────────────────────────────────────────────────────────
 
 describe("user display: full name with null fallback", () => {
-  it("uses ?? chaining and bracket index access", () => {
-    // Display first name, falling back to first alias, then "anonymous"
-    const result = mjsql('$.firstName ?? $.aliases[0] ?? "anonymous"');
+  it("uses ?? chaining and .at(0) for the first alias", () => {
+    // Display first name, falling back to first alias, then "anonymous".
+    // .at(0) compiles to a compact $arrayElemAt; $.aliases[0] would emit a
+    // runtime $cond on $isArray since the receiver type isn't statically known.
+    const result = mjsql('$.firstName ?? $.aliases.at(0) ?? "anonymous"');
 
     expect(result).toEqual({
       $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
@@ -347,7 +349,7 @@ describe("location: full address formatter", () => {
         $.postcode
       ]
         .filter(x => typeof x === "string" && x !== "")
-        .reduce((acc, x) => acc == "" ? x : acc + " " + x, "")
+        .join(" ")
     `);
 
     expect(result).toEqual({
@@ -379,7 +381,21 @@ describe("location: full address formatter", () => {
         },
         initialValue: "",
         in: {
-          $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }],
+          $cond: [
+            { $eq: ["$$value", ""] },
+            {
+              $toString: "$$this",
+            },
+            {
+              $concat: [
+                "$$value",
+                " ",
+                {
+                  $toString: "$$this",
+                },
+              ],
+            },
+          ],
         },
       },
     });
@@ -468,29 +484,30 @@ describe("v4: invoice line greeting (template literal + optional chain + .starts
     expect(result).toEqual({
       $concat: [
         "Hi ",
-        { $ifNull: ["$customer.firstName", "there"] },
+        { $toString: { $ifNull: ["$customer.firstName", "there"] } },
         " — your ",
         {
-          $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+          $toString: {
+            $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+          },
         },
         "invoice ",
-        "$invoice.id",
+        { $toString: "$invoice.id" },
         " is ready",
       ],
     });
   });
 });
 
-describe("v4: analytics — flatMap + Math.max + Date.now", () => {
-  it("computes seconds-since-most-recent-event across all sessions", () => {
+describe("v4: analytics — flatMap + Math.max + .getTime", () => {
+  it("computes the most-recent-event timestamp across all sessions", () => {
     // For a doc with sessions: [{ events: [{ ts }, ...] }, ...], extract the
     // newest event timestamp and report seconds since now.
     const result = mjsql(`
-      ($.sessions
+      $.sessions
         .flatMap(s => s.events)
         .map(e => e.ts.getTime())
         .reduce((acc, t) => Math.max(acc, t), 0)
-      )
     `);
 
     expect(result).toEqual({
@@ -577,6 +594,180 @@ describe("flex-shape accumulators in realistic pipelines", () => {
     const result = mjsql("$mergeObjects($.base, $.patch)");
     expect(result).toEqual({
       $mergeObjects: ["$base", "$patch"],
+    });
+  });
+});
+
+describe("v4: file upload validation (.includes on array literal + .endsWith + numeric separator)", () => {
+  it("checks extension whitelist, name match, and size cap", () => {
+    // Reject upload unless the lowercased extension is in the allowlist,
+    // the filename actually ends with that extension, and size is ≤ 25 MB.
+    const result = mjsql(`
+      [".jpg", ".png", ".pdf", ".docx"].includes($.file.ext.toLowerCase()) &&
+      $.file.name.endsWith($.file.ext) &&
+      $.file.size <= 25_000_000
+    `);
+
+    expect(result).toEqual({
+      $and: [
+        { $in: [{ $toLower: "$file.ext" }, [".jpg", ".png", ".pdf", ".docx"]] },
+        {
+          $eq: [
+            {
+              $substrCP: [
+                "$file.name",
+                {
+                  $subtract: [{ $strLenCP: "$file.name" }, { $strLenCP: "$file.ext" }],
+                },
+                { $strLenCP: "$file.ext" },
+              ],
+            },
+            "$file.ext",
+          ],
+        },
+        { $lte: ["$file.size", 25000000] },
+      ],
+    });
+  });
+});
+
+describe("v4: score range with spread + Array.isArray guard", () => {
+  it("computes max-min via spread, falling back to 0 when scores is missing", () => {
+    // Using ...spread to pass the array as variadic args to Math.max / Math.min.
+    // Array.isArray defends against documents where scores isn't an array.
+    const result = mjsql(`
+      Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0
+    `);
+
+    expect(result).toEqual({
+      $cond: [
+        { $isArray: "$scores" },
+        { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] },
+        0,
+      ],
+    });
+  });
+});
+
+describe("v4: days since event (Date.now + .getTime + numeric separator)", () => {
+  it("computes whole days elapsed since an event timestamp", () => {
+    // Date.now() returns ms since epoch — same as JS — and so does .getTime().
+    // 86_400_000 = 24 * 60 * 60 * 1000 ms in a day.
+    const result = mjsql("Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)");
+
+    expect(result).toEqual({
+      $floor: {
+        $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000],
+      },
+    });
+  });
+});
+
+describe("v4: audit log line (template literal + .toISOString + .charAt + .toUpperCase)", () => {
+  it("formats an ISO-timestamped log line with a single-letter level prefix", () => {
+    // Render lines like "2024-09-01T12:30:00.000Z [E] disk full".
+    const result = mjsql(
+      "`${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`",
+    );
+
+    expect(result).toEqual({
+      $concat: [
+        { $dateToString: { date: "$event.ts", format: "%Y-%m-%dT%H:%M:%S.%LZ" } },
+        " [",
+        { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
+        "] ",
+        // $.event.message is a FieldRef of unknown type — wrapped to avoid runtime
+        // errors if it isn't a string.
+        { $toString: "$event.message" },
+      ],
+    });
+  });
+});
+
+describe("v4: tag aggregation (.flat + .join)", () => {
+  it("collects all post tags into a single comma-separated string", () => {
+    // Posts each carry a tags array; flatten them all into one list and render as CSV.
+    const result = mjsql('$.posts.map(p => p.tags).flat().join(", ")');
+
+    expect(result).toEqual({
+      $reduce: {
+        input: {
+          $reduce: {
+            input: { $map: { input: "$posts", as: "p", in: "$$p.tags" } },
+            initialValue: [],
+            in: { $concatArrays: ["$$value", "$$this"] },
+          },
+        },
+        initialValue: "",
+        in: {
+          $cond: [
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", ", ", { $toString: "$$this" }] },
+          ],
+        },
+      },
+    });
+  });
+});
+
+describe("v4: scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)", () => {
+  it("derives geometric, audio, and trend metrics in a single $project shape", () => {
+    // distance: 2D Euclidean distance from origin
+    // octave:   octaves above A4 (440 Hz)
+    // decibels: amplitude relative to 1.0 in dB
+    // fovRad:   field-of-view degrees converted to radians
+    // growthFactor: continuous-compound multiplier for a given rate
+    // trend:    -1 / 0 / +1 indicator from period-over-period delta
+    // cubeSide: characteristic length from a 3D volume
+    const result = mjsql(`
+      {
+        distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),
+        octave: Math.log2($.frequency / 440),
+        decibels: Math.log10($.amplitude) * 20,
+        fovRad: $.fovDeg * Math.PI / 180,
+        growthFactor: Math.E ** $.rate,
+        trend: Math.sign($.delta),
+        cubeSide: Math.cbrt($.volume)
+      }
+    `);
+
+    expect(result).toEqual({
+      distance: {
+        $sqrt: {
+          $add: [
+            { $pow: [{ $subtract: ["$point.x", "$origin.x"] }, 2] },
+            { $pow: [{ $subtract: ["$point.y", "$origin.y"] }, 2] },
+          ],
+        },
+      },
+      octave: { $log: [{ $divide: ["$frequency", 440] }, 2] },
+      decibels: { $multiply: [{ $log10: "$amplitude" }, 20] },
+      fovRad: { $divide: [{ $multiply: ["$fovDeg", Math.PI] }, 180] },
+      growthFactor: { $pow: [Math.E, "$rate"] },
+      trend: { $cmp: ["$delta", 0] },
+      cubeSide: { $pow: ["$volume", { $divide: [1, 3] }] },
+    });
+  });
+});
+
+describe("v4: dynamic pivot row (computed key in literal + shorthand property)", () => {
+  it("turns each product into a dict keyed by category, plus the original record", () => {
+    // [{category:'A', price:1}] → [{ A: 1, p: { category:'A', price:1 } }]
+    // The shorthand `p` is sugar for `p: p`, which resolves to `p: $$p` in lambda scope.
+    const result = mjsql("$.products.map(p => ({ [p.category]: p.price, p }))");
+
+    expect(result).toEqual({
+      $map: {
+        input: "$products",
+        as: "p",
+        in: {
+          $arrayToObject: [
+            ["$$p.category", "$$p.price"],
+            ["p", "$$p"],
+          ],
+        },
+      },
     });
   });
 });
