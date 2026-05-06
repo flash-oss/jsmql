@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mjsql, validate, mql } from "../src/index.js";
+import { mjsql, validate, mql } from "../src/index.ts";
 
 describe("basic literals", () => {
   it("passes number through", () => {
