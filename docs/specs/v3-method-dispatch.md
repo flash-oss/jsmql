@@ -1,6 +1,6 @@
-# v3 Method Dispatch
+# Method Dispatch (v3 + v4 additions)
 
-This document describes how method calls, property access, and lambdas are implemented in v3.
+This document describes how method calls, property access, lambdas, and template literals are implemented. The original v3 method set is preserved unchanged; v4 added new methods, type-aware dispatch for `.includes`/`.indexOf`/`.concat`, and a few new node types.
 
 ## Field path reconstruction via `asFieldPath()`
 
@@ -35,7 +35,10 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.indexOf(str)` | `{ $indexOfCP: [expr, str] }` |
 | `.replace(find, rep)` | `{ $replaceOne: { input, find, replacement } }` |
 | `.replaceAll(find, rep)` | `{ $replaceAll: { input, find, replacement } }` |
-| `.includes(str)` | `{ $gte: [{ $indexOfCP: [expr, str] }, 0] }` |
+| `.startsWith(s)` | `{ $eq: [{ $indexOfCP: [expr, s] }, 0] }` |
+| `.endsWith(s)` | substring-equality at the tail (computed from `$strLenCP`) |
+| `.charAt(n)` | `{ $substrCP: [expr, n, 1] }` |
+| `.includes(str)` | `{ $gte: [{ $indexOfCP: [expr, str] }, 0] }` (string/unknown receiver) |
 | `.match(/pat/flags)` | `{ $regexMatch: { input, regex: "pat", options: "flags" } }` |
 | `.match("pat")` | `{ $regexMatch: { input, regex: "pat" } }` |
 | `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: [{ $isArray: expr }, { $size: expr }, { $strLenCP: expr }] }` otherwise |
@@ -48,6 +51,13 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.slice(start)` | `{ $slice: [expr, start] }` |
 | `.slice(start, count)` | `{ $slice: [expr, start, count] }` |
 | `.reverse()` | `{ $reverseArray: expr }` |
+| `.includes(x)` *(array receiver)* | `{ $in: [x, expr] }` |
+| `.indexOf(x)` *(array receiver)* | `{ $indexOfArray: [expr, x] }` |
+| `.concat(...args)` *(array receiver)* | `{ $concatArrays: [expr, ...args] }` |
+| `.concat(...args)` *(string receiver)* | `{ $concat: [expr, ...args] }` |
+| `.join(sep?)` | `$reduce` over the array, prepending `sep` for non-first elements |
+| `.flat()` / `.flat(1)` | `$reduce` with `$concatArrays` |
+| `.flatMap(x => body)` | `$reduce` over `$map` |
 
 ### Array methods (with lambda)
 
@@ -72,6 +82,8 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.getMinutes()` | `{ $minute: expr }` | |
 | `.getSeconds()` | `{ $second: expr }` | |
 | `.getMilliseconds()` | `{ $millisecond: expr }` | |
+| `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS) |
+| `.toISOString()` | `{ $dateToString: { date: expr, format: "%Y-%m-%dT%H:%M:%S.%LZ" } }` | |
 
 ## Lambda scoping (`GenerateCtx`)
 
@@ -123,8 +135,44 @@ The lexer tracks `lastTokenType`. When `/` is encountered:
 
 In codegen, when `.match(pattern)` receives a `RegexLiteral` arg, the pattern and flags are emitted directly into `{ $regexMatch: { input, regex, options } }`. When the arg is any other expression, it is generated normally as the `regex` value.
 
-## `.length` — always string length
+## `.length` — type-aware
 
-`.length` is always mapped to `$strLenCP` (string character length). There is no array length shortcut — use `$size($.array)` for array length. This is documented in `docs/LANGUAGE.md`.
+`.length` is dispatched on the receiver's static type:
 
-The check for `.length` happens before `asFieldPath()` in the `MemberAccess` codegen case, so even `$.name.length` maps to `{ $strLenCP: "$name" }` rather than the field path `"$name.length"`.
+- string-producing receiver → `{ $strLenCP: expr }`
+- array-producing receiver → `{ $size: expr }`
+- otherwise → runtime `$cond` on `$isArray`
+
+The check happens before `asFieldPath()` in the `MemberAccess` codegen case, so even `$.name.length` maps to a runtime-dispatch `$cond` rather than the field path `"$name.length"`.
+
+## v4: type-aware dispatch for `.includes` / `.indexOf` / `.concat`
+
+These three methods exist on both strings and arrays in JS. mjsql checks `isArrayProducing(receiver)` first — if the receiver is provably array-typed (array literal, `.split()` result, `.map()` result, etc.), the array form is emitted. Otherwise the string form is emitted (this is intentional for back-compat with v3, where `.includes` always meant `$indexOfCP`).
+
+The `ARRAY_RETURNING_METHODS` and `ARRAY_OUTPUT_OPS` sets in `codegen.ts` drive this detection. Adding a new array-producing method requires updating both sets.
+
+## v4: template literals
+
+`TemplateLiteral` is a new AST node with `quasis: string[]` and `expressions: Expr[]`, where `quasis.length === expressions.length + 1`. Codegen emits `$concat` over the interleaved chunks and expressions. Empty quasis are skipped to keep the output tidy.
+
+A template literal is always string-producing — it counts in the string-context `+` chain detection.
+
+## v4: optional chaining
+
+`?.` produces the same AST nodes as `.`. There is no separate "optional" marker — the codegen for member/method access is unchanged. This is correct because MongoDB's dotted-path semantics already null-pass through missing fields.
+
+## v4: object literals with computed or special entries
+
+`generateObjectLiteral(entries, ctx)` is the new entry point for object literals as values. If any entry has a computed key, it emits via `$arrayToObject` over a list of `[key, value]` pairs. Otherwise it falls through to the static-key fast path. `generateStaticObjectEntries` is still used for operator-style argument objects (`{ input, find, replacement }`) where keys are part of the wire format.
+
+The split between the two helpers is enforced inside `generateOperatorCall`: when an operator's registered shape is `object`, the static helper is used (and computed keys are rejected); otherwise the value helper is used.
+
+## v4: spread in call args
+
+`SpreadElement` was previously only valid in array/object literals. v4 extends it to call arg lists (`OperatorCall`, `MethodCall`, `MathCall`, `ObjectCall`). The `CallArg = Expr | SpreadElement` type is used for these arg arrays. `generateVariadicArgs(args, ctx)` decides between:
+
+1. No spread → flat array of generated values
+2. Single `...arg` → bare value
+3. Mixed → `{ $concatArrays: [...] }` with non-spread args wrapped in 1-element arrays
+
+`assertNoSpread()` is called in non-variadic operator paths (single/object/none shapes) to surface a clear error.

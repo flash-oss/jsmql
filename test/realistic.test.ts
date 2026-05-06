@@ -453,6 +453,107 @@ describe("mql template tag: parameterised threshold query", () => {
   });
 });
 
+// ── Modern JS features (v4) ───────────────────────────────────────────────────
+
+describe("v4: invoice line greeting (template literal + optional chain + .startsWith)", () => {
+  it("composes a personalised greeting with safe nested access", () => {
+    // Build a string like "Hi Ada — your VIP invoice INV-2024-001 is ready"
+    // using template literals, optional chaining for nested fields that may be missing,
+    // and .startsWith for a common prefix check.
+    const result = mjsql(
+      "`Hi ${$.customer?.firstName ?? 'there'} — your " +
+        "${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`",
+    );
+
+    expect(result).toEqual({
+      $concat: [
+        "Hi ",
+        { $ifNull: ["$customer.firstName", "there"] },
+        " — your ",
+        {
+          $cond: [{ $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, "VIP ", ""],
+        },
+        "invoice ",
+        "$invoice.id",
+        " is ready",
+      ],
+    });
+  });
+});
+
+describe("v4: analytics — flatMap + Math.max + Date.now", () => {
+  it("computes seconds-since-most-recent-event across all sessions", () => {
+    // For a doc with sessions: [{ events: [{ ts }, ...] }, ...], extract the
+    // newest event timestamp and report seconds since now.
+    const result = mjsql(`
+      ($.sessions
+        .flatMap(s => s.events)
+        .map(e => e.ts.getTime())
+        .reduce((acc, t) => Math.max(acc, t), 0)
+      )
+    `);
+
+    expect(result).toEqual({
+      $reduce: {
+        input: {
+          $map: {
+            input: {
+              $reduce: {
+                input: {
+                  $map: { input: "$sessions", as: "s", in: "$$s.events" },
+                },
+                initialValue: [],
+                in: { $concatArrays: ["$$value", "$$this"] },
+              },
+            },
+            as: "e",
+            in: { $toLong: "$$e.ts" },
+          },
+        },
+        initialValue: 0,
+        in: { $max: ["$$value", "$$this"] },
+      },
+    });
+  });
+});
+
+describe("v4: shopping cart total with numeric separators + .reduce", () => {
+  it("accumulates with a clearly-formatted threshold", () => {
+    // Cap line total at $10,000 (written as 10_000 for readability).
+    const result = mjsql("Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))");
+    expect(result).toEqual({
+      $min: [
+        10000,
+        {
+          $reduce: {
+            input: "$lines",
+            initialValue: 0,
+            in: {
+              $add: ["$$value", { $multiply: ["$$this.qty", "$$this.price"] }],
+            },
+          },
+        },
+      ],
+    });
+  });
+});
+
+describe("v4: pivot table row (computed keys + Object.fromEntries)", () => {
+  it("turns an array of {k,v} pairs into a wide row", () => {
+    // Aggregating an array of `{ name, value }` pairs into one object keyed by `name`.
+    const result = mjsql("Object.fromEntries($.metrics.map(m => [m.name, m.value]))");
+    expect(result).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: "$metrics",
+          as: "m",
+          in: ["$$m.name", "$$m.value"],
+        },
+      },
+    });
+  });
+});
+
 // ── validate() ────────────────────────────────────────────────────────────────
 
 describe("validate(): realistic error cases", () => {

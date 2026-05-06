@@ -58,18 +58,22 @@ An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 
 ### Valid Constructs
 
-- Literals: numbers, strings, booleans, `null`, arrays, objects
-- Spread: `[...arr]`, `{ ...obj }`
+- Literals: numbers (with numeric separators `1_000_000`), strings, booleans, `null`, arrays, objects
+- Template literals: `` `hello, ${$.name}!` ``
+- Spread: `[...arr]`, `{ ...obj }`, `Math.max(...$.scores)`
 - Field references: `$.fieldName`, `$.nested.path`
+- Optional chaining: `$.a?.b`, `$.a?.[0]`, `$.name?.trim()`
 - Bracket access: `$.items[0]`, `$.arr[$.idx]`
+- Computed object keys: `{ [$.k]: 1 }`
+- Shorthand object properties: `x => ({ x })` (sugar for `{ x: x }`)
 - Binary operators: `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `>`, `>=`, `<`, `<=`, `&&`, `||`, `??`, `in`, `**`
 - Unary operators: `!`, `-`
 - Ternary operator: `? :`
-- String methods: `.trim()`, `.toLowerCase()`, etc.
-- Array methods: `.map()`, `.filter()`, `.at()`, etc.
-- Math functions: `Math.floor()`, `Math.sqrt()`, etc.
+- String methods: `.trim()`, `.toLowerCase()`, `.startsWith()`, etc.
+- Array methods: `.map()`, `.filter()`, `.flat()`, `.join()`, etc.
+- Math functions and constants: `Math.floor()`, `Math.min()`, `Math.PI`, etc.
 - Type casting: `Number()`, `String()`, `typeof`, etc.
-- Date operations: `new Date()`, `.getFullYear()`, etc.
+- Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
 - Fallback: `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
 
@@ -87,7 +91,7 @@ An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 
 ### Numbers
 
-Integer and floating-point numbers, scientific notation:
+Integer and floating-point numbers, scientific notation, and numeric separators (`_` between digits):
 
 ```js
 42
@@ -95,7 +99,11 @@ Integer and floating-point numbers, scientific notation:
 -7
 1e3          // 1000
 2.5e-2       // 0.025
+1_000_000    // 1000000   (separators are stripped)
+1_234.567_89 // 1234.56789
 ```
+
+Underscores must sit between two digits — `1_`, `_1`, and `1__0` are errors.
 
 ### Strings
 
@@ -107,6 +115,23 @@ Both single and double quotes. Escape sequences: `\\`, `\"`, `\'`, `\n`, `\t`:
 "line1\nline2"
 "escaped \"quote\""
 ```
+
+### Template Literals
+
+Backtick-delimited strings with `${expr}` interpolation, just like JS. They compile to `$concat`:
+
+```js
+`hello, ${$.name}!`
+// → { $concat: ["hello, ", "$name", "!"] }
+
+`${$.first} ${$.last}`
+// → { $concat: ["$first", " ", "$last"] }
+
+`total: ${$.a + $.b}`
+// → { $concat: ["total: ", { $add: ["$a", "$b"] }] }
+```
+
+Templates with no expressions resolve to plain strings. Escape sequences support `\\`, `` \` ``, `\$`, `\n`, `\t`, `\r`. Templates nest: `` `outer ${`inner ${$.x}`}` `` works.
 
 ### Booleans
 
@@ -147,6 +172,28 @@ Key-value pairs in braces, including spread:
 
 Objects are useful as `$push` arguments in `group()`, as `$project` escape hatch values, and in `$let` bindings.
 
+#### Computed Keys
+
+Keys may be computed expressions, just like in JS:
+
+```js
+{ [$.k]: 1 }                       // → { $arrayToObject: [["$k", 1]] }
+{ a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [["a", 1], ["$dynKey", 2]] }
+```
+
+Whenever an object literal contains at least one computed key, it compiles to `$arrayToObject` so MongoDB can build the object at query time. Mixing computed keys with `...spread` is not supported.
+
+#### Shorthand Properties
+
+`{ x }` is sugar for `{ x: x }` — useful inside lambda bodies:
+
+```js
+$.items.map(x => ({ x }))
+// → { $map: { input: "$items", as: "x", in: { x: "$$x" } } }
+```
+
+The shorthand value is treated as an identifier (lambda parameter); using shorthand outside a lambda scope produces an "Unknown identifier" error.
+
 ---
 
 ## Field References
@@ -174,6 +221,16 @@ Bracket access maps to MongoDB's `$arrayElemAt`:
 ```js
 $.items[0]         // { $arrayElemAt: ["$items", 0] }
 $.items[$.idx]     // { $arrayElemAt: ["$items", "$idx"] }
+```
+
+### Optional Chaining
+
+`?.` is accepted everywhere `.` is. MongoDB already returns `null`/missing when a dotted path traverses a missing field, so `?.` is purely for JS readability — the compiled MQL is identical to the non-optional form:
+
+```js
+$.user?.address?.city                // → "$user.address.city"
+$.items?.[0]                         // → { $arrayElemAt: ["$items", 0] }
+$.name?.trim()                       // → { $trim: { input: "$name" } }
 ```
 
 ### Syntax
@@ -270,6 +327,10 @@ $.email.indexOf("@")               // { $indexOfCP: ["$email", "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
 $.email.includes("@")              // { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] }
+$.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: ["$email", "admin@"] }, 0] }
+$.file.endsWith(".pdf")            // substring-equality at the tail (see below)
+$.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
+$.first.concat(" ", $.last)        // { $concat: ["$first", " ", "$last"] }
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
 
 // Property access — type-aware dispatch
@@ -299,7 +360,17 @@ $.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
 $.items.slice(2)           // { $slice: ["$items", 2] }
 $.items.slice(1, 3)        // { $slice: ["$items", 1, 3] }
 $.items.reverse()          // { $reverseArray: "$items" }
+[1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
+[1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
+[1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
+$.tags.join(", ")          // builds a comma-separated string via $reduce/$concat
+$.nested.flat()            // flatten one level via $reduce + $concatArrays
+$.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
+
+**Type-aware dispatch.** `.includes()`, `.indexOf()`, and `.concat()` work on both strings and arrays. When mjsql can prove the receiver is an array (e.g. an array literal, the result of `.split()`, etc.), it emits the array-typed form (`$in`, `$indexOfArray`, `$concatArrays`). Otherwise it falls back to the string-typed form. To force array semantics on an unknown field, wrap with `$first($.x)` after a `$.x.map(...)` or use the explicit `$in($.x, ...)` / `$indexOfArray($.x, ...)` operator forms.
+
+**`.flat()` depth.** Only `flat()` and `flat(1)` are supported — MongoDB has no recursive flatten primitive, so deeper depths are rejected at compile time.
 
 ### Lambda Methods
 
@@ -374,7 +445,25 @@ Math.pow($.base, 2)                // { $pow: ["$base", 2] }
 Math.sqrt($.variance)              // { $sqrt: "$variance" }
 Math.exp($.rate)                   // { $exp: "$rate" }
 Math.log($.value)                  // { $ln: "$value" } (natural log)
+Math.log2($.value)                 // { $log: ["$value", 2] }
+Math.log10($.value)                // { $log10: "$value" }
 Math.trunc($.avg)                  // { $trunc: "$avg" }
+Math.sign($.delta)                 // { $cmp: ["$delta", 0] } (-1 / 0 / 1)
+Math.cbrt($.x)                     // { $pow: ["$x", { $divide: [1, 3] }] }
+Math.hypot($.a, $.b)               // sqrt(a² + b²) via $sqrt + $add + $pow
+Math.random()                      // { $rand: {} }
+
+Math.min($.a, $.b, $.c)            // { $min: ["$a", "$b", "$c"] }
+Math.max($.scores)                 // { $max: "$scores" }   (single array arg)
+Math.max(...$.scores)              // { $max: "$scores" }   (spread is sugar for the above)
+Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
+```
+
+### Constants
+
+```js
+Math.PI                            // 3.141592653589793
+Math.E                             // 2.718281828459045
 ```
 
 **Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). For rounding to N decimal places, use the `$round()` utility — there is no JS equivalent:
@@ -433,12 +522,13 @@ Valid target types: `"double"`, `"string"`, `"objectId"`, `"bool"`, `"date"`, `"
 
 ## Date Operations
 
-### Date Constructor
+### Date Constructor and `Date.now()`
 
 ```js
 new Date()                         // { $toDate: "$$NOW" }  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
 new Date("2024-01-01")             // { $toDate: "2024-01-01" }
+Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
 ```
 
 ### Date Getter Methods
@@ -454,6 +544,8 @@ $.createdAt.getHours()             // { $hour: "$createdAt" }
 $.createdAt.getMinutes()           // { $minute: "$createdAt" }
 $.createdAt.getSeconds()           // { $second: "$createdAt" }
 $.createdAt.getMilliseconds()      // { $millisecond: "$createdAt" }
+$.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoch)
+$.createdAt.toISOString()          // { $dateToString: { date: "$createdAt", format: "%Y-%m-%dT%H:%M:%S.%LZ" } }
 ```
 
 **Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; mjsql subtracts 1 automatically.
@@ -541,12 +633,32 @@ $setEquals($.a, $.b)               // { $setEquals: ["$a", "$b"] }
 Object.keys($.obj)                 // { $map: { input: { $objectToArray: "$obj" }, as: "kv", in: "$$kv.k" } }
 Object.values($.obj)               // { $map: { input: { $objectToArray: "$obj" }, as: "kv", in: "$$kv.v" } }
 Object.entries($.obj)              // { $objectToArray: "$obj" }
+Object.fromEntries($.pairs)        // { $arrayToObject: "$pairs" }
 Object.assign($.a, $.b)            // { $mergeObjects: ["$a", "$b"] }
 Object.assign($.a, $.b, $.c)       // { $mergeObjects: ["$a", "$b", "$c"] }
+Object.assign(...$.docs)           // { $mergeObjects: "$docs" }   (spread)
+
+Array.isArray($.items)             // { $isArray: "$items" }
 
 $getField("fieldName", $.doc)      // { $getField: { field: "fieldName", input: "$doc" } }
 $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: "$doc", value: val } }
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
+```
+
+### Spread in Variadic Calls
+
+For variadic operators (and `Math.min`/`Math.max`, `Object.assign`), `...arr` passes the whole array through as the operator value:
+
+```js
+Math.max(...$.scores)              // { $max: "$scores" }
+$concatArrays(...$.arrs)           // { $concatArrays: "$arrs" }
+Object.assign(...$.docs)           // { $mergeObjects: "$docs" }
+```
+
+When mixed with non-spread args, mjsql wraps the non-spreads in single-element arrays and joins via `$concatArrays`:
+
+```js
+Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
 ```
 
 `$getField` and `$setField` are useful when field names are dynamic or contain special characters.
@@ -787,8 +899,9 @@ unary       = "typeof" unary | (!|-) unary | postfix
 postfix     = primary (member_access | method_call | index_access)*
 
 primary     = number | string | boolean | null
+            | template_literal
             | field_ref | array_literal | object_literal
-            | utility_call | math_call | type_cast | date_new
+            | utility_call | math_call | math_const | type_cast | date_new | date_now
             | "(" expression ")"
 
 field_ref   = "$" "." identifier
@@ -800,16 +913,31 @@ object_literal = "{" (spread | key_value) ("," (spread | key_value))* "}"
 spread      = "..." expression
 
 key_value   = identifier ":" expression
+            | string ":" expression
+            | "[" expression "]" ":" expression       (* computed key *)
+            | identifier                              (* shorthand: name → name: name *)
 
-utility_call  = "$" identifier "(" args ")"
+template_literal = "`" template_chunk ("${" expression "}" template_chunk)* "`"
 
-math_call   = "Math" "." identifier "(" args ")"
+utility_call  = "$" identifier "(" call_args ")"
 
-index_access = "[" expression "]"
+math_call   = "Math" "." identifier "(" call_args ")"
 
-member_access = "." identifier
+math_const  = "Math" "." ("PI" | "E")
 
-method_call = "." identifier "(" (args | lambda) ")"
+date_now    = "Date" "." "now" "(" ")"
+
+index_access = ("[" | "?.[") expression "]"
+
+member_access = ("." | "?.") identifier
+
+method_call = ("." | "?.") identifier "(" call_args ")"
+
+call_args   = (call_arg ("," call_arg)*)?
+
+call_arg    = "..." expression                        (* spread *)
+            | lambda
+            | expression
 
 lambda      = identifier "=>" expression
             | "(" identifier ("," identifier)* ")" "=>" expression
@@ -818,7 +946,8 @@ args        = (expression ("," expression)*)?
 
 identifier  = [a-zA-Z_][a-zA-Z0-9_]*
 
-number      = [0-9]+ ("." [0-9]+)? ([eE][+-]?[0-9]+)?
+number      = digit_seq ("." digit_seq)? ([eE][+-]? digit_seq)?
+digit_seq   = [0-9]+ ("_" [0-9]+)*                    (* numeric separators *)
 
 string      = "\"" ... "\"" | "'" ... "'"
 
@@ -833,7 +962,7 @@ null        = "null"
 
 | Precedence | Operator | Associativity |
 |---|---|---|
-| 1 | `()` grouping, `.` member access, `[]` index, method calls | — |
+| 1 | `()` grouping, `.`/`?.` member access, `[]`/`?.[]` index, method calls | — |
 | 2 | `!`, `-` (unary) | Right |
 | 3 | `**` (exponentiation) | Right |
 | 4 | `*`, `/`, `%` | Left |
@@ -851,5 +980,14 @@ null        = "null"
 
 **Q: How do I get an array's length?**
 A: Use the `$size()` utility: `$size($.items)`. String length uses `.length` property: `$.name.length`.
+
+**Q: Why doesn't `$.field.includes(x)` use `$in` for arrays?**
+A: A bare field reference's type is unknown at compile time, so mjsql defaults to string semantics for `.includes()`/`.indexOf()`/`.concat()`. When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — mjsql emits the array form. To force array semantics, use `$in($.items, x)` or rebuild the chain so the type is known (e.g. `$.items.map(x => x).includes(target)`).
+
+**Q: Does `?.` actually short-circuit?**
+A: For field paths, MongoDB already returns `null`/missing when traversing through missing fields, so `$.a?.b?.c` and `$.a.b.c` produce the same MQL — `?.` is purely a JS-readability sugar.
+
+**Q: How do `Math.max(...$.arr)` and `Math.max($.arr)` differ?**
+A: They produce identical MQL (`{ $max: "$arr" }`). The spread form is just JS-natural sugar.
 
 ---

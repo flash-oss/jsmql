@@ -53,18 +53,28 @@ $.price * 1.1 > $.msrp
 $.age >= 18 && $.status == 'active'
 $.nickname ?? $.firstName ?? "Anonymous"
 
+// Template literals and optional chaining
+`Hi, ${$.user?.firstName ?? "there"} — your order ${$.id} is ready`
+
 // String methods
 $.email.toLowerCase().trim()
 $.title.split(" ").at(0)
+$.file.endsWith(".pdf")
 
 // Array methods with lambdas
 $.orders.filter(o => o.total > 100).map(o => o.id)
 $.scores.reduce((acc, x) => acc + x, 0)
+$.docs.flatMap(d => d.tags).join(", ")
 
 // Math, typeof, new Date, type casts
+Math.min(...$.scores)
 Math.floor($.rating)
 typeof $.field == "string" ? $.field.trim() : String($.field)
 $dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })
+
+// Numeric separators and computed object keys
+$.price <= 1_000_000
+Object.fromEntries($.metrics.map(m => [m.name, m.value]))
 ```
 
 ### Fallback: `$op()` utility form
