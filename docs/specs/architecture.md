@@ -62,7 +62,10 @@ MQL JSON (plain JS object)
 ## Public API surface (`src/index.ts`)
 
 ```ts
-type MjsqlInput = string | (() => unknown);
+type MjsqlInput = string | ((...args: any[]) => unknown);
+// Accepts any callable shape — `() => …`, `($) => …`, `(doc) => …` all work.
+// The parameter list is stripped at extraction time; `any` for parameters
+// gives IDE autocomplete on unannotated `$` without `noImplicitAny` errors.
 
 mjsql(input: MjsqlInput): object
 // Parses and transpiles. Throws LexError | ParseError | CodegenError | FunctionInputError.

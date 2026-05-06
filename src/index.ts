@@ -20,7 +20,13 @@ export class FunctionInputError extends Error {
   }
 }
 
-export type MjsqlInput = string | (() => unknown);
+// Accept any callable shape: the canonical idiom is `($) => …` (one
+// parameter named `$`, used as the document-context placeholder), but `()
+// => …` and `(doc) => …` are equally valid — the parameter list is
+// stripped at extraction time. `any` for the parameter type lets users
+// write unannotated `$` and still get IDE autocomplete (`$.foo.bar`)
+// without `noImplicitAny` complaining.
+export type MjsqlInput = string | ((...args: any[]) => unknown);
 
 // Compiled-body cache for the function-input path. Keyed on the extracted body
 // string, so inline arrows in hot loops (which create a new function object on
