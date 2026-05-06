@@ -11,7 +11,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "CHANGELOG.md", "docs/LANGUAGE.md"],
+  "files": ["dist", "README.md", "docs/LANGUAGE.md"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
