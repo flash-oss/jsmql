@@ -44,6 +44,7 @@ postfix        = primary (
                  | "." member_call
                  | "?." member_call                          (* optional chaining *)
                  | "?." "[" expression "]"                   (* optional bracket access *)
+                 | "(" call_arg_list ")"                     (* direct call — IIFE → $let *)
                  )*
 
 member_call    = FIELD_SEGMENT "(" call_arg_list ")"         (* method call *)
@@ -223,6 +224,23 @@ A lambda appearing anywhere else (e.g. as a standalone expression) is a codegen 
 $let({ d: $.price * 0.1 }, (d) => $.price - d)
 → { $let: { vars: { d: ... }, in: { $subtract: ["$price", "$$d"] } } }
 ```
+
+## IIFE → `$let`
+
+A `CallExpression` whose callee is a `Lambda` literal compiles to `$let`, with each lambda parameter becoming a `vars` entry bound to the corresponding argument:
+
+```
+((x, y) => $.a + x * y)(2, 3)
+→ { $let: { vars: { x: 2, y: 3 }, in: { $add: ["$a", { $multiply: ["$$x", 3] }] } } }
+```
+
+`CallExpression` nodes whose callee is *not* a Lambda are rejected at codegen with an error directing the user to `$opName(...)` (operator) or `receiver.method(...)` (method) — there is no other callable value in MQL.
+
+Two parser surfaces produce a Lambda usable here:
+- `(IDENT, ..., IDENT) => expr` — handled by `isLambdaStart()` + `parseLambdaParen()`.
+- `(IDENT => expr)` — single param without inner parens; handled by a check inside `parseGrouped()` (see source).
+
+Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse errors.
 
 ## Operator precedence (high → low)
 

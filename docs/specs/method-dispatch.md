@@ -51,6 +51,8 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.slice(start)` | `{ $slice: [expr, start] }` |
 | `.slice(start, count)` | `{ $slice: [expr, start, count] }` |
 | `.reverse()` | `{ $reverseArray: expr }` |
+| `.toReversed()` | `{ $reverseArray: expr }` (alias for `.reverse()`, ES2023) |
+| `.toSorted()` | `{ $sortArray: { input: expr, sortBy: 1 } }` (ES2023, ascending only — comparator rejected) |
 | `.includes(x)` *(known array receiver)* | `{ $in: [x, expr] }` |
 | `.indexOf(x)` *(known array receiver)* | `{ $indexOfArray: [expr, x] }` |
 | `.concat(...args)` *(known array receiver)* | `{ $concatArrays: [expr, ...args] }` |
@@ -67,6 +69,8 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.map(x => body)` | `{ $map: { input, as: "x", in: body } }` |
 | `.filter(x => cond)` | `{ $filter: { input, as: "x", cond } }` |
 | `.find(x => cond)` | `{ $arrayElemAt: [{ $filter: {...} }, 0] }` |
+| `.findLast(x => cond)` | `{ $arrayElemAt: [{ $filter: {...} }, -1] }` (ES2023) |
+| `.findLastIndex(x => cond)` | `$reduce` over `$zip` of `($range, expr)`, last index where cond is true (or -1) |
 | `.some(x => body)` | `{ $anyElementTrue: { $map: {...} } }` |
 | `.every(x => body)` | `{ $allElementsTrue: { $map: {...} } }` |
 | `.reduce((acc, x) => body, init)` | `{ $reduce: { input, initialValue: init, in: body } }` |

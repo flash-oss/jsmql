@@ -1008,6 +1008,106 @@ describe("$let with lambda", () => {
   });
 });
 
+describe("immutable array methods", () => {
+  it(".toSorted() with no comparator → ascending", () => {
+    expect(mjsql("$.scores.toSorted()")).toEqual({
+      $sortArray: { input: "$scores", sortBy: 1 },
+    });
+  });
+  it(".toSorted with comparator throws helpful error", () => {
+    expect(() => mjsql("$.scores.toSorted((a, b) => a - b)")).toThrow(
+      /comparator is not supported/,
+    );
+  });
+  it(".toReversed() is array-context", () => {
+    expect(mjsql("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
+  });
+  it(".toReversed() chainable with .map()", () => {
+    expect(mjsql("$.items.toReversed().map(x => x.name)")).toEqual({
+      $map: {
+        input: { $reverseArray: "$items" },
+        as: "x",
+        in: "$$x.name",
+      },
+    });
+  });
+  it(".findLast(p) returns last matching element", () => {
+    expect(mjsql("$.items.findLast(x => x.active)")).toEqual({
+      $arrayElemAt: [
+        {
+          $filter: {
+            input: "$items",
+            as: "x",
+            cond: "$$x.active",
+          },
+        },
+        -1,
+      ],
+    });
+  });
+  it(".findLastIndex(p) reduces (idx, el) pairs", () => {
+    expect(mjsql("$.items.findLastIndex(x => x.active)")).toEqual({
+      $reduce: {
+        input: {
+          $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] },
+        },
+        initialValue: -1,
+        in: {
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$this", 1] } },
+            in: {
+              $cond: ["$$x.active", { $arrayElemAt: ["$$this", 0] }, "$$value"],
+            },
+          },
+        },
+      },
+    });
+  });
+});
+
+describe("IIFE → $let", () => {
+  it("simple ((x) => body)(value)", () => {
+    expect(mjsql("((x) => x + 1)(5)")).toEqual({
+      $let: { vars: { x: 5 }, in: { $add: ["$$x", 1] } },
+    });
+  });
+  it("unparen single param (x => body)(value)", () => {
+    expect(mjsql("(x => x * 2)($.n)")).toEqual({
+      $let: { vars: { x: "$n" }, in: { $multiply: ["$$x", 2] } },
+    });
+  });
+  it("multi-param IIFE binds all params", () => {
+    expect(mjsql("((maxAge, minAge) => $.age >= minAge && $.age <= maxAge)(65, 18)")).toEqual({
+      $let: {
+        vars: { maxAge: 65, minAge: 18 },
+        in: { $and: [{ $gte: ["$age", "$$minAge"] }, { $lte: ["$age", "$$maxAge"] }] },
+      },
+    });
+  });
+  it("zero-param IIFE", () => {
+    expect(mjsql("(() => $.x + $.y)()")).toEqual({
+      $let: { vars: {}, in: { $add: ["$x", "$y"] } },
+    });
+  });
+  it("body can reference outer $.fields", () => {
+    expect(mjsql("((d) => $.price - d)($.price * 0.1)")).toEqual({
+      $let: {
+        vars: { d: { $multiply: ["$price", 0.1] } },
+        in: { $subtract: ["$price", "$$d"] },
+      },
+    });
+  });
+  it("rejects mismatched arity", () => {
+    expect(() => mjsql("((x, y) => x + y)(1)")).toThrow(/expected 2 argument/);
+  });
+  it("rejects calling a non-lambda", () => {
+    expect(() => mjsql("$.func(1, 2)")).toThrow(/Direct call/);
+  });
+  it("rejects spread args", () => {
+    expect(() => mjsql("((x) => x)(...$.arr)")).toThrow(/spread/);
+  });
+});
+
 describe("string-context + with method calls", () => {
   it("trim() in + chain is string-producing", () => {
     expect(mjsql('$.first.trim() + " " + $.last')).toEqual({

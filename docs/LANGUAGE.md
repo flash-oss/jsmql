@@ -420,6 +420,8 @@ $.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
 $.items.slice(2)           // { $slice: ["$items", 2] }
 $.items.slice(1, 3)        // { $slice: ["$items", 1, 3] }
 $.items.reverse()          // { $reverseArray: "$items" }
+$.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, identical to .reverse())
+$.scores.toSorted()        // { $sortArray: { input: "$scores", sortBy: 1 } } (ascending)
 [1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
@@ -464,6 +466,14 @@ $.items.filter(x => x > 0)
 $.items.find(x => x.status == "active")
 // → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: { $eq: ["$$x.status", "active"] } } }, 0] }
 
+// findLast — last matching element (ES2023)
+$.items.findLast(x => x.active)
+// → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: "$$x.active" } }, -1] }
+
+// findLastIndex — index of last matching element, or -1 (ES2023)
+$.items.findLastIndex(x => x.active)
+// → $reduce over [(idx, el), ...] pairs, keeping the last index where the predicate matches
+
 // some — true if any element matches
 $.scores.some(x => x >= 90)
 // → { $anyElementTrue: { $map: { input: "$scores", as: "x", in: { $gte: ["$$x", 90] } } } }
@@ -504,6 +514,25 @@ Lambda parameters shadow outer field references within their scope:
 $.items.map(price => price * $.taxRate)
 // price refers to the loop variable; $.taxRate refers to the document field
 ```
+
+### Immediately-invoked arrow functions (IIFE → `$let`)
+
+A call expression whose callee is an arrow-function literal compiles to MongoDB's `$let`. This is the JS-natural way to bind a name and avoid recomputing a sub-expression:
+
+```js
+((maxAge, minAge) => $.age >= minAge && $.age <= maxAge)(65, 18)
+// → { $let: {
+//       vars: { maxAge: 65, minAge: 18 },
+//       in: { $and: [{ $gte: ["$age", "$$minAge"] }, { $lte: ["$age", "$$maxAge"] }] }
+//     } }
+
+((d) => $.price - d)($.price * 0.1)
+// → { $let: { vars: { d: { $multiply: ["$price", 0.1] } }, in: { $subtract: ["$price", "$$d"] } } }
+```
+
+Either single-param paren style works: `(x => body)(arg)` and `((x) => body)(arg)` produce identical MQL. Param destructuring, default values, and rest parameters are not supported — drop into `$let({ vars }, (x) => body)` for those cases.
+
+The body of the IIFE can reference outer `$.fields` freely; only the lambda parameters are rebound.
 
 ---
 

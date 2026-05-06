@@ -304,6 +304,13 @@ export class Parser {
     let left = this.parsePrimary();
     for (;;) {
       const t = this.lexer.peek().type;
+      if (t === TokenType.LParen) {
+        // Direct call expression: e.g. ((x) => body)(arg) — only meaningful when the
+        // callee is a lambda (IIFE). Codegen emits $let; non-lambda callees error there.
+        const args = this.parseMethodCallArgs();
+        left = { type: "CallExpression", callee: left, args };
+        continue;
+      }
       if (t === TokenType.LBracket) {
         this.lexer.next(); // consume [
         const index = this.parseExpression();
@@ -468,10 +475,18 @@ export class Parser {
 
   // ── Sub-parsers ───────────────────────────────────────────────────────────
 
-  /** "(" expression ")"  */
+  /** "(" expression ")"  — also handles `(x => expr)`, the unparen-single-param lambda */
   private parseGrouped(): Expr {
     this.lexer.expect(TokenType.LParen);
-    const expr = this.parseExpression();
+    let expr: Expr;
+    if (
+      this.lexer.peek().type === TokenType.Ident &&
+      this.lexer.lookahead(1).type === TokenType.Arrow
+    ) {
+      expr = this.parseLambdaUnparen();
+    } else {
+      expr = this.parseExpression();
+    }
     const close = this.lexer.peek();
     if (close.type !== TokenType.RParen) {
       throw new ParseError(`Expected ')' at position ${close.pos}`, close.pos);

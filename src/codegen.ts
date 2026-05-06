@@ -105,6 +105,8 @@ const ARRAY_RETURNING_METHODS = new Set([
   "filter",
   "slice",
   "reverse",
+  "toReversed",
+  "toSorted",
   "flat",
   "flatMap",
 ]);
@@ -247,6 +249,9 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "MethodCall":
       return generateMethodCall(expr.object, expr.method, expr.args, ctx);
+
+    case "CallExpression":
+      return generateCallExpression(expr.callee, expr.args, ctx);
 
     case "Lambda":
       throw new CodegenError(
@@ -840,11 +845,64 @@ function generateMethodCall(
       }
       throw new CodegenError(`.slice() requires 1 or 2 arguments`);
     }
-    case "reverse": {
+    case "reverse":
+    case "toReversed": {
       if (args.length !== 0) {
-        throw new CodegenError(`.reverse() takes no arguments`);
+        throw new CodegenError(`.${method}() takes no arguments`);
       }
       return { $reverseArray: genObj };
+    }
+    case "toSorted": {
+      if (args.length !== 0) {
+        throw new CodegenError(
+          `.toSorted() with a comparator is not supported — use $op($sortArray, { input, sortBy }) for custom sort criteria.`,
+        );
+      }
+      return { $sortArray: { input: genObj, sortBy: 1 } };
+    }
+    case "findLast": {
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", 1);
+      const bodyCtx = extendCtx(ctx, lambda.params);
+      return {
+        $arrayElemAt: [
+          {
+            $filter: {
+              input: genObj,
+              as: lambda.params[0],
+              cond: _generate(lambda.body, bodyCtx),
+            },
+          },
+          -1,
+        ],
+      };
+    }
+    case "findLastIndex": {
+      const lambda = requireLambda(exprArgsOnly(args, "findLastIndex"), "findLastIndex", 1);
+      const bodyCtx = extendCtx(ctx, lambda.params);
+      const param = lambda.params[0];
+      // Reduce over [(index, element), ...] pairs, keeping the largest index where
+      // the predicate matches. $let rebinds the user-named param to $$this[1] so the
+      // predicate body's $$<param> references resolve correctly.
+      return {
+        $reduce: {
+          input: {
+            $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] },
+          },
+          initialValue: -1,
+          in: {
+            $let: {
+              vars: { [param]: { $arrayElemAt: ["$$this", 1] } },
+              in: {
+                $cond: [
+                  _generate(lambda.body, bodyCtx),
+                  { $arrayElemAt: ["$$this", 0] },
+                  "$$value",
+                ],
+              },
+            },
+          },
+        },
+      };
     }
     case "concat": {
       // Type-aware: known array → $concatArrays; known string → $concat;
@@ -1051,7 +1109,7 @@ function generateMethodCall(
 
     default:
       throw new CodegenError(
-        `Unknown method '.${method}()'. String methods: trim, trimStart, trimEnd, toLowerCase, toUpperCase, substr, charAt, split, indexOf, replace, replaceAll, includes, startsWith, endsWith, match, concat. Array methods: at, slice, reverse, map, filter, find, some, every, reduce, includes, indexOf, concat, join, flat, flatMap. Date methods: getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, getTime, toISOString.`,
+        `Unknown method '.${method}()'. String methods: trim, trimStart, trimEnd, toLowerCase, toUpperCase, substr, charAt, split, indexOf, replace, replaceAll, includes, startsWith, endsWith, match, concat. Array methods: at, slice, reverse, toReversed, toSorted, map, filter, find, findLast, findLastIndex, some, every, reduce, includes, indexOf, concat, join, flat, flatMap. Date methods: getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, getTime, toISOString.`,
       );
   }
 }
@@ -1079,6 +1137,42 @@ function requireLambda(
     throw new CodegenError(`.${method}() requires a lambda as its first argument, e.g. x => x > 0`);
   }
   return first;
+}
+
+// ── Call expressions (IIFE → $let) ────────────────────────────────────────────
+
+/**
+ * The only supported call form is an IIFE — a call whose callee is a lambda literal:
+ *
+ *   ((x, y) => $.a + x * y)(2, 3)
+ *   → { $let: { vars: { x: 2, y: 3 }, in: { $add: ["$a", { $multiply: ["$$x", 3] }] } } }
+ *
+ * Other callees (e.g. a field reference followed by `(...)`) are not callable in MQL —
+ * we reject them with an error pointing at the supported forms.
+ */
+function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx): unknown {
+  if (callee.type !== "Lambda") {
+    throw new CodegenError(
+      `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE → $let). For named operators use $opName(...); for methods use receiver.method(...).`,
+    );
+  }
+  if (callee.params.length !== args.length) {
+    throw new CodegenError(
+      `IIFE: expected ${callee.params.length} argument(s) for params (${callee.params.join(", ")}), got ${args.length}`,
+    );
+  }
+  const vars: Record<string, unknown> = {};
+  for (let i = 0; i < callee.params.length; i++) {
+    const a = args[i];
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(
+        `IIFE: spread arguments are not supported (use $op($let, ...) instead)`,
+      );
+    }
+    vars[callee.params[i]] = _generate(a, ctx);
+  }
+  const bodyCtx = extendCtx(ctx, callee.params);
+  return { $let: { vars, in: _generate(callee.body, bodyCtx) } };
 }
 
 // ── Type casts ────────────────────────────────────────────────────────────────

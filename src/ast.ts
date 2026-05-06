@@ -68,6 +68,7 @@ export type Expr =
   | { type: "ParamRef"; name: string }
   | { type: "MemberAccess"; object: Expr; member: string }
   | { type: "MethodCall"; object: Expr; method: string; args: CallArg[] }
+  | { type: "CallExpression"; callee: Expr; args: CallArg[] }
   | { type: "Lambda"; params: string[]; body: Expr }
   | { type: "TypeofExpr"; operand: Expr }
   | { type: "NewDate"; arg: Expr | null }
