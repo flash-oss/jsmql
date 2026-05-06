@@ -1,6 +1,6 @@
-import { Parser, ParseError } from "./parser.js";
-import { generate, CodegenError } from "./codegen.js";
-import { LexError } from "./lexer.js";
+import { Parser, ParseError } from "./parser.ts";
+import { generate, CodegenError } from "./codegen.ts";
+import { LexError } from "./lexer.ts";
 
 export type ValidationError = {
   message: string;

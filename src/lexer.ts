@@ -1,71 +1,77 @@
-export const enum TokenType {
+// Type-strippable replacement for the original `const enum TokenType`. The
+// `as const` object preserves the `TokenType.LParen` call-site idiom (no
+// churn at the 196 use sites), and the derived union gives us the same
+// type-checking guarantees. Trades the const-enum's compile-time inlining
+// for a small runtime object — negligible for a lexer.
+export const TokenType = {
   // Punctuation
-  LParen = "LParen", // (
-  RParen = "RParen", // )
-  LBracket = "LBracket", // [
-  RBracket = "RBracket", // ]
-  LBrace = "LBrace", // {
-  RBrace = "RBrace", // }
-  Comma = "Comma", // ,
-  Colon = "Colon", // :
-  Dot = "Dot", // .
-  QuestDot = "QuestDot", // ?.  (optional chaining)
-  DollarDot = "DollarDot", // $.
-  Dollar = "Dollar", // $ (standalone, before IDENT for operator)
-  Spread = "Spread", // ...
+  LParen: "LParen", // (
+  RParen: "RParen", // )
+  LBracket: "LBracket", // [
+  RBracket: "RBracket", // ]
+  LBrace: "LBrace", // {
+  RBrace: "RBrace", // }
+  Comma: "Comma", // ,
+  Colon: "Colon", // :
+  Dot: "Dot", // .
+  QuestDot: "QuestDot", // ?.  (optional chaining)
+  DollarDot: "DollarDot", // $.
+  Dollar: "Dollar", // $ (standalone, before IDENT for operator)
+  Spread: "Spread", // ...
 
   // Arithmetic operators
-  Plus = "Plus", // +
-  Minus = "Minus", // -
-  Star = "Star", // *
-  StarStar = "StarStar", // **
-  Slash = "Slash", // /
-  Percent = "Percent", // %
+  Plus: "Plus", // +
+  Minus: "Minus", // -
+  Star: "Star", // *
+  StarStar: "StarStar", // **
+  Slash: "Slash", // /
+  Percent: "Percent", // %
 
   // Comparison operators
-  EqEq = "EqEq", // ==
-  EqEqEq = "EqEqEq", // ===
-  BangEq = "BangEq", // !=
-  BangEqEq = "BangEqEq", // !==
-  Gt = "Gt", // >
-  GtEq = "GtEq", // >=
-  Lt = "Lt", // <
-  LtEq = "LtEq", // <=
+  EqEq: "EqEq", // ==
+  EqEqEq: "EqEqEq", // ===
+  BangEq: "BangEq", // !=
+  BangEqEq: "BangEqEq", // !==
+  Gt: "Gt", // >
+  GtEq: "GtEq", // >=
+  Lt: "Lt", // <
+  LtEq: "LtEq", // <=
 
   // Logical operators
-  AmpAmp = "AmpAmp", // &&
-  PipePipe = "PipePipe", // ||
-  Bang = "Bang", // !
+  AmpAmp: "AmpAmp", // &&
+  PipePipe: "PipePipe", // ||
+  Bang: "Bang", // !
 
   // Misc operators
-  QuestQuest = "QuestQuest", // ??
-  Quest = "Quest", // ?
-  Arrow = "Arrow", // =>
+  QuestQuest: "QuestQuest", // ??
+  Quest: "Quest", // ?
+  Arrow: "Arrow", // =>
 
   // Literals
-  Number = "Number",
-  String = "String",
-  True = "True",
-  False = "False",
-  Null = "Null",
-  RegexLiteral = "RegexLiteral", // /pattern/flags
+  Number: "Number",
+  String: "String",
+  True: "True",
+  False: "False",
+  Null: "Null",
+  RegexLiteral: "RegexLiteral", // /pattern/flags
 
   // Template literals
-  TemplateStart = "TemplateStart", // opening `
-  TemplateChars = "TemplateChars", // literal chunk between ` and ${ (or ` and `)
-  TemplateExprStart = "TemplateExprStart", // ${
-  TemplateEnd = "TemplateEnd", // closing `
+  TemplateStart: "TemplateStart", // opening `
+  TemplateChars: "TemplateChars", // literal chunk between ` and ${ (or ` and `)
+  TemplateExprStart: "TemplateExprStart", // ${
+  TemplateEnd: "TemplateEnd", // closing `
 
   // Keywords
-  In = "In", // in
-  New = "New", // new
-  Typeof = "Typeof", // typeof
+  In: "In", // in
+  New: "New", // new
+  Typeof: "Typeof", // typeof
 
   // Identifier
-  Ident = "Ident",
+  Ident: "Ident",
 
-  EOF = "EOF",
-}
+  EOF: "EOF",
+} as const;
+export type TokenType = (typeof TokenType)[keyof typeof TokenType];
 
 export type Token = {
   type: TokenType;
@@ -75,12 +81,11 @@ export type Token = {
 };
 
 export class LexError extends Error {
-  constructor(
-    message: string,
-    public readonly pos: number,
-  ) {
+  readonly pos: number;
+  constructor(message: string, pos: number) {
     super(message);
     this.name = "LexError";
+    this.pos = pos;
   }
 }
 
@@ -111,7 +116,9 @@ export class Lexer {
   private braceDepth = 0;
   private templateBraceDepths: number[] = [];
 
-  constructor(private readonly src: string) {
+  private readonly src: string;
+  constructor(src: string) {
+    this.src = src;
     this.tokenize();
   }
 

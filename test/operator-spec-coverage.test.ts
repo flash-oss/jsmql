@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import yaml from "js-yaml";
-import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.js";
+import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.ts";
 
 // ---------------------------------------------------------------------------
 // Drift-protection test: keep OPERATORS in sync with mongodb/mql-specifications.
