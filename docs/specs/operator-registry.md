@@ -1,6 +1,16 @@
 # Operator Registry
 
-`src/operators.ts` is the single source of truth for how MongoDB operators are mapped to MQL output shapes.
+`src/operators.ts` is the single source of truth for how MongoDB operators are mapped to MQL output shapes, and the canonical catalog of every MongoDB expression and accumulator operator mjsql knows about.
+
+Each entry has three fields:
+
+| Field | Purpose |
+|---|---|
+| `shape` | One of five [shapes](#shapes); decides how the operator's MQL value is structured. |
+| `category` | A label from `OPERATOR_CATEGORIES` (see below). Used for documentation grouping; not consumed by codegen. |
+| `description` | One-sentence summary, lifted verbatim from the official MongoDB spec where possible. Surfaced in editor tooltips and future docs generation. |
+
+The full list of categories: `arithmetic`, `array`, `bitwise`, `boolean`, `comparison`, `conditional`, `custom-aggregation`, `data-size`, `date`, `encrypted-string`, `literal`, `miscellaneous`, `object`, `set`, `string`, `text`, `timestamp`, `trigonometry`, `type`, `variable`, `window`.
 
 ## Shapes
 
@@ -90,28 +100,51 @@ This makes mjsql forward-compatible with new MongoDB operators that are not yet 
 
 ## Adding an operator
 
-1. Choose the correct shape.
-2. For `object` shape, list the positional key names in argument order. Optional trailing keys are fine — users can simply omit them.
-3. Add the entry to `OPERATORS` in `src/operators.ts`.
-4. Add a test case in `test/codegen.test.ts`.
-5. Update `docs/LANGUAGE.md` if the operator is user-facing.
+1. Verify the operator exists in `vendor/mql-specifications/definitions/expression/<name>.yaml` (or `definitions/accumulator/`). The spec is vendored on `npm install` via `vendor/fetch-mql-specs.mjs` at a pinned commit; the directory is gitignored. If a new operator isn't there, either bump the pinned commit (in the script) or add it to `REGISTRY_ONLY` in `test/operator-spec-coverage.test.ts` with a documenting comment.
+2. Choose the correct shape (see above).
+3. For `object` shape, list the positional key names in argument order. Optional trailing keys are fine — users can simply omit them.
+4. Lift the `description` from the YAML's `description` field. Trim to one sentence.
+5. Pick a `category` from `OPERATOR_CATEGORIES`.
+6. Add the entry to `OPERATORS` in `src/operators.ts`.
+7. Add a test case in `test/codegen.test.ts`.
+8. Update `docs/LANGUAGE.md` if the operator is user-facing.
+
+## Spec drift protection
+
+`test/operator-spec-coverage.test.ts` runs on every `npm test` and asserts that the registry stays in sync with `mongodb/mql-specifications`. Specifically:
+
+- Every operator in `definitions/expression/` and `definitions/accumulator/` exists in `OPERATORS`.
+- Every `OPERATORS` entry exists in the spec, except those documented in `REGISTRY_ONLY` (e.g. `$encStr*` Queryable Encryption ops, `$sampleRate` query predicate, `$toUUID/$toObject/$toArray` post-spec converters).
+- For object-shape entries, every positional key name is recognised by the spec for that operator. Set membership only — order may differ to preserve mjsql's API surface.
+- Every entry has a non-empty `description` and a known `category`.
+
+When the test fails, the message names the specific operator and the specific drift; act on it before merging.
 
 ## Current operator counts
 
 | Category | Count |
 |---|---|
-| Arithmetic | 16 |
-| Trigonometry | 15 |
-| Comparison | 7 |
+| Arithmetic | 23 |
+| Array | 29 |
+| Bitwise | 4 |
 | Boolean | 3 |
+| Comparison | 9 |
 | Conditional | 3 |
-| String | 18 |
-| Array | 17 |
+| Custom-aggregation | 2 |
+| Data-size | 2 |
+| Date | 22 |
+| Encrypted-string | 4 |
+| Literal | 1 |
+| Miscellaneous | 6 |
+| Object | 4 |
 | Set | 7 |
-| Object | 5 |
-| Date | 17 |
-| Type | 10 |
+| String | 20 |
+| Text | 1 |
+| Timestamp | 2 |
+| Trigonometry | 15 |
+| Type | 13 |
 | Variable | 1 |
-| Miscellaneous | 4 |
-| Accumulators | 11 |
-| **Total** | **~134** |
+| Window | 11 |
+| **Total** | **182** |
+
+Counts may drift as MongoDB adds operators; the drift-protection test will surface any divergence between the registry and the spec.

@@ -753,6 +753,104 @@ $let({ x: $.a + $.b, y: $.c * 2 }, (x, y) => x + y)
 // binds multiple variables, body can reference all of them
 ```
 
+### Bitwise
+
+```js
+$bitAnd($.flags, $.mask)           // { $bitAnd: ["$flags", "$mask"] }
+$bitOr($.a, $.b)                   // { $bitOr: ["$a", "$b"] }
+$bitXor($.a, $.b)                  // { $bitXor: ["$a", "$b"] }
+$bitNot($.flags)                   // { $bitNot: "$flags" }
+```
+
+### `$literal` — bypass expression evaluation
+
+⚠️ **Watch out:** `$literal` is the only operator whose argument is **not** evaluated as an expression. Use it when you want to keep a value the pipeline would otherwise interpret as a field reference (anything starting with `$`):
+
+```js
+$literal("$foo")                   // { $literal: "$foo" }   — the literal string "$foo"
+                                   //   (without $literal, "$foo" would mean field foo)
+$literal(42)                       // { $literal: 42 }       — equivalent to bare 42
+```
+
+### `$meta` — per-document aggregation metadata
+
+⚠️ **Watch out:** `$meta` takes a **keyword string** (`"textScore"`, `"indexKey"`, `"searchScore"`, etc.), not an arbitrary expression. mjsql does not validate the keyword.
+
+```js
+$meta("textScore")                 // { $meta: "textScore" }
+```
+
+### Custom Aggregation: `$function` and `$accumulator`
+
+⚠️ **Watch out:** the `body`, `init`, `accumulate`, `merge`, and `finalize` fields are **JavaScript source code as a string**, executed by MongoDB's V8 engine on the server. They are NOT mjsql expressions — `$.field` references will not be substituted, and you must pass field values via the `args` / `accumulateArgs` arrays.
+
+```js
+$function({
+  body: "function(price, taxRate) { return price * (1 + taxRate); }",
+  args: [$.price, $.taxRate],
+  lang: "js"
+})
+// → { $function: { body: "...", args: ["$price", "$taxRate"], lang: "js" } }
+
+$accumulator({
+  init: "function() { return 0; }",
+  accumulate: "function(state, value) { return state + value; }",
+  accumulateArgs: [$.amount],
+  merge: "function(a, b) { return a + b; }",
+  lang: "js"
+})
+```
+
+### Window Operators
+
+⚠️ **Watch out:** these are valid only inside the `$setWindowFields` stage. Calling `$rank()` from a `$project` stage produces nonsense MQL — mjsql does not validate the surrounding stage context.
+
+```js
+$rank()                            // { $rank: {} }
+$denseRank()                       // { $denseRank: {} }
+$documentNumber()                  // { $documentNumber: {} }
+$linearFill($.value)               // { $linearFill: "$value" }
+$locf($.value)                     // { $locf: "$value" }
+
+$shift($.price, -1, 0)             // { $shift: { output: "$price", by: -1, default: 0 } }
+$expMovingAvg($.price, 5)          // { $expMovingAvg: { input: "$price", N: 5 } }
+$expMovingAvg({ input: $.price, alpha: 0.3 })
+                                   // { $expMovingAvg: { input: "$price", alpha: 0.3 } }
+$derivative($.value, "hour")       // { $derivative: { input: "$value", unit: "hour" } }
+$integral($.value, "hour")         // { $integral: { input: "$value", unit: "hour" } }
+
+$covariancePop($.x, $.y)           // { $covariancePop: ["$x", "$y"] }
+$covarianceSamp($.x, $.y)          // { $covarianceSamp: ["$x", "$y"] }
+```
+
+### Encrypted String (Queryable Encryption)
+
+These operate on encrypted fields created with MongoDB's Queryable Encryption feature.
+
+```js
+$encStrContains($.encField, "secret")
+                                   // { $encStrContains: { input: "$encField", substring: "secret" } }
+$encStrStartsWith($.encField, "abc")
+                                   // { $encStrStartsWith: { input: "$encField", prefix: "abc" } }
+$encStrEndsWith($.encField, "xyz") // { $encStrEndsWith: { input: "$encField", suffix: "xyz" } }
+$encStrNormalizedEq($.encField, "match")
+                                   // { $encStrNormalizedEq: { input: "$encField", string: "match" } }
+```
+
+### Statistical Accumulators: `$median` and `$percentile`
+
+```js
+$median($.scores, "approximate")
+// { $median: { input: "$scores", method: "approximate" } }
+
+$percentile($.scores, [0.5, 0.95], "approximate")
+// { $percentile: { input: "$scores", p: [0.5, 0.95], method: "approximate" } }
+```
+
+### Deprecated: `$substr`
+
+`$substr` is deprecated in MongoDB. Prefer `$substrBytes` (byte-indexed) or `$substrCP` (code-point-indexed) for new code.
+
 ---
 
 ## Template Tag (`mql`)
