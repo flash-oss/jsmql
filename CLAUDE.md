@@ -24,16 +24,19 @@ Every decision should be evaluated through the lens of DX for the people **using
 ## Commands
 
 ```sh
+npm install       # install pinned versions from package.json (do this once)
 npm test          # run all tests (vitest)
 npm run format    # format all files with oxfmt (always run before committing)
 npm run build     # tsc → dist/
 
 # Run a single test file or a named test during development:
-npx vitest run test/codegen.test.ts
-npx vitest run -t "string context"
+node_modules/.bin/vitest run test/codegen.test.ts
+node_modules/.bin/vitest run -t "string context"
 ```
 
 **Before every commit:** run `npm run format` then `npm test`. Both must succeed.
+
+**Never use `npx`.** It silently downloads ad-hoc package versions on first run, which masks version drift between contributors. Always use the locally-installed binaries — `npm run <script>` (which prepends `node_modules/.bin` to PATH) or `node_modules/.bin/<binary>` directly. If a tool isn't in `devDependencies`, add it there first.
 
 ## File map
 
