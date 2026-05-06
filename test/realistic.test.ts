@@ -365,36 +365,11 @@ describe("location: full address formatter", () => {
                     $cond: [
                       {
                         $and: [
-                          {
-                            $eq: [
-                              {
-                                $type: "$building",
-                              },
-                              "string",
-                            ],
-                          },
-                          {
-                            $ne: [
-                              {
-                                $trim: {
-                                  input: "$building",
-                                },
-                              },
-                              "",
-                            ],
-                          },
+                          { $eq: [{ $type: "$building" }, "string"] },
+                          { $ne: [{ $trim: { input: "$building" } }, ""] },
                         ],
                       },
-                      {
-                        $concat: [
-                          {
-                            $trim: {
-                              input: "$building",
-                            },
-                          },
-                          ",",
-                        ],
-                      },
+                      { $concat: [{ $trim: { input: "$building" } }, ","] },
                       null,
                     ],
                   },
@@ -406,49 +381,19 @@ describe("location: full address formatter", () => {
                   "$postcode",
                 ],
                 as: "x",
-                cond: {
-                  $and: [
-                    {
-                      $eq: [
-                        {
-                          $type: "$$x",
-                        },
-                        "string",
-                      ],
-                    },
-                    {
-                      $ne: ["$$x", ""],
-                    },
-                  ],
-                },
+                cond: { $and: [{ $eq: [{ $type: "$$x" }, "string"] }, { $ne: ["$$x", ""] }] },
               },
             },
             as: "x",
-            in: {
-              $trim: {
-                input: "$$x",
-              },
-            },
+            in: { $trim: { input: "$$x" } },
           },
         },
         initialValue: "",
         in: {
           $cond: [
-            {
-              $eq: ["$$value", ""],
-            },
-            {
-              $toString: "$$this",
-            },
-            {
-              $concat: [
-                "$$value",
-                " ",
-                {
-                  $toString: "$$this",
-                },
-              ],
-            },
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", " ", { $toString: "$$this" }] },
           ],
         },
       },
