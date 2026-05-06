@@ -5,6 +5,7 @@
 | Path | Audience | Update when |
 |---|---|---|
 | `docs/LANGUAGE.md` | Users of mjsql | User-visible behaviour changes |
+| `docs/ROADMAP.md` | Contributors / users tracking what's next | Future work is planned, scoped, or shipped |
 | `docs/specs/*.md` | Claude / contributors implementing mjsql | Code structure or internal behaviour changes |
 
 Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples in the specs.

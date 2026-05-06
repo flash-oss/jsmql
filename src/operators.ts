@@ -2,8 +2,12 @@ export type SingleShape = { kind: "single" };
 export type ArrayShape = { kind: "array" };
 export type ObjectShape = { kind: "object"; keys: string[] };
 export type NoneShape = { kind: "none" };
+// Flex: operator accepts either a single expression OR an array of expressions.
+// Used for MQL operators that legitimately have two shapes (e.g. accumulator vs
+// expression context). 1 arg → `{ $op: expr }`, 2+ args → `{ $op: [a, b, ...] }`.
+export type FlexShape = { kind: "flex" };
 
-export type OperatorShape = SingleShape | ArrayShape | ObjectShape | NoneShape;
+export type OperatorShape = SingleShape | ArrayShape | ObjectShape | NoneShape | FlexShape;
 
 export type OperatorDef = {
   shape: OperatorShape;
@@ -12,6 +16,7 @@ export type OperatorDef = {
 const single: OperatorDef = { shape: { kind: "single" } };
 const array: OperatorDef = { shape: { kind: "array" } };
 const none: OperatorDef = { shape: { kind: "none" } };
+const flex: OperatorDef = { shape: { kind: "flex" } };
 
 function obj(...keys: string[]): OperatorDef {
   return { shape: { kind: "object", keys } };
@@ -31,10 +36,10 @@ export const OPERATORS: Record<string, OperatorDef> = {
   $mod: array,
   $multiply: array,
   $pow: array,
-  $round: array,
+  $round: flex,
   $sqrt: single,
   $subtract: array,
-  $trunc: single,
+  $trunc: flex,
 
   // ── Trigonometry ───────────────────────────────────────────────────────────
   $sin: single,
@@ -129,7 +134,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
 
   // ── Object ─────────────────────────────────────────────────────────────────
   $getField: obj("field", "input"),
-  $mergeObjects: array,
+  $mergeObjects: flex,
   $objectToArray2: single, // alias already listed above
   $setField: obj("field", "input", "value"),
   $unsetField: obj("field", "input"),
@@ -189,14 +194,14 @@ export const OPERATORS: Record<string, OperatorDef> = {
 
   // ── Accumulators (also valid as expression operators in some stages) ────────
   $addToSet: single,
-  $avg: single,
+  $avg: flex,
   $count: none,
-  $max: single,
-  $min: single,
+  $max: flex,
+  $min: flex,
   $push: single,
-  $stdDevPop: single,
-  $stdDevSamp: single,
-  $sum: single,
+  $stdDevPop: flex,
+  $stdDevSamp: flex,
+  $sum: flex,
   $bottom: obj("output", "sortBy"),
   $bottomN: obj("output", "sortBy", "n"),
   $firstN: obj("input", "n"),

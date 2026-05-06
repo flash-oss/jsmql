@@ -520,6 +520,22 @@ function generateOperatorCall(
       return { [name]: generateVariadicArgs(args, ctx) };
     }
 
+    case "flex": {
+      // Flex: 1 arg → `{ $op: expr }`, 2+ → `{ $op: [a, b, ...] }`.
+      // A single spread (`...arr`) collapses to the single form, passing the array through.
+      if (args.length === 0) {
+        throw new CodegenError(`Operator ${name} expects at least 1 argument`);
+      }
+      if (args.length === 1) {
+        const only = args[0];
+        if (only.type === "SpreadElement") {
+          return { [name]: _generate(only.argument, ctx) };
+        }
+        return { [name]: _generate(only, ctx) };
+      }
+      return { [name]: generateVariadicArgs(args, ctx) };
+    }
+
     case "object": {
       assertNoSpread(args, name);
       if (args.length === 0) {

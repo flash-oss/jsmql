@@ -571,6 +571,33 @@ describe("v4: pivot table row (computed keys + Object.fromEntries)", () => {
   });
 });
 
+describe("flex-shape accumulators in realistic pipelines", () => {
+  it("group-stage accumulator: $sum over a field, $round to 2dp", () => {
+    // Inside $group, $sum over a single field is the accumulator form.
+    // $round wraps the result to 2 decimal places. Both rely on flex shape.
+    const result = mjsql("$round($sum($.lineTotal), 2)");
+    expect(result).toEqual({
+      $round: [{ $sum: "$lineTotal" }, 2],
+    });
+  });
+
+  it("project-stage expression: $max picks the largest of several fields", () => {
+    // Inside $project, $max with multiple args returns the max across expressions.
+    const result = mjsql("$max($.basePrice, $.salePrice, $.competitorPrice)");
+    expect(result).toEqual({
+      $max: ["$basePrice", "$salePrice", "$competitorPrice"],
+    });
+  });
+
+  it("merging two snapshots: $mergeObjects in expression context", () => {
+    // Layering a partial update onto a base document.
+    const result = mjsql("$mergeObjects($.base, $.patch)");
+    expect(result).toEqual({
+      $mergeObjects: ["$base", "$patch"],
+    });
+  });
+});
+
 describe("v4: file upload validation (.includes on array literal + .endsWith + numeric separator)", () => {
   it("checks extension whitelist, name match, and size cap", () => {
     // Reject upload unless the lowercased extension is in the allowlist,

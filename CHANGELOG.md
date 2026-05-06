@@ -30,6 +30,7 @@ All notable changes to the public mjsql API are recorded here. The public API is
 - `.length` on a known array-producing receiver was already documented; it now also recognises `Object.keys()` and `Object.values()` outputs as arrays.
 - Template-literal interpolations are now wrapped with `$toString` unless the expression is statically known to produce a string. Matches JS coercion — `` `n=${$.n}` `` works for numeric or boolean fields without manual casting. Output is unchanged for string-producing interpolations.
 - Bracket access (`obj[k]` and `obj?.[k]`) is now type-aware. On a known array it still emits `$arrayElemAt`. On an unknown receiver it emits a runtime `$cond` on `$isArray` between `$arrayElemAt` (array branch) and `$getField` (object branch), so `$.config["host"]` now correctly looks up the dynamic key when `$.config` is an object. Use `.at(i)` (always `$arrayElemAt`) or chain a type-fixing method to pin the array form.
+- **Flex-shape operators.** `$round`, `$trunc`, `$min`, `$max`, `$avg`, `$sum`, `$stdDevPop`, `$stdDevSamp`, and `$mergeObjects` now accept either a single expression (accumulator-style: `{ $op: expr }`) or multiple expressions (expression-style: `{ $op: [a, b, ...] }`). Previously a single-arg call would emit either an unwrapped value or a one-element array depending on the operator's old shape — now it consistently emits the unwrapped form, matching how MongoDB uses these operators in `$group`. Multi-arg behaviour is unchanged.
 
 ### Notes on backwards-compatibility
 

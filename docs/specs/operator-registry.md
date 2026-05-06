@@ -4,7 +4,7 @@
 
 ## Shapes
 
-Every operator has one of four shapes:
+Every operator has one of five shapes:
 
 ### `single` → `{ $op: expr }`
 The operator takes exactly one expression argument. If more or fewer are given, codegen throws.
@@ -49,6 +49,31 @@ The operator takes no arguments (e.g. `$rand`).
 ```
 $rand()    →  { $rand: {} }
 ```
+
+### `flex` → `{ $op: expr }` _or_ `{ $op: [a, b, ...] }`
+The operator legitimately accepts both a single expression (typically in accumulator context, e.g. `$min` inside `$group`) and an array of expressions (in expression context, e.g. `$min` inside `$project`). The output shape is decided by argument count:
+
+```
+$min($.scores)            →  { $min: "$scores" }            (1 arg → single)
+$min($.a, $.b, $.c)       →  { $min: ["$a", "$b", "$c"] }   (2+ args → array)
+$round($.price)           →  { $round: "$price" }
+$round($.price, 2)        →  { $round: ["$price", 2] }
+```
+
+Spread handling matches `array`-shape operators:
+
+```
+$min(...$.scores)         →  { $min: "$scores" }                          (single spread → bare)
+$max($.first, ...$.rest)  →  { $max: { $concatArrays: [["$first"], "$rest"] } }  (mixed)
+```
+
+A single object-literal arg is treated as a value (the object itself), since flex is not the same as object-shape:
+
+```
+$mergeObjects({ a: 1 })   →  { $mergeObjects: { a: 1 } }
+```
+
+Current flex operators: `$round`, `$trunc`, `$min`, `$max`, `$avg`, `$sum`, `$stdDevPop`, `$stdDevSamp`, `$mergeObjects`.
 
 ## Unknown operators
 
