@@ -29,7 +29,9 @@ New syntax forms add a branch in `parseExpression()` and a dedicated `parseXxx()
 
 ## Extending the codegen
 
-New AST node types add a case in the `generate()` switch. Helper functions for specific shapes stay private and file-local.
+New AST node types add a case in the `_generate(expr, ctx)` switch. The public export is `generate(expr)` which calls `_generate` with `EMPTY_CTX`. All recursive calls must pass `ctx` through — never call `_generate` without it. Helper functions for specific shapes stay private and file-local.
+
+`GenerateCtx` carries two things: `lambdaParams` (set of in-scope lambda parameter names) and `reduceRemap` (maps user param names to MongoDB's fixed `$$value`/`$$this` names inside `.reduce()` bodies). Use `extendCtx(ctx, params)` to add lambda params; never mutate ctx directly.
 
 ## Error classes
 

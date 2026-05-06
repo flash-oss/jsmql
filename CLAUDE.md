@@ -25,7 +25,7 @@ Every decision should be evaluated through the lens of DX for the people **using
 
 ```sh
 npm test          # run all tests (vitest)
-npm run format    # format all src/ and test/ files with oxfmt (always run before committing)
+npm run format    # format all files with oxfmt (always run before committing)
 npm run build     # tsc → dist/
 
 # Run a single test file or a named test during development:
@@ -79,7 +79,7 @@ Breaking API changes must use `feat!:` or `fix!:` and must bump the major versio
 4. Update `docs/specs/operator-registry.md`.
 
 ### Formatting
-`oxfmt` at full defaults is the only formatter. Never make manual style decisions — just run `npm run format`. Do not configure oxfmt (no config file).
+`oxfmt` is the only formatter. Config is in `.oxfmtrc.json` (excludes `*.md`, `dist/`, `package*.json`). Never make manual style decisions — just run `npm run format`.
 
 ### TypeScript
 Strict mode stays on. No `any` without a comment explaining why it is unavoidable.
