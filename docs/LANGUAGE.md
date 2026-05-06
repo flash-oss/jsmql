@@ -891,6 +891,18 @@ mjsql(($) =>
 
 When an unknown identifier is encountered in the function-form path, the error message also points at the `mql` tag as the right tool for closure interpolation.
 
+### Escape-hatch operators (`$op` destructure)
+
+Direct `$op(...)` calls (e.g. `$dateDiff`, `$sampleRate`, `$stdDevPop`) work inside the function body, but TypeScript / your IDE will flag the operator name as an unknown identifier. To silence that warning, destructure the operators you use from the function's optional second parameter:
+
+```js
+mjsql(($, { $dateDiff }) =>
+  $dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }) ?? -1,
+);
+```
+
+The second parameter is types-only — the destructured names are typed as callables but never evaluated. The runtime strips the parameter list before parsing, so the body is identical to writing the call directly. Any `$`-prefixed name destructured from the second parameter is accepted by the type system; whether it is a real MongoDB operator is checked at compile time by the codegen.
+
 ---
 
 ## Template Tag (`mql`)

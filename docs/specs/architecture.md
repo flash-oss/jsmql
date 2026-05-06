@@ -62,10 +62,18 @@ MQL JSON (plain JS object)
 ## Public API surface (`src/index.ts`)
 
 ```ts
-type MjsqlInput = string | ((...args: any[]) => unknown);
-// Accepts any callable shape — `() => …`, `($) => …`, `(doc) => …` all work.
-// The parameter list is stripped at extraction time; `any` for parameters
-// gives IDE autocomplete on unannotated `$` without `noImplicitAny` errors.
+export type MjsqlOps = Record<`$${string}`, (...args: any[]) => any>;
+type MjsqlFn = ($: any, ops: MjsqlOps) => unknown;
+type MjsqlInput = string | MjsqlFn;
+// Accepts any callable shape — `() => …`, `($) => …`, `($, { $dateDiff }) => …`
+// all work, by JS function variance. The parameter list is stripped at
+// extraction time; `$` is `any` so unannotated `$.foo` keeps autocomplete
+// without `noImplicitAny`. The optional second parameter is **types-only** —
+// it gives users a destructure site for escape-hatch operators (e.g.
+// `$dateDiff`) so the IDE doesn't flag them as unknown identifiers. Its
+// template-literal key (`` `$${string}` ``) accepts any `$`-prefixed name as
+// a callable; correctness against the real operator registry is enforced at
+// codegen time, not by the type.
 
 mjsql(input: MjsqlInput): object
 // Parses and transpiles. Throws LexError | ParseError | CodegenError | FunctionInputError.

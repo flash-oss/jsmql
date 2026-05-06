@@ -254,8 +254,12 @@ describe("reporting: formatted date label", () => {
 
 describe("reporting: days since document was created", () => {
   it("uses $dateDiff escape hatch with new Date() for current time", () => {
-    // Days since the document was first created
-    const result = mjsql("$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: 'day' })");
+    // Days since the document was first created. Uses the function form with the
+    // operator destructured from the second parameter so the IDE doesn't flag
+    // `$dateDiff` as an unknown identifier.
+    const result = mjsql(($, { $dateDiff }) =>
+      $dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" }),
+    );
 
     expect(result).toEqual({
       $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" },

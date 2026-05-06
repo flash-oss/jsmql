@@ -23,10 +23,17 @@ export class FunctionInputError extends Error {
 // Accept any callable shape: the canonical idiom is `($) => …` (one
 // parameter named `$`, used as the document-context placeholder), but `()
 // => …` and `(doc) => …` are equally valid — the parameter list is
-// stripped at extraction time. `any` for the parameter type lets users
+// stripped at extraction time. `any` for the `$` parameter lets users
 // write unannotated `$` and still get IDE autocomplete (`$.foo.bar`)
 // without `noImplicitAny` complaining.
-export type MjsqlInput = string | ((...args: any[]) => unknown);
+//
+// The optional second parameter is types-only: it gives users a destructure
+// site for escape-hatch operators (`($, { $dateDiff }) => $dateDiff(…)`) so
+// IDEs don't flag `$dateDiff` as an unknown identifier. The parameter list
+// is stripped before the parser runs, so this never reaches the runtime.
+export type MjsqlOps = Record<`$${string}`, (...args: any[]) => any>;
+type MjsqlFn = ($: any, ops: MjsqlOps) => unknown;
+export type MjsqlInput = string | MjsqlFn;
 
 // Compiled-body cache for the function-input path. Keyed on the extracted body
 // string, so inline arrows in hot loops (which create a new function object on
@@ -97,7 +104,7 @@ function compile(expression: string): object {
 
 // ── Function-input extraction ─────────────────────────────────────────────
 
-function extractArrowBody(fn: () => unknown): string {
+function extractArrowBody(fn: (...args: any[]) => unknown): string {
   const src = Function.prototype.toString.call(fn).trim();
 
   if (/^async\b/.test(src)) {

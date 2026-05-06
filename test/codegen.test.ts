@@ -1655,6 +1655,17 @@ describe("function overload", () => {
     const b = make();
     expect(a).toEqual(b);
   });
+
+  it("destructured operator in the second parameter compiles to the same MQL as the string form", () => {
+    // The second arg is types-only — it gives users a destructure site that
+    // silences IDE warnings on `$dateDiff`. The runtime strips the param list,
+    // so this produces identical MQL to the string equivalent.
+    const fromFn = mjsql(($, { $dateDiff }) =>
+      $dateDiff({ startDate: $.a, endDate: $.b, unit: "day" }),
+    );
+    const fromStr = mjsql('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day" })');
+    expect(fromFn).toEqual(fromStr);
+  });
 });
 
 // ─── Newly-registered operators (pulled from mongodb/mql-specifications) ────
