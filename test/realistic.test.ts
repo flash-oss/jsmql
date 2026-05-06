@@ -111,6 +111,39 @@ describe("e-commerce: seasonal discount with eligibility check", () => {
   });
 });
 
+describe("e-commerce: discount breakdown via IIFE → $let", () => {
+  it("binds the discount once and reuses it across three projected fields", () => {
+    // A $project-style row that needs the same computed value (the discount amount)
+    // in three places: the final price, the raw savings, and the savings percentage.
+    // Writing this as an IIFE lets `$let` bind the value once instead of repeating
+    // `$.price * (1 - $.loyalty.multiplier)` in every field.
+    const result = mjsql(`
+      ((discount) => ({
+        finalPrice: $.price - discount,
+        savings: discount,
+        savingsPercent: Math.round((discount / $.price) * 100),
+      }))($.price * (1 - $.loyalty.multiplier))
+    `);
+
+    expect(result).toEqual({
+      $let: {
+        vars: {
+          discount: {
+            $multiply: ["$price", { $subtract: [1, "$loyalty.multiplier"] }],
+          },
+        },
+        in: {
+          finalPrice: { $subtract: ["$price", "$$discount"] },
+          savings: "$$discount",
+          savingsPercent: {
+            $round: [{ $multiply: [{ $divide: ["$$discount", "$price"] }, 100] }, 0],
+          },
+        },
+      },
+    });
+  });
+});
+
 describe("e-commerce: cart subtotal", () => {
   it("sums item totals using .map() and .reduce()", () => {
     // Sum up all item totals: items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)
