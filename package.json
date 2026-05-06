@@ -16,9 +16,12 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "oxfmt ."
+    "format": "oxfmt .",
+    "prepare": "node vendor/fetch-mql-specs.mjs"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "js-yaml": "^4.1.0",
     "oxfmt": "^0.47.0",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"

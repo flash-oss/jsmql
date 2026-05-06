@@ -14,7 +14,7 @@ Each stage has a single responsibility. Do not leak concerns across boundaries:
 
 ## Key invariants
 
-- `src/operators.ts` is the **only** place that knows about individual operator shapes. If you find yourself writing `if (name === '$trim')` in the parser or codegen, that logic belongs in the registry instead.
+- `src/operators.ts` is the **only** place that knows about individual operator shapes. If you find yourself writing `if (name === '$trim')` in the parser or codegen, that logic belongs in the registry instead. Each entry carries `shape`, `category` (from `OPERATOR_CATEGORIES`), and `description` (lifted from `vendor/mql-specifications/definitions/`). The drift-protection test in `test/operator-spec-coverage.test.ts` keeps the registry aligned with the official spec on every `npm test`.
 - The parser's object-style detection rule: if an operator call has **exactly one argument and that argument is an object literal**, it is `style: 'object'`. If there are multiple args (even if the first is an object), it is `style: 'positional'`. Do not change this rule without updating `docs/specs/grammar.md`.
 - Field refs (`$.field`) always serialise to the string `"$field"` in MQL output. Nested paths (`$.a.b`) become `"$a.b"`.
 - Unknown operators (not in the registry) fall through gracefully — see `codegen.ts:generateUnknownOperator`. This is intentional: it future-proofs the tool against new MongoDB operators.

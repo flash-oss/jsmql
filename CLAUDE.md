@@ -84,10 +84,11 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 Breaking API changes must use `feat!:` or `fix!:` and must bump the major version.
 
 ### Adding a new MongoDB operator
-1. Add an entry to `OPERATORS` in `src/operators.ts` with the correct shape.
-2. Add at least one test case in `test/codegen.test.ts`.
-3. If the operator has user-visible syntax (e.g. a named convenience form), update `docs/LANGUAGE.md`.
-4. Update `docs/specs/operator-registry.md`.
+1. Verify the operator exists in `vendor/mql-specifications/definitions/expression/<name>.yaml` (or `definitions/accumulator/`). If it isn't, bump the pinned commit in `vendor/fetch-mql-specs.mjs` or add the operator to `REGISTRY_ONLY` in `test/operator-spec-coverage.test.ts` with a comment.
+2. Add an entry to `OPERATORS` in `src/operators.ts` with the correct shape, a `category` from `OPERATOR_CATEGORIES`, and a one-sentence `description` lifted from the spec YAML.
+3. Add at least one test case in `test/codegen.test.ts`.
+4. If the operator has user-visible syntax (e.g. a named convenience form), update `docs/LANGUAGE.md`.
+5. Update `docs/specs/operator-registry.md` if shape semantics change. The drift-protection test (`test/operator-spec-coverage.test.ts`) will catch missing categories or descriptions.
 
 ### Formatting
 `oxfmt` is the only formatter. Config is in `.oxfmtrc.json` (excludes `*.md`, `dist/`, `package*.json`). Never make manual style decisions — just run `npm run format`.
