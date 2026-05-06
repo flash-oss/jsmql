@@ -1065,6 +1065,259 @@ describe("immutable array methods", () => {
   });
 });
 
+describe("ES2025 Set methods", () => {
+  it("intersection", () => {
+    expect(mjsql("new Set($.a).intersection(new Set($.b))")).toEqual({
+      $setIntersection: ["$a", "$b"],
+    });
+  });
+  it("union", () => {
+    expect(mjsql("new Set($.a).union(new Set($.b))")).toEqual({
+      $setUnion: ["$a", "$b"],
+    });
+  });
+  it("difference", () => {
+    expect(mjsql("new Set($.a).difference(new Set($.b))")).toEqual({
+      $setDifference: ["$a", "$b"],
+    });
+  });
+  it("isSubsetOf", () => {
+    expect(mjsql("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({
+      $setIsSubset: ["$a", "$b"],
+    });
+  });
+  it("isSupersetOf swaps args", () => {
+    expect(mjsql("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({
+      $setIsSubset: ["$b", "$a"],
+    });
+  });
+  it("works with array literals", () => {
+    expect(mjsql("new Set([1, 2, 3]).intersection(new Set([2, 3, 4]))")).toEqual({
+      $setIntersection: [
+        [1, 2, 3],
+        [2, 3, 4],
+      ],
+    });
+  });
+  it("symmetricDifference throws helpful error", () => {
+    expect(() => mjsql("new Set($.a).symmetricDifference(new Set($.b))")).toThrow(
+      /no MongoDB equivalent/,
+    );
+  });
+  it("non-Set argument is rejected", () => {
+    expect(() => mjsql("new Set($.a).intersection($.b)")).toThrow(/must be a 'new Set/);
+  });
+});
+
+describe("regex method variants", () => {
+  it("/re/.test(str)", () => {
+    expect(mjsql("/[a-z]+/.test($.s)")).toEqual({
+      $regexMatch: { input: "$s", regex: "[a-z]+" },
+    });
+  });
+  it("/re/flags.test(str) preserves flags", () => {
+    expect(mjsql("/PAT/i.test($.s)")).toEqual({
+      $regexMatch: { input: "$s", regex: "PAT", options: "i" },
+    });
+  });
+  it("/re/.exec(str)", () => {
+    expect(mjsql("/word/.exec($.s)")).toEqual({
+      $regexFind: { input: "$s", regex: "word" },
+    });
+  });
+  it("str.matchAll(/re/g)", () => {
+    expect(mjsql("$.s.matchAll(/word/g)")).toEqual({
+      $regexFindAll: { input: "$s", regex: "word", options: "g" },
+    });
+  });
+  it("matchAll without g flag throws", () => {
+    expect(() => mjsql("$.s.matchAll(/word/)")).toThrow(/'g' flag/);
+  });
+  it("str.search(/re/) returns idx with -1 fallback", () => {
+    expect(mjsql("$.s.search(/foo/)")).toEqual({
+      $ifNull: [
+        { $getField: { field: "idx", input: { $regexFind: { input: "$s", regex: "foo" } } } },
+        -1,
+      ],
+    });
+  });
+});
+
+describe("Number static predicates", () => {
+  it("Number.isInteger(x)", () => {
+    expect(mjsql("Number.isInteger($.n)")).toEqual({
+      $cond: [
+        { $in: [{ $type: "$n" }, ["int", "long"]] },
+        true,
+        {
+          $cond: [
+            { $in: [{ $type: "$n" }, ["double", "decimal"]] },
+            { $eq: ["$n", { $trunc: "$n" }] },
+            false,
+          ],
+        },
+      ],
+    });
+  });
+  it("Number.isNaN(x)", () => {
+    expect(mjsql("Number.isNaN($.x)")).toEqual({ $ne: ["$x", "$x"] });
+  });
+  it("Number.isFinite(x) throws helpful error", () => {
+    expect(() => mjsql("Number.isFinite($.x)")).toThrow(/no Infinity literal/);
+  });
+});
+
+describe("string padding methods", () => {
+  it("padStart with explicit char", () => {
+    expect(mjsql('$.code.padStart(5, "0")')).toEqual({
+      $let: {
+        vars: { s: "$code" },
+        in: {
+          $cond: [
+            { $gte: [{ $strLenCP: "$$s" }, 5] },
+            "$$s",
+            {
+              $concat: [
+                {
+                  $reduce: {
+                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$s" }] }] },
+                    initialValue: "",
+                    in: { $concat: ["$$value", "0"] },
+                  },
+                },
+                "$$s",
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+  it("padStart defaults to space", () => {
+    const out = mjsql("$.s.padStart(10)") as Record<string, unknown>;
+    // Spot-check: pad string should be a space
+    expect(JSON.stringify(out)).toContain('"in":{"$concat":["$$value"," "]}');
+  });
+  it("padEnd order is str-then-pad", () => {
+    const out = mjsql('$.s.padEnd(10, "-")') as Record<string, unknown>;
+    expect(JSON.stringify(out)).toContain('["$$s",{"$reduce"');
+  });
+  it("repeat", () => {
+    expect(mjsql('"-".repeat(5)')).toEqual({
+      $reduce: {
+        input: { $range: [0, 5] },
+        initialValue: "",
+        in: { $concat: ["$$value", "-"] },
+      },
+    });
+  });
+});
+
+describe("Array.from({length, ...})", () => {
+  it("no map function returns $range", () => {
+    expect(mjsql("Array.from({ length: 5 })")).toEqual({ $range: [0, 5] });
+  });
+  it("with (_, i) => body maps over $range", () => {
+    expect(mjsql("Array.from({ length: 3 }, (_, i) => i * 2)")).toEqual({
+      $map: {
+        input: { $range: [0, 3] },
+        as: "i",
+        in: {
+          $let: {
+            vars: { _: null },
+            in: { $multiply: ["$$i", 2] },
+          },
+        },
+      },
+    });
+  });
+  it("with $.length expression", () => {
+    const out = mjsql("Array.from({ length: $.n }, (_, i) => i)") as Record<string, unknown>;
+    expect(JSON.stringify(out)).toContain('"$range":[0,"$n"]');
+  });
+  it("non-{length} input throws", () => {
+    expect(() => mjsql("Array.from($.iter)")).toThrow(/{length: n} form/);
+  });
+  it("requires 2-param map function", () => {
+    expect(() => mjsql("Array.from({ length: 3 }, x => x)")).toThrow(/2 parameters/);
+  });
+});
+
+describe("BigInt literals", () => {
+  it("integer with n suffix", () => {
+    expect(mjsql("123n")).toEqual({ $toLong: "123" });
+  });
+  it("zero", () => {
+    expect(mjsql("0n")).toEqual({ $toLong: "0" });
+  });
+  it("rejects fraction with n", () => {
+    expect(() => mjsql("1.5n")).toThrow(/Invalid BigInt/);
+  });
+  it("rejects exponent with n", () => {
+    expect(() => mjsql("1e2n")).toThrow(/Invalid BigInt/);
+  });
+  it("works in arithmetic", () => {
+    expect(mjsql("$.timestamp - 1000n")).toEqual({
+      $subtract: ["$timestamp", { $toLong: "1000" }],
+    });
+  });
+});
+
+describe("Object.groupBy", () => {
+  it("groups by category", () => {
+    expect(mjsql("Object.groupBy($.items, x => x.category)")).toEqual({
+      $reduce: {
+        input: "$items",
+        initialValue: {},
+        in: {
+          $let: {
+            vars: { key: { $toString: "$$this.category" } },
+            in: {
+              $mergeObjects: [
+                "$$value",
+                {
+                  $arrayToObject: [
+                    [
+                      [
+                        "$$key",
+                        {
+                          $concatArrays: [
+                            {
+                              $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []],
+                            },
+                            ["$$this"],
+                          ],
+                        },
+                      ],
+                    ],
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it("rejects non-lambda discriminator", () => {
+    expect(() => mjsql("Object.groupBy($.items, $.f)")).toThrow(/single-parameter arrow function/);
+  });
+  it("rejects multi-param lambda", () => {
+    expect(() => mjsql("Object.groupBy($.items, (a, b) => a)")).toThrow(
+      /single-parameter arrow function/,
+    );
+  });
+});
+
+describe("optional method call ?.()", () => {
+  it("?.method() works", () => {
+    expect(mjsql("$.maybe?.toLowerCase()")).toEqual({ $toLower: "$maybe" });
+  });
+  it("?. on chain works", () => {
+    expect(mjsql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
+  });
+});
+
 describe("IIFE → $let", () => {
   it("simple ((x) => body)(value)", () => {
     expect(mjsql("((x) => x + 1)(5)")).toEqual({

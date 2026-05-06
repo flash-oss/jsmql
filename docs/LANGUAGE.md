@@ -108,6 +108,17 @@ Integer and floating-point numbers, scientific notation, and numeric separators 
 
 Underscores must sit between two digits — `1_`, `_1`, and `1__0` are errors.
 
+**BigInt literals.** Integer literals with an `n` suffix compile to MongoDB's `$toLong`:
+
+```js
+123n           // { $toLong: "123" }
+1_000_000n     // { $toLong: "1000000" }   (separators allowed)
+$.timestamp - 1000n
+               // { $subtract: ["$timestamp", { $toLong: "1000" }] }
+```
+
+`n` suffix is integer-only — `1.5n`, `1e2n`, etc. are syntax errors (matches JS).
+
 ### Strings
 
 Both single and double quotes. Escape sequences: `\\`, `\"`, `\'`, `\n`, `\t`:
@@ -392,6 +403,15 @@ $.file.endsWith(".pdf")            // substring-equality at the tail (see below)
 $.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
 $.first.trim().concat(" ", $.last) // { $concat: [{ $trim: ... }, " ", "$last"] }
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
+$.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word", options: "g" } }
+$.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
+$.code.padStart(5, "0")            // padded via $reduce + $range + $concat
+$.note.padEnd(10)                  // (default pad char is space)
+"-".repeat($.n)                    // $reduce concatenating "-" n times
+
+// Regex receiver methods — equivalent to .match / .search-style calls
+/^[a-z]/.test($.s)                 // { $regexMatch: { input: "$s", regex: "^[a-z]" } }
+/word/i.exec($.s)                  // { $regexFind: { input: "$s", regex: "word", options: "i" } }
 
 // Property access — type-aware dispatch
 $.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
@@ -422,6 +442,9 @@ $.items.slice(1, 3)        // { $slice: ["$items", 1, 3] }
 $.items.reverse()          // { $reverseArray: "$items" }
 $.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, identical to .reverse())
 $.scores.toSorted()        // { $sortArray: { input: "$scores", sortBy: 1 } } (ascending)
+Array.from({length: 5})    // { $range: [0, 5] }
+Array.from({length: 3}, (_, i) => i * 2)
+                           // { $map: { input: { $range: [0, 3] }, as: "i", in: <body> } }
 [1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
@@ -488,6 +511,31 @@ $.numbers.reduce((acc, x) => acc + x, 0)
 ```
 
 **Note:** In `reduce`, the accumulator and element are mapped to MongoDB's `$$value` and `$$this` variables.
+
+### Set methods (ES2025)
+
+Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag — MQL has no Set type, so the underlying arrays go straight into the operator.
+
+```js
+new Set($.a).intersection(new Set($.b))   // { $setIntersection: ["$a", "$b"] }
+new Set($.a).union(new Set($.b))          // { $setUnion: ["$a", "$b"] }
+new Set($.a).difference(new Set($.b))     // { $setDifference: ["$a", "$b"] }
+new Set($.a).isSubsetOf(new Set($.b))     // { $setIsSubset: ["$a", "$b"] }
+new Set($.a).isSupersetOf(new Set($.b))   // { $setIsSubset: ["$b", "$a"] }   (swap)
+```
+
+`Set.prototype.symmetricDifference()` and `.isDisjointFrom()` have no MongoDB equivalent — compose manually via `$setDifference` and `$setIntersection`. The set-method argument must itself be a `new Set(...)` literal so that the JS reads consistently.
+
+Need `$allElementsTrue` / `$anyElementTrue`? Use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
+
+### `Object.groupBy()` (ES2024)
+
+```js
+Object.groupBy($.items, x => x.category)
+// → $reduce that accumulates an object keyed by the discriminator
+```
+
+The discriminator must be a single-parameter arrow function. Non-string discriminators are wrapped in `$toString` automatically (matching JS, where the key is coerced to a string property name). `Map.groupBy()` is not supported — MQL has no Map type.
 
 ---
 
@@ -628,6 +676,15 @@ typeof $.age == "number"           // { $eq: [{ $type: "$age" }, "number"] }
 ```
 
 Returns the BSON type name as a string (e.g. `"double"`, `"string"`, `"bool"`, `"objectId"`, `"date"`, `"null"`, `"array"`, `"object"`).
+
+### Number static predicates
+
+```js
+Number.isInteger($.n)              // true if $.n is int/long, or a double with no fractional part
+Number.isNaN($.x)                  // { $ne: ["$x", "$x"] }   — NaN is the only value where x !== x
+```
+
+`Number.isFinite()` is **not supported** — MongoDB has no Infinity literal that can be referenced cleanly. For finite-bound checks, write the bounds explicitly (e.g. `$.x > -1e300 && $.x < 1e300`) or use `$convert` with an `onError` clause.
 
 ### MongoDB Type Conversion Utilities
 

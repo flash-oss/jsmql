@@ -59,7 +59,14 @@ const MATH_METHODS = new Set<string>([
 
 const MATH_CONSTANTS = new Set<string>(["PI", "E"]);
 
-const OBJECT_METHODS = new Set<string>(["keys", "values", "entries", "assign", "fromEntries"]);
+const OBJECT_METHODS = new Set<string>([
+  "keys",
+  "values",
+  "entries",
+  "assign",
+  "fromEntries",
+  "groupBy",
+]);
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 
@@ -425,6 +432,9 @@ export class Parser {
         return this.parseFieldRef();
       case TokenType.Number:
         return this.parseNumber();
+      case TokenType.BigInt:
+        this.lexer.next();
+        return { type: "BigIntLiteral", value: t.value };
       case TokenType.String:
         this.lexer.next();
         return { type: "StringLiteral", value: t.value };
@@ -460,6 +470,9 @@ export class Parser {
         }
         if (name === "Array" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseArrayStaticCall();
+        }
+        if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
+          return this.parseNumberStaticCall();
         }
         if (TYPE_CAST_NAMES.has(name)) return this.parseTypeCast();
         this.lexer.next();
@@ -627,22 +640,29 @@ export class Parser {
     return { type: "Lambda", params, body };
   }
 
-  /** "new Date()" or "new Date(expr)" */
+  /** "new Date()" / "new Date(expr)" or "new Set()" / "new Set(expr)" */
   private parseNewDate(): Expr {
     const newTok = this.lexer.next(); // consume 'new'
     const className = this.lexer.peek();
-    if (className.type !== TokenType.Ident || className.value !== "Date") {
-      throw new ParseError(`Expected 'Date' after 'new' at position ${newTok.pos}`, newTok.pos);
+    if (className.type !== TokenType.Ident) {
+      throw new ParseError(`Expected class name after 'new' at position ${newTok.pos}`, newTok.pos);
     }
-    this.lexer.next(); // consume 'Date'
+    if (className.value !== "Date" && className.value !== "Set") {
+      throw new ParseError(
+        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set()`,
+        className.pos,
+      );
+    }
+    const cls = className.value;
+    this.lexer.next(); // consume class name
     this.lexer.expect(TokenType.LParen);
     if (this.lexer.peek().type === TokenType.RParen) {
       this.lexer.next();
-      return { type: "NewDate", arg: null };
+      return cls === "Date" ? { type: "NewDate", arg: null } : { type: "NewSet", arg: null };
     }
     const arg = this.parseExpression();
     this.lexer.expect(TokenType.RParen);
-    return { type: "NewDate", arg };
+    return cls === "Date" ? { type: "NewDate", arg } : { type: "NewSet", arg };
   }
 
   /** "Date.now()" — recognised as a primary; other Date.* members are not supported */
@@ -662,23 +682,62 @@ export class Parser {
     return { type: "DateNow" };
   }
 
-  /** "Array.isArray(x)" */
+  /** "Array.isArray(x)" or "Array.from(input)" or "Array.from(input, mapFn)" */
   private parseArrayStaticCall(): Expr {
     const arrayTok = this.lexer.next(); // consume 'Array'
     this.lexer.expect(TokenType.Dot);
     const methodTok = this.lexer.peek();
-    if (methodTok.type !== TokenType.Ident || methodTok.value !== "isArray") {
+    if (methodTok.type !== TokenType.Ident) {
+      throw new ParseError(`Expected Array method name at position ${methodTok.pos}`, arrayTok.pos);
+    }
+    if (methodTok.value === "isArray") {
+      this.lexer.next();
+      this.lexer.expect(TokenType.LParen);
+      const arg = this.parseExpression();
+      this.lexer.expect(TokenType.RParen);
+      return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg] };
+    }
+    if (methodTok.value === "from") {
+      this.lexer.next();
+      this.lexer.expect(TokenType.LParen);
+      const input = this.parseExpression();
+      let mapFn: Expr | null = null;
+      if (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        const arg = this.parseArgOrLambda();
+        mapFn = arg;
+      }
+      this.lexer.expect(TokenType.RParen);
+      return { type: "ArrayFrom", input, mapFn };
+    }
+    throw new ParseError(
+      `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}. Supported: Array.isArray(), Array.from()`,
+      arrayTok.pos,
+    );
+  }
+
+  /** "Number.isInteger(x)" / "Number.isNaN(x)" / "Number.isFinite(x)" */
+  private parseNumberStaticCall(): Expr {
+    const numberTok = this.lexer.next(); // consume 'Number'
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (
+      methodTok.type !== TokenType.Ident ||
+      (methodTok.value !== "isInteger" &&
+        methodTok.value !== "isNaN" &&
+        methodTok.value !== "isFinite")
+    ) {
       throw new ParseError(
-        `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}. Supported: Array.isArray()`,
-        arrayTok.pos,
+        `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}. Supported: Number.isInteger, Number.isNaN, Number.isFinite`,
+        numberTok.pos,
       );
     }
-    this.lexer.next(); // consume 'isArray'
+    const method = methodTok.value as "isInteger" | "isNaN" | "isFinite";
+    this.lexer.next();
     this.lexer.expect(TokenType.LParen);
     const arg = this.parseExpression();
     this.lexer.expect(TokenType.RParen);
-    // Translate to $isArray operator call directly
-    return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg] };
+    return { type: "NumberStatic", method, arg };
   }
 
   /** "Math.method(args)" or "Math.PI" / "Math.E" constants */

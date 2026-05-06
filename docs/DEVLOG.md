@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-06 — ES2024/2025 set & object surface, regex helpers, BigInt, padding
+
+A grab-bag of JS-syntax additions all aimed at cutting more `$op(...)` escape-hatch usage. Each addition is independent; grouped here because they were designed and shipped together.
+
+**ES2025 Set methods.** `new Set(arr).intersection(new Set(other))` (and `.union`, `.difference`, `.isSubsetOf`, `.isSupersetOf`) compile to `$setIntersection`/`$setUnion`/`$setDifference`/`$setIsSubset`. The `new Set(...)` wrapper is a JS-syntax tag — MQL has no Set type, so codegen unwraps it on both receiver and argument. `symmetricDifference` and `isDisjointFrom` have no MongoDB equivalent and are rejected with actionable errors. `parseNewDate` was generalised to handle `new Set(...)` alongside `new Date(...)`; method dispatch in `generateMethodCall` intercepts `NewSet` receivers and routes to `generateSetMethodCall`.
+
+**Regex method variants.** `/re/.test(str)` and `/re/.exec(str)` (regex-as-receiver) and `str.matchAll(/re/g)` and `str.search(/re/)` (regex-as-argument) compile to `$regexMatch`, `$regexFind`, `$regexFindAll`. `.matchAll` requires the `g` flag (matching JS's TypeError). `.search` returns the first match's `.idx` with `$ifNull` fallback to `-1`. The lexer's existing context-sensitive `/`-vs-divide logic already produces `RegexLiteral` tokens at the right positions — no lexer changes needed.
+
+**`Object.groupBy()` (ES2024).** Synthesises a `$reduce` building a grouped object: discriminator runs against `$$this`, the result is wrapped with `$toString` if not statically a string, then `$mergeObjects` extends the accumulator under that key with the current element appended. Implementation in `generateObjectCall`'s new `groupBy` arm. `Map.groupBy` is rejected — JSON output target has no Map type.
+
+**`Number.isInteger` / `Number.isNaN`.** New `parseNumberStaticCall` handles `Number.isInteger`/`isNaN` in parsing (avoiding collision with the existing `Number(x)` type-cast form). `isInteger` checks BSON type via `$type` and falls back to `$eq([x, $trunc(x)])` for double/decimal. `isNaN` uses the `x !== x` trick. `isFinite` is **explicitly rejected** with a clear error pointing at domain-bound checks — MQL has no Infinity literal that compiles cleanly.
+
+**`Array.from({length: n}, (_, i) => f(i))`.** The {length} form is the only supported one — pattern-matched at codegen and synthesised as `$map($range(0, n), (i) => $let({ _: null }, body))`. Since `$map` only binds one variable, the lambda's first (element) parameter is rebound to `null` via `$let` — matches JS's "element is always undefined" semantics for the {length} form. Other `Array.from` invocations are rejected.
+
+**String `.padStart(n[, ch])`, `.padEnd(n[, ch])`, `.repeat(n)`.** Synthesised via `$reduce` over `$range` concatenating the pad/repeat string. Verbose MQL output but a tiny JS surface. `padStart` defaults the pad char to space, matching JS.
+
+**BigInt literals.** Lexer recognises the `n` suffix on integer literals (rejected on fractions/exponents, matching JS). New `BigIntLiteral` AST node compiles to `{ $toLong: <decimal-string> }`. Useful for 64-bit timestamp arithmetic where `Number` would lose precision.
+
+**Optional method call `?.()`.** Already worked — `parsePostfix` already handled `?.` followed by a member, and the method-call branch was reached for both `.method(args)` and `?.method(args)`. Added a regression test to lock the behaviour in.
+
+**Why now.** Each item closes a real DX gap. ~85 of the 187 MongoDB operators are still escape-hatch only after this PR; another ~30 are now reachable through standard JS syntax that previously required `$op(...)`. The biggest qualitative wins: Set algebra (every "deduplicate / overlap / membership" use case), `Object.groupBy` (the canonical analytics aggregation idiom), and BigInt literals (correctness for 64-bit timestamps).
+
+**What this PR rejects with actionable errors instead of silent failure.**
+- `Number.isFinite()` — no clean Infinity literal in MQL
+- `Set.symmetricDifference()` / `.isDisjointFrom()` — no direct operator
+- `Map.groupBy()` — no Map type in MQL
+- `Array.from(iterable)` — no general iterable-to-array primitive
+- `.toSorted(comparator)` — comparator translation deferred
+- `.matchAll(/re/)` without `g` flag — matches JS's TypeError
+
+**Verification.** 32 new test cases across all eight features. `npm test` passes 482/482. Documentation updated in [docs/LANGUAGE.md](LANGUAGE.md), [docs/specs/grammar.md](specs/grammar.md), and [docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-05-06 — Immutable array methods (ES2023) and IIFE → `$let`
 
 Two related additions to the JS surface, both expression-level idioms users already know.
@@ -29,7 +63,7 @@ Two parser surfaces produce a Lambda usable here: the existing `((x) => body)` f
 
 **Tradeoff in `findLastIndex`.** The synthesis is verbose — `$zip` + `$range` + `$let` inside `$reduce` — but the JS surface stays minimal. Users who want compact output can drop into the equivalent `$reduce` directly via the escape hatch. Documented in [docs/LANGUAGE.md](LANGUAGE.md) and [docs/specs/method-dispatch.md](specs/method-dispatch.md).
 
-**Verification.** 14 new test cases cover `toSorted`/`toReversed`/`findLast`/`findLastIndex` plus 8 covering the IIFE form (single-param paren and unparen, multi-param, zero-param, body referencing outer fields, mismatched arity, non-lambda callee, spread). `npm test` passes 456/456.
+**Verification.** 14 new test cases cover `toSorted`/`toReversed`/`findLast`/`findLastIndex` plus 8 covering the IIFE form (single-param paren and unparen, multi-param, zero-param, body referencing outer fields, mismatched arity, non-lambda callee, spread). `npm test` passes 416/416.
 
 ---
 

@@ -55,6 +55,7 @@ export const TokenType = {
 
   // Literals
   Number: "Number",
+  BigInt: "BigInt", // 123n
   String: "String",
   True: "True",
   False: "False",
@@ -99,6 +100,7 @@ export class LexError extends Error {
 // After anything else, `/` starts a regex literal.
 const VALUE_ENDING_TYPES = new Set<TokenType>([
   TokenType.Number,
+  TokenType.BigInt,
   TokenType.String,
   TokenType.True,
   TokenType.False,
@@ -481,15 +483,32 @@ export class Lexer {
     const src = this.src;
     let i = this.pos;
     i = this.consumeDigitsWithSeparators(i, start);
+    let hasFraction = false;
+    let hasExponent = false;
     // Only consume the dot if the next char is also a digit — prevents 0.name being lexed as float
     if (i < src.length && src[i] === "." && i + 1 < src.length && this.isDigit(src[i + 1])) {
+      hasFraction = true;
       i++;
       i = this.consumeDigitsWithSeparators(i, start);
     }
     if (i < src.length && (src[i] === "e" || src[i] === "E")) {
+      hasExponent = true;
       i++;
       if (i < src.length && (src[i] === "+" || src[i] === "-")) i++;
       i = this.consumeDigitsWithSeparators(i, start);
+    }
+    // BigInt suffix: integer literals only. Reject `1.5n`, `1e2n`, etc. — matches JS.
+    if (i < src.length && src[i] === "n") {
+      if (hasFraction || hasExponent) {
+        throw new LexError(
+          `Invalid BigInt literal at position ${start}: 'n' suffix requires an integer (no fraction or exponent)`,
+          start,
+        );
+      }
+      const raw = src.slice(this.pos, i);
+      const value = raw.replace(/_/g, "");
+      this.pos = i + 1; // consume the 'n'
+      return { type: TokenType.BigInt, value, pos: start };
     }
     const raw = src.slice(this.pos, i);
     // Numeric separators: strip underscores. _ is only valid between digits — readNumber

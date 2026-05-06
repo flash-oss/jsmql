@@ -41,6 +41,11 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.includes(str)` | `{ $gte: [{ $indexOfCP: [expr, str] }, 0] }` *(known string receiver only)* |
 | `.match(/pat/flags)` | `{ $regexMatch: { input, regex: "pat", options: "flags" } }` |
 | `.match("pat")` | `{ $regexMatch: { input, regex: "pat" } }` |
+| `.matchAll(/pat/g)` | `{ $regexFindAll: { input, regex, options } }` (requires `g` flag) |
+| `.search(/pat/)` | `$regexFind` + `.idx` field, with `$ifNull` fallback to `-1` |
+| `.padStart(n[, ch])` | `$let` + `$cond` + `$reduce`($range) — pad-string concatenated *before* receiver |
+| `.padEnd(n[, ch])` | mirror of padStart, pad string concatenated *after* receiver |
+| `.repeat(n)` | `$reduce` over `$range(0, n)` concatenating receiver |
 | `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: [{ $isArray: expr }, { $size: expr }, { $strLenCP: expr }] }` otherwise |
 
 ### Array methods (no lambda)
@@ -186,6 +191,14 @@ JS bracket access serves two purposes that compile to different MQL operators: a
 - **Unknown** receiver (bare `FieldRef`, ternary, etc.) → runtime `$cond` on `$isArray` between `$arrayElemAt` (array branch) and `$getField` (object branch). Both branches reuse the same `obj` expression; for paths this is free, and `$cond` is short-circuit so only the chosen branch executes.
 
 There is no string-literal/number-literal shortcut on the index — the receiver type alone drives the decision. If a user wants compact output for `$.field[0]`, they can use `.at(0)` (always emits `$arrayElemAt`) or pin the receiver type with `.map(x => x)` / `.slice(0)` / `.reverse()`.
+
+## Set-receiver methods (ES2025)
+
+When the receiver is a `NewSet` AST node (`new Set(arr)`), method dispatch is intercepted at the top of `generateMethodCall` and routed to `generateSetMethodCall`. The wrapper is unwrapped to its underlying array; the method's argument must itself be a `NewSet` and is also unwrapped. Output: `$setIntersection`, `$setUnion`, `$setDifference`, `$setIsSubset`. `isSupersetOf` swaps operand order to reuse `$setIsSubset`. `symmetricDifference` and `isDisjointFrom` are rejected with a clear error.
+
+## Regex-receiver methods
+
+When the receiver is a `RegexLiteral`, method dispatch is intercepted and routed to `generateRegexMethodCall`. `.test(str)` → `$regexMatch`; `.exec(str)` → `$regexFind`. The pattern and flags from the regex literal are emitted directly into the operator's `regex` and `options` fields. `RegexLiteral` as a standalone primary expression is parsed via the existing context-sensitive `/`-vs-divide lexer logic; appearing as a method receiver requires no new lexer state.
 
 ## Object literals with computed or special entries
 

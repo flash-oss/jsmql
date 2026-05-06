@@ -54,6 +54,7 @@ export type Expr =
     }
   | { type: "FieldRef"; path: string }
   | { type: "NumberLiteral"; value: number }
+  | { type: "BigIntLiteral"; value: string }
   | { type: "StringLiteral"; value: string }
   | { type: "BooleanLiteral"; value: boolean }
   | { type: "NullLiteral" }
@@ -72,10 +73,13 @@ export type Expr =
   | { type: "Lambda"; params: string[]; body: Expr }
   | { type: "TypeofExpr"; operand: Expr }
   | { type: "NewDate"; arg: Expr | null }
+  | { type: "NewSet"; arg: Expr | null }
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr }
   | { type: "MathCall"; method: MathMethod; args: CallArg[] }
   | { type: "MathConst"; name: MathConstant }
   | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[] }
+  | { type: "ArrayFrom"; input: Expr; mapFn: Expr | null }
+  | { type: "NumberStatic"; method: NumberStaticMethod; arg: Expr }
   | { type: "DateNow" };
 
 export type TypeCastOp = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat";
@@ -111,4 +115,5 @@ export type MathMethod =
   | "acosh"
   | "atanh";
 export type MathConstant = "PI" | "E";
-export type ObjectMethod = "keys" | "values" | "entries" | "assign" | "fromEntries";
+export type ObjectMethod = "keys" | "values" | "entries" | "assign" | "fromEntries" | "groupBy";
+export type NumberStaticMethod = "isInteger" | "isNaN" | "isFinite";

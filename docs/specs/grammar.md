@@ -54,18 +54,18 @@ primary        = operator_call
                | field_ref
                | math_call | math_const
                | object_call
-               | type_cast
-               | new_date | date_now | array_static
+               | type_cast | number_static
+               | new_date_or_set | date_now | array_static
                | regex_literal
                | template_literal
-               | number
+               | number | bigint
                | string
                | boolean
                | null
                | array_literal
                | object_literal
                | lambda_paren                                (* (x) => expr *)
-               | "(" expression ")"
+               | "(" expression ")"                          (* also accepts (x => expr) *)
                | IDENT                                       (* param_ref — lambda param or type cast name *)
 
 operator_call  = "$" IDENT_OR_KW "(" op_arg_list ")"
@@ -108,20 +108,24 @@ MATH_METHOD    = "abs" | "ceil" | "floor" | "round" | "pow" | "sqrt"
 math_const     = "Math" "." ("PI" | "E")
 
 object_call    = "Object" "." OBJECT_METHOD "(" call_arg_list ")"
-OBJECT_METHOD  = "keys" | "values" | "entries" | "assign" | "fromEntries"
+OBJECT_METHOD  = "keys" | "values" | "entries" | "assign" | "fromEntries" | "groupBy"
 
 type_cast      = TYPE_CAST_NAME "(" expression ")"
 TYPE_CAST_NAME = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat"
 
-new_date       = "new" "Date" "(" expression? ")"
+number_static  = "Number" "." NUMBER_STATIC "(" expression ")"
+NUMBER_STATIC  = "isInteger" | "isNaN" | "isFinite"
+
+new_date_or_set = "new" ("Date" | "Set") "(" expression? ")"
 date_now       = "Date" "." "now" "(" ")"
-array_static   = "Array" "." "isArray" "(" expression ")"
+array_static   = "Array" "." ("isArray" "(" expression ")" | "from" "(" expression ("," call_arg)? ")")
 
 regex_literal  = "/" REGEX_CHARS "/" REGEX_FLAGS?            (* context-sensitive: see below *)
 REGEX_FLAGS    = [gimsuy]+
 
 number         = DIGIT_SEQ ("." DIGIT_SEQ)? (("e"|"E") ("+"|"-")? DIGIT_SEQ)?
                  (* decimal point only consumed when followed by a digit *)
+bigint         = DIGIT_SEQ "n"                                (* integer-only; no fraction or exponent *)
 DIGIT_SEQ      = [0-9]+ ("_" [0-9]+)*                         (* numeric separators *)
 string         = '"' chars '"' | "'" chars "'"
 boolean        = "true" | "false"
@@ -288,7 +292,8 @@ Array literals, field refs, operator calls, and any other expression are accepte
 - Control flow (`if`, `for`, `while`)
 - `class` or prototype methods
 - Destructuring (in lambda params or anywhere)
-- `padStart`/`padEnd`/`repeat` — no MQL primitive
 - `JSON.stringify`/`JSON.parse` — no MQL primitive
-- `Number.isInteger`/`isNaN`/`isFinite` — partial via `$type`, not built-in
 - `<<`, `>>`, `>>>` (bitwise shifts) — no MQL primitive
+- `Number.isFinite()` — MQL has no Infinity literal that can be referenced cleanly
+- `Set.prototype.symmetricDifference` and `.isDisjointFrom` — no direct MongoDB equivalent (compose manually via `$setDifference` + `$setUnion`)
+- `Array.from(iterable)` (non-`{length}` form) — MQL has no general iterable-to-array primitive

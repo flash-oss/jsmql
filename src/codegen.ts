@@ -78,6 +78,9 @@ const STRING_RETURNING_METHODS = new Set([
   "charAt",
   "toISOString",
   "join",
+  "padStart",
+  "padEnd",
+  "repeat",
 ]);
 
 // ── Array-producing helpers ───────────────────────────────────────────────────
@@ -164,6 +167,8 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
   switch (expr.type) {
     case "NumberLiteral":
       return expr.value;
+    case "BigIntLiteral":
+      return { $toLong: expr.value };
     case "StringLiteral":
       return expr.value;
     case "BooleanLiteral":
@@ -263,6 +268,18 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "NewDate":
       return { $toDate: expr.arg ? _generate(expr.arg, ctx) : "$$NOW" };
+
+    case "NewSet":
+      // `new Set(arr)` is a tag for the value — used as a receiver in set-method calls
+      // (intersection/union/etc.). When evaluated as a standalone value, it just unwraps
+      // to the underlying array (MQL has no Set type).
+      return expr.arg === null ? [] : _generate(expr.arg, ctx);
+
+    case "ArrayFrom":
+      return generateArrayFrom(expr.input, expr.mapFn, ctx);
+
+    case "NumberStatic":
+      return generateNumberStatic(expr.method, expr.arg, ctx);
 
     case "DateNow":
       // Date.now() returns ms since epoch — match JS semantics
@@ -676,6 +693,15 @@ function generateMethodCall(
   args: CallArg[],
   ctx: GenerateCtx,
 ): unknown {
+  // ── Set receiver: new Set(arr).intersection / union / difference / ... ─────
+  if (object.type === "NewSet") {
+    return generateSetMethodCall(object, method, args, ctx);
+  }
+  // ── Regex receiver: /pat/flags.test(str) / .exec(str) ──────────────────────
+  if (object.type === "RegexLiteral") {
+    return generateRegexMethodCall(object, method, args, ctx);
+  }
+
   const genObj = _generate(object, ctx);
 
   switch (method) {
@@ -825,6 +851,84 @@ function generateMethodCall(
         return { $regexMatch: result };
       }
       return { $regexMatch: { input: genObj, regex: _generate(pattern, ctx) } };
+    }
+    case "matchAll": {
+      const exprArgs = exprArgsOnly(args, "matchAll");
+      if (exprArgs.length !== 1) {
+        throw new CodegenError(`.matchAll() requires exactly 1 argument (regex)`);
+      }
+      const pattern = exprArgs[0];
+      if (pattern.type === "RegexLiteral") {
+        if (!pattern.flags.includes("g")) {
+          throw new CodegenError(
+            `.matchAll() requires a regex with the 'g' flag (matching JS's TypeError on non-global regex)`,
+          );
+        }
+        const result: Record<string, unknown> = { input: genObj, regex: pattern.pattern };
+        if (pattern.flags) result["options"] = pattern.flags;
+        return { $regexFindAll: result };
+      }
+      return { $regexFindAll: { input: genObj, regex: _generate(pattern, ctx) } };
+    }
+    case "search": {
+      const exprArgs = exprArgsOnly(args, "search");
+      if (exprArgs.length !== 1) {
+        throw new CodegenError(`.search() requires exactly 1 argument (regex)`);
+      }
+      const pattern = exprArgs[0];
+      // .search returns the index of the first match, or -1. $regexFind returns
+      // an object with .idx for matches; null on no match. We surface .idx with
+      // an $ifNull fallback to -1 to match JS semantics exactly.
+      const findCall =
+        pattern.type === "RegexLiteral"
+          ? {
+              $regexFind: pattern.flags
+                ? { input: genObj, regex: pattern.pattern, options: pattern.flags }
+                : { input: genObj, regex: pattern.pattern },
+            }
+          : { $regexFind: { input: genObj, regex: _generate(pattern, ctx) } };
+      return { $ifNull: [{ $getField: { field: "idx", input: findCall } }, -1] };
+    }
+    case "padStart":
+    case "padEnd": {
+      const exprArgs = exprArgsOnly(args, method);
+      if (exprArgs.length < 1 || exprArgs.length > 2) {
+        throw new CodegenError(`.${method}() takes 1 or 2 arguments (targetLength[, padString])`);
+      }
+      const target = _generate(exprArgs[0], ctx);
+      const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
+      // If str length >= target, return str. Otherwise build pad-str of (target - len)
+      // chars by reducing $range, then concat str on the appropriate side.
+      const padReduce = {
+        $reduce: {
+          input: { $range: [0, { $subtract: [target, { $strLenCP: "$$s" }] }] },
+          initialValue: "",
+          in: { $concat: ["$$value", pad] },
+        },
+      };
+      const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
+      return {
+        $let: {
+          vars: { s: genObj },
+          in: {
+            $cond: [{ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }],
+          },
+        },
+      };
+    }
+    case "repeat": {
+      const exprArgs = exprArgsOnly(args, "repeat");
+      if (exprArgs.length !== 1) {
+        throw new CodegenError(`.repeat() requires exactly 1 argument (count)`);
+      }
+      const count = _generate(exprArgs[0], ctx);
+      return {
+        $reduce: {
+          input: { $range: [0, count] },
+          initialValue: "",
+          in: { $concat: ["$$value", genObj] },
+        },
+      };
     }
 
     // ── Array methods (no lambda) ───────────────────────────────────────────
@@ -1109,7 +1213,7 @@ function generateMethodCall(
 
     default:
       throw new CodegenError(
-        `Unknown method '.${method}()'. String methods: trim, trimStart, trimEnd, toLowerCase, toUpperCase, substr, charAt, split, indexOf, replace, replaceAll, includes, startsWith, endsWith, match, concat. Array methods: at, slice, reverse, toReversed, toSorted, map, filter, find, findLast, findLastIndex, some, every, reduce, includes, indexOf, concat, join, flat, flatMap. Date methods: getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, getTime, toISOString.`,
+        `Unknown method '.${method}()'. String methods: trim, trimStart, trimEnd, toLowerCase, toUpperCase, substr, charAt, split, indexOf, replace, replaceAll, includes, startsWith, endsWith, match, matchAll, search, concat, padStart, padEnd, repeat. Array methods: at, slice, reverse, toReversed, toSorted, map, filter, find, findLast, findLastIndex, some, every, reduce, includes, indexOf, concat, join, flat, flatMap. Date methods: getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, getTime, toISOString.`,
       );
   }
 }
@@ -1350,5 +1454,228 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
       if (args.length < 1) throw new CodegenError(`Object.assign() requires at least 1 argument`);
       return { $mergeObjects: generateVariadicArgs(args, ctx) };
     }
+    case "groupBy": {
+      const exprArgs = exprArgsOnly(args, "Object.groupBy");
+      if (exprArgs.length !== 2) {
+        throw new CodegenError(`Object.groupBy() requires exactly 2 arguments (items, x => key)`);
+      }
+      const input = exprArgs[0];
+      const lambda = exprArgs[1];
+      if (lambda.type !== "Lambda" || lambda.params.length !== 1) {
+        throw new CodegenError(
+          `Object.groupBy() requires a single-parameter arrow function as the discriminator`,
+        );
+      }
+      // Reduce over the input. For each element, compute the discriminator key with the
+      // user's lambda param bound to $$this. Use $let to materialise the key once, then
+      // append the current element to the array under that key in the accumulator.
+      const keyCtx: GenerateCtx = {
+        lambdaParams: new Set([...ctx.lambdaParams, lambda.params[0]]),
+        reduceRemap: new Map([[lambda.params[0], "this"]]),
+      };
+      const keyBody = _generate(lambda.body, keyCtx);
+      const keyExpr = isStringProducing(lambda.body) ? keyBody : { $toString: keyBody };
+      return {
+        $reduce: {
+          input: _generate(input, ctx),
+          initialValue: {},
+          in: {
+            $let: {
+              vars: { key: keyExpr },
+              in: {
+                $mergeObjects: [
+                  "$$value",
+                  {
+                    $arrayToObject: [
+                      [
+                        [
+                          "$$key",
+                          {
+                            $concatArrays: [
+                              {
+                                $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []],
+                              },
+                              ["$$this"],
+                            ],
+                          },
+                        ],
+                      ],
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+    }
   }
 }
+
+// ── Array.from ────────────────────────────────────────────────────────────────
+
+/**
+ * `Array.from({length: n}, (_, i) => f(i))` — the only supported form. Other
+ * Array.from invocations are rejected because MQL has no general iterable-to-array
+ * primitive. Compiles to `$map($range(0, n), (i) => body)` where the lambda's first
+ * (element) parameter is bound to null via $let, matching JS's `Array.from({length}, ...)`
+ * semantics where the element is always undefined.
+ */
+function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx): unknown {
+  if (input.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `Array.from() only supports the {length: n} form: Array.from({length: n}, (_, i) => …). For other inputs use $op($range, …) or .map().`,
+    );
+  }
+  if (input.entries.length !== 1) {
+    throw new CodegenError(`Array.from({length: n}) — exactly one 'length' entry is required`);
+  }
+  const entry = input.entries[0];
+  if (
+    entry.type !== "KeyValueEntry" ||
+    entry.key.kind !== "static" ||
+    entry.key.name !== "length"
+  ) {
+    throw new CodegenError(`Array.from() only supports {length: n}; saw a different object shape`);
+  }
+  const lengthExpr = _generate(entry.value, ctx);
+  if (mapFn === null) {
+    return { $range: [0, lengthExpr] };
+  }
+  if (mapFn.type !== "Lambda") {
+    throw new CodegenError(
+      `Array.from() second argument must be an arrow function (e.g. (_, i) => i * 2)`,
+    );
+  }
+  if (mapFn.params.length !== 2) {
+    throw new CodegenError(
+      `Array.from() map function must take 2 parameters (element, index) — element is always null in the {length} form`,
+    );
+  }
+  const [elemParam, idxParam] = mapFn.params;
+  const bodyCtx = extendCtx(ctx, mapFn.params);
+  return {
+    $map: {
+      input: { $range: [0, lengthExpr] },
+      as: idxParam,
+      in: { $let: { vars: { [elemParam]: null }, in: _generate(mapFn.body, bodyCtx) } },
+    },
+  };
+}
+
+// ── Number.* static predicates ────────────────────────────────────────────────
+
+function generateNumberStatic(
+  method: "isInteger" | "isNaN" | "isFinite",
+  arg: Expr,
+  ctx: GenerateCtx,
+): unknown {
+  const val = _generate(arg, ctx);
+  switch (method) {
+    case "isInteger":
+      // BSON has separate int/long/decimal/double types. Match JS: any numeric
+      // value with no fractional part is an integer. Long and int are always
+      // integers; double/decimal are integers iff trunc(x) === x.
+      return {
+        $cond: [
+          { $in: [{ $type: val }, ["int", "long"]] },
+          true,
+          {
+            $cond: [
+              { $in: [{ $type: val }, ["double", "decimal"]] },
+              { $eq: [val, { $trunc: val }] },
+              false,
+            ],
+          },
+        ],
+      };
+    case "isNaN":
+      // NaN is the only IEEE 754 value where x !== x.
+      return { $ne: [val, val] };
+    case "isFinite":
+      throw new CodegenError(
+        `Number.isFinite() is not supported — MQL has no Infinity literal. Use a domain-specific bound check (e.g. $.x > -1e300 && $.x < 1e300) or $convert with onError to detect non-finite values.`,
+      );
+  }
+}
+
+// ── Set method calls (ES2025) ─────────────────────────────────────────────────
+
+/**
+ * `new Set(a).intersection(new Set(b))` → `{ $setIntersection: [a, b] }`. The wrapper
+ * is a JS-syntax tag for "this is a set"; codegen unwraps it on both receiver and
+ * argument. MQL has no Set type — these compile to set operators on plain arrays.
+ */
+function generateSetMethodCall(
+  receiver: { type: "NewSet"; arg: Expr | null },
+  method: string,
+  args: CallArg[],
+  ctx: GenerateCtx,
+): unknown {
+  const lhs = receiver.arg ? _generate(receiver.arg, ctx) : [];
+  const exprArgs = exprArgsOnly(args, `Set.${method}`);
+  const requireSetArg = (): unknown => {
+    if (exprArgs.length !== 1) {
+      throw new CodegenError(`Set.${method}() requires exactly 1 argument`);
+    }
+    const arg = exprArgs[0];
+    if (arg.type !== "NewSet") {
+      throw new CodegenError(
+        `Set.${method}()'s argument must be a 'new Set(...)' expression, not a plain value`,
+      );
+    }
+    return arg.arg ? _generate(arg.arg, ctx) : [];
+  };
+  switch (method) {
+    case "intersection":
+      return { $setIntersection: [lhs, requireSetArg()] };
+    case "union":
+      return { $setUnion: [lhs, requireSetArg()] };
+    case "difference":
+      return { $setDifference: [lhs, requireSetArg()] };
+    case "isSubsetOf":
+      return { $setIsSubset: [lhs, requireSetArg()] };
+    case "isSupersetOf":
+      // A is a superset of B ⇔ B is a subset of A
+      return { $setIsSubset: [requireSetArg(), lhs] };
+    case "symmetricDifference":
+    case "isDisjointFrom":
+      throw new CodegenError(
+        `Set.${method}() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed`,
+      );
+    default:
+      throw new CodegenError(
+        `Unknown Set method '.${method}()'. Supported: intersection, union, difference, isSubsetOf, isSupersetOf`,
+      );
+  }
+}
+
+// ── Regex method calls ────────────────────────────────────────────────────────
+
+/**
+ * `/pat/flags.test(str)` → `$regexMatch`; `/pat/flags.exec(str)` → `$regexFind`.
+ * The regex literal supplies the pattern and flags; the str is the input.
+ */
+function generateRegexMethodCall(
+  regex: { type: "RegexLiteral"; pattern: string; flags: string },
+  method: string,
+  args: CallArg[],
+  ctx: GenerateCtx,
+): unknown {
+  const exprArgs = exprArgsOnly(args, `regex.${method}`);
+  if (exprArgs.length !== 1) {
+    throw new CodegenError(`regex.${method}() requires exactly 1 argument (input string)`);
+  }
+  const input = _generate(exprArgs[0], ctx);
+  const opName = method === "test" ? "$regexMatch" : method === "exec" ? "$regexFind" : null;
+  if (!opName) {
+    throw new CodegenError(
+      `Unknown regex method '.${method}()'. Supported: regex.test(str), regex.exec(str)`,
+    );
+  }
+  const obj: Record<string, unknown> = { input, regex: regex.pattern };
+  if (regex.flags) obj["options"] = regex.flags;
+  return { [opName]: obj };
+}
+
+// ── Object.groupBy moved into generateObjectCall above ────────────────────────
