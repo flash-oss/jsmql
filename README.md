@@ -23,7 +23,9 @@ mjsql accepts the expression as either a **string** (`mjsql("…")`) or an **arr
 npm install mjsql
 ```
 
-Requires **Node 24+** (or Deno / Bun) — mjsql ships its source as native TypeScript and runs without a build step. The package is **ESM-only**; use `import`, not `require`.
+Requires **Node 24+** (or Deno / Bun) — mjsql ships its source as native TypeScript and runs without a build step.
+
+The package is published as ESM (`"type": "module"`). On Node 24+ it works from both ESM and CommonJS via Node's [`require(esm)`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require) support — `import { mjsql } from "mjsql"` and `const { mjsql } = require("mjsql")` are both fine.
 
 ## Quick start
 
