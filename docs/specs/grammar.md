@@ -1,6 +1,6 @@
-# Grammar (v4)
+# Grammar
 
-This is the formal grammar for the expression syntax accepted by the parser. v4 added template literals, optional chaining, computed object keys, shorthand properties, numeric separators, and spread in call arguments on top of v3.
+The formal grammar for the expression syntax accepted by the parser.
 
 ## EBNF
 
@@ -231,7 +231,7 @@ Right-hand side of 'in' must be an array literal or field reference, not a scala
 
 Array literals, field refs, operator calls, and any other expression are accepted. This catches the common mistake `$.x in "value"` at transpile time rather than producing silently invalid MQL.
 
-## What is NOT in v4
+## What is NOT supported
 
 - Assignment expressions (`$.a = $.b + 1`)
 - Control flow (`if`, `for`, `while`)

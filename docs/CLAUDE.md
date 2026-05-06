@@ -5,10 +5,12 @@
 | Path | Audience | Update when |
 |---|---|---|
 | `docs/LANGUAGE.md` | Users of mjsql | User-visible behaviour changes |
-| `docs/ROADMAP.md` | Contributors / users tracking what's next | Future work is planned, scoped, or shipped |
+| `docs/DEVLOG.md` | Future-self / contributors asking "why?" | Every observable change — feature, refactor, naming, doc decision |
 | `docs/specs/*.md` | Claude / contributors implementing mjsql | Code structure or internal behaviour changes |
 
 Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples in the specs.
+
+`DEVLOG.md` is the single historical record — there is no separate CHANGELOG or ROADMAP. Newest entries on top. See the file's own header for the format.
 
 ## docs/LANGUAGE.md
 
@@ -23,9 +25,9 @@ When you add a new operator or syntax feature, add a table row or code example h
 | File | Covers |
 |---|---|
 | `specs/architecture.md` | End-to-end pipeline, data flow, module responsibilities |
-| `specs/grammar.md` | Formal grammar (EBNF) — current at v4 |
+| `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | How operator shapes work, how to add/modify entries |
-| `specs/v3-method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
+| `specs/method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
 
 ### When to update specs
 

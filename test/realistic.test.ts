@@ -470,9 +470,9 @@ describe("mql template tag: parameterised threshold query", () => {
   });
 });
 
-// ── Modern JS features (v4) ───────────────────────────────────────────────────
+// ── Modern JS features ───────────────────────────────────────────────────────
 
-describe("v4: invoice line greeting (template literal + optional chain + .startsWith)", () => {
+describe("invoice line greeting (template literal + optional chain + .startsWith)", () => {
   it("composes a personalised greeting with safe nested access", () => {
     // Build a string like "Hi Ada — your VIP invoice INV-2024-001 is ready"
     // using template literals, optional chaining for nested fields that may be missing,
@@ -500,7 +500,7 @@ describe("v4: invoice line greeting (template literal + optional chain + .starts
   });
 });
 
-describe("v4: analytics — flatMap + Math.max + .getTime", () => {
+describe("analytics — flatMap + Math.max + .getTime", () => {
   it("computes the most-recent-event timestamp across all sessions", () => {
     // For a doc with sessions: [{ events: [{ ts }, ...] }, ...], extract the
     // newest event timestamp and report seconds since now.
@@ -535,7 +535,7 @@ describe("v4: analytics — flatMap + Math.max + .getTime", () => {
   });
 });
 
-describe("v4: shopping cart total with numeric separators + .reduce", () => {
+describe("shopping cart total with numeric separators + .reduce", () => {
   it("accumulates with a clearly-formatted threshold", () => {
     // Cap line total at $10,000 (written as 10_000 for readability).
     const result = mjsql("Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))");
@@ -556,7 +556,7 @@ describe("v4: shopping cart total with numeric separators + .reduce", () => {
   });
 });
 
-describe("v4: pivot table row (computed keys + Object.fromEntries)", () => {
+describe("pivot table row (computed keys + Object.fromEntries)", () => {
   it("turns an array of {k,v} pairs into a wide row", () => {
     // Aggregating an array of `{ name, value }` pairs into one object keyed by `name`.
     const result = mjsql("Object.fromEntries($.metrics.map(m => [m.name, m.value]))");
@@ -599,7 +599,7 @@ describe("flex-shape accumulators in realistic pipelines", () => {
   });
 });
 
-describe("v4: file upload validation (.includes on array literal + .endsWith + numeric separator)", () => {
+describe("file upload validation (.includes on array literal + .endsWith + numeric separator)", () => {
   it("checks extension whitelist, name match, and size cap", () => {
     // Reject upload unless the lowercased extension is in the allowlist,
     // the filename actually ends with that extension, and size is ≤ 25 MB.
@@ -632,7 +632,7 @@ describe("v4: file upload validation (.includes on array literal + .endsWith + n
   });
 });
 
-describe("v4: score range with spread + Array.isArray guard", () => {
+describe("score range with spread + Array.isArray guard", () => {
   it("computes max-min via spread, falling back to 0 when scores is missing", () => {
     // Using ...spread to pass the array as variadic args to Math.max / Math.min.
     // Array.isArray defends against documents where scores isn't an array.
@@ -650,7 +650,7 @@ describe("v4: score range with spread + Array.isArray guard", () => {
   });
 });
 
-describe("v4: days since event (Date.now + .getTime + numeric separator)", () => {
+describe("days since event (Date.now + .getTime + numeric separator)", () => {
   it("computes whole days elapsed since an event timestamp", () => {
     // Date.now() returns ms since epoch — same as JS — and so does .getTime().
     // 86_400_000 = 24 * 60 * 60 * 1000 ms in a day.
@@ -664,7 +664,7 @@ describe("v4: days since event (Date.now + .getTime + numeric separator)", () =>
   });
 });
 
-describe("v4: audit log line (template literal + .toISOString + .charAt + .toUpperCase)", () => {
+describe("audit log line (template literal + .toISOString + .charAt + .toUpperCase)", () => {
   it("formats an ISO-timestamped log line with a single-letter level prefix", () => {
     // Render lines like "2024-09-01T12:30:00.000Z [E] disk full".
     const result = mjsql(
@@ -685,7 +685,7 @@ describe("v4: audit log line (template literal + .toISOString + .charAt + .toUpp
   });
 });
 
-describe("v4: tag aggregation (.flat + .join)", () => {
+describe("tag aggregation (.flat + .join)", () => {
   it("collects all post tags into a single comma-separated string", () => {
     // Posts each carry a tags array; flatten them all into one list and render as CSV.
     const result = mjsql('$.posts.map(p => p.tags).flat().join(", ")');
@@ -712,7 +712,7 @@ describe("v4: tag aggregation (.flat + .join)", () => {
   });
 });
 
-describe("v4: scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)", () => {
+describe("scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)", () => {
   it("derives geometric, audio, and trend metrics in a single $project shape", () => {
     // distance: 2D Euclidean distance from origin
     // octave:   octaves above A4 (440 Hz)
@@ -752,7 +752,7 @@ describe("v4: scientific projection (Math.hypot + Math.log2/log10 + Math.sign + 
   });
 });
 
-describe("v4: dynamic pivot row (computed key in literal + shorthand property)", () => {
+describe("dynamic pivot row (computed key in literal + shorthand property)", () => {
   it("turns each product into a dict keyed by category, plus the original record", () => {
     // [{category:'A', price:1}] → [{ A: 1, p: { category:'A', price:1 } }]
     // The shorthand `p` is sugar for `p: p`, which resolves to `p: $$p` in lambda scope.

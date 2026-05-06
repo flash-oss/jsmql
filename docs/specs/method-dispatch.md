@@ -1,6 +1,6 @@
-# Method Dispatch (v3 + v4 additions)
+# Method Dispatch
 
-This document describes how method calls, property access, lambdas, and template literals are implemented. The original v3 method set is preserved unchanged; v4 added new methods, type-aware dispatch for `.includes`/`.indexOf`/`.concat`, and a few new node types.
+This document describes how method calls, property access, lambdas, and template literals are implemented.
 
 ## Field path reconstruction via `asFieldPath()`
 
@@ -146,13 +146,7 @@ In codegen, when `.match(pattern)` receives a `RegexLiteral` arg, the pattern an
 
 The check happens before `asFieldPath()` in the `MemberAccess` codegen case, so even `$.name.length` maps to a runtime-dispatch `$cond` rather than the field path `"$name.length"`.
 
-## v4: type-aware dispatch for `.includes` / `.indexOf` / `.concat`
-
-These three methods exist on both strings and arrays in JS. mjsql checks `isArrayProducing(receiver)` first — if the receiver is provably array-typed (array literal, `.split()` result, `.map()` result, etc.), the array form is emitted. Otherwise the string form is emitted (this is intentional for back-compat with v3, where `.includes` always meant `$indexOfCP`).
-
-The `ARRAY_RETURNING_METHODS` and `ARRAY_OUTPUT_OPS` sets in `codegen.ts` drive this detection. Adding a new array-producing method requires updating both sets.
-
-## v4: type-aware dispatch for `.includes`/`.indexOf`/`.concat`
+## Type-aware dispatch for `.includes` / `.indexOf` / `.concat`
 
 These three methods exist on both strings and arrays in JS but compile to different MQL operators. Codegen consults `isArrayProducing(expr)` and `isStringProducing(expr)`:
 
@@ -162,23 +156,25 @@ These three methods exist on both strings and arrays in JS but compile to differ
 
 The unknown-receiver path is intentionally verbose. When the user knows the type at design time, they can pin it by chaining a type-fixing method (e.g. `.toLowerCase()` for strings, `.slice()` for arrays) or by switching to the operator form (`$in`, `$indexOfArray`, `$concatArrays`).
 
+The `ARRAY_RETURNING_METHODS` and `ARRAY_OUTPUT_OPS` sets in `codegen.ts` drive the detection. Adding a new array-producing method requires updating both sets.
+
 Spread args are handled identically across the array and string branches in `.concat`: `args.map(a => a.type === "SpreadElement" ? gen(a.argument) : gen(a))`.
 
-## v4: template literals
+## Template literals
 
-`TemplateLiteral` is a new AST node with `quasis: string[]` and `expressions: Expr[]`, where `quasis.length === expressions.length + 1`. Codegen emits `$concat` over the interleaved chunks and expressions. Empty quasis are skipped to keep the output tidy.
+`TemplateLiteral` is an AST node with `quasis: string[]` and `expressions: Expr[]`, where `quasis.length === expressions.length + 1`. Codegen emits `$concat` over the interleaved chunks and expressions. Empty quasis are skipped to keep the output tidy.
 
 Each interpolated expression is wrapped with `$toString` unless `isStringProducing(expr)` returns true. This matches JS template-literal coercion semantics — `` `n=${$.n}` `` works whether `$.n` is a number, boolean, or string at runtime. Expressions that are statically known to produce strings (string literals, nested templates, methods like `.toLowerCase()`, `String()` casts, the `+` operator in string context, `typeof`, and operators in `STRING_OUTPUT_OPS`) skip the wrap. `$toString` is a no-op on strings, so the wrap is purely an output-size optimisation.
 
 A template literal is always string-producing — it counts in the string-context `+` chain detection.
 
-## v4: optional chaining
+## Optional chaining
 
 `?.` produces the same AST nodes as `.`. There is no separate "optional" marker — the codegen for member/method access is unchanged. This is correct because MongoDB's dotted-path semantics already null-pass through missing fields.
 
 `?.[expr]` produces the same `IndexAccess` node as `[expr]`, so the receiver-type dispatch (below) applies to both.
 
-## v4: type-aware dispatch for `IndexAccess` (`obj[k]` and `obj?.[k]`)
+## Type-aware dispatch for `IndexAccess` (`obj[k]` and `obj?.[k]`)
 
 JS bracket access serves two purposes that compile to different MQL operators: array indexing (`$arrayElemAt`) and object dynamic-key lookup (`$getField`). Codegen consults `isArrayProducing(expr.object)`:
 
@@ -187,15 +183,15 @@ JS bracket access serves two purposes that compile to different MQL operators: a
 
 There is no string-literal/number-literal shortcut on the index — the receiver type alone drives the decision. If a user wants compact output for `$.field[0]`, they can use `.at(0)` (always emits `$arrayElemAt`) or pin the receiver type with `.map(x => x)` / `.slice(0)` / `.reverse()`.
 
-## v4: object literals with computed or special entries
+## Object literals with computed or special entries
 
-`generateObjectLiteral(entries, ctx)` is the new entry point for object literals as values. If any entry has a computed key, it emits via `$arrayToObject` over a list of `[key, value]` pairs. Otherwise it falls through to the static-key fast path. `generateStaticObjectEntries` is still used for operator-style argument objects (`{ input, find, replacement }`) where keys are part of the wire format.
+`generateObjectLiteral(entries, ctx)` is the entry point for object literals as values. If any entry has a computed key, it emits via `$arrayToObject` over a list of `[key, value]` pairs. Otherwise it falls through to the static-key fast path. `generateStaticObjectEntries` is used for operator-style argument objects (`{ input, find, replacement }`) where keys are part of the wire format.
 
 The split between the two helpers is enforced inside `generateOperatorCall`: when an operator's registered shape is `object`, the static helper is used (and computed keys are rejected); otherwise the value helper is used.
 
-## v4: spread in call args
+## Spread in call args
 
-`SpreadElement` was previously only valid in array/object literals. v4 extends it to call arg lists (`OperatorCall`, `MethodCall`, `MathCall`, `ObjectCall`). The `CallArg = Expr | SpreadElement` type is used for these arg arrays. `generateVariadicArgs(args, ctx)` decides between:
+`SpreadElement` is valid in array/object literals and in call arg lists (`OperatorCall`, `MethodCall`, `MathCall`, `ObjectCall`). The `CallArg = Expr | SpreadElement` type is used for those arg arrays. `generateVariadicArgs(args, ctx)` decides between:
 
 1. No spread → flat array of generated values
 2. Single `...arg` → bare value

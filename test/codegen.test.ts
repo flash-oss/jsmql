@@ -254,9 +254,7 @@ describe("single-char negative numbers", () => {
   });
 });
 
-// ── v2: JS infix operators ────────────────────────────────────────────────────
-
-describe("v2: arithmetic operators", () => {
+describe("arithmetic operators", () => {
   it("+ numeric", () => {
     expect(mjsql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
@@ -280,7 +278,7 @@ describe("v2: arithmetic operators", () => {
   });
 });
 
-describe("v2: comparison operators", () => {
+describe("comparison operators", () => {
   it("==", () => {
     expect(mjsql("$.status == 'active'")).toEqual({ $eq: ["$status", "active"] });
   });
@@ -312,7 +310,7 @@ describe("v2: comparison operators", () => {
   });
 });
 
-describe("v2: logical operators", () => {
+describe("logical operators", () => {
   it("&&", () => {
     expect(mjsql("$.a && $.b")).toEqual({ $and: ["$a", "$b"] });
   });
@@ -327,7 +325,7 @@ describe("v2: logical operators", () => {
   });
 });
 
-describe("v2: ternary", () => {
+describe("ternary", () => {
   it("basic ternary", () => {
     expect(mjsql("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
       $cond: [{ $gte: ["$age", 18] }, "adult", "minor"],
@@ -340,7 +338,7 @@ describe("v2: ternary", () => {
   });
 });
 
-describe("v2: nullish coalescing", () => {
+describe("nullish coalescing", () => {
   it("??", () => {
     expect(mjsql("$.nickname ?? $.name")).toEqual({ $ifNull: ["$nickname", "$name"] });
   });
@@ -351,7 +349,7 @@ describe("v2: nullish coalescing", () => {
   });
 });
 
-describe("v2: unary minus", () => {
+describe("unary minus", () => {
   it("unary - on field", () => {
     expect(mjsql("-$.amount")).toEqual({ $multiply: ["$amount", -1] });
   });
@@ -366,7 +364,7 @@ describe("v2: unary minus", () => {
   });
 });
 
-describe("v2: operator flattening", () => {
+describe("operator flattening", () => {
   it("+ flattened to $add", () => {
     expect(mjsql("$.a + $.b + $.c")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
@@ -389,7 +387,7 @@ describe("v2: operator flattening", () => {
   });
 });
 
-describe("v2: string-context +", () => {
+describe("string-context +", () => {
   it("string literal in chain → $concat", () => {
     expect(mjsql('$.first + " " + $.last')).toEqual({
       $concat: ["$first", " ", "$last"],
@@ -416,7 +414,7 @@ describe("v2: string-context +", () => {
   });
 });
 
-describe("v2: bracket access", () => {
+describe("bracket access", () => {
   it("constant index on bare field → runtime $cond on $isArray", () => {
     // Bare $.items receiver — type unknown — dispatch at runtime to handle
     // either array (numeric index) or object (dynamic key) at query time.
@@ -497,7 +495,7 @@ describe("v2: bracket access", () => {
   });
 });
 
-describe("v2: grouped expressions", () => {
+describe("grouped expressions", () => {
   it("grouping changes precedence", () => {
     expect(mjsql("($.a + $.b) * 2")).toEqual({
       $multiply: [{ $add: ["$a", "$b"] }, 2],
@@ -510,7 +508,7 @@ describe("v2: grouped expressions", () => {
   });
 });
 
-describe("v2: operator precedence", () => {
+describe("operator precedence", () => {
   it("* before +", () => {
     expect(mjsql("$.a + $.b * $.c")).toEqual({
       $add: ["$a", { $multiply: ["$b", "$c"] }],
@@ -533,7 +531,7 @@ describe("v2: operator precedence", () => {
   });
 });
 
-describe("v2: mixed v1 $operator() and v2 infix", () => {
+describe("mixed $operator() and infix", () => {
   it("infix inside $operator args", () => {
     expect(mjsql("$and($.age > 18, $.status == 'active')")).toEqual({
       $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
@@ -551,7 +549,7 @@ describe("v2: mixed v1 $operator() and v2 infix", () => {
   });
 });
 
-describe("v2: $.in field ref still works", () => {
+describe("$.in field ref still works", () => {
   it("field named 'in'", () => {
     expect(mjsql("$.in == 'test'")).toEqual({ $eq: ["$in", "test"] });
   });
@@ -560,9 +558,7 @@ describe("v2: $.in field ref still works", () => {
   });
 });
 
-// ── v3 tests ─────────────────────────────────────────────────────────────────
-
-describe("v3: field path regression (FieldRef stops at first segment)", () => {
+describe("field path regression (FieldRef stops at first segment)", () => {
   it("$.a.b.c produces $a.b.c", () => {
     expect(mjsql("$.a.b.c")).toEqual("$a.b.c");
   });
@@ -577,7 +573,7 @@ describe("v3: field path regression (FieldRef stops at first segment)", () => {
   });
 });
 
-describe("v3: string methods", () => {
+describe("string methods", () => {
   it("trim", () => {
     expect(mjsql("$.name.trim()")).toEqual({ $trim: { input: "$name" } });
   });
@@ -686,7 +682,7 @@ describe("v3: string methods", () => {
   });
 });
 
-describe("v3: array methods (no lambda)", () => {
+describe("array methods (no lambda)", () => {
   it("at(n)", () => {
     expect(mjsql("$.items.at(0)")).toEqual({ $arrayElemAt: ["$items", 0] });
   });
@@ -704,7 +700,7 @@ describe("v3: array methods (no lambda)", () => {
   });
 });
 
-describe("v3: array methods (with lambda)", () => {
+describe("array methods (with lambda)", () => {
   it("map with single param", () => {
     expect(mjsql("$.prices.map(p => p * 1.1)")).toEqual({
       $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
@@ -761,7 +757,7 @@ describe("v3: array methods (with lambda)", () => {
   });
 });
 
-describe("v3: date methods", () => {
+describe("date methods", () => {
   it("getFullYear", () => {
     expect(mjsql("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
   });
@@ -788,7 +784,7 @@ describe("v3: date methods", () => {
   });
 });
 
-describe("v3: typeof", () => {
+describe("typeof", () => {
   it("typeof fieldref", () => {
     expect(mjsql("typeof $.x")).toEqual({ $type: "$x" });
   });
@@ -797,7 +793,7 @@ describe("v3: typeof", () => {
   });
 });
 
-describe("v3: new Date()", () => {
+describe("new Date()", () => {
   it("no-arg maps to $$NOW", () => {
     expect(mjsql("new Date()")).toEqual({ $toDate: "$$NOW" });
   });
@@ -809,7 +805,7 @@ describe("v3: new Date()", () => {
   });
 });
 
-describe("v3: type casts", () => {
+describe("type casts", () => {
   it("Number()", () => {
     expect(mjsql("Number($.str)")).toEqual({ $toDouble: "$str" });
   });
@@ -827,7 +823,7 @@ describe("v3: type casts", () => {
   });
 });
 
-describe("v3: Math.*", () => {
+describe("Math.*", () => {
   it("Math.abs", () => {
     expect(mjsql("Math.abs($.x)")).toEqual({ $abs: "$x" });
   });
@@ -857,7 +853,7 @@ describe("v3: Math.*", () => {
   });
 });
 
-describe("v3: Object.*", () => {
+describe("Object.*", () => {
   it("Object.keys", () => {
     expect(mjsql("Object.keys($.doc)")).toEqual({
       $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.k" },
@@ -879,7 +875,7 @@ describe("v3: Object.*", () => {
   });
 });
 
-describe("v3: $let with lambda", () => {
+describe("$let with lambda", () => {
   it("single var lambda", () => {
     expect(mjsql("$let({ d: $.price * 0.1 }, (d) => $.price - d)")).toEqual({
       $let: {
@@ -890,7 +886,7 @@ describe("v3: $let with lambda", () => {
   });
 });
 
-describe("v3: string-context + with method calls", () => {
+describe("string-context + with method calls", () => {
   it("trim() in + chain is string-producing", () => {
     expect(mjsql('$.first.trim() + " " + $.last')).toEqual({
       $concat: [{ $trim: { input: "$first" } }, " ", "$last"],
@@ -908,7 +904,7 @@ describe("v3: string-context + with method calls", () => {
   });
 });
 
-describe("v3: regex literals (context-sensitive /)", () => {
+describe("regex literals (context-sensitive /)", () => {
   it("regex after operator is a literal, not divide", () => {
     expect(mjsql("$.str.match(/[a-z]+/)")).toEqual({
       $regexMatch: { input: "$str", regex: "[a-z]+" },
@@ -924,7 +920,7 @@ describe("v3: regex literals (context-sensitive /)", () => {
   });
 });
 
-describe("v3: error cases", () => {
+describe("error cases", () => {
   it("bare identifier outside lambda throws Did you mean", () => {
     expect(() => mjsql("x > 0")).toThrow(/Did you mean/);
   });
@@ -936,7 +932,7 @@ describe("v3: error cases", () => {
   });
 });
 
-describe("v3: 1-arg substr", () => {
+describe("1-arg substr", () => {
   it("substr(start) slices to end of string", () => {
     expect(mjsql("$.email.substr(1)")).toEqual({
       $substrCP: ["$email", 1, { $strLenCP: "$email" }],
@@ -1004,9 +1000,7 @@ describe("EOF error message", () => {
   });
 });
 
-// ── v4: modern JS additions ───────────────────────────────────────────────────
-
-describe("v4: template literals", () => {
+describe("template literals", () => {
   it("plain string template (no expressions)", () => {
     expect(mjsql("`hello`")).toEqual("hello");
   });
@@ -1067,7 +1061,7 @@ describe("v4: template literals", () => {
   });
 });
 
-describe("v4: array .includes()", () => {
+describe("array .includes()", () => {
   it("array literal → $in", () => {
     expect(mjsql('["a", "b"].includes($.x)')).toEqual({ $in: ["$x", ["a", "b"]] });
   });
@@ -1092,7 +1086,7 @@ describe("v4: array .includes()", () => {
   });
 });
 
-describe("v4: Math.min / Math.max", () => {
+describe("Math.min / Math.max", () => {
   it("Math.min variadic", () => {
     expect(mjsql("Math.min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
   });
@@ -1112,13 +1106,13 @@ describe("v4: Math.min / Math.max", () => {
   });
 });
 
-describe("v4: Date.now()", () => {
+describe("Date.now()", () => {
   it("returns ms since epoch", () => {
     expect(mjsql("Date.now()")).toEqual({ $toLong: "$$NOW" });
   });
 });
 
-describe("v4: Object.fromEntries", () => {
+describe("Object.fromEntries", () => {
   it("from $objectToArray result", () => {
     expect(mjsql("Object.fromEntries(Object.entries($.doc))")).toEqual({
       $arrayToObject: { $objectToArray: "$doc" },
@@ -1134,13 +1128,13 @@ describe("v4: Object.fromEntries", () => {
   });
 });
 
-describe("v4: Array.isArray", () => {
+describe("Array.isArray", () => {
   it("on a field", () => {
     expect(mjsql("Array.isArray($.items)")).toEqual({ $isArray: "$items" });
   });
 });
 
-describe("v4: optional chaining (?.)", () => {
+describe("optional chaining (?.)", () => {
   it("simple optional member access", () => {
     expect(mjsql("$.a?.b")).toEqual("$a.b");
   });
@@ -1167,7 +1161,7 @@ describe("v4: optional chaining (?.)", () => {
   });
 });
 
-describe("v4: .startsWith / .endsWith", () => {
+describe(".startsWith / .endsWith", () => {
   it("startsWith maps to indexOf == 0", () => {
     expect(mjsql('$.email.startsWith("admin")')).toEqual({
       $eq: [{ $indexOfCP: ["$email", "admin"] }, 0],
@@ -1189,13 +1183,13 @@ describe("v4: .startsWith / .endsWith", () => {
   });
 });
 
-describe("v4: .charAt", () => {
+describe(".charAt", () => {
   it("charAt(i)", () => {
     expect(mjsql("$.name.charAt(2)")).toEqual({ $substrCP: ["$name", 2, 1] });
   });
 });
 
-describe("v4: array .indexOf", () => {
+describe("array .indexOf", () => {
   it("on array literal → $indexOfArray", () => {
     expect(mjsql('["a", "b", "c"].indexOf($.x)')).toEqual({
       $indexOfArray: [["a", "b", "c"], "$x"],
@@ -1217,7 +1211,7 @@ describe("v4: array .indexOf", () => {
   });
 });
 
-describe("v4: array .concat", () => {
+describe("array .concat", () => {
   it("on array literal → $concatArrays", () => {
     expect(mjsql("[1, 2].concat([3, 4])")).toEqual({
       $concatArrays: [
@@ -1242,7 +1236,7 @@ describe("v4: array .concat", () => {
   });
 });
 
-describe("v4: .join", () => {
+describe(".join", () => {
   it("default separator (,)", () => {
     expect(mjsql("$.tags.join()")).toEqual({
       $reduce: {
@@ -1275,7 +1269,7 @@ describe("v4: .join", () => {
   });
 });
 
-describe("v4: .flat / .flatMap", () => {
+describe(".flat / .flatMap", () => {
   it("flat() one level", () => {
     expect(mjsql("$.nested.flat()")).toEqual({
       $reduce: {
@@ -1308,7 +1302,7 @@ describe("v4: .flat / .flatMap", () => {
   });
 });
 
-describe("v4: date .getTime / .toISOString", () => {
+describe("date .getTime / .toISOString", () => {
   it("getTime", () => {
     expect(mjsql("$.ts.getTime()")).toEqual({ $toLong: "$ts" });
   });
@@ -1319,7 +1313,7 @@ describe("v4: date .getTime / .toISOString", () => {
   });
 });
 
-describe("v4: Math.sign / log2 / log10 / hypot / cbrt / random / constants", () => {
+describe("Math.sign / log2 / log10 / hypot / cbrt / random / constants", () => {
   it("Math.sign maps to $cmp(x, 0)", () => {
     expect(mjsql("Math.sign($.x)")).toEqual({ $cmp: ["$x", 0] });
   });
@@ -1348,7 +1342,7 @@ describe("v4: Math.sign / log2 / log10 / hypot / cbrt / random / constants", () 
   });
 });
 
-describe("v4: numeric separators", () => {
+describe("numeric separators", () => {
   it("integer with separator", () => {
     expect(mjsql("$abs(1_000_000)")).toEqual({ $abs: 1000000 });
   });
@@ -1366,7 +1360,7 @@ describe("v4: numeric separators", () => {
   });
 });
 
-describe("v4: computed object keys", () => {
+describe("computed object keys", () => {
   it("single computed key", () => {
     expect(mjsql("$abs({ [$.k]: 1 })")).toEqual({
       $abs: { $arrayToObject: [["$k", 1]] },
@@ -1384,7 +1378,7 @@ describe("v4: computed object keys", () => {
   });
 });
 
-describe("v4: spread in operator args", () => {
+describe("spread in operator args", () => {
   it("$concatArrays with spread", () => {
     expect(mjsql("$concatArrays(...$.arrs)")).toEqual({ $concatArrays: "$arrs" });
   });
@@ -1393,7 +1387,7 @@ describe("v4: spread in operator args", () => {
   });
 });
 
-describe("v4: shorthand object properties", () => {
+describe("shorthand object properties", () => {
   it("inside lambda body", () => {
     expect(mjsql("$.items.map(x => ({ x }))")).toEqual({
       $map: { input: "$items", as: "x", in: { x: "$$x" } },

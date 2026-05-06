@@ -87,7 +87,8 @@ Strict mode stays on. No `any` without a comment explaining why it is unavoidabl
 ## Things the user did not explicitly ask for but matter
 
 - **README.md** — must exist and link to `docs/LANGUAGE.md` and `test/realistic.test.ts` as the two main entry points for new users.
-- **Changelog** — when the public API changes, add an entry to `CHANGELOG.md` (create it if absent).
-- **Semver** — `mjsql()` and `validate()` return shapes and `mql` behaviour are the public contract. Any change to those shapes is a breaking change.
+- **DEVLOG** — every observable change (feature, refactor, naming, doc decision) gets an entry in `docs/DEVLOG.md` in the same commit. Newest entries on top. There is no separate CHANGELOG or ROADMAP — DEVLOG is the single historical record. See the file's own header for format.
+- **Pre-1.0 versioning** — the project is at `0.1.0` and the public API is not yet committed to. Do **not** introduce `v1`/`v2`/`v3`/`v4` markers in test names, spec headers, or anywhere else; those imply released versions that don't exist. When the API stabilises and we cut `1.0`, that becomes the first real version.
+- **Semver** — `mjsql()` and `validate()` return shapes and `mql` behaviour are the public contract. Once we are at `1.0`, any change to those shapes is a breaking change.
 - **The `mql` template tag is first-class**, not a convenience wrapper. DX around it (good errors, correct interpolation) matters as much as `mjsql()` itself.
 - **The operator registry is the single source of truth.** Never add special-case operator handling inside the parser or codegen — it all goes through `src/operators.ts`.

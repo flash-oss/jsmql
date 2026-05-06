@@ -96,7 +96,7 @@ This makes mjsql forward-compatible with new MongoDB operators that are not yet 
 4. Add a test case in `test/codegen.test.ts`.
 5. Update `docs/LANGUAGE.md` if the operator is user-facing.
 
-## Current operator counts (v1)
+## Current operator counts
 
 | Category | Count |
 |---|---|
