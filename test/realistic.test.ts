@@ -773,6 +773,37 @@ describe("dynamic pivot row (computed key in literal + shorthand property)", () 
   });
 });
 
+describe("annotated insurance underwriting rule (// and /* */ comments)", () => {
+  it("compiles a multi-line rule with inline comments to the same MQL as a comment-free version", () => {
+    // Real underwriting check: applicant qualifies for the standard tier if
+    // they're the right age, drive a sane number of km/year, and aren't in
+    // a high-risk occupation. Comments document the business rules inline.
+    const result = mjsql(`
+      // age window: 25 to 70 inclusive
+      $.driver.age >= 25 && $.driver.age <= 70 &&
+
+      /* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */
+      $.policy.kmPerYear <= 30_000 &&
+
+      // hard-list occupations that bump the applicant to the high-risk tier
+      !($.driver.occupation in ["stunt-double", "test-pilot", "demolition-engineer"])
+    `);
+
+    expect(result).toEqual({
+      $and: [
+        { $gte: ["$driver.age", 25] },
+        { $lte: ["$driver.age", 70] },
+        { $lte: ["$policy.kmPerYear", 30000] },
+        {
+          $not: {
+            $in: ["$driver.occupation", ["stunt-double", "test-pilot", "demolition-engineer"]],
+          },
+        },
+      ],
+    });
+  });
+});
+
 // ── validate() ────────────────────────────────────────────────────────────────
 
 describe("validate(): realistic error cases", () => {

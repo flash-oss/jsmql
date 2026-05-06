@@ -1360,6 +1360,73 @@ describe("numeric separators", () => {
   });
 });
 
+describe("comments", () => {
+  it("// line comment between expressions", () => {
+    expect(mjsql("$.a // tail\n+ $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("// line comment at EOF (no terminator)", () => {
+    expect(mjsql("$abs($.x) // trailing comment")).toEqual({ $abs: "$x" });
+  });
+  it("// terminated by CR", () => {
+    expect(mjsql("$.a // x\r+ $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("// terminated by CRLF", () => {
+    expect(mjsql("$.a // x\r\n+ $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("// terminated by U+2028 (LSEP)", () => {
+    expect(mjsql("$.a // x + $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("// terminated by U+2029 (PSEP)", () => {
+    expect(mjsql("$.a // x + $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("/* block */ inline", () => {
+    expect(mjsql("$.a /* mid */ + $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("/* multi-line block */", () => {
+    expect(mjsql("$.a /*\n  spans\n  lines\n*/ + $.b")).toEqual({
+      $add: ["$a", "$b"],
+    });
+  });
+  it("empty /**/ block", () => {
+    expect(mjsql("$.a /**/ + $.b")).toEqual({ $add: ["$a", "$b"] });
+  });
+  it("multiple comments collapse to one boundary", () => {
+    expect(mjsql("$.a // one\n  /* two */ \n // three\n + $.b")).toEqual({
+      $add: ["$a", "$b"],
+    });
+  });
+  it("comment inside template ${...} interpolation", () => {
+    expect(mjsql("`hi ${ $.name /* user */ }`")).toEqual({
+      $concat: ["hi ", { $toString: "$name" }],
+    });
+  });
+  it("// inside string literal is preserved as data", () => {
+    expect(mjsql('$eq($.url, "https://example.com")')).toEqual({
+      $eq: ["$url", "https://example.com"],
+    });
+  });
+  it("// inside regex literal is preserved as pattern", () => {
+    // Two literal slashes inside a regex character class — must not be eaten as a comment
+    expect(mjsql("$.path.match(/[/\\\\]/)")).toEqual({
+      $regexMatch: { input: "$path", regex: "[/\\\\]" },
+    });
+  });
+  it("regex disambiguation works after a comment (non-value-ending)", () => {
+    // After `(` (not a value-ending token) a `/` would normally start a regex.
+    // A leading comment must not change that.
+    expect(mjsql("$.path.match(/* skip */ /foo/i)")).toEqual({
+      $regexMatch: { input: "$path", regex: "foo", options: "i" },
+    });
+  });
+  it("divide disambiguation works after a comment (value-ending)", () => {
+    // After a Number token, `/` is divide; a leading comment must not change that.
+    expect(mjsql("10 /* skip */ / 2")).toEqual({ $divide: [10, 2] });
+  });
+  it("unclosed /* throws LexError", () => {
+    expect(() => mjsql("$.a /* unclosed")).toThrow(/Unclosed block comment/);
+  });
+});
+
 describe("computed object keys", () => {
   it("single computed key", () => {
     expect(mjsql("$abs({ [$.k]: 1 })")).toEqual({

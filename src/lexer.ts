@@ -156,7 +156,7 @@ export class Lexer {
     const len = src.length;
 
     while (this.pos < len) {
-      this.skipWhitespace();
+      this.skipTrivia();
       if (this.pos >= len) break;
 
       const start = this.pos;
@@ -396,10 +396,55 @@ export class Lexer {
     this.pos += len;
   }
 
-  private skipWhitespace(): void {
-    while (this.pos < this.src.length && /\s/.test(this.src[this.pos])) {
+  // ECMAScript LineTerminator set: U+000A (LF), U+000D (CR),
+  // U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR).
+  // Use \u escapes — LSEP/PSEP render invisibly in most editors.
+  private static readonly LINE_TERMINATORS = /[\n\r\u2028\u2029]/;
+
+  // Whitespace + JS-style comments. Both forms are pure trivia: discarded
+  // here, never reach the token stream or AST. Loop until neither pass
+  // makes progress, so any sequence of mixed whitespace and comments
+  // collapses to a single trivia run (matches JS).
+  private skipTrivia(): void {
+    while (this.pos < this.src.length) {
+      const before = this.pos;
+      while (this.pos < this.src.length && /\s/.test(this.src[this.pos])) {
+        this.pos++;
+      }
+      if (this.pos < this.src.length && this.src[this.pos] === "/") {
+        const next = this.src[this.pos + 1];
+        if (next === "/") this.skipLineComment();
+        else if (next === "*") this.skipBlockComment();
+        else break;
+      }
+      if (this.pos === before) break;
+    }
+  }
+
+  // // line comments: skip until any LineTerminator or EOF. The terminator
+  // itself stays for the whitespace pass on the next skipTrivia iteration —
+  // this keeps positional reporting honest and lets future line/column
+  // tracking count newlines in one place.
+  private skipLineComment(): void {
+    this.pos += 2;
+    while (this.pos < this.src.length && !Lexer.LINE_TERMINATORS.test(this.src[this.pos])) {
       this.pos++;
     }
+  }
+
+  // /* block comments */: scan for the closing */, EOF means unclosed.
+  // No nesting (matches JS — the first */ closes).
+  private skipBlockComment(): void {
+    const start = this.pos;
+    this.pos += 2;
+    while (this.pos + 1 < this.src.length) {
+      if (this.src[this.pos] === "*" && this.src[this.pos + 1] === "/") {
+        this.pos += 2;
+        return;
+      }
+      this.pos++;
+    }
+    throw new LexError(`Unclosed block comment starting at position ${start}`, start);
   }
 
   private isDigit(ch: string): boolean {

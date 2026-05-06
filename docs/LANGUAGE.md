@@ -36,19 +36,20 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 
 1. [Expressions](#expressions)
 2. [Literals](#literals)
-3. [Field References](#field-references)
-4. [Operators](#operators)
-5. [String Methods](#string-methods)
-6. [Array Methods](#array-methods)
-7. [Lambda Functions](#lambda-functions)
-8. [Math Functions](#math-functions)
-9. [Type Casting](#type-casting)
-10. [Date Operations](#date-operations)
-11. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
-12. [Template Tag (`mql`)](#template-tag-mql)
-13. [Validation](#validation)
-14. [Error Messages](#error-messages)
-15. [Examples](#examples)
+3. [Comments](#comments)
+4. [Field References](#field-references)
+5. [Operators](#operators)
+6. [String Methods](#string-methods)
+7. [Array Methods](#array-methods)
+8. [Lambda Functions](#lambda-functions)
+9. [Math Functions](#math-functions)
+10. [Type Casting](#type-casting)
+11. [Date Operations](#date-operations)
+12. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
+13. [Template Tag (`mql`)](#template-tag-mql)
+14. [Validation](#validation)
+15. [Error Messages](#error-messages)
+16. [Examples](#examples)
 
 ---
 
@@ -76,6 +77,7 @@ An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 - Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
 - Escape hatch (direct operator form): `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
+- Comments: `// line` and `/* block */` — semantics identical to JavaScript
 
 ### Invalid Constructs
 
@@ -200,6 +202,19 @@ $.items.map(x => ({ x }))
 ```
 
 The shorthand value is treated as an identifier (lambda parameter); using shorthand outside a lambda scope produces an "Unknown identifier" error.
+
+---
+
+## Comments
+
+mjsql accepts JavaScript-style comments and discards them as trivia — they have no effect on the compiled MQL. Both forms are valid anywhere whitespace is.
+
+```js
+$.age >= 18  // line comment to end-of-line
+$.score /* block comment, can span lines */ * 1.1
+```
+
+Semantics match JavaScript exactly: line comments end at any LineTerminator (LF, CR, LSEP, PSEP) or EOF; block comments do not nest (the first `*/` closes), and an unclosed `/* …` is a parse error. Comments inside string literals, regex literals, and template-literal text are character data, not comments.
 
 ---
 

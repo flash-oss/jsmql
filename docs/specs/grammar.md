@@ -134,6 +134,15 @@ A template literal is a sequence of literal chunks alternating with `${expr}` in
 
 Digit sequences may contain single `_` characters between two digits. The lexer rejects leading `_`, trailing `_`, and `__`. The parser sees the underscore-stripped numeric value.
 
+## Comments
+
+JavaScript-style comments are skipped by the lexer, with semantics identical to ECMAScript:
+
+- `// …` to end-of-line (any of LF, CR, LSEP U+2028, PSEP U+2029) or EOF.
+- `/* … */` block comments. Nesting is **not** supported — the first `*/` closes. Unclosed block comments raise a `LexError`.
+
+Comments are trivia: they are discarded during tokenisation by `skipTrivia()` (which alternates whitespace and comment passes until neither makes progress) and never appear in the token stream or AST. They are valid anywhere whitespace is, including inside template `${…}` interpolations. They are **not** recognised inside string literals, regex literals, or template-literal quasi text — those are consumed atomically by `readString` / `readRegex` / `readTemplateChunk`.
+
 ## Spread in call arguments
 
 `...expr` is a valid argument anywhere that takes positional args (operator calls, method calls, `Math.*`, `Object.*`). It is represented in the AST as a `SpreadElement` interleaved with `Expr` arguments. Codegen handles spread in:
