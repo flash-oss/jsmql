@@ -347,7 +347,7 @@ describe("location: full address formatter", () => {
         $.postcode
       ]
         .filter(x => typeof x === "string" && x !== "")
-        .reduce((acc, x) => acc == "" ? x : acc + " " + x, "")
+        .join(" ")
     `);
 
     expect(result).toEqual({
@@ -379,7 +379,21 @@ describe("location: full address formatter", () => {
         },
         initialValue: "",
         in: {
-          $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }],
+          $cond: [
+            { $eq: ["$$value", ""] },
+            {
+              $toString: "$$this",
+            },
+            {
+              $concat: [
+                "$$value",
+                " ",
+                {
+                  $toString: "$$this",
+                },
+              ],
+            },
+          ],
         },
       },
     });
