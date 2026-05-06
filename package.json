@@ -2,8 +2,16 @@
   "name": "mjsql",
   "version": "0.1.0",
   "description": "LISP-style MongoDB aggregation expression transpiler",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "CHANGELOG.md", "docs/LANGUAGE.md"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -12,7 +20,7 @@
   },
   "devDependencies": {
     "oxfmt": "^0.47.0",
-    "typescript": "^5.4.0",
+    "typescript": "^6.0.0",
     "vitest": "^1.6.0"
   }
 }

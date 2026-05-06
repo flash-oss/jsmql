@@ -16,6 +16,16 @@ _(empty — add items here as they are scoped)_
 
 Items below are shipped on the current `main` branch (or staged in a worktree merged into it). For the per-release view of public-API changes, see [`CHANGELOG.md`](../CHANGELOG.md).
 
+### TypeScript 6 migration
+
+Cut over from TypeScript 5 to TypeScript 6 and lean on the new defaults. Concretely:
+
+- `typescript@^6.0.0` in `devDependencies`.
+- `tsconfig.json` reduced to the few options that genuinely differ from TS6 defaults: `moduleResolution: bundler`, `rootDir`, `outDir`, and the `declaration` / `declarationMap` / `sourceMap` triple needed for a published library. `target`, `module`, `strict`, `esModuleInterop`, and `lib` are all left to inherit TS6 defaults (`es2025`, `esnext`, `true`, always-on, follows-target).
+- Package now publishes as ESM (`"type": "module"`, single `exports` entry). Source contains no Node-only APIs, so output runs in both Node ESM and browser bundlers unchanged.
+
+This is breaking for consumers on `require("mjsql")` — see CHANGELOG. Pre-1.0, acceptable.
+
 ### `flex` operator shape
 
 Added a `flex` variant to `OperatorShape` in [`src/operators.ts`](../src/operators.ts) for MongoDB operators that genuinely accept either a single expression or an array of expressions.

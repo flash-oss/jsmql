@@ -22,6 +22,7 @@ All notable changes to the public mjsql API are recorded here. The public API is
 
 ### Changed
 
+- **Toolchain & publish format.** Built with TypeScript 6, emitted as ESM (`"type": "module"`, `module: esnext`, `moduleResolution: bundler`). Works in both Node (any ESM-capable version) and browsers via any modern bundler. Consumers using `require("mjsql")` must switch to `import { mjsql } from "mjsql"` or use a dynamic `import()`. Output target is now ES2025 (was ES2020). No source-level API changes.
 - `.includes()`, `.indexOf()`, and `.concat()` are now type-aware:
   - **Known array** receiver → array form (`$in`, `$indexOfArray`, `$concatArrays`).
   - **Known string** receiver → string form (`$indexOfCP`, etc.).
@@ -33,6 +34,8 @@ All notable changes to the public mjsql API are recorded here. The public API is
 - **Flex-shape operators.** `$round`, `$trunc`, `$min`, `$max`, `$avg`, `$sum`, `$stdDevPop`, `$stdDevSamp`, and `$mergeObjects` now accept either a single expression (accumulator-style: `{ $op: expr }`) or multiple expressions (expression-style: `{ $op: [a, b, ...] }`). Previously a single-arg call would emit either an unwrapped value or a one-element array depending on the operator's old shape — now it consistently emits the unwrapped form, matching how MongoDB uses these operators in `$group`. Multi-arg behaviour is unchanged.
 
 ### Notes on backwards-compatibility
+
+The CommonJS → ESM publish-format flip is the only consumer-visible breaking change in this release; expression-level output is unchanged or strictly improved. If you previously did `const { mjsql } = require("mjsql")`, switch to `import { mjsql } from "mjsql"` (or `await import("mjsql")` from CJS).
 
 All v3 expressions continue to compile to identical MQL. The only place to verify if you were relying on edge behaviour:
 
