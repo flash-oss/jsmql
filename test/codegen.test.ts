@@ -1276,3 +1276,88 @@ describe("v4: shorthand object properties", () => {
     expect(() => mjsql("({ foo })")).toThrow(/Unknown identifier/);
   });
 });
+
+describe("flex-shape operators", () => {
+  // ── $round / $trunc ─────────────────────────────────────────────────────────
+  it("$round single arg → bare value", () => {
+    expect(mjsql("$round($.price)")).toEqual({ $round: "$price" });
+  });
+  it("$round two args → array", () => {
+    expect(mjsql("$round($.price, 2)")).toEqual({ $round: ["$price", 2] });
+  });
+  it("$trunc single arg → bare value", () => {
+    expect(mjsql("$trunc($.value)")).toEqual({ $trunc: "$value" });
+  });
+  it("$trunc two args → array", () => {
+    expect(mjsql("$trunc($.value, 1)")).toEqual({ $trunc: ["$value", 1] });
+  });
+
+  // ── Accumulators ($min / $max / $avg / $sum / $stdDev*) ─────────────────────
+  it("$min single arg → bare value (accumulator-style)", () => {
+    expect(mjsql("$min($.scores)")).toEqual({ $min: "$scores" });
+  });
+  it("$min multiple args → array (expression-style)", () => {
+    expect(mjsql("$min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
+  });
+  it("$max single arg", () => {
+    expect(mjsql("$max($.scores)")).toEqual({ $max: "$scores" });
+  });
+  it("$max multiple args", () => {
+    expect(mjsql("$max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
+  });
+  it("$avg single arg", () => {
+    expect(mjsql("$avg($.values)")).toEqual({ $avg: "$values" });
+  });
+  it("$avg multiple args", () => {
+    expect(mjsql("$avg($.a, $.b, $.c)")).toEqual({ $avg: ["$a", "$b", "$c"] });
+  });
+  it("$sum single arg", () => {
+    expect(mjsql("$sum($.amounts)")).toEqual({ $sum: "$amounts" });
+  });
+  it("$sum multiple args", () => {
+    expect(mjsql("$sum($.a, $.b)")).toEqual({ $sum: ["$a", "$b"] });
+  });
+  it("$stdDevPop single arg", () => {
+    expect(mjsql("$stdDevPop($.measurements)")).toEqual({ $stdDevPop: "$measurements" });
+  });
+  it("$stdDevSamp multiple args", () => {
+    expect(mjsql("$stdDevSamp($.a, $.b, $.c)")).toEqual({
+      $stdDevSamp: ["$a", "$b", "$c"],
+    });
+  });
+
+  // ── $mergeObjects ───────────────────────────────────────────────────────────
+  it("$mergeObjects single arg → bare value", () => {
+    expect(mjsql("$mergeObjects($.docs)")).toEqual({ $mergeObjects: "$docs" });
+  });
+  it("$mergeObjects multiple args → array", () => {
+    expect(mjsql("$mergeObjects($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
+  });
+
+  // ── Spread handling ─────────────────────────────────────────────────────────
+  it("flex op with single spread → bare array", () => {
+    expect(mjsql("$min(...$.scores)")).toEqual({ $min: "$scores" });
+  });
+  it("flex op with mixed spread + scalar → $concatArrays", () => {
+    expect(mjsql("$max($.first, ...$.rest)")).toEqual({
+      $max: { $concatArrays: [["$first"], "$rest"] },
+    });
+  });
+
+  // ── Edge cases ──────────────────────────────────────────────────────────────
+  it("flex op with zero args throws", () => {
+    expect(() => mjsql("$min()")).toThrow(/at least 1 argument/);
+  });
+  it("flex op with object literal arg → object as value (not object-shape)", () => {
+    // Single arg that happens to be an object literal — parser flags this as object-style,
+    // but $mergeObjects has flex shape (not object), so the literal is passed as a value.
+    expect(mjsql("$mergeObjects({ a: 1, b: $.x })")).toEqual({
+      $mergeObjects: { a: 1, b: "$x" },
+    });
+  });
+  it("$round with arithmetic still works (regression: existing 2-arg form)", () => {
+    expect(mjsql("$round($.price * 1.1, 2)")).toEqual({
+      $round: [{ $multiply: ["$price", 1.1] }, 2],
+    });
+  });
+});

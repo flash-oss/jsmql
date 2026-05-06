@@ -601,7 +601,26 @@ $concat($.first, " ", $.last)      // { $concat: ["$first", " ", "$last"] }
 
 ```js
 $log($.value, 10)                  // { $log: ["$value", 10] }  (log base 10)
+$round($.value)                    // { $round: "$value" }       (round to integer)
 $round($.value, 2)                 // { $round: ["$value", 2] }  (2 decimal places)
+$trunc($.value)                    // { $trunc: "$value" }
+$trunc($.value, 1)                 // { $trunc: ["$value", 1] }
+```
+
+### Accumulators (also valid as expressions)
+
+Some operators are commonly used as accumulators in `$group` (taking a single field expression) but also work as expression operators in `$project` (taking multiple expressions to compare). mjsql accepts both shapes — pass one argument for the accumulator form, multiple for the expression form:
+
+```js
+$min($.scores)                     // { $min: "$scores" }              (single — accumulator-style)
+$min($.a, $.b, $.c)                // { $min: ["$a", "$b", "$c"] }     (multi — expression-style)
+
+$max($.scores)                     // { $max: "$scores" }
+$avg($.values)                     // { $avg: "$values" }
+$sum($.amounts)                    // { $sum: "$amounts" }
+$stdDevPop($.measurements)         // { $stdDevPop: "$measurements" }
+$mergeObjects($.docs)              // { $mergeObjects: "$docs" }       (single — accumulator-style)
+$mergeObjects($.a, $.b)            // { $mergeObjects: ["$a", "$b"] }  (multi — expression-style)
 ```
 
 ### Array

@@ -25,6 +25,7 @@ All notable changes to the public mjsql API are recorded here. The public API is
 - `.includes()`, `.indexOf()`, and `.concat()` are now type-aware. When the receiver is statically known to be an array (array literal, `.split()` result, `.map()` result, etc.) they emit the array-typed MQL form (`$in`, `$indexOfArray`, `$concatArrays`). For string and unknown-type receivers, they emit the previous string-typed form unchanged.
 - Object-style operator calls are now routed by the operator's registered shape: only operators with `object` shape (e.g. `$trim`, `$dateAdd`) require literal key names. For any other operator (or unknown), a single `{...}` argument is treated as a value and may use computed keys, spread, etc.
 - `.length` on a known array-producing receiver was already documented; it now also recognises `Object.keys()` and `Object.values()` outputs as arrays.
+- **Flex-shape operators.** `$round`, `$trunc`, `$min`, `$max`, `$avg`, `$sum`, `$stdDevPop`, `$stdDevSamp`, and `$mergeObjects` now accept either a single expression (accumulator-style: `{ $op: expr }`) or multiple expressions (expression-style: `{ $op: [a, b, ...] }`). Previously a single-arg call would emit either an unwrapped value or a one-element array depending on the operator's old shape — now it consistently emits the unwrapped form, matching how MongoDB uses these operators in `$group`. Multi-arg behaviour is unchanged.
 
 ### Notes on backwards-compatibility
 
