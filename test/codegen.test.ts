@@ -1656,3 +1656,170 @@ describe("function overload", () => {
     expect(a).toEqual(b);
   });
 });
+
+// ─── Newly-registered operators (pulled from mongodb/mql-specifications) ────
+
+describe("bitwise operators", () => {
+  it.each([
+    ["$bitAnd", "$bitAnd($.a, $.b, $.c)", { $bitAnd: ["$a", "$b", "$c"] }],
+    ["$bitOr", "$bitOr($.a, $.b)", { $bitOr: ["$a", "$b"] }],
+    ["$bitXor", "$bitXor($.a, $.b)", { $bitXor: ["$a", "$b"] }],
+    ["$bitNot", "$bitNot($.flags)", { $bitNot: "$flags" }],
+  ])("%s emits the expected MQL", (_name, src, expected) => {
+    expect(mjsql(src)).toEqual(expected);
+  });
+});
+
+describe("misc / hash / timestamp / sigmoid / type / literal operators", () => {
+  it.each([
+    ["$sigmoid", "$sigmoid($.x)", { $sigmoid: "$x" }],
+    ["$createObjectId", "$createObjectId()", { $createObjectId: {} }],
+    ["$toHashedIndexKey", "$toHashedIndexKey($.k)", { $toHashedIndexKey: "$k" }],
+    ["$tsIncrement", "$tsIncrement($.t)", { $tsIncrement: "$t" }],
+    ["$tsSecond", "$tsSecond($.t)", { $tsSecond: "$t" }],
+    [
+      "$toUUID",
+      '$toUUID("550e8400-e29b-41d4-a716-446655440000")',
+      {
+        $toUUID: "550e8400-e29b-41d4-a716-446655440000",
+      },
+    ],
+    ["$toObject", "$toObject($.json)", { $toObject: "$json" }],
+    ["$toArray", "$toArray($.field)", { $toArray: "$field" }],
+    ["$literal field-ref pass-through", '$literal("$foo")', { $literal: "$foo" }],
+    ["$meta keyword string", '$meta("textScore")', { $meta: "textScore" }],
+  ])("%s emits the expected MQL", (_name, src, expected) => {
+    expect(mjsql(src)).toEqual(expected);
+  });
+});
+
+describe("$hash and $hexHash (object shape)", () => {
+  it("$hash positional", () => {
+    expect(mjsql('$hash($.password, "sha256")')).toEqual({
+      $hash: { input: "$password", algorithm: "sha256" },
+    });
+  });
+  it("$hexHash object-style", () => {
+    expect(mjsql('$hexHash({ input: $.token, algorithm: "sha512" })')).toEqual({
+      $hexHash: { input: "$token", algorithm: "sha512" },
+    });
+  });
+});
+
+describe("$accumulator and $function (custom aggregation)", () => {
+  it("$function object-style", () => {
+    expect(
+      mjsql('$function({ body: "function(x) { return x * 2; }", args: [$.value], lang: "js" })'),
+    ).toEqual({
+      $function: {
+        body: "function(x) { return x * 2; }",
+        args: ["$value"],
+        lang: "js",
+      },
+    });
+  });
+  it("$accumulator object-style with subset of keys", () => {
+    expect(
+      mjsql(
+        '$accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", merge: "function(a, b) { return a + b; }", lang: "js" })',
+      ),
+    ).toEqual({
+      $accumulator: {
+        init: "function() { return 0; }",
+        accumulate: "function(s, v) { return s + v; }",
+        merge: "function(a, b) { return a + b; }",
+        lang: "js",
+      },
+    });
+  });
+});
+
+describe("$median and $percentile (statistical accumulators)", () => {
+  it("$median positional", () => {
+    expect(mjsql('$median($.scores, "approximate")')).toEqual({
+      $median: { input: "$scores", method: "approximate" },
+    });
+  });
+  it("$percentile positional", () => {
+    expect(mjsql('$percentile($.scores, [0.5, 0.95], "approximate")')).toEqual({
+      $percentile: {
+        input: "$scores",
+        p: [0.5, 0.95],
+        method: "approximate",
+      },
+    });
+  });
+});
+
+describe("encrypted-string operators ($encStr*)", () => {
+  it("$encStrContains", () => {
+    expect(mjsql('$encStrContains($.encField, "secret")')).toEqual({
+      $encStrContains: { input: "$encField", substring: "secret" },
+    });
+  });
+  it("$encStrStartsWith object-style", () => {
+    expect(mjsql('$encStrStartsWith({ input: $.encField, prefix: "abc" })')).toEqual({
+      $encStrStartsWith: { input: "$encField", prefix: "abc" },
+    });
+  });
+  it("$encStrEndsWith", () => {
+    expect(mjsql('$encStrEndsWith($.encField, "xyz")')).toEqual({
+      $encStrEndsWith: { input: "$encField", suffix: "xyz" },
+    });
+  });
+  it("$encStrNormalizedEq", () => {
+    expect(mjsql('$encStrNormalizedEq($.encField, "compare")')).toEqual({
+      $encStrNormalizedEq: { input: "$encField", string: "compare" },
+    });
+  });
+});
+
+describe("window operators ($setWindowFields-only)", () => {
+  it.each([
+    ["$rank", "$rank()", { $rank: {} }],
+    ["$denseRank", "$denseRank()", { $denseRank: {} }],
+    ["$documentNumber", "$documentNumber()", { $documentNumber: {} }],
+    ["$linearFill", "$linearFill($.value)", { $linearFill: "$value" }],
+    ["$locf", "$locf($.value)", { $locf: "$value" }],
+    ["$covariancePop", "$covariancePop($.x, $.y)", { $covariancePop: ["$x", "$y"] }],
+    ["$covarianceSamp", "$covarianceSamp($.x, $.y)", { $covarianceSamp: ["$x", "$y"] }],
+  ])("%s emits the expected MQL", (_name, src, expected) => {
+    expect(mjsql(src)).toEqual(expected);
+  });
+
+  it("$shift positional", () => {
+    expect(mjsql("$shift($.price, -1, 0)")).toEqual({
+      $shift: { output: "$price", by: -1, default: 0 },
+    });
+  });
+
+  it("$shift object-style", () => {
+    expect(mjsql("$shift({ output: $.price, by: -1, default: 0 })")).toEqual({
+      $shift: { output: "$price", by: -1, default: 0 },
+    });
+  });
+
+  it("$expMovingAvg with N (positional)", () => {
+    expect(mjsql("$expMovingAvg($.price, 5)")).toEqual({
+      $expMovingAvg: { input: "$price", N: 5 },
+    });
+  });
+
+  it("$expMovingAvg with alpha (object-style)", () => {
+    expect(mjsql("$expMovingAvg({ input: $.price, alpha: 0.3 })")).toEqual({
+      $expMovingAvg: { input: "$price", alpha: 0.3 },
+    });
+  });
+
+  it("$derivative positional", () => {
+    expect(mjsql('$derivative($.value, "hour")')).toEqual({
+      $derivative: { input: "$value", unit: "hour" },
+    });
+  });
+
+  it("$integral positional", () => {
+    expect(mjsql('$integral($.value, "hour")')).toEqual({
+      $integral: { input: "$value", unit: "hour" },
+    });
+  });
+});
