@@ -1,4 +1,4 @@
-import { Lexer, TokenType, type Token } from "./lexer.js";
+import { Lexer, TokenType, type Token } from "./lexer.ts";
 import type {
   Expr,
   BinaryOp,
@@ -13,15 +13,14 @@ import type {
   ObjectMethod,
   ObjectKey,
   CallArg,
-} from "./ast.js";
+} from "./ast.ts";
 
 export class ParseError extends Error {
-  constructor(
-    message: string,
-    public readonly pos: number,
-  ) {
+  readonly pos: number;
+  constructor(message: string, pos: number) {
     super(message);
     this.name = "ParseError";
+    this.pos = pos;
   }
 }
 

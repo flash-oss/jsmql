@@ -1,4 +1,4 @@
-import { lookupOperator } from "./operators.js";
+import { lookupOperator } from "./operators.ts";
 import type {
   BinaryOp,
   Expr,
@@ -11,7 +11,7 @@ import type {
   MathConstant,
   ObjectMethod,
   TypeCastOp,
-} from "./ast.js";
+} from "./ast.ts";
 
 export class CodegenError extends Error {
   constructor(message: string) {
