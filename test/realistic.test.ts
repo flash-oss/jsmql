@@ -341,49 +341,97 @@ describe("location: full address formatter", () => {
     // MongoDB executes this entirely — no need to fetch all fields to the client.
     const result = mjsql(`
       [
-        typeof $.building === "string" && $.building !== "" ? $.building + "," : null,
-        $.streetNo,
-        $.street,
-        $.suburb,
-        $.state,
-        $.country,
-        $.postcode
+        typeof $.building === "string" && $.building.trim() !== "" ? $.building.trim() + "," : null,
+        $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode
       ]
         .filter(x => typeof x === "string" && x !== "")
+        .map(x => x.trim())
         .join(" ")
     `);
 
     expect(result).toEqual({
       $reduce: {
         input: {
-          $filter: {
-            input: [
-              {
-                $cond: [
+          $map: {
+            input: {
+              $filter: {
+                input: [
                   {
-                    $and: [{ $eq: [{ $type: "$building" }, "string"] }, { $ne: ["$building", ""] }],
+                    $cond: [
+                      {
+                        $and: [
+                          {
+                            $eq: [
+                              {
+                                $type: "$building",
+                              },
+                              "string",
+                            ],
+                          },
+                          {
+                            $ne: [
+                              {
+                                $trim: {
+                                  input: "$building",
+                                },
+                              },
+                              "",
+                            ],
+                          },
+                        ],
+                      },
+                      {
+                        $concat: [
+                          {
+                            $trim: {
+                              input: "$building",
+                            },
+                          },
+                          ",",
+                        ],
+                      },
+                      null,
+                    ],
                   },
-                  { $concat: ["$building", ","] },
-                  null,
+                  "$streetNo",
+                  "$street",
+                  "$suburb",
+                  "$state",
+                  "$country",
+                  "$postcode",
                 ],
+                as: "x",
+                cond: {
+                  $and: [
+                    {
+                      $eq: [
+                        {
+                          $type: "$$x",
+                        },
+                        "string",
+                      ],
+                    },
+                    {
+                      $ne: ["$$x", ""],
+                    },
+                  ],
+                },
               },
-              "$streetNo",
-              "$street",
-              "$suburb",
-              "$state",
-              "$country",
-              "$postcode",
-            ],
+            },
             as: "x",
-            cond: {
-              $and: [{ $eq: [{ $type: "$$x" }, "string"] }, { $ne: ["$$x", ""] }],
+            in: {
+              $trim: {
+                input: "$$x",
+              },
             },
           },
         },
         initialValue: "",
         in: {
           $cond: [
-            { $eq: ["$$value", ""] },
+            {
+              $eq: ["$$value", ""],
+            },
             {
               $toString: "$$this",
             },
