@@ -46,11 +46,12 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 10. [Type Casting](#type-casting)
 11. [Date Operations](#date-operations)
 12. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
-13. [Function Form](#function-form)
-14. [Template Tag (`mql`)](#template-tag-mql)
-15. [Validation](#validation)
-16. [Error Messages](#error-messages)
-17. [Examples](#examples)
+13. [Pipelines](#pipelines)
+14. [Function Form](#function-form)
+15. [Template Tag (`mql`)](#template-tag-mql)
+16. [Validation](#validation)
+17. [Error Messages](#error-messages)
+18. [Examples](#examples)
 
 ---
 
@@ -86,7 +87,6 @@ An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 - Statements: function definitions, assignments
 - Object/array mutations: `.push()`, `.splice()`
 - Destructuring: `{ a, b } = obj`
-- Pipeline stages: `$match`, `$project`, `$group`, etc.
 
 ---
 
@@ -984,6 +984,84 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 ### Deprecated: `$substr`
 
 `$substr` is deprecated in MongoDB. Prefer `$substrBytes` (byte-indexed) or `$substrCP` (code-point-indexed) for new code.
+
+---
+
+## Pipelines
+
+`mjsql()` also compiles **whole aggregation pipelines** — arrays of stage objects like `[{ $match: ... }, { $sort: ... }, { $limit: ... }]`. The same function detects pipeline mode from the input and returns an `object[]` instead of a single `object`. No new exports, no separate API.
+
+### Two equivalent forms
+
+```js
+// Stage-object form: copy-paste-from-Compass shape.
+mjsql(`[
+  { $match: $.age > 18 },
+  { $project: { name: 1, total: $.price * $.qty } },
+  { $group: { _id: $.dept, total: $sum($.salary) } },
+  { $sort: { total: -1 } },
+  { $limit: 10 }
+]`);
+
+// Stage-call form: terser, parallels the $op() escape hatch.
+mjsql(`[
+  $match($.age > 18),
+  $project({ name: 1, total: $.price * $.qty }),
+  $group({ _id: $.dept, total: $sum($.salary) }),
+  $sort({ total: -1 }),
+  $limit(10)
+]`);
+```
+
+The two forms compile to the same MQL pipeline and may be mixed in one array. Each stage body is a regular mjsql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
+
+### `$match` and `$expr`
+
+In real MongoDB, `$match`'s body can be either a *query document* or an *aggregation expression* — the latter must be wrapped in `$expr`. mjsql does the wrapping for you whenever the body is anything other than a plain object literal:
+
+```js
+mjsql("[{ $match: $.age > 18 }]");
+// → [{ $match: { $expr: { $gt: ["$age", 18] } } }]   ← auto-wrapped
+
+mjsql("[{ $match: { age: { $gt: 18 } } }]");
+// → [{ $match: { age: { $gt: 18 } } }]               ← raw query doc, untouched
+```
+
+Use the object-literal form when porting an existing query document; use any expression when you want aggregation operators inside `$match`.
+
+### Sub-pipelines
+
+`$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. mjsql recognises these positions and recurses, so `$match`'s `$expr` rule and the strict typo check apply uniformly:
+
+```js
+mjsql(`[{
+  $lookup: {
+    from: "orders",
+    let: { uid: $._id },
+    pipeline: [
+      { $match: $.userId === $$uid },     // gets $expr-wrapped
+      { $project: { total: 1 } }
+    ],
+    as: "userOrders"
+  }
+}]`);
+```
+
+### Detection and typos
+
+A top-level array enters pipeline mode when its first element looks like a stage attempt — a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage; mistakes surface immediately:
+
+```js
+mjsql("[{ $macth: $.age > 18 }]");
+// → CodegenError: Element 0 of pipeline: '$macth' is not a known
+//                 aggregation stage. Did you mean '$match'?
+```
+
+A plain value array like `[1, 2, 3]` is *not* a pipeline — the first element doesn't look like a stage attempt, so mjsql leaves it as a literal array expression.
+
+### What stages are supported?
+
+All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, `$bucket`, `$bucketAuto`, `$count`, `$densify`, `$documents`, `$facet`, `$fill`, `$geoNear`, `$graphLookup`, `$group`, `$limit`, `$lookup`, `$match`, `$merge`, `$out`, `$project`, `$redact`, `$replaceRoot`, `$replaceWith`, `$sample`, `$search`, `$set`, `$setWindowFields`, `$skip`, `$sort`, `$sortByCount`, `$unionWith`, `$unset`, `$unwind`, `$vectorSearch`, and the rest.
 
 ---
 

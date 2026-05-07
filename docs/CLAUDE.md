@@ -32,7 +32,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/projection.md` | (Stub) Future support for projection operators (`$`, `$elemMatch`, `$slice`, `$meta`). |
 | `specs/accumulators.md` | (Stub) Future stage-spec integration for `$group` / `$setWindowFields` accumulators. |
 | `specs/update.md` | (Stub) Future support for update operators (`$set`, `$inc`, `$push`, …). |
-| `specs/aggregation-stages.md` | (Stub) Future support for full pipeline-stage authoring. |
+| `specs/aggregation-stages.md` | Pipeline-stage authoring through `mjsql()`: detection, lowering, sub-pipeline recursion, the `$match` `$expr`-wrap rule. |
 
 ### When to update specs
 

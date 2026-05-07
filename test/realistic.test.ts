@@ -842,6 +842,59 @@ describe("annotated insurance underwriting rule (// and /* */ comments)", () => 
   });
 });
 
+// ── Pipelines ─────────────────────────────────────────────────────────────────
+
+describe("pipeline: top-orders report by department", () => {
+  // Sales analytics: pick recent shipped orders, attach the buyer document
+  // from the users collection, group by department, compute average order
+  // size, then keep the top three departments by revenue — all in one
+  // mjsql expression that mixes both pipeline stage forms.
+  it("compiles a realistic multi-stage pipeline mixing both stage forms", () => {
+    const since = "2026-01-01";
+    const result = mql`[
+      { $match: { status: "shipped", placedAt: { $gte: ${since} } } },
+      $lookup({
+        from: "users",
+        localField: "userId",
+        foreignField: "_id",
+        as: "buyer"
+      }),
+      { $unwind: $.buyer },
+      { $group: {
+          _id: $.buyer.department,
+          revenue: $sum($.total),
+          orders: $sum(1)
+      } },
+      { $set: { avgOrder: $.revenue / $.orders } },
+      { $sort: { revenue: -1 } },
+      $limit(3)
+    ]`;
+
+    expect(result).toEqual([
+      { $match: { status: "shipped", placedAt: { $gte: "2026-01-01" } } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "buyer",
+        },
+      },
+      { $unwind: "$buyer" },
+      {
+        $group: {
+          _id: "$buyer.department",
+          revenue: { $sum: "$total" },
+          orders: { $sum: 1 },
+        },
+      },
+      { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
+      { $sort: { revenue: -1 } },
+      { $limit: 3 },
+    ]);
+  });
+});
+
 // ── validate() ────────────────────────────────────────────────────────────────
 
 describe("validate(): realistic error cases", () => {

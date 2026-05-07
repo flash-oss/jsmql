@@ -930,6 +930,24 @@ export class Parser {
       return { type: "KeyValueEntry", key, value };
     }
 
+    // `$ident:` form. In JS, `$match` is a valid identifier; the lexer splits
+    // it into Dollar + Ident so `$match(...)` and `$.foo` can be recognised
+    // distinctly. As an object key we re-stitch them: `{ $match: ... }`,
+    // `{ $gt: 18 }`, `{ $or: [...] }` are the natural ways to author
+    // aggregation stage objects and MongoDB query documents.
+    if (tok.type === TokenType.Dollar) {
+      this.lexer.next();
+      const ident = this.lexer.peek();
+      if (!this.isIdentOrKeyword(ident)) {
+        throw new ParseError(`Expected identifier after '$' at position ${tok.pos}`, tok.pos);
+      }
+      this.lexer.next();
+      this.lexer.expect(TokenType.Colon);
+      const value = this.parseExpression();
+      const key: ObjectKey = { kind: "static", name: `$${ident.value}` };
+      return { type: "KeyValueEntry", key, value };
+    }
+
     if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
       throw new ParseError(`Expected object key at position ${tok.pos}`, tok.pos);
     }

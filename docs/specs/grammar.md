@@ -90,6 +90,7 @@ object_literal = "{" object_entries? "}"
 object_entries = object_entry ("," object_entry)*
 object_entry   = "..." expression
                | (IDENT | STRING) ":" expression
+               | "$" IDENT ":" expression                    (* dollar-prefixed key, e.g. { $match: ... } *)
                | "[" expression "]" ":" expression           (* computed key *)
                | IDENT                                       (* shorthand: name → name: name *)
 

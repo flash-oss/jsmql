@@ -1,5 +1,6 @@
 import { Parser, ParseError } from "./parser.ts";
 import { generate, CodegenError, UnknownIdentifierError } from "./codegen.ts";
+import { isPipelineAst, generatePipeline } from "./pipeline.ts";
 import { LexError } from "./lexer.ts";
 
 export type ValidationError = {
@@ -35,18 +36,25 @@ export type MjsqlOps = Record<`$${string}`, (...args: any[]) => any>;
 type MjsqlFn = ($: any, ops: MjsqlOps) => unknown;
 export type MjsqlInput = string | MjsqlFn;
 
+// `mjsql()` returns either a single compiled MQL expression object, or — when
+// the input is a top-level aggregation pipeline `[ { $stage: ... }, ... ]` —
+// the corresponding stage array. The union is widened from the historical
+// `object` to make pipeline mode visible in the type. Both runtime values are
+// objects, so existing call sites keep type-checking.
+export type MjsqlOutput = object | object[];
+
 // Compiled-body cache for the function-input path. Keyed on the extracted body
 // string, so inline arrows in hot loops (which create a new function object on
 // every call) still hit. Bounded by source-code size — there is no way to
 // inject dynamic content into a function body, so this never grows unboundedly.
-const fnBodyCache = new Map<string, object>();
+const fnBodyCache = new Map<string, MjsqlOutput>();
 
-export function mjsql(input: MjsqlInput): object {
+export function mjsql(input: MjsqlInput): MjsqlOutput {
   if (typeof input === "function") {
     const body = extractArrowBody(input);
     const cached = fnBodyCache.get(body);
     if (cached !== undefined) return cached;
-    let compiled: object;
+    let compiled: MjsqlOutput;
     try {
       compiled = compile(body);
     } catch (err) {
@@ -85,7 +93,7 @@ export function validate(input: MjsqlInput): ValidationResult {
   }
 }
 
-export function mql(strings: TemplateStringsArray, ...values: unknown[]): object {
+export function mql(strings: TemplateStringsArray, ...values: unknown[]): MjsqlOutput {
   let src = "";
   for (let i = 0; i < strings.length; i++) {
     src += strings[i];
@@ -96,9 +104,10 @@ export function mql(strings: TemplateStringsArray, ...values: unknown[]): object
   return mjsql(src);
 }
 
-function compile(expression: string): object {
+function compile(expression: string): MjsqlOutput {
   const parser = new Parser(expression);
   const ast = parser.parse();
+  if (isPipelineAst(ast)) return generatePipeline(ast);
   return generate(ast) as object;
 }
 
