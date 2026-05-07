@@ -994,22 +994,24 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 ### Two equivalent forms
 
 ```js
-// Stage-object form: copy-paste-from-Compass shape.
-mjsql(`[
-  { $match: $.age > 18 },
-  { $project: { name: 1, total: $.price * $.qty } },
-  { $group: { _id: $.dept, total: $sum($.salary) } },
-  { $sort: { total: -1 } },
-  { $limit: 10 }
-]`);
-
-// Stage-call form: terser, parallels the $op() escape hatch.
+// Stage-call form: terser, reads like JavaScript end-to-end. Recommended
+// when you're authoring a new pipeline.
 mjsql(`[
   $match($.age > 18),
   $project({ name: 1, total: $.price * $.qty }),
   $group({ _id: $.dept, total: $sum($.salary) }),
   $sort({ total: -1 }),
   $limit(10)
+]`);
+
+// Stage-object form: matches the shape MongoDB emits in Compass and the
+// docs. Useful when porting an existing pipeline you've copied verbatim.
+mjsql(`[
+  { $match: $.age > 18 },
+  { $project: { name: 1, total: $.price * $.qty } },
+  { $group: { _id: $.dept, total: $sum($.salary) } },
+  { $sort: { total: -1 } },
+  { $limit: 10 }
 ]`);
 ```
 

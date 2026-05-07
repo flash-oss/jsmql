@@ -847,31 +847,40 @@ describe("annotated insurance underwriting rule (// and /* */ comments)", () => 
 describe("pipeline: top-orders report by department", () => {
   // Sales analytics: pick recent shipped orders, attach the buyer document
   // from the users collection, group by department, compute average order
-  // size, then keep the top three departments by revenue — all in one
-  // mjsql expression that mixes both pipeline stage forms.
-  it("compiles a realistic multi-stage pipeline mixing both stage forms", () => {
+  // size, then keep the top three departments by revenue. Stages use the
+  // call form ($match(...), $unwind(...), …) and bodies use plain JS
+  // expressions — comparison operators, field refs, arithmetic — so the
+  // pipeline reads like the JavaScript that built it. $match's body is
+  // auto-wrapped in $expr because it isn't an object literal.
+  it("authors a realistic multi-stage pipeline using JS-expression bodies", () => {
     const since = "2026-01-01";
     const result = mql`[
-      { $match: { status: "shipped", placedAt: { $gte: ${since} } } },
+      $match($.status === "shipped" && $.placedAt >= ${since}),
       $lookup({
         from: "users",
         localField: "userId",
         foreignField: "_id",
         as: "buyer"
       }),
-      { $unwind: $.buyer },
-      { $group: {
-          _id: $.buyer.department,
-          revenue: $sum($.total),
-          orders: $sum(1)
-      } },
-      { $set: { avgOrder: $.revenue / $.orders } },
-      { $sort: { revenue: -1 } },
+      $unwind($.buyer),
+      $group({
+        _id: $.buyer.department,
+        revenue: $sum($.total),
+        orders: $sum(1)
+      }),
+      $set({ avgOrder: $.revenue / $.orders }),
+      $sort({ revenue: -1 }),
       $limit(3)
     ]`;
 
     expect(result).toEqual([
-      { $match: { status: "shipped", placedAt: { $gte: "2026-01-01" } } },
+      {
+        $match: {
+          $expr: {
+            $and: [{ $eq: ["$status", "shipped"] }, { $gte: ["$placedAt", "2026-01-01"] }],
+          },
+        },
+      },
       {
         $lookup: {
           from: "users",
