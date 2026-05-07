@@ -117,15 +117,23 @@ describe("e-commerce: discount breakdown via IIFE → $let", () => {
     // in three places: the final price, the raw savings, and the savings percentage.
     // Writing this as an IIFE lets `$let` bind the value once instead of repeating
     // `$.price * (1 - $.loyalty.multiplier)` in every field.
-    const result = mjsql(`
+    const result1 = mjsql(`
       ((discount) => ({
         finalPrice: $.price - discount,
         savings: discount,
         savingsPercent: Math.round((discount / $.price) * 100),
       }))($.price * (1 - $.loyalty.multiplier))
     `);
+    const result2 = mjsql(($) =>
+      ((discount) => ({
+        finalPrice: $.price - discount,
+        savings: discount,
+        savingsPercent: Math.round((discount / $.price) * 100),
+      }))($.price * (1 - $.loyalty.multiplier)),
+    );
+    expect(result1).toEqual(result2);
 
-    expect(result).toEqual({
+    expect(result1).toEqual({
       $let: {
         vars: {
           discount: {
@@ -376,20 +384,15 @@ describe("location: full address formatter", () => {
     // Assembles up to 7 address fields into a single space-separated string.
     // The optional building name (e.g. "Suite 4,") is included only when present.
     // MongoDB executes this entirely — no need to fetch all fields to the client.
-    const result = mjsql(($) =>
+    const result = mjsql(`
       [
         typeof $.building === "string" && $.building.trim() !== "" ? $.building.trim() + "," : null,
-        $.streetNo,
-        $.street,
-        $.suburb,
-        $.state,
-        $.country,
-        $.postcode,
+        $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode,
       ]
         .filter((x) => typeof x === "string" && x !== "")
         .map((x) => x.trim())
-        .join(" "),
-    );
+        .join(" ")
+    `);
 
     expect(result).toEqual({
       $reduce: {
