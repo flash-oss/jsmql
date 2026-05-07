@@ -853,50 +853,35 @@ describe("pipeline: top-orders report by department", () => {
   // pipeline reads like the JavaScript that built it. $match's body is
   // auto-wrapped in $expr because it isn't an object literal.
   it("authors a realistic multi-stage pipeline using JS-expression bodies", () => {
-    const since = "2026-01-01";
-    const result = mql`[
-      $match($.status === "shipped" && $.placedAt >= ${since}),
-      $lookup({
-        from: "users",
-        localField: "userId",
-        foreignField: "_id",
-        as: "buyer"
-      }),
+    const result1 = mql`[
+      $match($.status === "shipped" && $.placedAt >= "2026-01-01"),
+      $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" }),
       $unwind($.buyer),
-      $group({
-        _id: $.buyer.department,
-        revenue: $sum($.total),
-        orders: $sum(1)
-      }),
+      $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) }),
       $set({ avgOrder: $.revenue / $.orders }),
       $sort({ revenue: -1 }),
       $limit(3)
     ]`;
+    const result2 = mjsql(($, { $match, $lookup, $unwind, $group, $sum, $set, $sort, $limit }) => [
+      $match($.status === "shipped" && $.placedAt >= "2026-01-01"),
+      $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" }),
+      $unwind($.buyer),
+      $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) }),
+      $set({ avgOrder: $.revenue / $.orders }),
+      $sort({ revenue: -1 }),
+      $limit(3),
+    ]);
 
-    expect(result).toEqual([
+    expect(result1).toEqual(result2);
+    expect(result1).toEqual([
       {
         $match: {
-          $expr: {
-            $and: [{ $eq: ["$status", "shipped"] }, { $gte: ["$placedAt", "2026-01-01"] }],
-          },
+          $expr: { $and: [{ $eq: ["$status", "shipped"] }, { $gte: ["$placedAt", "2026-01-01"] }] },
         },
       },
-      {
-        $lookup: {
-          from: "users",
-          localField: "userId",
-          foreignField: "_id",
-          as: "buyer",
-        },
-      },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
       { $unwind: "$buyer" },
-      {
-        $group: {
-          _id: "$buyer.department",
-          revenue: { $sum: "$total" },
-          orders: { $sum: 1 },
-        },
-      },
+      { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
       { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
       { $sort: { revenue: -1 } },
       { $limit: 3 },
