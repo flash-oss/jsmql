@@ -158,7 +158,9 @@ MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three op
 - Sharding issues — `$where` doesn't work cleanly across shards.
 - Security risk — running JavaScript on the server is a known attack surface, especially with user input.
 - Verbose — `$accumulator` is six JavaScript fields for what's usually one line in mjsql.
-- No syntax checking — the body is just a string; typos blow up at runtime.
+- Your IDE can't see the code — the body is just a string. No autocomplete, no rename, no go-to-definition, no ESLint, no formatter.
+- Hard to test — you need a real MongoDB instance with scripting enabled to run the JS body. mjsql expressions are plain JavaScript and test like any other function.
+- No syntax checking — typos blow up at runtime, not at compile time.
 
 The three cases below cover the most common migrations. See [docs/LANGUAGE.md](docs/LANGUAGE.md#replacing-server-side-javascript) for more.
 
@@ -200,29 +202,52 @@ db.users.find({ $expr: mjsql(($) => $.age > 18) });
 
 Unlike `$where`, `$expr` lets MongoDB use indexes when it can.
 
-### `$accumulator` — custom average per group
+### `$accumulator` — count orders by status per shop
+
+For each shop, you want a count of orders by status: `{ pending: 12, paid: 87, refunded: 3 }`. No built-in accumulator can build a dynamic-keyed object during `$group`, so people reach for `$accumulator` and JavaScript:
 
 ```js
-// Deprecated in MongoDB 8.0 — six JavaScript fields
+// Deprecated in MongoDB 8.0
 { $group: {
-    _id: "$category",
-    avg: { $accumulator: {
-        init:           "function() { return { sum: 0, count: 0 }; }",
-        accumulate:     "function(s, v) { return { sum: s.sum + v, count: s.count + 1 }; }",
-        accumulateArgs: ["$value"],
-        merge:          "function(a, b) { return { sum: a.sum + b.sum, count: a.count + b.count }; }",
-        finalize:       "function(s) { return s.sum / s.count; }",
+    _id: "$shopId",
+    counts: { $accumulator: {
+        init:           "function() { return {}; }",
+        accumulate:     "function(state, status) { state[status] = (state[status] || 0) + 1; return state; }",
+        accumulateArgs: ["$status"],
+        merge:          "function(a, b) { const out = {...a}; for (const k in b) out[k] = (out[k] || 0) + b[k]; return out; }",
         lang: "js"
 } } } }
-
-// mjsql — string form
-mql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
-
-// mjsql — function form
-mjsql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 ```
 
-For accumulators a built-in can't express, `$reduce` handles custom state — natively, no JavaScript engine needed.
+In mjsql, collect statuses with `$push`, then build the object with `$reduce` and a computed key:
+
+```js
+// mjsql — string form
+mql`[
+  { $group: { _id: $.shopId, statuses: $push($.status) } },
+  { $project: {
+      counts: $.statuses.reduce(
+        (acc, s) => $mergeObjects(acc, { [s]: (acc[s] ?? 0) + 1 }),
+        {}
+      )
+  } }
+]`;
+
+// mjsql — function form
+mjsql(($) => [
+  { $group: { _id: $.shopId, statuses: $push($.status) } },
+  {
+    $project: {
+      counts: $.statuses.reduce(
+        (acc, s) => $mergeObjects(acc, { [s]: (acc[s] ?? 0) + 1 }),
+        {},
+      ),
+    },
+  },
+]);
+```
+
+Same result, no string-encoded JavaScript, no separate merge function. Every line is plain JS — your IDE lints, formats, and refactors it like any other code.
 
 ## API
 
