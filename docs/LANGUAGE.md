@@ -1313,11 +1313,13 @@ const combined = mjsql(`$.age > 21 && $.status in ["active", "pending"]`);
 
 ## Replacing Server-Side JavaScript
 
-Starting in **MongoDB 8.0**, server-side JavaScript is deprecated. The three operators affected are `$function`, `$accumulator`, and `$where`. MongoDB's own deprecation guidance recommends rewriting the logic as native aggregation expressions; mjsql is the authoring layer for that rewrite — JavaScript syntax in, native MQL operators out.
+MongoDB 8.0 deprecated three operators that run JavaScript on the server: `$function`, `$accumulator`, and `$where`. MongoDB's own docs say to rewrite this logic as native aggregation operators. mjsql does that for you — you write JavaScript, and mjsql compiles it to native operators.
 
-**mjsql does not add new syntax for the deprecated operators.** They remain reachable through the registry passthrough form (e.g. `$function({ body: "...", args: [...], lang: "js" })`) for users who genuinely need them on older MongoDB versions, but no sugar is provided and we recommend migration. There is no error, warning, or stderr output when the deprecated operators are emitted — existing code keeps working without ceremony.
+For the full pros and cons of server-side JavaScript, see the [README](../README.md#pros-and-cons-of-server-side-javascript). Short version: it's deprecated, slow, can't use indexes, often turned off, and a security risk.
 
-Each migration row below shows the deprecated form on top, then the mjsql replacement in **string form** (`mjsql("…")`) and **function form** (`mjsql(($) => …)`).
+**mjsql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
+
+Each migration below shows the deprecated form on top, then the mjsql replacement in **string form** (`` mql`…` ``) and **function form** (`mjsql(($) => …)`).
 
 ### `$function` — per-document JavaScript expression
 
@@ -1332,7 +1334,7 @@ Field arithmetic:
 } } } }
 
 // String form
-mjsql(`{ doubled: $.qty * 2 }`);
+mql`{ doubled: $.qty * 2 }`;
 
 // Function form
 mjsql(($) => ({ doubled: $.qty * 2 }));
@@ -1349,13 +1351,13 @@ Conditional reshaping:
 } }
 
 // String form
-mjsql(`$.score > 100 ? "high" : "low"`);
+mql`$.score > 100 ? "high" : "low"`;
 
 // Function form
 mjsql(($) => ($.score > 100 ? "high" : "low"));
 ```
 
-String normalisation:
+String cleanup:
 
 ```js
 // Deprecated
@@ -1366,7 +1368,7 @@ String normalisation:
 } }
 
 // String form
-mjsql(`$.email.toLowerCase().trim()`);
+mql`$.email.toLowerCase().trim()`;
 
 // Function form
 mjsql(($) => $.email.toLowerCase().trim());
@@ -1374,24 +1376,24 @@ mjsql(($) => $.email.toLowerCase().trim());
 
 ### `$where` — predicate inside `find()` / `$match`
 
-`$where` runs a JavaScript predicate over each document. The native replacement is `$expr` wrapping a comparison expression. The query planner can use indexes for many `$expr` predicates that `$where` blocked entirely.
+`$where` runs a JavaScript predicate over every document. The native replacement is `$expr` wrapping a comparison. Unlike `$where`, `$expr` lets MongoDB use indexes when it can.
 
 ```js
 // Deprecated
 db.users.find({ $where: "function() { return this.age > 18; }" });
 
 // String form
-db.users.find({ $expr: mjsql(`$.age > 18`) });
+db.users.find({ $expr: mql`$.age > 18` });
 
 // Function form
 db.users.find({ $expr: mjsql(($) => $.age > 18) });
 ```
 
-Inside an aggregation pipeline, the equivalent uses `$match` directly — mjsql wraps the body in `$expr` automatically (see [Pipelines](#pipelines)):
+Inside an aggregation pipeline, you can use `$match` directly — mjsql wraps the body in `$expr` for you (see [Pipelines](#pipelines)):
 
 ```js
 // String form
-mjsql(`[{ $match: $.age > 18 }]`);
+mql`[{ $match: $.age > 18 }]`;
 // → [{ $match: { $expr: { $gt: ["$age", 18] } } }]
 
 // Function form
@@ -1400,10 +1402,10 @@ mjsql(($) => [{ $match: $.age > 18 }]);
 
 ### `$accumulator` — custom accumulator inside `$group` / `$setWindowFields`
 
-Most uses of `$accumulator` reduce to a built-in accumulator. Average:
+Most uses of `$accumulator` map to a built-in accumulator. Average:
 
 ```js
-// Deprecated — six interlocked function fields
+// Deprecated — six JavaScript fields
 { $group: {
     _id: "$category",
     avg: { $accumulator: {
@@ -1416,17 +1418,17 @@ Most uses of `$accumulator` reduce to a built-in accumulator. Average:
 } } } }
 
 // String form
-mjsql(`[{ $group: { _id: $.category, avg: $avg($.value) } }]`);
+mql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
 
 // Function form
 mjsql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 ```
 
-For genuinely custom state, `$reduce` covers the common shapes natively. Running min/max alongside count:
+For accumulators that need custom state, `$reduce` handles the common shapes natively. Running min/max alongside count:
 
 ```js
 // String form
-mjsql(`
+mql`
   $.values.reduce(
     (acc, x) => ({
       min: acc.min == null ? x : (x < acc.min ? x : acc.min),
@@ -1435,7 +1437,7 @@ mjsql(`
     }),
     { min: null, max: null, n: 0 }
   )
-`);
+`;
 
 // Function form
 mjsql(($) =>
@@ -1450,16 +1452,16 @@ mjsql(($) =>
 );
 ```
 
-### What if I genuinely need server-side JavaScript?
+### What if I really need server-side JavaScript?
 
-The registry passthrough form continues to compile:
+The registry passthrough form still compiles:
 
 ```js
 mjsql(`$function({ body: "function(x) { return x * 2; }", args: [$.qty], lang: "js" })`);
 // → { $function: { body: "...", args: ["$qty"], lang: "js" } }
 ```
 
-This is unchanged for backwards compatibility. We do not recommend it on MongoDB 8.0+ — the deprecation eventually becomes removal, and many environments already disable server-side JavaScript via `--noscripting`. If you reach for it, leave a comment in your code explaining why, and consider whether `$reduce` or a custom pipeline can express the same shape.
+This is unchanged for backwards compatibility. We don't recommend it on MongoDB 8.0+ — deprecation eventually means removal, and many setups already turn server-side JavaScript off with `--noscripting`. If you do reach for it, leave a comment explaining why, and check whether `$reduce` or a custom pipeline can do the same job.
 
 ## Language Grammar (EBNF, simplified)
 

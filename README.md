@@ -17,7 +17,7 @@ mjsql(($) => $.items.map((item) => item.price * item.qty).reduce((acc, x) => acc
 
 mjsql accepts the expression as either a **string** (`mjsql("…")`) or an **arrow function** (`mjsql(($) => …)`). The function form is recommended — your editor's regular JS formatter (prettier, oxfmt) indents and line-breaks long expressions for free.
 
-MongoDB 8.0 deprecates server-side JavaScript: `$function`, `$accumulator`, and `$where`. mjsql is designed for the post-`$function` era — write the same logic as ordinary JavaScript expressions and get native aggregation operators that run inside the query engine, with no JavaScript engine required. See [Replacing server-side JavaScript](#replacing-server-side-javascript) for migration examples.
+MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where` — three operators that run JavaScript on the server. They're slow, can't use indexes, and are turned off in many setups. mjsql is the replacement: you write your logic as plain JavaScript and it compiles to fast native MongoDB operators. See [Replacing server-side JavaScript](#replacing-server-side-javascript) for examples.
 
 ## Install
 
@@ -141,9 +141,26 @@ See **[docs/LANGUAGE.md](docs/LANGUAGE.md)** for the full language reference.
 
 ## Replacing server-side JavaScript
 
-MongoDB 8.0 deprecates `$function`, `$accumulator`, and `$where` — the three operators that execute user-supplied JavaScript on the server. The deprecation note in MongoDB's own documentation recommends rewriting the logic as native aggregation expressions. mjsql is the authoring layer for that rewrite: ordinary JavaScript syntax in, native MQL out, and considerably less code.
+MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three operators run JavaScript on the server, and MongoDB's own docs say to replace them with native aggregation operators. mjsql does that for you — you write JavaScript, mjsql compiles it to native MongoDB operators.
 
-The three cases below cover the most common patterns. See [docs/LANGUAGE.md](docs/LANGUAGE.md#replacing-server-side-javascript) for a longer reference.
+### Pros and cons of server-side JavaScript
+
+**Pros:**
+- Maximum flexibility — you can write any JavaScript, including things native operators can't do.
+- One operator covers many cases — no need to learn a big aggregation operator catalog.
+
+**Cons:**
+- Deprecated in MongoDB 8.0 — will be removed in a future version.
+- Slower — the JavaScript engine runs once per document; native operators run in C++.
+- Skips indexes — `$where` can't use them at all; native operators can.
+- Often turned off — many setups (including parts of Atlas) disable server-side JavaScript with `--noscripting`.
+- Hides logic from the query planner — MongoDB can't reorder or push down through JavaScript.
+- Sharding issues — `$where` doesn't work cleanly across shards.
+- Security risk — running JavaScript on the server is a known attack surface, especially with user input.
+- Verbose — `$accumulator` is six JavaScript fields for what's usually one line in mjsql.
+- No syntax checking — the body is just a string; typos blow up at runtime.
+
+The three cases below cover the most common migrations. See [docs/LANGUAGE.md](docs/LANGUAGE.md#replacing-server-side-javascript) for more.
 
 ### `$function` — field arithmetic
 
@@ -156,7 +173,7 @@ The three cases below cover the most common patterns. See [docs/LANGUAGE.md](doc
 } } } }
 
 // mjsql — string form
-mjsql(`{ doubled: $.qty * 2 }`);
+mql`{ doubled: $.qty * 2 }`;
 // → { doubled: { $multiply: ["$qty", 2] } }
 
 // mjsql — function form
@@ -164,7 +181,7 @@ mjsql(($) => ({ doubled: $.qty * 2 }));
 // → { doubled: { $multiply: ["$qty", 2] } }
 ```
 
-The output is a native `$multiply` evaluated inside the query engine. No `--javascriptEnabled` server flag, no per-document JavaScript engine startup.
+Compiles to a native `$multiply` — no JavaScript engine, no flags, just fast.
 
 ### `$where` — predicate inside `find()` / `$match`
 
@@ -173,7 +190,7 @@ The output is a native `$multiply` evaluated inside the query engine. No `--java
 db.users.find({ $where: "function() { return this.age > 18; }" });
 
 // mjsql — string form
-db.users.find({ $expr: mjsql(`$.age > 18`) });
+db.users.find({ $expr: mql`$.age > 18` });
 // → { $expr: { $gt: ["$age", 18] } }
 
 // mjsql — function form
@@ -181,12 +198,12 @@ db.users.find({ $expr: mjsql(($) => $.age > 18) });
 // → { $expr: { $gt: ["$age", 18] } }
 ```
 
-The query planner can use indexes for many `$expr` predicates that `$where` blocked entirely.
+Unlike `$where`, `$expr` lets MongoDB use indexes when it can.
 
 ### `$accumulator` — custom average per group
 
 ```js
-// Deprecated in MongoDB 8.0 — six interlocked function fields
+// Deprecated in MongoDB 8.0 — six JavaScript fields
 { $group: {
     _id: "$category",
     avg: { $accumulator: {
@@ -199,13 +216,13 @@ The query planner can use indexes for many `$expr` predicates that `$where` bloc
 } } } }
 
 // mjsql — string form
-mjsql(`[{ $group: { _id: $.category, avg: $avg($.value) } }]`);
+mql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
 
 // mjsql — function form
 mjsql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 ```
 
-For accumulators that genuinely cannot be expressed as a built-in, `$reduce` covers custom-state shapes with native execution.
+For accumulators a built-in can't express, `$reduce` handles custom state — natively, no JavaScript engine needed.
 
 ## API
 
