@@ -889,6 +889,83 @@ describe("pipeline: top-orders report by department", () => {
   });
 });
 
+describe("pipeline: count orders by status per shop ($accumulator replacement)", () => {
+  // Realistic analytics output: for each shop, a count of orders by status —
+  // { pending: 12, paid: 87, refunded: 3 }. The dynamic-keyed object (one
+  // key per distinct status value) is the case that pushes people toward
+  // $accumulator and server-side JavaScript, since no built-in accumulator
+  // builds an object whose keys come from data.
+  //
+  // mjsql replaces the $accumulator pattern natively: $push the statuses
+  // into an array during $group, then $reduce them into an object using
+  // object spread and a computed key. The codegen lowers `{ ...acc, [s]: x }`
+  // to $mergeObjects + $arrayToObject. Bracket access on a lambda parameter
+  // (`acc[s]`) compiles to a runtime $cond between $arrayElemAt and
+  // $getField — mjsql can't statically infer that `acc` is an object, so it
+  // dispatches at evaluation time. The dead $arrayElemAt branch never runs
+  // for this particular reducer, but the codegen stays type-agnostic.
+  it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
+    const result1 = mql`[
+      { $group: { _id: $.shopId, statuses: $push($.status) } },
+      { $project: {
+          counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
+      } }
+    ]`;
+    const result2 = mjsql(($, { $push }) => [
+      { $group: { _id: $.shopId, statuses: $push($.status) } },
+      {
+        $project: {
+          counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {}),
+        },
+      },
+    ]);
+
+    expect(result1).toEqual(result2);
+    expect(result1).toEqual([
+      { $group: { _id: "$shopId", statuses: { $push: "$status" } } },
+      {
+        $project: {
+          counts: {
+            $reduce: {
+              input: "$statuses",
+              initialValue: {},
+              in: {
+                $mergeObjects: [
+                  "$$value",
+                  {
+                    $arrayToObject: [
+                      [
+                        "$$this",
+                        {
+                          $add: [
+                            {
+                              $ifNull: [
+                                {
+                                  $cond: [
+                                    { $isArray: "$$value" },
+                                    { $arrayElemAt: ["$$value", "$$this"] },
+                                    { $getField: { field: "$$this", input: "$$value" } },
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            1,
+                          ],
+                        },
+                      ],
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
 // ── validate() ────────────────────────────────────────────────────────────────
 
 describe("validate(): realistic error cases", () => {
