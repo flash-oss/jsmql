@@ -52,6 +52,7 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 16. [Validation](#validation)
 17. [Error Messages](#error-messages)
 18. [Examples](#examples)
+19. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
 
 ---
 
@@ -1309,6 +1310,156 @@ const ageFilter = mql`$.age > ${21}`;
 const combined = mjsql(`$.age > 21 && $.status in ["active", "pending"]`);
 // → { $and: [{ $gt: ["$age", 21] }, { $in: ["$status", ["active", "pending"]] }] }
 ```
+
+## Replacing Server-Side JavaScript
+
+Starting in **MongoDB 8.0**, server-side JavaScript is deprecated. The three operators affected are `$function`, `$accumulator`, and `$where`. MongoDB's own deprecation guidance recommends rewriting the logic as native aggregation expressions; mjsql is the authoring layer for that rewrite — JavaScript syntax in, native MQL operators out.
+
+**mjsql does not add new syntax for the deprecated operators.** They remain reachable through the registry passthrough form (e.g. `$function({ body: "...", args: [...], lang: "js" })`) for users who genuinely need them on older MongoDB versions, but no sugar is provided and we recommend migration. There is no error, warning, or stderr output when the deprecated operators are emitted — existing code keeps working without ceremony.
+
+Each migration row below shows the deprecated form on top, then the mjsql replacement in **string form** (`mjsql("…")`) and **function form** (`mjsql(($) => …)`).
+
+### `$function` — per-document JavaScript expression
+
+Field arithmetic:
+
+```js
+// Deprecated
+{ $project: { doubled: { $function: {
+    body: "function(x) { return x * 2; }",
+    args: ["$qty"],
+    lang: "js"
+} } } }
+
+// String form
+mjsql(`{ doubled: $.qty * 2 }`);
+
+// Function form
+mjsql(($) => ({ doubled: $.qty * 2 }));
+```
+
+Conditional reshaping:
+
+```js
+// Deprecated
+{ $function: {
+    body: "function(x) { return x > 100 ? 'high' : 'low'; }",
+    args: ["$score"],
+    lang: "js"
+} }
+
+// String form
+mjsql(`$.score > 100 ? "high" : "low"`);
+
+// Function form
+mjsql(($) => ($.score > 100 ? "high" : "low"));
+```
+
+String normalisation:
+
+```js
+// Deprecated
+{ $function: {
+    body: "function(s) { return s.toLowerCase().trim(); }",
+    args: ["$email"],
+    lang: "js"
+} }
+
+// String form
+mjsql(`$.email.toLowerCase().trim()`);
+
+// Function form
+mjsql(($) => $.email.toLowerCase().trim());
+```
+
+### `$where` — predicate inside `find()` / `$match`
+
+`$where` runs a JavaScript predicate over each document. The native replacement is `$expr` wrapping a comparison expression. The query planner can use indexes for many `$expr` predicates that `$where` blocked entirely.
+
+```js
+// Deprecated
+db.users.find({ $where: "function() { return this.age > 18; }" });
+
+// String form
+db.users.find({ $expr: mjsql(`$.age > 18`) });
+
+// Function form
+db.users.find({ $expr: mjsql(($) => $.age > 18) });
+```
+
+Inside an aggregation pipeline, the equivalent uses `$match` directly — mjsql wraps the body in `$expr` automatically (see [Pipelines](#pipelines)):
+
+```js
+// String form
+mjsql(`[{ $match: $.age > 18 }]`);
+// → [{ $match: { $expr: { $gt: ["$age", 18] } } }]
+
+// Function form
+mjsql(($) => [{ $match: $.age > 18 }]);
+```
+
+### `$accumulator` — custom accumulator inside `$group` / `$setWindowFields`
+
+Most uses of `$accumulator` reduce to a built-in accumulator. Average:
+
+```js
+// Deprecated — six interlocked function fields
+{ $group: {
+    _id: "$category",
+    avg: { $accumulator: {
+        init:           "function() { return { sum: 0, count: 0 }; }",
+        accumulate:     "function(s, v) { return { sum: s.sum + v, count: s.count + 1 }; }",
+        accumulateArgs: ["$value"],
+        merge:          "function(a, b) { return { sum: a.sum + b.sum, count: a.count + b.count }; }",
+        finalize:       "function(s) { return s.sum / s.count; }",
+        lang: "js"
+} } } }
+
+// String form
+mjsql(`[{ $group: { _id: $.category, avg: $avg($.value) } }]`);
+
+// Function form
+mjsql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
+```
+
+For genuinely custom state, `$reduce` covers the common shapes natively. Running min/max alongside count:
+
+```js
+// String form
+mjsql(`
+  $.values.reduce(
+    (acc, x) => ({
+      min: acc.min == null ? x : (x < acc.min ? x : acc.min),
+      max: acc.max == null ? x : (x > acc.max ? x : acc.max),
+      n:   acc.n + 1
+    }),
+    { min: null, max: null, n: 0 }
+  )
+`);
+
+// Function form
+mjsql(($) =>
+  $.values.reduce(
+    (acc, x) => ({
+      min: acc.min == null ? x : x < acc.min ? x : acc.min,
+      max: acc.max == null ? x : x > acc.max ? x : acc.max,
+      n: acc.n + 1,
+    }),
+    { min: null, max: null, n: 0 },
+  ),
+);
+```
+
+### What if I genuinely need server-side JavaScript?
+
+The registry passthrough form continues to compile:
+
+```js
+mjsql(`$function({ body: "function(x) { return x * 2; }", args: [$.qty], lang: "js" })`);
+// → { $function: { body: "...", args: ["$qty"], lang: "js" } }
+```
+
+This is unchanged for backwards compatibility. We do not recommend it on MongoDB 8.0+ — the deprecation eventually becomes removal, and many environments already disable server-side JavaScript via `--noscripting`. If you reach for it, leave a comment in your code explaining why, and consider whether `$reduce` or a custom pipeline can express the same shape.
 
 ## Language Grammar (EBNF, simplified)
 
