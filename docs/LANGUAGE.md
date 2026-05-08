@@ -188,9 +188,11 @@ Key-value pairs in braces, including spread:
 ```js
 { name: $.name, score: $.score }           // field values
 { status: "active", count: $.count + 1 }   // mixed
-{ ...$.defaults, priority: 1 }             // spread an object field
-{ ...$.a, ...$.b, extra: true }            // merge multiple objects
+{ ...$.defaults, priority: 1 }             // → { $mergeObjects: ["$defaults", { priority: 1 }] }
+{ ...$.a, ...$.b, extra: true }            // → { $mergeObjects: ["$a", "$b", { extra: true }] }
 ```
+
+Spread compiles to `$mergeObjects`. Consecutive non-spread keys group into one operand, each `...expr` becomes its own operand, and JS "later wins" semantics on key collision match `$mergeObjects` exactly. A lone `{...x}` returns `x` directly — no redundant `$mergeObjects` wrapper.
 
 Objects are useful as `$push` arguments in `group()`, as `$project` escape hatch values, and in `$let` bindings.
 
@@ -203,7 +205,11 @@ Keys may be computed expressions, just like in JS:
 { a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [["a", 1], ["$dynKey", 2]] }
 ```
 
-Whenever an object literal contains at least one computed key, it compiles to `$arrayToObject` so MongoDB can build the object at query time. Mixing computed keys with `...spread` is not supported.
+Whenever a static block of keys contains at least one computed key, that block compiles to `$arrayToObject` so MongoDB can build it at query time. Computed keys mix with spread — each block is built independently, then `$mergeObjects` joins them:
+
+```js
+{ ...$.base, [$.k]: $.v }          // → { $mergeObjects: ["$base", { $arrayToObject: [["$k", "$v"]] }] }
+```
 
 #### Shorthand Properties
 

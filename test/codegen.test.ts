@@ -189,6 +189,88 @@ describe("object literals as args", () => {
   });
 });
 
+describe("object spread", () => {
+  it("single spread becomes the spread argument directly (no redundant $mergeObjects)", () => {
+    expect(mjsql("$foo({ ...$.base })")).toEqual({ $foo: "$base" });
+  });
+
+  it("two spreads emit $mergeObjects", () => {
+    expect(mjsql("$foo({ ...$.a, ...$.b })")).toEqual({
+      $foo: { $mergeObjects: ["$a", "$b"] },
+    });
+  });
+
+  it("static keys before a spread group into one operand", () => {
+    expect(mjsql("$foo({ x: 1, y: 2, ...$.rest })")).toEqual({
+      $foo: { $mergeObjects: [{ x: 1, y: 2 }, "$rest"] },
+    });
+  });
+
+  it("static keys after a spread group into one operand", () => {
+    expect(mjsql("$foo({ ...$.base, x: 1 })")).toEqual({
+      $foo: { $mergeObjects: ["$base", { x: 1 }] },
+    });
+  });
+
+  it("statics around a spread split into separate operands (left-to-right)", () => {
+    expect(mjsql("$foo({ x: 1, ...$.mid, y: 2 })")).toEqual({
+      $foo: { $mergeObjects: [{ x: 1 }, "$mid", { y: 2 }] },
+    });
+  });
+
+  it("computed key inside a static block uses $arrayToObject for that block only", () => {
+    expect(mjsql("$foo({ ...$.base, [$.k]: $.v })")).toEqual({
+      $foo: {
+        $mergeObjects: ["$base", { $arrayToObject: [["$k", "$v"]] }],
+      },
+    });
+  });
+
+  it("works inside .reduce — the README $accumulator replacement", () => {
+    expect(
+      mjsql("$.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})"),
+    ).toEqual({
+      $reduce: {
+        input: "$statuses",
+        initialValue: {},
+        in: {
+          $mergeObjects: [
+            "$$value",
+            {
+              $arrayToObject: [
+                [
+                  "$$this",
+                  {
+                    $add: [
+                      {
+                        $ifNull: [
+                          {
+                            $cond: [
+                              { $isArray: "$$value" },
+                              { $arrayElemAt: ["$$value", "$$this"] },
+                              { $getField: { field: "$$this", input: "$$value" } },
+                            ],
+                          },
+                          0,
+                        ],
+                      },
+                      1,
+                    ],
+                  },
+                ],
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("rejects spread inside operator-arg objects (key shape is wire format)", () => {
+    expect(() => mjsql("$replaceOne({ ...$.opts, input: $.s })")).toThrow(/Spread/);
+  });
+});
+
 describe("$cond", () => {
   it("positional 3-arg cond (object-shape, maps to if/then/else)", () => {
     expect(mjsql('$cond($.age, "adult", "minor")')).toEqual({

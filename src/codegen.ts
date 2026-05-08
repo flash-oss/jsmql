@@ -467,26 +467,69 @@ function generateArrayElement(el: ArrayElement, ctx: GenerateCtx): unknown {
 }
 
 /**
- * Generate an object literal. If all entries are static-key plain key-value pairs,
- * emits a regular MQL object. If any entry is a computed key, the result is built via
- * `$arrayToObject`. Spread entries are not supported (would require runtime merging).
+ * Generate an object literal. The shape it compiles to depends on which features the
+ * source used:
+ *
+ *   - All static keys, no spread        → plain MQL object.
+ *   - Any computed key, no spread       → `$arrayToObject` over `[[k, v], ...]`.
+ *   - Any spread (`{...a, x: 1, ...b}`) → `$mergeObjects` over a list of operands,
+ *                                         where consecutive non-spread entries are
+ *                                         grouped into one operand each (using the
+ *                                         same static / `$arrayToObject` rules) and
+ *                                         each spread argument is its own operand.
+ *
+ * The single-operand case (`{...a}` on its own) returns the spread argument directly
+ * to avoid emitting a redundant `$mergeObjects: [a]` wrapper — they're semantically
+ * equivalent in MQL.
  */
 function generateObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx): unknown {
-  const hasComputed = entries.some((e) => e.type === "KeyValueEntry" && e.key.kind === "computed");
   const hasSpread = entries.some((e) => e.type === "SpreadElement");
 
-  if (hasSpread) {
-    throw new CodegenError("Spread elements in object literals are not supported in MQL output");
+  if (!hasSpread) {
+    const hasComputed = entries.some(
+      (e) => e.type === "KeyValueEntry" && e.key.kind === "computed",
+    );
+    if (!hasComputed) {
+      return generateStaticObjectEntries(entries, ctx);
+    }
+    return generateComputedKeyObject(entries as KeyValueEntry[], ctx);
   }
 
-  if (!hasComputed) {
-    // Fast path: pure static-key object.
-    return generateStaticObjectEntries(entries, ctx);
-  }
+  // Spread present: walk entries left-to-right, grouping consecutive non-spread
+  // entries into one $mergeObjects operand each, and emitting each spread argument
+  // as its own operand. JS spread semantics ("later wins") match $mergeObjects's
+  // own ("rightmost value wins on key collision"), so left-to-right order is
+  // preserved verbatim.
+  const operands: unknown[] = [];
+  let staticBuffer: KeyValueEntry[] = [];
 
-  // Computed keys → $arrayToObject of [[k, v], ...] entries
-  const pairs = entries.map((e) => {
-    const entry = e as KeyValueEntry;
+  const flushBuffer = () => {
+    if (staticBuffer.length === 0) return;
+    const hasComputed = staticBuffer.some((e) => e.key.kind === "computed");
+    operands.push(
+      hasComputed
+        ? generateComputedKeyObject(staticBuffer, ctx)
+        : generateStaticObjectEntries(staticBuffer, ctx),
+    );
+    staticBuffer = [];
+  };
+
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      flushBuffer();
+      operands.push(_generate(entry.argument, ctx));
+    } else {
+      staticBuffer.push(entry);
+    }
+  }
+  flushBuffer();
+
+  if (operands.length === 1) return operands[0];
+  return { $mergeObjects: operands };
+}
+
+function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): unknown {
+  const pairs = entries.map((entry) => {
     const key = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
     return [key, _generate(entry.value, ctx)];
   });

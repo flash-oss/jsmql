@@ -227,7 +227,7 @@ mql`[
   { $group: { _id: $.shopId, statuses: $push($.status) } },
   { $project: {
       counts: $.statuses.reduce(
-        (acc, s) => $mergeObjects(acc, { [s]: (acc[s] ?? 0) + 1 }),
+        (acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }),
         {}
       )
   } }
@@ -238,10 +238,7 @@ mjsql(($) => [
   { $group: { _id: $.shopId, statuses: $push($.status) } },
   {
     $project: {
-      counts: $.statuses.reduce(
-        (acc, s) => $mergeObjects(acc, { [s]: (acc[s] ?? 0) + 1 }),
-        {},
-      ),
+      counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {}),
     },
   },
 ]);
