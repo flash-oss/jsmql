@@ -21,6 +21,23 @@ export class FunctionInputError extends Error {
   }
 }
 
+// Raised by the `mql` template tag when an interpolated value cannot be safely
+// embedded as a JSON literal. Covers the three cases JSON.stringify mishandles:
+// values it returns `undefined` for (functions, Symbols, plain `undefined`), the
+// non-finite numbers it silently coerces to `null` (NaN/Infinity/-Infinity), and
+// values it throws on (BigInt, circular references). Surfacing these as a
+// dedicated error means the caller learns about the problem at interpolation
+// time instead of getting a confusing parse error or silent data loss
+// downstream.
+export class MqlInterpolationError extends Error {
+  readonly slot: number;
+  constructor(message: string, slot: number) {
+    super(message);
+    this.name = "MqlInterpolationError";
+    this.slot = slot;
+  }
+}
+
 // Accept any callable shape: the canonical idiom is `($) => …` (one
 // parameter named `$`, used as the document-context placeholder), but `()
 // => …` and `(doc) => …` are equally valid — the parameter list is
@@ -45,14 +62,36 @@ export type MjsqlOutput = object | object[];
 
 // Compiled-body cache for the function-input path. Keyed on the extracted body
 // string, so inline arrows in hot loops (which create a new function object on
-// every call) still hit. Bounded by source-code size — there is no way to
-// inject dynamic content into a function body, so this never grows unboundedly.
+// every call) still hit. Today there is no way to inject dynamic content into
+// a function body — `Function.prototype.toString()` returns the literal source
+// text — so growth is naturally bounded by the number of distinct arrow
+// expressions in the host program. The LRU cap is a defence-in-depth against
+// future changes that could let dynamic strings reach this map (e.g. a
+// `new Function(...)` accepted as input). Map preserves insertion order, so
+// delete-then-set on hit refreshes recency without an extra data structure.
+const FN_BODY_CACHE_CAP = 256;
 const fnBodyCache = new Map<string, MjsqlOutput>();
+
+function cacheGet(body: string): MjsqlOutput | undefined {
+  const hit = fnBodyCache.get(body);
+  if (hit === undefined) return undefined;
+  fnBodyCache.delete(body);
+  fnBodyCache.set(body, hit);
+  return hit;
+}
+
+function cacheSet(body: string, compiled: MjsqlOutput): void {
+  if (fnBodyCache.size >= FN_BODY_CACHE_CAP) {
+    const oldest = fnBodyCache.keys().next().value;
+    if (oldest !== undefined) fnBodyCache.delete(oldest);
+  }
+  fnBodyCache.set(body, compiled);
+}
 
 export function mjsql(input: MjsqlInput): MjsqlOutput {
   if (typeof input === "function") {
     const body = extractArrowBody(input);
-    const cached = fnBodyCache.get(body);
+    const cached = cacheGet(body);
     if (cached !== undefined) return cached;
     let compiled: MjsqlOutput;
     try {
@@ -60,7 +99,7 @@ export function mjsql(input: MjsqlInput): MjsqlOutput {
     } catch (err) {
       throw augmentForFunctionInput(err);
     }
-    fnBodyCache.set(body, compiled);
+    cacheSet(body, compiled);
     return compiled;
   }
   return compile(input);
@@ -83,13 +122,30 @@ export function validate(input: MjsqlInput): ValidationResult {
         errors: [{ message: err.message, pos: 0, code: "CODEGEN_ERROR" }],
       };
     }
-    if (err instanceof FunctionInputError) {
+    if (err instanceof FunctionInputError || err instanceof MqlInterpolationError) {
       return {
         valid: false,
         errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],
       };
     }
-    throw err;
+    // RangeError is what V8 throws on stack overflow — caused by input shape,
+    // so it belongs in the SYNTAX_ERROR bucket. Should be unreachable in
+    // practice now that the parser/codegen depth limits trip first, but keep
+    // the catch as a belt-and-braces safeguard.
+    if (err instanceof RangeError) {
+      return {
+        valid: false,
+        errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],
+      };
+    }
+    // validate() promises never to throw — anything else gets wrapped as a
+    // generic CODEGEN_ERROR so the caller can rely on the structured-result
+    // contract. The original message is preserved for debugging.
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      valid: false,
+      errors: [{ message: `internal error: ${message}`, pos: 0, code: "CODEGEN_ERROR" }],
+    };
   }
 }
 
@@ -98,10 +154,44 @@ export function mql(strings: TemplateStringsArray, ...values: unknown[]): MjsqlO
   for (let i = 0; i < strings.length; i++) {
     src += strings[i];
     if (i < values.length) {
-      src += JSON.stringify(values[i]);
+      src += stringifyInterpolation(values[i], i + 1);
     }
   }
   return mjsql(src);
+}
+
+// Wrap JSON.stringify with the validation needed to keep the `mql` template
+// tag a safe boundary. Three failure modes that JSON.stringify quietly hides:
+//   - returns `undefined` for unsupported value types (function/Symbol/the
+//     literal `undefined`); concatenating that into the source produces the
+//     bare text "undefined" which the parser then misreads as an identifier.
+//   - silently coerces non-finite numbers to "null", losing the user's intent.
+//   - throws TypeError for BigInt values and circular references.
+function stringifyInterpolation(value: unknown, slot: number): string {
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new MqlInterpolationError(
+      `mql interpolation slot ${slot}: ${value} is not a valid JSON value (NaN and ±Infinity have no JSON representation). Replace with null or a finite number.`,
+      slot,
+    );
+  }
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(value);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new MqlInterpolationError(
+      `mql interpolation slot ${slot} could not be serialised: ${reason}`,
+      slot,
+    );
+  }
+  if (json === undefined) {
+    const ty = value === undefined ? "undefined" : typeof value;
+    throw new MqlInterpolationError(
+      `mql interpolation slot ${slot} has type '${ty}', which has no JSON representation. Pass a string, number, boolean, null, array, or plain object instead.`,
+      slot,
+    );
+  }
+  return json;
 }
 
 function compile(expression: string): MjsqlOutput {

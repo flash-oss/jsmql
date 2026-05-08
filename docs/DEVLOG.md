@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-08 — Defensive hardening from the security audit
+
+A pass over the four issues a security review of the `mql` template tag and the surrounding APIs flagged as worth fixing. None of the findings were exploitable on the documented use case, but each one was a footgun or a contract gap the library could close cheaply. New `test/security.test.ts` covers all four.
+
+**`mql` interpolation now rejects values that `JSON.stringify` mishandles.** Previously, `mql\`$.x == ${undefined}\`` silently produced the literal text `undefined` in the parsed source (interpreted as an unknown identifier two layers deeper); `mql\`$.x == ${NaN}\`` silently coerced to `null`; `BigInt` and circular structures threw a raw `TypeError` from inside `JSON.stringify`. New `MqlInterpolationError` (exported) is raised at interpolation time with a slot-pointing message (`mql interpolation slot 2 has type 'undefined'…`). Strings, finite numbers, booleans, `null`, arrays, and plain objects continue to round-trip unchanged. See `stringifyInterpolation()` in [src/index.ts](../src/index.ts).
+
+**Parser and codegen now cap recursion depth at 200 levels.** Previously, deeply nested input (e.g. `'('.repeat(2000) + …`) blew the V8 call stack and threw an uncaught `RangeError` that bypassed `validate()`'s structured-error contract entirely. Both the recursive-descent parser ([src/parser.ts](../src/parser.ts) — instance counter on `parseExpression`) and the codegen ([src/codegen.ts](../src/codegen.ts) — module-level counter reset at each public `generate()` entry) now throw normal `ParseError` / `CodegenError` past the cap, with a `nests too deeply (max 200 levels)` message. 200 was chosen with margin: each parser level burns ~17 stack frames in the precedence cascade, so 200 levels ≈ 3400 frames, well under any platform's default. Real expressions never approach this depth.
+
+**`validate()` is now total.** It used to throw any error class it didn't recognise (including `RangeError` and now `MqlInterpolationError`); a function named `validate` should never throw. New catch arms map `MqlInterpolationError` and `RangeError` into `SYNTAX_ERROR`, and a final fallback wraps anything else as a generic `CODEGEN_ERROR` with `internal error: …` so the structured-result contract holds for arbitrary input. No new error code introduced — `INTERNAL_ERROR` would have widened the public API; `CODEGEN_ERROR` is the existing non-positional bucket and matches the taxonomy.
+
+**Compiled-body cache is now a bounded LRU (cap 256).** [src/index.ts](../src/index.ts)'s `fnBodyCache` was a plain `Map` whose growth was bounded only by the count of distinct arrow-function source strings in the host program — fine today, since `Function.prototype.toString()` returns static text. The bound is defence-in-depth against a future change that lets dynamic strings reach this map (e.g. accepting `new Function(...)` as input). LRU is implemented in-file as `cacheGet` / `cacheSet` via `Map` insertion-order.
+
+**Deferred from this pass.** Server-side-JavaScript operators (`$function`, `$accumulator`, and `$where` via the unknown-operator passthrough at `codegen.ts:602`) remain emittable. The chosen direction is to surface them via the JS `function` keyword as first-class mjsql syntax — the same model as the `in` keyword — rather than a denylist or `{ allowServerJs: true }` flag. Substantial design work; tracked for a separate session. No `SECURITY.md` written yet either; will add once the threat model stabilises post-deferred-work.
+
+---
+
 ## 2026-05-07 — Aggregation pipelines through `mjsql()`
 
 `mjsql()` now compiles entire MongoDB aggregation pipelines, not just single expressions. No new exports — detection happens at the input boundary inside `compile()`. A top-level array enters pipeline mode when its first element looks like a stage attempt; the function returns `object[]` instead of the historical single `object`. Both forms work and may be mixed:

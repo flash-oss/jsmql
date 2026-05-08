@@ -70,8 +70,17 @@ const OBJECT_METHODS = new Set<string>([
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 
+// Recursion-depth cap for the recursive-descent parser. Each user-visible
+// nest level burns ~17 stack frames as the precedence cascade walks from
+// parseExpression down to parsePrimary; 200 levels stays well within Node's
+// default stack budget while comfortably above any realistic expression.
+// Exceeding it surfaces a structured ParseError instead of an uncaught
+// V8 RangeError. Mirrored in codegen.ts.
+export const MAX_RECURSION_DEPTH = 200;
+
 export class Parser {
   private readonly lexer: Lexer;
+  private depth = 0;
 
   constructor(src: string) {
     this.lexer = new Lexer(src);
@@ -89,7 +98,19 @@ export class Parser {
   // ── Precedence hierarchy (low → high) ────────────────────────────────────
 
   private parseExpression(): Expr {
-    return this.parseTernary();
+    if (++this.depth > MAX_RECURSION_DEPTH) {
+      this.depth--;
+      const pos = this.lexer.peek().pos;
+      throw new ParseError(
+        `Expression nests too deeply (max ${MAX_RECURSION_DEPTH} levels) at position ${pos}`,
+        pos,
+      );
+    }
+    try {
+      return this.parseTernary();
+    } finally {
+      this.depth--;
+    }
   }
 
   /** ternary:  nullish ("?" expression ":" ternary)?  — right-associative */
