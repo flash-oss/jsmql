@@ -227,10 +227,7 @@ In mjsql, collect statuses with `$push`, then build the object with `$reduce` an
 mql`[
   { $group: { _id: $.shopId, statuses: $push($.status) } },
   { $project: {
-      counts: $.statuses.reduce(
-        (acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }),
-        {}
-      )
+      counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
   } }
 ]`;
 
@@ -249,7 +246,7 @@ Same result, no string-encoded JavaScript, no separate merge function. Every lin
 
 ## API
 
-### `mjsql(input: MjsqlInput): MjsqlOutput`
+### `mjsql(input: string | function): object | object[]`
 
 Compiles your expression to MongoDB aggregation JSON. Throws a clear error if the input is invalid.
 
@@ -278,9 +275,11 @@ Behind the scenes, mjsql calls `Function.prototype.toString()` on the function, 
 
 Variables from outer scope don't survive `toString()` — use the `mql` template tag if you need closure values. Compiled bodies are cached, so inline arrows in hot loops only compile once.
 
-### `validate(input: MjsqlInput): ValidationResult`
+### `validate(input: string | function): { valid: boolean, errors: object[] }`
 
-Same as `mjsql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. `validate()` never throws — even on stack overflow or unexpected internal errors, it returns a `ValidationResult` with the failure described.
+Same as `mjsql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. `validate()` never throws — even on stack overflow or unexpected internal errors, you get a structured result describing the failure.
+
+Each error has `{ message: string, pos: number, code: "SYNTAX_ERROR" | "CODEGEN_ERROR" }`. `pos` is the character offset in the source (or `0` if not applicable).
 
 ### `` mql`...` `` (template tag)
 
@@ -296,22 +295,14 @@ Use it when you need values from outer scope inside a function-form expression �
 
 Accepts strings, numbers, booleans, `null`, arrays, and plain objects. Anything else (`undefined`, functions, `Symbol`, `NaN`, `±Infinity`, `BigInt`, circular structures) throws `MqlInterpolationError` so you find out at the call site, not via a confusing parse error downstream.
 
-### TypeScript
+### Errors
 
-```ts
-import type {
-  MjsqlInput,
-  MjsqlOutput,
-  MjsqlOps,
-  ValidationError,
-  ValidationResult,
-} from "mjsql";
-import { MqlInterpolationError, FunctionInputError } from "mjsql";
-```
+mjsql throws regular `Error` subclasses you can catch by class:
 
-`MjsqlOps` is the type of the function form's optional second parameter. It exists to keep your IDE happy when you call `$op(...)` operators in the body — types-only, never runs.
+- `MqlInterpolationError` — `mql\`\`` got a value it can't safely embed (see above).
+- `FunctionInputError` — the function form got something it can't extract a body from (block body, `function` declaration, `async`).
 
-`MqlInterpolationError` and `FunctionInputError` are the two extra error classes mjsql can throw, on top of the standard `Error` it throws for parse and codegen failures. Catch them by class if you want to handle the cases distinctly.
+Parse and codegen failures throw plain `Error`s with descriptive messages.
 
 ## License
 
