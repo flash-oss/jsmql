@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-08 — Array spread compiles to `$concatArrays`
+
+`[1, 2, ...$.arr, 3]` now compiles. Previously the codegen threw `CodegenError: Spread elements in array literals are not supported in MQL output` — same docs/code drift the object-spread change just closed. `docs/LANGUAGE.md:180-181` already listed `[...$.tags, "extra"]` and `[...$.a, ...$.b]` as valid syntax, but only the parser honoured it; codegen rejected. This entry closes the parity with the object-spread implementation that landed earlier today.
+
+The lowering is the array equivalent of object spread: walk elements left-to-right, group consecutive non-spread elements into one `$concatArrays` operand (a literal MQL array), and emit each `...expr` as its own operand. So `[1, 2, ...$.arr, 3]` becomes `{ $concatArrays: [[1, 2], "$arr", [3]] }`. A lone `[...x]` returns `x` directly to avoid a redundant `{ $concatArrays: [x] }` wrapper. Each spread argument must evaluate to an array at runtime, the same constraint MongoDB's `$concatArrays` itself imposes.
+
+The new helper `generateArrayLiteral` in `src/codegen.ts` sits next to `generateObjectLiteral` so the parallel structure is visible. Eleven new test cases in `test/codegen.test.ts` under `describe("array spread", …)` cover grouping, single-spread unwrap, multiple spreads, lambda-param threading, the empty-array fast path, and a nested `[[...$.a]]` regression. A realistic case in `test/realistic.test.ts` shows the natural use: building a combined moderator list and checking membership with `.includes()`. The call-arg variadic helper (`generateVariadicArgs`) is intentionally left alone — its per-arg wrapping reads more cleanly for short call lists, and it is documented as a separate concept in `docs/specs/method-dispatch.md`.
+
+---
+
 ## 2026-05-08 — Object spread compiles to `$mergeObjects`
 
 `{ ...a, x: 1, ...b }` now compiles. Previously the codegen threw `CodegenError: Spread elements in object literals are not supported in MQL output`, which was both a real DX gap and a docs/code drift — `docs/LANGUAGE.md` already listed object spread as valid syntax with `{ ...$.defaults, priority: 1 }` examples.

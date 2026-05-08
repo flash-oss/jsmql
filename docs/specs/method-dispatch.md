@@ -206,12 +206,24 @@ When the receiver is a `RegexLiteral`, method dispatch is intercepted and routed
 
 The split between the two helpers is enforced inside `generateOperatorCall`: when an operator's registered shape is `object`, the static helper is used (and computed keys are rejected); otherwise the value helper is used.
 
-## Spread in call args
+## Spread
 
-`SpreadElement` is valid in array/object literals and in call arg lists (`OperatorCall`, `MethodCall`, `MathCall`, `ObjectCall`). The `CallArg = Expr | SpreadElement` type is used for those arg arrays. `generateVariadicArgs(args, ctx)` decides between:
+`SpreadElement` appears in three positions, each with its own codegen helper. They all share the same target operator (`$concatArrays` for arrays, `$mergeObjects` for objects) but differ in how they group consecutive non-spread elements.
+
+### Call args
+
+`SpreadElement` is valid in call arg lists (`OperatorCall`, `MethodCall`, `MathCall`, `ObjectCall`). The `CallArg = Expr | SpreadElement` type is used for those arg arrays. `generateVariadicArgs(args, ctx)` decides between:
 
 1. No spread → flat array of generated values
 2. Single `...arg` → bare value
-3. Mixed → `{ $concatArrays: [...] }` with non-spread args wrapped in 1-element arrays
+3. Mixed → `{ $concatArrays: [...] }` with each non-spread arg wrapped in its own 1-element array
 
 `assertNoSpread()` is called in non-variadic operator paths (single/object/none shapes) to surface a clear error.
+
+### Array literals
+
+`generateArrayLiteral(elements, ctx)` handles `ArrayLiteral` AST nodes. It uses the same `$concatArrays` target as the call-arg helper, but **groups consecutive non-spread elements into a single literal-array operand** rather than wrapping each individually. So `[1, 2, ...$.arr, 3]` lowers to `{ $concatArrays: [[1, 2], "$arr", [3]] }`, not `{ $concatArrays: [[1], [2], "$arr", [3]] }`. A lone `[...x]` returns `x` directly. The two helpers are kept separate (call-arg wrapping vs. array-literal grouping) intentionally — call args are usually short and per-arg wrapping reads more cleanly there, while array literals can be long and benefit from tighter output.
+
+### Object literals
+
+`generateObjectLiteral(entries, ctx)` follows the same shape as the array-literal helper but targets `$mergeObjects`. Consecutive non-spread entries group into one operand (a static or `$arrayToObject` block depending on whether any keys are computed), each `...expr` becomes its own operand, and a lone `{...x}` returns `x` directly.

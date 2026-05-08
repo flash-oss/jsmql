@@ -183,6 +183,70 @@ describe("array literals", () => {
   });
 });
 
+describe("array spread", () => {
+  it("single spread becomes the spread argument directly (no redundant $concatArrays)", () => {
+    expect(mjsql("$foo([...$.arr])")).toEqual({ $foo: "$arr" });
+  });
+
+  it("two spreads emit $concatArrays", () => {
+    expect(mjsql("$foo([...$.a, ...$.b])")).toEqual({
+      $foo: { $concatArrays: ["$a", "$b"] },
+    });
+  });
+
+  it("statics before a spread group into one operand", () => {
+    expect(mjsql("$foo([1, 2, ...$.rest])")).toEqual({
+      $foo: { $concatArrays: [[1, 2], "$rest"] },
+    });
+  });
+
+  it("statics after a spread group into one operand", () => {
+    expect(mjsql("$foo([...$.base, 1, 2])")).toEqual({
+      $foo: { $concatArrays: ["$base", [1, 2]] },
+    });
+  });
+
+  it("statics around a spread split into two grouped operands (left-to-right)", () => {
+    expect(mjsql("$foo([1, ...$.mid, 2])")).toEqual({
+      $foo: { $concatArrays: [[1], "$mid", [2]] },
+    });
+  });
+
+  it("multiple spreads with statics interleaved", () => {
+    expect(mjsql("$foo([1, ...$.a, 2, ...$.b, 3])")).toEqual({
+      $foo: { $concatArrays: [[1], "$a", [2], "$b", [3]] },
+    });
+  });
+
+  it("spread of a literal array produces $concatArrays of literal-array operands", () => {
+    expect(mjsql("$foo([...[1, 2], 3])")).toEqual({
+      $foo: { $concatArrays: [[1, 2], [3]] },
+    });
+  });
+
+  it("spread inside .map lambda body remaps the lambda param", () => {
+    expect(mjsql("$.xs.map(x => [...$.prefix, x])")).toEqual({
+      $map: {
+        input: "$xs",
+        as: "x",
+        in: { $concatArrays: ["$prefix", ["$$x"]] },
+      },
+    });
+  });
+
+  it("empty array still works (no spread, fast path)", () => {
+    expect(mjsql("$foo([])")).toEqual({ $foo: [] });
+  });
+
+  it("plain non-spread arrays unchanged (regression)", () => {
+    expect(mjsql("$foo([1, 2, 3])")).toEqual({ $foo: [1, 2, 3] });
+  });
+
+  it("nested array literal with spread inside", () => {
+    expect(mjsql("$foo([[...$.a]])")).toEqual({ $foo: ["$a"] });
+  });
+});
+
 describe("object literals as args", () => {
   it("object as second positional arg for unknown op", () => {
     expect(mjsql("$foo({ a: 1 }, $.b)")).toEqual({ $foo: [{ a: 1 }, "$b"] });
