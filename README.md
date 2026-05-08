@@ -15,7 +15,7 @@ mjsql(($) => $.items.map((item) => item.price * item.qty).reduce((acc, x) => acc
 // → { $reduce: { input: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.price", "$$item.qty"] } } }, initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
-mjsql accepts the expression as either a **string** (`mjsql("…")`) or an **arrow function** (`mjsql(($) => …)`). The function form is recommended — your editor's regular JS formatter (prettier, oxfmt) indents and line-breaks long expressions for free.
+You can pass mjsql a **string** (`mjsql("…")`) or an **arrow function** (`mjsql(($) => …)`). The function form is recommended — your JS formatter (prettier, oxfmt) handles indentation and line breaks for long expressions automatically.
 
 MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where` — three operators that run JavaScript on the server. They're slow, can't use indexes, and are turned off in many setups. mjsql is the replacement: you write your logic as plain JavaScript and it compiles to fast native MongoDB operators. See [Replacing server-side JavaScript](#replacing-server-side-javascript) for examples.
 
@@ -25,9 +25,9 @@ MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where` — three opera
 npm install mjsql
 ```
 
-Requires **Node 24+** (or Deno / Bun) — mjsql ships its source as native TypeScript and runs without a build step.
+Works with **Node 24+**, Deno, and Bun. No build step needed in your project.
 
-The package is published as ESM (`"type": "module"`). On Node 24+ it works from both ESM and CommonJS via Node's [`require(esm)`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require) support — `import { mjsql } from "mjsql"` and `const { mjsql } = require("mjsql")` are both fine.
+The package is published as ESM. Node 24+ supports [`require(esm)`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require), so both `import { mjsql } from "mjsql"` and `const { mjsql } = require("mjsql")` work.
 
 ## Quick start
 
@@ -93,17 +93,18 @@ Date.now() - $.createdAt.getTime()
 $.event.ts.toISOString()
 $dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })
 
-// Numeric separators and computed object keys
+// Numeric separators, computed keys, object spread
 $.price <= 1_000_000
 { [$.dynamicKey]: $.value, count: 1 }
+{ ...$.defaults, priority: 1 }
 Object.fromEntries($.metrics.map((m) => [m.name, m.value]))
 ```
 
 JavaScript-style line (`// …`) and block (`/* … */`) comments are supported anywhere whitespace is allowed.
 
-### Escape Hatch: `$op()` (direct operator form)
+### Escape hatch: `$op()` (direct operator form)
 
-For MongoDB operators that have no JavaScript equivalent, use the `$opName()` escape hatch — a direct call to the underlying MQL operator:
+For MongoDB operators that have no JavaScript equivalent, call the operator directly with `$opName()`:
 
 ```js
 $zip([$.weeks, $.amounts])         // { $zip: { inputs: ["$weeks", "$amounts"] } }
@@ -114,9 +115,9 @@ $dateTrunc({ date: $.createdAt, unit: "week" })
 $round($.price, 2)                 // { $round: ["$price", 2] }   (Math.round has no precision arg)
 ```
 
-The registry covers every MongoDB aggregation expression and accumulator the official `mongodb/mql-specifications` repo defines (182 operators, including the full Bitwise and Window categories). Unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.
+mjsql knows 182 operators — every aggregation expression and accumulator from MongoDB's official specs, including the full Bitwise and Window categories. Unknown operators pass through, so mjsql works with new MongoDB versions out of the box.
 
-Inside the function form, destructure escape-hatch operators from the second parameter so the IDE doesn't flag them as unknown identifiers — the parameter is types-only and never reaches the runtime:
+In the function form, destructure escape-hatch operators from the second parameter to keep your IDE happy. The second parameter is types-only and never runs:
 
 ```js
 mjsql(($, { $dateDiff }) =>
@@ -248,9 +249,21 @@ Same result, no string-encoded JavaScript, no separate merge function. Every lin
 
 ## API
 
-### `mjsql(input: string | function): object`
+### `mjsql(input: MjsqlInput): MjsqlOutput`
 
-Parses and transpiles the expression. Throws a descriptive error on invalid input.
+Compiles your expression to MongoDB aggregation JSON. Throws a clear error if the input is invalid.
+
+Returns either a single MQL object (for an expression) or an array of stages (for a top-level pipeline). Pass an expression to get an expression, pass a pipeline array to get a stage array:
+
+```js
+// Expression input → MQL object output
+mjsql(($) => $.age > 18);
+// → { $gt: ["$age", 18] }
+
+// Pipeline input → MQL stage array output (and $match auto-wraps in $expr)
+mjsql(($) => [{ $match: $.age > 18 }, { $project: { name: 1 } }]);
+// → [{ $match: { $expr: { $gt: ["$age", 18] } } }, { $project: { name: 1 } }]
+```
 
 The function form accepts an **expression-body arrow function**:
 
@@ -261,31 +274,44 @@ mjsql(($, { $dateDiff }) =>
 );
 ```
 
-The runtime calls `Function.prototype.toString()`, strips the parameter list at the first `=>`, and feeds the body to the same parser as the string form. Block bodies (`($) => { return …; }`), `function` declarations, `async`, and generators are rejected with a clear error. Outer-scope variables don't survive `toString()` — for those, use the `mql` template tag. Compiled bodies are cached by their extracted source string, so inline arrows in hot paths (`collection.find(mjsql(($) => $.status == "active"))`) compile only once.
+Behind the scenes, mjsql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error.
 
-### `validate(input: MjsqlInput): { valid: boolean, errors: ValidationError[] }`
+Variables from outer scope don't survive `toString()` — use the `mql` template tag if you need closure values. Compiled bodies are cached, so inline arrows in hot loops only compile once.
 
-Same as `mjsql()` but returns errors instead of throwing. Useful for linters and form validation.
+### `validate(input: MjsqlInput): ValidationResult`
+
+Same as `mjsql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. `validate()` never throws — even on stack overflow or unexpected internal errors, it returns a `ValidationResult` with the failure described.
 
 ### `` mql`...` `` (template tag)
 
-Interpolate JavaScript values (numbers, strings, booleans, arrays) directly into expressions:
+A template tag for injecting JavaScript values into mjsql expressions. Each `${value}` is JSON-stringified and dropped into the expression source:
 
 ```js
 const statuses = ["active", "pending"];
-mql`$.status in ${statuses}`
+mql`$.status in ${statuses}`;
 // → { $in: ["$status", ["active", "pending"]] }
 ```
 
-The template tag is the canonical answer when you need to inject closure-scope values into a function-form expression.
+Use it when you need values from outer scope inside a function-form expression — those values don't survive `Function.prototype.toString()`, but `mql` template-interpolation works fine.
+
+Accepts strings, numbers, booleans, `null`, arrays, and plain objects. Anything else (`undefined`, functions, `Symbol`, `NaN`, `±Infinity`, `BigInt`, circular structures) throws `MqlInterpolationError` so you find out at the call site, not via a confusing parse error downstream.
 
 ### TypeScript
 
 ```ts
-import type { MjsqlInput, MjsqlOps, ValidationError, ValidationResult } from "mjsql";
+import type {
+  MjsqlInput,
+  MjsqlOutput,
+  MjsqlOps,
+  ValidationError,
+  ValidationResult,
+} from "mjsql";
+import { MqlInterpolationError, FunctionInputError } from "mjsql";
 ```
 
-`MjsqlOps` is the type of the function form's optional second parameter — `Record<\`$${string}\`, (...args: any[]) => any>` — used purely to silence IDE warnings on direct `$op(...)` calls inside the body.
+`MjsqlOps` is the type of the function form's optional second parameter. It exists to keep your IDE happy when you call `$op(...)` operators in the body — types-only, never runs.
+
+`MqlInterpolationError` and `FunctionInputError` are the two extra error classes mjsql can throw, on top of the standard `Error` it throws for parse and codegen failures. Catch them by class if you want to handle the cases distinctly.
 
 ## License
 
