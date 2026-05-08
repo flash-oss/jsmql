@@ -688,6 +688,19 @@ describe("score range with spread + Array.isArray guard", () => {
   });
 });
 
+describe("moderator membership check with array spread", () => {
+  it("checks if user is in the combined moderator list for a thread", () => {
+    // A thread's effective moderators are: thread-specific mods, room-wide mods,
+    // plus a hard-coded root user. Array spread is the natural JS form for
+    // building this combined list, then .includes() checks membership.
+    const result = mjsql('[...$.moderators, ...$.room.mods, "root"].includes($.userId)');
+
+    expect(result).toEqual({
+      $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }],
+    });
+  });
+});
+
 describe("days since event (Date.now + .getTime + numeric separator)", () => {
   it("computes whole days elapsed since an event timestamp", () => {
     // Date.now() returns ms since epoch — same as JS — and so does .getTime().

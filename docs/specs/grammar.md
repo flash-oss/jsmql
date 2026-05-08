@@ -165,14 +165,16 @@ JavaScript-style comments are skipped by the lexer, with semantics identical to 
 
 Comments are trivia: they are discarded during tokenisation by `skipTrivia()` (which alternates whitespace and comment passes until neither makes progress) and never appear in the token stream or AST. They are valid anywhere whitespace is, including inside template `${…}` interpolations. They are **not** recognised inside string literals, regex literals, or template-literal quasi text — those are consumed atomically by `readString` / `readRegex` / `readTemplateChunk`.
 
-## Spread in call arguments
+## Spread
 
-`...expr` is a valid argument anywhere that takes positional args (operator calls, method calls, `Math.*`, `Object.*`). It is represented in the AST as a `SpreadElement` interleaved with `Expr` arguments. Codegen handles spread in:
+`...expr` is a valid construct anywhere positional args, array literal elements, or object literal entries appear. It is represented in the AST as a `SpreadElement`. Codegen handles spread in:
 
-- Variadic operator/method calls — single spread → bare value; mixed → `$concatArrays`-wrapped
+- Variadic operator/method calls — single spread → bare value; mixed → `$concatArrays`-wrapped per-arg
 - `Math.min`/`Math.max` — same as variadic
 - `Object.assign` — same
 - Unknown operators — single spread passes through
+- Array literals — `$concatArrays` with consecutive non-spread elements grouped into one literal-array operand; a lone `[...x]` returns `x` directly
+- Object literals — `$mergeObjects` with consecutive non-spread entries grouped into one operand; a lone `{...x}` returns `x` directly
 
 Non-variadic operators (single/object/none shapes) reject spread with a clear error.
 

@@ -201,7 +201,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return `$${expr.path}`;
 
     case "ArrayLiteral":
-      return expr.elements.map((el) => generateArrayElement(el, ctx));
+      return generateArrayLiteral(expr.elements, ctx);
 
     case "ObjectLiteral":
       return generateObjectLiteral(expr.entries, ctx);
@@ -459,11 +459,46 @@ function generateUnaryExpr(op: "!" | "-" | "~", operand: Expr, ctx: GenerateCtx)
 
 // ── Array / object literals ───────────────────────────────────────────────────
 
-function generateArrayElement(el: ArrayElement, ctx: GenerateCtx): unknown {
-  if (el.type === "SpreadElement") {
-    throw new CodegenError("Spread elements in array literals are not supported in MQL output");
+/**
+ * Generate an array literal. Mirrors `generateObjectLiteral`'s spread handling:
+ *
+ *   - No spread → plain MQL array of generated elements.
+ *   - Any spread (`[1, ...a, 2]`) → `$concatArrays` over a list of operands, where
+ *     consecutive non-spread elements are grouped into one literal-array operand
+ *     and each spread argument is its own operand (presumed to evaluate to an
+ *     array at runtime).
+ *
+ * The single-operand case (`[...a]` on its own) returns the spread argument
+ * directly — `{ $concatArrays: [a] }` is semantically equivalent and noisier.
+ */
+function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx): unknown {
+  const hasSpread = elements.some((el) => el.type === "SpreadElement");
+
+  if (!hasSpread) {
+    return elements.map((el) => _generate(el as Expr, ctx));
   }
-  return _generate(el, ctx);
+
+  const operands: unknown[] = [];
+  let buffer: Expr[] = [];
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    operands.push(buffer.map((el) => _generate(el, ctx)));
+    buffer = [];
+  };
+
+  for (const el of elements) {
+    if (el.type === "SpreadElement") {
+      flushBuffer();
+      operands.push(_generate(el.argument, ctx));
+    } else {
+      buffer.push(el);
+    }
+  }
+  flushBuffer();
+
+  if (operands.length === 1) return operands[0];
+  return { $concatArrays: operands };
 }
 
 /**

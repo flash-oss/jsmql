@@ -181,6 +181,8 @@ Comma-separated values in brackets, including spread:
 [...$.a, ...$.b]              // spread multiple arrays
 ```
 
+Spread compiles to `$concatArrays`. Consecutive non-spread elements group into one operand, each `...expr` becomes its own operand, and a lone `[...x]` returns `x` directly — no redundant `$concatArrays` wrapper. Each spread argument must evaluate to an array at runtime; this is the same constraint MongoDB's `$concatArrays` itself imposes.
+
 ### Objects
 
 Key-value pairs in braces, including spread:
