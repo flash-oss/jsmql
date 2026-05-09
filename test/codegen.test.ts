@@ -1610,6 +1610,9 @@ describe("in operator RHS validation", () => {
   it("throws on null RHS", () => {
     expect(() => mjsql("$.x in null")).toThrow(/Right-hand side of 'in'/);
   });
+  it("throws on object literal RHS with a JS-vs-MQL hint", () => {
+    expect(() => mjsql("$.x in { a: 1 }")).toThrow(/property existence/);
+  });
   it("accepts array literal RHS", () => {
     expect(mjsql('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
   });

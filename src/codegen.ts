@@ -373,6 +373,12 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "^":
       return { $bitXor: flattenChain("^", left, right, ctx) };
     case "in": {
+      // MQL's $in checks array membership. JS's `in` checks object property
+      // existence — a different operation we don't model. Reject the literal
+      // shapes that produce confusing or silently-wrong output: scalars (no
+      // sensible MQL mapping) and object literals (would silently emit
+      // \`{ $in: [..., {...}] }\` and fail at runtime with a less actionable
+      // message than this one).
       if (
         right.type === "StringLiteral" ||
         right.type === "NumberLiteral" ||
@@ -381,6 +387,11 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
       ) {
         throw new CodegenError(
           "Right-hand side of 'in' must be an array literal or field reference, not a scalar value",
+        );
+      }
+      if (right.type === "ObjectLiteral") {
+        throw new CodegenError(
+          "Right-hand side of 'in' must be an array literal or field reference. JavaScript's `key in object` (property existence) has no MongoDB equivalent — use `Object.keys(obj).includes(key)` or `$getField` instead.",
         );
       }
       return { $in: [_generate(left, ctx), _generate(right, ctx)] };
