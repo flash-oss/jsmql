@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-09 — Mutations: `=`, `+=`, `-=`, `*=`, `/=`, and `delete` compile to `$set`/`$unset` stages
+
+Closes the longest-standing item in `Invalid Constructs` (assignments) and adds `delete` alongside it. Users now write document updates in JS-natural form — `$.score += 1`, `delete $.tmp`, `$.user.name = "alice"` — and the compiler emits the correct MongoDB pipeline-stage shapes. Multiple mutations separated by `;` or `,` coalesce into the smallest correct stage sequence.
+
+**Wire format.** `$set` and `$unset` were already registered pipeline stages in `src/stages.ts`; the new code only synthesises the stage objects, no operator-registry changes. Single `$unset` deletes use the string form (`{ $unset: "tmp" }`); two-or-more deletes coalesce to the array form (`{ $unset: ["a", "b"] }`). One assignment yields a bare `{$set:{…}}` object, multiple stages yield an array — same convention as existing pipeline-vs-expression output.
+
+**Coalescing.** Adjacent same-kind mutations (all assignments, or all deletes) merge into one stage *unless* a path collision (parent/child) or a read-after-write would change the semantics. `$.a = 1; $.b = 2` is one `$set`; `$.a = 1; $.b = $.a` is two `$set`s because the second reads what the first wrote — preserves JS sequential semantics. Same algorithm runs at the top level and between adjacent mutation elements inside a pipeline.
+
+**Parser shape.** `parse()` now returns `Program = Expr | MutationProgram`. Top-level dispatch: a leading `delete` keyword, or any expression followed by an assignment operator, triggers mutation-program parsing. Inside `parseArrayLiteral`, the same per-element heuristic runs so `[$match(...), $.a = 1, delete $.tmp, $sort(...)]` works. `=` is right-associative and chainable; `+=`/`-=`/`*=`/`/=` are not — `a += b += 1` is rejected because it's too easy to misread. Compound operators are desugared at parse time into `=` plus a `BinaryExpr`, so codegen sees only plain assignments and inherits the existing type-aware `+` (numeric `$add` vs string `$concat`) for free.
+
+**Parenthesized assignments accepted.** Formatters wrap assignment expressions in parens when they sit in array element position, and Vite/Vitest's transform silently strips them — so without parser support, `mjsql(($) => [($.a = 5)])` would fail in production runtimes even though it passed in tests. `parseGrouped` now recognises an assignment operator after the inner expression, parses the assignment inside the parens, and returns the resulting `AssignExpr`. Misuse as a value (`1 + ($.a = 5)`) is rejected at codegen with a clear message.
+
+**Targets.** Restricted to static field paths (`$.x` / `$.x.y.z`). Bare identifiers, index access, and computed paths are rejected with operator-specific error messages. Mutations are statement-only — invalid inside expressions, lambda bodies, or as values. The `delete` keyword does not return a boolean (unlike JS).
+
+**Both `;` and `,` work as separators**, freely interchangeable. `,` was already a list separator inside arrays/calls; the parser disambiguates by position. `;` is a new lexer token. Trailing separator allowed.
+
+**Spec.** `docs/specs/mutations.md` covers the AST, lexer additions, parser dispatch, codegen coalescer, pipeline integration, and the parens-handling. User-facing reference is `docs/LANGUAGE.md` § Mutations. Tests in `test/mutations.test.ts` (62 cases) plus a paired-form realistic case (`mjsql(string)` ≡ `mjsql(func)`) in `test/realistic.test.ts`.
+
+---
+
 ## 2026-05-09 — Two follow-ups to the simplification sweep
 
 Two course-corrections on the same day's sweep, both based on user feedback that the cuts were too aggressive on the wrong dimension.

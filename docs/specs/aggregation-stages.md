@@ -18,12 +18,14 @@ This spec covers how `mjsql()` recognises a top-level aggregation pipeline and c
 1. Root must be an `ArrayLiteral` with at least one element.
 2. The *first* element must be a **stage candidate**:
    - `ObjectLiteral` whose first entry is a static `$<name>:` key (correct or misspelled), or
-   - `OperatorCall` of any name (any `$<name>(...)` form).
+   - `OperatorCall` of any name (any `$<name>(...)` form), or
+   - `AssignExpr` or `DeleteStmt` — bare mutation elements compile to `$set`/`$unset` stages via the coalescer in [docs/specs/mutations.md](mutations.md).
 
 Once pipeline mode is active, every element is validated against the strict shape:
 
 - Stage-object form: `ObjectLiteral` with exactly one static `$<name>:` entry where `<name>` is a registered stage in `STAGES`.
 - Stage-call form: `OperatorCall` with `name` registered in `STAGES` and exactly one positional or object-style argument.
+- Mutation form: any `AssignExpr` or `DeleteStmt` element. Adjacent mutation elements coalesce through `generateMutationGroups` (see `mutations.md`).
 
 A failure at any element throws a `CodegenError` pinpointing the offending index. The error message includes a Levenshtein-based "Did you mean `$<closest>`?" suggestion when the unknown name is within edit distance 2 of a registered stage.
 

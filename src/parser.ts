@@ -2,7 +2,6 @@ import { Lexer, TokenType, type Token } from "./lexer.ts";
 import type {
   Expr,
   BinaryOp,
-  UnaryOp,
   ArrayElement,
   ObjectEntry,
   KeyValueEntry,
@@ -13,6 +12,11 @@ import type {
   ObjectMethod,
   ObjectKey,
   CallArg,
+  AssignExpr,
+  DeleteStmt,
+  Mutation,
+  MutationProgram,
+  Program,
 } from "./ast.ts";
 
 export class ParseError extends Error {
@@ -70,6 +74,19 @@ const OBJECT_METHODS = new Set<string>([
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 
+function compoundBinaryOp(op: "+=" | "-=" | "*=" | "/="): BinaryOp {
+  switch (op) {
+    case "+=":
+      return "+";
+    case "-=":
+      return "-";
+    case "*=":
+      return "*";
+    case "/=":
+      return "/";
+  }
+}
+
 // Recursion-depth cap for the recursive-descent parser. Each user-visible
 // nest level burns ~17 stack frames as the precedence cascade walks from
 // parseExpression down to parsePrimary; 200 levels stays well within Node's
@@ -86,13 +103,227 @@ export class Parser {
     this.lexer = new Lexer(src);
   }
 
-  parse(): Expr {
+  parse(): Program {
+    const first = this.lexer.peek();
+
+    // `delete $.x` is the only mutation that can appear before any expression
+    // tokens, so a leading `delete` definitively means this is a mutation
+    // program. The other mutation operators (=, +=, …) reveal themselves only
+    // *after* a target expression has been parsed — handled below.
+    if (first.type === TokenType.Delete) {
+      return this.parseMutationProgram();
+    }
+
+    // Speculative: parse a single expression first.
     const expr = this.parseExpression();
+
+    // If an assignment operator follows, the expression we just parsed was
+    // actually a mutation target — treat the whole input as a mutation program.
+    if (this.peekAssignOp() !== null) {
+      this.validateMutationTarget(expr);
+      return this.parseMutationProgramFrom(expr);
+    }
+
+    // `parseExpression` may have surfaced an `AssignExpr` from a parenthesized
+    // top-level assignment (`($.a = 5)`) via parseGrouped's handling. Wrap it
+    // in a MutationProgram so codegen routes through the mutation path.
+    if ((expr as unknown as { type: string }).type === "AssignExpr") {
+      const mutations: Mutation[] = [expr as unknown as AssignExpr];
+      this.parseMutationProgramRest(mutations);
+      return { type: "MutationProgram", mutations };
+    }
+
     const eof = this.lexer.peek();
     if (eof.type !== TokenType.EOF) {
       throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
     }
     return expr;
+  }
+
+  // ── Mutation program ─────────────────────────────────────────────────────
+
+  /** Entry when the input starts with a mutation token (`delete`). */
+  private parseMutationProgram(): MutationProgram {
+    const mutations: Mutation[] = [];
+    mutations.push(...this.parseMutation());
+    this.parseMutationProgramRest(mutations);
+    return { type: "MutationProgram", mutations };
+  }
+
+  /** Entry when the first target was already parsed as an expression. */
+  private parseMutationProgramFrom(firstTarget: Expr): MutationProgram {
+    const mutations: Mutation[] = [];
+    mutations.push(...this.parseAssignmentChainFrom(firstTarget));
+    this.parseMutationProgramRest(mutations);
+    return { type: "MutationProgram", mutations };
+  }
+
+  /** After the first mutation is parsed, consume any `;`/`,`-separated tail. */
+  private parseMutationProgramRest(mutations: Mutation[]): void {
+    for (;;) {
+      if (!this.peekMutationSeparator()) break;
+      this.lexer.next(); // consume `;` or `,`
+      if (this.lexer.peek().type === TokenType.EOF) break; // trailing separator
+      mutations.push(...this.parseMutation());
+    }
+    const tok = this.lexer.peek();
+    if (tok.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token '${tok.value}' at position ${tok.pos}`, tok.pos);
+    }
+  }
+
+  /**
+   * Parse a single mutation. Returns an array because a chained assignment
+   * (`$.a = $.b = expr`) flattens to multiple `AssignExpr` nodes here, all
+   * sharing the deepest RHS.
+   */
+  private parseMutation(): Mutation[] {
+    if (this.lexer.peek().type === TokenType.Delete) {
+      return [this.parseDeleteStmt()];
+    }
+    const target = this.parsePostfix();
+    this.validateMutationTarget(target);
+    return this.parseAssignmentChainFrom(target);
+  }
+
+  private parseDeleteStmt(): DeleteStmt {
+    this.lexer.next(); // consume `delete`
+    const target = this.parsePostfix();
+    this.validateMutationTarget(target);
+    return { type: "DeleteStmt", target };
+  }
+
+  /**
+   * Given a target already parsed and validated, expect an assignment operator
+   * and parse the RHS. Handles right-associative chains for `=`; rejects them
+   * for compound operators because `a += b += 1` is too easy to misread.
+   */
+  private parseAssignmentChainFrom(target: Expr): AssignExpr[] {
+    const opTok = this.lexer.peek();
+    const op = this.peekAssignOp();
+    if (op === null) {
+      throw new ParseError(`Expected assignment operator at position ${opTok.pos}`, opTok.pos);
+    }
+    this.lexer.next(); // consume the assignment op
+
+    if (op === "=") {
+      // Try to peek a chained target: `<target> = <target> = …`. The peek-ahead
+      // is bounded (DollarDot, Ident segments, dots) so this is cheap.
+      if (this.peekIsAssignmentChainStart()) {
+        const subTarget = this.parsePostfix();
+        this.validateMutationTarget(subTarget);
+        const sub = this.parseAssignmentChainFrom(subTarget);
+        const deepestValue = sub[sub.length - 1].value;
+        return [{ type: "AssignExpr", target, value: deepestValue }, ...sub];
+      }
+      const value = this.parseExpression();
+      return [{ type: "AssignExpr", target, value }];
+    }
+
+    // Compound op (+=, -=, *=, /=). Reject chained.
+    if (this.peekIsAssignmentChainStart()) {
+      const tok = this.lexer.peek();
+      throw new ParseError(
+        `Compound assignment cannot be chained at position ${tok.pos} — split into separate statements`,
+        tok.pos,
+      );
+    }
+    const rhs = this.parseExpression();
+    const desugared: Expr = {
+      type: "BinaryExpr",
+      op: compoundBinaryOp(op),
+      left: target,
+      right: rhs,
+    };
+    return [{ type: "AssignExpr", target, value: desugared }];
+  }
+
+  /**
+   * Returns the assignment operator string at the current position, or null
+   * if the next token is not an assignment operator.
+   */
+  private peekAssignOp(): "=" | "+=" | "-=" | "*=" | "/=" | null {
+    switch (this.lexer.peek().type) {
+      case TokenType.Eq:
+        return "=";
+      case TokenType.PlusEq:
+        return "+=";
+      case TokenType.MinusEq:
+        return "-=";
+      case TokenType.StarEq:
+        return "*=";
+      case TokenType.SlashEq:
+        return "/=";
+      default:
+        return null;
+    }
+  }
+
+  private isAssignOpType(t: TokenType): boolean {
+    return (
+      t === TokenType.Eq ||
+      t === TokenType.PlusEq ||
+      t === TokenType.MinusEq ||
+      t === TokenType.StarEq ||
+      t === TokenType.SlashEq
+    );
+  }
+
+  private peekMutationSeparator(): boolean {
+    const t = this.lexer.peek().type;
+    return t === TokenType.Semi || t === TokenType.Comma;
+  }
+
+  /**
+   * Lookahead: do the next tokens look like `$.path[.path]* <assignOp>`?
+   * Used to detect the start of a chained assignment's RHS when we're at
+   * the right of a `=` operator. Bounded by the length of the field path
+   * so it's cheap and never false-positive on regular RHS expressions.
+   */
+  private peekIsAssignmentChainStart(): boolean {
+    if (this.lexer.peek().type !== TokenType.DollarDot) return false;
+    let offset = 1;
+    if (!this.isIdentOrKeyword(this.lexer.lookahead(offset))) return false;
+    offset++;
+    while (this.lexer.lookahead(offset).type === TokenType.Dot) {
+      offset++;
+      if (!this.isIdentOrKeyword(this.lexer.lookahead(offset))) return false;
+      offset++;
+    }
+    return this.isAssignOpType(this.lexer.lookahead(offset).type);
+  }
+
+  /**
+   * Mutation targets are restricted to field paths: a `FieldRef` (`$.x`) or
+   * a chain of `MemberAccess` nodes rooted at one (`$.x.y.z`). Anything else
+   * — index access, function calls, parameter refs, parenthesized expressions
+   * containing operators — is rejected with a precise error.
+   */
+  private validateMutationTarget(target: Expr): void {
+    if (this.isFieldPathTarget(target)) return;
+    const pos = this.lexer.peek().pos;
+    if (target.type === "ParamRef") {
+      throw new ParseError(
+        `Mutation target must be a field path like '$.${target.name}', not a bare identifier (at position ${pos})`,
+        pos,
+      );
+    }
+    if (target.type === "IndexAccess") {
+      throw new ParseError(
+        `Mutation target must be a static field path; computed/index access ('[…]') is not supported (at position ${pos})`,
+        pos,
+      );
+    }
+    throw new ParseError(
+      `Mutation target must be a field path like '$.x' or '$.x.y' (at position ${pos})`,
+      pos,
+    );
+  }
+
+  private isFieldPathTarget(target: Expr): boolean {
+    if (target.type === "FieldRef") return true;
+    if (target.type === "MemberAccess") return this.isFieldPathTarget(target.object);
+    return false;
   }
 
   // ── Precedence hierarchy (low → high) ────────────────────────────────────
@@ -520,6 +751,27 @@ export class Parser {
       expr = this.parseLambdaUnparen();
     } else {
       expr = this.parseExpression();
+      // `($.x = expr)` — parenthesized assignment. JS-syntax-equivalent to
+      // a bare `$.x = expr`; matters because formatters (oxfmt, prettier)
+      // wrap assignment expressions in parens when they appear in array
+      // element position. Parse the assignment here so the function-input
+      // form `mjsql(($) => [($.a = 1)])` works the same as the bare form.
+      // The result is an AssignExpr; we surface it as an `Expr` and let
+      // contextual handling in parseArrayLiteral / parse() / _generate
+      // route it appropriately. Plain expression contexts (e.g. `1 + (a=2)`)
+      // bubble it up to codegen which throws a precise error.
+      if (this.peekAssignOp() !== null) {
+        this.validateMutationTarget(expr);
+        const chain = this.parseAssignmentChainFrom(expr);
+        if (chain.length !== 1) {
+          const tok = this.lexer.peek();
+          throw new ParseError(
+            `Chained assignment inside parentheses is not supported at position ${tok.pos}`,
+            tok.pos,
+          );
+        }
+        expr = chain[0] as unknown as Expr;
+      }
     }
     const close = this.lexer.peek();
     if (close.type !== TokenType.RParen) {
@@ -885,8 +1137,21 @@ export class Parser {
         const arg = this.parseExpression();
         const spread: SpreadElement = { type: "SpreadElement", argument: arg };
         elements.push(spread);
+      } else if (this.lexer.peek().type === TokenType.Delete) {
+        // `delete $.x` as a pipeline element. Codegen rejects it if the array
+        // turns out not to be a pipeline.
+        elements.push(this.parseDeleteStmt());
       } else {
-        elements.push(this.parseExpression());
+        // Could be a regular expression OR an assignment used as a pipeline
+        // element (`[$match(...), $.a = 1]`). Parse the expression first; if a
+        // bare assignment operator follows, treat the result as a target.
+        const expr = this.parseExpression();
+        if (this.peekAssignOp() !== null) {
+          this.validateMutationTarget(expr);
+          for (const m of this.parseAssignmentChainFrom(expr)) elements.push(m);
+        } else {
+          elements.push(expr);
+        }
       }
       if (this.lexer.peek().type === TokenType.Comma) {
         this.lexer.next();

@@ -12,6 +12,8 @@ import type {
   MathConstant,
   ObjectMethod,
   TypeCastOp,
+  Mutation,
+  MutationProgram,
 } from "./ast.ts";
 
 export class CodegenError extends Error {
@@ -169,6 +171,17 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
 }
 
 function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
+  // Defensive: parseGrouped may surface an AssignExpr through this path when
+  // it sees `($.x = expr)` — a parenthesized assignment. AssignExpr is not in
+  // the Expr union, but the cast in parseGrouped lets it flow here. Reject
+  // with a clear message so users debugging `1 + ($.a = 5)` see what's wrong.
+  const dynType = (expr as unknown as { type: string }).type;
+  if (dynType === "AssignExpr" || dynType === "DeleteStmt") {
+    throw new CodegenError(
+      `${dynType === "AssignExpr" ? "Assignment" : "delete"} is a statement, not a value. ` +
+        `It is only valid at the top level or as a pipeline-array element.`,
+    );
+  }
   switch (expr.type) {
     case "NumberLiteral":
       return expr.value;
@@ -535,6 +548,19 @@ function generateUnaryExpr(op: "!" | "-" | "~", operand: Expr, ctx: GenerateCtx)
  * directly — `{ $concatArrays: [a] }` is semantically equivalent and noisier.
  */
 function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx): unknown {
+  // Mutations (`$.a = 1`, `delete $.x`) are valid as ArrayElements only when
+  // the array is a pipeline (handled in pipeline.ts before reaching here).
+  // Reaching here with a mutation means the user wrote a mutation inside a
+  // value array — reject with a precise error pointing at the supported forms.
+  for (const el of elements) {
+    if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      throw new CodegenError(
+        `${el.type === "AssignExpr" ? "Assignment" : "delete"} is a statement, not a value, and is only valid at the top level or as a pipeline-array element. ` +
+          `If this array is meant to be a pipeline, ensure its first element is a stage like \`$match(...)\`.`,
+      );
+    }
+  }
+
   const hasSpread = elements.some((el) => el.type === "SpreadElement");
 
   if (!hasSpread) {
@@ -554,6 +580,9 @@ function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx): unkno
     if (el.type === "SpreadElement") {
       flushBuffer();
       operands.push(_generate(el.argument, ctx));
+    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      // Already rejected above; unreachable.
+      continue;
     } else {
       buffer.push(el);
     }
@@ -1910,4 +1939,275 @@ function generateRegexMethodCall(
   return { [opName]: obj };
 }
 
-// ── Object.groupBy moved into generateObjectCall above ────────────────────────
+// ── Mutation codegen ──────────────────────────────────────────────────────────
+
+/**
+ * Compile a top-level `MutationProgram` to either a single stage object (if
+ * everything coalesces into one $set/$unset) or an array of stage objects.
+ *
+ * The shape mirrors `mjsql()`'s existing top-level convention: one stage →
+ * bare object, multiple stages → array.
+ */
+export function generateMutationProgram(prog: MutationProgram): object | object[] {
+  if (prog.mutations.length === 0) {
+    throw new CodegenError("Mutation program must contain at least one assignment or delete");
+  }
+  const groups = groupMutations(prog.mutations);
+  const stages = groups.map((g) => generateMutationGroup(g));
+  if (stages.length === 1) return stages[0];
+  return stages;
+}
+
+/**
+ * Coalescer used by both mjsql() top-level mutations and by pipeline.ts when
+ * mutations appear as pipeline elements. Returns one or more stage objects.
+ *
+ * Grouping rule (preserves JS sequential semantics):
+ *   - Consecutive same-kind (assign/delete) mutations join one group, UNLESS
+ *   - A new mutation's write path collides (equals or is a parent/child) with
+ *     any prior write in the group, OR
+ *   - For assignments: the new RHS reads any path that was written earlier in
+ *     the group. (Delete has no reads.)
+ */
+export function generateMutationGroups(muts: Mutation[]): object[] {
+  const groups = groupMutations(muts);
+  return groups.map((g) => generateMutationGroup(g));
+}
+
+function groupMutations(muts: Mutation[]): Mutation[][] {
+  const groups: Mutation[][] = [];
+  let current: Mutation[] = [];
+  let writes = new Set<string>();
+  let kind: "assign" | "delete" | null = null;
+
+  for (const m of muts) {
+    const myKind: "assign" | "delete" = m.type === "AssignExpr" ? "assign" : "delete";
+    const writePath = mutationWritePath(m);
+    const reads = m.type === "AssignExpr" ? collectMutationReads(m.value) : null;
+
+    let mustBreak = false;
+    if (kind !== null && kind !== myKind) {
+      mustBreak = true;
+    }
+    if (!mustBreak) {
+      for (const w of writes) {
+        if (pathsCollide(w, writePath)) {
+          mustBreak = true;
+          break;
+        }
+      }
+    }
+    if (!mustBreak && reads !== null) {
+      for (const r of reads) {
+        for (const w of writes) {
+          if (pathsCollide(w, r)) {
+            mustBreak = true;
+            break;
+          }
+        }
+        if (mustBreak) break;
+      }
+    }
+
+    if (mustBreak && current.length > 0) {
+      groups.push(current);
+      current = [];
+      writes = new Set();
+    }
+    current.push(m);
+    writes.add(writePath);
+    kind = myKind;
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+
+function generateMutationGroup(group: Mutation[]): object {
+  if (group.length === 0) {
+    throw new CodegenError("Internal: empty mutation group");
+  }
+  if (group[0].type === "AssignExpr") {
+    const fields: Record<string, unknown> = {};
+    for (const m of group) {
+      if (m.type !== "AssignExpr") {
+        throw new CodegenError("Internal: mixed-kind mutation group");
+      }
+      const path = mutationWritePath(m);
+      if (Object.prototype.hasOwnProperty.call(fields, path)) {
+        throw new CodegenError(`Internal: field '${path}' written twice in same group`);
+      }
+      fields[path] = generate(m.value);
+    }
+    return { $set: fields };
+  }
+  // Delete group
+  const paths: string[] = [];
+  for (const m of group) {
+    if (m.type !== "DeleteStmt") {
+      throw new CodegenError("Internal: mixed-kind mutation group");
+    }
+    paths.push(mutationWritePath(m));
+  }
+  // MongoDB pipeline `$unset` accepts a single string OR an array of strings.
+  // Use the more compact string form for size 1 to match handwritten output.
+  return paths.length === 1 ? { $unset: paths[0] } : { $unset: paths };
+}
+
+/** Reconstruct the dotted write path from a mutation target. */
+export function mutationWritePath(m: Mutation): string {
+  return targetToPath(m.target);
+}
+
+function targetToPath(target: Expr): string {
+  if (target.type === "FieldRef") return target.path;
+  if (target.type === "MemberAccess") {
+    return `${targetToPath(target.object)}.${target.member}`;
+  }
+  throw new CodegenError(
+    "Internal: mutation target is not a field path (parser should have rejected)",
+  );
+}
+
+/**
+ * Collect dotted field-path reads from an expression. Used by the coalescer
+ * to detect read-after-write conflicts within a $set group. Lambda-local
+ * params are intentionally not recorded — they reference iteration values,
+ * not document fields.
+ */
+function collectMutationReads(expr: Expr): Set<string> {
+  const out = new Set<string>();
+  collectReadsInto(expr, out);
+  return out;
+}
+
+function collectReadsInto(expr: Expr, out: Set<string>): void {
+  // Foldable field path (`$.a`, `$.a.b.c`) — record as a single dotted entry.
+  const path = tryFieldPath(expr);
+  if (path !== null) {
+    out.add(path);
+    return;
+  }
+  switch (expr.type) {
+    case "FieldRef":
+      out.add(expr.path);
+      return;
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "RegexLiteral":
+    case "ParamRef":
+    case "MathConst":
+    case "DateNow":
+      return;
+    case "ArrayLiteral":
+      for (const el of expr.elements) {
+        if (el.type === "SpreadElement") collectReadsInto(el.argument, out);
+        else if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+          // mutations inside expressions are rejected elsewhere; ignore here
+        } else collectReadsInto(el, out);
+      }
+      return;
+    case "ObjectLiteral":
+      for (const e of expr.entries) {
+        if (e.type === "SpreadElement") {
+          collectReadsInto(e.argument, out);
+        } else {
+          if (e.key.kind === "computed") collectReadsInto(e.key.expr, out);
+          collectReadsInto(e.value, out);
+        }
+      }
+      return;
+    case "TemplateLiteral":
+      for (const e of expr.expressions) collectReadsInto(e, out);
+      return;
+    case "BinaryExpr":
+      collectReadsInto(expr.left, out);
+      collectReadsInto(expr.right, out);
+      return;
+    case "UnaryExpr":
+      collectReadsInto(expr.operand, out);
+      return;
+    case "TernaryExpr":
+      collectReadsInto(expr.condition, out);
+      collectReadsInto(expr.consequent, out);
+      collectReadsInto(expr.alternate, out);
+      return;
+    case "IndexAccess":
+      collectReadsInto(expr.object, out);
+      collectReadsInto(expr.index, out);
+      return;
+    case "MemberAccess":
+      collectReadsInto(expr.object, out);
+      return;
+    case "MethodCall":
+      collectReadsInto(expr.object, out);
+      collectArgsInto(expr.args, out);
+      return;
+    case "CallExpression":
+      collectReadsInto(expr.callee, out);
+      collectArgsInto(expr.args, out);
+      return;
+    case "Lambda":
+      collectReadsInto(expr.body, out);
+      return;
+    case "TypeofExpr":
+      collectReadsInto(expr.operand, out);
+      return;
+    case "NewDate":
+    case "NewSet":
+      if (expr.arg) collectReadsInto(expr.arg, out);
+      return;
+    case "TypeCast":
+      collectReadsInto(expr.arg, out);
+      return;
+    case "MathCall":
+    case "ObjectCall":
+      collectArgsInto(expr.args, out);
+      return;
+    case "ArrayFrom":
+      collectReadsInto(expr.input, out);
+      if (expr.mapFn) collectReadsInto(expr.mapFn, out);
+      return;
+    case "NumberStatic":
+      collectReadsInto(expr.arg, out);
+      return;
+    case "OperatorCall":
+      collectArgsInto(expr.args, out);
+      return;
+  }
+}
+
+function collectArgsInto(args: CallArg[], out: Set<string>): void {
+  for (const a of args) {
+    if (a.type === "SpreadElement") collectReadsInto(a.argument, out);
+    else collectReadsInto(a, out);
+  }
+}
+
+function tryFieldPath(expr: Expr): string | null {
+  if (expr.type === "FieldRef") return expr.path;
+  if (expr.type === "MemberAccess") {
+    const base = tryFieldPath(expr.object);
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+
+/**
+ * Two paths "collide" when one is the same as, or a strict ancestor of, the
+ * other. `a` and `a` collide; `a` and `a.b` collide; `a` and `b` do not.
+ * Used by the mutation coalescer to detect conflicts that force a stage
+ * boundary.
+ */
+function pathsCollide(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.length < b.length && b.startsWith(a) && b.charCodeAt(a.length) === 0x2e /* . */) {
+    return true;
+  }
+  if (b.length < a.length && a.startsWith(b) && a.charCodeAt(b.length) === 0x2e /* . */) {
+    return true;
+  }
+  return false;
+}

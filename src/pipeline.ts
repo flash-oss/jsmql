@@ -18,8 +18,8 @@
 // expression is wrapped in $expr so the user can write `{ $match: $.age > 18 }`
 // and get `{ $match: { $expr: { $gt: ["$age", 18] } } }`.
 
-import type { Expr, ArrayElement } from "./ast.ts";
-import { generate, CodegenError } from "./codegen.ts";
+import type { Expr, ArrayElement, Mutation } from "./ast.ts";
+import { generate, generateMutationGroups, CodegenError } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 
@@ -39,6 +39,10 @@ type StageShape = { name: string; body: Expr };
  */
 function isStageCandidate(el: ArrayElement): boolean {
   if (el.type === "SpreadElement") return false;
+  // Mutations (`$.a = 1`, `delete $.x`) are pipeline stages — they lower to
+  // $set/$unset stages via the coalescer. Recognising them here flips the
+  // array into pipeline mode even when no `$stage`-shaped element comes first.
+  if (el.type === "AssignExpr" || el.type === "DeleteStmt") return true;
   if (el.type === "ObjectLiteral") {
     if (el.entries.length === 0) return false;
     const first = el.entries[0];
@@ -98,18 +102,39 @@ export function isPipelineAst(ast: Expr): boolean {
  * Caller must have verified `isPipelineAst(ast)` first; we still validate
  * every element here and throw a precise CodegenError on the first non-stage
  * element so the error message points at the offending position.
+ *
+ * Consecutive mutation elements (`$.a = 1`, `delete $.x`) coalesce through
+ * the same algorithm `mjsql()` uses at the top level — see
+ * `generateMutationGroups` in codegen.ts. Non-mutation stages flush the
+ * current mutation buffer and emit its compiled $set/$unset stage(s) inline.
  */
 export function generatePipeline(ast: Expr): unknown[] {
   if (ast.type !== "ArrayLiteral") {
     throw new CodegenError("generatePipeline expects an ArrayLiteral AST");
   }
-  return ast.elements.map((el, i) => {
+  const out: unknown[] = [];
+  let mutationBuffer: Mutation[] = [];
+
+  const flushMutations = () => {
+    if (mutationBuffer.length === 0) return;
+    for (const stage of generateMutationGroups(mutationBuffer)) out.push(stage);
+    mutationBuffer = [];
+  };
+
+  ast.elements.forEach((el, i) => {
+    if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      mutationBuffer.push(el);
+      return;
+    }
+    flushMutations();
     const stage = asStageShape(el);
     if (!stage) {
       throw new CodegenError(formatNotAStageError(el, i));
     }
-    return { [stage.name]: generateStageBody(stage.name, stage.body) };
+    out.push({ [stage.name]: generateStageBody(stage.name, stage.body) });
   });
+  flushMutations();
+  return out;
 }
 
 function generateStageBody(stageName: string, body: Expr): unknown {
