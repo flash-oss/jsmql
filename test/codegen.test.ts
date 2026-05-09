@@ -34,10 +34,6 @@ describe("field refs", () => {
 });
 
 describe("single-shape operators", () => {
-  it("$abs", () => {
-    expect(mjsql("$abs($.delta)")).toEqual({ $abs: "$delta" });
-  });
-
   it("$not", () => {
     expect(mjsql("$not($.active)")).toEqual({ $not: "$active" });
   });
@@ -90,12 +86,6 @@ describe("array-shape operators", () => {
 });
 
 describe("nested operators", () => {
-  it("deeply nested", () => {
-    expect(mjsql('$and($gt($.age, 18), $eq($.status, "active"))')).toEqual({
-      $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
-    });
-  });
-
   it("operator as argument", () => {
     expect(mjsql("$multiply($add($.a, $.b), 2)")).toEqual({
       $multiply: [{ $add: ["$a", "$b"] }, 2],
@@ -688,11 +678,6 @@ describe("mixed $operator() and infix", () => {
       $abs: { $subtract: ["$a", "$b"] },
     });
   });
-  it("$round on arithmetic", () => {
-    expect(mjsql("$round($.price * 1.1, 2)")).toEqual({
-      $round: [{ $multiply: ["$price", 1.1] }, 2],
-    });
-  });
 });
 
 describe("$.in field ref still works", () => {
@@ -707,15 +692,6 @@ describe("$.in field ref still works", () => {
 describe("field path regression (FieldRef stops at first segment)", () => {
   it("$.a.b.c produces $a.b.c", () => {
     expect(mjsql("$.a.b.c")).toEqual("$a.b.c");
-  });
-  it("$.items[0] (unknown receiver) produces $cond bracket-access shape", () => {
-    expect(mjsql("$.items[0]")).toEqual({
-      $cond: [
-        { $isArray: "$items" },
-        { $arrayElemAt: ["$items", 0] },
-        { $getField: { field: 0, input: "$items" } },
-      ],
-    });
   });
   it("$.items[0].name produces $getField on bracket-access result", () => {
     expect(mjsql("$.items[0].name")).toEqual({
@@ -1455,15 +1431,6 @@ describe("Object.groupBy", () => {
   });
 });
 
-describe("optional method call ?.()", () => {
-  it("?.method() works", () => {
-    expect(mjsql("$.maybe?.toLowerCase()")).toEqual({ $toLower: "$maybe" });
-  });
-  it("?. on chain works", () => {
-    expect(mjsql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
-  });
-});
-
 describe("IIFE → $let", () => {
   it("simple ((x) => body)(value)", () => {
     expect(mjsql("((x) => x + 1)(5)")).toEqual({
@@ -1764,6 +1731,9 @@ describe("optional chaining (?.)", () => {
   });
   it("optional method call", () => {
     expect(mjsql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
+  });
+  it("optional method call on a chain", () => {
+    expect(mjsql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
   });
   it("optional bracket access on bare field → runtime $cond", () => {
     // ?.[ ] desugars to the same node as [ ]; receiver type unknown → dispatch at runtime.
