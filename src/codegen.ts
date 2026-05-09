@@ -155,34 +155,16 @@ function isStringProducing(expr: Expr): boolean {
   }
 }
 
-// ── Recursion guard ───────────────────────────────────────────────────────────
-
-// Mirrors parser's MAX_RECURSION_DEPTH (kept duplicated rather than imported
-// from parser.ts to keep the codegen file standalone). Module-level counter is
-// safe because Node is single-threaded; each public generate() entry resets
-// it so a previous throw can't leak depth across calls.
-const MAX_RECURSION_DEPTH = 200;
-let _genDepth = 0;
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function generate(expr: Expr): unknown {
-  _genDepth = 0;
   return _generate(expr, EMPTY_CTX);
 }
 
 // ── Core generator ────────────────────────────────────────────────────────────
 
 function _generate(expr: Expr, ctx: GenerateCtx): unknown {
-  if (++_genDepth > MAX_RECURSION_DEPTH) {
-    _genDepth--;
-    throw new CodegenError(`Expression nests too deeply (max ${MAX_RECURSION_DEPTH} levels)`);
-  }
-  try {
-    return _generateBody(expr, ctx);
-  } finally {
-    _genDepth--;
-  }
+  return _generateBody(expr, ctx);
 }
 
 function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
