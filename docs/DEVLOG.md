@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-09 — Spec drift sweep across `docs/specs/`
+
+A full audit of every file in `docs/specs/` against the actual implementation in `src/`. Found 11 concrete drift points and fixed all of them; no source or test changes (the implementation was right, the specs had fallen behind).
+
+**`architecture.md` — biggest cluster.** The `Expr` AST node list was missing five node types added since the spec was last touched (`BigIntLiteral`, `NewSet`, `CallExpression`, `ArrayFrom`, `NumberStatic`). The pipeline diagram terminated at `generate()` and the module-responsibilities table didn't list `pipeline.ts` or `stages.ts` — both load-bearing modules for the pipeline-mode path that runs from `compile()` in `src/index.ts`. The public `mjsql()` signature still claimed `: object` rather than the widened `: MjsqlOutput = object | object[]` that pipeline mode needs. The error-types table was missing `MqlInterpolationError` (public class, raised by the `mql` template tag) and `validate()`'s `RangeError` defensive arm. The lexer one-line summary listed only six of the twelve+ token shapes the lexer actually produces. And the cache section still described the `fnBodyCache` as "unbounded but safely so" — it has been a 256-entry LRU since the security-hardening pass on 2026-05-08.
+
+**`grammar.md`.** The `$let` lambda paragraph said the lambda parameters "become the `vars` binding names" — direction reversed. The keys come from the object literal (the first arg); the lambda's params are added to scope so the body can reference them as `$$paramName`. The spec wording made it sound like the lambda was load-bearing for the binding step, which would mislead anyone trying to extend or debug the `$let` intercept. Also expanded the string-context-`+` method list from ten methods to the full sixteen the codegen actually checks (`STRING_RETURNING_METHODS` in `src/codegen.ts`); the old list silently understated when a `+` chain becomes `$concat`.
+
+**`method-dispatch.md`.** `.flatMap(x => body)` was filed under "Array methods (no lambda)" — clearly wrong since it requires a lambda to do anything useful. Moved to the lambda section. The Set-receiver section described the dispatch route to `$setIntersection` / `$setUnion` / `$setDifference` / `$setIsSubset` but never listed the actual JS method names (`.intersection`, `.union`, `.difference`, `.isSubsetOf`, `.isSupersetOf`); added a small mapping table including the `isSupersetOf`-as-swapped-`$setIsSubset` trick.
+
+**Smaller items.** `aggregation-stages.md` had a dead `[strict-subset-of-JavaScript](#)` link → repointed to `grammar.md#strict-js-subset-rule`. `accumulators.md` listed all 35 accumulators inline — replaced the static list with a pointer to the registry plus `vendor/mql-specifications/definitions/accumulator/`, since the drift-protection test in `test/operator-spec-coverage.test.ts` already keeps that set authoritative. `query-predicates.md` listed `$sampleRate` as a query-predicate scope item without acknowledging it's already in the expression registry as a `miscellaneous` operator — added a callout flagging the dual-context disambiguation as part of the spec's open design work. `operator-registry.md`'s `flex`-vs-`object` distinction got an explicit "object-literal arg is a value, not a shape signal" callout.
+
+Operator counts in `operator-registry.md` (182 total, broken down by category) were verified against `src/operators.ts` by manual tally — accurate. The `test/operator-spec-coverage.test.ts` drift test continues to be the strongest defence here; the gap is that nothing automated catches AST-node-list drift or module-list drift, so those will need re-reading periodically.
+
+---
+
 ## 2026-05-08 — Array spread compiles to `$concatArrays`
 
 `[1, 2, ...$.arr, 3]` now compiles. Previously the codegen threw `CodegenError: Spread elements in array literals are not supported in MQL output` — same docs/code drift the object-spread change just closed. `docs/LANGUAGE.md:180-181` already listed `[...$.tags, "extra"]` and `[...$.a, ...$.b]` as valid syntax, but only the parser honoured it; codegen rejected. This entry closes the parity with the object-spread implementation that landed earlier today.

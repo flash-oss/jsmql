@@ -65,7 +65,6 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.includes/.indexOf/.concat` *(unknown receiver)* | runtime `$cond` on `$isArray` between the array and string forms (see below) |
 | `.join(sep?)` | `$reduce` over the array, prepending `sep` for non-first elements |
 | `.flat()` / `.flat(1)` | `$reduce` with `$concatArrays` |
-| `.flatMap(x => body)` | `$reduce` over `$map` |
 
 ### Array methods (with lambda)
 
@@ -78,6 +77,7 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.findLastIndex(x => cond)` | `$reduce` over `$zip` of `($range, expr)`, last index where cond is true (or -1) |
 | `.some(x => body)` | `{ $anyElementTrue: { $map: {...} } }` |
 | `.every(x => body)` | `{ $allElementsTrue: { $map: {...} } }` |
+| `.flatMap(x => body)` | `$reduce` over `$map` (concatenating each element's mapped array) |
 | `.reduce((acc, x) => body, init)` | `{ $reduce: { input, initialValue: init, in: body } }` |
 
 ### Date methods
@@ -194,7 +194,16 @@ There is no string-literal/number-literal shortcut on the index — the receiver
 
 ## Set-receiver methods (ES2025)
 
-When the receiver is a `NewSet` AST node (`new Set(arr)`), method dispatch is intercepted at the top of `generateMethodCall` and routed to `generateSetMethodCall`. The wrapper is unwrapped to its underlying array; the method's argument must itself be a `NewSet` and is also unwrapped. Output: `$setIntersection`, `$setUnion`, `$setDifference`, `$setIsSubset`. `isSupersetOf` swaps operand order to reuse `$setIsSubset`. `symmetricDifference` and `isDisjointFrom` are rejected with a clear error.
+When the receiver is a `NewSet` AST node (`new Set(arr)`), method dispatch is intercepted at the top of `generateMethodCall` and routed to `generateSetMethodCall`. The wrapper is unwrapped to its underlying array; the method's argument must itself be a `NewSet` and is also unwrapped.
+
+| Method | MQL output |
+|---|---|
+| `.intersection(new Set(other))` | `{ $setIntersection: [arr, other] }` |
+| `.union(new Set(other))` | `{ $setUnion: [arr, other] }` |
+| `.difference(new Set(other))` | `{ $setDifference: [arr, other] }` |
+| `.isSubsetOf(new Set(other))` | `{ $setIsSubset: [arr, other] }` |
+| `.isSupersetOf(new Set(other))` | `{ $setIsSubset: [other, arr] }` (operands swapped to reuse `$setIsSubset`) |
+| `.symmetricDifference` / `.isDisjointFrom` | rejected with a clear error — no MongoDB equivalent (compose manually via `$setDifference` + `$setUnion`) |
 
 ## Regex-receiver methods
 

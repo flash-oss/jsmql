@@ -77,7 +77,7 @@ $min(...$.scores)         →  { $min: "$scores" }                          (sin
 $max($.first, ...$.rest)  →  { $max: { $concatArrays: [["$first"], "$rest"] } }  (mixed)
 ```
 
-A single object-literal arg is treated as a value (the object itself), since flex is not the same as object-shape:
+A single object-literal arg is treated as a **value** (the object itself), not as a shape signal. `flex` is not the same as `object`-shape: with `object`-shape, a lone object literal is the operator's structured argument with named keys; with `flex`, it's just one value among potentially many.
 
 ```
 $mergeObjects({ a: 1 })   →  { $mergeObjects: { a: 1 } }
