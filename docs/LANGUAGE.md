@@ -246,7 +246,7 @@ Document fields are referenced with `$.` (dollar-dot):
 ```js
 $.age              // simple field
 $.address.city     // nested field
-$.items.0.name     // array element by index
+$.items[0].name    // array element by index — use bracket access (`$.items.0` is invalid JS)
 $.in               // field literally named "in" (no conflict with operator)
 ```
 
