@@ -17,10 +17,10 @@
   },
   "scripts": {
     "build": "tsc",
+    "pretest": "node vendor/fetch-mql-specs.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "oxfmt .",
-    "prepare": "node vendor/fetch-mql-specs.mjs"
+    "format": "oxfmt ."
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
