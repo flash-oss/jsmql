@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-09 — Two follow-ups to the simplification sweep
+
+Two course-corrections on the same day's sweep, both based on user feedback that the cuts were too aggressive on the wrong dimension.
+
+**README \$accumulator example restored.** The earlier compression collapsed the migration section to a single \$where → \$expr example plus a link. That undersold the project — the \$accumulator-replacement case (count orders by status per shop, six string-encoded JS fields collapsing to one `.reduce()` with a computed key) is the strongest motivator we have. \$where → \$expr is real but small; \$accumulator is the "look how much shorter your code gets" pitch. Both examples now sit on the README front page; \$function gets a one-sentence mention since it follows the same pattern. Full guide stays in LANGUAGE.md.
+
+**`in` with an object-literal RHS now compiles to property existence (JS-faithful).** The earlier commit rejected `\$.x in { a: 1 }` outright with a "use Object.keys().includes()" hint, on the grounds that JS's `key in object` semantic had no useful MongoDB equivalent. Wrong call — the JS semantic *does* have a clean MQL mapping for object literals: extract the keys at compile time and reduce to `\$in` against a literal array. `\$.x in { a: 1, b: 2 }` now emits `{ \$in: ["\$x", ["a", "b"]] }`. Computed keys evaluate at runtime; spread entries lower to `\$objectToArray(expr).k` and splice in via `\$concatArrays`. The semantic divergence is now documented explicitly in LANGUAGE.md: array on the right is value-membership (deliberate divergence from JS, matches MongoDB query intent), object on the right is property-existence (JS-faithful), scalar on the right still errors. Five new tests cover the static, computed-key, mixed-spread, and spread-only cases.
+
+The principle: the project's #2 priority is *strict subset of JavaScript syntax*, but the per-construct semantic decisions are case-by-case. For `in`, MongoDB users typing `value in array` overwhelmingly want value-membership and we keep that even though JS does index-existence; but `value in object` already maps cleanly to property-existence and we should match JS there. Refusing to compile is the wrong default when a clean mapping exists.
+
+---
+
+## 2026-05-09 — Project-wide simplification sweep
+
+A whole-tree audit followed by 14 small commits, ranked by impact-to-risk and committed individually so any one is easy to revert. Every change kept the test suite green and preserved (or improved) user-facing DX. Three correctness bugs, six internal cleanups, three test-suite trims, two contributor-tooling wins, three DX-improving error messages.
+
+**Correctness bugs.** The `package.json` description still said "LISP-style MongoDB aggregation expression transpiler" — the framing the project pivoted away from; npm/registry searches show this first, fixed. The DEVLOG entry from 2026-05-06 still linked to four spec stub files that were deleted on 2026-05-09; converted to plain text with a back-pointer to the deletion entry. `docs/LANGUAGE.md` showed `$.items.0.name` as a valid field-path example — the 2026-05-06 strict-JS-subset commit removed that syntax; replaced with the bracket form.
+
+**Internal cleanups.** `parser.ts` had two character-for-character identical predicates (`isIdentOrKeyword` + `isFieldSegmentToken`) used in different contexts but checking the same Ident-or-keyword set; collapsed to one. `requireLambda` in `codegen.ts` took a `_minParams` argument every call site passed and the body ignored — arity is checked manually after the call, so the parameter was just ceremony. The codegen module-level `_genDepth` recursion guard mirrored the parser's own depth cap; since codegen only ever sees parser-produced ASTs, the parser cap trips first — removing the codegen guard takes module-level mutable state out of the file.
+
+**Test suite trims.** Five exact-duplicate codegen test cases removed (5/557 → 552, zero behaviour coverage lost — every cut has a sibling assertion in another describe). Then four documented operators that lacked any codegen test got coverage: `$switch`, `$dateTrunc`, `$dateFromString`, `$sampleRate`. Net: 552 → 556 → 559 by the end of the session.
+
+**Contributor-tooling wins.** The `vendor/fetch-mql-specs.mjs` script was full-cloning the upstream MongoDB spec repo (~30 MB) on every `npm install` for two folders we read. Switched to `--filter=blob:none` + cone-mode sparse-checkout limited to `definitions/{expression,accumulator,stage}` — vendor footprint drops to 1.5 MB. Then moved the script from `prepare` to `pretest` so downstream consumers of the published package don't pay the clone cost; contributors and CI still get the fetch automatically because `npm test` triggers it. Replaced a `cat`-via-`execSync` sentinel read with a plain `readFileSync` while we were in there.
+
+**DX-improving errors.** Three silent-surprise paths now error with a clear message instead. (1) Regex literals in standalone position (`$.x == /foo/`, `$regexMatch({ regex: /foo/ })`) used to silently return the bare pattern string, dropping any flags — now throws with a list of supported method-call forms. (2) `$.x in {a: 1}` used to compile to `{ $in: ["$x", {a:1}] }` and produce a confusing Mongo-runtime error — now throws at codegen with a hint pointing at `Object.keys(obj).includes(key)` or `$getField`. (3) Unknown method names used to surface a wall-of-text "here are all 40+ supported methods" error; now they get a Levenshtein-driven "Did you mean '.toLowerCase()'?" hint, sharing a tiny new `src/levenshtein.ts` with the existing pipeline-stage suggester.
+
+**Two suggestions deliberately rejected.** The audit also flagged the operator-shape factory helpers (`single`/`array`/`obj`/`flex`/`none` in `src/operators.ts`) and the public `FunctionInputError` / `MqlInterpolationError` classes as candidates for inlining. Both were the wrong call. The factories make the 170-entry registry an order of magnitude shorter than inlined `{ shape: { kind: "..." }, category: "...", description: "..." }` literals — that's not over-abstraction, it's the file's main readability lever. The error classes are the routing keys `validate()` uses to map `FunctionInputError` → `SYNTAX_ERROR` instead of the catch-all `CODEGEN_ERROR` bucket; dropping them either regresses error codes or requires a worse alternative (sentinel properties, message-string matching). Pre-1.0 we *could* break the public API for marginal LOC, but the routing logic is what keeps `validate()`'s contract clean.
+
+**Net.** Across the 14 commits: ~140 LOC of cleanly-removed code, ~85 LOC of new tests + the new Levenshtein helper, README is ~70 lines shorter, vendor on-disk drops 28.5 MB. No source change exposed an existing test bug or required a coverage trade-off.
+
+---
+
 ## 2026-05-09 — Restructure `docs/specs/` to make drift impossible by construction
 
 Follow-up to the morning's spec drift sweep. That commit fixed eleven concrete drift points one by one. This commit takes the next step and removes most of the surface that *can* drift in the first place.
@@ -261,7 +293,7 @@ The operator registry now covers every MongoDB aggregation expression and accumu
 
 **DX warnings added to [LANGUAGE.md](LANGUAGE.md)** for operators where the registry shape under-specifies real-world correctness: `$literal` bypasses field-ref evaluation; `$meta` takes a keyword string not an arbitrary expression; `$accumulator`/`$function` body fields are server-side V8 source not mjsql syntax; window operators are valid only inside `$setWindowFields`; `$substr` is deprecated.
 
-**Five spec stubs in `docs/specs/`** for the rest of MQL: [query-predicates](specs/query-predicates.md), [projection](specs/projection.md), [accumulators-as-stage-spec](specs/accumulators.md), [update operators](specs/update.md), [aggregation pipeline stages](specs/aggregation-stages.md). Each stub points at its corresponding `vendor/mql-specifications/definitions/<folder>/` so future implementation has a clear precedent. Atlas Search (`definitions/search/`) and BSON types (`definitions/types/`) are noted but not stubbed.
+**Five spec stubs in `docs/specs/`** for the rest of MQL: query-predicates, projection, accumulators-as-stage-spec, update operators, and [aggregation pipeline stages](specs/aggregation-stages.md). Each stub points at its corresponding `vendor/mql-specifications/definitions/<folder>/` so future implementation has a clear precedent. Atlas Search (`definitions/search/`) and BSON types (`definitions/types/`) are noted but not stubbed. *(The four future-work stubs were deleted on 2026-05-09 — see that day's "restructure" entry.)*
 
 **Pinned spec commit:** `671c69579f9852c12ff89834ac73239f27005f81`. Bump in [`vendor/fetch-mql-specs.mjs`](../vendor/fetch-mql-specs.mjs) when MongoDB adds operators; the drift-protection test will surface what needs registering.
 

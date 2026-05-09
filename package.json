@@ -1,7 +1,7 @@
 {
   "name": "mjsql",
   "version": "0.1.0",
-  "description": "LISP-style MongoDB aggregation expression transpiler",
+  "description": "Write MongoDB aggregation expressions in JavaScript. JS-subset language that compiles to MQL JSON.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,10 +17,10 @@
   },
   "scripts": {
     "build": "tsc",
+    "pretest": "node vendor/fetch-mql-specs.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "oxfmt .",
-    "prepare": "node vendor/fetch-mql-specs.mjs"
+    "format": "oxfmt ."
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

@@ -1,4 +1,5 @@
 import { lookupOperator } from "./operators.ts";
+import { closestNameTo } from "./levenshtein.ts";
 import type {
   BinaryOp,
   Expr,
@@ -155,34 +156,16 @@ function isStringProducing(expr: Expr): boolean {
   }
 }
 
-// ── Recursion guard ───────────────────────────────────────────────────────────
-
-// Mirrors parser's MAX_RECURSION_DEPTH (kept duplicated rather than imported
-// from parser.ts to keep the codegen file standalone). Module-level counter is
-// safe because Node is single-threaded; each public generate() entry resets
-// it so a previous throw can't leak depth across calls.
-const MAX_RECURSION_DEPTH = 200;
-let _genDepth = 0;
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function generate(expr: Expr): unknown {
-  _genDepth = 0;
   return _generate(expr, EMPTY_CTX);
 }
 
 // ── Core generator ────────────────────────────────────────────────────────────
 
 function _generate(expr: Expr, ctx: GenerateCtx): unknown {
-  if (++_genDepth > MAX_RECURSION_DEPTH) {
-    _genDepth--;
-    throw new CodegenError(`Expression nests too deeply (max ${MAX_RECURSION_DEPTH} levels)`);
-  }
-  try {
-    return _generateBody(expr, ctx);
-  } finally {
-    _genDepth--;
-  }
+  return _generateBody(expr, ctx);
 }
 
 function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
@@ -246,8 +229,15 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     }
 
     case "RegexLiteral":
-      // Used directly in .match(); as a standalone value just return the pattern string
-      return expr.pattern;
+      // Method dispatch (e.g. `.match(/foo/)`, `/foo/.test(s)`) handles regex
+      // arguments and receivers directly, reading pattern + flags from the AST
+      // node before recursion. If we land here, the regex showed up in some
+      // other position (binary operand, ternary branch, $op argument value)
+      // where MQL has no concept of a regex value — silently returning the
+      // pattern string would lose the flags and surprise the user.
+      throw new CodegenError(
+        `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+      );
 
     case "ParamRef": {
       if (ctx.reduceRemap?.has(expr.name)) {
@@ -383,19 +373,8 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
       return { $bitOr: flattenChain("|", left, right, ctx) };
     case "^":
       return { $bitXor: flattenChain("^", left, right, ctx) };
-    case "in": {
-      if (
-        right.type === "StringLiteral" ||
-        right.type === "NumberLiteral" ||
-        right.type === "BooleanLiteral" ||
-        right.type === "NullLiteral"
-      ) {
-        throw new CodegenError(
-          "Right-hand side of 'in' must be an array literal or field reference, not a scalar value",
-        );
-      }
-      return { $in: [_generate(left, ctx), _generate(right, ctx)] };
-    }
+    case "in":
+      return generateInExpr(left, right, ctx);
   }
 }
 
@@ -417,6 +396,90 @@ function collectChain(op: BinaryOp, expr: Expr, out: unknown[], ctx: GenerateCtx
   } else {
     out.push(_generate(expr, ctx));
   }
+}
+
+// ── `in` operator ─────────────────────────────────────────────────────────────
+
+/**
+ * `in` straddles two JS semantics depending on the RHS:
+ *   - array on the right: value membership (different from JS, which checks
+ *     numeric-index existence on arrays — but value-membership is overwhelmingly
+ *     what users want for MongoDB queries, so we deliberately diverge here).
+ *   - object on the right: property existence — JS-faithful.
+ *
+ * For an object-literal RHS we extract the keys at compile time and reduce to
+ * `{ $in: [LHS, [...keys]] }`. Computed keys are evaluated at runtime; spread
+ * entries unwrap to `$objectToArray` over the spread expression so the keys
+ * become available without us having to know them at compile time.
+ *
+ * Scalar literals on the right have no useful interpretation in either
+ * direction and stay rejected.
+ */
+function generateInExpr(left: Expr, right: Expr, ctx: GenerateCtx): unknown {
+  if (
+    right.type === "StringLiteral" ||
+    right.type === "NumberLiteral" ||
+    right.type === "BooleanLiteral" ||
+    right.type === "NullLiteral"
+  ) {
+    throw new CodegenError(
+      "Right-hand side of 'in' must be an array literal, object literal, or field reference, not a scalar value",
+    );
+  }
+  if (right.type === "ObjectLiteral") {
+    return { $in: [_generate(left, ctx), keyArrayForObjectLiteral(right.entries, ctx)] };
+  }
+  return { $in: [_generate(left, ctx), _generate(right, ctx)] };
+}
+
+/**
+ * Build the MQL expression representing the *keys* of an object-literal RHS,
+ * for the `key in obj` case. Static-only entries collapse to a literal string
+ * array. Computed-key entries emit the key expression directly (it should
+ * resolve to a string at runtime). Spread entries lower to
+ * `$objectToArray(expr).k` so we can splice the runtime keys in.
+ *
+ * If every chunk is static the result is a plain JS array; if any spread is
+ * present we wrap the chunks in `$concatArrays`.
+ */
+function keyArrayForObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx): unknown {
+  // Fast path: all static keys → a plain literal array of strings.
+  if (entries.every((e) => e.type === "KeyValueEntry" && e.key.kind === "static")) {
+    return entries.map((e) => ((e as KeyValueEntry).key as { kind: "static"; name: string }).name);
+  }
+
+  // Mixed path: build `$concatArrays` of per-chunk operands. Consecutive
+  // non-spread entries group into one literal array (mirrors the array-literal
+  // spread codegen for compact output).
+  const operands: unknown[] = [];
+  let currentChunk: unknown[] | null = null;
+  const flush = () => {
+    if (currentChunk !== null) {
+      operands.push(currentChunk);
+      currentChunk = null;
+    }
+  };
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      flush();
+      operands.push({
+        $map: {
+          input: { $objectToArray: _generate(entry.argument, ctx) },
+          as: "kv",
+          in: "$$kv.k",
+        },
+      });
+      continue;
+    }
+    if (currentChunk === null) currentChunk = [];
+    currentChunk.push(
+      entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx),
+    );
+  }
+  flush();
+
+  if (operands.length === 1) return operands[0];
+  return { $concatArrays: operands };
 }
 
 // ── String-context + ──────────────────────────────────────────────────────────
@@ -1065,7 +1128,7 @@ function generateMethodCall(
       return { $sortArray: { input: genObj, sortBy: 1 } };
     }
     case "findLast": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $arrayElemAt: [
@@ -1081,7 +1144,7 @@ function generateMethodCall(
       };
     }
     case "findLastIndex": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLastIndex"), "findLastIndex", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "findLastIndex"), "findLastIndex");
       const bodyCtx = extendCtx(ctx, lambda.params);
       const param = lambda.params[0];
       // Reduce over [(index, element), ...] pairs, keeping the largest index where
@@ -1177,7 +1240,7 @@ function generateMethodCall(
       };
     }
     case "flatMap": {
-      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $reduce: {
@@ -1196,7 +1259,7 @@ function generateMethodCall(
 
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
-      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "map"), "map");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $map: {
@@ -1207,7 +1270,7 @@ function generateMethodCall(
       };
     }
     case "filter": {
-      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $filter: {
@@ -1218,7 +1281,7 @@ function generateMethodCall(
       };
     }
     case "find": {
-      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "find"), "find");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $arrayElemAt: [
@@ -1234,7 +1297,7 @@ function generateMethodCall(
       };
     }
     case "some": {
-      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "some"), "some");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $anyElementTrue: {
@@ -1247,7 +1310,7 @@ function generateMethodCall(
       };
     }
     case "every": {
-      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "every"), "every");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $allElementsTrue: {
@@ -1264,7 +1327,7 @@ function generateMethodCall(
       if (exprArgs.length !== 2) {
         throw new CodegenError(`.reduce() requires exactly 2 arguments (lambda, initialValue)`);
       }
-      const lambda = requireLambda(exprArgs, "reduce", 2);
+      const lambda = requireLambda(exprArgs, "reduce");
       if (lambda.params.length !== 2) {
         throw new CodegenError(
           `.reduce() lambda must have exactly 2 parameters (accumulator, element)`,
@@ -1311,12 +1374,82 @@ function generateMethodCall(
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
 
-    default:
-      throw new CodegenError(
-        `Unknown method '.${method}()'. String methods: trim, trimStart, trimEnd, toLowerCase, toUpperCase, substr, charAt, split, indexOf, replace, replaceAll, includes, startsWith, endsWith, match, matchAll, search, concat, padStart, padEnd, repeat. Array methods: at, slice, reverse, toReversed, toSorted, map, filter, find, findLast, findLastIndex, some, every, reduce, includes, indexOf, concat, join, flat, flatMap. Date methods: getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, getTime, toISOString.`,
-      );
+    default: {
+      const suggestion = closestNameTo(method, KNOWN_METHODS);
+      const hint = suggestion ? ` Did you mean '.${suggestion}()'?` : "";
+      throw new CodegenError(`Unknown method '.${method}()'.${hint}`);
+    }
   }
 }
+
+// Every method name with a dedicated case in generateMethodCall, used to power
+// "did you mean?" suggestions on unknown methods. Kept here rather than next to
+// the switch so adding a new method is a one-line edit at the call site plus
+// one entry here — clearer than scanning a 1000-line function for case labels.
+const KNOWN_METHODS: ReadonlySet<string> = new Set([
+  // String
+  "trim",
+  "trimStart",
+  "trimLeft",
+  "trimEnd",
+  "trimRight",
+  "toLowerCase",
+  "toUpperCase",
+  "substr",
+  "charAt",
+  "split",
+  "startsWith",
+  "endsWith",
+  "indexOf",
+  "replace",
+  "replaceAll",
+  "includes",
+  "match",
+  "matchAll",
+  "search",
+  "padStart",
+  "padEnd",
+  "repeat",
+  // Array
+  "at",
+  "slice",
+  "reverse",
+  "toReversed",
+  "toSorted",
+  "concat",
+  "join",
+  "flat",
+  "flatMap",
+  "map",
+  "filter",
+  "find",
+  "findLast",
+  "findLastIndex",
+  "some",
+  "every",
+  "reduce",
+  // Date
+  "getFullYear",
+  "getMonth",
+  "getDate",
+  "getDay",
+  "getHours",
+  "getMinutes",
+  "getSeconds",
+  "getMilliseconds",
+  "getTime",
+  "toISOString",
+  // Set (intercepted before this dispatcher when receiver is a NewSet, but
+  // listed so a typo on a non-NewSet receiver still surfaces a useful suggestion)
+  "intersection",
+  "union",
+  "difference",
+  "isSubsetOf",
+  "isSupersetOf",
+  // Regex (intercepted on RegexLiteral receivers; same rationale)
+  "test",
+  "exec",
+]);
 
 /**
  * Most methods can't take spread args — only variadic ones (concat). This helper
@@ -1334,7 +1467,6 @@ function exprArgsOnly(args: CallArg[], method: string): Expr[] {
 function requireLambda(
   args: Expr[],
   method: string,
-  _minParams: number,
 ): { type: "Lambda"; params: string[]; body: Expr } {
   const first = args[0];
   if (!first || first.type !== "Lambda") {

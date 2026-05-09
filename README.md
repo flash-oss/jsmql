@@ -163,52 +163,25 @@ MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three op
 - Hard to test — you need a real MongoDB instance with scripting enabled to run the JS body. mjsql expressions are plain JavaScript and test like any other function.
 - No syntax checking — typos blow up at runtime, not at compile time.
 
-The three cases below cover the most common migrations. See [docs/LANGUAGE.md](docs/LANGUAGE.md#replacing-server-side-javascript) for more.
-
-### `$function` — field arithmetic
-
-```js
-// Deprecated in MongoDB 8.0
-{ $project: { doubled: { $function: {
-    body: "function(x) { return x * 2; }",
-    args: ["$qty"],
-    lang: "js"
-} } } }
-
-// mjsql — string form
-mql`{ doubled: $.qty * 2 }`;
-// → { doubled: { $multiply: ["$qty", 2] } }
-
-// mjsql — function form
-mjsql(($) => ({ doubled: $.qty * 2 }));
-// → { doubled: { $multiply: ["$qty", 2] } }
-```
-
-Compiles to a native `$multiply` — no JavaScript engine, no flags, just fast.
-
-### `$where` — predicate inside `find()` / `$match`
+### `$where` becomes `$expr`
 
 ```js
 // Deprecated in MongoDB 8.0
 db.users.find({ $where: "function() { return this.age > 18; }" });
 
-// mjsql — string form
-db.users.find({ $expr: mql`$.age > 18` });
-// → { $expr: { $gt: ["$age", 18] } }
-
-// mjsql — function form
+// mjsql
 db.users.find({ $expr: mjsql(($) => $.age > 18) });
 // → { $expr: { $gt: ["$age", 18] } }
 ```
 
-Unlike `$where`, `$expr` lets MongoDB use indexes when it can.
+Unlike `$where`, `$expr` can use indexes.
 
-### `$accumulator` — count orders by status per shop
+### `$accumulator` becomes `$reduce` (count orders by status per shop)
 
 For each shop, you want a count of orders by status: `{ pending: 12, paid: 87, refunded: 3 }`. No built-in accumulator can build a dynamic-keyed object during `$group`, so people reach for `$accumulator` and JavaScript:
 
 ```js
-// Deprecated in MongoDB 8.0
+// Deprecated in MongoDB 8.0 — six JavaScript fields, all stored as strings
 { $group: {
     _id: "$shopId",
     counts: { $accumulator: {
@@ -220,18 +193,9 @@ For each shop, you want a count of orders by status: `{ pending: 12, paid: 87, r
 } } } }
 ```
 
-In mjsql, collect statuses with `$push`, then build the object with `$reduce` and a computed key:
+In mjsql, collect the statuses with `$push`, then build the object with `$reduce` and a computed key:
 
 ```js
-// mjsql — string form
-mql`[
-  { $group: { _id: $.shopId, statuses: $push($.status) } },
-  { $project: {
-      counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
-  } }
-]`;
-
-// mjsql — function form
 mjsql(($) => [
   { $group: { _id: $.shopId, statuses: $push($.status) } },
   {
@@ -242,7 +206,9 @@ mjsql(($) => [
 ]);
 ```
 
-Same result, no string-encoded JavaScript, no separate merge function. Every line is plain JS — your IDE lints, formats, and refactors it like any other code.
+Same result, no string-encoded JavaScript, no separate merge function. Every line is plain JS — your IDE lints, formats, and refactors it like any other code. `$function` follows the same pattern: replace the JS body with native arithmetic and method chains.
+
+See [docs/LANGUAGE.md#replacing-server-side-javascript](docs/LANGUAGE.md#replacing-server-side-javascript) for the full migration guide.
 
 ## API
 

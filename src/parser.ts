@@ -369,7 +369,7 @@ export class Parser {
           continue;
         }
         const member = this.lexer.peek();
-        if (!this.isFieldSegmentToken(member)) {
+        if (!this.isIdentOrKeyword(member)) {
           throw new ParseError(
             `Expected property name after '.' at position ${member.pos}`,
             member.pos,
@@ -583,7 +583,7 @@ export class Parser {
   private parseFieldRef(): Expr {
     const dollarDot = this.lexer.next(); // consume $.
     const first = this.lexer.peek();
-    if (!this.isFieldSegmentToken(first)) {
+    if (!this.isIdentOrKeyword(first)) {
       throw new ParseError(
         `Expected field name after '$.' at position ${dollarDot.pos}`,
         dollarDot.pos,
@@ -593,18 +593,13 @@ export class Parser {
     return { type: "FieldRef", path: first.value };
   }
 
-  /** Any identifier or keyword token — valid as an operator name after $ */
+  /**
+   * An identifier-like token — a regular `Ident` or one of the reserved-word
+   * keywords (`in`, `new`, `typeof`) we accept in identifier position. Valid
+   * after `.` (field-path segments, member names), after `$` (operator names),
+   * and as a `$<key>` in object literals.
+   */
   private isIdentOrKeyword(t: Token): boolean {
-    return (
-      t.type === TokenType.Ident ||
-      t.type === TokenType.In ||
-      t.type === TokenType.New ||
-      t.type === TokenType.Typeof
-    );
-  }
-
-  /** A token that is valid as a field-path segment (identifiers and reserved-word keywords). */
-  private isFieldSegmentToken(t: Token): boolean {
     return (
       t.type === TokenType.Ident ||
       t.type === TokenType.In ||

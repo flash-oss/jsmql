@@ -34,10 +34,6 @@ describe("field refs", () => {
 });
 
 describe("single-shape operators", () => {
-  it("$abs", () => {
-    expect(mjsql("$abs($.delta)")).toEqual({ $abs: "$delta" });
-  });
-
   it("$not", () => {
     expect(mjsql("$not($.active)")).toEqual({ $not: "$active" });
   });
@@ -90,12 +86,6 @@ describe("array-shape operators", () => {
 });
 
 describe("nested operators", () => {
-  it("deeply nested", () => {
-    expect(mjsql('$and($gt($.age, 18), $eq($.status, "active"))')).toEqual({
-      $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
-    });
-  });
-
   it("operator as argument", () => {
     expect(mjsql("$multiply($add($.a, $.b), 2)")).toEqual({
       $multiply: [{ $add: ["$a", "$b"] }, 2],
@@ -146,6 +136,48 @@ describe("object-shape operators (positional → object mapping)", () => {
     expect(mjsql('$getField("fieldName", $.doc)')).toEqual({
       $getField: { field: "fieldName", input: "$doc" },
     });
+  });
+
+  it("$switch object-style with branches/default", () => {
+    expect(
+      mjsql(
+        '$switch({ branches: [{ case: $eq($.tier, "gold"), then: 0.2 }, { case: $eq($.tier, "silver"), then: 0.1 }], default: 0 })',
+      ),
+    ).toEqual({
+      $switch: {
+        branches: [
+          { case: { $eq: ["$tier", "gold"] }, then: 0.2 },
+          { case: { $eq: ["$tier", "silver"] }, then: 0.1 },
+        ],
+        default: 0,
+      },
+    });
+  });
+
+  it("$dateTrunc positional (date, unit)", () => {
+    expect(mjsql('$dateTrunc($.createdAt, "day")')).toEqual({
+      $dateTrunc: { date: "$createdAt", unit: "day" },
+    });
+  });
+
+  it("$dateFromString single-arg positional", () => {
+    expect(mjsql("$dateFromString($.dateString)")).toEqual({
+      $dateFromString: { dateString: "$dateString" },
+    });
+  });
+});
+
+describe("escape-hatch operators (single-arg, expression-shaped)", () => {
+  it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
+    expect(mjsql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
+  });
+});
+
+describe("regex literal in standalone position", () => {
+  it("rejects /pattern/ as a binary operand with a clear error", () => {
+    expect(() => mjsql("$.x == /foo/")).toThrow(
+      /Regex literals are only valid as arguments to \.match\(\)/,
+    );
   });
 });
 
@@ -688,11 +720,6 @@ describe("mixed $operator() and infix", () => {
       $abs: { $subtract: ["$a", "$b"] },
     });
   });
-  it("$round on arithmetic", () => {
-    expect(mjsql("$round($.price * 1.1, 2)")).toEqual({
-      $round: [{ $multiply: ["$price", 1.1] }, 2],
-    });
-  });
 });
 
 describe("$.in field ref still works", () => {
@@ -707,15 +734,6 @@ describe("$.in field ref still works", () => {
 describe("field path regression (FieldRef stops at first segment)", () => {
   it("$.a.b.c produces $a.b.c", () => {
     expect(mjsql("$.a.b.c")).toEqual("$a.b.c");
-  });
-  it("$.items[0] (unknown receiver) produces $cond bracket-access shape", () => {
-    expect(mjsql("$.items[0]")).toEqual({
-      $cond: [
-        { $isArray: "$items" },
-        { $arrayElemAt: ["$items", 0] },
-        { $getField: { field: 0, input: "$items" } },
-      ],
-    });
   });
   it("$.items[0].name produces $getField on bracket-access result", () => {
     expect(mjsql("$.items[0].name")).toEqual({
@@ -1455,15 +1473,6 @@ describe("Object.groupBy", () => {
   });
 });
 
-describe("optional method call ?.()", () => {
-  it("?.method() works", () => {
-    expect(mjsql("$.maybe?.toLowerCase()")).toEqual({ $toLower: "$maybe" });
-  });
-  it("?. on chain works", () => {
-    expect(mjsql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
-  });
-});
-
 describe("IIFE → $let", () => {
   it("simple ((x) => body)(value)", () => {
     expect(mjsql("((x) => x + 1)(5)")).toEqual({
@@ -1548,6 +1557,10 @@ describe("error cases", () => {
   it("unknown method throws with helpful message", () => {
     expect(() => mjsql("$.name.frobulate()")).toThrow(/Unknown method/);
   });
+  it("near-miss method names get a 'Did you mean' suggestion", () => {
+    expect(() => mjsql("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
+    expect(() => mjsql("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
+  });
   it("lambda in non-method context throws", () => {
     expect(() => mjsql("$abs(x => x)")).toThrow(/Lambda expression/);
   });
@@ -1603,6 +1616,35 @@ describe("in operator RHS validation", () => {
   });
   it("accepts array literal RHS", () => {
     expect(mjsql('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
+  });
+  it("object literal RHS → property-existence (JS-faithful)", () => {
+    expect(mjsql("$.x in { a: 1, b: 2 }")).toEqual({ $in: ["$x", ["a", "b"]] });
+  });
+  it("string-literal LHS works against an object literal", () => {
+    expect(mjsql("'a' in { a: 1, b: 2 }")).toEqual({ $in: ["a", ["a", "b"]] });
+  });
+  it("object literal with computed key emits the key expression", () => {
+    expect(mjsql("$.x in { a: 1, [$.dynKey]: 2 }")).toEqual({
+      $in: ["$x", ["a", "$dynKey"]],
+    });
+  });
+  it("object literal with spread uses $objectToArray for the spread keys", () => {
+    expect(mjsql("$.x in { ...$.base, a: 1 }")).toEqual({
+      $in: [
+        "$x",
+        {
+          $concatArrays: [
+            { $map: { input: { $objectToArray: "$base" }, as: "kv", in: "$$kv.k" } },
+            ["a"],
+          ],
+        },
+      ],
+    });
+  });
+  it("object literal with only spread reduces to $objectToArray.k directly", () => {
+    expect(mjsql("$.x in { ...$.other }")).toEqual({
+      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "kv", in: "$$kv.k" } }],
+    });
   });
   it("accepts field ref RHS", () => {
     expect(mjsql("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });
@@ -1764,6 +1806,9 @@ describe("optional chaining (?.)", () => {
   });
   it("optional method call", () => {
     expect(mjsql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
+  });
+  it("optional method call on a chain", () => {
+    expect(mjsql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
   });
   it("optional bracket access on bare field → runtime $cond", () => {
     // ?.[ ] desugars to the same node as [ ]; receiver type unknown → dispatch at runtime.
