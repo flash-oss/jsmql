@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-09 — Restructure `docs/specs/` to make drift impossible by construction
+
+Follow-up to the morning's spec drift sweep. That commit fixed eleven concrete drift points one by one. This commit takes the next step and removes most of the surface that *can* drift in the first place.
+
+**Deleted four future-work stubs.** `accumulators.md`, `projection.md`, `query-predicates.md`, `update.md` were placeholders describing work that hasn't started — each duplicated its one-line description from `docs/CLAUDE.md`'s spec-coverage table without adding anything. Replaced the four table rows with a single "future work areas" paragraph that lists the same scope inline; new stub files can be created when the corresponding implementation actually starts. Net: ~70 lines of doc surface gone.
+
+**Replaced static enumerations with source pointers.** Where a spec listed names that already live in source — and the spec wasn't itself the canonical definition — the list is gone and the prose now points at the source const/type. Concrete swaps:
+
+- `architecture.md` pipeline diagram: `Expr` node enumeration → "see the `Expr` union in src/ast.ts"; lexer token enumeration → "see `TokenType` in src/lexer.ts".
+- `grammar.md`: the string-context-`+` method bullet list → one sentence pointing at `STRING_RETURNING_METHODS` and `STRING_OUTPUT_OPS` in `src/codegen.ts`. EBNF productions for `MATH_METHOD`, `MATH_CONST`, `OBJECT_METHOD`, `TYPE_CAST_NAME`, `NUMBER_STATIC` now have inline comments pointing at `MathMethod` / `MathConstant` / `ObjectMethod` / `TypeCastOp` / `NumberStaticMethod` in `src/ast.ts`.
+- `operator-registry.md`: the categories list → "see `OPERATOR_CATEGORIES` in `src/operators.ts`"; the "current flex operators" list → "see entries with `shape: FLEX` in `src/operators.ts`"; the per-category operator-counts table → deleted entirely. `test/operator-spec-coverage.test.ts` already enforces every category/shape claim, so the counts table was a drift trap with no readership value.
+
+**Method-dispatch.md is unchanged.** Its tables are the canonical spec for method-name → MQL-output mapping; codegen implements them, not the other way round. The two real bugs from the morning sweep (`.flatMap` mis-categorised, no Set-method names) had already landed in the previous commit.
+
+**Pass C — sentinel-based drift test — was skipped on purpose.** The plan allowed for a small `test/spec-pointers.test.ts` that would parse `<!-- mirrors X:Y -->` comments and assert spec/source set equality. After the deletions and pointer-replacements, no spec contains a duplicated source enumeration that "reads better as a list", so there is nothing for the sentinel test to guard. The test itself becomes load-bearing as soon as a future spec re-introduces a concrete enumeration that mirrors source — at that point we add the test along with the sentinel comment, instead of carrying it now for hypothetical use.
+
+**Why this shape over the morning's one-edit-per-drift-point approach.** Each spec line that names something that also lives in source is a future-drift commitment; the drift sweep paid that cost once but the cost recurs on every subsequent feature. Replacing the names with pointers means the next person extending the AST or the operator registry doesn't have a spec line to remember to update — the pointer keeps reading correctly because it's deferring to the canonical home. Same goes for the deleted stubs: an empty stub adds nothing to grep-discoverability that the `docs/CLAUDE.md` index doesn't already provide, and removes one of the recurring "this stub is technically out of date" footnotes.
+
+---
+
 ## 2026-05-09 — Spec drift sweep across `docs/specs/`
 
 A full audit of every file in `docs/specs/` against the actual implementation in `src/`. Found 11 concrete drift points and fixed all of them; no source or test changes (the implementation was right, the specs had fallen behind).

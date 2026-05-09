@@ -10,7 +10,7 @@ Each entry has three fields:
 | `category` | A label from `OPERATOR_CATEGORIES` (see below). Used for documentation grouping; not consumed by codegen. |
 | `description` | One-sentence summary, lifted verbatim from the official MongoDB spec where possible. Surfaced in editor tooltips and future docs generation. |
 
-The full list of categories: `arithmetic`, `array`, `bitwise`, `boolean`, `comparison`, `conditional`, `custom-aggregation`, `data-size`, `date`, `encrypted-string`, `literal`, `miscellaneous`, `object`, `set`, `string`, `text`, `timestamp`, `trigonometry`, `type`, `variable`, `window`.
+The full list of categories — see `OPERATOR_CATEGORIES` in `src/operators.ts`.
 
 ## Shapes
 
@@ -83,7 +83,7 @@ A single object-literal arg is treated as a **value** (the object itself), not a
 $mergeObjects({ a: 1 })   →  { $mergeObjects: { a: 1 } }
 ```
 
-Current flex operators: `$round`, `$trunc`, `$min`, `$max`, `$avg`, `$sum`, `$stdDevPop`, `$stdDevSamp`, `$mergeObjects`.
+Current flex operators — see entries with `shape: FLEX` in `src/operators.ts`.
 
 ## Unknown operators
 
@@ -120,31 +120,3 @@ This makes mjsql forward-compatible with new MongoDB operators that are not yet 
 
 When the test fails, the message names the specific operator and the specific drift; act on it before merging.
 
-## Current operator counts
-
-| Category | Count |
-|---|---|
-| Arithmetic | 23 |
-| Array | 29 |
-| Bitwise | 4 |
-| Boolean | 3 |
-| Comparison | 9 |
-| Conditional | 3 |
-| Custom-aggregation | 2 |
-| Data-size | 2 |
-| Date | 22 |
-| Encrypted-string | 4 |
-| Literal | 1 |
-| Miscellaneous | 6 |
-| Object | 4 |
-| Set | 7 |
-| String | 20 |
-| Text | 1 |
-| Timestamp | 2 |
-| Trigonometry | 15 |
-| Type | 13 |
-| Variable | 1 |
-| Window | 11 |
-| **Total** | **182** |
-
-Counts may drift as MongoDB adds operators; the drift-protection test will surface any divergence between the registry and the spec.

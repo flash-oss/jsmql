@@ -76,7 +76,7 @@ A realistic, multi-stage example also lives in [test/realistic.test.ts](../../te
 ## Out of scope (future work)
 
 - **Drift-protection test for `STAGES`** against `vendor/mql-specifications/definitions/stage/`, parallel to `test/operator-spec-coverage.test.ts`. New stages added to MongoDB would be silently missed today.
-- **Query-predicate operators inside `$match` object-literal bodies.** Today the body is passed through verbatim; we don't validate `$gt`, `$in`, etc. at the query layer. Tracked in [query-predicates.md](query-predicates.md).
+- **Query-predicate operators inside `$match` object-literal bodies.** Today the body is passed through verbatim; we don't validate `$gt`, `$in`, etc. at the query layer. Will get its own spec when work begins; see the "future work areas" note in [docs/CLAUDE.md](../CLAUDE.md#docsspecs).
 - **`$setWindowFields` static validation** — the stage compiles but window-only operators (`$rank`, `$denseRank`, `$documentNumber`, …) are not gated to that stage's body.
 - **Type-level overloads** of `mjsql()` so a literal pipeline input narrows the return to `object[]`. The widened union is enough for now.
 - **Stage-call typo detection.** `$abs(1)` as the first array element triggers pipeline mode and fails strictly, but typos like `$prject({...})` are caught for the same reason — a mistyped stage name still produces a clear error. Object-form typos are caught with did-you-mean.
