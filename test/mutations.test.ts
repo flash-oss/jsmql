@@ -82,6 +82,122 @@ describe("mutations: compound assignment (+=, -=, *=, /=)", () => {
   });
 });
 
+describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
+  // In MQL pipeline context the prefix/postfix distinction is irrelevant —
+  // there is no "value of expression" for a stage-level mutation, so all four
+  // forms compile to the same `$set: { x: { $add|$subtract: ["$x", 1] } }`.
+
+  it("postfix ++ on a top-level field", () => {
+    expect(mjsql("$.x++")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+  });
+
+  it("prefix ++ on a top-level field", () => {
+    expect(mjsql("++$.x")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+  });
+
+  it("postfix -- on a top-level field", () => {
+    expect(mjsql("$.x--")).toEqual({ $set: { x: { $subtract: ["$x", 1] } } });
+  });
+
+  it("prefix -- on a top-level field", () => {
+    expect(mjsql("--$.x")).toEqual({ $set: { x: { $subtract: ["$x", 1] } } });
+  });
+
+  it("postfix ++ on a nested path", () => {
+    expect(mjsql("$.user.score++")).toEqual({
+      $set: { "user.score": { $add: ["$user.score", 1] } },
+    });
+  });
+
+  it("prefix -- on a nested path", () => {
+    expect(mjsql("--$.cart.itemCount")).toEqual({
+      $set: { "cart.itemCount": { $subtract: ["$cart.itemCount", 1] } },
+    });
+  });
+
+  it("multiple inc/dec coalesce into one $set", () => {
+    expect(mjsql("$.a++; $.b--; ++$.c")).toEqual({
+      $set: {
+        a: { $add: ["$a", 1] },
+        b: { $subtract: ["$b", 1] },
+        c: { $add: ["$c", 1] },
+      },
+    });
+  });
+
+  it("inc/dec mixed with assignments coalesce into one $set", () => {
+    expect(mjsql("$.cnt++, $.label = 'done'")).toEqual({
+      $set: { cnt: { $add: ["$cnt", 1] }, label: "done" },
+    });
+  });
+
+  it("inc/dec inside a pipeline", () => {
+    expect(mjsql("[$match($.active), $.views++, $sort({views: -1})]")).toEqual([
+      { $match: { $expr: "$active" } },
+      { $set: { views: { $add: ["$views", 1] } } },
+      { $sort: { views: -1 } },
+    ]);
+  });
+
+  it("parens around postfix work (formatter-friendly)", () => {
+    expect(mjsql("($.x++)")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+  });
+
+  it("parens around prefix work", () => {
+    expect(mjsql("(++$.x)")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+  });
+
+  it("parens around inc/dec inside pipeline arrays work", () => {
+    expect(mjsql("[$match($.active), ($.views++), (--$.lives)]")).toEqual([
+      { $match: { $expr: "$active" } },
+      {
+        $set: {
+          views: { $add: ["$views", 1] },
+          lives: { $subtract: ["$lives", 1] },
+        },
+      },
+    ]);
+  });
+
+  it("read-after-write splits when a later mutation references an inc'd field", () => {
+    expect(mjsql("$.cnt++; $.lastCnt = $.cnt")).toEqual([
+      { $set: { cnt: { $add: ["$cnt", 1] } } },
+      { $set: { lastCnt: "$cnt" } },
+    ]);
+  });
+
+  it("rejects inc/dec on a bare identifier", () => {
+    const result = validate("x++");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/field path|bare identifier/i);
+  });
+
+  it("rejects prefix inc/dec on a bare identifier", () => {
+    const result = validate("++x");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/field path|bare identifier/i);
+  });
+
+  it("rejects inc/dec on index access", () => {
+    const result = validate("$.items[0]++");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/index access|computed/i);
+  });
+
+  it("rejects inc/dec used as a value (postfix in expression context)", () => {
+    // `1 + $.x++` — $.x++ is a statement, not a value
+    const result = validate("1 + $.x++");
+    expect(result.valid).toBe(false);
+  });
+
+  it("regression: `5 - -3` still parses (whitespace separates the minuses)", () => {
+    // Without space, `5--3` lexes as `5 -- 3` (MinusMinus token) and would be
+    // rejected as an inc/dec on a non-field-path target. With whitespace, the
+    // two minuses lex as separate Minus tokens and the unary minus path runs.
+    expect(mjsql("5 - -3")).toEqual({ $subtract: [5, -3] });
+  });
+});
+
 describe("mutations: sequencing", () => {
   it("two independent assignments coalesce into one $set (semicolon separator)", () => {
     expect(mjsql("$.a = 1; $.b = 2")).toEqual({ $set: { a: 1, b: 2 } });

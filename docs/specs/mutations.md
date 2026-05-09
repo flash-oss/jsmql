@@ -66,6 +66,21 @@ For `$.a += rhs`, the parser emits:
 
 The `<$.a>` node is shared between `target` and `value.left` — the AST is immutable at codegen time, so sharing is safe. Compound `+`'s string-vs-number disambiguation (`$concat` vs `$add`) falls out of the existing `BinaryExpr +` codegen for free.
 
+### Increment / decrement
+
+`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. They desugar via `makeIncDecMutation(target, op)` to the same `AssignExpr` shape as a compound assignment with a `NumberLiteral(1)` RHS. All four forms compile to the same `$set` stage — the prefix/postfix distinction (return-then-mutate vs mutate-then-return) is meaningful in JS but irrelevant in pipeline context where stage-level mutations have no return value.
+
+Lexer adds `PlusPlus` and `MinusMinus` tokens with strict longest-match ordering: `++`/`--` is checked before `+=`/`-=` is checked before `+`/`-`. This means `1--2` (no whitespace) lexes as `1`, `--`, `2` and is rejected at target-validation; `1 - -2` (whitespace) lexes as `1`, `-`, `-`, `2` and parses as `1 - (-2)`.
+
+Parser dispatch matches the rest of the mutation surface:
+
+- **Top level**: `parse()` adds `++`/`--` to the leading-token set that triggers `parseMutationProgram` (alongside `delete`). Postfix is handled the same way as a leading assignment operator: after the speculative `parseExpression`, a `++`/`--` lookahead routes through `parseMutationProgramFromPostfix(target)`.
+- **`parseMutation`**: prefix when the next token is `PlusPlus`/`MinusMinus`; postfix when the just-parsed target is followed by one.
+- **`parseArrayLiteral`** (pipeline elements): same rules — prefix detected before parsing, postfix detected after.
+- **`parseGrouped`**: `(++x)` and `(x++)` parsed via the same hooks. `(++x = 5)`-style nonsense fails through the existing path-validation errors.
+
+Targets validate the same way as for assignments — only `FieldRef` or chained `MemberAccess`. `1++` and `$.items[0]++` are rejected at parse time; `1 + $.x++` falls through to the codegen-level "Assignment is a statement, not a value" error.
+
 ### Parenthesized assignments
 
 Formatters wrap assignment expressions in parens when they appear in array element position (`[($.a = 5)]`). Without parser support, `mjsql(($) => [($.a = 5)])` would fail outside Vite/Vitest's transform (which silently strips the parens). To match user expectations, `parseGrouped` recognises an assignment-op after the inner expression: it parses the assignment chain inside the parens, validates the target, and returns the resulting `AssignExpr` cast as `Expr` (one localised type assertion). Single chains only — `($.a = $.b = 5)` is rejected with a precise error.

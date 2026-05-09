@@ -28,6 +28,10 @@ export const TokenType = {
   Slash: "Slash", // /
   Percent: "Percent", // %
 
+  // Increment / decrement (mutation statements; not value expressions)
+  PlusPlus: "PlusPlus", // ++
+  MinusMinus: "MinusMinus", // --
+
   // Assignment operators
   Eq: "Eq", // =
   PlusEq: "PlusEq", // +=
@@ -369,16 +373,22 @@ export class Lexer {
         continue;
       }
 
+      // ++ before += before +
       if (ch === "+") {
-        if (ch2 === "=") {
+        if (ch2 === "+") {
+          this.emit(TokenType.PlusPlus, "++", start, 2);
+        } else if (ch2 === "=") {
           this.emit(TokenType.PlusEq, "+=", start, 2);
         } else {
           this.emit(TokenType.Plus, "+", start, 1);
         }
         continue;
       }
+      // -- before -= before -
       if (ch === "-") {
-        if (ch2 === "=") {
+        if (ch2 === "-") {
+          this.emit(TokenType.MinusMinus, "--", start, 2);
+        } else if (ch2 === "=") {
           this.emit(TokenType.MinusEq, "-=", start, 2);
         } else {
           this.emit(TokenType.Minus, "-", start, 1);
