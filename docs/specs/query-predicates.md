@@ -15,7 +15,7 @@ Examples from the official spec (not exhaustive):
 
 `$all`, `$and`, `$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet`, `$comment`, `$elemMatch`, `$eq`, `$exists`, `$expr`, `$geoIntersects`, `$geoWithin`, `$gt`, `$gte`, `$in`, `$jsonSchema`, `$lt`, `$lte`, `$mod`, `$ne`, `$near`, `$nearSphere`, `$nin`, `$nor`, `$not`, `$or`, `$regex`, `$sampleRate`, `$size`, `$text`, `$type`, `$where`.
 
-Some of these collide by name with expression operators (`$eq`, `$gt`, etc.) but have a different MQL shape in query-predicate context.
+Some of these collide by name with expression operators (`$eq`, `$gt`, etc.) but have a different MQL shape in query-predicate context. `$sampleRate` is a particularly subtle case — it is registered today as a `miscellaneous` expression operator (single-shape, callable as `$sampleRate(0.1)`), and will *also* surface as a query predicate inside `$match` once that context lands. The disambiguation rule is part of this spec's design work.
 
 ## Open design questions
 

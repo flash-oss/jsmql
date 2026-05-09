@@ -9,7 +9,7 @@
 
 ## Scope
 
-The accumulators in the spec — already covered by the expression registry: `$accumulator`, `$addToSet`, `$avg`, `$bottom`, `$bottomN`, `$concatArrays`, `$count`, `$covariancePop`, `$covarianceSamp`, `$denseRank`, `$derivative`, `$documentNumber`, `$expMovingAvg`, `$first`, `$firstN`, `$integral`, `$last`, `$lastN`, `$linearFill`, `$locf`, `$max`, `$maxN`, `$median`, `$mergeObjects`, `$min`, `$minN`, `$percentile`, `$push`, `$rank`, `$setUnion`, `$shift`, `$stdDevPop`, `$stdDevSamp`, `$sum`, `$top`, `$topN`.
+Every operator listed in `vendor/mql-specifications/definitions/accumulator/` is already in the expression registry as a regular operator entry — see [`src/operators.ts`](../../src/operators.ts), and the drift-protection test (`test/operator-spec-coverage.test.ts`) keeps that set in sync with the spec on every `npm test`. The window-only operators (category `window` in the registry) are also reachable as accumulator-valued bindings inside `$setWindowFields`.
 
 The remaining work: a syntax for the *containing stage* — for example, allowing a JS expression to evaluate to a full `$group` stage with accumulator field bindings.
 

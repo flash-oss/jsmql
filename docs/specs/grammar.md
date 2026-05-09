@@ -226,11 +226,12 @@ A lambda appearing anywhere else (e.g. as a standalone expression) is a codegen 
 
 ## `$let` with lambda
 
-`$let(varsObject, lambda)` is a special positional form where the second argument is a lambda. The lambda parameters become the `vars` binding names:
+`$let(varsObject, lambda)` is a special positional form where the second argument is a lambda. The `vars` keys come from the **object literal** (the first argument); the lambda's parameters are added to scope so that references inside the body emit `$$paramName`. Lambda parameter names must match the keys in the object literal — when they do, the binding works:
 ```
 $let({ d: $.price * 0.1 }, (d) => $.price - d)
 → { $let: { vars: { d: ... }, in: { $subtract: ["$price", "$$d"] } } }
 ```
+A name mismatch (`$let({ x: ... }, (d) => ...)`) compiles, but emits a `$$d` reference with no `vars.d` binding — which MongoDB rejects at runtime. See `generateOperatorCall`'s `$let` intercept in `src/codegen.ts`.
 
 ## IIFE → `$let`
 
@@ -273,8 +274,9 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions are:
 
 - `StringLiteral`
+- `TemplateLiteral` (always produces a string)
 - `OperatorCall` whose name is in `STRING_OUTPUT_OPS` (defined in `codegen.ts`)
-- `MethodCall` to a string-returning method (`trim`, `trimStart`, `trimEnd`, `trimLeft`, `trimRight`, `toLowerCase`, `toUpperCase`, `substr`, `replace`, `replaceAll`)
+- `MethodCall` to a string-returning method — the canonical set is `STRING_RETURNING_METHODS` in `codegen.ts`: `trim`, `trimStart`, `trimEnd`, `trimLeft`, `trimRight`, `toLowerCase`, `toUpperCase`, `substr`, `replace`, `replaceAll`, `charAt`, `toISOString`, `join`, `padStart`, `padEnd`, `repeat`
 - `TypeCast` with cast `"String"` (i.e. `String(x)`)
 - `TypeofExpr` (`typeof x` always returns a string)
 - A nested `+` sub-expression where at least one of its own operands is string-producing
