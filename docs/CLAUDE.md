@@ -28,11 +28,9 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | How operator shapes work, how to add/modify entries |
 | `specs/method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
-| `specs/query-predicates.md` | (Stub) Future support for query-predicate operators inside `$match` / `find()`. |
-| `specs/projection.md` | (Stub) Future support for projection operators (`$`, `$elemMatch`, `$slice`, `$meta`). |
-| `specs/accumulators.md` | (Stub) Future stage-spec integration for `$group` / `$setWindowFields` accumulators. |
-| `specs/update.md` | (Stub) Future support for update operators (`$set`, `$inc`, `$push`, …). |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `mjsql()`: detection, lowering, sub-pipeline recursion, the `$match` `$expr`-wrap rule. |
+
+Future work areas — not yet implemented and not yet specified — include query-predicate operators inside `$match` / `find()` (e.g. `$elemMatch`, `$exists`, `$jsonSchema`), projection operators (`$`, `$elemMatch`, `$slice`, `$meta`), the stage-spec integration for `$group` / `$setWindowFields` accumulator field bindings, and update operators (`$set`, `$inc`, `$push`, …). Add a spec file when the work begins.
 
 ### When to update specs
 

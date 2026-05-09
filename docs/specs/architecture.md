@@ -16,12 +16,7 @@ Function-input adapter (src/index.ts)
     ▼
 Lexer (src/lexer.ts)
     Scans the input character-by-character into a flat Token[].
-    Handles: punctuation; `$.` (field ref prefix); `$` (operator prefix);
-    number / BigInt / string / boolean / null literals; identifiers;
-    template literals (with brace-depth tracking across `${...}`);
-    regex literals (context-sensitive `/` vs divide); bitwise tokens
-    (`&` `|` `^` `~`); spread (`...`); `//` and `/* */` comments;
-    numeric separators `_`.
+    Token shapes — see `TokenType` in src/lexer.ts.
     │
     ▼
 Token[]
@@ -34,13 +29,7 @@ Parser (src/parser.ts)
     │
     ▼
 Expr (src/ast.ts)
-    Union type. Nodes: OperatorCall, FieldRef, NumberLiteral,
-    BigIntLiteral, StringLiteral, BooleanLiteral, NullLiteral,
-    ArrayLiteral, ObjectLiteral, TemplateLiteral, BinaryExpr,
-    UnaryExpr, TernaryExpr, IndexAccess, RegexLiteral, ParamRef,
-    MemberAccess, MethodCall, CallExpression, Lambda, TypeofExpr,
-    NewDate, NewSet, TypeCast, MathCall, MathConst, ObjectCall,
-    ArrayFrom, NumberStatic, DateNow.
+    Union type — see the `Expr` union in src/ast.ts.
     Spread/key-value are auxiliary types used inside
     array/object nodes and call argument lists.
     │

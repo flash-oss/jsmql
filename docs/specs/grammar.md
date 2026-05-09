@@ -100,22 +100,19 @@ lambda_unparen = IDENT "=>" expression                       (* x => expr *)
 lambda_paren   = "(" [IDENT ("," IDENT)*] ")" "=>" expression  (* (x, y) => expr *)
 
 math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
-MATH_METHOD    = "abs" | "ceil" | "floor" | "round" | "pow" | "sqrt"
-               | "exp" | "log" | "log2" | "log10" | "trunc"
-               | "min" | "max" | "sign" | "hypot" | "cbrt" | "random"
-               | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
-               | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
+MATH_METHOD    = (* see `MathMethod` in src/ast.ts *)
 
-math_const     = "Math" "." ("PI" | "E")
+math_const     = "Math" "." MATH_CONST
+MATH_CONST     = (* see `MathConstant` in src/ast.ts *)
 
 object_call    = "Object" "." OBJECT_METHOD "(" call_arg_list ")"
-OBJECT_METHOD  = "keys" | "values" | "entries" | "assign" | "fromEntries" | "groupBy"
+OBJECT_METHOD  = (* see `ObjectMethod` in src/ast.ts *)
 
 type_cast      = TYPE_CAST_NAME "(" expression ")"
-TYPE_CAST_NAME = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat"
+TYPE_CAST_NAME = (* see `TypeCastOp` in src/ast.ts *)
 
 number_static  = "Number" "." NUMBER_STATIC "(" expression ")"
-NUMBER_STATIC  = "isInteger" | "isNaN" | "isFinite"
+NUMBER_STATIC  = (* see `NumberStaticMethod` in src/ast.ts *)
 
 new_date_or_set = "new" ("Date" | "Set") "(" expression? ")"
 date_now       = "Date" "." "now" "(" ")"
@@ -271,15 +268,7 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 
 ## String-context `+`
 
-When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions are:
-
-- `StringLiteral`
-- `TemplateLiteral` (always produces a string)
-- `OperatorCall` whose name is in `STRING_OUTPUT_OPS` (defined in `codegen.ts`)
-- `MethodCall` to a string-returning method — the canonical set is `STRING_RETURNING_METHODS` in `codegen.ts`: `trim`, `trimStart`, `trimEnd`, `trimLeft`, `trimRight`, `toLowerCase`, `toUpperCase`, `substr`, `replace`, `replaceAll`, `charAt`, `toISOString`, `join`, `padStart`, `padEnd`, `repeat`
-- `TypeCast` with cast `"String"` (i.e. `String(x)`)
-- `TypeofExpr` (`typeof x` always returns a string)
-- A nested `+` sub-expression where at least one of its own operands is string-producing
+When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions: string and template literals, `String(x)` casts, `typeof x`, any `OperatorCall` in `STRING_OUTPUT_OPS`, any `MethodCall` to a method in `STRING_RETURNING_METHODS` — both sets are defined in `src/codegen.ts` — and recursively, a nested `+` chain with at least one string-producing operand.
 
 ## `in` operator — RHS validation
 
