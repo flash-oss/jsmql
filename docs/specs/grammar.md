@@ -5,7 +5,32 @@ The formal grammar for the expression syntax accepted by the parser.
 ## EBNF
 
 ```ebnf
-program        = expression EOF
+program        = mutation_program EOF
+               | expression EOF
+
+mutation_program
+               = mutation (separator mutation)* separator?
+               (* parser dispatch:
+                  - leading `delete` token, OR
+                  - leading expression followed by an assignment operator
+                  triggers mutation_program; otherwise expression *)
+
+separator      = ";" | ","
+
+mutation       = "delete" target
+               | assignment_chain
+
+assignment_chain
+               = target "=" assignment_chain          (* right-associative *)
+               | target "=" expression
+               | target compound_op expression
+               (* compound_op chains are rejected: `a += b += 1` is a parse error *)
+
+compound_op    = "+=" | "-=" | "*=" | "/="
+
+target         = field_ref ("." FIELD_SEGMENT)*
+               (* must be a static field path; index access ($.x[0]) and
+                  bare identifiers are rejected at parse time *)
 
 expression     = ternary
 

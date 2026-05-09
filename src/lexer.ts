@@ -12,6 +12,7 @@ export const TokenType = {
   LBrace: "LBrace", // {
   RBrace: "RBrace", // }
   Comma: "Comma", // ,
+  Semi: "Semi", // ;
   Colon: "Colon", // :
   Dot: "Dot", // .
   QuestDot: "QuestDot", // ?.  (optional chaining)
@@ -26,6 +27,13 @@ export const TokenType = {
   StarStar: "StarStar", // **
   Slash: "Slash", // /
   Percent: "Percent", // %
+
+  // Assignment operators
+  Eq: "Eq", // =
+  PlusEq: "PlusEq", // +=
+  MinusEq: "MinusEq", // -=
+  StarEq: "StarEq", // *=
+  SlashEq: "SlashEq", // /=
 
   // Comparison operators
   EqEq: "EqEq", // ==
@@ -72,6 +80,7 @@ export const TokenType = {
   In: "In", // in
   New: "New", // new
   Typeof: "Typeof", // typeof
+  Delete: "Delete", // delete
 
   // Identifier
   Ident: "Ident",
@@ -220,6 +229,10 @@ export class Lexer {
         this.emit(TokenType.Comma, ",", start, 1);
         continue;
       }
+      if (ch === ";") {
+        this.emit(TokenType.Semi, ";", start, 1);
+        continue;
+      }
       if (ch === ":") {
         this.emit(TokenType.Colon, ":", start, 1);
         continue;
@@ -245,9 +258,13 @@ export class Lexer {
         continue;
       }
 
-      // ** before *
+      // ** before *= before *
       if (ch === "*" && ch2 === "*") {
         this.emit(TokenType.StarStar, "**", start, 2);
+        continue;
+      }
+      if (ch === "*" && ch2 === "=") {
+        this.emit(TokenType.StarEq, "*=", start, 2);
         continue;
       }
       if (ch === "*") {
@@ -255,7 +272,7 @@ export class Lexer {
         continue;
       }
 
-      // === before == before => (bare = is an error)
+      // === before == before => before bare = (assignment)
       if (ch === "=") {
         if (ch2 === "=" && ch3 === "=") {
           this.emit(TokenType.EqEqEq, "===", start, 3);
@@ -269,10 +286,8 @@ export class Lexer {
           this.emit(TokenType.Arrow, "=>", start, 2);
           continue;
         }
-        throw new LexError(
-          `Unexpected character '=' at position ${start} (did you mean '==' ?)`,
-          start,
-        );
+        this.emit(TokenType.Eq, "=", start, 1);
+        continue;
       }
 
       // !== before != before !
@@ -355,11 +370,19 @@ export class Lexer {
       }
 
       if (ch === "+") {
-        this.emit(TokenType.Plus, "+", start, 1);
+        if (ch2 === "=") {
+          this.emit(TokenType.PlusEq, "+=", start, 2);
+        } else {
+          this.emit(TokenType.Plus, "+", start, 1);
+        }
         continue;
       }
       if (ch === "-") {
-        this.emit(TokenType.Minus, "-", start, 1);
+        if (ch2 === "=") {
+          this.emit(TokenType.MinusEq, "-=", start, 2);
+        } else {
+          this.emit(TokenType.Minus, "-", start, 1);
+        }
         continue;
       }
       if (ch === "%") {
@@ -367,10 +390,14 @@ export class Lexer {
         continue;
       }
 
-      // / — context-sensitive: divide or regex literal
+      // / — context-sensitive: divide (or /= compound) or regex literal
       if (ch === "/") {
         if (this.lastTokenType !== null && VALUE_ENDING_TYPES.has(this.lastTokenType)) {
-          this.emit(TokenType.Slash, "/", start, 1);
+          if (ch2 === "=") {
+            this.emit(TokenType.SlashEq, "/=", start, 2);
+          } else {
+            this.emit(TokenType.Slash, "/", start, 1);
+          }
         } else {
           this.pushToken(this.readRegex(start));
         }
@@ -727,6 +754,8 @@ export class Lexer {
         return { type: TokenType.New, value: "new", pos };
       case "typeof":
         return { type: TokenType.Typeof, value: "typeof", pos };
+      case "delete":
+        return { type: TokenType.Delete, value: "delete", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }

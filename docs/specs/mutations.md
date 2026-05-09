@@ -1,0 +1,111 @@
+# Mutations
+
+How `=`, `+=`, `-=`, `*=`, `/=`, and `delete` lower from JavaScript syntax to MongoDB pipeline `$set` / `$unset` stages.
+
+User-facing reference is `docs/LANGUAGE.md` § Mutations.
+
+## AST
+
+Three node types in `src/ast.ts`:
+
+```ts
+type AssignExpr      = { type: "AssignExpr"; target: Expr; value: Expr };
+type DeleteStmt      = { type: "DeleteStmt"; target: Expr };
+type Mutation        = AssignExpr | DeleteStmt;
+type MutationProgram = { type: "MutationProgram"; mutations: Mutation[] };
+```
+
+`AssignExpr` does not carry an `op` field. The parser desugars compound operators (`+=`, `-=`, `*=`, `/=`) at construction time: `$.a += rhs` becomes `AssignExpr { target: $.a, value: BinaryExpr("+", $.a, rhs) }`. Codegen therefore only sees plain `=` assignments.
+
+`MutationProgram` is its own type, not part of the `Expr` union. `Parser.parse()` returns `Program = Expr | MutationProgram`; `compile()` in `src/index.ts` dispatches on the discriminant.
+
+`ArrayElement` is widened to `Expr | SpreadElement | AssignExpr | DeleteStmt` so mutations can sit inside pipeline-array literals. Non-pipeline `ArrayLiteral` codegen rejects mutation elements with a clear error.
+
+## Lexer
+
+Six new tokens (`src/lexer.ts`):
+
+| Token       | Source | Notes |
+|-------------|--------|-------|
+| `Eq`        | `=`    | Distinct from `EqEq` / `EqEqEq` / `Arrow` (longer-token-first ordering preserved) |
+| `PlusEq`    | `+=`   | Two-char lookahead before single-char `Plus` |
+| `MinusEq`   | `-=`   | Same as above for `Minus` |
+| `StarEq`    | `*=`   | Checked after `**` (StarStar) and before `*` (Star) |
+| `SlashEq`   | `/=`   | Only emitted in division-context (`lastTokenType` is value-ending). In regex-context, the `=` after `/` is part of a regex literal. |
+| `Semi`      | `;`    | Statement separator |
+
+One new keyword: `Delete` (added to `keywordToken()` switch alongside `typeof`/`new`/`in`).
+
+## Parser
+
+Top-level dispatch (`Parser.parse()`):
+
+1. If the first token is `Delete` → `parseMutationProgram()` directly.
+2. Otherwise speculatively `parseExpression()`. If an assignment operator follows, the expression is the first mutation target; flow merges into `parseMutationProgramFrom(target)`.
+3. Otherwise expect EOF (regular expression input).
+
+Inside `parseArrayLiteral`, the same per-element heuristic applies: a leading `Delete` token, or an expression followed by an assignment operator, becomes a mutation element. This is what enables `[$match(...), $.a = 1, delete $.tmp, $sort(...)]`.
+
+### Chained `=` (right-associative)
+
+`parseAssignmentChainFrom(target)` consumes the `=`, then peeks ahead with `peekIsAssignmentChainStart()` (DollarDot, identifier segments, dots, then an assignment operator). If it matches, parse the next target and recurse, then prepend the outer target with the deepest RHS as its value. The result is a flat list of `AssignExpr` nodes, all sharing the same RHS.
+
+Compound operators (`+=`, etc.) reject chained RHS — too easy to misread.
+
+### Target validation
+
+A target must be a `FieldRef` or a chain of `MemberAccess` nodes rooted at one. Bare identifiers (`ParamRef`), index access (`IndexAccess`), and any other shape are rejected at parse time with operator-specific error messages. The walk lives in `Parser.isFieldPathTarget`.
+
+### Compound desugar
+
+For `$.a += rhs`, the parser emits:
+
+```ts
+{ type: "AssignExpr", target: <$.a>, value: { type: "BinaryExpr", op: "+", left: <$.a>, right: <rhs> } }
+```
+
+The `<$.a>` node is shared between `target` and `value.left` — the AST is immutable at codegen time, so sharing is safe. Compound `+`'s string-vs-number disambiguation (`$concat` vs `$add`) falls out of the existing `BinaryExpr +` codegen for free.
+
+## Codegen
+
+`src/codegen.ts` exports two mutation entry points:
+
+- `generateMutationProgram(prog)` — top-level entry from `compile()`. Emits a single stage object (one group) or a stage array (2+ groups), matching the existing 1-stage-vs-pipeline output convention.
+- `generateMutationGroups(muts)` — used by `pipeline.ts` when mutations appear inline in a pipeline array. Returns an array of stage objects without the unwrap step.
+
+### Coalescing
+
+`groupMutations(muts)` walks the list left-to-right and starts a new group when:
+
+1. **Kind change** — assignment ↔ delete.
+2. **Path collision** — the new write path equals or is a parent/child of any prior write in the group (detected by `pathsCollide`, which compares dotted strings).
+3. **Read-after-write** (assignments only) — the new RHS reads any path the current group has written. Reads are collected by `collectMutationReads(expr)`, which walks all expression node types and records every foldable field path (`tryFieldPath` reconstructs dotted strings the same way `asFieldPath` does, but without the leading `$`).
+
+Each group emits one stage:
+
+- All-`AssignExpr` group → `{ $set: { writePath: gen(value), … } }`
+- All-`DeleteStmt` group → `{ $unset: "path" }` (size 1) or `{ $unset: ["a", "b", …] }` (size 2+). MongoDB pipeline `$unset` accepts both shapes; the string form is more compact and matches handwritten output.
+
+The codegen never inspects the original compound operator — by the time it runs, `+=` has been desugared to `=` plus `BinaryExpr`. This keeps `_generate`'s switch simple and lets the existing arithmetic codegen handle type-aware `$add`/`$concat` etc.
+
+## Pipeline integration
+
+`isStageCandidate` in `src/pipeline.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare mutation (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline.
+
+`generatePipeline` walks elements left-to-right with a `mutationBuffer`. Consecutive mutation elements accumulate; non-mutation stages flush the buffer through `generateMutationGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage. The final flush handles a trailing run of mutations.
+
+## Error message conventions
+
+| Situation                       | Where caught | Message theme |
+|---------------------------------|--------------|---------------|
+| Bare identifier as target       | parser       | "Mutation target must be a field path like '$.x', not a bare identifier" |
+| `IndexAccess` as target         | parser       | "Mutation target must be a static field path; computed/index access ('[…]') is not supported" |
+| Lambda or compound-shape target | parser       | "Mutation target must be a field path like '$.x' or '$.x.y'" |
+| Compound chain                  | parser       | "Compound assignment cannot be chained — split into separate statements" |
+| Mutation in a value array       | codegen      | "Assignment is a statement, not a value, and is only valid at the top level or as a pipeline-array element" |
+| Empty mutation program          | codegen      | "Mutation program must contain at least one assignment or delete" (defensive — parser shouldn't produce this) |
+
+## Tests
+
+- `test/mutations.test.ts` — focused unit tests, one case per behavior.
+- `test/realistic.test.ts` — at least one realistic end-to-end example combining mutations with pipeline-style usage.

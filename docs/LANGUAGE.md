@@ -46,13 +46,14 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 10. [Type Casting](#type-casting)
 11. [Date Operations](#date-operations)
 12. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
-13. [Pipelines](#pipelines)
-14. [Function Form](#function-form)
-15. [Template Tag (`mql`)](#template-tag-mql)
-16. [Validation](#validation)
-17. [Error Messages](#error-messages)
-18. [Examples](#examples)
-19. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
+13. [Mutations](#mutations)
+14. [Pipelines](#pipelines)
+15. [Function Form](#function-form)
+16. [Template Tag (`mql`)](#template-tag-mql)
+17. [Validation](#validation)
+18. [Error Messages](#error-messages)
+19. [Examples](#examples)
+20. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
 
 ---
 
@@ -85,8 +86,8 @@ An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 ### Invalid Constructs
 
 - Control flow: `if`, `for`, `while`, `break`, etc.
-- Statements: function definitions, assignments
-- Object/array mutations: `.push()`, `.splice()`
+- Statement-level features other than mutations: function definitions, declarations
+- Object/array in-place mutations: `.push()`, `.splice()`
 - Destructuring: `{ a, b } = obj`
 
 ---
@@ -993,6 +994,116 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 ### Deprecated: `$substr`
 
 `$substr` is deprecated in MongoDB. Prefer `$substrBytes` (byte-indexed) or `$substrCP` (code-point-indexed) for new code.
+
+---
+
+## Mutations
+
+Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each mutation compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple mutations coalesce into the smallest correct stage shape.
+
+```js
+mjsql("$.score = 100")
+// → { $set: { score: 100 } }
+
+mjsql("$.cnt += 1")
+// → { $set: { cnt: { $add: ["$cnt", 1] } } }
+
+mjsql("delete $.tmp")
+// → { $unset: "tmp" }
+```
+
+### Sequencing
+
+Multiple mutations are separated by `;` or `,` (interchangeable; trailing separator allowed):
+
+```js
+mjsql("$.a = 1; $.b = 2")        // single $set with both
+// → { $set: { a: 1, b: 2 } }
+
+mjsql("$.a = 1, $.b = 2")        // same, comma form
+// → { $set: { a: 1, b: 2 } }
+```
+
+### Targets
+
+The left-hand side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. Bare identifiers and computed/index access are not assignable:
+
+```js
+x = 5                  // ✗ — bare identifier
+$.items[0] = 5         // ✗ — index access
+$.user.name = "alice"  // ✓ — nested field path
+```
+
+### Compound assignment
+
+`+=`, `-=`, `*=`, `/=` are sugar for `$.x = $.x <op> rhs`. The `+=` operator inherits the language's type-aware addition: numeric `+=` produces `$add`, string `+=` produces `$concat`.
+
+```js
+mjsql("$.score *= 2")
+// → { $set: { score: { $multiply: ["$score", 2] } } }
+
+mjsql("$.greeting += '!'")
+// → { $set: { greeting: { $concat: ["$greeting", "!"] } } }
+```
+
+### Chained assignment
+
+`$.a = $.b = expr` is supported (right-associative, like JavaScript); both fields receive the same RHS expression. Compound chains (`a += b += 1`) are rejected — too easy to misread.
+
+```js
+mjsql("$.x = $.y = 0")
+// → { $set: { x: 0, y: 0 } }
+```
+
+### Coalescing
+
+Consecutive same-kind mutations (all assignments, or all deletes) are grouped into a single `$set`/`$unset` stage. A new stage starts when:
+
+- The kind changes (assignment ↔ delete)
+- A later mutation writes to a path already written in the current group
+- A later assignment **reads** a path the current group has written — preserves JS sequential semantics
+
+```js
+// Independent assignments → one stage
+mjsql("$.a = 1; $.b = 2")
+// → { $set: { a: 1, b: 2 } }
+
+// Read-after-write → two stages
+mjsql("$.a = 1; $.b = $.a")
+// → [{ $set: { a: 1 } }, { $set: { b: "$a" } }]
+
+// Kind change → two stages
+mjsql("delete $.a; delete $.b; $.status = 'done'")
+// → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
+```
+
+### Mutations inside pipelines
+
+Mutations can appear as pipeline elements alongside ordinary stages. The same coalescing rule applies between adjacent mutation elements; non-mutation stages act as boundaries:
+
+```js
+mjsql(`[
+  $match($.active),
+  $.score += 1,
+  $.lastSeenAt = $$NOW,
+  $sort({ score: -1 })
+]`)
+// → [
+//     { $match: { $expr: "$active" } },
+//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
+//     { $sort: { score: -1 } }
+//   ]
+```
+
+### Limits
+
+Mutations are **statements**, not expression values. They are valid only at the top level of a `mjsql()` call or as direct pipeline-array elements. They cannot appear:
+
+- Inside an arbitrary expression (`($.a = 1) + 2` — rejected)
+- Inside a lambda body (`$.list.map(x => $.a = x)` — rejected)
+- As any value other than a top-level statement or pipeline element
+
+The `delete` keyword is statement-only — unlike JavaScript, it does not return a boolean.
 
 ---
 

@@ -979,6 +979,34 @@ describe("pipeline: count orders by status per shop ($accumulator replacement)",
   });
 });
 
+describe("e-commerce: post-purchase document touch-up (mutations)", () => {
+  // Compute a derived field, bump a counter, drop a transient flag, then
+  // stamp a status — using JS-natural mutation syntax instead of hand-rolling
+  // $set / $unset stages. Independent assignments coalesce into one $set;
+  // the kind change at `delete` opens a new $unset stage; another kind change
+  // back to assignment opens the final $set.
+  it("compiles a mixed assignment + delete + status update sequence", () => {
+    expect(
+      mjsql(`
+        $.lineTotal = $.qty * $.unitPrice;
+        $.invoiceCount += 1;
+        delete $.tempToken;
+        delete $._processingState;
+        $.status = 'complete'
+      `),
+    ).toEqual([
+      {
+        $set: {
+          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
+          invoiceCount: { $add: ["$invoiceCount", 1] },
+        },
+      },
+      { $unset: ["tempToken", "_processingState"] },
+      { $set: { status: "complete" } },
+    ]);
+  });
+});
+
 // ── validate() ────────────────────────────────────────────────────────────────
 
 describe("validate(): realistic error cases", () => {

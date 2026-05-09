@@ -14,10 +14,46 @@ export type KeyValueEntry = {
 };
 
 export type ObjectEntry = KeyValueEntry | SpreadElement;
-export type ArrayElement = Expr | SpreadElement;
+// AssignExpr and DeleteStmt are valid as ArrayElements ONLY when the array is
+// a pipeline (first element is a stage candidate). Codegen for a non-pipeline
+// ArrayLiteral throws on these — see codegen.ts:generateArrayLiteral.
+export type ArrayElement = Expr | SpreadElement | AssignExpr | DeleteStmt;
 
 /** Argument position that may be a spread (call sites that allow `...x`) */
 export type CallArg = Expr | SpreadElement;
+
+/**
+ * Assignment statement: `$.path = value` (also reached via `+=`/`-=`/`*=`/`/=`,
+ * which the parser desugars into a `=` plus the corresponding `BinaryExpr`).
+ * `target` is restricted to a field-path expression (FieldRef or chained
+ * MemberAccess rooted at a FieldRef); the parser enforces this at construction.
+ */
+export type AssignExpr = {
+  type: "AssignExpr";
+  target: Expr;
+  value: Expr;
+};
+
+/** Statement form: `delete $.path`. Only legal at top level or as a pipeline element. */
+export type DeleteStmt = {
+  type: "DeleteStmt";
+  target: Expr;
+};
+
+export type Mutation = AssignExpr | DeleteStmt;
+
+/**
+ * Top-level mutation program: one or more assignments and/or deletes,
+ * separated by `;` or `,` in source. Distinct from `Expr` because mutations
+ * are statements with stage-level effect, not expression values.
+ */
+export type MutationProgram = {
+  type: "MutationProgram";
+  mutations: Mutation[];
+};
+
+/** What `Parser.parse()` returns: either an expression (incl. pipeline arrays) or a mutation program. */
+export type Program = Expr | MutationProgram;
 
 export type BinaryOp =
   | "+"

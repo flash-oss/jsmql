@@ -102,6 +102,26 @@ Object.fromEntries($.metrics.map((m) => [m.name, m.value]))
 
 JavaScript-style line (`// …`) and block (`/* … */`) comments are supported anywhere whitespace is allowed.
 
+### Mutations: `=`, `+=`, `delete`
+
+For document updates, use JS-natural assignment and `delete`. Each mutation compiles to a MongoDB pipeline `$set`/`$unset` stage; consecutive same-kind mutations coalesce automatically:
+
+```js
+mjsql("$.score += 1")
+// → { $set: { score: { $add: ["$score", 1] } } }
+
+mjsql("$.total = $.price * $.qty, $.views += 1")
+// → { $set: { total: { $multiply: ["$price", "$qty"] }, views: { $add: ["$views", 1] } } }
+
+mjsql("delete $.tempToken, delete $._processingState, $.status = 'complete'")
+// → [
+//     { $unset: ["tempToken", "_processingState"] },
+//     { $set: { status: "complete" } }
+//   ]
+```
+
+Works for `=`, `+=`, `-=`, `*=`, `/=`, and `delete`; targets are field paths (`$.x`, `$.x.y`); separators are `;` or `,`. See [docs/LANGUAGE.md § Mutations](docs/LANGUAGE.md#mutations) for the full rules.
+
 ### Escape hatch: `$op()` (direct operator form)
 
 For MongoDB operators that have no JavaScript equivalent, call the operator directly with `$opName()`:
