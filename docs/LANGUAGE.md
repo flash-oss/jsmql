@@ -348,9 +348,16 @@ $.age >= 21                         // { $gte: ["$age", 21] }
 $.score < 50                        // { $lt: ["$score", 50] }
 $.score <= 100                      // { $lte: ["$score", 100] }
 $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]] }
+$.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (property existence)
 ```
 
 **Note:** `===` and `!==` work the same as `==` and `!=`.
+
+**`in` operator semantics:**
+- Array on the right → value membership: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3. *(JavaScript itself uses index existence here — we deliberately diverge because value membership is what users want for MongoDB queries.)*
+- Object literal on the right → property existence (JS-faithful): `$.x in { a, b }` is true when `$.x` equals `"a"` or `"b"`. Computed keys and `...spread` are supported; spread keys are pulled at runtime via `$objectToArray`.
+- Field reference on the right → array membership against the field's value (assumes the field holds an array at query time).
+- Scalar literal on the right → codegen error (no useful interpretation).
 
 ### Logical
 

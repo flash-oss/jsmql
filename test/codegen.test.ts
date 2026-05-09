@@ -1614,11 +1614,37 @@ describe("in operator RHS validation", () => {
   it("throws on null RHS", () => {
     expect(() => mjsql("$.x in null")).toThrow(/Right-hand side of 'in'/);
   });
-  it("throws on object literal RHS with a JS-vs-MQL hint", () => {
-    expect(() => mjsql("$.x in { a: 1 }")).toThrow(/property existence/);
-  });
   it("accepts array literal RHS", () => {
     expect(mjsql('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
+  });
+  it("object literal RHS → property-existence (JS-faithful)", () => {
+    expect(mjsql("$.x in { a: 1, b: 2 }")).toEqual({ $in: ["$x", ["a", "b"]] });
+  });
+  it("string-literal LHS works against an object literal", () => {
+    expect(mjsql("'a' in { a: 1, b: 2 }")).toEqual({ $in: ["a", ["a", "b"]] });
+  });
+  it("object literal with computed key emits the key expression", () => {
+    expect(mjsql("$.x in { a: 1, [$.dynKey]: 2 }")).toEqual({
+      $in: ["$x", ["a", "$dynKey"]],
+    });
+  });
+  it("object literal with spread uses $objectToArray for the spread keys", () => {
+    expect(mjsql("$.x in { ...$.base, a: 1 }")).toEqual({
+      $in: [
+        "$x",
+        {
+          $concatArrays: [
+            { $map: { input: { $objectToArray: "$base" }, as: "kv", in: "$$kv.k" } },
+            ["a"],
+          ],
+        },
+      ],
+    });
+  });
+  it("object literal with only spread reduces to $objectToArray.k directly", () => {
+    expect(mjsql("$.x in { ...$.other }")).toEqual({
+      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "kv", in: "$$kv.k" } }],
+    });
   });
   it("accepts field ref RHS", () => {
     expect(mjsql("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });

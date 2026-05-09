@@ -373,30 +373,8 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
       return { $bitOr: flattenChain("|", left, right, ctx) };
     case "^":
       return { $bitXor: flattenChain("^", left, right, ctx) };
-    case "in": {
-      // MQL's $in checks array membership. JS's `in` checks object property
-      // existence — a different operation we don't model. Reject the literal
-      // shapes that produce confusing or silently-wrong output: scalars (no
-      // sensible MQL mapping) and object literals (would silently emit
-      // \`{ $in: [..., {...}] }\` and fail at runtime with a less actionable
-      // message than this one).
-      if (
-        right.type === "StringLiteral" ||
-        right.type === "NumberLiteral" ||
-        right.type === "BooleanLiteral" ||
-        right.type === "NullLiteral"
-      ) {
-        throw new CodegenError(
-          "Right-hand side of 'in' must be an array literal or field reference, not a scalar value",
-        );
-      }
-      if (right.type === "ObjectLiteral") {
-        throw new CodegenError(
-          "Right-hand side of 'in' must be an array literal or field reference. JavaScript's `key in object` (property existence) has no MongoDB equivalent — use `Object.keys(obj).includes(key)` or `$getField` instead.",
-        );
-      }
-      return { $in: [_generate(left, ctx), _generate(right, ctx)] };
-    }
+    case "in":
+      return generateInExpr(left, right, ctx);
   }
 }
 
@@ -418,6 +396,90 @@ function collectChain(op: BinaryOp, expr: Expr, out: unknown[], ctx: GenerateCtx
   } else {
     out.push(_generate(expr, ctx));
   }
+}
+
+// ── `in` operator ─────────────────────────────────────────────────────────────
+
+/**
+ * `in` straddles two JS semantics depending on the RHS:
+ *   - array on the right: value membership (different from JS, which checks
+ *     numeric-index existence on arrays — but value-membership is overwhelmingly
+ *     what users want for MongoDB queries, so we deliberately diverge here).
+ *   - object on the right: property existence — JS-faithful.
+ *
+ * For an object-literal RHS we extract the keys at compile time and reduce to
+ * `{ $in: [LHS, [...keys]] }`. Computed keys are evaluated at runtime; spread
+ * entries unwrap to `$objectToArray` over the spread expression so the keys
+ * become available without us having to know them at compile time.
+ *
+ * Scalar literals on the right have no useful interpretation in either
+ * direction and stay rejected.
+ */
+function generateInExpr(left: Expr, right: Expr, ctx: GenerateCtx): unknown {
+  if (
+    right.type === "StringLiteral" ||
+    right.type === "NumberLiteral" ||
+    right.type === "BooleanLiteral" ||
+    right.type === "NullLiteral"
+  ) {
+    throw new CodegenError(
+      "Right-hand side of 'in' must be an array literal, object literal, or field reference, not a scalar value",
+    );
+  }
+  if (right.type === "ObjectLiteral") {
+    return { $in: [_generate(left, ctx), keyArrayForObjectLiteral(right.entries, ctx)] };
+  }
+  return { $in: [_generate(left, ctx), _generate(right, ctx)] };
+}
+
+/**
+ * Build the MQL expression representing the *keys* of an object-literal RHS,
+ * for the `key in obj` case. Static-only entries collapse to a literal string
+ * array. Computed-key entries emit the key expression directly (it should
+ * resolve to a string at runtime). Spread entries lower to
+ * `$objectToArray(expr).k` so we can splice the runtime keys in.
+ *
+ * If every chunk is static the result is a plain JS array; if any spread is
+ * present we wrap the chunks in `$concatArrays`.
+ */
+function keyArrayForObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx): unknown {
+  // Fast path: all static keys → a plain literal array of strings.
+  if (entries.every((e) => e.type === "KeyValueEntry" && e.key.kind === "static")) {
+    return entries.map((e) => ((e as KeyValueEntry).key as { kind: "static"; name: string }).name);
+  }
+
+  // Mixed path: build `$concatArrays` of per-chunk operands. Consecutive
+  // non-spread entries group into one literal array (mirrors the array-literal
+  // spread codegen for compact output).
+  const operands: unknown[] = [];
+  let currentChunk: unknown[] | null = null;
+  const flush = () => {
+    if (currentChunk !== null) {
+      operands.push(currentChunk);
+      currentChunk = null;
+    }
+  };
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      flush();
+      operands.push({
+        $map: {
+          input: { $objectToArray: _generate(entry.argument, ctx) },
+          as: "kv",
+          in: "$$kv.k",
+        },
+      });
+      continue;
+    }
+    if (currentChunk === null) currentChunk = [];
+    currentChunk.push(
+      entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx),
+    );
+  }
+  flush();
+
+  if (operands.length === 1) return operands[0];
+  return { $concatArrays: operands };
 }
 
 // ── String-context + ──────────────────────────────────────────────────────────
