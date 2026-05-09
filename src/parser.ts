@@ -106,11 +106,15 @@ export class Parser {
   parse(): Program {
     const first = this.lexer.peek();
 
-    // `delete $.x` is the only mutation that can appear before any expression
-    // tokens, so a leading `delete` definitively means this is a mutation
-    // program. The other mutation operators (=, +=, …) reveal themselves only
-    // *after* a target expression has been parsed — handled below.
-    if (first.type === TokenType.Delete) {
+    // Tokens that can ONLY start a mutation program: `delete`, `++`, `--`.
+    // Their presence at position 0 unambiguously commits us to mutation
+    // parsing. Other mutation forms (=, +=, x++, …) reveal themselves only
+    // after a target expression has been parsed — handled below.
+    if (
+      first.type === TokenType.Delete ||
+      first.type === TokenType.PlusPlus ||
+      first.type === TokenType.MinusMinus
+    ) {
       return this.parseMutationProgram();
     }
 
@@ -122,6 +126,12 @@ export class Parser {
     if (this.peekAssignOp() !== null) {
       this.validateMutationTarget(expr);
       return this.parseMutationProgramFrom(expr);
+    }
+
+    // Postfix `x++` / `x--` — same dispatch as a leading assignment operator.
+    if (this.peekIncDecOp() !== null) {
+      this.validateMutationTarget(expr);
+      return this.parseMutationProgramFromPostfix(expr);
     }
 
     // `parseExpression` may have surfaced an `AssignExpr` from a parenthesized
@@ -158,6 +168,22 @@ export class Parser {
     return { type: "MutationProgram", mutations };
   }
 
+  /**
+   * Entry when the first target was parsed and is followed by `++` or `--`
+   * (postfix inc/dec). Validation must already have happened.
+   */
+  private parseMutationProgramFromPostfix(firstTarget: Expr): MutationProgram {
+    const op = this.peekIncDecOp();
+    if (op === null) {
+      const tok = this.lexer.peek();
+      throw new ParseError(`Expected '++' or '--' at position ${tok.pos}`, tok.pos);
+    }
+    this.lexer.next(); // consume the operator
+    const mutations: Mutation[] = [this.makeIncDecMutation(firstTarget, op)];
+    this.parseMutationProgramRest(mutations);
+    return { type: "MutationProgram", mutations };
+  }
+
   /** After the first mutation is parsed, consume any `;`/`,`-separated tail. */
   private parseMutationProgramRest(mutations: Mutation[]): void {
     for (;;) {
@@ -181,8 +207,18 @@ export class Parser {
     if (this.lexer.peek().type === TokenType.Delete) {
       return [this.parseDeleteStmt()];
     }
+    // Prefix increment/decrement: `++$.x` / `--$.x`.
+    if (this.peekIncDecOp() !== null) {
+      return [this.parsePrefixIncDec()];
+    }
     const target = this.parsePostfix();
     this.validateMutationTarget(target);
+    // Postfix increment/decrement: `$.x++` / `$.x--`.
+    const postfix = this.peekIncDecOp();
+    if (postfix !== null) {
+      this.lexer.next();
+      return [this.makeIncDecMutation(target, postfix)];
+    }
     return this.parseAssignmentChainFrom(target);
   }
 
@@ -272,6 +308,51 @@ export class Parser {
   private peekMutationSeparator(): boolean {
     const t = this.lexer.peek().type;
     return t === TokenType.Semi || t === TokenType.Comma;
+  }
+
+  /**
+   * Returns "++" or "--" if the next token is an inc/dec operator, else null.
+   * Used at both prefix (start of mutation) and postfix (after a target)
+   * positions; the caller decides which.
+   */
+  private peekIncDecOp(): "++" | "--" | null {
+    switch (this.lexer.peek().type) {
+      case TokenType.PlusPlus:
+        return "++";
+      case TokenType.MinusMinus:
+        return "--";
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Parse a prefix `++<target>` or `--<target>`. The prefix vs postfix
+   * distinction is irrelevant in MQL pipeline context — both forms compile
+   * to the same `$set: { x: { $add|$subtract: ["$x", 1] } }` shape, since
+   * pipeline stages don't carry "value of expression" semantics.
+   */
+  private parsePrefixIncDec(): AssignExpr {
+    const op = this.peekIncDecOp();
+    if (op === null) {
+      const tok = this.lexer.peek();
+      throw new ParseError(`Expected '++' or '--' at position ${tok.pos}`, tok.pos);
+    }
+    this.lexer.next(); // consume `++` or `--`
+    const target = this.parsePostfix();
+    this.validateMutationTarget(target);
+    return this.makeIncDecMutation(target, op);
+  }
+
+  /** Build the desugared AssignExpr for `target++` / `target--` / `++target` / `--target`. */
+  private makeIncDecMutation(target: Expr, op: "++" | "--"): AssignExpr {
+    const value: Expr = {
+      type: "BinaryExpr",
+      op: op === "++" ? "+" : "-",
+      left: target,
+      right: { type: "NumberLiteral", value: 1 },
+    };
+    return { type: "AssignExpr", target, value };
   }
 
   /**
@@ -749,6 +830,10 @@ export class Parser {
       this.lexer.lookahead(1).type === TokenType.Arrow
     ) {
       expr = this.parseLambdaUnparen();
+    } else if (this.peekIncDecOp() !== null) {
+      // Prefix `(++$.x)` / `(--$.x)` — parens around prefix inc/dec. Same
+      // formatter-friendly motivation as the assignment case below.
+      expr = this.parsePrefixIncDec() as unknown as Expr;
     } else {
       expr = this.parseExpression();
       // `($.x = expr)` — parenthesized assignment. JS-syntax-equivalent to
@@ -771,6 +856,12 @@ export class Parser {
           );
         }
         expr = chain[0] as unknown as Expr;
+      } else if (this.peekIncDecOp() !== null) {
+        // Postfix `($.x++)` / `($.x--)` — parens around postfix inc/dec.
+        const op = this.peekIncDecOp()!;
+        this.lexer.next();
+        this.validateMutationTarget(expr);
+        expr = this.makeIncDecMutation(expr, op) as unknown as Expr;
       }
     }
     const close = this.lexer.peek();
@@ -1141,14 +1232,22 @@ export class Parser {
         // `delete $.x` as a pipeline element. Codegen rejects it if the array
         // turns out not to be a pipeline.
         elements.push(this.parseDeleteStmt());
+      } else if (this.peekIncDecOp() !== null) {
+        // Prefix `++$.x` / `--$.x` as a pipeline element.
+        elements.push(this.parsePrefixIncDec());
       } else {
-        // Could be a regular expression OR an assignment used as a pipeline
-        // element (`[$match(...), $.a = 1]`). Parse the expression first; if a
-        // bare assignment operator follows, treat the result as a target.
+        // Could be a regular expression OR an assignment OR a postfix `x++`
+        // used as a pipeline element. Parse the expression first; if a bare
+        // assignment operator or `++`/`--` follows, treat as a mutation.
         const expr = this.parseExpression();
         if (this.peekAssignOp() !== null) {
           this.validateMutationTarget(expr);
           for (const m of this.parseAssignmentChainFrom(expr)) elements.push(m);
+        } else if (this.peekIncDecOp() !== null) {
+          const op = this.peekIncDecOp()!;
+          this.lexer.next();
+          this.validateMutationTarget(expr);
+          elements.push(this.makeIncDecMutation(expr, op));
         } else {
           elements.push(expr);
         }

@@ -1053,6 +1053,20 @@ mjsql("$.greeting += '!'")
 // → { $set: { greeting: { $concat: ["$greeting", "!"] } } }
 ```
 
+### Increment / decrement
+
+`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. The prefix/postfix distinction is meaningful in JavaScript (return-then-mutate vs mutate-then-return), but in MongoDB pipeline context there is no "value of expression" for a statement-level mutation, so all four forms compile to the same `$set` stage.
+
+```js
+mjsql("$.cnt++")
+// → { $set: { cnt: { $add: ["$cnt", 1] } } }
+
+mjsql("--$.lives")
+// → { $set: { lives: { $subtract: ["$lives", 1] } } }
+```
+
+Like other mutations, inc/dec is a statement: invalid as a value (`1 + $.x++` is rejected) and restricted to field-path targets.
+
 ### Chained assignment
 
 `$.a = $.b = expr` is supported (right-associative, like JavaScript); both fields receive the same RHS expression. Compound chains (`a += b += 1`) are rejected — too easy to misread.

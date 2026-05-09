@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Increment / decrement: `x++`, `++x`, `x--`, `--x`
+
+Follow-up to yesterday's mutations feature. JS's increment/decrement operators now compile to the same `$set` stage as `x += 1` / `x -= 1`. All four forms produce identical output — the prefix/postfix distinction (return-then-mutate vs mutate-then-return) is irrelevant in MongoDB pipeline context because stage-level mutations don't carry a "value of expression". Treating them as four spellings of the same statement keeps the surface JS-faithful without inventing semantics MQL can't represent.
+
+**Lexer.** Two new tokens (`PlusPlus`, `MinusMinus`) with strict longest-match ordering: `++` checked before `+=` before `+`; same for `-`. The whitespace boundary stays sane — `1 - -2` still lexes as two `Minus` tokens (parses as `1 - (-2)`); `1--2` lexes as `1`, `--`, `2` and is rejected at target validation because `1` isn't a field path.
+
+**Parser.** Prefix `++x`/`--x` joins `delete` as a leading-token signal that triggers `parseMutationProgram`. Postfix `x++`/`x--` joins assignment operators as a post-target signal — same dispatch as `$.x = …`, `$.x += …`. All four mutation positions accept both forms (top-level, `parseMutation`, `parseArrayLiteral` pipeline element, `parseGrouped` parens). Both prefix and postfix desugar via `makeIncDecMutation(target, op)` into the standard `AssignExpr { target, value: BinaryExpr(+/-, target, 1) }` — codegen sees nothing new.
+
+Targets validate identically to compound assignments (field paths only). Misuse as a value (`1 + $.x++`) bubbles through to the existing codegen-level "Assignment is a statement, not a value" error.
+
+**Tests.** 18 new cases in `test/mutations.test.ts` covering all four forms across all four positions (top-level, mixed coalescing, pipeline element, parens), plus the `5 - -3` whitespace regression. Total now 644.
+
+---
+
 ## 2026-05-09 — Mutations: `=`, `+=`, `-=`, `*=`, `/=`, and `delete` compile to `$set`/`$unset` stages
 
 Closes the longest-standing item in `Invalid Constructs` (assignments) and adds `delete` alongside it. Users now write document updates in JS-natural form — `$.score += 1`, `delete $.tmp`, `$.user.name = "alice"` — and the compiler emits the correct MongoDB pipeline-stage shapes. Multiple mutations separated by `;` or `,` coalesce into the smallest correct stage sequence.
