@@ -1,4 +1,5 @@
 import { lookupOperator } from "./operators.ts";
+import { closestNameTo } from "./levenshtein.ts";
 import type {
   BinaryOp,
   Expr,
@@ -1311,12 +1312,82 @@ function generateMethodCall(
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
 
-    default:
-      throw new CodegenError(
-        `Unknown method '.${method}()'. String methods: trim, trimStart, trimEnd, toLowerCase, toUpperCase, substr, charAt, split, indexOf, replace, replaceAll, includes, startsWith, endsWith, match, matchAll, search, concat, padStart, padEnd, repeat. Array methods: at, slice, reverse, toReversed, toSorted, map, filter, find, findLast, findLastIndex, some, every, reduce, includes, indexOf, concat, join, flat, flatMap. Date methods: getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, getTime, toISOString.`,
-      );
+    default: {
+      const suggestion = closestNameTo(method, KNOWN_METHODS);
+      const hint = suggestion ? ` Did you mean '.${suggestion}()'?` : "";
+      throw new CodegenError(`Unknown method '.${method}()'.${hint}`);
+    }
   }
 }
+
+// Every method name with a dedicated case in generateMethodCall, used to power
+// "did you mean?" suggestions on unknown methods. Kept here rather than next to
+// the switch so adding a new method is a one-line edit at the call site plus
+// one entry here — clearer than scanning a 1000-line function for case labels.
+const KNOWN_METHODS: ReadonlySet<string> = new Set([
+  // String
+  "trim",
+  "trimStart",
+  "trimLeft",
+  "trimEnd",
+  "trimRight",
+  "toLowerCase",
+  "toUpperCase",
+  "substr",
+  "charAt",
+  "split",
+  "startsWith",
+  "endsWith",
+  "indexOf",
+  "replace",
+  "replaceAll",
+  "includes",
+  "match",
+  "matchAll",
+  "search",
+  "padStart",
+  "padEnd",
+  "repeat",
+  // Array
+  "at",
+  "slice",
+  "reverse",
+  "toReversed",
+  "toSorted",
+  "concat",
+  "join",
+  "flat",
+  "flatMap",
+  "map",
+  "filter",
+  "find",
+  "findLast",
+  "findLastIndex",
+  "some",
+  "every",
+  "reduce",
+  // Date
+  "getFullYear",
+  "getMonth",
+  "getDate",
+  "getDay",
+  "getHours",
+  "getMinutes",
+  "getSeconds",
+  "getMilliseconds",
+  "getTime",
+  "toISOString",
+  // Set (intercepted before this dispatcher when receiver is a NewSet, but
+  // listed so a typo on a non-NewSet receiver still surfaces a useful suggestion)
+  "intersection",
+  "union",
+  "difference",
+  "isSubsetOf",
+  "isSupersetOf",
+  // Regex (intercepted on RegexLiteral receivers; same rationale)
+  "test",
+  "exec",
+]);
 
 /**
  * Most methods can't take spread args — only variadic ones (concat). This helper

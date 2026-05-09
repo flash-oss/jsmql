@@ -1557,6 +1557,10 @@ describe("error cases", () => {
   it("unknown method throws with helpful message", () => {
     expect(() => mjsql("$.name.frobulate()")).toThrow(/Unknown method/);
   });
+  it("near-miss method names get a 'Did you mean' suggestion", () => {
+    expect(() => mjsql("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
+    expect(() => mjsql("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
+  });
   it("lambda in non-method context throws", () => {
     expect(() => mjsql("$abs(x => x)")).toThrow(/Lambda expression/);
   });

@@ -20,6 +20,7 @@
 
 import type { Expr, ArrayElement } from "./ast.ts";
 import { generate, CodegenError } from "./codegen.ts";
+import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 
 type StageShape = { name: string; body: Expr };
@@ -201,36 +202,7 @@ function formatUnknownStage(name: string, index: number): string {
 }
 
 function closestStage(name: string): string | null {
-  // Cheap Levenshtein over the registered stage names; only return a hit
-  // when the distance is small enough to be a likely typo.
-  let best: { name: string; dist: number } | null = null;
-  for (const candidate of Object.keys(STAGES)) {
-    const d = levenshtein(name, candidate);
-    if (best === null || d < best.dist) best = { name: candidate, dist: d };
-  }
-  if (best === null) return null;
-  // Keep the bar tight: at most 2 edits, and must be cheaper than the name's length.
-  if (best.dist <= 2 && best.dist < name.length) return best.name;
-  return null;
-}
-
-function levenshtein(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  const prev = new Array<number>(n + 1);
-  const curr = new Array<number>(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= n; j++) prev[j] = curr[j];
-  }
-  return prev[n];
+  return closestNameTo(name, Object.keys(STAGES));
 }
 
 function formatStageList(): string {
