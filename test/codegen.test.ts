@@ -173,6 +173,14 @@ describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   });
 });
 
+describe("regex literal in standalone position", () => {
+  it("rejects /pattern/ as a binary operand with a clear error", () => {
+    expect(() => mjsql("$.x == /foo/")).toThrow(
+      /Regex literals are only valid as arguments to \.match\(\)/,
+    );
+  });
+});
+
 describe("zero-arg operators", () => {
   it("$rand", () => {
     expect(mjsql("$rand()")).toEqual({ $rand: {} });

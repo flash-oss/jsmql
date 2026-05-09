@@ -228,8 +228,15 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     }
 
     case "RegexLiteral":
-      // Used directly in .match(); as a standalone value just return the pattern string
-      return expr.pattern;
+      // Method dispatch (e.g. `.match(/foo/)`, `/foo/.test(s)`) handles regex
+      // arguments and receivers directly, reading pattern + flags from the AST
+      // node before recursion. If we land here, the regex showed up in some
+      // other position (binary operand, ternary branch, $op argument value)
+      // where MQL has no concept of a regex value — silently returning the
+      // pattern string would lose the flags and surprise the user.
+      throw new CodegenError(
+        `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+      );
 
     case "ParamRef": {
       if (ctx.reduceRemap?.has(expr.name)) {
