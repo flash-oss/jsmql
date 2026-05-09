@@ -137,6 +137,40 @@ describe("object-shape operators (positional → object mapping)", () => {
       $getField: { field: "fieldName", input: "$doc" },
     });
   });
+
+  it("$switch object-style with branches/default", () => {
+    expect(
+      mjsql(
+        '$switch({ branches: [{ case: $eq($.tier, "gold"), then: 0.2 }, { case: $eq($.tier, "silver"), then: 0.1 }], default: 0 })',
+      ),
+    ).toEqual({
+      $switch: {
+        branches: [
+          { case: { $eq: ["$tier", "gold"] }, then: 0.2 },
+          { case: { $eq: ["$tier", "silver"] }, then: 0.1 },
+        ],
+        default: 0,
+      },
+    });
+  });
+
+  it("$dateTrunc positional (date, unit)", () => {
+    expect(mjsql('$dateTrunc($.createdAt, "day")')).toEqual({
+      $dateTrunc: { date: "$createdAt", unit: "day" },
+    });
+  });
+
+  it("$dateFromString single-arg positional", () => {
+    expect(mjsql("$dateFromString($.dateString)")).toEqual({
+      $dateFromString: { dateString: "$dateString" },
+    });
+  });
+});
+
+describe("escape-hatch operators (single-arg, expression-shaped)", () => {
+  it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
+    expect(mjsql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
+  });
 });
 
 describe("zero-arg operators", () => {
