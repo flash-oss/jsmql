@@ -11,7 +11,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "docs/LANGUAGE.md"],
+  "files": ["src/**.ts", "test/realistic.test.ts", "dist", "README.md", "docs/LANGUAGE.md"],
   "engines": {
     "node": ">=24"
   },
