@@ -193,6 +193,28 @@ describe("mutations: realistic mixed (user-supplied)", () => {
       { $set: { status: "complete" } },
     ]);
   });
+
+  it("three-stage coalescing across kind boundaries: $set → $unset → $set", () => {
+    // Assignments coalesce into one $set; the kind change at `delete` opens a
+    // new $unset stage (two paths → array form); the kind change back to
+    // assignment opens the final $set.
+    expect(
+      mjsql(
+        "$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, " +
+          "delete $.tempToken, delete $._processingState, " +
+          "$.status = 'complete'",
+      ),
+    ).toEqual([
+      {
+        $set: {
+          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
+          invoiceCount: { $add: ["$invoiceCount", 1] },
+        },
+      },
+      { $unset: ["tempToken", "_processingState"] },
+      { $set: { status: "complete" } },
+    ]);
+  });
 });
 
 describe("mutations: in pipelines", () => {

@@ -979,22 +979,30 @@ describe("pipeline: count orders by status per shop ($accumulator replacement)",
   });
 });
 
-describe("e-commerce: post-purchase document touch-up (mutations)", () => {
-  // Compute a derived field, bump a counter, drop a transient flag, then
-  // stamp a status — using JS-natural mutation syntax instead of hand-rolling
-  // $set / $unset stages. Independent assignments coalesce into one $set;
-  // the kind change at `delete` opens a new $unset stage; another kind change
-  // back to assignment opens the final $set.
-  it("compiles a mixed assignment + delete + status update sequence", () => {
+describe("e-commerce: invoice finalisation pipeline (mutations + $match)", () => {
+  // Read pipeline that selects pending paid invoices, derives a line total and
+  // bumps a counter, drops transient processing state, then stamps the final
+  // status. Demonstrates mutations interleaved with traditional pipeline stages
+  // — the $match boundary flushes any pending mutation buffer, and the run
+  // after $match coalesces by kind / read-after-write rules into three stages.
+  it("compiles match → mutate → mutate → mutate to a four-stage pipeline", () => {
     expect(
-      mjsql(`
-        $.lineTotal = $.qty * $.unitPrice;
-        $.invoiceCount += 1;
-        delete $.tempToken;
-        delete $._processingState;
+      mjsql(`[
+        $match($.status === 'pending' && $.paidAt != null),
+        $.lineTotal = $.qty * $.unitPrice,
+        $.invoiceCount += 1,
+        delete $.tempToken,
+        delete $._processingState,
         $.status = 'complete'
-      `),
+      ]`),
     ).toEqual([
+      {
+        $match: {
+          $expr: {
+            $and: [{ $eq: ["$status", "pending"] }, { $ne: ["$paidAt", null] }],
+          },
+        },
+      },
       {
         $set: {
           lineTotal: { $multiply: ["$qty", "$unitPrice"] },
