@@ -1065,7 +1065,7 @@ function generateMethodCall(
       return { $sortArray: { input: genObj, sortBy: 1 } };
     }
     case "findLast": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $arrayElemAt: [
@@ -1081,7 +1081,7 @@ function generateMethodCall(
       };
     }
     case "findLastIndex": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLastIndex"), "findLastIndex", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "findLastIndex"), "findLastIndex");
       const bodyCtx = extendCtx(ctx, lambda.params);
       const param = lambda.params[0];
       // Reduce over [(index, element), ...] pairs, keeping the largest index where
@@ -1177,7 +1177,7 @@ function generateMethodCall(
       };
     }
     case "flatMap": {
-      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $reduce: {
@@ -1196,7 +1196,7 @@ function generateMethodCall(
 
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
-      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "map"), "map");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $map: {
@@ -1207,7 +1207,7 @@ function generateMethodCall(
       };
     }
     case "filter": {
-      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $filter: {
@@ -1218,7 +1218,7 @@ function generateMethodCall(
       };
     }
     case "find": {
-      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "find"), "find");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $arrayElemAt: [
@@ -1234,7 +1234,7 @@ function generateMethodCall(
       };
     }
     case "some": {
-      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "some"), "some");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $anyElementTrue: {
@@ -1247,7 +1247,7 @@ function generateMethodCall(
       };
     }
     case "every": {
-      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", 1);
+      const lambda = requireLambda(exprArgsOnly(args, "every"), "every");
       const bodyCtx = extendCtx(ctx, lambda.params);
       return {
         $allElementsTrue: {
@@ -1264,7 +1264,7 @@ function generateMethodCall(
       if (exprArgs.length !== 2) {
         throw new CodegenError(`.reduce() requires exactly 2 arguments (lambda, initialValue)`);
       }
-      const lambda = requireLambda(exprArgs, "reduce", 2);
+      const lambda = requireLambda(exprArgs, "reduce");
       if (lambda.params.length !== 2) {
         throw new CodegenError(
           `.reduce() lambda must have exactly 2 parameters (accumulator, element)`,
@@ -1334,7 +1334,6 @@ function exprArgsOnly(args: CallArg[], method: string): Expr[] {
 function requireLambda(
   args: Expr[],
   method: string,
-  _minParams: number,
 ): { type: "Lambda"; params: string[]; body: Expr } {
   const first = args[0];
   if (!first || first.type !== "Lambda") {
