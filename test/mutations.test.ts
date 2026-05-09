@@ -255,6 +255,36 @@ describe("mutations: in pipelines", () => {
   });
 });
 
+describe("mutations: parenthesized form (formatter-friendly)", () => {
+  // Formatters (oxfmt, prettier) wrap assignment expressions in parens when
+  // they appear in array element position. The parser unwraps these so the
+  // function-input form `mjsql(($) => [($.a = 1)])` produces the same output
+  // as the bare `mjsql("[$.a = 1]")`.
+
+  it("parens around an assignment at the top level work", () => {
+    expect(mjsql("($.a = 5)")).toEqual({ $set: { a: 5 } });
+  });
+
+  it("parens around a compound assignment work", () => {
+    expect(mjsql("($.x += 1)")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+  });
+
+  it("parens around assignments as pipeline elements coalesce normally", () => {
+    expect(mjsql("[$match($.active), ($.a = 1), ($.b = 2), $sort({c: 1})]")).toEqual([
+      { $match: { $expr: "$active" } },
+      { $set: { a: 1, b: 2 } },
+      { $sort: { c: 1 } },
+    ]);
+  });
+
+  it("parens around assignments mixed with bare assignments work", () => {
+    expect(mjsql("[$match($.active), ($.a = 1), $.b = 2]")).toEqual([
+      { $match: { $expr: "$active" } },
+      { $set: { a: 1, b: 2 } },
+    ]);
+  });
+});
+
 describe("mutations: validation errors", () => {
   it("rejects bare identifier as target", () => {
     const result = validate("x = 5");
@@ -296,9 +326,17 @@ describe("mutations: validation errors", () => {
   });
 
   it("rejects mutation inside parenthesized expression context", () => {
-    // ($.a = 1) + 2 — assignment used as a value
+    // ($.a = 1) + 2 — assignment used as a value (codegen-level rejection
+    // since parseGrouped now accepts the parens-form syntactically)
     const result = validate("($.a = 1) + 2");
     expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/statement, not a value/i);
+  });
+
+  it("rejects chained assignment inside parens", () => {
+    const result = validate("($.a = $.b = 5)");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/chained assignment inside parentheses/i);
   });
 });
 

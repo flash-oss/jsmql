@@ -124,6 +124,15 @@ export class Parser {
       return this.parseMutationProgramFrom(expr);
     }
 
+    // `parseExpression` may have surfaced an `AssignExpr` from a parenthesized
+    // top-level assignment (`($.a = 5)`) via parseGrouped's handling. Wrap it
+    // in a MutationProgram so codegen routes through the mutation path.
+    if ((expr as unknown as { type: string }).type === "AssignExpr") {
+      const mutations: Mutation[] = [expr as unknown as AssignExpr];
+      this.parseMutationProgramRest(mutations);
+      return { type: "MutationProgram", mutations };
+    }
+
     const eof = this.lexer.peek();
     if (eof.type !== TokenType.EOF) {
       throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
@@ -742,6 +751,27 @@ export class Parser {
       expr = this.parseLambdaUnparen();
     } else {
       expr = this.parseExpression();
+      // `($.x = expr)` — parenthesized assignment. JS-syntax-equivalent to
+      // a bare `$.x = expr`; matters because formatters (oxfmt, prettier)
+      // wrap assignment expressions in parens when they appear in array
+      // element position. Parse the assignment here so the function-input
+      // form `mjsql(($) => [($.a = 1)])` works the same as the bare form.
+      // The result is an AssignExpr; we surface it as an `Expr` and let
+      // contextual handling in parseArrayLiteral / parse() / _generate
+      // route it appropriately. Plain expression contexts (e.g. `1 + (a=2)`)
+      // bubble it up to codegen which throws a precise error.
+      if (this.peekAssignOp() !== null) {
+        this.validateMutationTarget(expr);
+        const chain = this.parseAssignmentChainFrom(expr);
+        if (chain.length !== 1) {
+          const tok = this.lexer.peek();
+          throw new ParseError(
+            `Chained assignment inside parentheses is not supported at position ${tok.pos}`,
+            tok.pos,
+          );
+        }
+        expr = chain[0] as unknown as Expr;
+      }
     }
     const close = this.lexer.peek();
     if (close.type !== TokenType.RParen) {

@@ -66,6 +66,16 @@ For `$.a += rhs`, the parser emits:
 
 The `<$.a>` node is shared between `target` and `value.left` — the AST is immutable at codegen time, so sharing is safe. Compound `+`'s string-vs-number disambiguation (`$concat` vs `$add`) falls out of the existing `BinaryExpr +` codegen for free.
 
+### Parenthesized assignments
+
+Formatters wrap assignment expressions in parens when they appear in array element position (`[($.a = 5)]`). Without parser support, `mjsql(($) => [($.a = 5)])` would fail outside Vite/Vitest's transform (which silently strips the parens). To match user expectations, `parseGrouped` recognises an assignment-op after the inner expression: it parses the assignment chain inside the parens, validates the target, and returns the resulting `AssignExpr` cast as `Expr` (one localised type assertion). Single chains only — `($.a = $.b = 5)` is rejected with a precise error.
+
+Downstream:
+
+- **Top level**: `parse()` checks for `expr.type === "AssignExpr"` after `parseExpression` returns and wraps it in a `MutationProgram`. So `mjsql("($.a = 5)")` works identically to `mjsql("$.a = 5")`.
+- **Pipeline element**: `parseArrayLiteral` already pushes whatever `parseExpression` returns; `ArrayElement` allows `AssignExpr`; `pipeline.ts` `isStageCandidate` returns true for it; the coalescer takes over.
+- **Inside a real expression** (e.g. `1 + ($.a = 5)`): the AssignExpr bubbles through the cascade and eventually reaches `_generateBody`. A defensive check at the top of that function throws `CodegenError("Assignment is a statement, not a value …")` with a clear, actionable message.
+
 ## Codegen
 
 `src/codegen.ts` exports two mutation entry points:

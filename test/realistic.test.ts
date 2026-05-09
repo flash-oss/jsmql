@@ -985,17 +985,30 @@ describe("e-commerce: invoice finalisation pipeline (mutations + $match)", () =>
   // status. Demonstrates mutations interleaved with traditional pipeline stages
   // — the $match boundary flushes any pending mutation buffer, and the run
   // after $match coalesces by kind / read-after-write rules into three stages.
+  // Exercised in both forms: the string body and the function-input adapter
+  // must produce identical output. The function form's parens around the
+  // assignment expressions are added by the formatter and are accepted
+  // transparently by the parser — see docs/specs/mutations.md.
   it("compiles match → mutate → mutate → mutate to a four-stage pipeline", () => {
-    expect(
-      mjsql(`[
-        $match($.status === 'pending' && $.paidAt != null),
-        $.lineTotal = $.qty * $.unitPrice,
-        $.invoiceCount += 1,
-        delete $.tempToken,
-        delete $._processingState,
-        $.status = 'complete'
-      ]`),
-    ).toEqual([
+    const result1 = mjsql(`[
+      $match($.status === 'pending' && $.paidAt != null),
+      $.lineTotal = $.qty * $.unitPrice,
+      $.invoiceCount += 1,
+      delete $.tempToken,
+      delete $._processingState,
+      $.status = 'complete'
+    ]`);
+    const result2 = mjsql(($, { $match }) => [
+      $match($.status === "pending" && $.paidAt != null),
+      ($.lineTotal = $.qty * $.unitPrice),
+      ($.invoiceCount += 1),
+      delete $.tempToken,
+      delete $._processingState,
+      ($.status = "complete"),
+    ]);
+    expect(result1).toEqual(result2);
+
+    expect(result1).toEqual([
       {
         $match: {
           $expr: {

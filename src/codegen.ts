@@ -188,6 +188,17 @@ function _generate(expr: Expr, ctx: GenerateCtx): unknown {
 }
 
 function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
+  // Defensive: parseGrouped may surface an AssignExpr through this path when
+  // it sees `($.x = expr)` — a parenthesized assignment. AssignExpr is not in
+  // the Expr union, but the cast in parseGrouped lets it flow here. Reject
+  // with a clear message so users debugging `1 + ($.a = 5)` see what's wrong.
+  const dynType = (expr as unknown as { type: string }).type;
+  if (dynType === "AssignExpr" || dynType === "DeleteStmt") {
+    throw new CodegenError(
+      `${dynType === "AssignExpr" ? "Assignment" : "delete"} is a statement, not a value. ` +
+        `It is only valid at the top level or as a pipeline-array element.`,
+    );
+  }
   switch (expr.type) {
     case "NumberLiteral":
       return expr.value;
