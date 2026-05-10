@@ -32,10 +32,11 @@ Every expression mjsql accepts must be valid JavaScript syntax. The pitch is "JS
 ## Commands
 
 ```sh
-npm install       # install pinned versions from package.json (do this once)
-npm test          # run all tests (vitest)
-npm run format    # format all files with oxfmt (always run before committing)
-npm run build     # tsc → dist/
+npm install        # install pinned versions from package.json (do this once)
+npm test           # run all tests (vitest), including the strippable-TS smoke
+npm run format     # format all files with oxfmt (always run before committing)
+npm run build      # tsc → dist/
+npm run smoke:dist # build, then run the dist-import smoke test
 
 # Run a single test file or a named test during development:
 node_modules/.bin/vitest run test/codegen.test.ts
@@ -60,8 +61,9 @@ docs/
   LANGUAGE.md     User-facing language reference
   specs/          Implementation specs (see docs/CLAUDE.md)
 test/
-  codegen.test.ts Unit tests, one case per feature
+  codegen.test.ts    Unit tests, one case per feature
   realistic.test.ts  Full-feature integration tests (referenced from README)
+  smoke.test.ts      Strippable-TS and built-dist invariants (spawn-based)
 ```
 
 ## Rules
@@ -104,4 +106,4 @@ Strict mode stays on. No `any` without a comment explaining why it is unavoidabl
 - **Semver** — `mjsql()` and `validate()` return shapes and `mql` behaviour are the public contract. Once we are at `1.0`, any change to those shapes is a breaking change.
 - **The `mql` template tag is first-class**, not a convenience wrapper. DX around it (good errors, correct interpolation) matters as much as `mjsql()` itself.
 - **The operator registry is the single source of truth.** Never add special-case operator handling inside the parser or codegen — it all goes through `src/operators.ts`.
-- **`src/` stays in TypeScript's strippable subset** so the source runs as-is on Node 24+ (native type-stripping, no flag), Deno, and Bun. The full list of banned constructs and the rationale live in [`src/CLAUDE.md`](src/CLAUDE.md). Test the invariant with `node src/index.ts` — it must run without errors.
+- **`src/` stays in TypeScript's strippable subset** so the source runs as-is on Node 24+ (native type-stripping, no flag), Deno, and Bun. The full list of banned constructs and the rationale live in [`src/CLAUDE.md`](src/CLAUDE.md). The invariant is locked down by `test/smoke.test.ts`, which `npm test` runs on every change. Pair with `npm run smoke:dist` after a build to verify the published bundle still imports.

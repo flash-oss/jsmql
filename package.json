@@ -20,6 +20,7 @@
     "pretest": "node vendor/fetch-mql-specs.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:dist": "npm run build && vitest run test/smoke.test.ts",
     "format": "oxfmt ."
   },
   "devDependencies": {
