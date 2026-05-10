@@ -16,6 +16,8 @@ import type {
   DeleteStmt,
   Mutation,
   MutationProgram,
+  Pipeline,
+  PipelineStmt,
   Program,
 } from "./ast.ts";
 
@@ -25,6 +27,21 @@ export class ParseError extends Error {
     super(message);
     this.name = "ParseError";
     this.pos = pos;
+  }
+}
+
+/**
+ * Raised by `Parser.parseFunctionInput()` when the source given to
+ * `mjsql(($) => …)` is not a valid arrow function shape — `async`
+ * arrows, `function` declarations, missing arrow operator, unbalanced
+ * params, `return` inside a block body, etc. Distinct from `ParseError`
+ * because the failure is in the function-shape adapter, not in mjsql's
+ * own grammar; `validate()` maps both to `SYNTAX_ERROR`.
+ */
+export class FunctionInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FunctionInputError";
   }
 }
 
@@ -104,12 +121,199 @@ export class Parser {
   }
 
   parse(): Program {
+    // Top-level grammar:
+    //   program := stmt (";" stmt)* ";"?
+    // where each `stmt` is either an expression or a mutation chain (one or
+    // more comma-separated mutations). Any presence of `;` — including a
+    // single trailing one — flips the input to pipeline mode (`Pipeline`),
+    // and each `;`-separated chunk becomes its own stage(s) in the lowerer
+    // with no cross-coalescing. Without any `;`, behaviour is unchanged:
+    // the single statement is returned as `Expr` or `MutationProgram`.
+    const stmts: PipelineStmt[] = [this.collectStatement()];
+    let sawSemi = false;
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next(); // consume `;`
+      sawSemi = true;
+      if (this.lexer.peek().type === TokenType.EOF) break; // trailing `;`
+      stmts.push(this.collectStatement());
+    }
+
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
+    }
+
+    if (!sawSemi) return stmts[0];
+    return { type: "Pipeline", stmts };
+  }
+
+  /**
+   * Entry point for the function-input form (`mjsql(($) => …)`). The source
+   * is the result of `Function.prototype.toString.call(fn)` — a full arrow
+   * function expression. We consume the parameter list and `=>`, then dispatch
+   * to either a block-body parser (`{ stmt; stmt; }`, the function-form mirror
+   * of the implicit `;`-separated pipeline) or an expression-body parser (a
+   * single mjsql expression / mutation, with one optional trailing `;` allowed
+   * as a formatter artifact — single-statement bodies do NOT flip into pipeline
+   * mode here).
+   *
+   * Raises `FunctionInputError` for shape problems specific to the adapter
+   * (`async`, `function`, missing arrow, `return` in a block body, …) and
+   * `ParseError`/`LexError` for grammar problems inside the body itself.
+   */
+  parseFunctionInput(): Program {
+    const first = this.lexer.peek();
+    if (first.type === TokenType.Ident && first.value === "async") {
+      throw new FunctionInputError(
+        "mjsql does not support async functions. Use a synchronous arrow: `($) => …`",
+      );
+    }
+    if (first.type === TokenType.Ident && first.value === "function") {
+      throw new FunctionInputError(
+        "mjsql expects an arrow function, got a `function` declaration. Use: `($) => …`",
+      );
+    }
+    if (first.type !== TokenType.LParen) {
+      throw new FunctionInputError(
+        "mjsql expects an arrow function `($) => …` as the function-form input.",
+      );
+    }
+    this.skipParameterList();
+
+    const arrowTok = this.lexer.peek();
+    if (arrowTok.type !== TokenType.Arrow) {
+      throw new FunctionInputError(
+        "mjsql could not find an arrow operator (`=>`) in the function source. Use: `($) => …`",
+      );
+    }
+    this.lexer.next(); // consume `=>`
+
+    if (this.lexer.peek().type === TokenType.LBrace) {
+      return this.parseBlockBody();
+    }
+    return this.parseExpressionBody();
+  }
+
+  /**
+   * Skip the parenthesised parameter list of the function-form arrow. We
+   * never inspect the params (they are types-only — see docs/LANGUAGE.md
+   * § Function Form), so we just balance-count parens and discard tokens.
+   * Cursor is left immediately after the matching `)`.
+   */
+  private skipParameterList(): void {
+    this.lexer.next(); // consume opening `(`
+    let depth = 1;
+    while (depth > 0) {
+      const tok = this.lexer.next();
+      if (tok.type === TokenType.EOF) {
+        throw new FunctionInputError(
+          "mjsql could not parse the function parameter list — unbalanced parentheses",
+        );
+      }
+      if (tok.type === TokenType.LParen) depth++;
+      else if (tok.type === TokenType.RParen) depth--;
+    }
+  }
+
+  /**
+   * Parse the body of a block-body arrow: `{ stmt (; stmt)* ;? }`. This is
+   * structurally the same as the top-level `;`-separated pipeline form
+   * (see `parse()`), terminated by `}` instead of EOF. A single-statement
+   * block body without `;` returns the underlying `Expr`/`MutationProgram`
+   * unchanged; any `;` (including a trailing one) wraps as a `Pipeline`.
+   *
+   * `return` is rejected up front with a precise `FunctionInputError` so the
+   * user gets a clear pointer to either the `;`-separated form or an
+   * expression-body arrow, instead of the parser's generic "unknown
+   * identifier" message.
+   */
+  private parseBlockBody(): Program {
+    this.lexer.next(); // consume `{`
+
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      throw new FunctionInputError(
+        "mjsql expects at least one statement inside a block-body arrow.",
+      );
+    }
+
+    this.rejectReturn();
+    const stmts: PipelineStmt[] = [this.collectStatement()];
+    let sawSemi = false;
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+      sawSemi = true;
+      if (this.lexer.peek().type === TokenType.RBrace) break;
+      this.rejectReturn();
+      stmts.push(this.collectStatement());
+    }
+
+    const closeTok = this.lexer.peek();
+    if (closeTok.type !== TokenType.RBrace) {
+      throw new ParseError(
+        `Expected '}' to close the block body at position ${closeTok.pos}`,
+        closeTok.pos,
+      );
+    }
+    this.lexer.next();
+
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+
+    if (!sawSemi) return stmts[0];
+    return { type: "Pipeline", stmts };
+  }
+
+  /**
+   * Parse the body of an expression-body arrow: a single mjsql statement,
+   * with one optional trailing `;` consumed as a formatter artifact. The
+   * trailing `;` does NOT trigger pipeline mode here — single-statement
+   * expression bodies preserve their object-shaped output, matching the
+   * documented contract for `mjsql(($) => …)`.
+   */
+  private parseExpressionBody(): Program {
+    const stmt = this.collectStatement();
+    if (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+    }
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+    return stmt;
+  }
+
+  /**
+   * Throw a precise `FunctionInputError` if the next token is the bare
+   * identifier `return`. Called at every statement-start position inside
+   * a block body, so a `return` token *inside* a string or expression
+   * (where it would just be a property name like `obj.return`) doesn't
+   * false-fire — only true statement-leading `return`s reach this check.
+   */
+  private rejectReturn(): void {
+    const tok = this.lexer.peek();
+    if (tok.type === TokenType.Ident && tok.value === "return") {
+      throw new FunctionInputError(
+        "mjsql block-body arrows are a sequence of mjsql statements, not JavaScript control flow. " +
+          "Remove `return` — write the body as `;`-separated mjsql statements, or switch to an " +
+          "expression-body arrow `($) => EXPR`.",
+      );
+    }
+  }
+
+  /**
+   * Parse one top-level statement: either an expression or a mutation chain
+   * (one or more comma-separated mutations sharing a stage). Stops at the
+   * first `;` or EOF; the caller (`parse()`) handles the `;` boundary.
+   */
+  private collectStatement(): PipelineStmt {
     const first = this.lexer.peek();
 
     // Tokens that can ONLY start a mutation program: `delete`, `++`, `--`.
-    // Their presence at position 0 unambiguously commits us to mutation
-    // parsing. Other mutation forms (=, +=, x++, …) reveal themselves only
-    // after a target expression has been parsed — handled below.
+    // Their presence at the start of a statement unambiguously commits us
+    // to mutation parsing. Other mutation forms (=, +=, x++, …) reveal
+    // themselves only after a target expression has been parsed — below.
     if (
       first.type === TokenType.Delete ||
       first.type === TokenType.PlusPlus ||
@@ -122,31 +326,28 @@ export class Parser {
     const expr = this.parseExpression();
 
     // If an assignment operator follows, the expression we just parsed was
-    // actually a mutation target — treat the whole input as a mutation program.
+    // actually a mutation target — treat the rest of the statement as a
+    // mutation chain.
     if (this.peekAssignOp() !== null) {
       this.validateMutationTarget(expr);
       return this.parseMutationProgramFrom(expr);
     }
 
-    // Postfix `x++` / `x--` — same dispatch as a leading assignment operator.
+    // Postfix `x++` / `x--`.
     if (this.peekIncDecOp() !== null) {
       this.validateMutationTarget(expr);
       return this.parseMutationProgramFromPostfix(expr);
     }
 
     // `parseExpression` may have surfaced an `AssignExpr` from a parenthesized
-    // top-level assignment (`($.a = 5)`) via parseGrouped's handling. Wrap it
-    // in a MutationProgram so codegen routes through the mutation path.
+    // top-level assignment (`($.a = 5)`). Wrap it in a MutationProgram so
+    // codegen routes through the mutation path.
     if ((expr as unknown as { type: string }).type === "AssignExpr") {
       const mutations: Mutation[] = [expr as unknown as AssignExpr];
       this.parseMutationProgramRest(mutations);
       return { type: "MutationProgram", mutations };
     }
 
-    const eof = this.lexer.peek();
-    if (eof.type !== TokenType.EOF) {
-      throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
-    }
     return expr;
   }
 
@@ -184,17 +385,17 @@ export class Parser {
     return { type: "MutationProgram", mutations };
   }
 
-  /** After the first mutation is parsed, consume any `;`/`,`-separated tail. */
+  /**
+   * After the first mutation is parsed, consume any `,`-separated tail.
+   * Stops at the first non-`,` token (typically `;` or EOF) and leaves
+   * the cursor there for the caller to handle.
+   */
   private parseMutationProgramRest(mutations: Mutation[]): void {
-    for (;;) {
-      if (!this.peekMutationSeparator()) break;
-      this.lexer.next(); // consume `;` or `,`
-      if (this.lexer.peek().type === TokenType.EOF) break; // trailing separator
+    while (this.peekMutationSeparator()) {
+      this.lexer.next(); // consume `,`
+      const next = this.lexer.peek().type;
+      if (next === TokenType.EOF || next === TokenType.Semi) break; // trailing separator
       mutations.push(...this.parseMutation());
-    }
-    const tok = this.lexer.peek();
-    if (tok.type !== TokenType.EOF) {
-      throw new ParseError(`Unexpected token '${tok.value}' at position ${tok.pos}`, tok.pos);
     }
   }
 
@@ -306,8 +507,7 @@ export class Parser {
   }
 
   private peekMutationSeparator(): boolean {
-    const t = this.lexer.peek().type;
-    return t === TokenType.Semi || t === TokenType.Comma;
+    return this.lexer.peek().type === TokenType.Comma;
   }
 
   /**

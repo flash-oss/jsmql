@@ -1,12 +1,17 @@
-import { Parser, ParseError } from "./parser.ts";
+import { Parser, ParseError, FunctionInputError } from "./parser.ts";
 import {
   generate,
   generateMutationProgram,
   CodegenError,
   UnknownIdentifierError,
 } from "./codegen.ts";
-import { isPipelineAst, generatePipeline } from "./pipeline.ts";
+import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
 import { LexError } from "./lexer.ts";
+import type { Program } from "./ast.ts";
+
+// Re-exported so users can `import { FunctionInputError } from "mjsql"` even
+// though the class itself lives in parser.ts (where it is thrown).
+export { FunctionInputError };
 
 export type ValidationError = {
   message: string;
@@ -18,13 +23,6 @@ export type ValidationResult = {
   valid: boolean;
   errors: ValidationError[];
 };
-
-export class FunctionInputError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FunctionInputError";
-  }
-}
 
 // Raised by the `mql` template tag when an interpolated value cannot be safely
 // embedded as a JSON literal. Covers the three cases JSON.stringify mishandles:
@@ -95,19 +93,19 @@ function cacheSet(body: string, compiled: MjsqlOutput): void {
 
 export function mjsql(input: MjsqlInput): MjsqlOutput {
   if (typeof input === "function") {
-    const body = extractArrowBody(input);
-    const cached = cacheGet(body);
+    const src = Function.prototype.toString.call(input).trim();
+    const cached = cacheGet(src);
     if (cached !== undefined) return cached;
     let compiled: MjsqlOutput;
     try {
-      compiled = compile(body);
+      compiled = lower(new Parser(src).parseFunctionInput());
     } catch (err) {
       throw augmentForFunctionInput(err);
     }
-    cacheSet(body, compiled);
+    cacheSet(src, compiled);
     return compiled;
   }
-  return compile(input);
+  return lower(new Parser(input).parse());
 }
 
 export function validate(input: MjsqlInput): ValidationResult {
@@ -199,48 +197,16 @@ function stringifyInterpolation(value: unknown, slot: number): string {
   return json;
 }
 
-function compile(expression: string): MjsqlOutput {
-  const parser = new Parser(expression);
-  const ast = parser.parse();
+/**
+ * Lower a parsed `Program` to its MQL output. Centralised so the string-input
+ * path (`Parser.parse()`) and the function-input path
+ * (`Parser.parseFunctionInput()`) share the same dispatch.
+ */
+function lower(ast: Program): MjsqlOutput {
+  if (ast.type === "Pipeline") return generateImplicitPipeline(ast);
   if (ast.type === "MutationProgram") return generateMutationProgram(ast);
   if (isPipelineAst(ast)) return generatePipeline(ast);
   return generate(ast) as object;
-}
-
-// ── Function-input extraction ─────────────────────────────────────────────
-
-function extractArrowBody(fn: (...args: any[]) => unknown): string {
-  const src = Function.prototype.toString.call(fn).trim();
-
-  if (/^async\b/.test(src)) {
-    throw new FunctionInputError(
-      "mjsql does not support async functions. Use a synchronous arrow: `($) => …`",
-    );
-  }
-  if (/^function\b/.test(src)) {
-    throw new FunctionInputError(
-      "mjsql expects an arrow function, got a `function` declaration. Use: `($) => …`",
-    );
-  }
-
-  const arrowIdx = src.indexOf("=>");
-  if (arrowIdx < 0) {
-    throw new FunctionInputError(
-      `mjsql could not find an arrow operator in the function source. Use: \`($) => …\``,
-    );
-  }
-
-  let body = src.slice(arrowIdx + 2).trim();
-
-  if (body.startsWith("{")) {
-    throw new FunctionInputError(
-      "mjsql expects an expression-body arrow function, not a block body. " +
-        "Use `($) => EXPR`, not `($) => { return EXPR; }`",
-    );
-  }
-
-  while (body.endsWith(";")) body = body.slice(0, -1).trimEnd();
-  return body;
 }
 
 function augmentForFunctionInput(err: unknown): unknown {

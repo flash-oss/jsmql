@@ -10,6 +10,61 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — refactor: function-input parsing lives in `parser.ts`
+
+Same observable behaviour as the previous block-body-arrow entry; this is a code-organization fix. The earlier landing did the arrow-source work as string slicing + a regex `return` check inside `extractArrowBody` in `src/index.ts`. That belongs in the parser: arrow function syntax is grammar, not a runtime adapter concern, and the regex was fragile (it false-matched `return` inside string literals).
+
+`src/parser.ts` now owns it:
+
+- `Parser.parseFunctionInput()` — public entry called by `mjsql()` for the function-form input. Consumes the parameter list (balance-counted, discarded — params are types-only), the `=>`, then dispatches to a block-body or expression-body parser.
+- `parseBlockBody()` — structurally identical to the top-level `;`-loop in `parse()`, terminated by `}` instead of EOF. Same coalescing rules as the implicit `;`-separated pipeline.
+- `parseExpressionBody()` — single statement with one optional trailing `;`, which is consumed silently (formatter artifact) and does NOT flip into pipeline mode. Single-statement expression-body arrows preserve their object-shaped output as before.
+- `rejectReturn()` — token-aware check at every statement-start position inside a block body. Throws a precise `FunctionInputError` when it sees the bare identifier `return`, so a `return` token *inside* a string or as `obj.return` no longer false-fires.
+
+`FunctionInputError` moved from `src/index.ts` to `src/parser.ts` (re-exported from `index.ts` so the public import path is unchanged). `extractArrowBody` and the regex are gone; `src/index.ts` is now a thin wrapper that calls the right `Parser` entry point and lowers the resulting `Program` through a shared `lower()` helper.
+
+No test count change (still 669) — error messages match the prior shape, the `expression-body arrow` test in `codegen.test.ts` was renamed to "rejects `return` inside a block-body arrow" to match what it actually checks now.
+
+---
+
+## 2026-05-10 — Block-body arrows for the function-input form
+
+The `mjsql(($) => …)` adapter now accepts block-body arrows alongside expression bodies. The body inside `{ … }` is a sequence of mjsql statements separated by `;` — the function-form mirror of the implicit-pipeline string syntax shipped earlier today. This lets users author multi-stage pipelines as plain JS that prettier and oxfmt indent and line-break for free, without any `[…]` ceremony:
+
+```js
+mjsql(($, { $match }) => {
+  $match($.status === "pending" && $.paidAt != null);
+  ($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1);
+  delete $.tempToken, delete $._processingState;
+  $.status = "complete";
+});
+```
+
+`extractArrowBody` in `src/index.ts` strips the outer braces and passes the inner content unchanged. `;`s are preserved (they are the pipeline-stage separator); the existing trailing-`;` strip is now scoped to expression bodies only — single-statement expression arrows still produce object output.
+
+`return` inside a block body throws a precise `FunctionInputError` rather than the parser's "unknown identifier" message, pointing the user at the `;`-separated form or an expression-body arrow.
+
+**Tests.** Five new cases in `test/implicit-pipeline.test.ts` covering block-body arrows (multi-statement, comma-grouped chunks, single-statement, `return` rejection, and the expression-body trailing-`;` regression). One new realistic case in `test/realistic.test.ts` showing the block-body form compiling identically to the string form for the invoice-finalisation pipeline. Total 663 → 669.
+
+---
+
+## 2026-05-10 — Implicit pipelines: `;` is a pipeline-stage separator, `,` is in-stage
+
+`;` and `,` were interchangeable mutation-chain separators. They are not anymore. The new rule:
+
+- `;` is **the** pipeline-stage separator. Any `;` at the top level — including a single trailing `;` — flips `mjsql()` into pipeline mode and returns an array. Each `;`-separated chunk becomes its own stage(s); adjacent mutation statements **never** coalesce across `;`.
+- `,` is the in-stage mutation separator. It still groups mutations into one `$set`/`$unset` stage, with the existing kind / read-after-write splits.
+
+The motivation is DX: short pipelines no longer need `[…]` brackets, and the role of each separator is now unambiguous. `$match($.active); $.score += 1; $sort({score: -1})` reads naturally as three stages and compiles directly without ceremony.
+
+**Breaking change.** Two existing inputs change shape: `$.a = 1;` (trailing `;`) was `{ $set: { a: 1 } }` and is now `[{ $set: { a: 1 } }]`; `$.a = 1; $.b = 2` was `{ $set: { a: 1, b: 2 } }` and is now `[{ $set: { a: 1 } }, { $set: { b: 2 } }]` (two stages, no merge across `;`). Migration is mechanical: replace `;` with `,` to keep the old single-stage shape.
+
+**Implementation.** New `Pipeline` AST node; `Parser.parse()` rewritten as a `;`-separated statement loop calling a factored-out `collectStatement()`; `peekMutationSeparator` no longer recognises `;`; new `generateImplicitPipeline` in `src/pipeline.ts` lowers each `;`-separated statement in isolation (mutation chunks via `generateMutationProgram`, stage expressions via single-element `generatePipeline`). The bracketed `[…]` form is unchanged and still coalesces adjacent mutation elements via `generateMutationGroups` — that is the documented difference between the two pipeline forms.
+
+**Tests.** 21 new cases in `test/implicit-pipeline.test.ts` covering trailing `;`, multi-statement, mixed `;`+`,`, RAW splits inside one chunk, and stage-call errors. One new realistic test in `test/realistic.test.ts` showing the implicit form compiling identically to a hand-written `[…]` pipeline. Existing `test/mutations.test.ts` cases that used `;` as a mutation separator now use `,`. Total goes from 644 to 663.
+
+---
+
 ## 2026-05-10 — Smoke checks codified in `test/smoke.test.ts`
 
 Two invariants that I'd been verifying by hand at the end of every session — `node src/index.ts` (strippable-TS rule) and a post-build ESM import of `dist/index.js` — are now part of the vitest suite. The strippable check spawns the real Node stripper because vitest's Vite-based loader silently accepts the very constructs the rule bans (`enum`, `namespace`, parameter properties, decorators, …); a regex/AST walker would drift from "what Node actually does", so the test runs the canonical command. The dist case uses `it.skipIf(!existsSync(...))` so local `npm test` stays fast and silent; `npm run smoke:dist` builds first and exercises it on demand.

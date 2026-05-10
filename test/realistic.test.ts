@@ -1028,6 +1028,52 @@ describe("e-commerce: invoice finalisation pipeline (mutations + $match)", () =>
   });
 });
 
+describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => {
+  // Same intent as the `[…]`-bracketed pipeline above, but written with the
+  // implicit `;`-separated form. The two writings should compile to the same
+  // MQL, except the implicit form does not coalesce adjacent mutations across
+  // `;`. Inside one `;` chunk, `,` still groups mutations into one stage with
+  // the usual kind / read-after-write splits.
+  it("compiles `;`-separated stages identically to the bracketed form", () => {
+    const bracketed = mjsql(`[
+      $match($.status === 'pending' && $.paidAt != null),
+      $.lineTotal = $.qty * $.unitPrice,
+      $.invoiceCount += 1,
+      delete $.tempToken,
+      delete $._processingState,
+      $.status = 'complete'
+    ]`);
+    const implicit = mjsql(`
+      $match($.status === 'pending' && $.paidAt != null);
+      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
+      delete $.tempToken, delete $._processingState;
+      $.status = 'complete'
+    `);
+    expect(implicit).toEqual(bracketed);
+  });
+
+  // Same intent again, this time as a block-body arrow function. The body
+  // inside `{ … }` is a sequence of mjsql statements separated by `;`, with
+  // `,` keeping the in-stage role for mutations. The `($, { $match })`
+  // destructured second parameter is types-only — it just gives IDEs a place
+  // to hand `$match` to the user without complaining about an unknown name.
+  it("block-body arrow function compiles identically to the string forms", () => {
+    const stringForm = mjsql(`
+      $match($.status === 'pending' && $.paidAt != null);
+      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
+      delete $.tempToken, delete $._processingState;
+      $.status = 'complete'
+    `);
+    const implicitAsFunc = mjsql(($, { $match }) => {
+      $match($.status === "pending" && $.paidAt != null);
+      (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
+      (delete $.tempToken, delete $._processingState);
+      $.status = "complete";
+    });
+    expect(implicitAsFunc).toEqual(stringForm);
+  });
+});
+
 // ── validate() ────────────────────────────────────────────────────────────────
 
 describe("validate(): realistic error cases", () => {

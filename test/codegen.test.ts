@@ -2250,12 +2250,12 @@ describe("function overload", () => {
     expect(mjsql(($) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
   });
 
-  it("rejects a block-body arrow with a clear error", () => {
+  it("rejects `return` inside a block-body arrow with a clear error", () => {
     expect(() =>
       mjsql(($) => {
         return $.age > 18;
       }),
-    ).toThrow(/expression-body arrow/);
+    ).toThrow(/return/);
   });
 
   it("rejects a `function` declaration", () => {

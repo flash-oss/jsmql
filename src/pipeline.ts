@@ -18,8 +18,13 @@
 // expression is wrapped in $expr so the user can write `{ $match: $.age > 18 }`
 // and get `{ $match: { $expr: { $gt: ["$age", 18] } } }`.
 
-import type { Expr, ArrayElement, Mutation } from "./ast.ts";
-import { generate, generateMutationGroups, CodegenError } from "./codegen.ts";
+import type { Expr, ArrayElement, Mutation, Pipeline } from "./ast.ts";
+import {
+  generate,
+  generateMutationGroups,
+  generateMutationProgram,
+  CodegenError,
+} from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 
@@ -127,14 +132,42 @@ export function generatePipeline(ast: Expr): unknown[] {
       return;
     }
     flushMutations();
-    const stage = asStageShape(el);
-    if (!stage) {
-      throw new CodegenError(formatNotAStageError(el, i));
-    }
-    out.push({ [stage.name]: generateStageBody(stage.name, stage.body) });
+    out.push(stageFromElement(el, i));
   });
   flushMutations();
   return out;
+}
+
+/**
+ * Compile a `Pipeline` (a sequence of `;`-separated top-level statements) to
+ * an MQL stage array. Each statement is lowered in isolation: a mutation
+ * chain (`,`-grouped, possibly RAW-split) goes through `generateMutationProgram`
+ * and contributes one or more `$set`/`$unset` stages; an expression must be a
+ * stage call/object and contributes exactly one stage.
+ *
+ * Adjacent mutation statements never coalesce — `;` is a hard boundary, in
+ * contrast to `generatePipeline` (the `[…]` form), where consecutive
+ * mutation elements coalesce through `generateMutationGroups`. This is the
+ * core difference between the two pipeline forms.
+ */
+export function generateImplicitPipeline(p: Pipeline): unknown[] {
+  const out: unknown[] = [];
+  p.stmts.forEach((stmt, i) => {
+    if (stmt.type === "MutationProgram") {
+      const result = generateMutationProgram(stmt);
+      if (Array.isArray(result)) out.push(...result);
+      else out.push(result);
+      return;
+    }
+    out.push(stageFromElement(stmt, i));
+  });
+  return out;
+}
+
+function stageFromElement(el: ArrayElement, index: number): Record<string, unknown> {
+  const stage = asStageShape(el);
+  if (!stage) throw new CodegenError(formatNotAStageError(el, index));
+  return { [stage.name]: generateStageBody(stage.name, stage.body) };
 }
 
 function generateStageBody(stageName: string, body: Expr): unknown {
