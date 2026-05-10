@@ -10,28 +10,6 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-05-10 — Bare type-cast callbacks: `arr.filter(Boolean)` etc.
-
-`Boolean`, `Number`, and `String` can now appear bare (without `(...)`) as the callback to any single-param higher-order array method — `.filter()`, `.map()`, `.find()`, `.findLast()`, `.findLastIndex()`, `.some()`, `.every()`, `.flatMap()`. This is the standard JS shorthand for `x => Boolean(x)` (etc.), and it was the kind of expression any JS developer expects to "just work" — failing it with `Expected LParen` was a violation of both project priorities (strict-JS subset, actionable errors).
-
-Mechanics: the parser distinguishes the call form (`Boolean(x)`) from the bare form by 1-token lookahead in `parsePrimary()` ([src/parser.ts](../src/parser.ts)) and emits a new AST node `TypeCastRef` for the bare case. `requireLambda()` in [src/codegen.ts](../src/codegen.ts) desugars `TypeCastRef { cast }` into a synthetic `Lambda { params: ["v"], body: TypeCast(cast, ParamRef("v")) }` before per-method handlers run, so all eight callback-taking methods support the shorthand from a single change site. Outside callback position the bare form throws an actionable `CodegenError` pointing the user at the call form.
-
-`parseInt` and `parseFloat` are deliberately *not* in the bare-callable set. In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its radix argument — an infamous footgun. mjsql could either replicate the bug or diverge silently from JS runtime semantics; rejecting the bare form forces users to write `x => parseInt(x)` and surfaces the choice. The call form `parseInt(x)` continues to work as before.
-
-`.reduce(Boolean)` falls out automatically: the synthetic lambda has 1 parameter and the existing "exactly 2 parameters" check in `.reduce()` rejects it. Future work: `Math.floor` / `Math.round` etc. as bare callbacks (different AST shape — member access rather than bare ident — so larger change), and a possible parser-level "did you mean `x => parseInt(x)`?" hint when the user writes `parseInt` bare.
-
----
-
-## 2026-05-10 — Browser playground (`playground.html`)
-
-A single-file static playground at the repo root: vertical split with an mjsql input on the left and the compiled MQL JSON live-rendering on the right. Loads the local `dist/index.js` directly via `<script type="module">`, so there is no build step beyond `npm run build` and no bundler. Default expression is the README quick-start (`$.price >= 100 && $.stock > 0`) so first paint shows recognisable output.
-
-The render path uses `validate()` for the structured-error guarantee and only calls `mjsql()` once validation passes — that keeps the textarea handler `try/catch`-free and lets us show the error `code` and `pos` plainly. No debouncing: the parser/codegen run in microseconds and recompiling on every keystroke gives the most responsive feel.
-
-Browsers refuse to load ESM from `file://`, so the page must be served over HTTP — the README pointer mentions `python3 -m http.server` (the project bans `npx`, and that one-liner ships with macOS). Not added to `package.json` `files`: the playground is a contributor/demo tool, not part of the published npm artifact.
-
----
-
 ## 2026-05-10 — `scripts/merge-devlog.mjs`: auto-resolve DEVLOG merge conflicts
 
 Parallel-session work on this project hits the same papercut on every merge: each branch prepends a new entry to `docs/DEVLOG.md`, git can't pick a winner, and a human (or the agent) has to read both sides and stitch them back together. That manual stitch was costing minutes per merge — a tax that scales linearly with the number of in-flight branches.
@@ -41,6 +19,18 @@ Parallel-session work on this project hits the same papercut on every merge: eac
 Deliberately *not* wired as a custom git merge driver via `.gitattributes` + `git config`. Reasons: the postinstall machinery to install the driver across clones/worktrees adds a moving part to setup; a manually-invoked script is one less thing to break, leaves the default git behaviour unchanged for everyone who hasn't opted in, and is honest about *when* the smart merge is happening. The cost is one extra command (`./scripts/merge-devlog.mjs`) per conflict — well below the threshold where automation is worth its setup overhead.
 
 Falls back to a normal manual conflict in the rare cases the structural merge can't decide: diverging edits to the same past entry, deletion of a past entry on one side (the convention is append-only — corrections go in a follow-up entry that links back), or diverging edits to the file header. Unit tests in `test/merge-devlog.test.ts` cover both the auto-merge path and the fall-back conditions.
+
+---
+
+## 2026-05-10 — Bare type-cast callbacks: `arr.filter(Boolean)` etc.
+
+`Boolean`, `Number`, and `String` can now appear bare (without `(...)`) as the callback to any single-param higher-order array method — `.filter()`, `.map()`, `.find()`, `.findLast()`, `.findLastIndex()`, `.some()`, `.every()`, `.flatMap()`. This is the standard JS shorthand for `x => Boolean(x)` (etc.), and it was the kind of expression any JS developer expects to "just work" — failing it with `Expected LParen` was a violation of both project priorities (strict-JS subset, actionable errors).
+
+Mechanics: the parser distinguishes the call form (`Boolean(x)`) from the bare form by 1-token lookahead in `parsePrimary()` ([src/parser.ts](../src/parser.ts)) and emits a new AST node `TypeCastRef` for the bare case. `requireLambda()` in [src/codegen.ts](../src/codegen.ts) desugars `TypeCastRef { cast }` into a synthetic `Lambda { params: ["v"], body: TypeCast(cast, ParamRef("v")) }` before per-method handlers run, so all eight callback-taking methods support the shorthand from a single change site. Outside callback position the bare form throws an actionable `CodegenError` pointing the user at the call form.
+
+`parseInt` and `parseFloat` are deliberately *not* in the bare-callable set. In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its radix argument — an infamous footgun. mjsql could either replicate the bug or diverge silently from JS runtime semantics; rejecting the bare form forces users to write `x => parseInt(x)` and surfaces the choice. The call form `parseInt(x)` continues to work as before.
+
+`.reduce(Boolean)` falls out automatically: the synthetic lambda has 1 parameter and the existing "exactly 2 parameters" check in `.reduce()` rejects it. Future work: `Math.floor` / `Math.round` etc. as bare callbacks (different AST shape — member access rather than bare ident — so larger change), and a possible parser-level "did you mean `x => parseInt(x)`?" hint when the user writes `parseInt` bare.
 
 ---
 
@@ -62,6 +52,16 @@ mjsql(($, { $match }) => {
 `return` inside a block body throws a precise `FunctionInputError` rather than the parser's "unknown identifier" message, pointing the user at the `;`-separated form or an expression-body arrow.
 
 **Tests.** Five new cases in `test/implicit-pipeline.test.ts` covering block-body arrows (multi-statement, comma-grouped chunks, single-statement, `return` rejection, and the expression-body trailing-`;` regression). One new realistic case in `test/realistic.test.ts` showing the block-body form compiling identically to the string form for the invoice-finalisation pipeline. Total 663 → 669.
+
+---
+
+## 2026-05-10 — Browser playground (`playground.html`)
+
+A single-file static playground at the repo root: vertical split with an mjsql input on the left and the compiled MQL JSON live-rendering on the right. Loads the local `dist/index.js` directly via `<script type="module">`, so there is no build step beyond `npm run build` and no bundler. Default expression is the README quick-start (`$.price >= 100 && $.stock > 0`) so first paint shows recognisable output.
+
+The render path uses `validate()` for the structured-error guarantee and only calls `mjsql()` once validation passes — that keeps the textarea handler `try/catch`-free and lets us show the error `code` and `pos` plainly. No debouncing: the parser/codegen run in microseconds and recompiling on every keystroke gives the most responsive feel.
+
+Browsers refuse to load ESM from `file://`, so the page must be served over HTTP — the README pointer mentions `python3 -m http.server` (the project bans `npx`, and that one-liner ships with macOS). Not added to `package.json` `files`: the playground is a contributor/demo tool, not part of the published npm artifact.
 
 ---
 
@@ -93,6 +93,16 @@ Follow-up to yesterday's mutations feature. JS's increment/decrement operators n
 Targets validate identically to compound assignments (field paths only). Misuse as a value (`1 + $.x++`) bubbles through to the existing codegen-level "Assignment is a statement, not a value" error.
 
 **Tests.** 18 new cases in `test/mutations.test.ts` covering all four forms across all four positions (top-level, mixed coalescing, pipeline element, parens), plus the `5 - -3` whitespace regression. Total now 644.
+
+---
+
+## 2026-05-10 — Playground polish: examples, prettify, syntax highlighting
+
+Three additive enhancements to `playground.html` (initial entry below):
+
+- **Examples dropdown** in the left-panel label with 13 curated cases lifted from `test/realistic.test.ts`, spanning expression, template-literal, and pipeline forms. Default selection is the dynamic-keyed-histogram pipeline (the `$accumulator` replacement), which is the most distinctive showcase of what mjsql buys you over hand-written MQL. Sources live in `<script type="text/plain">` blocks so backticks, `${…}`, `<`, and `&&` need no escaping; `loadExample()` strips the common leading-whitespace prefix that the HTML formatter adds.
+- **Prettify checkbox** on the right-panel label (default On) toggles the `JSON.stringify` indent argument between `2` and `0`. Off is the right call for copy-pasting compact MQL into a `db.aggregate(...)` call.
+- **Syntax highlighting on both panes** via CodeMirror 5 from cdnjs (`codemirror.min.{js,css}`, `mode/javascript/javascript.min.js`, `theme/neo.min.css`). Picked CodeMirror over Prism/highlight.js because it gives real editing on the editable left pane (no textarea-overlay trick) and a read-only mode for the right pane via the same library — single dependency, consistent look. The `javascript` mode handles both JS and JSON (`{ json: true }`). Errors switch the right pane's mode to `null` (plain text) and add a `.error` class on the panel for the red tint.
 
 ---
 
