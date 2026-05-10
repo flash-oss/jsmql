@@ -7,6 +7,7 @@ import type {
   KeyValueEntry,
   SpreadElement,
   TypeCastOp,
+  BareCastOp,
   MathMethod,
   MathConstant,
   ObjectMethod,
@@ -90,6 +91,12 @@ const OBJECT_METHODS = new Set<string>([
 ]);
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
+// Subset of TYPE_CAST_NAMES that are also valid as bare callbacks:
+//   $.items.filter(Boolean) === $.items.filter(x => Boolean(x))
+// parseInt / parseFloat are excluded so we don't import the JS
+// `arr.map(parseInt)` index-as-radix footgun — users opt in explicitly with
+// `x => parseInt(x)`.
+const BARE_CAST_NAMES = new Set<BareCastOp>(["Number", "String", "Boolean"]);
 
 function compoundBinaryOp(op: "+=" | "-=" | "*=" | "/="): BinaryOp {
   switch (op) {
@@ -1007,7 +1014,16 @@ export class Parser {
         if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseNumberStaticCall();
         }
-        if (TYPE_CAST_NAMES.has(name)) return this.parseTypeCast();
+        if (TYPE_CAST_NAMES.has(name)) {
+          if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
+          if (BARE_CAST_NAMES.has(name as BareCastOp)) {
+            this.lexer.next();
+            return { type: "TypeCastRef", cast: name as BareCastOp };
+          }
+          // parseInt / parseFloat without `(` falls through to parseTypeCast(),
+          // which throws the existing "Expected LParen" error.
+          return this.parseTypeCast();
+        }
         this.lexer.next();
         return { type: "ParamRef", name };
       }

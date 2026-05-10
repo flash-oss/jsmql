@@ -261,6 +261,35 @@ describe("content pipeline: URL slug", () => {
   });
 });
 
+describe("content pipeline: full display name (skipping missing parts)", () => {
+  it("uses bare-Boolean filter callback and .join() to compose a display name", () => {
+    // Build "First Middle Last" but drop any missing/empty parts so we don't
+    // end up with double spaces. Same pattern as in plain JS:
+    //   [first, middle, last].filter(Boolean).join(" ")
+    const result = mjsql('[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")');
+
+    expect(result).toEqual({
+      $reduce: {
+        input: {
+          $filter: {
+            input: ["$firstName", "$middleName", "$lastName"],
+            as: "v",
+            cond: { $toBool: "$$v" },
+          },
+        },
+        initialValue: "",
+        in: {
+          $cond: [
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", " ", { $toString: "$$this" }] },
+          ],
+        },
+      },
+    });
+  });
+});
+
 describe("content pipeline: lowercase display name", () => {
   it("uses string-context + and $toLower escape hatch", () => {
     // Lowercase "FirstName LastName" for use as a display handle

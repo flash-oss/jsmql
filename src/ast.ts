@@ -132,6 +132,7 @@ export type Expr =
   | { type: "NewDate"; arg: Expr | null }
   | { type: "NewSet"; arg: Expr | null }
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr }
+  | { type: "TypeCastRef"; cast: BareCastOp }
   | { type: "MathCall"; method: MathMethod; args: CallArg[] }
   | { type: "MathConst"; name: MathConstant }
   | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[] }
@@ -140,6 +141,10 @@ export type Expr =
   | { type: "DateNow" };
 
 export type TypeCastOp = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat";
+/** Type-cast names usable as bare callbacks (e.g. `arr.filter(Boolean)`).
+ * Excludes parseInt/parseFloat because real-JS `arr.map(parseInt)` has the
+ * famous index-as-radix footgun; users must write `x => parseInt(x)` to opt in. */
+export type BareCastOp = "Number" | "String" | "Boolean";
 export type MathMethod =
   | "abs"
   | "ceil"

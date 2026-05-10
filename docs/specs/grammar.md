@@ -90,7 +90,7 @@ primary        = operator_call
                | field_ref
                | math_call | math_const
                | object_call
-               | type_cast | number_static
+               | type_cast | type_cast_ref | number_static
                | new_date_or_set | date_now | array_static
                | regex_literal
                | template_literal
@@ -146,6 +146,9 @@ OBJECT_METHOD  = (* see `ObjectMethod` in src/ast.ts *)
 
 type_cast      = TYPE_CAST_NAME "(" expression ")"
 TYPE_CAST_NAME = (* see `TypeCastOp` in src/ast.ts *)
+
+type_cast_ref  = BARE_CAST_NAME                              (* bare callback shorthand, no `(` *)
+BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* see `BareCastOp` in src/ast.ts *)
 
 number_static  = "Number" "." NUMBER_STATIC "(" expression ")"
 NUMBER_STATIC  = (* see `NumberStaticMethod` in src/ast.ts *)
@@ -266,6 +269,16 @@ If `asFieldPath()` can't fold the chain into a single dotted-path string — e.g
 - `$.items[0].name` → `MemberAccess(IndexAccess(FieldRef("items"), 0), "name")` → codegen: `{ $getField: { field: "name", input: <bracket-access $cond> } }`
 
 (For numeric array indices specifically, this is the supported replacement for the previously-accepted-but-not-valid-JS form `$.items.0.name`. See "Strict-JS-subset rule" above.)
+
+## Type-cast call vs bare reference
+
+`Boolean`, `Number`, `String` are ambiguous between `type_cast` (call form, `Boolean(x)`) and `type_cast_ref` (bare callback, `arr.filter(Boolean)`). The parser disambiguates by 1-token lookahead in `parsePrimary()`:
+
+- If the cast name is followed by `(`, parse as `type_cast`.
+- Otherwise, if the name is in `BARE_CAST_NAMES` (`Boolean` / `Number` / `String`), parse as `type_cast_ref`.
+- `parseInt` / `parseFloat` are not in `BARE_CAST_NAMES` — without `(` they fall through to the existing `parseTypeCast()` "Expected LParen" error. This is intentional: real-JS `arr.map(parseInt)` has the index-as-radix footgun, so users must write `x => parseInt(x)` to opt in.
+
+A `type_cast_ref` is only meaningful as a callback to a higher-order array method. In any other position, codegen throws an actionable error directing the user to the call form.
 
 ## Context-sensitive `/` (regex vs divide)
 
