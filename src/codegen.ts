@@ -158,6 +158,122 @@ function isStringProducing(expr: Expr): boolean {
   }
 }
 
+// ── JS truthy/falsy semantics ─────────────────────────────────────────────────
+//
+// JavaScript treats `false`, `null`, `undefined`, `0`, `""`, and `NaN` as
+// falsy; everything else (including `[]` and `{}`) is truthy. MongoDB's
+// $cond/$and/$or/$not/$toBool use a different rule (e.g. `""` is truthy in
+// MQL). To make `&&`, `||`, `!`, `?:`, `Boolean()`, and predicate-method
+// bodies match the JS semantics users expect, we wrap operands in `jsBool`.
+//
+// NaN: detecting NaN in MongoDB is expensive (its $eq treats NaN==NaN as
+// true, so `$ne:[x,x]` does not work). NaN values are vanishingly rare in
+// MongoDB collections, so we accept this divergence and document it.
+
+// Operators whose return type is always a boolean — used to elide the jsBool
+// wrap when an operand is already a boolean.
+const BOOL_OUTPUT_OPS = new Set([
+  "$eq",
+  "$ne",
+  "$gt",
+  "$gte",
+  "$lt",
+  "$lte",
+  "$and",
+  "$or",
+  "$not",
+  "$in",
+  "$regexMatch",
+  "$isNumber",
+  "$isArray",
+  "$allElementsTrue",
+  "$anyElementTrue",
+  "$setEquals",
+  "$setIsSubset",
+]);
+
+// Method names whose codegen always emits a boolean.
+const BOOL_RETURNING_METHODS = new Set(["includes", "startsWith", "endsWith", "every", "some"]);
+
+/** True if the AST node always compiles to an MQL expression that evaluates
+ *  to a boolean. When true we skip the jsBool wrap. */
+function isProvablyBool(expr: Expr): boolean {
+  switch (expr.type) {
+    case "BooleanLiteral":
+      return true;
+    case "UnaryExpr":
+      return expr.op === "!";
+    case "BinaryExpr":
+      switch (expr.op) {
+        case "==":
+        case "===":
+        case "!=":
+        case "!==":
+        case "<":
+        case "<=":
+        case ">":
+        case ">=":
+        case "in":
+          return true;
+        case "&&":
+        case "||":
+          // JS `&&`/`||` are operand-preserving, so they're bool only when
+          // every operand is bool. Recurse — this matches the chain-level
+          // optimization in `generateLogical` which emits `$and`/`$or`
+          // (a bool) for all-bool chains.
+          return isProvablyBool(expr.left) && isProvablyBool(expr.right);
+        default:
+          return false;
+      }
+    case "TypeCast":
+      return expr.cast === "Boolean";
+    case "OperatorCall":
+      return BOOL_OUTPUT_OPS.has(expr.name);
+    case "MethodCall":
+      return BOOL_RETURNING_METHODS.has(expr.method);
+    default:
+      return false;
+  }
+}
+
+/** Wrap an already-generated MQL expression in a JS-truthy check.
+ *  Returns true iff `value` is truthy under JS rules (false, null, missing,
+ *  0, "" → false; everything else → true; NaN treated as truthy — see note). */
+function jsBool(value: unknown): unknown {
+  return {
+    $and: [
+      { $ne: [value, null] }, // catches null AND missing — MongoDB treats them equal in $ne
+      { $ne: [value, false] },
+      { $ne: [value, ""] },
+      { $ne: [value, 0] },
+    ],
+  };
+}
+
+/** jsBool around a generated value, but elide if the source AST is already
+ *  provably boolean. The AST is needed to do the elision check; the generated
+ *  value is what gets emitted. Pass them both for the common case where
+ *  callers have already invoked _generate(). */
+function jsBoolIfNeeded(srcExpr: Expr, generated: unknown): unknown {
+  return isProvablyBool(srcExpr) ? generated : jsBool(generated);
+}
+
+/** True if `expr` resolves to a stable field/param/path (no computation,
+ *  no side-effects, free to reference twice). Used by `&&`/`||` to decide
+ *  whether the operand-preserving codegen needs a `$let` to bind once. */
+function isPureRef(expr: Expr, ctx: GenerateCtx): boolean {
+  return asFieldPath(expr, ctx) !== null;
+}
+
+/** Pick a $let binding name that doesn't shadow any in-scope lambda param. */
+function gensymInScope(ctx: GenerateCtx, base: string): string {
+  if (!ctx.lambdaParams.has(base)) return base;
+  for (let i = 2; ; i++) {
+    const name = `${base}${i}`;
+    if (!ctx.lambdaParams.has(name)) return name;
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function generate(expr: Expr): unknown {
@@ -217,7 +333,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "TernaryExpr":
       return {
         $cond: [
-          _generate(expr.condition, ctx),
+          jsBoolIfNeeded(expr.condition, _generate(expr.condition, ctx)),
           _generate(expr.consequent, ctx),
           _generate(expr.alternate, ctx),
         ],
@@ -384,9 +500,9 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "<=":
       return { $lte: [_generate(left, ctx), _generate(right, ctx)] };
     case "&&":
-      return { $and: flattenChain("&&", left, right, ctx) };
+      return generateLogical("&&", left, right, ctx);
     case "||":
-      return { $or: flattenChain("||", left, right, ctx) };
+      return generateLogical("||", left, right, ctx);
     case "??":
       return { $ifNull: flattenChain("??", left, right, ctx) };
     case "&":
@@ -418,6 +534,69 @@ function collectChain(op: BinaryOp, expr: Expr, out: unknown[], ctx: GenerateCtx
   } else {
     out.push(_generate(expr, ctx));
   }
+}
+
+// ── Logical && / || (operand-preserving, JS semantics) ───────────────────────
+//
+// JS `a && b` returns `a` if a is falsy, else `b`. JS `a || b` returns `a`
+// if a is truthy, else `b`. The result is the operand, not a boolean — so
+// `$.x || "default"` evaluates to "default" only when $.x is JS-falsy, and
+// `[$.b && $.b + ","]` includes the concatenation only when $.b is truthy.
+//
+// We compile to `$cond` and bind the LHS once via `$let` when re-evaluating
+// it would be wasteful or unsafe. Pure refs (FieldRef / lambda param /
+// member access on either) compile inline without `$let`.
+//
+// Chains like `a && b && c` are folded right so short-circuit semantics
+// are preserved: `a && (b && c)` → if a falsy return a, else evaluate b&&c.
+
+function generateLogical(op: "&&" | "||", left: Expr, right: Expr, ctx: GenerateCtx): unknown {
+  const chain: Expr[] = [];
+  collectExprChain(op, left, chain);
+  chain.push(right);
+  return foldLogical(op, chain, ctx);
+}
+
+function foldLogical(op: "&&" | "||", chain: Expr[], ctx: GenerateCtx): unknown {
+  if (chain.length === 1) return _generate(chain[0], ctx);
+  // All-bool chains (or all-bool tails) keep the cheap `$and`/`$or` form.
+  // The result is bool either way — JS's operand-preserving rule is moot
+  // when every operand is already a boolean. Covers the common filter-
+  // condition case (`x > 0 && y < 10`) and bool-only tails of mixed chains.
+  if (chain.every((e) => isProvablyBool(e))) {
+    const operands = chain.map((e) => _generate(e, ctx));
+    return op === "&&" ? { $and: operands } : { $or: operands };
+  }
+  const lhs = chain[0];
+  const lhsGen = _generate(lhs, ctx);
+  const rhsGen = foldLogical(op, chain.slice(1), ctx);
+  // Pure refs and provably-bool LHS values are cheap to reference twice, so
+  // we inline rather than introducing `$let`. (For provably-bool, the value
+  // and its truthiness are the same — re-eval cost is at most a comparison.)
+  if (isPureRef(lhs, ctx) || isProvablyBool(lhs)) {
+    return condForLogical(op, lhsGen, rhsGen, lhs);
+  }
+  // Bind lhs once so we can both test and return it without re-evaluating.
+  const v = gensymInScope(ctx, "_v");
+  const ref = `$$${v}`;
+  return {
+    $let: {
+      vars: { [v]: lhsGen },
+      // The bound value is a runtime value — we don't have an AST for it,
+      // so we can't ask isProvablyBool. Always wrap in jsBool for the cond.
+      in: condForLogical(op, ref, rhsGen, null),
+    },
+  };
+}
+
+function condForLogical(
+  op: "&&" | "||",
+  lhs: unknown,
+  rhs: unknown,
+  lhsExpr: Expr | null,
+): unknown {
+  const cond = lhsExpr ? jsBoolIfNeeded(lhsExpr, lhs) : jsBool(lhs);
+  return op === "&&" ? { $cond: [cond, rhs, lhs] } : { $cond: [cond, lhs, rhs] };
 }
 
 // ── `in` operator ─────────────────────────────────────────────────────────────
@@ -530,7 +709,12 @@ function collectExprChain(op: BinaryOp, expr: Expr, out: Expr[]): void {
 
 function generateUnaryExpr(op: "!" | "-" | "~", operand: Expr, ctx: GenerateCtx): unknown {
   if (op === "!") {
-    return { $not: _generate(operand, ctx) };
+    // !!x → jsBool(x): the canonical "coerce to JS boolean" idiom, identical
+    // to what `Boolean(x)` emits. Saves a $not-of-$not.
+    if (operand.type === "UnaryExpr" && operand.op === "!") {
+      return jsBool(_generate(operand.operand, ctx));
+    }
+    return { $not: jsBoolIfNeeded(operand, _generate(operand, ctx)) };
   }
   if (op === "~") {
     return { $bitNot: _generate(operand, ctx) };
@@ -1174,7 +1358,7 @@ function generateMethodCall(
             $filter: {
               input: genObj,
               as: lambda.params[0],
-              cond: _generate(lambda.body, bodyCtx),
+              cond: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
             },
           },
           -1,
@@ -1199,7 +1383,7 @@ function generateMethodCall(
               vars: { [param]: { $arrayElemAt: ["$$this", 1] } },
               in: {
                 $cond: [
-                  _generate(lambda.body, bodyCtx),
+                  jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
                   { $arrayElemAt: ["$$this", 0] },
                   "$$value",
                 ],
@@ -1314,7 +1498,7 @@ function generateMethodCall(
         $filter: {
           input: genObj,
           as: lambda.params[0],
-          cond: _generate(lambda.body, bodyCtx),
+          cond: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
         },
       };
     }
@@ -1327,7 +1511,7 @@ function generateMethodCall(
             $filter: {
               input: genObj,
               as: lambda.params[0],
-              cond: _generate(lambda.body, bodyCtx),
+              cond: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
             },
           },
           0,
@@ -1342,7 +1526,7 @@ function generateMethodCall(
           $map: {
             input: genObj,
             as: lambda.params[0],
-            in: _generate(lambda.body, bodyCtx),
+            in: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
           },
         },
       };
@@ -1355,7 +1539,7 @@ function generateMethodCall(
           $map: {
             input: genObj,
             as: lambda.params[0],
-            in: _generate(lambda.body, bodyCtx),
+            in: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
           },
         },
       };
@@ -1568,7 +1752,9 @@ function generateTypeCast(cast: TypeCastOp, arg: Expr, ctx: GenerateCtx): unknow
     case "String":
       return { $toString: val };
     case "Boolean":
-      return { $toBool: val };
+      // JS truthy/falsy semantics — see jsBool() above. Users who want the
+      // raw MongoDB $toBool can call it directly: $toBool($.x).
+      return jsBoolIfNeeded(arg, val);
     case "parseInt":
       return { $toInt: val };
   }

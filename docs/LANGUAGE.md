@@ -363,10 +363,18 @@ $.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (pro
 ### Logical
 
 ```js
-$.active && $.age > 18              // { $and: ["$active", { $gt: ["$age", 18] }] }
-$.a > 0 || $.b > 0                  // { $or: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }] }
-!$.active                           // { $not: "$active" } 
+$.a > 0 && $.b > 0                  // { $and: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }] }
+$.a > 0 || $.b > 0                  // { $or:  [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }] }
+
+// Operand-preserving (returns the operand, like JS) when at least one side
+// is not already a boolean:
+$.nickname || "anonymous"           // returns $.nickname if truthy, else "anonymous"
+$.building && $.building + ","      // includes the suffix only when $.building is truthy
+
+!$.active                           // logical NOT, JS truthy/falsy semantics
 ```
+
+`&&` and `||` follow JavaScript: they return the operand, not a coerced boolean. When every operand in a chain is already a boolean comparison the codegen emits the cheap `$and` / `$or` form; mixed chains compile to `$cond` so the operand value flows through. See [Truthy and falsy](#truthy-and-falsy) below for the rule used.
 
 ### Conditional
 
@@ -374,6 +382,24 @@ $.a > 0 || $.b > 0                  // { $or: [{ $gt: ["$a", 0] }, { $gt: ["$b",
 $.age >= 18 ? "adult" : "minor"     // { $cond: [{ $gte: ["$age", 18] }, "adult", "minor"] }
 $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 ```
+
+### Truthy and falsy
+
+`&&`, `||`, `!`, `?:`, `Boolean(x)`, and predicate-method bodies (`.filter`, `.find`, `.findLast`, `.findLastIndex`, `.some`, `.every`) all use **JavaScript** truthy/falsy semantics, not MongoDB's. The values treated as falsy are:
+
+| Value | Falsy? |
+|---|---|
+| `false` | yes |
+| `null` | yes |
+| missing field | yes |
+| `0` | yes |
+| `""` (empty string) | yes |
+| `NaN` | **no** — see limitation below |
+| everything else (`[]`, `{}`, `"0"`, `-1`, dates, …) | truthy |
+
+MongoDB's raw `$toBool` and bare `$cond` use a different rule (e.g. `""` is truthy in MQL). When you need raw MongoDB semantics — for example to match the behaviour of an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes are unaffected.
+
+**Known limitation: `NaN` is treated as truthy.** Detecting `NaN` in MongoDB aggregation requires an expensive per-value `$convert` (its `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work). `NaN` values are vanishingly rare in MongoDB data; the divergence is documented rather than papered over.
 
 ### Bitwise
 
@@ -534,8 +560,9 @@ $.numbers.reduce((acc, x) => acc + x, 0)
 `Boolean`, `Number`, and `String` can be passed bare as the callback to any of the lambda-taking array methods, just like in plain JavaScript:
 
 ```js
-$.items.filter(Boolean)         // drop falsy values
-// → { $filter: { input: "$items", as: "v", cond: { $toBool: "$$v" } } }
+$.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, missing)
+// → $filter whose `cond` checks each element for JS truthiness
+// (see "Truthy and falsy" above)
 
 $.scores.map(Number)            // coerce strings to numbers
 // → { $map: { input: "$scores", as: "v", in: { $toDouble: "$$v" } } }
@@ -699,10 +726,12 @@ $log($.value, 10)                  // { $log: ["$value", 10] } (log base 10)
 ```js
 Number($.stringField)              // { $toDouble: "$stringField" }
 String($.numField)                 // { $toString: "$numField" }
-Boolean($.value)                   // { $toBool: "$value" }
+Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
 parseInt($.stringField)            // { $toInt: "$stringField" }
 parseFloat($.stringField)          // { $toDouble: "$stringField" }
 ```
+
+`Boolean(x)` follows JavaScript's truthy/falsy rules — `Boolean("")` is `false`, `Boolean(0)` is `false`, `Boolean([])` is `true`. To get MongoDB's raw `$toBool` (where `""` is truthy and `null` propagates as `null`), call the operator directly: `$toBool($.x)`.
 
 ### `typeof` Operator
 

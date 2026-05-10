@@ -266,6 +266,8 @@ describe("content pipeline: full display name (skipping missing parts)", () => {
     // Build "First Middle Last" but drop any missing/empty parts so we don't
     // end up with double spaces. Same pattern as in plain JS:
     //   [first, middle, last].filter(Boolean).join(" ")
+    // `Boolean` follows JS truthy/falsy rules — empty strings, null, and
+    // missing fields are dropped. See codegen.ts `jsBool()`.
     const result = mjsql('[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")');
 
     expect(result).toEqual({
@@ -274,7 +276,14 @@ describe("content pipeline: full display name (skipping missing parts)", () => {
           $filter: {
             input: ["$firstName", "$middleName", "$lastName"],
             as: "v",
-            cond: { $toBool: "$$v" },
+            cond: {
+              $and: [
+                { $ne: ["$$v", null] },
+                { $ne: ["$$v", false] },
+                { $ne: ["$$v", ""] },
+                { $ne: ["$$v", 0] },
+              ],
+            },
           },
         },
         initialValue: "",
@@ -357,11 +366,23 @@ describe("inventory: stock status label", () => {
 describe("inventory: reorder alert", () => {
   it("uses unary !, ** exponentiation, and < comparison", () => {
     // Alert if: not discontinued AND stock below reorder threshold (exponential decay model)
+    // `!$.discontinued` follows JS truthiness — `discontinued: 0` would be
+    // treated as falsy (not discontinued) just like in JS, even though MQL's
+    // raw `$not` would coerce 0 differently.
     const result = mjsql("!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel");
 
     expect(result).toEqual({
       $and: [
-        { $not: "$discontinued" },
+        {
+          $not: {
+            $and: [
+              { $ne: ["$discontinued", null] },
+              { $ne: ["$discontinued", false] },
+              { $ne: ["$discontinued", ""] },
+              { $ne: ["$discontinued", 0] },
+            ],
+          },
+        },
         {
           $lt: ["$stock", { $multiply: ["$baseReorder", { $pow: [2, "$urgencyLevel"] }] }],
         },
@@ -409,60 +430,60 @@ describe("user display: full name with null fallback", () => {
 // ── Location ──────────────────────────────────────────────────────────────────
 
 describe("location: full address formatter", () => {
-  it("builds a formatted address string using filter + reduce, server-side", () => {
+  it("uses && to conditionally include the building line and Boolean to drop empties", () => {
     // Assembles up to 7 address fields into a single space-separated string.
     // The optional building name (e.g. "Suite 4,") is included only when present.
     // MongoDB executes this entirely — no need to fetch all fields to the client.
     const result = mjsql(`
-      [
-        typeof $.building === "string" && $.building.trim() !== "" ? $.building.trim() + "," : null,
-        $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode,
-      ]
-        .filter((x) => typeof x === "string" && x !== "")
-        .map((x) => x.trim())
+      [$.building && $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
+        .filter(Boolean)
         .join(" ")
     `);
 
     expect(result).toEqual({
       $reduce: {
         input: {
-          $map: {
-            input: {
-              $filter: {
-                input: [
+          $filter: {
+            input: [
+              {
+                $and: [
+                  "$building",
                   {
-                    $cond: [
-                      {
-                        $and: [
-                          { $eq: [{ $type: "$building" }, "string"] },
-                          { $ne: [{ $trim: { input: "$building" } }, ""] },
-                        ],
-                      },
-                      { $concat: [{ $trim: { input: "$building" } }, ","] },
-                      null,
-                    ],
+                    $concat: ["$building", ","],
                   },
-                  "$streetNo",
-                  "$street",
-                  "$suburb",
-                  "$state",
-                  "$country",
-                  "$postcode",
                 ],
-                as: "x",
-                cond: { $and: [{ $eq: [{ $type: "$$x" }, "string"] }, { $ne: ["$$x", ""] }] },
               },
+              "$streetNo",
+              "$street",
+              "$suburb",
+              "$state",
+              "$country",
+              "$postcode",
+            ],
+            as: "v",
+            cond: {
+              $toBool: "$$v",
             },
-            as: "x",
-            in: { $trim: { input: "$$x" } },
           },
         },
         initialValue: "",
         in: {
           $cond: [
-            { $eq: ["$$value", ""] },
-            { $toString: "$$this" },
-            { $concat: ["$$value", " ", { $toString: "$$this" }] },
+            {
+              $eq: ["$$value", ""],
+            },
+            {
+              $toString: "$$this",
+            },
+            {
+              $concat: [
+                "$$value",
+                " ",
+                {
+                  $toString: "$$this",
+                },
+              ],
+            },
           ],
         },
       },
@@ -500,16 +521,31 @@ describe("data quality: normalise string vs number field", () => {
 
 describe("access control: admin permission check", () => {
   it("combines &&, .toLowerCase().includes(), and .trim().length", () => {
-    // Active user with an admin role (case-insensitive) and non-empty trimmed name
+    // Active user with an admin role (case-insensitive) and non-empty trimmed name.
+    // `$.active` is a non-bool field reference, so `&&` follows JS's
+    // operand-preserving rule and folds into a $cond chain. The bool-only
+    // tail (`includes && length > 0`) collapses to `$and`.
     const result = mjsql(
       '$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length > 0',
     );
 
     expect(result).toEqual({
-      $and: [
+      $cond: [
+        {
+          $and: [
+            { $ne: ["$active", null] },
+            { $ne: ["$active", false] },
+            { $ne: ["$active", ""] },
+            { $ne: ["$active", 0] },
+          ],
+        },
+        {
+          $and: [
+            { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
+            { $gt: [{ $strLenCP: { $trim: { input: "$name" } } }, 0] },
+          ],
+        },
         "$active",
-        { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
-        { $gt: [{ $strLenCP: { $trim: { input: "$name" } } }, 0] },
       ],
     });
   });
