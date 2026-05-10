@@ -30,6 +30,21 @@ export class ParseError extends Error {
   }
 }
 
+/**
+ * Raised by `Parser.parseFunctionInput()` when the source given to
+ * `mjsql(($) => …)` is not a valid arrow function shape — `async`
+ * arrows, `function` declarations, missing arrow operator, unbalanced
+ * params, `return` inside a block body, etc. Distinct from `ParseError`
+ * because the failure is in the function-shape adapter, not in mjsql's
+ * own grammar; `validate()` maps both to `SYNTAX_ERROR`.
+ */
+export class FunctionInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FunctionInputError";
+  }
+}
+
 const MATH_METHODS = new Set<string>([
   "abs",
   "ceil",
@@ -130,6 +145,161 @@ export class Parser {
 
     if (!sawSemi) return stmts[0];
     return { type: "Pipeline", stmts };
+  }
+
+  /**
+   * Entry point for the function-input form (`mjsql(($) => …)`). The source
+   * is the result of `Function.prototype.toString.call(fn)` — a full arrow
+   * function expression. We consume the parameter list and `=>`, then dispatch
+   * to either a block-body parser (`{ stmt; stmt; }`, the function-form mirror
+   * of the implicit `;`-separated pipeline) or an expression-body parser (a
+   * single mjsql expression / mutation, with one optional trailing `;` allowed
+   * as a formatter artifact — single-statement bodies do NOT flip into pipeline
+   * mode here).
+   *
+   * Raises `FunctionInputError` for shape problems specific to the adapter
+   * (`async`, `function`, missing arrow, `return` in a block body, …) and
+   * `ParseError`/`LexError` for grammar problems inside the body itself.
+   */
+  parseFunctionInput(): Program {
+    const first = this.lexer.peek();
+    if (first.type === TokenType.Ident && first.value === "async") {
+      throw new FunctionInputError(
+        "mjsql does not support async functions. Use a synchronous arrow: `($) => …`",
+      );
+    }
+    if (first.type === TokenType.Ident && first.value === "function") {
+      throw new FunctionInputError(
+        "mjsql expects an arrow function, got a `function` declaration. Use: `($) => …`",
+      );
+    }
+    if (first.type !== TokenType.LParen) {
+      throw new FunctionInputError(
+        "mjsql expects an arrow function `($) => …` as the function-form input.",
+      );
+    }
+    this.skipParameterList();
+
+    const arrowTok = this.lexer.peek();
+    if (arrowTok.type !== TokenType.Arrow) {
+      throw new FunctionInputError(
+        "mjsql could not find an arrow operator (`=>`) in the function source. Use: `($) => …`",
+      );
+    }
+    this.lexer.next(); // consume `=>`
+
+    if (this.lexer.peek().type === TokenType.LBrace) {
+      return this.parseBlockBody();
+    }
+    return this.parseExpressionBody();
+  }
+
+  /**
+   * Skip the parenthesised parameter list of the function-form arrow. We
+   * never inspect the params (they are types-only — see docs/LANGUAGE.md
+   * § Function Form), so we just balance-count parens and discard tokens.
+   * Cursor is left immediately after the matching `)`.
+   */
+  private skipParameterList(): void {
+    this.lexer.next(); // consume opening `(`
+    let depth = 1;
+    while (depth > 0) {
+      const tok = this.lexer.next();
+      if (tok.type === TokenType.EOF) {
+        throw new FunctionInputError(
+          "mjsql could not parse the function parameter list — unbalanced parentheses",
+        );
+      }
+      if (tok.type === TokenType.LParen) depth++;
+      else if (tok.type === TokenType.RParen) depth--;
+    }
+  }
+
+  /**
+   * Parse the body of a block-body arrow: `{ stmt (; stmt)* ;? }`. This is
+   * structurally the same as the top-level `;`-separated pipeline form
+   * (see `parse()`), terminated by `}` instead of EOF. A single-statement
+   * block body without `;` returns the underlying `Expr`/`MutationProgram`
+   * unchanged; any `;` (including a trailing one) wraps as a `Pipeline`.
+   *
+   * `return` is rejected up front with a precise `FunctionInputError` so the
+   * user gets a clear pointer to either the `;`-separated form or an
+   * expression-body arrow, instead of the parser's generic "unknown
+   * identifier" message.
+   */
+  private parseBlockBody(): Program {
+    this.lexer.next(); // consume `{`
+
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      throw new FunctionInputError(
+        "mjsql expects at least one statement inside a block-body arrow.",
+      );
+    }
+
+    this.rejectReturn();
+    const stmts: PipelineStmt[] = [this.collectStatement()];
+    let sawSemi = false;
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+      sawSemi = true;
+      if (this.lexer.peek().type === TokenType.RBrace) break;
+      this.rejectReturn();
+      stmts.push(this.collectStatement());
+    }
+
+    const closeTok = this.lexer.peek();
+    if (closeTok.type !== TokenType.RBrace) {
+      throw new ParseError(
+        `Expected '}' to close the block body at position ${closeTok.pos}`,
+        closeTok.pos,
+      );
+    }
+    this.lexer.next();
+
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+
+    if (!sawSemi) return stmts[0];
+    return { type: "Pipeline", stmts };
+  }
+
+  /**
+   * Parse the body of an expression-body arrow: a single mjsql statement,
+   * with one optional trailing `;` consumed as a formatter artifact. The
+   * trailing `;` does NOT trigger pipeline mode here — single-statement
+   * expression bodies preserve their object-shaped output, matching the
+   * documented contract for `mjsql(($) => …)`.
+   */
+  private parseExpressionBody(): Program {
+    const stmt = this.collectStatement();
+    if (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+    }
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+    return stmt;
+  }
+
+  /**
+   * Throw a precise `FunctionInputError` if the next token is the bare
+   * identifier `return`. Called at every statement-start position inside
+   * a block body, so a `return` token *inside* a string or expression
+   * (where it would just be a property name like `obj.return`) doesn't
+   * false-fire — only true statement-leading `return`s reach this check.
+   */
+  private rejectReturn(): void {
+    const tok = this.lexer.peek();
+    if (tok.type === TokenType.Ident && tok.value === "return") {
+      throw new FunctionInputError(
+        "mjsql block-body arrows are a sequence of mjsql statements, not JavaScript control flow. " +
+          "Remove `return` — write the body as `;`-separated mjsql statements, or switch to an " +
+          "expression-body arrow `($) => EXPR`.",
+      );
+    }
   }
 
   /**
