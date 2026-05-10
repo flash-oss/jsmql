@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — `scripts/merge-devlog.mjs`: auto-resolve DEVLOG merge conflicts
+
+Parallel-session work on this project hits the same papercut on every merge: each branch prepends a new entry to `docs/DEVLOG.md`, git can't pick a winner, and a human (or the agent) has to read both sides and stitch them back together. That manual stitch was costing minutes per merge — a tax that scales linearly with the number of in-flight branches.
+
+`scripts/merge-devlog.mjs` is a one-shot resolver. Run it when `git merge` stops on `docs/DEVLOG.md`; it reads the three index stages (base/ours/theirs) that git keeps during an unresolved conflict, splits each on the `---` separator, dedupes by `## YYYY-MM-DD — Title` heading, takes the union, sorts newest-first (alphabetical tiebreak inside a date), writes the result, and `git add`s it. Measured wall-clock on a real two-side conflict: 158 ms.
+
+Deliberately *not* wired as a custom git merge driver via `.gitattributes` + `git config`. Reasons: the postinstall machinery to install the driver across clones/worktrees adds a moving part to setup; a manually-invoked script is one less thing to break, leaves the default git behaviour unchanged for everyone who hasn't opted in, and is honest about *when* the smart merge is happening. The cost is one extra command (`./scripts/merge-devlog.mjs`) per conflict — well below the threshold where automation is worth its setup overhead.
+
+Falls back to a normal manual conflict in the rare cases the structural merge can't decide: diverging edits to the same past entry, deletion of a past entry on one side (the convention is append-only — corrections go in a follow-up entry that links back), or diverging edits to the file header. Unit tests in `test/merge-devlog.test.ts` cover both the auto-merge path and the fall-back conditions.
+
+---
+
 ## 2026-05-10 — Smoke checks codified in `test/smoke.test.ts`
 
 Two invariants that I'd been verifying by hand at the end of every session — `node src/index.ts` (strippable-TS rule) and a post-build ESM import of `dist/index.js` — are now part of the vitest suite. The strippable check spawns the real Node stripper because vitest's Vite-based loader silently accepts the very constructs the rule bans (`enum`, `namespace`, parameter properties, decorators, …); a regex/AST walker would drift from "what Node actually does", so the test runs the canonical command. The dist case uses `it.skipIf(!existsSync(...))` so local `npm test` stays fast and silent; `npm run smoke:dist` builds first and exercises it on demand.
