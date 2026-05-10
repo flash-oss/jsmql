@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mjsql playground</title>
+    <title>jsmql playground</title>
 
     <link
       rel="stylesheet"
@@ -208,14 +208,14 @@
   </head>
   <body>
     <header>
-      <strong>mjsql playground</strong>
+      <strong>jsmql playground</strong>
       <span class="tag">type an expression on the left, see the compiled MQL on the right</span>
       <a href="docs/LANGUAGE.md">syntax reference</a>
     </header>
     <main>
       <section class="panel">
         <div class="label">
-          <span>mjsql input</span>
+          <span>jsmql input</span>
           <label
             >Examples
             <select id="example">
@@ -361,7 +361,7 @@
     </script>
 
     <script type="module">
-      import { mjsql, validate } from "./dist/index.js";
+      import { jsmql, validate } from "./dist/index.js";
 
       const inputEl = document.getElementById("input");
       const outputEl = document.getElementById("output");
@@ -438,7 +438,7 @@
           clearErrorMarker();
           const indent = prettify.checked ? 2 : 0;
           outputCm.setOption("mode", { name: "javascript", json: true });
-          outputCm.setValue(JSON.stringify(mjsql(src), null, indent));
+          outputCm.setValue(JSON.stringify(jsmql(src), null, indent));
           outputPanel.classList.remove("error");
         } else {
           const e = result.errors[0];

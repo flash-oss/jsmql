@@ -43,10 +43,10 @@ describe("smoke: built dist", () => {
     "dist/index.js loads via ESM import and produces correct MQL",
     () => {
       const script = `
-        import { mjsql, validate, mql } from ${JSON.stringify(distUrl)};
-        const out = mjsql("$.age > 18");
+        import { jsmql, validate, mql } from ${JSON.stringify(distUrl)};
+        const out = jsmql("$.age > 18");
         if (JSON.stringify(out) !== '{"$gt":["$age",18]}') {
-          throw new Error("mjsql() output mismatch: " + JSON.stringify(out));
+          throw new Error("jsmql() output mismatch: " + JSON.stringify(out));
         }
         if (!validate("$.age > 18").valid) throw new Error("validate() failed");
         const tag = mql\`$.x > \${5}\`;

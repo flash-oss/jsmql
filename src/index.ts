@@ -9,7 +9,7 @@ import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pip
 import { LexError } from "./lexer.ts";
 import type { Program } from "./ast.ts";
 
-// Re-exported so users can `import { FunctionInputError } from "mjsql"` even
+// Re-exported so users can `import { FunctionInputError } from "jsmql"` even
 // though the class itself lives in parser.ts (where it is thrown).
 export { FunctionInputError };
 
@@ -52,16 +52,16 @@ export class MqlInterpolationError extends Error {
 // site for escape-hatch operators (`($, { $dateDiff }) => $dateDiff(…)`) so
 // IDEs don't flag `$dateDiff` as an unknown identifier. The parameter list
 // is stripped before the parser runs, so this never reaches the runtime.
-export type MjsqlOps = Record<`$${string}`, (...args: any[]) => any>;
-type MjsqlFn = ($: any, ops: MjsqlOps) => unknown;
-export type MjsqlInput = string | MjsqlFn;
+export type JsmqlOps = Record<`$${string}`, (...args: any[]) => any>;
+type JsmqlFn = ($: any, ops: JsmqlOps) => unknown;
+export type JsmqlInput = string | JsmqlFn;
 
-// `mjsql()` returns either a single compiled MQL expression object, or — when
+// `jsmql()` returns either a single compiled MQL expression object, or — when
 // the input is a top-level aggregation pipeline `[ { $stage: ... }, ... ]` —
 // the corresponding stage array. The union is widened from the historical
 // `object` to make pipeline mode visible in the type. Both runtime values are
 // objects, so existing call sites keep type-checking.
-export type MjsqlOutput = object | object[];
+export type JsmqlOutput = object | object[];
 
 // Compiled-body cache for the function-input path. Keyed on the extracted body
 // string, so inline arrows in hot loops (which create a new function object on
@@ -73,9 +73,9 @@ export type MjsqlOutput = object | object[];
 // `new Function(...)` accepted as input). Map preserves insertion order, so
 // delete-then-set on hit refreshes recency without an extra data structure.
 const FN_BODY_CACHE_CAP = 256;
-const fnBodyCache = new Map<string, MjsqlOutput>();
+const fnBodyCache = new Map<string, JsmqlOutput>();
 
-function cacheGet(body: string): MjsqlOutput | undefined {
+function cacheGet(body: string): JsmqlOutput | undefined {
   const hit = fnBodyCache.get(body);
   if (hit === undefined) return undefined;
   fnBodyCache.delete(body);
@@ -83,7 +83,7 @@ function cacheGet(body: string): MjsqlOutput | undefined {
   return hit;
 }
 
-function cacheSet(body: string, compiled: MjsqlOutput): void {
+function cacheSet(body: string, compiled: JsmqlOutput): void {
   if (fnBodyCache.size >= FN_BODY_CACHE_CAP) {
     const oldest = fnBodyCache.keys().next().value;
     if (oldest !== undefined) fnBodyCache.delete(oldest);
@@ -91,12 +91,12 @@ function cacheSet(body: string, compiled: MjsqlOutput): void {
   fnBodyCache.set(body, compiled);
 }
 
-export function mjsql(input: MjsqlInput): MjsqlOutput {
+export function jsmql(input: JsmqlInput): JsmqlOutput {
   if (typeof input === "function") {
     const src = Function.prototype.toString.call(input).trim();
     const cached = cacheGet(src);
     if (cached !== undefined) return cached;
-    let compiled: MjsqlOutput;
+    let compiled: JsmqlOutput;
     try {
       compiled = lower(new Parser(src).parseFunctionInput());
     } catch (err) {
@@ -108,9 +108,9 @@ export function mjsql(input: MjsqlInput): MjsqlOutput {
   return lower(new Parser(input).parse());
 }
 
-export function validate(input: MjsqlInput): ValidationResult {
+export function validate(input: JsmqlInput): ValidationResult {
   try {
-    mjsql(input);
+    jsmql(input);
     return { valid: true, errors: [] };
   } catch (err) {
     if (err instanceof ParseError || err instanceof LexError) {
@@ -152,7 +152,7 @@ export function validate(input: MjsqlInput): ValidationResult {
   }
 }
 
-export function mql(strings: TemplateStringsArray, ...values: unknown[]): MjsqlOutput {
+export function mql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
   let src = "";
   for (let i = 0; i < strings.length; i++) {
     src += strings[i];
@@ -160,7 +160,7 @@ export function mql(strings: TemplateStringsArray, ...values: unknown[]): MjsqlO
       src += stringifyInterpolation(values[i], i + 1);
     }
   }
-  return mjsql(src);
+  return jsmql(src);
 }
 
 // Wrap JSON.stringify with the validation needed to keep the `mql` template
@@ -202,7 +202,7 @@ function stringifyInterpolation(value: unknown, slot: number): string {
  * path (`Parser.parse()`) and the function-input path
  * (`Parser.parseFunctionInput()`) share the same dispatch.
  */
-function lower(ast: Program): MjsqlOutput {
+function lower(ast: Program): JsmqlOutput {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast);
   if (ast.type === "MutationProgram") return generateMutationProgram(ast);
   if (isPipelineAst(ast)) return generatePipeline(ast);

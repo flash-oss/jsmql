@@ -2,7 +2,7 @@
  * Realistic integration tests.
  *
  * Each test represents a plausible real-world MongoDB aggregation expression
- * written in mjsql's JavaScript-subset syntax. $op() escape-hatch calls (the
+ * written in jsmql's JavaScript-subset syntax. $op() escape-hatch calls (the
  * direct operator form) appear only where there is no JavaScript equivalent
  * (e.g. $dateDiff, $stdDevPop, $sampleRate).
  *
@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mjsql, validate, mql } from "../src/index.ts";
+import { jsmql, validate, mql } from "../src/index.ts";
 
 // ── E-commerce ────────────────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ describe("e-commerce: order eligibility for free shipping", () => {
     // Customer qualifies for free shipping if:
     //   cart total ≥ $50, loyalty status is premium/gold/platinum,
     //   cart has < 20 items, and region (trimmed, lowercased) is "us"
-    const result = mjsql(`
+    const result = jsmql(`
       $.cart.total >= 50 &&
       $.customer.status in ["premium", "gold", "platinum"] &&
       $.cart.items.length < 20 &&
@@ -54,7 +54,7 @@ describe("e-commerce: tiered loyalty discount price", () => {
     // Gold (≥2 years): 8% off
     // Standard: full price
     // Result rounded to 2 decimal places.
-    const result = mjsql(`
+    const result = jsmql(`
       $round(
         $.price * (
           $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :
@@ -89,7 +89,7 @@ describe("e-commerce: tiered loyalty discount price", () => {
 describe("e-commerce: seasonal discount with eligibility check", () => {
   it("uses &&, in, ternary ? :, and * arithmetic", () => {
     // 20% off if item is in sale category AND quantity > 1 AND price >= 10
-    const result = mjsql(`
+    const result = jsmql(`
       $.quantity > 1 && $.price >= 10 && $.category in ["sale", "clearance"]
         ? $.price * 0.8
         : $.price
@@ -117,14 +117,14 @@ describe("e-commerce: discount breakdown via IIFE → $let", () => {
     // in three places: the final price, the raw savings, and the savings percentage.
     // Writing this as an IIFE lets `$let` bind the value once instead of repeating
     // `$.price * (1 - $.loyalty.multiplier)` in every field.
-    const result1 = mjsql(`
+    const result1 = jsmql(`
       ((discount) => ({
         finalPrice: $.price - discount,
         savings: discount,
         savingsPercent: Math.round((discount / $.price) * 100),
       }))($.price * (1 - $.loyalty.multiplier))
     `);
-    const result2 = mjsql(($) =>
+    const result2 = jsmql(($) =>
       ((discount) => ({
         finalPrice: $.price - discount,
         savings: discount,
@@ -155,7 +155,7 @@ describe("e-commerce: discount breakdown via IIFE → $let", () => {
 describe("e-commerce: cart subtotal", () => {
   it("sums item totals using .map() and .reduce()", () => {
     // Sum up all item totals: items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)
-    const result = mjsql(
+    const result = jsmql(
       "$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)",
     );
 
@@ -180,7 +180,7 @@ describe("e-commerce: cart subtotal", () => {
 describe("user analytics: email domain extraction", () => {
   it("chains .split(), .at(), .toLowerCase()", () => {
     // Extract and normalise the domain part of an email address
-    const result = mjsql('$.email.split("@").at(1).toLowerCase()');
+    const result = jsmql('$.email.split("@").at(1).toLowerCase()');
 
     expect(result).toEqual({
       $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] },
@@ -191,7 +191,7 @@ describe("user analytics: email domain extraction", () => {
 describe("user analytics: score normalisation", () => {
   it("uses arithmetic operators and grouping", () => {
     // Normalise score to 0–100 range: (score - min) / (max - min) * 100
-    const result = mjsql("($.score - $.minScore) / ($.maxScore - $.minScore) * 100");
+    const result = jsmql("($.score - $.minScore) / ($.maxScore - $.minScore) * 100");
 
     expect(result).toEqual({
       $multiply: [
@@ -210,7 +210,7 @@ describe("user analytics: score normalisation", () => {
 describe("user analytics: age decade bucket", () => {
   it("uses Math.floor() and * arithmetic", () => {
     // Round age down to nearest decade: Math.floor(age / 10) * 10
-    const result = mjsql("Math.floor($.age / 10) * 10");
+    const result = jsmql("Math.floor($.age / 10) * 10");
 
     expect(result).toEqual({
       $multiply: [{ $floor: { $divide: ["$age", 10] } }, 10],
@@ -221,7 +221,7 @@ describe("user analytics: age decade bucket", () => {
 describe("user analytics: days since last login", () => {
   it("uses Math.abs, $dateDiff escape hatch, ??, and new Date()", () => {
     // Days since last login; -1 if never logged in; always non-negative
-    const result = mjsql(
+    const result = jsmql(
       "Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)",
     );
 
@@ -241,7 +241,7 @@ describe("user analytics: days since last login", () => {
 describe("content pipeline: URL slug", () => {
   it("uses String() cast, + string concatenation, and method chaining", () => {
     // Build a URL slug: "<articleId>-<normalised-title>"
-    const result = mjsql(
+    const result = jsmql(
       'String($.articleId) + "-" + $.title.toLowerCase().trim().replaceAll(" ", "-")',
     );
 
@@ -268,7 +268,7 @@ describe("content pipeline: full display name (skipping missing parts)", () => {
     //   [first, middle, last].filter(Boolean).join(" ")
     // `Boolean` follows JS truthy/falsy rules — empty strings, null, and
     // missing fields are dropped. See codegen.ts `jsBool()`.
-    const result = mjsql('[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")');
+    const result = jsmql('[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")');
 
     expect(result).toEqual({
       $reduce: {
@@ -302,7 +302,7 @@ describe("content pipeline: full display name (skipping missing parts)", () => {
 describe("content pipeline: lowercase display name", () => {
   it("uses string-context + and $toLower escape hatch", () => {
     // Lowercase "FirstName LastName" for use as a display handle
-    const result = mjsql('$toLower($.firstName + " " + $.lastName)');
+    const result = jsmql('$toLower($.firstName + " " + $.lastName)');
 
     expect(result).toEqual({
       $toLower: { $concat: ["$firstName", " ", "$lastName"] },
@@ -315,7 +315,7 @@ describe("content pipeline: lowercase display name", () => {
 describe("reporting: formatted date label", () => {
   it("chains ?? to fall back through date fields to a default string", () => {
     // Display date as "YYYY-MM-DD", falling back through alternatives to "unknown"
-    const result = mjsql(`
+    const result = jsmql(`
       $dateToString({ date: $.publishedAt, format: "%Y-%m-%d" }) ??
       $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
       "unknown"
@@ -336,7 +336,7 @@ describe("reporting: days since document was created", () => {
     // Days since the document was first created. Uses the function form with the
     // operator destructured from the second parameter so the IDE doesn't flag
     // `$dateDiff` as an unknown identifier.
-    const result = mjsql(($, { $dateDiff }) =>
+    const result = jsmql(($, { $dateDiff }) =>
       $dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" }),
     );
 
@@ -351,7 +351,7 @@ describe("reporting: days since document was created", () => {
 describe("inventory: stock status label", () => {
   it("uses nested ternary ? : to classify stock level", () => {
     // Classify stock level: ok / low / out-of-stock
-    const result = mjsql('$.stock >= $.reorderPoint ? "ok" : $.stock > 0 ? "low" : "out-of-stock"');
+    const result = jsmql('$.stock >= $.reorderPoint ? "ok" : $.stock > 0 ? "low" : "out-of-stock"');
 
     expect(result).toEqual({
       $cond: [
@@ -369,7 +369,7 @@ describe("inventory: reorder alert", () => {
     // `!$.discontinued` follows JS truthiness — `discontinued: 0` would be
     // treated as falsy (not discontinued) just like in JS, even though MQL's
     // raw `$not` would coerce 0 differently.
-    const result = mjsql("!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel");
+    const result = jsmql("!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel");
 
     expect(result).toEqual({
       $and: [
@@ -396,7 +396,7 @@ describe("inventory: reorder alert", () => {
 describe("financial: invoice line total with compound tax", () => {
   it("uses JS arithmetic operators and $round escape hatch", () => {
     // lineTotal = round(qty * (unitPrice + unitPrice * taxRate), 2)
-    const result = mjsql("$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)");
+    const result = jsmql("$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)");
 
     expect(result).toEqual({
       $round: [
@@ -419,7 +419,7 @@ describe("user display: full name with null fallback", () => {
     // Display first name, falling back to first alias, then "anonymous".
     // .at(0) compiles to a compact $arrayElemAt; $.aliases[0] would emit a
     // runtime $cond on $isArray since the receiver type isn't statically known.
-    const result = mjsql('$.firstName ?? $.aliases.at(0) ?? "anonymous"');
+    const result = jsmql('$.firstName ?? $.aliases.at(0) ?? "anonymous"');
 
     expect(result).toEqual({
       $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
@@ -434,7 +434,7 @@ describe("location: full address formatter", () => {
     // Assembles up to 7 address fields into a single space-separated string.
     // The optional building name (e.g. "Suite 4,") is included only when present.
     // MongoDB executes this entirely — no need to fetch all fields to the client.
-    const result = mjsql(`
+    const result = jsmql(`
       [$.building && $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
         .filter(Boolean)
         .join(" ")
@@ -499,7 +499,7 @@ describe("location: full address formatter", () => {
 describe("data quality: CSV field word count", () => {
   it("uses .split().length — known array context resolves to $size", () => {
     // Count the number of comma-separated values in a CSV field
-    const result = mjsql('$.tags.split(",").length');
+    const result = jsmql('$.tags.split(",").length');
 
     expect(result).toEqual({ $size: { $split: ["$tags", ","] } });
   });
@@ -508,7 +508,7 @@ describe("data quality: CSV field word count", () => {
 describe("data quality: normalise string vs number field", () => {
   it("uses typeof in ternary to coerce mixed-type input", () => {
     // Return trimmed string if already a string, else convert to string
-    const result = mjsql('typeof $.value == "string" ? $.value.trim() : String($.value)');
+    const result = jsmql('typeof $.value == "string" ? $.value.trim() : String($.value)');
 
     expect(result).toEqual({
       $cond: [
@@ -528,7 +528,7 @@ describe("access control: admin permission check", () => {
     // `$.active` is a non-bool field reference, so `&&` follows JS's
     // operand-preserving rule and folds into a $cond chain. The bool-only
     // tail (`includes && length > 0`) collapses to `$and`.
-    const result = mjsql(
+    const result = jsmql(
       '$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length > 0',
     );
 
@@ -583,7 +583,7 @@ describe("invoice line greeting (template literal + optional chain + .startsWith
     // Build a string like "Hi Ada — your VIP invoice INV-2024-001 is ready"
     // using template literals, optional chaining for nested fields that may be missing,
     // and .startsWith for a common prefix check.
-    const result = mjsql(
+    const result = jsmql(
       "`Hi ${$.customer?.firstName ?? 'there'} — your " +
         "${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`",
     );
@@ -610,7 +610,7 @@ describe("analytics — flatMap + Math.max + .getTime", () => {
   it("computes the most-recent-event timestamp across all sessions", () => {
     // For a doc with sessions: [{ events: [{ ts }, ...] }, ...], extract the
     // newest event timestamp and report seconds since now.
-    const result = mjsql(`
+    const result = jsmql(`
       $.sessions
         .flatMap(s => s.events)
         .map(e => e.ts.getTime())
@@ -644,7 +644,7 @@ describe("analytics — flatMap + Math.max + .getTime", () => {
 describe("shopping cart total with numeric separators + .reduce", () => {
   it("accumulates with a clearly-formatted threshold", () => {
     // Cap line total at $10,000 (written as 10_000 for readability).
-    const result = mjsql("Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))");
+    const result = jsmql("Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))");
     expect(result).toEqual({
       $min: [
         10000,
@@ -665,7 +665,7 @@ describe("shopping cart total with numeric separators + .reduce", () => {
 describe("pivot table row (computed keys + Object.fromEntries)", () => {
   it("turns an array of {k,v} pairs into a wide row", () => {
     // Aggregating an array of `{ name, value }` pairs into one object keyed by `name`.
-    const result = mjsql("Object.fromEntries($.metrics.map(m => [m.name, m.value]))");
+    const result = jsmql("Object.fromEntries($.metrics.map(m => [m.name, m.value]))");
     expect(result).toEqual({
       $arrayToObject: {
         $map: {
@@ -682,7 +682,7 @@ describe("flex-shape accumulators in realistic pipelines", () => {
   it("group-stage accumulator: $sum over a field, $round to 2dp", () => {
     // Inside $group, $sum over a single field is the accumulator form.
     // $round wraps the result to 2 decimal places. Both rely on flex shape.
-    const result = mjsql("$round($sum($.lineTotal), 2)");
+    const result = jsmql("$round($sum($.lineTotal), 2)");
     expect(result).toEqual({
       $round: [{ $sum: "$lineTotal" }, 2],
     });
@@ -690,7 +690,7 @@ describe("flex-shape accumulators in realistic pipelines", () => {
 
   it("project-stage expression: $max picks the largest of several fields", () => {
     // Inside $project, $max with multiple args returns the max across expressions.
-    const result = mjsql("$max($.basePrice, $.salePrice, $.competitorPrice)");
+    const result = jsmql("$max($.basePrice, $.salePrice, $.competitorPrice)");
     expect(result).toEqual({
       $max: ["$basePrice", "$salePrice", "$competitorPrice"],
     });
@@ -698,7 +698,7 @@ describe("flex-shape accumulators in realistic pipelines", () => {
 
   it("merging two snapshots: $mergeObjects in expression context", () => {
     // Layering a partial update onto a base document.
-    const result = mjsql("$mergeObjects($.base, $.patch)");
+    const result = jsmql("$mergeObjects($.base, $.patch)");
     expect(result).toEqual({
       $mergeObjects: ["$base", "$patch"],
     });
@@ -709,7 +709,7 @@ describe("file upload validation (.includes on array literal + .endsWith + numer
   it("checks extension whitelist, name match, and size cap", () => {
     // Reject upload unless the lowercased extension is in the allowlist,
     // the filename actually ends with that extension, and size is ≤ 25 MB.
-    const result = mjsql(`
+    const result = jsmql(`
       [".jpg", ".png", ".pdf", ".docx"].includes($.file.ext.toLowerCase()) &&
       $.file.name.endsWith($.file.ext) &&
       $.file.size <= 25_000_000
@@ -742,7 +742,7 @@ describe("score range with spread + Array.isArray guard", () => {
   it("computes max-min via spread, falling back to 0 when scores is missing", () => {
     // Using ...spread to pass the array as variadic args to Math.max / Math.min.
     // Array.isArray defends against documents where scores isn't an array.
-    const result = mjsql(`
+    const result = jsmql(`
       Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0
     `);
 
@@ -761,7 +761,7 @@ describe("moderator membership check with array spread", () => {
     // A thread's effective moderators are: thread-specific mods, room-wide mods,
     // plus a hard-coded root user. Array spread is the natural JS form for
     // building this combined list, then .includes() checks membership.
-    const result = mjsql('[...$.moderators, ...$.room.mods, "root"].includes($.userId)');
+    const result = jsmql('[...$.moderators, ...$.room.mods, "root"].includes($.userId)');
 
     expect(result).toEqual({
       $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }],
@@ -773,7 +773,7 @@ describe("days since event (Date.now + .getTime + numeric separator)", () => {
   it("computes whole days elapsed since an event timestamp", () => {
     // Date.now() returns ms since epoch — same as JS — and so does .getTime().
     // 86_400_000 = 24 * 60 * 60 * 1000 ms in a day.
-    const result = mjsql("Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)");
+    const result = jsmql("Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)");
 
     expect(result).toEqual({
       $floor: {
@@ -786,7 +786,7 @@ describe("days since event (Date.now + .getTime + numeric separator)", () => {
 describe("audit log line (template literal + .toISOString + .charAt + .toUpperCase)", () => {
   it("formats an ISO-timestamped log line with a single-letter level prefix", () => {
     // Render lines like "2024-09-01T12:30:00.000Z [E] disk full".
-    const result = mjsql(
+    const result = jsmql(
       "`${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`",
     );
 
@@ -807,7 +807,7 @@ describe("audit log line (template literal + .toISOString + .charAt + .toUpperCa
 describe("tag aggregation (.flat + .join)", () => {
   it("collects all post tags into a single comma-separated string", () => {
     // Posts each carry a tags array; flatten them all into one list and render as CSV.
-    const result = mjsql('$.posts.map(p => p.tags).flat().join(", ")');
+    const result = jsmql('$.posts.map(p => p.tags).flat().join(", ")');
 
     expect(result).toEqual({
       $reduce: {
@@ -840,7 +840,7 @@ describe("scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math
     // growthFactor: continuous-compound multiplier for a given rate
     // trend:    -1 / 0 / +1 indicator from period-over-period delta
     // cubeSide: characteristic length from a 3D volume
-    const result = mjsql(`
+    const result = jsmql(`
       {
         distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),
         octave: Math.log2($.frequency / 440),
@@ -875,7 +875,7 @@ describe("dynamic pivot row (computed key in literal + shorthand property)", () 
   it("turns each product into a dict keyed by category, plus the original record", () => {
     // [{category:'A', price:1}] → [{ A: 1, p: { category:'A', price:1 } }]
     // The shorthand `p` is sugar for `p: p`, which resolves to `p: $$p` in lambda scope.
-    const result = mjsql("$.products.map(p => ({ [p.category]: p.price, p }))");
+    const result = jsmql("$.products.map(p => ({ [p.category]: p.price, p }))");
 
     expect(result).toEqual({
       $map: {
@@ -897,7 +897,7 @@ describe("annotated insurance underwriting rule (// and /* */ comments)", () => 
     // Real underwriting check: applicant qualifies for the standard tier if
     // they're the right age, drive a sane number of km/year, and aren't in
     // a high-risk occupation. Comments document the business rules inline.
-    const result = mjsql(`
+    const result = jsmql(`
       // age window: 25 to 70 inclusive
       $.driver.age >= 25 && $.driver.age <= 70 &&
 
@@ -943,7 +943,7 @@ describe("pipeline: top-orders report by department", () => {
       $sort({ revenue: -1 }),
       $limit(3)
     ]`;
-    const result2 = mjsql(($, { $match, $lookup, $unwind, $group, $sum, $set, $sort, $limit }) => [
+    const result2 = jsmql(($, { $match, $lookup, $unwind, $group, $sum, $set, $sort, $limit }) => [
       $match($.status === "shipped" && $.placedAt >= "2026-01-01"),
       $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" }),
       $unwind($.buyer),
@@ -977,12 +977,12 @@ describe("pipeline: count orders by status per shop ($accumulator replacement)",
   // $accumulator and server-side JavaScript, since no built-in accumulator
   // builds an object whose keys come from data.
   //
-  // mjsql replaces the $accumulator pattern natively: $push the statuses
+  // jsmql replaces the $accumulator pattern natively: $push the statuses
   // into an array during $group, then $reduce them into an object using
   // object spread and a computed key. The codegen lowers `{ ...acc, [s]: x }`
   // to $mergeObjects + $arrayToObject. Bracket access on a lambda parameter
   // (`acc[s]`) compiles to a runtime $cond between $arrayElemAt and
-  // $getField — mjsql can't statically infer that `acc` is an object, so it
+  // $getField — jsmql can't statically infer that `acc` is an object, so it
   // dispatches at evaluation time. The dead $arrayElemAt branch never runs
   // for this particular reducer, but the codegen stays type-agnostic.
   it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
@@ -992,7 +992,7 @@ describe("pipeline: count orders by status per shop ($accumulator replacement)",
           counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
       } }
     ]`;
-    const result2 = mjsql(($, { $push }) => [
+    const result2 = jsmql(($, { $push }) => [
       { $group: { _id: $.shopId, statuses: $push($.status) } },
       {
         $project: {
@@ -1058,7 +1058,7 @@ describe("e-commerce: invoice finalisation pipeline (mutations + $match)", () =>
   // assignment expressions are added by the formatter and are accepted
   // transparently by the parser — see docs/specs/mutations.md.
   it("compiles match → mutate → mutate → mutate to a four-stage pipeline", () => {
-    const result1 = mjsql(`[
+    const result1 = jsmql(`[
       $match($.status === 'pending' && $.paidAt != null),
       $.lineTotal = $.qty * $.unitPrice,
       $.invoiceCount += 1,
@@ -1066,7 +1066,7 @@ describe("e-commerce: invoice finalisation pipeline (mutations + $match)", () =>
       delete $._processingState,
       $.status = 'complete'
     ]`);
-    const result2 = mjsql(($, { $match }) => [
+    const result2 = jsmql(($, { $match }) => [
       $match($.status === "pending" && $.paidAt != null),
       ($.lineTotal = $.qty * $.unitPrice),
       ($.invoiceCount += 1),
@@ -1103,7 +1103,7 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
   // `;`. Inside one `;` chunk, `,` still groups mutations into one stage with
   // the usual kind / read-after-write splits.
   it("compiles `;`-separated stages identically to the bracketed form", () => {
-    const bracketed = mjsql(`[
+    const bracketed = jsmql(`[
       $match($.status === 'pending' && $.paidAt != null),
       $.lineTotal = $.qty * $.unitPrice,
       $.invoiceCount += 1,
@@ -1111,7 +1111,7 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
       delete $._processingState,
       $.status = 'complete'
     ]`);
-    const implicit = mjsql(`
+    const implicit = jsmql(`
       $match($.status === 'pending' && $.paidAt != null);
       $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
       delete $.tempToken, delete $._processingState;
@@ -1121,18 +1121,18 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
   });
 
   // Same intent again, this time as a block-body arrow function. The body
-  // inside `{ … }` is a sequence of mjsql statements separated by `;`, with
+  // inside `{ … }` is a sequence of jsmql statements separated by `;`, with
   // `,` keeping the in-stage role for mutations. The `($, { $match })`
   // destructured second parameter is types-only — it just gives IDEs a place
   // to hand `$match` to the user without complaining about an unknown name.
   it("block-body arrow function compiles identically to the string forms", () => {
-    const stringForm = mjsql(`
+    const stringForm = jsmql(`
       $match($.status === 'pending' && $.paidAt != null);
       $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
       delete $.tempToken, delete $._processingState;
       $.status = 'complete'
     `);
-    const implicitAsFunc = mjsql(($, { $match }) => {
+    const implicitAsFunc = jsmql(($, { $match }) => {
       $match($.status === "pending" && $.paidAt != null);
       (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
       (delete $.tempToken, delete $._processingState);

@@ -3,7 +3,7 @@
 ## Pipeline
 
 ```
-mjsql(string | Function)
+jsmql(string | Function)
     │
     ▼
 Function-input adapter (src/index.ts)
@@ -70,9 +70,9 @@ MQL JSON (plain JS object, or array of stage objects)
 ## Public API surface (`src/index.ts`)
 
 ```ts
-export type MjsqlOps = Record<`$${string}`, (...args: any[]) => any>;
-type MjsqlFn = ($: any, ops: MjsqlOps) => unknown;
-type MjsqlInput = string | MjsqlFn;
+export type JsmqlOps = Record<`$${string}`, (...args: any[]) => any>;
+type JsmqlFn = ($: any, ops: JsmqlOps) => unknown;
+type JsmqlInput = string | JsmqlFn;
 // Accepts any callable shape — `() => …`, `($) => …`, `($, { $dateDiff }) => …`
 // all work, by JS function variance. The parameter list is stripped at
 // extraction time; `$` is `any` so unannotated `$.foo` keeps autocomplete
@@ -83,27 +83,27 @@ type MjsqlInput = string | MjsqlFn;
 // a callable; correctness against the real operator registry is enforced at
 // codegen time, not by the type.
 
-type MjsqlOutput = object | object[];
+type JsmqlOutput = object | object[];
 // Single compiled MQL expression, or — for top-level aggregation pipelines —
 // an array of stage objects. Pipeline-mode detection lives in src/pipeline.ts;
 // see specs/aggregation-stages.md.
 
-mjsql(input: MjsqlInput): MjsqlOutput
+jsmql(input: JsmqlInput): JsmqlOutput
 // Parses and transpiles. Throws LexError | ParseError | CodegenError | FunctionInputError.
 // For function input, the body is extracted (toString + arrow strip) and the result is cached.
 
-validate(input: MjsqlInput): ValidationResult
+validate(input: JsmqlInput): ValidationResult
 // Same pipeline, but catches all errors and returns { valid, errors[] } instead.
 // Total — never throws (see error-mapping table below).
 
-mql(strings: TemplateStringsArray, ...values: unknown[]): MjsqlOutput
+mql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
 // Template tag. Interpolates values via JSON.stringify (with validation —
-// see MqlInterpolationError below), then calls mjsql().
+// see MqlInterpolationError below), then calls jsmql().
 ```
 
 ### Function-input cache
 
-Cache key: the **extracted body string**, not the function reference. Inline arrows like `mjsql(($) => …)` evaluate to a fresh function object on every call (JS does not intern function literals), so a `WeakMap<Function, object>` would never hit. The body string is stable across every evaluation of the same source location, which gives cache hits in hot loops, in hoisted module-top-level constants, and across identical bodies declared at different call sites.
+Cache key: the **extracted body string**, not the function reference. Inline arrows like `jsmql(($) => …)` evaluate to a fresh function object on every call (JS does not intern function literals), so a `WeakMap<Function, object>` would never hit. The body string is stable across every evaluation of the same source location, which gives cache hits in hot loops, in hoisted module-top-level constants, and across identical bodies declared at different call sites.
 
 The cache is a **bounded LRU** (cap `FN_BODY_CACHE_CAP = 256`, eviction by `Map` insertion order). Today function bodies cannot be string-interpolated, so the natural set of distinct bodies is bounded by source-code size, but the cap is defence-in-depth against a future change that lets dynamic strings reach this map (e.g. accepting `new Function(...)` as input). The string-input path is intentionally **not** cached, because raw strings are often built via dynamic concatenation and would defeat any cache.
 

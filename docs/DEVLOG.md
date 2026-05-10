@@ -1,12 +1,22 @@
 # DEVLOG
 
-A chronological log of decisions, changes, and the reasoning behind them. Every observable change to mjsql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
+A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
 
 **Conventions.**
 - Newest entry on top.
 - Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
 - If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
 - Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
+
+---
+
+## 2026-05-10 — Renamed project from `mjsql` to `jsmql`
+
+The old name read phonetically as "MySQL" — a relational database the project has nothing to do with. That's a DX trap on first contact: the name should help a reader place the tool, not mislead them. `jsmql` reads as "JS → MQL", which is exactly what the compiler does (JavaScript-subset syntax in, MongoDB MQL JSON out), and grounds the name in MongoDB's actual term for its query language.
+
+Mechanical rename across all 27 tracked files containing the old name: package identity (`package.json`, `package-lock.json`), the exported `jsmql()` function in [src/index.ts](../src/index.ts), the `JsmqlInput` / `JsmqlOutput` / `JsmqlOps` / `JsmqlFn` type names, parser error messages in [src/parser.ts](../src/parser.ts), every test, every doc, every CLAUDE.md, and the historical entries in this DEVLOG. The `mql` template tag is unchanged — it always referred to MongoDB's MQL output, not the project name. Pre-1.0 with no published npm artifact and no GitHub remote configured, so the rename is purely an in-repo change today; the containing folder `~/code/mjsql` and any future remote will be moved as a follow-up using `git worktree repair` (18 sibling worktrees share the parent directory).
+
+Marked `feat!:` because the import-path identity changed: anyone with `import { mjsql } from "mjsql"` in their code needs `import { jsmql } from "jsmql"`. The runtime contract (input shapes, output shapes, error types) is otherwise unchanged.
 
 ---
 
@@ -38,7 +48,7 @@ Falls back to a normal manual conflict in the rare cases the structural merge ca
 
 Mechanics: the parser distinguishes the call form (`Boolean(x)`) from the bare form by 1-token lookahead in `parsePrimary()` ([src/parser.ts](../src/parser.ts)) and emits a new AST node `TypeCastRef` for the bare case. `requireLambda()` in [src/codegen.ts](../src/codegen.ts) desugars `TypeCastRef { cast }` into a synthetic `Lambda { params: ["v"], body: TypeCast(cast, ParamRef("v")) }` before per-method handlers run, so all eight callback-taking methods support the shorthand from a single change site. Outside callback position the bare form throws an actionable `CodegenError` pointing the user at the call form.
 
-`parseInt` and `parseFloat` are deliberately *not* in the bare-callable set. In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its radix argument — an infamous footgun. mjsql could either replicate the bug or diverge silently from JS runtime semantics; rejecting the bare form forces users to write `x => parseInt(x)` and surfaces the choice. The call form `parseInt(x)` continues to work as before.
+`parseInt` and `parseFloat` are deliberately *not* in the bare-callable set. In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its radix argument — an infamous footgun. jsmql could either replicate the bug or diverge silently from JS runtime semantics; rejecting the bare form forces users to write `x => parseInt(x)` and surfaces the choice. The call form `parseInt(x)` continues to work as before.
 
 `.reduce(Boolean)` falls out automatically: the synthetic lambda has 1 parameter and the existing "exactly 2 parameters" check in `.reduce()` rejects it. Future work: `Math.floor` / `Math.round` etc. as bare callbacks (different AST shape — member access rather than bare ident — so larger change), and a possible parser-level "did you mean `x => parseInt(x)`?" hint when the user writes `parseInt` bare.
 
@@ -46,10 +56,10 @@ Mechanics: the parser distinguishes the call form (`Boolean(x)`) from the bare f
 
 ## 2026-05-10 — Block-body arrows for the function-input form
 
-The `mjsql(($) => …)` adapter now accepts block-body arrows alongside expression bodies. The body inside `{ … }` is a sequence of mjsql statements separated by `;` — the function-form mirror of the implicit-pipeline string syntax shipped earlier today. This lets users author multi-stage pipelines as plain JS that prettier and oxfmt indent and line-break for free, without any `[…]` ceremony:
+The `jsmql(($) => …)` adapter now accepts block-body arrows alongside expression bodies. The body inside `{ … }` is a sequence of jsmql statements separated by `;` — the function-form mirror of the implicit-pipeline string syntax shipped earlier today. This lets users author multi-stage pipelines as plain JS that prettier and oxfmt indent and line-break for free, without any `[…]` ceremony:
 
 ```js
-mjsql(($, { $match }) => {
+jsmql(($, { $match }) => {
   $match($.status === "pending" && $.paidAt != null);
   ($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1);
   delete $.tempToken, delete $._processingState;
@@ -67,9 +77,9 @@ mjsql(($, { $match }) => {
 
 ## 2026-05-10 — Browser playground (`playground.html`)
 
-A single-file static playground at the repo root: vertical split with an mjsql input on the left and the compiled MQL JSON live-rendering on the right. Loads the local `dist/index.js` directly via `<script type="module">`, so there is no build step beyond `npm run build` and no bundler. Default expression is the README quick-start (`$.price >= 100 && $.stock > 0`) so first paint shows recognisable output.
+A single-file static playground at the repo root: vertical split with an jsmql input on the left and the compiled MQL JSON live-rendering on the right. Loads the local `dist/index.js` directly via `<script type="module">`, so there is no build step beyond `npm run build` and no bundler. Default expression is the README quick-start (`$.price >= 100 && $.stock > 0`) so first paint shows recognisable output.
 
-The render path uses `validate()` for the structured-error guarantee and only calls `mjsql()` once validation passes — that keeps the textarea handler `try/catch`-free and lets us show the error `code` and `pos` plainly. No debouncing: the parser/codegen run in microseconds and recompiling on every keystroke gives the most responsive feel.
+The render path uses `validate()` for the structured-error guarantee and only calls `jsmql()` once validation passes — that keeps the textarea handler `try/catch`-free and lets us show the error `code` and `pos` plainly. No debouncing: the parser/codegen run in microseconds and recompiling on every keystroke gives the most responsive feel.
 
 Browsers refuse to load ESM from `file://`, so the page must be served over HTTP — the README pointer mentions `python3 -m http.server` (the project bans `npx`, and that one-liner ships with macOS). Not added to `package.json` `files`: the playground is a contributor/demo tool, not part of the published npm artifact.
 
@@ -79,7 +89,7 @@ Browsers refuse to load ESM from `file://`, so the page must be served over HTTP
 
 `;` and `,` were interchangeable mutation-chain separators. They are not anymore. The new rule:
 
-- `;` is **the** pipeline-stage separator. Any `;` at the top level — including a single trailing `;` — flips `mjsql()` into pipeline mode and returns an array. Each `;`-separated chunk becomes its own stage(s); adjacent mutation statements **never** coalesce across `;`.
+- `;` is **the** pipeline-stage separator. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode and returns an array. Each `;`-separated chunk becomes its own stage(s); adjacent mutation statements **never** coalesce across `;`.
 - `,` is the in-stage mutation separator. It still groups mutations into one `$set`/`$unset` stage, with the existing kind / read-after-write splits.
 
 The motivation is DX: short pipelines no longer need `[…]` brackets, and the role of each separator is now unambiguous. `$match($.active); $.score += 1; $sort({score: -1})` reads naturally as three stages and compiles directly without ceremony.
@@ -110,7 +120,7 @@ Targets validate identically to compound assignments (field paths only). Misuse 
 
 Three additive enhancements to `playground.html` (initial entry below):
 
-- **Examples dropdown** in the left-panel label with 13 curated cases lifted from `test/realistic.test.ts`, spanning expression, template-literal, and pipeline forms. Default selection is the dynamic-keyed-histogram pipeline (the `$accumulator` replacement), which is the most distinctive showcase of what mjsql buys you over hand-written MQL. Sources live in `<script type="text/plain">` blocks so backticks, `${…}`, `<`, and `&&` need no escaping; `loadExample()` strips the common leading-whitespace prefix that the HTML formatter adds.
+- **Examples dropdown** in the left-panel label with 13 curated cases lifted from `test/realistic.test.ts`, spanning expression, template-literal, and pipeline forms. Default selection is the dynamic-keyed-histogram pipeline (the `$accumulator` replacement), which is the most distinctive showcase of what jsmql buys you over hand-written MQL. Sources live in `<script type="text/plain">` blocks so backticks, `${…}`, `<`, and `&&` need no escaping; `loadExample()` strips the common leading-whitespace prefix that the HTML formatter adds.
 - **Prettify checkbox** on the right-panel label (default On) toggles the `JSON.stringify` indent argument between `2` and `0`. Off is the right call for copy-pasting compact MQL into a `db.aggregate(...)` call.
 - **Syntax highlighting on both panes** via CodeMirror 5 from cdnjs (`codemirror.min.{js,css}`, `mode/javascript/javascript.min.js`, `theme/neo.min.css`). Picked CodeMirror over Prism/highlight.js because it gives real editing on the editable left pane (no textarea-overlay trick) and a read-only mode for the right pane via the same library — single dependency, consistent look. The `javascript` mode handles both JS and JSON (`{ json: true }`). Errors switch the right pane's mode to `null` (plain text) and add a `.error` class on the panel for the red tint.
 
@@ -134,7 +144,7 @@ Same observable behaviour as the previous block-body-arrow entry; this is a code
 
 `src/parser.ts` now owns it:
 
-- `Parser.parseFunctionInput()` — public entry called by `mjsql()` for the function-form input. Consumes the parameter list (balance-counted, discarded — params are types-only), the `=>`, then dispatches to a block-body or expression-body parser.
+- `Parser.parseFunctionInput()` — public entry called by `jsmql()` for the function-form input. Consumes the parameter list (balance-counted, discarded — params are types-only), the `=>`, then dispatches to a block-body or expression-body parser.
 - `parseBlockBody()` — structurally identical to the top-level `;`-loop in `parse()`, terminated by `}` instead of EOF. Same coalescing rules as the implicit `;`-separated pipeline.
 - `parseExpressionBody()` — single statement with one optional trailing `;`, which is consumed silently (formatter artifact) and does NOT flip into pipeline mode. Single-statement expression-body arrows preserve their object-shaped output as before.
 - `rejectReturn()` — token-aware check at every statement-start position inside a block body. Throws a precise `FunctionInputError` when it sees the bare identifier `return`, so a `return` token *inside* a string or as `obj.return` no longer false-fires.
@@ -151,7 +161,7 @@ Two invariants that I'd been verifying by hand at the end of every session — `
 
 The motivation is straightforward: relying on muscle memory to enforce a documented invariant means it survives only as long as the human remembers. The real failure mode is silent — a contributor lands a `class` with a parameter property, every vitest case still passes, and the package breaks for Deno/Bun users at import time. `npm test` now catches it on the same commit.
 
-`test/CLAUDE.md` and the root `CLAUDE.md` "Things that matter" list now point at `test/smoke.test.ts` instead of the manual `node src/index.ts` ritual. Per-feature spot-checks (`node -e "console.log(mjsql('…'))"`) are explicitly *not* added — they duplicate `codegen.test.ts` / `realistic.test.ts` cases.
+`test/CLAUDE.md` and the root `CLAUDE.md` "Things that matter" list now point at `test/smoke.test.ts` instead of the manual `node src/index.ts` ritual. Per-feature spot-checks (`node -e "console.log(jsmql('…'))"`) are explicitly *not* added — they duplicate `codegen.test.ts` / `realistic.test.ts` cases.
 
 ---
 
@@ -165,13 +175,13 @@ Closes the longest-standing item in `Invalid Constructs` (assignments) and adds 
 
 **Parser shape.** `parse()` now returns `Program = Expr | MutationProgram`. Top-level dispatch: a leading `delete` keyword, or any expression followed by an assignment operator, triggers mutation-program parsing. Inside `parseArrayLiteral`, the same per-element heuristic runs so `[$match(...), $.a = 1, delete $.tmp, $sort(...)]` works. `=` is right-associative and chainable; `+=`/`-=`/`*=`/`/=` are not — `a += b += 1` is rejected because it's too easy to misread. Compound operators are desugared at parse time into `=` plus a `BinaryExpr`, so codegen sees only plain assignments and inherits the existing type-aware `+` (numeric `$add` vs string `$concat`) for free.
 
-**Parenthesized assignments accepted.** Formatters wrap assignment expressions in parens when they sit in array element position, and Vite/Vitest's transform silently strips them — so without parser support, `mjsql(($) => [($.a = 5)])` would fail in production runtimes even though it passed in tests. `parseGrouped` now recognises an assignment operator after the inner expression, parses the assignment inside the parens, and returns the resulting `AssignExpr`. Misuse as a value (`1 + ($.a = 5)`) is rejected at codegen with a clear message.
+**Parenthesized assignments accepted.** Formatters wrap assignment expressions in parens when they sit in array element position, and Vite/Vitest's transform silently strips them — so without parser support, `jsmql(($) => [($.a = 5)])` would fail in production runtimes even though it passed in tests. `parseGrouped` now recognises an assignment operator after the inner expression, parses the assignment inside the parens, and returns the resulting `AssignExpr`. Misuse as a value (`1 + ($.a = 5)`) is rejected at codegen with a clear message.
 
 **Targets.** Restricted to static field paths (`$.x` / `$.x.y.z`). Bare identifiers, index access, and computed paths are rejected with operator-specific error messages. Mutations are statement-only — invalid inside expressions, lambda bodies, or as values. The `delete` keyword does not return a boolean (unlike JS).
 
 **Both `;` and `,` work as separators**, freely interchangeable. `,` was already a list separator inside arrays/calls; the parser disambiguates by position. `;` is a new lexer token. Trailing separator allowed.
 
-**Spec.** `docs/specs/mutations.md` covers the AST, lexer additions, parser dispatch, codegen coalescer, pipeline integration, and the parens-handling. User-facing reference is `docs/LANGUAGE.md` § Mutations. Tests in `test/mutations.test.ts` (62 cases) plus a paired-form realistic case (`mjsql(string)` ≡ `mjsql(func)`) in `test/realistic.test.ts`.
+**Spec.** `docs/specs/mutations.md` covers the AST, lexer additions, parser dispatch, codegen coalescer, pipeline integration, and the parens-handling. User-facing reference is `docs/LANGUAGE.md` § Mutations. Tests in `test/mutations.test.ts` (62 cases) plus a paired-form realistic case (`jsmql(string)` ≡ `jsmql(func)`) in `test/realistic.test.ts`.
 
 ---
 
@@ -219,7 +229,7 @@ Follow-up to the morning's spec drift sweep. That commit fixed eleven concrete d
 
 A full audit of every file in `docs/specs/` against the actual implementation in `src/`. Found 11 concrete drift points and fixed all of them; no source or test changes (the implementation was right, the specs had fallen behind).
 
-**`architecture.md` — biggest cluster.** The `Expr` AST node list was missing five node types added since the spec was last touched (`BigIntLiteral`, `NewSet`, `CallExpression`, `ArrayFrom`, `NumberStatic`). The pipeline diagram terminated at `generate()` and the module-responsibilities table didn't list `pipeline.ts` or `stages.ts` — both load-bearing modules for the pipeline-mode path that runs from `compile()` in `src/index.ts`. The public `mjsql()` signature still claimed `: object` rather than the widened `: MjsqlOutput = object | object[]` that pipeline mode needs. The error-types table was missing `MqlInterpolationError` (public class, raised by the `mql` template tag) and `validate()`'s `RangeError` defensive arm. The lexer one-line summary listed only six of the twelve+ token shapes the lexer actually produces. And the cache section still described the `fnBodyCache` as "unbounded but safely so" — it has been a 256-entry LRU since the security-hardening pass on 2026-05-08.
+**`architecture.md` — biggest cluster.** The `Expr` AST node list was missing five node types added since the spec was last touched (`BigIntLiteral`, `NewSet`, `CallExpression`, `ArrayFrom`, `NumberStatic`). The pipeline diagram terminated at `generate()` and the module-responsibilities table didn't list `pipeline.ts` or `stages.ts` — both load-bearing modules for the pipeline-mode path that runs from `compile()` in `src/index.ts`. The public `jsmql()` signature still claimed `: object` rather than the widened `: JsmqlOutput = object | object[]` that pipeline mode needs. The error-types table was missing `MqlInterpolationError` (public class, raised by the `mql` template tag) and `validate()`'s `RangeError` defensive arm. The lexer one-line summary listed only six of the twelve+ token shapes the lexer actually produces. And the cache section still described the `fnBodyCache` as "unbounded but safely so" — it has been a 256-entry LRU since the security-hardening pass on 2026-05-08.
 
 **`grammar.md`.** The `$let` lambda paragraph said the lambda parameters "become the `vars` binding names" — direction reversed. The keys come from the object literal (the first arg); the lambda's params are added to scope so the body can reference them as `$$paramName`. The spec wording made it sound like the lambda was load-bearing for the binding step, which would mislead anyone trying to extend or debug the `$let` intercept. Also expanded the string-context-`+` method list from ten methods to the full sixteen the codegen actually checks (`STRING_RETURNING_METHODS` in `src/codegen.ts`); the old list silently understated when a `+` chain becomes `$concat`.
 
@@ -265,7 +275,7 @@ A pass over the four issues a security review of the `mql` template tag and the 
 
 **Compiled-body cache is now a bounded LRU (cap 256).** [src/index.ts](../src/index.ts)'s `fnBodyCache` was a plain `Map` whose growth was bounded only by the count of distinct arrow-function source strings in the host program — fine today, since `Function.prototype.toString()` returns static text. The bound is defence-in-depth against a future change that lets dynamic strings reach this map (e.g. accepting `new Function(...)` as input). LRU is implemented in-file as `cacheGet` / `cacheSet` via `Map` insertion-order.
 
-**Deferred from this pass.** Server-side-JavaScript operators (`$function`, `$accumulator`, and `$where` via the unknown-operator passthrough at `codegen.ts:602`) remain emittable. The chosen direction is to surface them via the JS `function` keyword as first-class mjsql syntax — the same model as the `in` keyword — rather than a denylist or `{ allowServerJs: true }` flag. Substantial design work; tracked for a separate session. No `SECURITY.md` written yet either; will add once the threat model stabilises post-deferred-work.
+**Deferred from this pass.** Server-side-JavaScript operators (`$function`, `$accumulator`, and `$where` via the unknown-operator passthrough at `codegen.ts:602`) remain emittable. The chosen direction is to surface them via the JS `function` keyword as first-class jsmql syntax — the same model as the `in` keyword — rather than a denylist or `{ allowServerJs: true }` flag. Substantial design work; tracked for a separate session. No `SECURITY.md` written yet either; will add once the threat model stabilises post-deferred-work.
 
 ---
 
@@ -275,28 +285,28 @@ A pass over the four issues a security review of the `mql` template tag and the 
 
 The mapping is unambiguous: walk entries left-to-right, group consecutive non-spread entries into one `$mergeObjects` operand each, and emit each `...expr` as its own operand. JS spread's "later wins" matches `$mergeObjects`'s "rightmost value wins on key collision", so order is preserved without rearranging. Computed keys still produce `$arrayToObject`, but per-block — `{ ...$.base, [$.k]: $.v }` becomes `{ $mergeObjects: ["$base", { $arrayToObject: [["$k", "$v"]] }] }`. A lone `{ ...x }` returns `x` directly so the common no-op case doesn't get a redundant wrapper.
 
-This unlocks the cleaner version of the histogram replacement in the README's `$accumulator` migration example. The reduce body went from `(acc, s) => $mergeObjects(acc, { [s]: (acc[s] ?? 0) + 1 })` to the more JS-natural `(acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 })`. Same MQL output, less mjsql-specific syntax. Eight new test cases in `test/codegen.test.ts` under `describe("object spread", …)` cover the grouping rules, computed-key interaction, and the README's exact reduce expression.
+This unlocks the cleaner version of the histogram replacement in the README's `$accumulator` migration example. The reduce body went from `(acc, s) => $mergeObjects(acc, { [s]: (acc[s] ?? 0) + 1 })` to the more JS-natural `(acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 })`. Same MQL output, less jsmql-specific syntax. Eight new test cases in `test/codegen.test.ts` under `describe("object spread", …)` cover the grouping rules, computed-key interaction, and the README's exact reduce expression.
 
 The drop-in support also works inside operator argument objects — but those still reject spread, since an operator's argument keys are part of MongoDB's wire format and can't be runtime-merged. That restriction is tested too.
 
 ---
 
-## 2026-05-08 — Position mjsql as the migration path for deprecated server-side JS
+## 2026-05-08 — Position jsmql as the migration path for deprecated server-side JS
 
-MongoDB 8.0 deprecates `$function`, `$accumulator`, and `$where` — the three operators that execute user-supplied JavaScript on the server. mjsql's authoring model ("write JavaScript expressions, get native aggregation operators") is exactly what MongoDB's own deprecation guidance points users toward, so we are explicit about it: the README now leads with the deprecation context, and `docs/LANGUAGE.md` has a new "Replacing server-side JavaScript" section with side-by-side migration examples in both the string form (`mjsql("…")`) and the function form (`mjsql(($) => …)`).
+MongoDB 8.0 deprecates `$function`, `$accumulator`, and `$where` — the three operators that execute user-supplied JavaScript on the server. jsmql's authoring model ("write JavaScript expressions, get native aggregation operators") is exactly what MongoDB's own deprecation guidance points users toward, so we are explicit about it: the README now leads with the deprecation context, and `docs/LANGUAGE.md` has a new "Replacing server-side JavaScript" section with side-by-side migration examples in both the string form (`jsmql("…")`) and the function form (`jsmql(($) => …)`).
 
 **Deliberate non-decisions.** No `function` keyword sugar in the grammar (an earlier-explored direction is now retired); no error or warning when the deprecated operators are emitted via the existing registry passthrough; no removal of the `$function` / `$accumulator` registry entries. The DX bar is clear: existing code that calls these operators continues to work without ceremony. The whole pivot lives in three files — `README.md`, `docs/LANGUAGE.md`, `docs/DEVLOG.md` (this entry) — and zero source or tests change.
 
-**Why this shape.** Throwing an error or printing a warning would degrade users who already use these operators on older MongoDB versions, where they remain supported. Documentation does the work instead: anyone landing here from a "MongoDB $function deprecated" search query gets a direct migration table and a reason to adopt mjsql, while existing call sites continue to compile silently. The decision aligns with priority #1 (developer experience) and turns the deprecation into mjsql's strongest positioning lever to date.
+**Why this shape.** Throwing an error or printing a warning would degrade users who already use these operators on older MongoDB versions, where they remain supported. Documentation does the work instead: anyone landing here from a "MongoDB $function deprecated" search query gets a direct migration table and a reason to adopt jsmql, while existing call sites continue to compile silently. The decision aligns with priority #1 (developer experience) and turns the deprecation into jsmql's strongest positioning lever to date.
 
 ---
 
-## 2026-05-07 — Aggregation pipelines through `mjsql()`
+## 2026-05-07 — Aggregation pipelines through `jsmql()`
 
-`mjsql()` now compiles entire MongoDB aggregation pipelines, not just single expressions. No new exports — detection happens at the input boundary inside `compile()`. A top-level array enters pipeline mode when its first element looks like a stage attempt; the function returns `object[]` instead of the historical single `object`. Both forms work and may be mixed:
+`jsmql()` now compiles entire MongoDB aggregation pipelines, not just single expressions. No new exports — detection happens at the input boundary inside `compile()`. A top-level array enters pipeline mode when its first element looks like a stage attempt; the function returns `object[]` instead of the historical single `object`. Both forms work and may be mixed:
 
 ```js
-mjsql(`[
+jsmql(`[
   { $match: $.age > 18 },
   $sort({ created: -1 }),
   { $limit: 10 }
@@ -305,7 +315,7 @@ mjsql(`[
 
 **Why both forms.** The stage-object shape `{ $match: ... }` mirrors what users copy out of Compass and the MongoDB docs; the stage-call shape `$match(...)` parallels the existing `$op()` escape hatch and is terser. They compile identically; users pick what reads better at the call site.
 
-**`$match` auto-`$expr` wrap.** `$match` is the one stage with two body modes in real MQL — query document or aggregation expression (the latter must be wrapped in `$expr`). When a `$match` body parses as an object literal, mjsql treats it as a raw query document and passes it through; anything else is auto-wrapped, so `{ $match: $.age > 18 }` becomes `{ $match: { $expr: { $gt: ["$age", 18] } } }`. This is the only stage-aware transform; everything else is the existing object-literal codegen.
+**`$match` auto-`$expr` wrap.** `$match` is the one stage with two body modes in real MQL — query document or aggregation expression (the latter must be wrapped in `$expr`). When a `$match` body parses as an object literal, jsmql treats it as a raw query document and passes it through; anything else is auto-wrapped, so `{ $match: $.age > 18 }` becomes `{ $match: { $expr: { $gt: ["$age", 18] } } }`. This is the only stage-aware transform; everything else is the existing object-literal codegen.
 
 **Architecture.** New `src/stages.ts` registers all 45 stages from `vendor/mql-specifications/definitions/stage/` (description + per-stage `subPipelineFields`). New `src/pipeline.ts` owns detection (`isPipelineAst`), lowering (`generatePipeline`), and sub-pipeline recursion for `$lookup.pipeline`, `$unionWith.pipeline`, and `$facet.*`. `src/codegen.ts` is unchanged — pipeline lowering composes on top of `generate()`. The same registry-as-truth invariant we apply to operators (no `if (name === ...)` outside the registry) applies to stages.
 
@@ -313,7 +323,7 @@ mjsql(`[
 
 **Detection trigger is intentionally aggressive on `OperatorCall` first elements.** `[ $abs(1), $abs(2) ]` enters pipeline mode and fails strictly — top-level value arrays of expression-operator results are vanishingly rare in aggregation use, while typos like `[$prject({...})]` benefit hugely from a clear "not a known stage" error instead of silent compile-as-array.
 
-**Public API.** `mjsql()` and `mql` return type widens from `object` to `object | object[]` (`MjsqlOutput`). Pre-1.0 it's a non-breaking change at runtime (arrays are objects); semver-tracked when 1.0 cuts.
+**Public API.** `jsmql()` and `mql` return type widens from `object` to `object | object[]` (`JsmqlOutput`). Pre-1.0 it's a non-breaking change at runtime (arrays are objects); semver-tracked when 1.0 cuts.
 
 **What's deliberately deferred.** Drift-protection test for `STAGES` (parallel to `test/operator-spec-coverage.test.ts`); query-predicate validation inside `$match` object-literal bodies (today they passthrough verbatim, see `docs/specs/query-predicates.md`); `$setWindowFields` static validation of window-only operators. Spec details in `docs/specs/aggregation-stages.md`.
 
@@ -323,7 +333,7 @@ mjsql(`[
 
 The example block under "no JavaScript equivalent" prose previously showed `$cmp`, `$in`, `$or`, `$size`, `$cond` — all of which *do* have JS counterparts (`<=>`-style comparison, the `in` keyword, `||`, `.length`, `?:`). Replaced with `$zip`, `$sampleRate`, `$stdDevPop`, `$dateTrunc`, `$topN` — operators with no JS analogue.
 
-**Why.** The original examples undermined the framing of the whole section. A reader could reasonably conclude that mjsql's `$op()` form is just a stylistic alternative to JS syntax, when in fact its purpose is to reach MQL operators that don't have a JS surface at all. Picking the right exemplars makes the section's value obvious at a glance.
+**Why.** The original examples undermined the framing of the whole section. A reader could reasonably conclude that jsmql's `$op()` form is just a stylistic alternative to JS syntax, when in fact its purpose is to reach MQL operators that don't have a JS surface at all. Picking the right exemplars makes the section's value obvious at a glance.
 
 **Affected.** [`README.md`](../README.md), [`CLAUDE.md`](../CLAUDE.md), [`docs/LANGUAGE.md`](LANGUAGE.md), [`test/realistic.test.ts`](../test/realistic.test.ts) (header comment).
 
@@ -333,7 +343,7 @@ The example block under "no JavaScript equivalent" prose previously showed `$cmp
 
 `$op()` was previously called "utility functions" / "fallback form" in user-facing docs. Renamed everywhere to "Escape Hatch", with "(direct operator form)" as the parenthetical explainer in headings and prose. EBNF grammar production renamed from `utility_call` → `operator_call` to match the spec.
 
-**Why.** "Utility" implied auxiliary / second-class. "Fallback" implied the primary mechanism failed. Neither was true: `$op()` is the first-class way to invoke any MQL operator that doesn't have a JS surface in mjsql. "Escape hatch" carries the right "you are stepping outside the JS subset on purpose" connotation, which is the actual mental model.
+**Why.** "Utility" implied auxiliary / second-class. "Fallback" implied the primary mechanism failed. Neither was true: `$op()` is the first-class way to invoke any MQL operator that doesn't have a JS surface in jsmql. "Escape hatch" carries the right "you are stepping outside the JS subset on purpose" connotation, which is the actual mental model.
 
 **Affected.** [`README.md`](../README.md), [`CLAUDE.md`](../CLAUDE.md), [`docs/LANGUAGE.md`](LANGUAGE.md) (TOC, intro, Math notes, Date subsection, dedicated section, FAQ, EBNF), [`test/realistic.test.ts`](../test/realistic.test.ts) (header + 5 test names).
 
@@ -387,7 +397,7 @@ The operator registry now covers every MongoDB aggregation expression and accumu
 
 **Spec as ground truth.** The official spec lives at `mongodb/mql-specifications` (Apache 2.0). It has no `package.json`, so it can't be installed as a normal npm devDependency — instead, [`vendor/fetch-mql-specs.mjs`](../vendor/fetch-mql-specs.mjs) clones it into `vendor/mql-specifications/` (gitignored) at a pinned commit, run as the package's `prepare` lifecycle hook. The new [`test/operator-spec-coverage.test.ts`](../test/operator-spec-coverage.test.ts) reads the YAML on every `npm test` and asserts the registry covers every spec operator and uses keys recognised by the spec for object-shape entries. Acceptable gaps (e.g. `$encStr*` not yet in spec, `$sampleRate` is a query predicate exposed for ergonomics) are documented in a `REGISTRY_ONLY` allowlist with comments.
 
-**DX warnings added to [LANGUAGE.md](LANGUAGE.md)** for operators where the registry shape under-specifies real-world correctness: `$literal` bypasses field-ref evaluation; `$meta` takes a keyword string not an arbitrary expression; `$accumulator`/`$function` body fields are server-side V8 source not mjsql syntax; window operators are valid only inside `$setWindowFields`; `$substr` is deprecated.
+**DX warnings added to [LANGUAGE.md](LANGUAGE.md)** for operators where the registry shape under-specifies real-world correctness: `$literal` bypasses field-ref evaluation; `$meta` takes a keyword string not an arbitrary expression; `$accumulator`/`$function` body fields are server-side V8 source not jsmql syntax; window operators are valid only inside `$setWindowFields`; `$substr` is deprecated.
 
 **Five spec stubs in `docs/specs/`** for the rest of MQL: query-predicates, projection, accumulators-as-stage-spec, update operators, and [aggregation pipeline stages](specs/aggregation-stages.md). Each stub points at its corresponding `vendor/mql-specifications/definitions/<folder>/` so future implementation has a clear precedent. Atlas Search (`definitions/search/`) and BSON types (`definitions/types/`) are noted but not stubbed. *(The four future-work stubs were deleted on 2026-05-09 — see that day's "restructure" entry.)*
 
@@ -431,17 +441,17 @@ A grab-bag of JS-syntax additions all aimed at cutting more `$op(...)` escape-ha
 
 ---
 
-## 2026-05-06 — Function-form input for `mjsql()` and `validate()`
+## 2026-05-06 — Function-form input for `jsmql()` and `validate()`
 
-`mjsql()` and `validate()` now accept an arrow function as input, not just a string. The runtime calls `Function.prototype.toString()` on the function, strips the arrow prefix, and feeds the body to the existing parser. Identical MQL output to the equivalent string form, but the expression now lives inside real JS syntax — which means **prettier and oxfmt format it for free**, no plugin, no config.
+`jsmql()` and `validate()` now accept an arrow function as input, not just a string. The runtime calls `Function.prototype.toString()` on the function, strips the arrow prefix, and feeds the body to the existing parser. Identical MQL output to the equivalent string form, but the expression now lives inside real JS syntax — which means **prettier and oxfmt format it for free**, no plugin, no config.
 
-That formatter-friendliness is the entire motivation. Template literal contents are opaque to JS formatters; long mjsql expressions in `mql\`…\`` sit as one un-broken line. Wrapped in an arrow, the same expression breaks and indents like any other JS. The `test/realistic.test.ts` "full address formatter" case was rewritten to the function form as the proof — same `$reduce` MQL output, dramatically more readable source.
+That formatter-friendliness is the entire motivation. Template literal contents are opaque to JS formatters; long jsmql expressions in `mql\`…\`` sit as one un-broken line. Wrapped in an arrow, the same expression breaks and indents like any other JS. The `test/realistic.test.ts` "full address formatter" case was rewritten to the function form as the proof — same `$reduce` MQL output, dramatically more readable source.
 
 **Restrictions in this release** (kept narrow on purpose, all surfaceable later if needed): arrow functions only (no `function` keyword); expression body only (no `() => { return …; }`); no `async`, no generators. The wrapper's parameter list is ignored — `($)`, `()`, `(doc)` all work — but the parameter is **not** bound inside the body. The recommended idiom is `($) => …` because `$` doubles as the document context. Outer-scope variables don't survive `toString()` (it's text, not a closure); when an unknown identifier is encountered via the function path, the existing `Unknown identifier 'X'. Did you mean '$.X'?` error is augmented to also point at `` mql`…` `` as the canonical interpolation tool.
 
-**Caching.** Compiled bodies are cached in a `Map<string, object>` keyed on the **extracted body string** (not the function reference). Inline arrows in hot paths like `collection.find(mjsql(($) => $.status == "active"))` evaluate to a fresh function object on every call, so a `WeakMap<Function, …>` would never hit. The body string is stable across every evaluation of the same source location, so the cache works correctly for the common case. Cache size is bounded by source-code (no way to inject dynamic content into a function body), so no eviction is needed. The string-input path is intentionally **not** cached, because raw strings are often built via dynamic concatenation and would leak memory.
+**Caching.** Compiled bodies are cached in a `Map<string, object>` keyed on the **extracted body string** (not the function reference). Inline arrows in hot paths like `collection.find(jsmql(($) => $.status == "active"))` evaluate to a fresh function object on every call, so a `WeakMap<Function, …>` would never hit. The body string is stable across every evaluation of the same source location, so the cache works correctly for the common case. Cache size is bounded by source-code (no way to inject dynamic content into a function body), so no eviction is needed. The string-input path is intentionally **not** cached, because raw strings are often built via dynamic concatenation and would leak memory.
 
-**Build-time path was explicitly rejected.** A babel/swc/unplugin transform would solve the closure problem cleanly and run the cache at compile time, but build-time tooling worsens DX in JS — particularly server-side — so this is runtime-only. A future prettier plugin (to format inside `` mql`…` `` string contents) and an eslint plugin for mjsql expressions remain on the table as separate, additive work.
+**Build-time path was explicitly rejected.** A babel/swc/unplugin transform would solve the closure problem cleanly and run the cache at compile time, but build-time tooling worsens DX in JS — particularly server-side — so this is runtime-only. A future prettier plugin (to format inside `` mql`…` `` string contents) and an eslint plugin for jsmql expressions remain on the table as separate, additive work.
 
 Files: [src/index.ts](../src/index.ts) (overload, extraction adapter, body-string cache, `FunctionInputError`); [src/codegen.ts](../src/codegen.ts) (new `UnknownIdentifierError extends CodegenError` carrying the offending identifier so the index-layer can append the `mql` hint without string-matching). Specs updated: [docs/specs/architecture.md](specs/architecture.md), [docs/specs/grammar.md](specs/grammar.md). User-facing docs: new "Function Form" section in [docs/LANGUAGE.md](LANGUAGE.md).
 
@@ -476,7 +486,7 @@ Added `// …` line and `/* … */` block comments to the lexer, with semantics 
 
 Implementation lives entirely in [src/lexer.ts](../src/lexer.ts): renamed `skipWhitespace()` → `skipTrivia()` and made it loop between whitespace and comment passes until neither makes progress. New helpers `skipLineComment()`, `skipBlockComment()`, plus a `LINE_TERMINATORS = /[\n\r\u2028\u2029]/` regex for the four ECMAScript LineTerminator characters. The divide-vs-regex `/` handler is untouched — by the time it runs, any leading `//` or `/*` has already been eaten, so the existing `lastTokenType` decision continues to work unchanged.
 
-**Why.** mjsql is a "JS subset" language and the absence of comments was conspicuous, especially for multi-line expressions that already exist in `test/realistic.test.ts`. The divide-vs-regex disambiguation also makes raw `/` ambiguous to humans without comment context. Picking native-JS semantics (rather than inventing our own) means anyone who knows JS already knows how mjsql comments work — including the edge cases (LSEP/PSEP terminators, unclosed block error, atomic string/regex/template-quasi treatment, no nesting).
+**Why.** jsmql is a "JS subset" language and the absence of comments was conspicuous, especially for multi-line expressions that already exist in `test/realistic.test.ts`. The divide-vs-regex disambiguation also makes raw `/` ambiguous to humans without comment context. Picking native-JS semantics (rather than inventing our own) means anyone who knows JS already knows how jsmql comments work — including the edge cases (LSEP/PSEP terminators, unclosed block error, atomic string/regex/template-quasi treatment, no nesting).
 
 **Out of scope.** The legacy HTML-like `<!--` / `-->` (Annex B Script-mode-only in JS), nested block comments, and preserving comments in the AST. Those are not part of the "JS comments" mental model we're adopting.
 
@@ -502,7 +512,7 @@ Thirteen trigonometry operators and four bitwise operators that previously requi
 
 ## 2026-05-06 — Source kept in TypeScript's strippable subset; runs natively on Node 24+, Deno, Bun
 
-mjsql's `src/` no longer relies on TypeScript constructs that require a compile step. The source runs as-is under Node 24's native type-stripping (stable, no flag), Deno, and Bun.
+jsmql's `src/` no longer relies on TypeScript constructs that require a compile step. The source runs as-is under Node 24's native type-stripping (stable, no flag), Deno, and Bun.
 
 **Three blockers were removed:**
 
@@ -512,7 +522,7 @@ mjsql's `src/` no longer relies on TypeScript constructs that require a compile 
 
 **[package.json](../package.json)** now declares `"engines": { "node": ">=24" }` so consumers/CI install on a runtime that supports native TS execution.
 
-**Verification:** `node src/index.ts` (no flags) runs the source directly on Node 24+. A smoke test confirms all three public exports — `mjsql()`, `validate()`, and the `mql` template tag — produce correct MQL via native execution. `npm test` (393 tests) continues to pass under vitest, which already loads `.ts` directly.
+**Verification:** `node src/index.ts` (no flags) runs the source directly on Node 24+. A smoke test confirms all three public exports — `jsmql()`, `validate()`, and the `mql` template tag — produce correct MQL via native execution. `npm test` (393 tests) continues to pass under vitest, which already loads `.ts` directly.
 
 **The invariant is now load-bearing:** anything new added to `src/` must remain strippable. No `enum`, no `namespace`, no parameter properties, no decorators, no `<T>x` casts, no `import =`/`export =`. Captured in [`CLAUDE.md`](../CLAUDE.md) and [`src/CLAUDE.md`](../src/CLAUDE.md).
 
@@ -524,7 +534,7 @@ mjsql's `src/` no longer relies on TypeScript constructs that require a compile 
 
 ## 2026-05-06 — Strict JS subset rule + drop numeric field segments
 
-Promoted "mjsql is a strict subset of JavaScript syntax" to a top-level invariant — `#2 priority` in the root `CLAUDE.md`, alongside DX. Also surfaced in `src/CLAUDE.md` and `docs/specs/grammar.md`.
+Promoted "jsmql is a strict subset of JavaScript syntax" to a top-level invariant — `#2 priority` in the root `CLAUDE.md`, alongside DX. Also surfaced in `src/CLAUDE.md` and `docs/specs/grammar.md`.
 
 **Audit.** The lexer, parser, and grammar were cross-checked against `node --check`. One realistic violation: numeric segments after `.` (`$.0`, `$.items.0`, `obj.0`) — JS rejects all three; you have to write `obj[0]`. Codegen was using this to emit MongoDB's dotted-path-with-array-index string (`"$items.0"`), but the syntax doesn't pass JS. Theoretical edge cases around using reserved words like `class`, `function`, `await` as bare identifiers exist in principle but aren't reachable through any documented or tested construct.
 
@@ -532,7 +542,7 @@ Promoted "mjsql is a strict subset of JavaScript syntax" to a top-level invarian
 
 **Codegen follow-on.** `$.items[0]` already worked, but `$.items[0].name` previously threw `CodegenError: Cannot access property 'name' on a non-field expression` because `MemberAccess` codegen only handled foldable field-path chains. Replaced the throw with a `$getField` fallback. Strictly additive: every input that folded into a path before still folds; inputs that threw now produce valid MQL. `$getField` was already used elsewhere in codegen, so no new MongoDB version floor.
 
-**Why.** mjsql's pitch is "JS you already know"; a syntax JS rejects breaks the pitch. Pre-1.0, the breaking change is fine.
+**Why.** jsmql's pitch is "JS you already know"; a syntax JS rejects breaks the pitch. Pre-1.0, the breaking change is fine.
 
 ---
 
@@ -552,16 +562,16 @@ Template-literal interpolations are now wrapped with `$toString` unless the expr
 - Known string → string form (`$indexOfCP`, `$gte/$indexOfCP`, `$concat`).
 - Unknown receiver (bare `$.field`, ternary, etc.) → runtime `$cond` on `$isArray` between the two forms. For bracket access, the object branch uses `$getField`.
 
-**Why.** Same JS method name, different MQL operators depending on the receiver type. The compile-time check covers the cases where mjsql can prove the type from the AST (array literals, `.split()` results, `.map()` results, etc.). For unknown types, picking either form silently is wrong — the runtime `$cond` is verbose but correct. Users who want compact output can pin the type by chaining a type-fixing method (`.toLowerCase()`, `.slice()`) or by using the operator form (`$in`, `$indexOfArray`).
+**Why.** Same JS method name, different MQL operators depending on the receiver type. The compile-time check covers the cases where jsmql can prove the type from the AST (array literals, `.split()` results, `.map()` results, etc.). For unknown types, picking either form silently is wrong — the runtime `$cond` is verbose but correct. Users who want compact output can pin the type by chaining a type-fixing method (`.toLowerCase()`, `.slice()`) or by using the operator form (`$in`, `$indexOfArray`).
 
 ---
 
 ## 2026-05-06 — Typed second parameter for the function form (operator escape hatches)
 
-`MjsqlInput`'s function arm gained an optional second parameter, typed `MjsqlOps = Record<\`$${string}\`, (...args: any[]) => any>`. Users can now destructure operator names from it to silence IDE warnings on direct `$op(...)` calls inside the body:
+`JsmqlInput`'s function arm gained an optional second parameter, typed `JsmqlOps = Record<\`$${string}\`, (...args: any[]) => any>`. Users can now destructure operator names from it to silence IDE warnings on direct `$op(...)` calls inside the body:
 
 ```ts
-mjsql(($, { $dateDiff }) =>
+jsmql(($, { $dateDiff }) =>
   $dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }) ?? -1,
 );
 ```
@@ -582,7 +592,7 @@ Cut the toolchain over from TypeScript 5 to TypeScript 6 and leaned on the new d
 
 **Why.** TS6 ships saner defaults that drop a lot of tsconfig boilerplate; keeping the config to only what differs makes intent obvious to future readers. ESM-only is the simpler shape — dual-publish (CJS + ESM) is mostly machinery for older toolchains we don't have a use case for. The bump to ES2025 follows the TS6 default and matches what realistic Node and bundler targets accept today.
 
-**Behaviour change.** Consumers using `const { mjsql } = require("mjsql")` must switch to `import { mjsql } from "mjsql"` (or `await import("mjsql")` from CJS code). No source-level API changes; expression-level output is unchanged.
+**Behaviour change.** Consumers using `const { jsmql } = require("jsmql")` must switch to `import { jsmql } from "jsmql"` (or `await import("jsmql")` from CJS code). No source-level API changes; expression-level output is unchanged.
 
 ---
 
@@ -602,4 +612,4 @@ Pre-DEVLOG history, captured here as a baseline for the current state of the lan
 
 **Statics.** `Array.isArray`, `Object.keys`, `Object.values`, `Object.entries`, `Object.fromEntries`, `Object.assign`.
 
-**Operator and unknown-operator behaviour.** Object-style operator calls route by the operator's registered shape: only operators with `object` shape (e.g. `$trim`, `$dateAdd`) require literal key names. For any other operator (or unknown), a single `{...}` argument is treated as a value and may use computed keys. Unknown operators (not in `OPERATORS`) pass through automatically using a few simple heuristics, making mjsql forward-compatible with new MongoDB releases.
+**Operator and unknown-operator behaviour.** Object-style operator calls route by the operator's registered shape: only operators with `object` shape (e.g. `$trim`, `$dateAdd`) require literal key names. For any other operator (or unknown), a single `{...}` argument is treated as a value and may use computed keys. Unknown operators (not in `OPERATORS`) pass through automatically using a few simple heuristics, making jsmql forward-compatible with new MongoDB releases.

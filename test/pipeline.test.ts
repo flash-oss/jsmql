@@ -1,97 +1,97 @@
 import { describe, it, expect } from "vitest";
-import { mjsql, validate, mql } from "../src/index.ts";
+import { jsmql, validate, mql } from "../src/index.ts";
 
 describe("pipeline detection", () => {
   it("compiles a single-stage pipeline as an array", () => {
-    expect(mjsql("[ { $limit: 10 } ]")).toEqual([{ $limit: 10 }]);
+    expect(jsmql("[ { $limit: 10 } ]")).toEqual([{ $limit: 10 }]);
   });
 
   it("non-stage array still compiles as expression-mode array literal", () => {
-    expect(mjsql("[1, 2, 3]")).toEqual([1, 2, 3]);
+    expect(jsmql("[1, 2, 3]")).toEqual([1, 2, 3]);
   });
 
   it("array of mixed scalars and unrelated objects stays expression-mode", () => {
     // First element isn't a stage shape, so the whole array is treated as a
     // value array. We get whatever the codegen would normally produce.
-    expect(mjsql("[1, { $limit: 10 }]")).toEqual([1, { $limit: 10 }]);
+    expect(jsmql("[1, { $limit: 10 }]")).toEqual([1, { $limit: 10 }]);
   });
 
   it("empty array is not a pipeline", () => {
-    expect(mjsql("[]")).toEqual([]);
+    expect(jsmql("[]")).toEqual([]);
   });
 });
 
 describe("pipeline — stage-object form", () => {
   it("$match with expression body wraps in $expr", () => {
-    expect(mjsql("[{ $match: $.age > 18 }]")).toEqual([
+    expect(jsmql("[{ $match: $.age > 18 }]")).toEqual([
       { $match: { $expr: { $gt: ["$age", 18] } } },
     ]);
   });
 
   it("$match with object-literal body passes through as raw query doc", () => {
-    expect(mjsql("[{ $match: { age: { $gt: 18 } } }]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
+    expect(jsmql("[{ $match: { age: { $gt: 18 } } }]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("$project with mixed include flags and computed fields", () => {
-    expect(mjsql("[{ $project: { name: 1, total: $.price * $.qty } }]")).toEqual([
+    expect(jsmql("[{ $project: { name: 1, total: $.price * $.qty } }]")).toEqual([
       { $project: { name: 1, total: { $multiply: ["$price", "$qty"] } } },
     ]);
   });
 
   it("$group with accumulator", () => {
-    expect(mjsql("[{ $group: { _id: $.dept, total: $sum($.salary) } }]")).toEqual([
+    expect(jsmql("[{ $group: { _id: $.dept, total: $sum($.salary) } }]")).toEqual([
       { $group: { _id: "$dept", total: { $sum: "$salary" } } },
     ]);
   });
 
   it("$sort and $limit", () => {
-    expect(mjsql("[{ $sort: { total: -1 } }, { $limit: 10 }]")).toEqual([
+    expect(jsmql("[{ $sort: { total: -1 } }, { $limit: 10 }]")).toEqual([
       { $sort: { total: -1 } },
       { $limit: 10 },
     ]);
   });
 
   it("$skip with a numeric scalar body", () => {
-    expect(mjsql("[{ $skip: 50 }]")).toEqual([{ $skip: 50 }]);
+    expect(jsmql("[{ $skip: 50 }]")).toEqual([{ $skip: 50 }]);
   });
 
   it("$count with a string scalar body", () => {
-    expect(mjsql('[{ $count: "totalDocs" }]')).toEqual([{ $count: "totalDocs" }]);
+    expect(jsmql('[{ $count: "totalDocs" }]')).toEqual([{ $count: "totalDocs" }]);
   });
 
   it("$unwind with a field-ref body", () => {
-    expect(mjsql("[{ $unwind: $.items }]")).toEqual([{ $unwind: "$items" }]);
+    expect(jsmql("[{ $unwind: $.items }]")).toEqual([{ $unwind: "$items" }]);
   });
 
   it("$set / $addFields are first-class stages", () => {
-    expect(mjsql("[{ $set: { fullName: $.firstName + ' ' + $.lastName } }]")).toEqual([
+    expect(jsmql("[{ $set: { fullName: $.firstName + ' ' + $.lastName } }]")).toEqual([
       { $set: { fullName: { $concat: ["$firstName", " ", "$lastName"] } } },
     ]);
-    expect(mjsql("[{ $addFields: { ratio: $.a / $.b } }]")).toEqual([
+    expect(jsmql("[{ $addFields: { ratio: $.a / $.b } }]")).toEqual([
       { $addFields: { ratio: { $divide: ["$a", "$b"] } } },
     ]);
   });
 
   it("$replaceRoot and $replaceWith", () => {
-    expect(mjsql("[{ $replaceRoot: { newRoot: $.user } }]")).toEqual([
+    expect(jsmql("[{ $replaceRoot: { newRoot: $.user } }]")).toEqual([
       { $replaceRoot: { newRoot: "$user" } },
     ]);
-    expect(mjsql("[{ $replaceWith: $.user }]")).toEqual([{ $replaceWith: "$user" }]);
+    expect(jsmql("[{ $replaceWith: $.user }]")).toEqual([{ $replaceWith: "$user" }]);
   });
 });
 
 describe("pipeline — stage-call form", () => {
   it("$match expression body wraps in $expr", () => {
-    expect(mjsql("[$match($.age > 18)]")).toEqual([{ $match: { $expr: { $gt: ["$age", 18] } } }]);
+    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { $expr: { $gt: ["$age", 18] } } }]);
   });
 
   it("$match object-literal body is raw query doc", () => {
-    expect(mjsql("[$match({ age: { $gt: 18 } })]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
+    expect(jsmql("[$match({ age: { $gt: 18 } })]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("$project, $group, $sort, $limit", () => {
     expect(
-      mjsql(`[
+      jsmql(`[
         $project({ name: 1, total: $.price * $.qty }),
         $group({ _id: $.dept, total: $sum($.salary) }),
         $sort({ total: -1 }),
@@ -106,23 +106,23 @@ describe("pipeline — stage-call form", () => {
   });
 
   it("$limit and $skip with scalar args", () => {
-    expect(mjsql("[$limit(5)]")).toEqual([{ $limit: 5 }]);
-    expect(mjsql("[$skip(50)]")).toEqual([{ $skip: 50 }]);
+    expect(jsmql("[$limit(5)]")).toEqual([{ $limit: 5 }]);
+    expect(jsmql("[$skip(50)]")).toEqual([{ $skip: 50 }]);
   });
 
   it("$unwind with field-ref arg", () => {
-    expect(mjsql("[$unwind($.items)]")).toEqual([{ $unwind: "$items" }]);
+    expect(jsmql("[$unwind($.items)]")).toEqual([{ $unwind: "$items" }]);
   });
 
   it("$count with string arg", () => {
-    expect(mjsql('[$count("totalDocs")]')).toEqual([{ $count: "totalDocs" }]);
+    expect(jsmql('[$count("totalDocs")]')).toEqual([{ $count: "totalDocs" }]);
   });
 });
 
 describe("pipeline — mixed forms", () => {
   it("stage-object and stage-call elements compose in one pipeline", () => {
     expect(
-      mjsql(`[
+      jsmql(`[
         { $match: $.active === true },
         $sort({ created: -1 }),
         { $limit: 25 }
@@ -135,8 +135,8 @@ describe("pipeline — mixed forms", () => {
   });
 
   it("the two forms produce identical output for the same stage", () => {
-    const a = mjsql("[$match($.age > 18)]");
-    const b = mjsql("[{ $match: $.age > 18 }]");
+    const a = jsmql("[$match($.age > 18)]");
+    const b = jsmql("[{ $match: $.age > 18 }]");
     expect(a).toEqual(b);
   });
 });
@@ -144,7 +144,7 @@ describe("pipeline — mixed forms", () => {
 describe("pipeline — sub-pipelines", () => {
   it("$lookup recurses into the pipeline: field", () => {
     expect(
-      mjsql(`[{
+      jsmql(`[{
         $lookup: {
           from: "orders",
           let: { uid: $._id },
@@ -169,14 +169,14 @@ describe("pipeline — sub-pipelines", () => {
 
   it("$lookup pipeline: field that is not a stage array stays as expression", () => {
     // If the value isn't pipeline-shaped, generate it normally — no error.
-    expect(mjsql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toEqual([
+    expect(jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toEqual([
       { $lookup: { from: "x", pipeline: "$someVar", as: "y" } },
     ]);
   });
 
   it("$facet recurses into every value", () => {
     expect(
-      mjsql(`[{
+      jsmql(`[{
         $facet: {
           byCount: [{ $count: "n" }],
           topThree: [{ $sort: { score: -1 } }, { $limit: 3 }]
@@ -194,7 +194,7 @@ describe("pipeline — sub-pipelines", () => {
 
   it("$unionWith recurses into pipeline:", () => {
     expect(
-      mjsql(`[{ $unionWith: { coll: "archive", pipeline: [{ $match: $.year < 2020 }] } }]`),
+      jsmql(`[{ $unionWith: { coll: "archive", pipeline: [{ $match: $.year < 2020 }] } }]`),
     ).toEqual([
       {
         $unionWith: {
@@ -208,19 +208,19 @@ describe("pipeline — sub-pipelines", () => {
 
 describe("pipeline — error cases", () => {
   it("rejects unknown stage name with did-you-mean suggestion", () => {
-    expect(() => mjsql("[{ $macth: $.age > 18 }]")).toThrow(/'\$match'/);
+    expect(() => jsmql("[{ $macth: $.age > 18 }]")).toThrow(/'\$match'/);
   });
 
   it("rejects unknown stage name in stage-call form", () => {
-    expect(() => mjsql("[$prject({ name: 1 })]")).toThrow(/'\$project'/);
+    expect(() => jsmql("[$prject({ name: 1 })]")).toThrow(/'\$project'/);
   });
 
   it("once first element is a stage, every element must be a stage", () => {
-    expect(() => mjsql("[{ $match: $.a > 1 }, 42]")).toThrow(/Element 1/);
+    expect(() => jsmql("[{ $match: $.a > 1 }, 42]")).toThrow(/Element 1/);
   });
 
   it("multi-key object cannot be a stage element", () => {
-    expect(() => mjsql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(
+    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(
       /single-key stage object/,
     );
   });
@@ -247,7 +247,7 @@ describe("pipeline — mql template tag", () => {
 describe("pipeline — function input", () => {
   it("compiles an arrow returning a pipeline", () => {
     expect(
-      mjsql(($) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }]),
+      jsmql(($) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }]),
     ).toEqual([
       { $match: { $expr: { $eq: ["$active", true] } } },
       { $sort: { created: -1 } },
