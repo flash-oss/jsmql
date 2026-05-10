@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mjsql, validate, mql } from "../src/index.ts";
+import { jsmql, validate, mql } from "../src/index.ts";
 
 // Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
@@ -11,83 +11,83 @@ const truthy = (v: unknown) => ({
 
 describe("basic literals", () => {
   it("passes number through", () => {
-    expect(mjsql("$abs(42)")).toEqual({ $abs: 42 });
+    expect(jsmql("$abs(42)")).toEqual({ $abs: 42 });
   });
 
   it("passes string through", () => {
-    expect(mjsql('$toLower("Hello")')).toEqual({ $toLower: "Hello" });
+    expect(jsmql('$toLower("Hello")')).toEqual({ $toLower: "Hello" });
   });
 
   it("handles boolean", () => {
-    expect(mjsql("$not(true)")).toEqual({ $not: true });
+    expect(jsmql("$not(true)")).toEqual({ $not: true });
   });
 
   it("handles null", () => {
-    expect(mjsql("$not(null)")).toEqual({ $not: null });
+    expect(jsmql("$not(null)")).toEqual({ $not: null });
   });
 });
 
 describe("field refs", () => {
   it("simple field", () => {
-    expect(mjsql("$abs($.delta)")).toEqual({ $abs: "$delta" });
+    expect(jsmql("$abs($.delta)")).toEqual({ $abs: "$delta" });
   });
 
   it("nested field", () => {
-    expect(mjsql("$year($.createdAt)")).toEqual({ $year: "$createdAt" });
+    expect(jsmql("$year($.createdAt)")).toEqual({ $year: "$createdAt" });
   });
 
   it("deep nested field", () => {
-    expect(mjsql("$abs($.address.city)")).toEqual({ $abs: "$address.city" });
+    expect(jsmql("$abs($.address.city)")).toEqual({ $abs: "$address.city" });
   });
 });
 
 describe("single-shape operators", () => {
   it("$not", () => {
-    expect(mjsql("$not($.active)")).toEqual({ $not: "$active" });
+    expect(jsmql("$not($.active)")).toEqual({ $not: "$active" });
   });
 
   it("$size", () => {
-    expect(mjsql("$size($.items)")).toEqual({ $size: "$items" });
+    expect(jsmql("$size($.items)")).toEqual({ $size: "$items" });
   });
 
   it("$toLower", () => {
-    expect(mjsql("$toLower($.name)")).toEqual({ $toLower: "$name" });
+    expect(jsmql("$toLower($.name)")).toEqual({ $toLower: "$name" });
   });
 });
 
 describe("array-shape operators", () => {
   it("$eq two args", () => {
-    expect(mjsql("$eq($.age, 18)")).toEqual({ $eq: ["$age", 18] });
+    expect(jsmql("$eq($.age, 18)")).toEqual({ $eq: ["$age", 18] });
   });
 
   it("$gt comparison", () => {
-    expect(mjsql("$gt($.age, 18)")).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql("$gt($.age, 18)")).toEqual({ $gt: ["$age", 18] });
   });
 
   it("$add multiple args", () => {
-    expect(mjsql("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
+    expect(jsmql("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
 
   it("$and logical", () => {
-    expect(mjsql('$and($gt($.age, 18), $eq($.status, "active"))')).toEqual({
+    expect(jsmql('$and($gt($.age, 18), $eq($.status, "active"))')).toEqual({
       $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
     });
   });
 
   it("$or logical", () => {
-    expect(mjsql("$or($eq($.a, 1), $eq($.b, 2))")).toEqual({
+    expect(jsmql("$or($eq($.a, 1), $eq($.b, 2))")).toEqual({
       $or: [{ $eq: ["$a", 1] }, { $eq: ["$b", 2] }],
     });
   });
 
   it("$in with array literal", () => {
-    expect(mjsql('$in($.status, ["active", "pending"])')).toEqual({
+    expect(jsmql('$in($.status, ["active", "pending"])')).toEqual({
       $in: ["$status", ["active", "pending"]],
     });
   });
 
   it("$ifNull varargs", () => {
-    expect(mjsql('$ifNull($.nickname, $.firstName, "Unknown")')).toEqual({
+    expect(jsmql('$ifNull($.nickname, $.firstName, "Unknown")')).toEqual({
       $ifNull: ["$nickname", "$firstName", "Unknown"],
     });
   });
@@ -95,7 +95,7 @@ describe("array-shape operators", () => {
 
 describe("nested operators", () => {
   it("operator as argument", () => {
-    expect(mjsql("$multiply($add($.a, $.b), 2)")).toEqual({
+    expect(jsmql("$multiply($add($.a, $.b), 2)")).toEqual({
       $multiply: [{ $add: ["$a", "$b"] }, 2],
     });
   });
@@ -103,19 +103,19 @@ describe("nested operators", () => {
 
 describe("object-style operators (object arg)", () => {
   it("$trim with named args", () => {
-    expect(mjsql("$trim({ input: $.name, chars: ' ' })")).toEqual({
+    expect(jsmql("$trim({ input: $.name, chars: ' ' })")).toEqual({
       $trim: { input: "$name", chars: " " },
     });
   });
 
   it("$replaceOne named", () => {
-    expect(mjsql('$replaceOne({ input: $.text, find: "old", replacement: "new" })')).toEqual({
+    expect(jsmql('$replaceOne({ input: $.text, find: "old", replacement: "new" })')).toEqual({
       $replaceOne: { input: "$text", find: "old", replacement: "new" },
     });
   });
 
   it("$dateAdd named", () => {
-    expect(mjsql('$dateAdd({ startDate: $.date, unit: "day", amount: 7 })')).toEqual({
+    expect(jsmql('$dateAdd({ startDate: $.date, unit: "day", amount: 7 })')).toEqual({
       $dateAdd: { startDate: "$date", unit: "day", amount: 7 },
     });
   });
@@ -123,32 +123,32 @@ describe("object-style operators (object arg)", () => {
 
 describe("object-shape operators (positional → object mapping)", () => {
   it("$trim positional", () => {
-    expect(mjsql("$trim($.name, ' ')")).toEqual({
+    expect(jsmql("$trim($.name, ' ')")).toEqual({
       $trim: { input: "$name", chars: " " },
     });
   });
 
   it("$trim positional single arg", () => {
-    expect(mjsql("$trim($.name)")).toEqual({
+    expect(jsmql("$trim($.name)")).toEqual({
       $trim: { input: "$name" },
     });
   });
 
   it("$replaceOne positional", () => {
-    expect(mjsql('$replaceOne($.text, "old", "new")')).toEqual({
+    expect(jsmql('$replaceOne($.text, "old", "new")')).toEqual({
       $replaceOne: { input: "$text", find: "old", replacement: "new" },
     });
   });
 
   it("$getField positional", () => {
-    expect(mjsql('$getField("fieldName", $.doc)')).toEqual({
+    expect(jsmql('$getField("fieldName", $.doc)')).toEqual({
       $getField: { field: "fieldName", input: "$doc" },
     });
   });
 
   it("$switch object-style with branches/default", () => {
     expect(
-      mjsql(
+      jsmql(
         '$switch({ branches: [{ case: $eq($.tier, "gold"), then: 0.2 }, { case: $eq($.tier, "silver"), then: 0.1 }], default: 0 })',
       ),
     ).toEqual({
@@ -163,13 +163,13 @@ describe("object-shape operators (positional → object mapping)", () => {
   });
 
   it("$dateTrunc positional (date, unit)", () => {
-    expect(mjsql('$dateTrunc($.createdAt, "day")')).toEqual({
+    expect(jsmql('$dateTrunc($.createdAt, "day")')).toEqual({
       $dateTrunc: { date: "$createdAt", unit: "day" },
     });
   });
 
   it("$dateFromString single-arg positional", () => {
-    expect(mjsql("$dateFromString($.dateString)")).toEqual({
+    expect(jsmql("$dateFromString($.dateString)")).toEqual({
       $dateFromString: { dateString: "$dateString" },
     });
   });
@@ -177,13 +177,13 @@ describe("object-shape operators (positional → object mapping)", () => {
 
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
-    expect(mjsql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
+    expect(jsmql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
   });
 });
 
 describe("regex literal in standalone position", () => {
   it("rejects /pattern/ as a binary operand with a clear error", () => {
-    expect(() => mjsql("$.x == /foo/")).toThrow(
+    expect(() => jsmql("$.x == /foo/")).toThrow(
       /Regex literals are only valid as arguments to \.match\(\)/,
     );
   });
@@ -191,81 +191,81 @@ describe("regex literal in standalone position", () => {
 
 describe("zero-arg operators", () => {
   it("$rand", () => {
-    expect(mjsql("$rand()")).toEqual({ $rand: {} });
+    expect(jsmql("$rand()")).toEqual({ $rand: {} });
   });
 });
 
 describe("unknown operators (fallthrough)", () => {
   it("zero args → {}", () => {
-    expect(mjsql("$someNewOp()")).toEqual({ $someNewOp: {} });
+    expect(jsmql("$someNewOp()")).toEqual({ $someNewOp: {} });
   });
 
   it("single non-object arg → bare value", () => {
-    expect(mjsql("$someOp($.a)")).toEqual({ $someOp: "$a" });
+    expect(jsmql("$someOp($.a)")).toEqual({ $someOp: "$a" });
   });
 
   it("single object arg → pass object", () => {
-    expect(mjsql('$someOp({ key: "val" })')).toEqual({ $someOp: { key: "val" } });
+    expect(jsmql('$someOp({ key: "val" })')).toEqual({ $someOp: { key: "val" } });
   });
 
   it("multiple args → array", () => {
-    expect(mjsql("$someNewOp($.a, $.b)")).toEqual({ $someNewOp: ["$a", "$b"] });
+    expect(jsmql("$someNewOp($.a, $.b)")).toEqual({ $someNewOp: ["$a", "$b"] });
   });
 });
 
 describe("array literals", () => {
   it("simple array", () => {
-    expect(mjsql("$in($.x, [1, 2, 3])")).toEqual({ $in: ["$x", [1, 2, 3]] });
+    expect(jsmql("$in($.x, [1, 2, 3])")).toEqual({ $in: ["$x", [1, 2, 3]] });
   });
 
   it("nested array", () => {
-    expect(mjsql("$abs([1, 2])")).toEqual({ $abs: [1, 2] });
+    expect(jsmql("$abs([1, 2])")).toEqual({ $abs: [1, 2] });
   });
 });
 
 describe("array spread", () => {
   it("single spread becomes the spread argument directly (no redundant $concatArrays)", () => {
-    expect(mjsql("$foo([...$.arr])")).toEqual({ $foo: "$arr" });
+    expect(jsmql("$foo([...$.arr])")).toEqual({ $foo: "$arr" });
   });
 
   it("two spreads emit $concatArrays", () => {
-    expect(mjsql("$foo([...$.a, ...$.b])")).toEqual({
+    expect(jsmql("$foo([...$.a, ...$.b])")).toEqual({
       $foo: { $concatArrays: ["$a", "$b"] },
     });
   });
 
   it("statics before a spread group into one operand", () => {
-    expect(mjsql("$foo([1, 2, ...$.rest])")).toEqual({
+    expect(jsmql("$foo([1, 2, ...$.rest])")).toEqual({
       $foo: { $concatArrays: [[1, 2], "$rest"] },
     });
   });
 
   it("statics after a spread group into one operand", () => {
-    expect(mjsql("$foo([...$.base, 1, 2])")).toEqual({
+    expect(jsmql("$foo([...$.base, 1, 2])")).toEqual({
       $foo: { $concatArrays: ["$base", [1, 2]] },
     });
   });
 
   it("statics around a spread split into two grouped operands (left-to-right)", () => {
-    expect(mjsql("$foo([1, ...$.mid, 2])")).toEqual({
+    expect(jsmql("$foo([1, ...$.mid, 2])")).toEqual({
       $foo: { $concatArrays: [[1], "$mid", [2]] },
     });
   });
 
   it("multiple spreads with statics interleaved", () => {
-    expect(mjsql("$foo([1, ...$.a, 2, ...$.b, 3])")).toEqual({
+    expect(jsmql("$foo([1, ...$.a, 2, ...$.b, 3])")).toEqual({
       $foo: { $concatArrays: [[1], "$a", [2], "$b", [3]] },
     });
   });
 
   it("spread of a literal array produces $concatArrays of literal-array operands", () => {
-    expect(mjsql("$foo([...[1, 2], 3])")).toEqual({
+    expect(jsmql("$foo([...[1, 2], 3])")).toEqual({
       $foo: { $concatArrays: [[1, 2], [3]] },
     });
   });
 
   it("spread inside .map lambda body remaps the lambda param", () => {
-    expect(mjsql("$.xs.map(x => [...$.prefix, x])")).toEqual({
+    expect(jsmql("$.xs.map(x => [...$.prefix, x])")).toEqual({
       $map: {
         input: "$xs",
         as: "x",
@@ -275,55 +275,55 @@ describe("array spread", () => {
   });
 
   it("empty array still works (no spread, fast path)", () => {
-    expect(mjsql("$foo([])")).toEqual({ $foo: [] });
+    expect(jsmql("$foo([])")).toEqual({ $foo: [] });
   });
 
   it("plain non-spread arrays unchanged (regression)", () => {
-    expect(mjsql("$foo([1, 2, 3])")).toEqual({ $foo: [1, 2, 3] });
+    expect(jsmql("$foo([1, 2, 3])")).toEqual({ $foo: [1, 2, 3] });
   });
 
   it("nested array literal with spread inside", () => {
-    expect(mjsql("$foo([[...$.a]])")).toEqual({ $foo: ["$a"] });
+    expect(jsmql("$foo([[...$.a]])")).toEqual({ $foo: ["$a"] });
   });
 });
 
 describe("object literals as args", () => {
   it("object as second positional arg for unknown op", () => {
-    expect(mjsql("$foo({ a: 1 }, $.b)")).toEqual({ $foo: [{ a: 1 }, "$b"] });
+    expect(jsmql("$foo({ a: 1 }, $.b)")).toEqual({ $foo: [{ a: 1 }, "$b"] });
   });
 });
 
 describe("object spread", () => {
   it("single spread becomes the spread argument directly (no redundant $mergeObjects)", () => {
-    expect(mjsql("$foo({ ...$.base })")).toEqual({ $foo: "$base" });
+    expect(jsmql("$foo({ ...$.base })")).toEqual({ $foo: "$base" });
   });
 
   it("two spreads emit $mergeObjects", () => {
-    expect(mjsql("$foo({ ...$.a, ...$.b })")).toEqual({
+    expect(jsmql("$foo({ ...$.a, ...$.b })")).toEqual({
       $foo: { $mergeObjects: ["$a", "$b"] },
     });
   });
 
   it("static keys before a spread group into one operand", () => {
-    expect(mjsql("$foo({ x: 1, y: 2, ...$.rest })")).toEqual({
+    expect(jsmql("$foo({ x: 1, y: 2, ...$.rest })")).toEqual({
       $foo: { $mergeObjects: [{ x: 1, y: 2 }, "$rest"] },
     });
   });
 
   it("static keys after a spread group into one operand", () => {
-    expect(mjsql("$foo({ ...$.base, x: 1 })")).toEqual({
+    expect(jsmql("$foo({ ...$.base, x: 1 })")).toEqual({
       $foo: { $mergeObjects: ["$base", { x: 1 }] },
     });
   });
 
   it("statics around a spread split into separate operands (left-to-right)", () => {
-    expect(mjsql("$foo({ x: 1, ...$.mid, y: 2 })")).toEqual({
+    expect(jsmql("$foo({ x: 1, ...$.mid, y: 2 })")).toEqual({
       $foo: { $mergeObjects: [{ x: 1 }, "$mid", { y: 2 }] },
     });
   });
 
   it("computed key inside a static block uses $arrayToObject for that block only", () => {
-    expect(mjsql("$foo({ ...$.base, [$.k]: $.v })")).toEqual({
+    expect(jsmql("$foo({ ...$.base, [$.k]: $.v })")).toEqual({
       $foo: {
         $mergeObjects: ["$base", { $arrayToObject: [["$k", "$v"]] }],
       },
@@ -332,7 +332,7 @@ describe("object spread", () => {
 
   it("works inside .reduce — the README $accumulator replacement", () => {
     expect(
-      mjsql("$.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})"),
+      jsmql("$.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})"),
     ).toEqual({
       $reduce: {
         input: "$statuses",
@@ -371,19 +371,19 @@ describe("object spread", () => {
   });
 
   it("rejects spread inside operator-arg objects (key shape is wire format)", () => {
-    expect(() => mjsql("$replaceOne({ ...$.opts, input: $.s })")).toThrow(/Spread/);
+    expect(() => jsmql("$replaceOne({ ...$.opts, input: $.s })")).toThrow(/Spread/);
   });
 });
 
 describe("$cond", () => {
   it("positional 3-arg cond (object-shape, maps to if/then/else)", () => {
-    expect(mjsql('$cond($.age, "adult", "minor")')).toEqual({
+    expect(jsmql('$cond($.age, "adult", "minor")')).toEqual({
       $cond: { if: "$age", then: "adult", else: "minor" },
     });
   });
 
   it("object-style cond", () => {
-    expect(mjsql('$cond({ if: $.active, then: "yes", else: "no" })')).toEqual({
+    expect(jsmql('$cond({ if: $.active, then: "yes", else: "no" })')).toEqual({
       $cond: { if: "$active", then: "yes", else: "no" },
     });
   });
@@ -436,61 +436,61 @@ describe("validate()", () => {
 
 describe("single-char negative numbers", () => {
   it("negative number literal", () => {
-    expect(mjsql("$abs(-5)")).toEqual({ $abs: -5 });
+    expect(jsmql("$abs(-5)")).toEqual({ $abs: -5 });
   });
 });
 
 describe("arithmetic operators", () => {
   it("+ numeric", () => {
-    expect(mjsql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("- binary", () => {
-    expect(mjsql("$.a - $.b")).toEqual({ $subtract: ["$a", "$b"] });
+    expect(jsmql("$.a - $.b")).toEqual({ $subtract: ["$a", "$b"] });
   });
   it("* multiply", () => {
-    expect(mjsql("$.a * 1.1")).toEqual({ $multiply: ["$a", 1.1] });
+    expect(jsmql("$.a * 1.1")).toEqual({ $multiply: ["$a", 1.1] });
   });
   it("/ divide", () => {
-    expect(mjsql("$.a / $.b")).toEqual({ $divide: ["$a", "$b"] });
+    expect(jsmql("$.a / $.b")).toEqual({ $divide: ["$a", "$b"] });
   });
   it("% modulo", () => {
-    expect(mjsql("$.a % 2")).toEqual({ $mod: ["$a", 2] });
+    expect(jsmql("$.a % 2")).toEqual({ $mod: ["$a", 2] });
   });
   it("** power", () => {
-    expect(mjsql("$.base ** 2")).toEqual({ $pow: ["$base", 2] });
+    expect(jsmql("$.base ** 2")).toEqual({ $pow: ["$base", 2] });
   });
   it("** is right-associative", () => {
-    expect(mjsql("2 ** 3 ** 2")).toEqual({ $pow: [2, { $pow: [3, 2] }] });
+    expect(jsmql("2 ** 3 ** 2")).toEqual({ $pow: [2, { $pow: [3, 2] }] });
   });
 });
 
 describe("comparison operators", () => {
   it("==", () => {
-    expect(mjsql("$.status == 'active'")).toEqual({ $eq: ["$status", "active"] });
+    expect(jsmql("$.status == 'active'")).toEqual({ $eq: ["$status", "active"] });
   });
   it("===", () => {
-    expect(mjsql("$.status === 'active'")).toEqual({ $eq: ["$status", "active"] });
+    expect(jsmql("$.status === 'active'")).toEqual({ $eq: ["$status", "active"] });
   });
   it("!=", () => {
-    expect(mjsql("$.status != null")).toEqual({ $ne: ["$status", null] });
+    expect(jsmql("$.status != null")).toEqual({ $ne: ["$status", null] });
   });
   it("!==", () => {
-    expect(mjsql("$.status !== null")).toEqual({ $ne: ["$status", null] });
+    expect(jsmql("$.status !== null")).toEqual({ $ne: ["$status", null] });
   });
   it(">", () => {
-    expect(mjsql("$.age > 18")).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql("$.age > 18")).toEqual({ $gt: ["$age", 18] });
   });
   it(">=", () => {
-    expect(mjsql("$.age >= 21")).toEqual({ $gte: ["$age", 21] });
+    expect(jsmql("$.age >= 21")).toEqual({ $gte: ["$age", 21] });
   });
   it("<", () => {
-    expect(mjsql("$.score < 50")).toEqual({ $lt: ["$score", 50] });
+    expect(jsmql("$.score < 50")).toEqual({ $lt: ["$score", 50] });
   });
   it("<=", () => {
-    expect(mjsql("$.score <= 100")).toEqual({ $lte: ["$score", 100] });
+    expect(jsmql("$.score <= 100")).toEqual({ $lte: ["$score", 100] });
   });
   it("in", () => {
-    expect(mjsql('$.status in ["active", "pending"]')).toEqual({
+    expect(jsmql('$.status in ["active", "pending"]')).toEqual({
       $in: ["$status", ["active", "pending"]],
     });
   });
@@ -498,36 +498,36 @@ describe("comparison operators", () => {
 
 describe("logical operators", () => {
   it("&& on field refs returns operand (JS semantics)", () => {
-    expect(mjsql("$.a && $.b")).toEqual({
+    expect(jsmql("$.a && $.b")).toEqual({
       $cond: [truthy("$a"), "$b", "$a"],
     });
   });
   it("|| on field refs returns operand (JS semantics)", () => {
-    expect(mjsql("$.a || $.b")).toEqual({
+    expect(jsmql("$.a || $.b")).toEqual({
       $cond: [truthy("$a"), "$a", "$b"],
     });
   });
   it("&& on bool comparisons stays as $and (no operand-preservation needed)", () => {
-    expect(mjsql("$.a > 0 && $.b > 0")).toEqual({
+    expect(jsmql("$.a > 0 && $.b > 0")).toEqual({
       $and: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
     });
   });
   it("|| on bool comparisons stays as $or", () => {
-    expect(mjsql("$.a > 0 || $.b > 0")).toEqual({
+    expect(jsmql("$.a > 0 || $.b > 0")).toEqual({
       $or: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
     });
   });
   it("! unary uses JS truthiness", () => {
-    expect(mjsql("!$.active")).toEqual({ $not: truthy("$active") });
+    expect(jsmql("!$.active")).toEqual({ $not: truthy("$active") });
   });
   it("!! double negation peephole → jsBool (no $not-of-$not)", () => {
-    expect(mjsql("!!$.active")).toEqual(truthy("$active"));
+    expect(jsmql("!!$.active")).toEqual(truthy("$active"));
   });
   it("! on a comparison elides the jsBool wrap", () => {
-    expect(mjsql("!($.a > 0)")).toEqual({ $not: { $gt: ["$a", 0] } });
+    expect(jsmql("!($.a > 0)")).toEqual({ $not: { $gt: ["$a", 0] } });
   });
   it("&& with non-pure-ref LHS uses $let to bind once", () => {
-    expect(mjsql("($.a + $.b) && $.c")).toEqual({
+    expect(jsmql("($.a + $.b) && $.c")).toEqual({
       $let: {
         vars: { _v: { $add: ["$a", "$b"] } },
         in: { $cond: [truthy("$$_v"), "$c", "$$_v"] },
@@ -535,7 +535,7 @@ describe("logical operators", () => {
     });
   });
   it("|| short-circuit chain with default (user's idiom)", () => {
-    expect(mjsql('$.nickname || "anonymous"')).toEqual({
+    expect(jsmql('$.nickname || "anonymous"')).toEqual({
       $cond: [truthy("$nickname"), "$nickname", "anonymous"],
     });
   });
@@ -543,17 +543,17 @@ describe("logical operators", () => {
 
 describe("ternary", () => {
   it("basic ternary with bool condition (no jsBool wrap)", () => {
-    expect(mjsql("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
+    expect(jsmql("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
       $cond: [{ $gte: ["$age", 18] }, "adult", "minor"],
     });
   });
   it("ternary with non-bool condition wraps in jsBool", () => {
-    expect(mjsql('$.name ? "yes" : "no"')).toEqual({
+    expect(jsmql('$.name ? "yes" : "no"')).toEqual({
       $cond: [truthy("$name"), "yes", "no"],
     });
   });
   it("nested ternary (right-associative) wraps each non-bool condition", () => {
-    expect(mjsql("$.a ? 'x' : $.b ? 'y' : 'z'")).toEqual({
+    expect(jsmql("$.a ? 'x' : $.b ? 'y' : 'z'")).toEqual({
       $cond: [truthy("$a"), "x", { $cond: [truthy("$b"), "y", "z"] }],
     });
   });
@@ -561,10 +561,10 @@ describe("ternary", () => {
 
 describe("nullish coalescing", () => {
   it("??", () => {
-    expect(mjsql("$.nickname ?? $.name")).toEqual({ $ifNull: ["$nickname", "$name"] });
+    expect(jsmql("$.nickname ?? $.name")).toEqual({ $ifNull: ["$nickname", "$name"] });
   });
   it("?? flattened chain", () => {
-    expect(mjsql("$.a ?? $.b ?? 'unknown'")).toEqual({
+    expect(jsmql("$.a ?? $.b ?? 'unknown'")).toEqual({
       $ifNull: ["$a", "$b", "unknown"],
     });
   });
@@ -572,51 +572,51 @@ describe("nullish coalescing", () => {
 
 describe("unary minus", () => {
   it("unary - on field", () => {
-    expect(mjsql("-$.amount")).toEqual({ $multiply: ["$amount", -1] });
+    expect(jsmql("-$.amount")).toEqual({ $multiply: ["$amount", -1] });
   });
   it("unary - on number literal optimised to negative number", () => {
-    expect(mjsql("-5")).toEqual(-5);
+    expect(jsmql("-5")).toEqual(-5);
   });
   it("unary - on number inside operator", () => {
-    expect(mjsql("$abs(-5)")).toEqual({ $abs: -5 });
+    expect(jsmql("$abs(-5)")).toEqual({ $abs: -5 });
   });
   it("unary - on expression", () => {
-    expect(mjsql("-($.a + $.b)")).toEqual({ $multiply: [{ $add: ["$a", "$b"] }, -1] });
+    expect(jsmql("-($.a + $.b)")).toEqual({ $multiply: [{ $add: ["$a", "$b"] }, -1] });
   });
 });
 
 describe("operator flattening", () => {
   it("+ flattened to $add", () => {
-    expect(mjsql("$.a + $.b + $.c")).toEqual({ $add: ["$a", "$b", "$c"] });
+    expect(jsmql("$.a + $.b + $.c")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
   it("* flattened to $multiply", () => {
-    expect(mjsql("$.a * $.b * $.c")).toEqual({ $multiply: ["$a", "$b", "$c"] });
+    expect(jsmql("$.a * $.b * $.c")).toEqual({ $multiply: ["$a", "$b", "$c"] });
   });
   it("&& on bool comparisons flattened to $and", () => {
-    expect(mjsql("$.a > 0 && $.b > 0 && $.c > 0")).toEqual({
+    expect(jsmql("$.a > 0 && $.b > 0 && $.c > 0")).toEqual({
       $and: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }, { $gt: ["$c", 0] }],
     });
   });
   it("|| on bool comparisons flattened to $or", () => {
-    expect(mjsql("$.a > 0 || $.b > 0 || $.c > 0")).toEqual({
+    expect(jsmql("$.a > 0 || $.b > 0 || $.c > 0")).toEqual({
       $or: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }, { $gt: ["$c", 0] }],
     });
   });
   it("&& on non-bool operands folds right into nested $cond (operand-preserving)", () => {
-    expect(mjsql("$.a && $.b && $.c")).toEqual({
+    expect(jsmql("$.a && $.b && $.c")).toEqual({
       $cond: [truthy("$a"), { $cond: [truthy("$b"), "$c", "$b"] }, "$a"],
     });
   });
   it("|| on non-bool operands folds right (operand-preserving)", () => {
-    expect(mjsql("$.a || $.b || $.c")).toEqual({
+    expect(jsmql("$.a || $.b || $.c")).toEqual({
       $cond: [truthy("$a"), "$a", { $cond: [truthy("$b"), "$b", "$c"] }],
     });
   });
   it("?? flattened to $ifNull (4 operands)", () => {
-    expect(mjsql("$.a ?? $.b ?? $.c ?? 0")).toEqual({ $ifNull: ["$a", "$b", "$c", 0] });
+    expect(jsmql("$.a ?? $.b ?? $.c ?? 0")).toEqual({ $ifNull: ["$a", "$b", "$c", 0] });
   });
   it("- is NOT flattened (left-assoc, not same operator)", () => {
-    expect(mjsql("$.a - $.b - $.c")).toEqual({
+    expect(jsmql("$.a - $.b - $.c")).toEqual({
       $subtract: [{ $subtract: ["$a", "$b"] }, "$c"],
     });
   });
@@ -624,28 +624,28 @@ describe("operator flattening", () => {
 
 describe("string-context +", () => {
   it("string literal in chain → $concat", () => {
-    expect(mjsql('$.first + " " + $.last')).toEqual({
+    expect(jsmql('$.first + " " + $.last')).toEqual({
       $concat: ["$first", " ", "$last"],
     });
   });
   it("empty string → $concat", () => {
-    expect(mjsql('$.a + ""')).toEqual({ $concat: ["$a", ""] });
+    expect(jsmql('$.a + ""')).toEqual({ $concat: ["$a", ""] });
   });
   it("no string literal → $add", () => {
-    expect(mjsql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("string-output operator → $concat", () => {
-    expect(mjsql("$toString($.n) + $.s")).toEqual({
+    expect(jsmql("$toString($.n) + $.s")).toEqual({
       $concat: [{ $toString: "$n" }, "$s"],
     });
   });
   it("$toLower result in chain → $concat", () => {
-    expect(mjsql("$.prefix + $toLower($.name)")).toEqual({
+    expect(jsmql("$.prefix + $toLower($.name)")).toEqual({
       $concat: ["$prefix", { $toLower: "$name" }],
     });
   });
   it("mixed numeric + string-output op → $concat", () => {
-    expect(mjsql('$.count + " items"')).toEqual({ $concat: ["$count", " items"] });
+    expect(jsmql('$.count + " items"')).toEqual({ $concat: ["$count", " items"] });
   });
 });
 
@@ -653,7 +653,7 @@ describe("bracket access", () => {
   it("constant index on bare field → runtime $cond on $isArray", () => {
     // Bare $.items receiver — type unknown — dispatch at runtime to handle
     // either array (numeric index) or object (dynamic key) at query time.
-    expect(mjsql("$.items[0]")).toEqual({
+    expect(jsmql("$.items[0]")).toEqual({
       $cond: [
         { $isArray: "$items" },
         { $arrayElemAt: ["$items", 0] },
@@ -662,7 +662,7 @@ describe("bracket access", () => {
     });
   });
   it("field index on bare field → runtime $cond", () => {
-    expect(mjsql("$.items[$.idx]")).toEqual({
+    expect(jsmql("$.items[$.idx]")).toEqual({
       $cond: [
         { $isArray: "$items" },
         { $arrayElemAt: ["$items", "$idx"] },
@@ -671,7 +671,7 @@ describe("bracket access", () => {
     });
   });
   it("string-literal key on bare field → runtime $cond (the $getField branch is the right one for objects)", () => {
-    expect(mjsql('$.config["host"]')).toEqual({
+    expect(jsmql('$.config["host"]')).toEqual({
       $cond: [
         { $isArray: "$config" },
         { $arrayElemAt: ["$config", "host"] },
@@ -680,7 +680,7 @@ describe("bracket access", () => {
     });
   });
   it("chained bracket access on bare field → nested $cond", () => {
-    expect(mjsql("$.m[$.r][$.c]")).toEqual({
+    expect(jsmql("$.m[$.r][$.c]")).toEqual({
       $cond: [
         {
           $isArray: {
@@ -719,12 +719,12 @@ describe("bracket access", () => {
     });
   });
   it("bracket access on known-array operator result stays compact", () => {
-    expect(mjsql("$reverseArray($.items)[0]")).toEqual({
+    expect(jsmql("$reverseArray($.items)[0]")).toEqual({
       $arrayElemAt: [{ $reverseArray: "$items" }, 0],
     });
   });
   it("bracket access on .map() result stays compact", () => {
-    expect(mjsql("$.items.map(x => x.id)[0]")).toEqual({
+    expect(jsmql("$.items.map(x => x.id)[0]")).toEqual({
       $arrayElemAt: [{ $map: { input: "$items", as: "x", in: "$$x.id" } }, 0],
     });
   });
@@ -732,12 +732,12 @@ describe("bracket access", () => {
 
 describe("grouped expressions", () => {
   it("grouping changes precedence", () => {
-    expect(mjsql("($.a + $.b) * 2")).toEqual({
+    expect(jsmql("($.a + $.b) * 2")).toEqual({
       $multiply: [{ $add: ["$a", "$b"] }, 2],
     });
   });
   it("without grouping * binds tighter", () => {
-    expect(mjsql("$.a + $.b * 2")).toEqual({
+    expect(jsmql("$.a + $.b * 2")).toEqual({
       $add: ["$a", { $multiply: ["$b", 2] }],
     });
   });
@@ -745,22 +745,22 @@ describe("grouped expressions", () => {
 
 describe("operator precedence", () => {
   it("* before +", () => {
-    expect(mjsql("$.a + $.b * $.c")).toEqual({
+    expect(jsmql("$.a + $.b * $.c")).toEqual({
       $add: ["$a", { $multiply: ["$b", "$c"] }],
     });
   });
   it("comparison before && (mixed-bool chain folds operand-preserving)", () => {
-    expect(mjsql("$.age > 18 && $.active")).toEqual({
+    expect(jsmql("$.age > 18 && $.active")).toEqual({
       $cond: [{ $gt: ["$age", 18] }, "$active", { $gt: ["$age", 18] }],
     });
   });
   it("&& before ||", () => {
-    expect(mjsql("$.a || $.b && $.c")).toEqual({
+    expect(jsmql("$.a || $.b && $.c")).toEqual({
       $cond: [truthy("$a"), "$a", { $cond: [truthy("$b"), "$c", "$b"] }],
     });
   });
   it("! before && (LHS is provably bool, no $let)", () => {
-    expect(mjsql("!$.a && $.b")).toEqual({
+    expect(jsmql("!$.a && $.b")).toEqual({
       $cond: [{ $not: truthy("$a") }, "$b", { $not: truthy("$a") }],
     });
   });
@@ -768,12 +768,12 @@ describe("operator precedence", () => {
 
 describe("mixed $operator() and infix", () => {
   it("infix inside $operator args", () => {
-    expect(mjsql("$and($.age > 18, $.status == 'active')")).toEqual({
+    expect(jsmql("$and($.age > 18, $.status == 'active')")).toEqual({
       $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
     });
   });
   it("$operator wrapping infix", () => {
-    expect(mjsql("$abs($.a - $.b)")).toEqual({
+    expect(jsmql("$abs($.a - $.b)")).toEqual({
       $abs: { $subtract: ["$a", "$b"] },
     });
   });
@@ -781,19 +781,19 @@ describe("mixed $operator() and infix", () => {
 
 describe("$.in field ref still works", () => {
   it("field named 'in'", () => {
-    expect(mjsql("$.in == 'test'")).toEqual({ $eq: ["$in", "test"] });
+    expect(jsmql("$.in == 'test'")).toEqual({ $eq: ["$in", "test"] });
   });
   it("nested field with 'in' segment", () => {
-    expect(mjsql("$size($.in)")).toEqual({ $size: "$in" });
+    expect(jsmql("$size($.in)")).toEqual({ $size: "$in" });
   });
 });
 
 describe("field path regression (FieldRef stops at first segment)", () => {
   it("$.a.b.c produces $a.b.c", () => {
-    expect(mjsql("$.a.b.c")).toEqual("$a.b.c");
+    expect(jsmql("$.a.b.c")).toEqual("$a.b.c");
   });
   it("$.items[0].name produces $getField on bracket-access result", () => {
-    expect(mjsql("$.items[0].name")).toEqual({
+    expect(jsmql("$.items[0].name")).toEqual({
       $getField: {
         field: "name",
         input: {
@@ -807,46 +807,46 @@ describe("field path regression (FieldRef stops at first segment)", () => {
     });
   });
   it("rejects numeric field segments — $.items.0 is not valid JS syntax", () => {
-    expect(() => mjsql("$.items.0")).toThrow(/Expected property name after '\.'/);
+    expect(() => jsmql("$.items.0")).toThrow(/Expected property name after '\.'/);
   });
   it("deep path inside $abs", () => {
-    expect(mjsql("$abs($.a.b.c)")).toEqual({ $abs: "$a.b.c" });
+    expect(jsmql("$abs($.a.b.c)")).toEqual({ $abs: "$a.b.c" });
   });
   it("dotted path in comparison", () => {
-    expect(mjsql("$.loyalty.years >= 2")).toEqual({ $gte: ["$loyalty.years", 2] });
+    expect(jsmql("$.loyalty.years >= 2")).toEqual({ $gte: ["$loyalty.years", 2] });
   });
 });
 
 describe("string methods", () => {
   it("trim", () => {
-    expect(mjsql("$.name.trim()")).toEqual({ $trim: { input: "$name" } });
+    expect(jsmql("$.name.trim()")).toEqual({ $trim: { input: "$name" } });
   });
   it("trimStart", () => {
-    expect(mjsql("$.name.trimStart()")).toEqual({ $ltrim: { input: "$name" } });
+    expect(jsmql("$.name.trimStart()")).toEqual({ $ltrim: { input: "$name" } });
   });
   it("trimLeft alias", () => {
-    expect(mjsql("$.name.trimLeft()")).toEqual({ $ltrim: { input: "$name" } });
+    expect(jsmql("$.name.trimLeft()")).toEqual({ $ltrim: { input: "$name" } });
   });
   it("trimEnd", () => {
-    expect(mjsql("$.name.trimEnd()")).toEqual({ $rtrim: { input: "$name" } });
+    expect(jsmql("$.name.trimEnd()")).toEqual({ $rtrim: { input: "$name" } });
   });
   it("trimRight alias", () => {
-    expect(mjsql("$.name.trimRight()")).toEqual({ $rtrim: { input: "$name" } });
+    expect(jsmql("$.name.trimRight()")).toEqual({ $rtrim: { input: "$name" } });
   });
   it("toLowerCase", () => {
-    expect(mjsql("$.name.toLowerCase()")).toEqual({ $toLower: "$name" });
+    expect(jsmql("$.name.toLowerCase()")).toEqual({ $toLower: "$name" });
   });
   it("toUpperCase", () => {
-    expect(mjsql("$.name.toUpperCase()")).toEqual({ $toUpper: "$name" });
+    expect(jsmql("$.name.toUpperCase()")).toEqual({ $toUpper: "$name" });
   });
   it("substr", () => {
-    expect(mjsql("$.name.substr(0, 5)")).toEqual({ $substrCP: ["$name", 0, 5] });
+    expect(jsmql("$.name.substr(0, 5)")).toEqual({ $substrCP: ["$name", 0, 5] });
   });
   it("split", () => {
-    expect(mjsql('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
+    expect(jsmql('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
   });
   it("indexOf on bare field → runtime $cond on $isArray", () => {
-    expect(mjsql('$.name.indexOf("@")')).toEqual({
+    expect(jsmql('$.name.indexOf("@")')).toEqual({
       $cond: [
         { $isArray: "$name" },
         { $indexOfArray: ["$name", "@"] },
@@ -855,22 +855,22 @@ describe("string methods", () => {
     });
   });
   it("indexOf on known string → $indexOfCP", () => {
-    expect(mjsql('$.name.toLowerCase().indexOf("@")')).toEqual({
+    expect(jsmql('$.name.toLowerCase().indexOf("@")')).toEqual({
       $indexOfCP: [{ $toLower: "$name" }, "@"],
     });
   });
   it("replace", () => {
-    expect(mjsql('$.name.replace("a", "b")')).toEqual({
+    expect(jsmql('$.name.replace("a", "b")')).toEqual({
       $replaceOne: { input: "$name", find: "a", replacement: "b" },
     });
   });
   it("replaceAll", () => {
-    expect(mjsql('$.slug.replaceAll(" ", "-")')).toEqual({
+    expect(jsmql('$.slug.replaceAll(" ", "-")')).toEqual({
       $replaceAll: { input: "$slug", find: " ", replacement: "-" },
     });
   });
   it("includes on bare field → runtime $cond on $isArray", () => {
-    expect(mjsql('$.email.includes("@")')).toEqual({
+    expect(jsmql('$.email.includes("@")')).toEqual({
       $cond: [
         { $isArray: "$email" },
         { $in: ["@", "$email"] },
@@ -879,48 +879,48 @@ describe("string methods", () => {
     });
   });
   it("includes on known string → string form", () => {
-    expect(mjsql('$.email.toLowerCase().includes("@")')).toEqual({
+    expect(jsmql('$.email.toLowerCase().includes("@")')).toEqual({
       $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0],
     });
   });
   it("match with regex literal", () => {
-    expect(mjsql("$.str.match(/^[A-Z]/)")).toEqual({
+    expect(jsmql("$.str.match(/^[A-Z]/)")).toEqual({
       $regexMatch: { input: "$str", regex: "^[A-Z]" },
     });
   });
   it("match with regex literal and flags", () => {
-    expect(mjsql("$.str.match(/^[a-z]/i)")).toEqual({
+    expect(jsmql("$.str.match(/^[a-z]/i)")).toEqual({
       $regexMatch: { input: "$str", regex: "^[a-z]", options: "i" },
     });
   });
   it("match with string pattern", () => {
-    expect(mjsql('$.str.match("^[a-z]")')).toEqual({
+    expect(jsmql('$.str.match("^[a-z]")')).toEqual({
       $regexMatch: { input: "$str", regex: "^[a-z]" },
     });
   });
   it("length on string-producing expression → $strLenCP", () => {
-    expect(mjsql("$.name.trim().length")).toEqual({ $strLenCP: { $trim: { input: "$name" } } });
+    expect(jsmql("$.name.trim().length")).toEqual({ $strLenCP: { $trim: { input: "$name" } } });
   });
   it("length on array-producing expression → $size", () => {
-    expect(mjsql('$.csv.split(",").length')).toEqual({ $size: { $split: ["$csv", ","] } });
+    expect(jsmql('$.csv.split(",").length')).toEqual({ $size: { $split: ["$csv", ","] } });
   });
   it("length on map result → $size", () => {
-    expect(mjsql("$.items.map(x => x).length")).toEqual({
+    expect(jsmql("$.items.map(x => x).length")).toEqual({
       $size: { $map: { input: "$items", as: "x", in: "$$x" } },
     });
   });
   it("length on unknown field → runtime dispatch", () => {
-    expect(mjsql("$.items.length")).toEqual({
+    expect(jsmql("$.items.length")).toEqual({
       $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }],
     });
   });
   it("chained trim then toLowerCase", () => {
-    expect(mjsql("$.name.trim().toLowerCase()")).toEqual({
+    expect(jsmql("$.name.trim().toLowerCase()")).toEqual({
       $toLower: { $trim: { input: "$name" } },
     });
   });
   it("chained toLowerCase then trim", () => {
-    expect(mjsql("$.name.toLowerCase().trim()")).toEqual({
+    expect(jsmql("$.name.toLowerCase().trim()")).toEqual({
       $trim: { input: { $toLower: "$name" } },
     });
   });
@@ -928,70 +928,70 @@ describe("string methods", () => {
 
 describe("array methods (no lambda)", () => {
   it("at(n)", () => {
-    expect(mjsql("$.items.at(0)")).toEqual({ $arrayElemAt: ["$items", 0] });
+    expect(jsmql("$.items.at(0)")).toEqual({ $arrayElemAt: ["$items", 0] });
   });
   it("at(-1)", () => {
-    expect(mjsql("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
+    expect(jsmql("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
   });
   it("slice(start)", () => {
-    expect(mjsql("$.items.slice(2)")).toEqual({ $slice: ["$items", 2] });
+    expect(jsmql("$.items.slice(2)")).toEqual({ $slice: ["$items", 2] });
   });
   it("slice(start, count)", () => {
-    expect(mjsql("$.items.slice(0, 3)")).toEqual({ $slice: ["$items", 0, 3] });
+    expect(jsmql("$.items.slice(0, 3)")).toEqual({ $slice: ["$items", 0, 3] });
   });
   it("reverse()", () => {
-    expect(mjsql("$.items.reverse()")).toEqual({ $reverseArray: "$items" });
+    expect(jsmql("$.items.reverse()")).toEqual({ $reverseArray: "$items" });
   });
 });
 
 describe("array methods (with lambda)", () => {
   it("map with single param", () => {
-    expect(mjsql("$.prices.map(p => p * 1.1)")).toEqual({
+    expect(jsmql("$.prices.map(p => p * 1.1)")).toEqual({
       $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
     });
   });
   it("map with parenthesized param", () => {
-    expect(mjsql("$.prices.map((p) => p * 1.1)")).toEqual({
+    expect(jsmql("$.prices.map((p) => p * 1.1)")).toEqual({
       $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
     });
   });
   it("filter", () => {
-    expect(mjsql("$.items.filter(x => x > 0)")).toEqual({
+    expect(jsmql("$.items.filter(x => x > 0)")).toEqual({
       $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } },
     });
   });
   it("find", () => {
-    expect(mjsql("$.items.find(x => x > 0)")).toEqual({
+    expect(jsmql("$.items.find(x => x > 0)")).toEqual({
       $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } } }, 0],
     });
   });
   it("some", () => {
-    expect(mjsql("$.items.some(x => x > 0)")).toEqual({
+    expect(jsmql("$.items.some(x => x > 0)")).toEqual({
       $anyElementTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } },
     });
   });
   it("every", () => {
-    expect(mjsql("$.items.every(x => x > 0)")).toEqual({
+    expect(jsmql("$.items.every(x => x > 0)")).toEqual({
       $allElementsTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } },
     });
   });
   it("reduce", () => {
-    expect(mjsql("$.ns.reduce((acc, x) => acc + x, 0)")).toEqual({
+    expect(jsmql("$.ns.reduce((acc, x) => acc + x, 0)")).toEqual({
       $reduce: { input: "$ns", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
   it("lambda accessing doc field via $.", () => {
-    expect(mjsql("$.items.map(x => x * $.taxRate)")).toEqual({
+    expect(jsmql("$.items.map(x => x * $.taxRate)")).toEqual({
       $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$taxRate"] } },
     });
   });
   it("lambda accessing nested field on element (x.status → $$x.status)", () => {
-    expect(mjsql('$.orders.filter(o => o.status == "active")')).toEqual({
+    expect(jsmql('$.orders.filter(o => o.status == "active")')).toEqual({
       $filter: { input: "$orders", as: "o", cond: { $eq: ["$$o.status", "active"] } },
     });
   });
   it("reduce accessing element field ($$this.price)", () => {
-    expect(mjsql("$.orders.reduce((sum, o) => sum + o.price, 0)")).toEqual({
+    expect(jsmql("$.orders.reduce((sum, o) => sum + o.price, 0)")).toEqual({
       $reduce: {
         input: "$orders",
         initialValue: 0,
@@ -1003,37 +1003,37 @@ describe("array methods (with lambda)", () => {
 
 describe("bare type-cast callbacks", () => {
   it("filter(Boolean) drops JS-falsy elements", () => {
-    expect(mjsql("$.items.filter(Boolean)")).toEqual({
+    expect(jsmql("$.items.filter(Boolean)")).toEqual({
       $filter: { input: "$items", as: "v", cond: truthy("$$v") },
     });
   });
   it("map(Number) coerces to double", () => {
-    expect(mjsql("$.nums.map(Number)")).toEqual({
+    expect(jsmql("$.nums.map(Number)")).toEqual({
       $map: { input: "$nums", as: "v", in: { $toDouble: "$$v" } },
     });
   });
   it("map(String) coerces to string", () => {
-    expect(mjsql("$.xs.map(String)")).toEqual({
+    expect(jsmql("$.xs.map(String)")).toEqual({
       $map: { input: "$xs", as: "v", in: { $toString: "$$v" } },
     });
   });
   it("find(Boolean) returns first JS-truthy element", () => {
-    expect(mjsql("$.xs.find(Boolean)")).toEqual({
+    expect(jsmql("$.xs.find(Boolean)")).toEqual({
       $arrayElemAt: [{ $filter: { input: "$xs", as: "v", cond: truthy("$$v") } }, 0],
     });
   });
   it("some(Boolean) is any-JS-truthy", () => {
-    expect(mjsql("$.xs.some(Boolean)")).toEqual({
+    expect(jsmql("$.xs.some(Boolean)")).toEqual({
       $anyElementTrue: { $map: { input: "$xs", as: "v", in: truthy("$$v") } },
     });
   });
   it("every(Boolean) is all-JS-truthy", () => {
-    expect(mjsql("$.xs.every(Boolean)")).toEqual({
+    expect(jsmql("$.xs.every(Boolean)")).toEqual({
       $allElementsTrue: { $map: { input: "$xs", as: "v", in: truthy("$$v") } },
     });
   });
   it("flatMap(Number) survives the desugar", () => {
-    expect(mjsql("$.xs.flatMap(Number)")).toEqual({
+    expect(jsmql("$.xs.flatMap(Number)")).toEqual({
       $reduce: {
         input: { $map: { input: "$xs", as: "v", in: { $toDouble: "$$v" } } },
         initialValue: [],
@@ -1042,7 +1042,7 @@ describe("bare type-cast callbacks", () => {
     });
   });
   it("composes through chaining: filter(Boolean).join(' ')", () => {
-    expect(mjsql('$.parts.filter(Boolean).join(" ")')).toEqual({
+    expect(jsmql('$.parts.filter(Boolean).join(" ")')).toEqual({
       $reduce: {
         input: { $filter: { input: "$parts", as: "v", cond: truthy("$$v") } },
         initialValue: "",
@@ -1057,206 +1057,206 @@ describe("bare type-cast callbacks", () => {
     });
   });
   it("Boolean as a value (outside callback) errors with the call form suggested", () => {
-    expect(() => mjsql("Boolean + 5")).toThrow(/used as a value.*Boolean\(value\)/);
+    expect(() => jsmql("Boolean + 5")).toThrow(/used as a value.*Boolean\(value\)/);
   });
   it("reduce(Boolean, 0) hits the existing 2-param error", () => {
-    expect(() => mjsql("$.xs.reduce(Boolean, 0)")).toThrow(/exactly 2 parameters/);
+    expect(() => jsmql("$.xs.reduce(Boolean, 0)")).toThrow(/exactly 2 parameters/);
   });
   it("parseInt is intentionally not supported bare (avoids the JS index-as-radix footgun)", () => {
-    expect(() => mjsql("$.xs.filter(parseInt)")).toThrow(/Expected LParen/);
+    expect(() => jsmql("$.xs.filter(parseInt)")).toThrow(/Expected LParen/);
   });
   it("parseFloat is intentionally not supported bare", () => {
-    expect(() => mjsql("$.xs.filter(parseFloat)")).toThrow(/Expected LParen/);
+    expect(() => jsmql("$.xs.filter(parseFloat)")).toThrow(/Expected LParen/);
   });
 });
 
 describe("date methods", () => {
   it("getFullYear", () => {
-    expect(mjsql("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
+    expect(jsmql("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
   });
   it("getMonth (0-based)", () => {
-    expect(mjsql("$.ts.getMonth()")).toEqual({ $subtract: [{ $month: "$ts" }, 1] });
+    expect(jsmql("$.ts.getMonth()")).toEqual({ $subtract: [{ $month: "$ts" }, 1] });
   });
   it("getDate", () => {
-    expect(mjsql("$.ts.getDate()")).toEqual({ $dayOfMonth: "$ts" });
+    expect(jsmql("$.ts.getDate()")).toEqual({ $dayOfMonth: "$ts" });
   });
   it("getDay (0-based)", () => {
-    expect(mjsql("$.ts.getDay()")).toEqual({ $subtract: [{ $dayOfWeek: "$ts" }, 1] });
+    expect(jsmql("$.ts.getDay()")).toEqual({ $subtract: [{ $dayOfWeek: "$ts" }, 1] });
   });
   it("getHours", () => {
-    expect(mjsql("$.ts.getHours()")).toEqual({ $hour: "$ts" });
+    expect(jsmql("$.ts.getHours()")).toEqual({ $hour: "$ts" });
   });
   it("getMinutes", () => {
-    expect(mjsql("$.ts.getMinutes()")).toEqual({ $minute: "$ts" });
+    expect(jsmql("$.ts.getMinutes()")).toEqual({ $minute: "$ts" });
   });
   it("getSeconds", () => {
-    expect(mjsql("$.ts.getSeconds()")).toEqual({ $second: "$ts" });
+    expect(jsmql("$.ts.getSeconds()")).toEqual({ $second: "$ts" });
   });
   it("getMilliseconds", () => {
-    expect(mjsql("$.ts.getMilliseconds()")).toEqual({ $millisecond: "$ts" });
+    expect(jsmql("$.ts.getMilliseconds()")).toEqual({ $millisecond: "$ts" });
   });
 });
 
 describe("typeof", () => {
   it("typeof fieldref", () => {
-    expect(mjsql("typeof $.x")).toEqual({ $type: "$x" });
+    expect(jsmql("typeof $.x")).toEqual({ $type: "$x" });
   });
   it("typeof in comparison", () => {
-    expect(mjsql('typeof $.x == "string"')).toEqual({ $eq: [{ $type: "$x" }, "string"] });
+    expect(jsmql('typeof $.x == "string"')).toEqual({ $eq: [{ $type: "$x" }, "string"] });
   });
 });
 
 describe("new Date()", () => {
   it("no-arg maps to $$NOW", () => {
-    expect(mjsql("new Date()")).toEqual({ $toDate: "$$NOW" });
+    expect(jsmql("new Date()")).toEqual({ $toDate: "$$NOW" });
   });
   it("with field arg", () => {
-    expect(mjsql("new Date($.ts)")).toEqual({ $toDate: "$ts" });
+    expect(jsmql("new Date($.ts)")).toEqual({ $toDate: "$ts" });
   });
   it("with string literal", () => {
-    expect(mjsql('new Date("2024-01-01")')).toEqual({ $toDate: "2024-01-01" });
+    expect(jsmql('new Date("2024-01-01")')).toEqual({ $toDate: "2024-01-01" });
   });
 });
 
 describe("type casts", () => {
   it("Number()", () => {
-    expect(mjsql("Number($.str)")).toEqual({ $toDouble: "$str" });
+    expect(jsmql("Number($.str)")).toEqual({ $toDouble: "$str" });
   });
   it("String()", () => {
-    expect(mjsql("String($.n)")).toEqual({ $toString: "$n" });
+    expect(jsmql("String($.n)")).toEqual({ $toString: "$n" });
   });
   it("Boolean() uses JS truthy semantics (not MQL's $toBool)", () => {
-    expect(mjsql("Boolean($.x)")).toEqual(truthy("$x"));
+    expect(jsmql("Boolean($.x)")).toEqual(truthy("$x"));
   });
   it("Boolean() on a provably-bool value elides the wrap", () => {
-    expect(mjsql("Boolean($.x > 0)")).toEqual({ $gt: ["$x", 0] });
+    expect(jsmql("Boolean($.x > 0)")).toEqual({ $gt: ["$x", 0] });
   });
   it("$toBool() direct operator escape preserves raw MongoDB semantics", () => {
-    expect(mjsql("$toBool($.x)")).toEqual({ $toBool: "$x" });
+    expect(jsmql("$toBool($.x)")).toEqual({ $toBool: "$x" });
   });
   it("parseInt()", () => {
-    expect(mjsql("parseInt($.s)")).toEqual({ $toInt: "$s" });
+    expect(jsmql("parseInt($.s)")).toEqual({ $toInt: "$s" });
   });
   it("parseFloat()", () => {
-    expect(mjsql("parseFloat($.s)")).toEqual({ $toDouble: "$s" });
+    expect(jsmql("parseFloat($.s)")).toEqual({ $toDouble: "$s" });
   });
 });
 
 describe("Math.*", () => {
   it("Math.abs", () => {
-    expect(mjsql("Math.abs($.x)")).toEqual({ $abs: "$x" });
+    expect(jsmql("Math.abs($.x)")).toEqual({ $abs: "$x" });
   });
   it("Math.ceil", () => {
-    expect(mjsql("Math.ceil($.x)")).toEqual({ $ceil: "$x" });
+    expect(jsmql("Math.ceil($.x)")).toEqual({ $ceil: "$x" });
   });
   it("Math.floor", () => {
-    expect(mjsql("Math.floor($.x)")).toEqual({ $floor: "$x" });
+    expect(jsmql("Math.floor($.x)")).toEqual({ $floor: "$x" });
   });
   it("Math.round adds 0 precision", () => {
-    expect(mjsql("Math.round($.x)")).toEqual({ $round: ["$x", 0] });
+    expect(jsmql("Math.round($.x)")).toEqual({ $round: ["$x", 0] });
   });
   it("Math.pow", () => {
-    expect(mjsql("Math.pow(2, $.n)")).toEqual({ $pow: [2, "$n"] });
+    expect(jsmql("Math.pow(2, $.n)")).toEqual({ $pow: [2, "$n"] });
   });
   it("Math.sqrt", () => {
-    expect(mjsql("Math.sqrt($.x)")).toEqual({ $sqrt: "$x" });
+    expect(jsmql("Math.sqrt($.x)")).toEqual({ $sqrt: "$x" });
   });
   it("Math.exp", () => {
-    expect(mjsql("Math.exp($.x)")).toEqual({ $exp: "$x" });
+    expect(jsmql("Math.exp($.x)")).toEqual({ $exp: "$x" });
   });
   it("Math.log (natural log → $ln)", () => {
-    expect(mjsql("Math.log($.x)")).toEqual({ $ln: "$x" });
+    expect(jsmql("Math.log($.x)")).toEqual({ $ln: "$x" });
   });
   it("Math.trunc", () => {
-    expect(mjsql("Math.trunc($.x)")).toEqual({ $trunc: "$x" });
+    expect(jsmql("Math.trunc($.x)")).toEqual({ $trunc: "$x" });
   });
 });
 
 describe("Math trigonometry", () => {
   it("Math.sin", () => {
-    expect(mjsql("Math.sin($.angle)")).toEqual({ $sin: "$angle" });
+    expect(jsmql("Math.sin($.angle)")).toEqual({ $sin: "$angle" });
   });
   it("Math.cos", () => {
-    expect(mjsql("Math.cos($.angle)")).toEqual({ $cos: "$angle" });
+    expect(jsmql("Math.cos($.angle)")).toEqual({ $cos: "$angle" });
   });
   it("Math.tan", () => {
-    expect(mjsql("Math.tan($.angle)")).toEqual({ $tan: "$angle" });
+    expect(jsmql("Math.tan($.angle)")).toEqual({ $tan: "$angle" });
   });
   it("Math.asin", () => {
-    expect(mjsql("Math.asin($.x)")).toEqual({ $asin: "$x" });
+    expect(jsmql("Math.asin($.x)")).toEqual({ $asin: "$x" });
   });
   it("Math.acos", () => {
-    expect(mjsql("Math.acos($.x)")).toEqual({ $acos: "$x" });
+    expect(jsmql("Math.acos($.x)")).toEqual({ $acos: "$x" });
   });
   it("Math.atan", () => {
-    expect(mjsql("Math.atan($.x)")).toEqual({ $atan: "$x" });
+    expect(jsmql("Math.atan($.x)")).toEqual({ $atan: "$x" });
   });
   it("Math.atan2", () => {
-    expect(mjsql("Math.atan2($.y, $.x)")).toEqual({ $atan2: ["$y", "$x"] });
+    expect(jsmql("Math.atan2($.y, $.x)")).toEqual({ $atan2: ["$y", "$x"] });
   });
   it("Math.atan2 wrong arity", () => {
-    expect(() => mjsql("Math.atan2($.x)")).toThrow(/exactly 2 arguments/);
+    expect(() => jsmql("Math.atan2($.x)")).toThrow(/exactly 2 arguments/);
   });
   it("Math.sinh", () => {
-    expect(mjsql("Math.sinh($.x)")).toEqual({ $sinh: "$x" });
+    expect(jsmql("Math.sinh($.x)")).toEqual({ $sinh: "$x" });
   });
   it("Math.cosh", () => {
-    expect(mjsql("Math.cosh($.x)")).toEqual({ $cosh: "$x" });
+    expect(jsmql("Math.cosh($.x)")).toEqual({ $cosh: "$x" });
   });
   it("Math.tanh", () => {
-    expect(mjsql("Math.tanh($.x)")).toEqual({ $tanh: "$x" });
+    expect(jsmql("Math.tanh($.x)")).toEqual({ $tanh: "$x" });
   });
   it("Math.asinh", () => {
-    expect(mjsql("Math.asinh($.x)")).toEqual({ $asinh: "$x" });
+    expect(jsmql("Math.asinh($.x)")).toEqual({ $asinh: "$x" });
   });
   it("Math.acosh", () => {
-    expect(mjsql("Math.acosh($.x)")).toEqual({ $acosh: "$x" });
+    expect(jsmql("Math.acosh($.x)")).toEqual({ $acosh: "$x" });
   });
   it("Math.atanh", () => {
-    expect(mjsql("Math.atanh($.x)")).toEqual({ $atanh: "$x" });
+    expect(jsmql("Math.atanh($.x)")).toEqual({ $atanh: "$x" });
   });
 });
 
 describe("bitwise infix operators", () => {
   it("a & b", () => {
-    expect(mjsql("$.a & $.b")).toEqual({ $bitAnd: ["$a", "$b"] });
+    expect(jsmql("$.a & $.b")).toEqual({ $bitAnd: ["$a", "$b"] });
   });
   it("a | b", () => {
-    expect(mjsql("$.a | $.b")).toEqual({ $bitOr: ["$a", "$b"] });
+    expect(jsmql("$.a | $.b")).toEqual({ $bitOr: ["$a", "$b"] });
   });
   it("a ^ b", () => {
-    expect(mjsql("$.a ^ $.b")).toEqual({ $bitXor: ["$a", "$b"] });
+    expect(jsmql("$.a ^ $.b")).toEqual({ $bitXor: ["$a", "$b"] });
   });
   it("~a", () => {
-    expect(mjsql("~$.a")).toEqual({ $bitNot: "$a" });
+    expect(jsmql("~$.a")).toEqual({ $bitNot: "$a" });
   });
   it("a & b & c flattens", () => {
-    expect(mjsql("$.a & $.b & $.c")).toEqual({ $bitAnd: ["$a", "$b", "$c"] });
+    expect(jsmql("$.a & $.b & $.c")).toEqual({ $bitAnd: ["$a", "$b", "$c"] });
   });
   it("a | b | c flattens", () => {
-    expect(mjsql("$.a | $.b | $.c")).toEqual({ $bitOr: ["$a", "$b", "$c"] });
+    expect(jsmql("$.a | $.b | $.c")).toEqual({ $bitOr: ["$a", "$b", "$c"] });
   });
   it("a ^ b ^ c flattens", () => {
-    expect(mjsql("$.a ^ $.b ^ $.c")).toEqual({ $bitXor: ["$a", "$b", "$c"] });
+    expect(jsmql("$.a ^ $.b ^ $.c")).toEqual({ $bitXor: ["$a", "$b", "$c"] });
   });
   it("(a & b) | c precedence: & binds tighter than |", () => {
-    expect(mjsql("$.a & $.b | $.c")).toEqual({
+    expect(jsmql("$.a & $.b | $.c")).toEqual({
       $bitOr: [{ $bitAnd: ["$a", "$b"] }, "$c"],
     });
   });
   it("(a ^ b) | c precedence: ^ binds tighter than |", () => {
-    expect(mjsql("$.a ^ $.b | $.c")).toEqual({
+    expect(jsmql("$.a ^ $.b | $.c")).toEqual({
       $bitOr: [{ $bitXor: ["$a", "$b"] }, "$c"],
     });
   });
   it("(a & b) ^ c precedence: & binds tighter than ^", () => {
-    expect(mjsql("$.a & $.b ^ $.c")).toEqual({
+    expect(jsmql("$.a & $.b ^ $.c")).toEqual({
       $bitXor: [{ $bitAnd: ["$a", "$b"] }, "$c"],
     });
   });
   it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
     // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
-    expect(mjsql("$.a | $.b && $.c")).toEqual({
+    expect(jsmql("$.a | $.b && $.c")).toEqual({
       $let: {
         vars: { _v: { $bitOr: ["$a", "$b"] } },
         in: { $cond: [truthy("$$_v"), "$c", "$$_v"] },
@@ -1264,12 +1264,12 @@ describe("bitwise infix operators", () => {
     });
   });
   it("== binds tighter than & (so a == b & c → (a == b) & c)", () => {
-    expect(mjsql("$.a == $.b & $.c")).toEqual({
+    expect(jsmql("$.a == $.b & $.c")).toEqual({
       $bitAnd: [{ $eq: ["$a", "$b"] }, "$c"],
     });
   });
   it("unary ~ has higher precedence than &", () => {
-    expect(mjsql("~$.flags & 255")).toEqual({
+    expect(jsmql("~$.flags & 255")).toEqual({
       $bitAnd: [{ $bitNot: "$flags" }, 255],
     });
   });
@@ -1277,29 +1277,29 @@ describe("bitwise infix operators", () => {
 
 describe("Object.*", () => {
   it("Object.keys", () => {
-    expect(mjsql("Object.keys($.doc)")).toEqual({
+    expect(jsmql("Object.keys($.doc)")).toEqual({
       $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.k" },
     });
   });
   it("Object.values", () => {
-    expect(mjsql("Object.values($.doc)")).toEqual({
+    expect(jsmql("Object.values($.doc)")).toEqual({
       $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.v" },
     });
   });
   it("Object.entries", () => {
-    expect(mjsql("Object.entries($.doc)")).toEqual({ $objectToArray: "$doc" });
+    expect(jsmql("Object.entries($.doc)")).toEqual({ $objectToArray: "$doc" });
   });
   it("Object.assign (2 args)", () => {
-    expect(mjsql("Object.assign($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
+    expect(jsmql("Object.assign($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
   });
   it("Object.assign (3 args)", () => {
-    expect(mjsql("Object.assign($.a, $.b, $.c)")).toEqual({ $mergeObjects: ["$a", "$b", "$c"] });
+    expect(jsmql("Object.assign($.a, $.b, $.c)")).toEqual({ $mergeObjects: ["$a", "$b", "$c"] });
   });
 });
 
 describe("$let with lambda", () => {
   it("single var lambda", () => {
-    expect(mjsql("$let({ d: $.price * 0.1 }, (d) => $.price - d)")).toEqual({
+    expect(jsmql("$let({ d: $.price * 0.1 }, (d) => $.price - d)")).toEqual({
       $let: {
         vars: { d: { $multiply: ["$price", 0.1] } },
         in: { $subtract: ["$price", "$$d"] },
@@ -1310,20 +1310,20 @@ describe("$let with lambda", () => {
 
 describe("immutable array methods", () => {
   it(".toSorted() with no comparator → ascending", () => {
-    expect(mjsql("$.scores.toSorted()")).toEqual({
+    expect(jsmql("$.scores.toSorted()")).toEqual({
       $sortArray: { input: "$scores", sortBy: 1 },
     });
   });
   it(".toSorted with comparator throws helpful error", () => {
-    expect(() => mjsql("$.scores.toSorted((a, b) => a - b)")).toThrow(
+    expect(() => jsmql("$.scores.toSorted((a, b) => a - b)")).toThrow(
       /comparator is not supported/,
     );
   });
   it(".toReversed() is array-context", () => {
-    expect(mjsql("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
+    expect(jsmql("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
   });
   it(".toReversed() chainable with .map()", () => {
-    expect(mjsql("$.items.toReversed().map(x => x.name)")).toEqual({
+    expect(jsmql("$.items.toReversed().map(x => x.name)")).toEqual({
       $map: {
         input: { $reverseArray: "$items" },
         as: "x",
@@ -1332,7 +1332,7 @@ describe("immutable array methods", () => {
     });
   });
   it(".findLast(p) returns last matching element (predicate body wrapped in jsBool)", () => {
-    expect(mjsql("$.items.findLast(x => x.active)")).toEqual({
+    expect(jsmql("$.items.findLast(x => x.active)")).toEqual({
       $arrayElemAt: [
         {
           $filter: {
@@ -1346,7 +1346,7 @@ describe("immutable array methods", () => {
     });
   });
   it(".findLastIndex(p) reduces (idx, el) pairs (predicate body wrapped in jsBool)", () => {
-    expect(mjsql("$.items.findLastIndex(x => x.active)")).toEqual({
+    expect(jsmql("$.items.findLastIndex(x => x.active)")).toEqual({
       $reduce: {
         input: {
           $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] },
@@ -1367,32 +1367,32 @@ describe("immutable array methods", () => {
 
 describe("ES2025 Set methods", () => {
   it("intersection", () => {
-    expect(mjsql("new Set($.a).intersection(new Set($.b))")).toEqual({
+    expect(jsmql("new Set($.a).intersection(new Set($.b))")).toEqual({
       $setIntersection: ["$a", "$b"],
     });
   });
   it("union", () => {
-    expect(mjsql("new Set($.a).union(new Set($.b))")).toEqual({
+    expect(jsmql("new Set($.a).union(new Set($.b))")).toEqual({
       $setUnion: ["$a", "$b"],
     });
   });
   it("difference", () => {
-    expect(mjsql("new Set($.a).difference(new Set($.b))")).toEqual({
+    expect(jsmql("new Set($.a).difference(new Set($.b))")).toEqual({
       $setDifference: ["$a", "$b"],
     });
   });
   it("isSubsetOf", () => {
-    expect(mjsql("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({
+    expect(jsmql("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({
       $setIsSubset: ["$a", "$b"],
     });
   });
   it("isSupersetOf swaps args", () => {
-    expect(mjsql("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({
+    expect(jsmql("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({
       $setIsSubset: ["$b", "$a"],
     });
   });
   it("works with array literals", () => {
-    expect(mjsql("new Set([1, 2, 3]).intersection(new Set([2, 3, 4]))")).toEqual({
+    expect(jsmql("new Set([1, 2, 3]).intersection(new Set([2, 3, 4]))")).toEqual({
       $setIntersection: [
         [1, 2, 3],
         [2, 3, 4],
@@ -1400,41 +1400,41 @@ describe("ES2025 Set methods", () => {
     });
   });
   it("symmetricDifference throws helpful error", () => {
-    expect(() => mjsql("new Set($.a).symmetricDifference(new Set($.b))")).toThrow(
+    expect(() => jsmql("new Set($.a).symmetricDifference(new Set($.b))")).toThrow(
       /no MongoDB equivalent/,
     );
   });
   it("non-Set argument is rejected", () => {
-    expect(() => mjsql("new Set($.a).intersection($.b)")).toThrow(/must be a 'new Set/);
+    expect(() => jsmql("new Set($.a).intersection($.b)")).toThrow(/must be a 'new Set/);
   });
 });
 
 describe("regex method variants", () => {
   it("/re/.test(str)", () => {
-    expect(mjsql("/[a-z]+/.test($.s)")).toEqual({
+    expect(jsmql("/[a-z]+/.test($.s)")).toEqual({
       $regexMatch: { input: "$s", regex: "[a-z]+" },
     });
   });
   it("/re/flags.test(str) preserves flags", () => {
-    expect(mjsql("/PAT/i.test($.s)")).toEqual({
+    expect(jsmql("/PAT/i.test($.s)")).toEqual({
       $regexMatch: { input: "$s", regex: "PAT", options: "i" },
     });
   });
   it("/re/.exec(str)", () => {
-    expect(mjsql("/word/.exec($.s)")).toEqual({
+    expect(jsmql("/word/.exec($.s)")).toEqual({
       $regexFind: { input: "$s", regex: "word" },
     });
   });
   it("str.matchAll(/re/g)", () => {
-    expect(mjsql("$.s.matchAll(/word/g)")).toEqual({
+    expect(jsmql("$.s.matchAll(/word/g)")).toEqual({
       $regexFindAll: { input: "$s", regex: "word", options: "g" },
     });
   });
   it("matchAll without g flag throws", () => {
-    expect(() => mjsql("$.s.matchAll(/word/)")).toThrow(/'g' flag/);
+    expect(() => jsmql("$.s.matchAll(/word/)")).toThrow(/'g' flag/);
   });
   it("str.search(/re/) returns idx with -1 fallback", () => {
-    expect(mjsql("$.s.search(/foo/)")).toEqual({
+    expect(jsmql("$.s.search(/foo/)")).toEqual({
       $ifNull: [
         { $getField: { field: "idx", input: { $regexFind: { input: "$s", regex: "foo" } } } },
         -1,
@@ -1445,7 +1445,7 @@ describe("regex method variants", () => {
 
 describe("Number static predicates", () => {
   it("Number.isInteger(x)", () => {
-    expect(mjsql("Number.isInteger($.n)")).toEqual({
+    expect(jsmql("Number.isInteger($.n)")).toEqual({
       $cond: [
         { $in: [{ $type: "$n" }, ["int", "long"]] },
         true,
@@ -1460,16 +1460,16 @@ describe("Number static predicates", () => {
     });
   });
   it("Number.isNaN(x)", () => {
-    expect(mjsql("Number.isNaN($.x)")).toEqual({ $ne: ["$x", "$x"] });
+    expect(jsmql("Number.isNaN($.x)")).toEqual({ $ne: ["$x", "$x"] });
   });
   it("Number.isFinite(x) throws helpful error", () => {
-    expect(() => mjsql("Number.isFinite($.x)")).toThrow(/no Infinity literal/);
+    expect(() => jsmql("Number.isFinite($.x)")).toThrow(/no Infinity literal/);
   });
 });
 
 describe("string padding methods", () => {
   it("padStart with explicit char", () => {
-    expect(mjsql('$.code.padStart(5, "0")')).toEqual({
+    expect(jsmql('$.code.padStart(5, "0")')).toEqual({
       $let: {
         vars: { s: "$code" },
         in: {
@@ -1494,16 +1494,16 @@ describe("string padding methods", () => {
     });
   });
   it("padStart defaults to space", () => {
-    const out = mjsql("$.s.padStart(10)") as Record<string, unknown>;
+    const out = jsmql("$.s.padStart(10)") as Record<string, unknown>;
     // Spot-check: pad string should be a space
     expect(JSON.stringify(out)).toContain('"in":{"$concat":["$$value"," "]}');
   });
   it("padEnd order is str-then-pad", () => {
-    const out = mjsql('$.s.padEnd(10, "-")') as Record<string, unknown>;
+    const out = jsmql('$.s.padEnd(10, "-")') as Record<string, unknown>;
     expect(JSON.stringify(out)).toContain('["$$s",{"$reduce"');
   });
   it("repeat", () => {
-    expect(mjsql('"-".repeat(5)')).toEqual({
+    expect(jsmql('"-".repeat(5)')).toEqual({
       $reduce: {
         input: { $range: [0, 5] },
         initialValue: "",
@@ -1515,10 +1515,10 @@ describe("string padding methods", () => {
 
 describe("Array.from({length, ...})", () => {
   it("no map function returns $range", () => {
-    expect(mjsql("Array.from({ length: 5 })")).toEqual({ $range: [0, 5] });
+    expect(jsmql("Array.from({ length: 5 })")).toEqual({ $range: [0, 5] });
   });
   it("with (_, i) => body maps over $range", () => {
-    expect(mjsql("Array.from({ length: 3 }, (_, i) => i * 2)")).toEqual({
+    expect(jsmql("Array.from({ length: 3 }, (_, i) => i * 2)")).toEqual({
       $map: {
         input: { $range: [0, 3] },
         as: "i",
@@ -1532,32 +1532,32 @@ describe("Array.from({length, ...})", () => {
     });
   });
   it("with $.length expression", () => {
-    const out = mjsql("Array.from({ length: $.n }, (_, i) => i)") as Record<string, unknown>;
+    const out = jsmql("Array.from({ length: $.n }, (_, i) => i)") as Record<string, unknown>;
     expect(JSON.stringify(out)).toContain('"$range":[0,"$n"]');
   });
   it("non-{length} input throws", () => {
-    expect(() => mjsql("Array.from($.iter)")).toThrow(/{length: n} form/);
+    expect(() => jsmql("Array.from($.iter)")).toThrow(/{length: n} form/);
   });
   it("requires 2-param map function", () => {
-    expect(() => mjsql("Array.from({ length: 3 }, x => x)")).toThrow(/2 parameters/);
+    expect(() => jsmql("Array.from({ length: 3 }, x => x)")).toThrow(/2 parameters/);
   });
 });
 
 describe("BigInt literals", () => {
   it("integer with n suffix", () => {
-    expect(mjsql("123n")).toEqual({ $toLong: "123" });
+    expect(jsmql("123n")).toEqual({ $toLong: "123" });
   });
   it("zero", () => {
-    expect(mjsql("0n")).toEqual({ $toLong: "0" });
+    expect(jsmql("0n")).toEqual({ $toLong: "0" });
   });
   it("rejects fraction with n", () => {
-    expect(() => mjsql("1.5n")).toThrow(/Invalid BigInt/);
+    expect(() => jsmql("1.5n")).toThrow(/Invalid BigInt/);
   });
   it("rejects exponent with n", () => {
-    expect(() => mjsql("1e2n")).toThrow(/Invalid BigInt/);
+    expect(() => jsmql("1e2n")).toThrow(/Invalid BigInt/);
   });
   it("works in arithmetic", () => {
-    expect(mjsql("$.timestamp - 1000n")).toEqual({
+    expect(jsmql("$.timestamp - 1000n")).toEqual({
       $subtract: ["$timestamp", { $toLong: "1000" }],
     });
   });
@@ -1565,7 +1565,7 @@ describe("BigInt literals", () => {
 
 describe("Object.groupBy", () => {
   it("groups by category", () => {
-    expect(mjsql("Object.groupBy($.items, x => x.category)")).toEqual({
+    expect(jsmql("Object.groupBy($.items, x => x.category)")).toEqual({
       $reduce: {
         input: "$items",
         initialValue: {},
@@ -1600,10 +1600,10 @@ describe("Object.groupBy", () => {
     });
   });
   it("rejects non-lambda discriminator", () => {
-    expect(() => mjsql("Object.groupBy($.items, $.f)")).toThrow(/single-parameter arrow function/);
+    expect(() => jsmql("Object.groupBy($.items, $.f)")).toThrow(/single-parameter arrow function/);
   });
   it("rejects multi-param lambda", () => {
-    expect(() => mjsql("Object.groupBy($.items, (a, b) => a)")).toThrow(
+    expect(() => jsmql("Object.groupBy($.items, (a, b) => a)")).toThrow(
       /single-parameter arrow function/,
     );
   });
@@ -1611,17 +1611,17 @@ describe("Object.groupBy", () => {
 
 describe("IIFE → $let", () => {
   it("simple ((x) => body)(value)", () => {
-    expect(mjsql("((x) => x + 1)(5)")).toEqual({
+    expect(jsmql("((x) => x + 1)(5)")).toEqual({
       $let: { vars: { x: 5 }, in: { $add: ["$$x", 1] } },
     });
   });
   it("unparen single param (x => body)(value)", () => {
-    expect(mjsql("(x => x * 2)($.n)")).toEqual({
+    expect(jsmql("(x => x * 2)($.n)")).toEqual({
       $let: { vars: { x: "$n" }, in: { $multiply: ["$$x", 2] } },
     });
   });
   it("multi-param IIFE binds all params", () => {
-    expect(mjsql("((maxAge, minAge) => $.age >= minAge && $.age <= maxAge)(65, 18)")).toEqual({
+    expect(jsmql("((maxAge, minAge) => $.age >= minAge && $.age <= maxAge)(65, 18)")).toEqual({
       $let: {
         vars: { maxAge: 65, minAge: 18 },
         in: { $and: [{ $gte: ["$age", "$$minAge"] }, { $lte: ["$age", "$$maxAge"] }] },
@@ -1629,12 +1629,12 @@ describe("IIFE → $let", () => {
     });
   });
   it("zero-param IIFE", () => {
-    expect(mjsql("(() => $.x + $.y)()")).toEqual({
+    expect(jsmql("(() => $.x + $.y)()")).toEqual({
       $let: { vars: {}, in: { $add: ["$x", "$y"] } },
     });
   });
   it("body can reference outer $.fields", () => {
-    expect(mjsql("((d) => $.price - d)($.price * 0.1)")).toEqual({
+    expect(jsmql("((d) => $.price - d)($.price * 0.1)")).toEqual({
       $let: {
         vars: { d: { $multiply: ["$price", 0.1] } },
         in: { $subtract: ["$price", "$$d"] },
@@ -1642,29 +1642,29 @@ describe("IIFE → $let", () => {
     });
   });
   it("rejects mismatched arity", () => {
-    expect(() => mjsql("((x, y) => x + y)(1)")).toThrow(/expected 2 argument/);
+    expect(() => jsmql("((x, y) => x + y)(1)")).toThrow(/expected 2 argument/);
   });
   it("rejects calling a non-lambda", () => {
-    expect(() => mjsql("$.func(1, 2)")).toThrow(/Direct call/);
+    expect(() => jsmql("$.func(1, 2)")).toThrow(/Direct call/);
   });
   it("rejects spread args", () => {
-    expect(() => mjsql("((x) => x)(...$.arr)")).toThrow(/spread/);
+    expect(() => jsmql("((x) => x)(...$.arr)")).toThrow(/spread/);
   });
 });
 
 describe("string-context + with method calls", () => {
   it("trim() in + chain is string-producing", () => {
-    expect(mjsql('$.first.trim() + " " + $.last')).toEqual({
+    expect(jsmql('$.first.trim() + " " + $.last')).toEqual({
       $concat: [{ $trim: { input: "$first" } }, " ", "$last"],
     });
   });
   it("String() cast in + chain is string-producing", () => {
-    expect(mjsql('String($.n) + " items"')).toEqual({
+    expect(jsmql('String($.n) + " items"')).toEqual({
       $concat: [{ $toString: "$n" }, " items"],
     });
   });
   it("typeof in + chain is string-producing", () => {
-    expect(mjsql('typeof $.x + " type"')).toEqual({
+    expect(jsmql('typeof $.x + " type"')).toEqual({
       $concat: [{ $type: "$x" }, " type"],
     });
   });
@@ -1672,15 +1672,15 @@ describe("string-context + with method calls", () => {
 
 describe("regex literals (context-sensitive /)", () => {
   it("regex after operator is a literal, not divide", () => {
-    expect(mjsql("$.str.match(/[a-z]+/)")).toEqual({
+    expect(jsmql("$.str.match(/[a-z]+/)")).toEqual({
       $regexMatch: { input: "$str", regex: "[a-z]+" },
     });
   });
   it("/ after number is divide", () => {
-    expect(mjsql("$.x / 2")).toEqual({ $divide: ["$x", 2] });
+    expect(jsmql("$.x / 2")).toEqual({ $divide: ["$x", 2] });
   });
   it("regex with multiple flags", () => {
-    expect(mjsql("$.str.match(/pattern/gi)")).toEqual({
+    expect(jsmql("$.str.match(/pattern/gi)")).toEqual({
       $regexMatch: { input: "$str", regex: "pattern", options: "gi" },
     });
   });
@@ -1688,31 +1688,31 @@ describe("regex literals (context-sensitive /)", () => {
 
 describe("error cases", () => {
   it("bare identifier outside lambda throws Did you mean", () => {
-    expect(() => mjsql("x > 0")).toThrow(/Did you mean/);
+    expect(() => jsmql("x > 0")).toThrow(/Did you mean/);
   });
   it("unknown method throws with helpful message", () => {
-    expect(() => mjsql("$.name.frobulate()")).toThrow(/Unknown method/);
+    expect(() => jsmql("$.name.frobulate()")).toThrow(/Unknown method/);
   });
   it("near-miss method names get a 'Did you mean' suggestion", () => {
-    expect(() => mjsql("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
-    expect(() => mjsql("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
+    expect(() => jsmql("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
+    expect(() => jsmql("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
   });
   it("lambda in non-method context throws", () => {
-    expect(() => mjsql("$abs(x => x)")).toThrow(/Lambda expression/);
+    expect(() => jsmql("$abs(x => x)")).toThrow(/Lambda expression/);
   });
 });
 
 describe("1-arg substr", () => {
   it("substr(start) slices to end of string", () => {
-    expect(mjsql("$.email.substr(1)")).toEqual({
+    expect(jsmql("$.email.substr(1)")).toEqual({
       $substrCP: ["$email", 1, { $strLenCP: "$email" }],
     });
   });
   it("substr(start, count) keeps 2-arg form", () => {
-    expect(mjsql("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
+    expect(jsmql("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
   });
   it("substr with expression start", () => {
-    expect(mjsql("$.email.substr($.headerLength + 1)")).toEqual({
+    expect(jsmql("$.email.substr($.headerLength + 1)")).toEqual({
       $substrCP: ["$email", { $add: ["$headerLength", 1] }, { $strLenCP: "$email" }],
     });
   });
@@ -1720,52 +1720,52 @@ describe("1-arg substr", () => {
 
 describe("comparison precedence: relational higher than equality", () => {
   it("a < b == true parses as (a < b) == true", () => {
-    expect(mjsql("$.a < $.b == true")).toEqual({
+    expect(jsmql("$.a < $.b == true")).toEqual({
       $eq: [{ $lt: ["$a", "$b"] }, true],
     });
   });
   it("a > 0 == b > 0 parses as (a > 0) == (b > 0)", () => {
-    expect(mjsql("$.a > 0 == $.b > 0")).toEqual({
+    expect(jsmql("$.a > 0 == $.b > 0")).toEqual({
       $eq: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
     });
   });
   it("simple relational still works", () => {
-    expect(mjsql("$.x < 5")).toEqual({ $lt: ["$x", 5] });
+    expect(jsmql("$.x < 5")).toEqual({ $lt: ["$x", 5] });
   });
   it("simple equality still works", () => {
-    expect(mjsql("$.x == 5")).toEqual({ $eq: ["$x", 5] });
+    expect(jsmql("$.x == 5")).toEqual({ $eq: ["$x", 5] });
   });
 });
 
 describe("in operator RHS validation", () => {
   it("throws on string RHS", () => {
-    expect(() => mjsql('$.x in "abc"')).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql('$.x in "abc"')).toThrow(/Right-hand side of 'in'/);
   });
   it("throws on number RHS", () => {
-    expect(() => mjsql("$.x in 42")).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql("$.x in 42")).toThrow(/Right-hand side of 'in'/);
   });
   it("throws on boolean RHS", () => {
-    expect(() => mjsql("$.x in true")).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql("$.x in true")).toThrow(/Right-hand side of 'in'/);
   });
   it("throws on null RHS", () => {
-    expect(() => mjsql("$.x in null")).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql("$.x in null")).toThrow(/Right-hand side of 'in'/);
   });
   it("accepts array literal RHS", () => {
-    expect(mjsql('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
+    expect(jsmql('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
   });
   it("object literal RHS → property-existence (JS-faithful)", () => {
-    expect(mjsql("$.x in { a: 1, b: 2 }")).toEqual({ $in: ["$x", ["a", "b"]] });
+    expect(jsmql("$.x in { a: 1, b: 2 }")).toEqual({ $in: ["$x", ["a", "b"]] });
   });
   it("string-literal LHS works against an object literal", () => {
-    expect(mjsql("'a' in { a: 1, b: 2 }")).toEqual({ $in: ["a", ["a", "b"]] });
+    expect(jsmql("'a' in { a: 1, b: 2 }")).toEqual({ $in: ["a", ["a", "b"]] });
   });
   it("object literal with computed key emits the key expression", () => {
-    expect(mjsql("$.x in { a: 1, [$.dynKey]: 2 }")).toEqual({
+    expect(jsmql("$.x in { a: 1, [$.dynKey]: 2 }")).toEqual({
       $in: ["$x", ["a", "$dynKey"]],
     });
   });
   it("object literal with spread uses $objectToArray for the spread keys", () => {
-    expect(mjsql("$.x in { ...$.base, a: 1 }")).toEqual({
+    expect(jsmql("$.x in { ...$.base, a: 1 }")).toEqual({
       $in: [
         "$x",
         {
@@ -1778,83 +1778,83 @@ describe("in operator RHS validation", () => {
     });
   });
   it("object literal with only spread reduces to $objectToArray.k directly", () => {
-    expect(mjsql("$.x in { ...$.other }")).toEqual({
+    expect(jsmql("$.x in { ...$.other }")).toEqual({
       $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "kv", in: "$$kv.k" } }],
     });
   });
   it("accepts field ref RHS", () => {
-    expect(mjsql("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });
+    expect(jsmql("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });
   });
 });
 
 describe("EOF error message", () => {
   it("empty string gives Unexpected end of expression", () => {
-    expect(() => mjsql("")).toThrow(/Unexpected end of expression/);
+    expect(() => jsmql("")).toThrow(/Unexpected end of expression/);
   });
   it("trailing operator gives Unexpected end of expression", () => {
-    expect(() => mjsql("$.a &&")).toThrow(/Unexpected end of expression/);
+    expect(() => jsmql("$.a &&")).toThrow(/Unexpected end of expression/);
   });
   it("incomplete ternary gives Unexpected end of expression", () => {
-    expect(() => mjsql("$.a ? $.b")).toThrow(/Expected ':'/);
+    expect(() => jsmql("$.a ? $.b")).toThrow(/Expected ':'/);
   });
 });
 
 describe("template literals", () => {
   it("plain string template (no expressions)", () => {
-    expect(mjsql("`hello`")).toEqual("hello");
+    expect(jsmql("`hello`")).toEqual("hello");
   });
   it("single interpolation", () => {
     // FieldRef has unknown runtime type → wrapped in $toString to match JS coercion semantics.
-    expect(mjsql("`hello, ${$.name}!`")).toEqual({
+    expect(jsmql("`hello, ${$.name}!`")).toEqual({
       $concat: ["hello, ", { $toString: "$name" }, "!"],
     });
   });
   it("multiple interpolations", () => {
-    expect(mjsql("`${$.first} ${$.last}`")).toEqual({
+    expect(jsmql("`${$.first} ${$.last}`")).toEqual({
       $concat: [{ $toString: "$first" }, " ", { $toString: "$last" }],
     });
   });
   it("interpolation at the start", () => {
-    expect(mjsql("`${$.x} px`")).toEqual({ $concat: [{ $toString: "$x" }, " px"] });
+    expect(jsmql("`${$.x} px`")).toEqual({ $concat: [{ $toString: "$x" }, " px"] });
   });
   it("interpolation at the end", () => {
-    expect(mjsql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", { $toString: "$id" }] });
+    expect(jsmql("`prefix-${$.id}`")).toEqual({ $concat: ["prefix-", { $toString: "$id" }] });
   });
   it("expression inside interpolation", () => {
-    expect(mjsql("`total: ${$.a + $.b}`")).toEqual({
+    expect(jsmql("`total: ${$.a + $.b}`")).toEqual({
       $concat: ["total: ", { $toString: { $add: ["$a", "$b"] } }],
     });
   });
   it("interpolation containing object literal (brace tracking)", () => {
-    expect(mjsql("`v=${$let({ x: 1 }, x => x)}`")).toEqual({
+    expect(jsmql("`v=${$let({ x: 1 }, x => x)}`")).toEqual({
       $concat: ["v=", { $toString: { $let: { vars: { x: 1 }, in: "$$x" } } }],
     });
   });
   it("nested template literal", () => {
     // Inner template literal is statically string-producing → no $toString wrap.
-    expect(mjsql("`outer ${`inner ${$.x}`}`")).toEqual({
+    expect(jsmql("`outer ${`inner ${$.x}`}`")).toEqual({
       $concat: ["outer ", { $concat: ["inner ", { $toString: "$x" }] }],
     });
   });
   it("escape sequences", () => {
-    expect(mjsql("`a\\nb`")).toEqual("a\nb");
+    expect(jsmql("`a\\nb`")).toEqual("a\nb");
   });
   it("escaped backtick and dollar", () => {
-    expect(mjsql("`a\\`b\\${c}`")).toEqual("a`b${c}");
+    expect(jsmql("`a\\`b\\${c}`")).toEqual("a`b${c}");
   });
   it("template literal participates in string-context +", () => {
-    expect(mjsql("`x=${$.x}` + ' done'")).toEqual({
+    expect(jsmql("`x=${$.x}` + ' done'")).toEqual({
       $concat: [{ $concat: ["x=", { $toString: "$x" }] }, " done"],
     });
   });
   it("string-producing interpolations skip the $toString wrap", () => {
     // .toLowerCase() is statically string-producing — the wrap would be redundant.
-    expect(mjsql("`name=${$.name.toLowerCase()}`")).toEqual({
+    expect(jsmql("`name=${$.name.toLowerCase()}`")).toEqual({
       $concat: ["name=", { $toLower: "$name" }],
     });
   });
   it("number literal interpolation gets $toString wrap", () => {
-    expect(mjsql("`n=${42}`")).toEqual({
+    expect(jsmql("`n=${42}`")).toEqual({
       $concat: ["n=", { $toString: 42 }],
     });
   });
@@ -1862,20 +1862,20 @@ describe("template literals", () => {
 
 describe("array .includes()", () => {
   it("array literal → $in", () => {
-    expect(mjsql('["a", "b"].includes($.x)')).toEqual({ $in: ["$x", ["a", "b"]] });
+    expect(jsmql('["a", "b"].includes($.x)')).toEqual({ $in: ["$x", ["a", "b"]] });
   });
   it("known array (split result) → $in", () => {
-    expect(mjsql('$.csv.split(",").includes("active")')).toEqual({
+    expect(jsmql('$.csv.split(",").includes("active")')).toEqual({
       $in: ["active", { $split: ["$csv", ","] }],
     });
   });
   it("known string (toLowerCase result) → string form", () => {
-    expect(mjsql('$.email.toLowerCase().includes("@")')).toEqual({
+    expect(jsmql('$.email.toLowerCase().includes("@")')).toEqual({
       $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0],
     });
   });
   it("bare $.field → runtime $cond on $isArray (works for either type)", () => {
-    expect(mjsql("$.field.includes($.x)")).toEqual({
+    expect(jsmql("$.field.includes($.x)")).toEqual({
       $cond: [
         { $isArray: "$field" },
         { $in: ["$x", "$field"] },
@@ -1887,19 +1887,19 @@ describe("array .includes()", () => {
 
 describe("Math.min / Math.max", () => {
   it("Math.min variadic", () => {
-    expect(mjsql("Math.min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
+    expect(jsmql("Math.min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
   });
   it("Math.max variadic", () => {
-    expect(mjsql("Math.max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
+    expect(jsmql("Math.max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
   });
   it("Math.max with single array arg", () => {
-    expect(mjsql("Math.max($.scores)")).toEqual({ $max: "$scores" });
+    expect(jsmql("Math.max($.scores)")).toEqual({ $max: "$scores" });
   });
   it("Math.max with spread arg", () => {
-    expect(mjsql("Math.max(...$.scores)")).toEqual({ $max: "$scores" });
+    expect(jsmql("Math.max(...$.scores)")).toEqual({ $max: "$scores" });
   });
   it("Math.min mixed spread + scalar", () => {
-    expect(mjsql("Math.min($.a, ...$.others)")).toEqual({
+    expect(jsmql("Math.min($.a, ...$.others)")).toEqual({
       $min: { $concatArrays: [["$a"], "$others"] },
     });
   });
@@ -1907,18 +1907,18 @@ describe("Math.min / Math.max", () => {
 
 describe("Date.now()", () => {
   it("returns ms since epoch", () => {
-    expect(mjsql("Date.now()")).toEqual({ $toLong: "$$NOW" });
+    expect(jsmql("Date.now()")).toEqual({ $toLong: "$$NOW" });
   });
 });
 
 describe("Object.fromEntries", () => {
   it("from $objectToArray result", () => {
-    expect(mjsql("Object.fromEntries(Object.entries($.doc))")).toEqual({
+    expect(jsmql("Object.fromEntries(Object.entries($.doc))")).toEqual({
       $arrayToObject: { $objectToArray: "$doc" },
     });
   });
   it("from array literal of pairs", () => {
-    expect(mjsql('Object.fromEntries([["a", 1], ["b", 2]])')).toEqual({
+    expect(jsmql('Object.fromEntries([["a", 1], ["b", 2]])')).toEqual({
       $arrayToObject: [
         ["a", 1],
         ["b", 2],
@@ -1929,26 +1929,26 @@ describe("Object.fromEntries", () => {
 
 describe("Array.isArray", () => {
   it("on a field", () => {
-    expect(mjsql("Array.isArray($.items)")).toEqual({ $isArray: "$items" });
+    expect(jsmql("Array.isArray($.items)")).toEqual({ $isArray: "$items" });
   });
 });
 
 describe("optional chaining (?.)", () => {
   it("simple optional member access", () => {
-    expect(mjsql("$.a?.b")).toEqual("$a.b");
+    expect(jsmql("$.a?.b")).toEqual("$a.b");
   });
   it("chained optional access", () => {
-    expect(mjsql("$.a?.b?.c")).toEqual("$a.b.c");
+    expect(jsmql("$.a?.b?.c")).toEqual("$a.b.c");
   });
   it("optional method call", () => {
-    expect(mjsql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
+    expect(jsmql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
   });
   it("optional method call on a chain", () => {
-    expect(mjsql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
+    expect(jsmql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
   });
   it("optional bracket access on bare field → runtime $cond", () => {
     // ?.[ ] desugars to the same node as [ ]; receiver type unknown → dispatch at runtime.
-    expect(mjsql("$.scoresByLevel?.[$.level]")).toEqual({
+    expect(jsmql("$.scoresByLevel?.[$.level]")).toEqual({
       $cond: [
         { $isArray: "$scoresByLevel" },
         { $arrayElemAt: ["$scoresByLevel", "$level"] },
@@ -1957,7 +1957,7 @@ describe("optional chaining (?.)", () => {
     });
   });
   it("optional bracket access on known array stays compact", () => {
-    expect(mjsql("$.items.reverse()?.[0]")).toEqual({
+    expect(jsmql("$.items.reverse()?.[0]")).toEqual({
       $arrayElemAt: [{ $reverseArray: "$items" }, 0],
     });
   });
@@ -1965,12 +1965,12 @@ describe("optional chaining (?.)", () => {
 
 describe(".startsWith / .endsWith", () => {
   it("startsWith maps to indexOf == 0", () => {
-    expect(mjsql('$.email.startsWith("admin")')).toEqual({
+    expect(jsmql('$.email.startsWith("admin")')).toEqual({
       $eq: [{ $indexOfCP: ["$email", "admin"] }, 0],
     });
   });
   it("endsWith maps to substring equality at the tail", () => {
-    expect(mjsql('$.file.endsWith(".pdf")')).toEqual({
+    expect(jsmql('$.file.endsWith(".pdf")')).toEqual({
       $eq: [
         {
           $substrCP: [
@@ -1987,23 +1987,23 @@ describe(".startsWith / .endsWith", () => {
 
 describe(".charAt", () => {
   it("charAt(i)", () => {
-    expect(mjsql("$.name.charAt(2)")).toEqual({ $substrCP: ["$name", 2, 1] });
+    expect(jsmql("$.name.charAt(2)")).toEqual({ $substrCP: ["$name", 2, 1] });
   });
 });
 
 describe("array .indexOf", () => {
   it("on array literal → $indexOfArray", () => {
-    expect(mjsql('["a", "b", "c"].indexOf($.x)')).toEqual({
+    expect(jsmql('["a", "b", "c"].indexOf($.x)')).toEqual({
       $indexOfArray: [["a", "b", "c"], "$x"],
     });
   });
   it("on known string → $indexOfCP", () => {
-    expect(mjsql('$.email.toLowerCase().indexOf("@")')).toEqual({
+    expect(jsmql('$.email.toLowerCase().indexOf("@")')).toEqual({
       $indexOfCP: [{ $toLower: "$email" }, "@"],
     });
   });
   it("on bare field → runtime $cond on $isArray", () => {
-    expect(mjsql('$.email.indexOf("@")')).toEqual({
+    expect(jsmql('$.email.indexOf("@")')).toEqual({
       $cond: [
         { $isArray: "$email" },
         { $indexOfArray: ["$email", "@"] },
@@ -2015,7 +2015,7 @@ describe("array .indexOf", () => {
 
 describe("array .concat", () => {
   it("on array literal → $concatArrays", () => {
-    expect(mjsql("[1, 2].concat([3, 4])")).toEqual({
+    expect(jsmql("[1, 2].concat([3, 4])")).toEqual({
       $concatArrays: [
         [1, 2],
         [3, 4],
@@ -2023,12 +2023,12 @@ describe("array .concat", () => {
     });
   });
   it("on known string → $concat", () => {
-    expect(mjsql("$.first.trim().concat($.last)")).toEqual({
+    expect(jsmql("$.first.trim().concat($.last)")).toEqual({
       $concat: [{ $trim: { input: "$first" } }, "$last"],
     });
   });
   it("on bare field → runtime $cond on $isArray", () => {
-    expect(mjsql("$.parts.concat($.tail)")).toEqual({
+    expect(jsmql("$.parts.concat($.tail)")).toEqual({
       $cond: [
         { $isArray: "$parts" },
         { $concatArrays: ["$parts", "$tail"] },
@@ -2040,7 +2040,7 @@ describe("array .concat", () => {
 
 describe(".join", () => {
   it("default separator (,)", () => {
-    expect(mjsql("$.tags.join()")).toEqual({
+    expect(jsmql("$.tags.join()")).toEqual({
       $reduce: {
         input: "$tags",
         initialValue: "",
@@ -2055,7 +2055,7 @@ describe(".join", () => {
     });
   });
   it("custom separator", () => {
-    expect(mjsql('$.tags.join(" | ")')).toEqual({
+    expect(jsmql('$.tags.join(" | ")')).toEqual({
       $reduce: {
         input: "$tags",
         initialValue: "",
@@ -2073,7 +2073,7 @@ describe(".join", () => {
 
 describe(".flat / .flatMap", () => {
   it("flat() one level", () => {
-    expect(mjsql("$.nested.flat()")).toEqual({
+    expect(jsmql("$.nested.flat()")).toEqual({
       $reduce: {
         input: "$nested",
         initialValue: [],
@@ -2082,7 +2082,7 @@ describe(".flat / .flatMap", () => {
     });
   });
   it("flat(1) explicit depth", () => {
-    expect(mjsql("$.nested.flat(1)")).toEqual({
+    expect(jsmql("$.nested.flat(1)")).toEqual({
       $reduce: {
         input: "$nested",
         initialValue: [],
@@ -2091,10 +2091,10 @@ describe(".flat / .flatMap", () => {
     });
   });
   it("flat(2) is rejected", () => {
-    expect(() => mjsql("$.nested.flat(2)")).toThrow(/depth=1/);
+    expect(() => jsmql("$.nested.flat(2)")).toThrow(/depth=1/);
   });
   it("flatMap with lambda", () => {
-    expect(mjsql("$.docs.flatMap(d => d.tags)")).toEqual({
+    expect(jsmql("$.docs.flatMap(d => d.tags)")).toEqual({
       $reduce: {
         input: { $map: { input: "$docs", as: "d", in: "$$d.tags" } },
         initialValue: [],
@@ -2106,10 +2106,10 @@ describe(".flat / .flatMap", () => {
 
 describe("date .getTime / .toISOString", () => {
   it("getTime", () => {
-    expect(mjsql("$.ts.getTime()")).toEqual({ $toLong: "$ts" });
+    expect(jsmql("$.ts.getTime()")).toEqual({ $toLong: "$ts" });
   });
   it("toISOString", () => {
-    expect(mjsql("$.ts.toISOString()")).toEqual({
+    expect(jsmql("$.ts.toISOString()")).toEqual({
       $dateToString: { date: "$ts", format: "%Y-%m-%dT%H:%M:%S.%LZ" },
     });
   });
@@ -2117,126 +2117,126 @@ describe("date .getTime / .toISOString", () => {
 
 describe("Math.sign / log2 / log10 / hypot / cbrt / random / constants", () => {
   it("Math.sign maps to $cmp(x, 0)", () => {
-    expect(mjsql("Math.sign($.x)")).toEqual({ $cmp: ["$x", 0] });
+    expect(jsmql("Math.sign($.x)")).toEqual({ $cmp: ["$x", 0] });
   });
   it("Math.log2", () => {
-    expect(mjsql("Math.log2($.x)")).toEqual({ $log: ["$x", 2] });
+    expect(jsmql("Math.log2($.x)")).toEqual({ $log: ["$x", 2] });
   });
   it("Math.log10", () => {
-    expect(mjsql("Math.log10($.x)")).toEqual({ $log10: "$x" });
+    expect(jsmql("Math.log10($.x)")).toEqual({ $log10: "$x" });
   });
   it("Math.cbrt", () => {
-    expect(mjsql("Math.cbrt($.x)")).toEqual({ $pow: ["$x", { $divide: [1, 3] }] });
+    expect(jsmql("Math.cbrt($.x)")).toEqual({ $pow: ["$x", { $divide: [1, 3] }] });
   });
   it("Math.hypot 2-arg", () => {
-    expect(mjsql("Math.hypot($.a, $.b)")).toEqual({
+    expect(jsmql("Math.hypot($.a, $.b)")).toEqual({
       $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] },
     });
   });
   it("Math.random", () => {
-    expect(mjsql("Math.random()")).toEqual({ $rand: {} });
+    expect(jsmql("Math.random()")).toEqual({ $rand: {} });
   });
   it("Math.PI", () => {
-    expect(mjsql("Math.PI")).toEqual(Math.PI);
+    expect(jsmql("Math.PI")).toEqual(Math.PI);
   });
   it("Math.E", () => {
-    expect(mjsql("Math.E")).toEqual(Math.E);
+    expect(jsmql("Math.E")).toEqual(Math.E);
   });
 });
 
 describe("numeric separators", () => {
   it("integer with separator", () => {
-    expect(mjsql("$abs(1_000_000)")).toEqual({ $abs: 1000000 });
+    expect(jsmql("$abs(1_000_000)")).toEqual({ $abs: 1000000 });
   });
   it("float with separator", () => {
-    expect(mjsql("$abs(1_234.567_89)")).toEqual({ $abs: 1234.56789 });
+    expect(jsmql("$abs(1_234.567_89)")).toEqual({ $abs: 1234.56789 });
   });
   it("exponent with separator", () => {
-    expect(mjsql("$abs(1_2e3)")).toEqual({ $abs: 12000 });
+    expect(jsmql("$abs(1_2e3)")).toEqual({ $abs: 12000 });
   });
   it("trailing _ rejected", () => {
-    expect(() => mjsql("1_")).toThrow(/Numeric separator/);
+    expect(() => jsmql("1_")).toThrow(/Numeric separator/);
   });
   it("double __ rejected", () => {
-    expect(() => mjsql("1__0")).toThrow(/Numeric separator/);
+    expect(() => jsmql("1__0")).toThrow(/Numeric separator/);
   });
 });
 
 describe("comments", () => {
   it("// line comment between expressions", () => {
-    expect(mjsql("$.a // tail\n+ $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a // tail\n+ $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("// line comment at EOF (no terminator)", () => {
-    expect(mjsql("$abs($.x) // trailing comment")).toEqual({ $abs: "$x" });
+    expect(jsmql("$abs($.x) // trailing comment")).toEqual({ $abs: "$x" });
   });
   it("// terminated by CR", () => {
-    expect(mjsql("$.a // x\r+ $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a // x\r+ $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("// terminated by CRLF", () => {
-    expect(mjsql("$.a // x\r\n+ $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a // x\r\n+ $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("// terminated by U+2028 (LSEP)", () => {
-    expect(mjsql("$.a // x + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a // x + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("// terminated by U+2029 (PSEP)", () => {
-    expect(mjsql("$.a // x + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a // x + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("/* block */ inline", () => {
-    expect(mjsql("$.a /* mid */ + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a /* mid */ + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("/* multi-line block */", () => {
-    expect(mjsql("$.a /*\n  spans\n  lines\n*/ + $.b")).toEqual({
+    expect(jsmql("$.a /*\n  spans\n  lines\n*/ + $.b")).toEqual({
       $add: ["$a", "$b"],
     });
   });
   it("empty /**/ block", () => {
-    expect(mjsql("$.a /**/ + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(jsmql("$.a /**/ + $.b")).toEqual({ $add: ["$a", "$b"] });
   });
   it("multiple comments collapse to one boundary", () => {
-    expect(mjsql("$.a // one\n  /* two */ \n // three\n + $.b")).toEqual({
+    expect(jsmql("$.a // one\n  /* two */ \n // three\n + $.b")).toEqual({
       $add: ["$a", "$b"],
     });
   });
   it("comment inside template ${...} interpolation", () => {
-    expect(mjsql("`hi ${ $.name /* user */ }`")).toEqual({
+    expect(jsmql("`hi ${ $.name /* user */ }`")).toEqual({
       $concat: ["hi ", { $toString: "$name" }],
     });
   });
   it("// inside string literal is preserved as data", () => {
-    expect(mjsql('$eq($.url, "https://example.com")')).toEqual({
+    expect(jsmql('$eq($.url, "https://example.com")')).toEqual({
       $eq: ["$url", "https://example.com"],
     });
   });
   it("// inside regex literal is preserved as pattern", () => {
     // Two literal slashes inside a regex character class — must not be eaten as a comment
-    expect(mjsql("$.path.match(/[/\\\\]/)")).toEqual({
+    expect(jsmql("$.path.match(/[/\\\\]/)")).toEqual({
       $regexMatch: { input: "$path", regex: "[/\\\\]" },
     });
   });
   it("regex disambiguation works after a comment (non-value-ending)", () => {
     // After `(` (not a value-ending token) a `/` would normally start a regex.
     // A leading comment must not change that.
-    expect(mjsql("$.path.match(/* skip */ /foo/i)")).toEqual({
+    expect(jsmql("$.path.match(/* skip */ /foo/i)")).toEqual({
       $regexMatch: { input: "$path", regex: "foo", options: "i" },
     });
   });
   it("divide disambiguation works after a comment (value-ending)", () => {
     // After a Number token, `/` is divide; a leading comment must not change that.
-    expect(mjsql("10 /* skip */ / 2")).toEqual({ $divide: [10, 2] });
+    expect(jsmql("10 /* skip */ / 2")).toEqual({ $divide: [10, 2] });
   });
   it("unclosed /* throws LexError", () => {
-    expect(() => mjsql("$.a /* unclosed")).toThrow(/Unclosed block comment/);
+    expect(() => jsmql("$.a /* unclosed")).toThrow(/Unclosed block comment/);
   });
 });
 
 describe("computed object keys", () => {
   it("single computed key", () => {
-    expect(mjsql("$abs({ [$.k]: 1 })")).toEqual({
+    expect(jsmql("$abs({ [$.k]: 1 })")).toEqual({
       $abs: { $arrayToObject: [["$k", 1]] },
     });
   });
   it("mixed static and computed keys", () => {
-    expect(mjsql("$abs({ a: 1, [$.k]: 2 })")).toEqual({
+    expect(jsmql("$abs({ a: 1, [$.k]: 2 })")).toEqual({
       $abs: {
         $arrayToObject: [
           ["a", 1],
@@ -2249,109 +2249,109 @@ describe("computed object keys", () => {
 
 describe("spread in operator args", () => {
   it("$concatArrays with spread", () => {
-    expect(mjsql("$concatArrays(...$.arrs)")).toEqual({ $concatArrays: "$arrs" });
+    expect(jsmql("$concatArrays(...$.arrs)")).toEqual({ $concatArrays: "$arrs" });
   });
   it("Object.assign with spread", () => {
-    expect(mjsql("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
+    expect(jsmql("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
   });
 });
 
 describe("shorthand object properties", () => {
   it("inside lambda body", () => {
-    expect(mjsql("$.items.map(x => ({ x }))")).toEqual({
+    expect(jsmql("$.items.map(x => ({ x }))")).toEqual({
       $map: { input: "$items", as: "x", in: { x: "$$x" } },
     });
   });
   it("two shorthand props", () => {
-    expect(mjsql("$.items.map(x => ({ x, x }))")).toEqual({
+    expect(jsmql("$.items.map(x => ({ x, x }))")).toEqual({
       $map: { input: "$items", as: "x", in: { x: "$$x" } },
     });
   });
   it("shorthand outside lambda scope errors", () => {
-    expect(() => mjsql("({ foo })")).toThrow(/Unknown identifier/);
+    expect(() => jsmql("({ foo })")).toThrow(/Unknown identifier/);
   });
 });
 
 describe("flex-shape operators", () => {
   // ── $round / $trunc ─────────────────────────────────────────────────────────
   it("$round single arg → bare value", () => {
-    expect(mjsql("$round($.price)")).toEqual({ $round: "$price" });
+    expect(jsmql("$round($.price)")).toEqual({ $round: "$price" });
   });
   it("$round two args → array", () => {
-    expect(mjsql("$round($.price, 2)")).toEqual({ $round: ["$price", 2] });
+    expect(jsmql("$round($.price, 2)")).toEqual({ $round: ["$price", 2] });
   });
   it("$trunc single arg → bare value", () => {
-    expect(mjsql("$trunc($.value)")).toEqual({ $trunc: "$value" });
+    expect(jsmql("$trunc($.value)")).toEqual({ $trunc: "$value" });
   });
   it("$trunc two args → array", () => {
-    expect(mjsql("$trunc($.value, 1)")).toEqual({ $trunc: ["$value", 1] });
+    expect(jsmql("$trunc($.value, 1)")).toEqual({ $trunc: ["$value", 1] });
   });
 
   // ── Accumulators ($min / $max / $avg / $sum / $stdDev*) ─────────────────────
   it("$min single arg → bare value (accumulator-style)", () => {
-    expect(mjsql("$min($.scores)")).toEqual({ $min: "$scores" });
+    expect(jsmql("$min($.scores)")).toEqual({ $min: "$scores" });
   });
   it("$min multiple args → array (expression-style)", () => {
-    expect(mjsql("$min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
+    expect(jsmql("$min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
   });
   it("$max single arg", () => {
-    expect(mjsql("$max($.scores)")).toEqual({ $max: "$scores" });
+    expect(jsmql("$max($.scores)")).toEqual({ $max: "$scores" });
   });
   it("$max multiple args", () => {
-    expect(mjsql("$max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
+    expect(jsmql("$max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
   });
   it("$avg single arg", () => {
-    expect(mjsql("$avg($.values)")).toEqual({ $avg: "$values" });
+    expect(jsmql("$avg($.values)")).toEqual({ $avg: "$values" });
   });
   it("$avg multiple args", () => {
-    expect(mjsql("$avg($.a, $.b, $.c)")).toEqual({ $avg: ["$a", "$b", "$c"] });
+    expect(jsmql("$avg($.a, $.b, $.c)")).toEqual({ $avg: ["$a", "$b", "$c"] });
   });
   it("$sum single arg", () => {
-    expect(mjsql("$sum($.amounts)")).toEqual({ $sum: "$amounts" });
+    expect(jsmql("$sum($.amounts)")).toEqual({ $sum: "$amounts" });
   });
   it("$sum multiple args", () => {
-    expect(mjsql("$sum($.a, $.b)")).toEqual({ $sum: ["$a", "$b"] });
+    expect(jsmql("$sum($.a, $.b)")).toEqual({ $sum: ["$a", "$b"] });
   });
   it("$stdDevPop single arg", () => {
-    expect(mjsql("$stdDevPop($.measurements)")).toEqual({ $stdDevPop: "$measurements" });
+    expect(jsmql("$stdDevPop($.measurements)")).toEqual({ $stdDevPop: "$measurements" });
   });
   it("$stdDevSamp multiple args", () => {
-    expect(mjsql("$stdDevSamp($.a, $.b, $.c)")).toEqual({
+    expect(jsmql("$stdDevSamp($.a, $.b, $.c)")).toEqual({
       $stdDevSamp: ["$a", "$b", "$c"],
     });
   });
 
   // ── $mergeObjects ───────────────────────────────────────────────────────────
   it("$mergeObjects single arg → bare value", () => {
-    expect(mjsql("$mergeObjects($.docs)")).toEqual({ $mergeObjects: "$docs" });
+    expect(jsmql("$mergeObjects($.docs)")).toEqual({ $mergeObjects: "$docs" });
   });
   it("$mergeObjects multiple args → array", () => {
-    expect(mjsql("$mergeObjects($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
+    expect(jsmql("$mergeObjects($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
   });
 
   // ── Spread handling ─────────────────────────────────────────────────────────
   it("flex op with single spread → bare array", () => {
-    expect(mjsql("$min(...$.scores)")).toEqual({ $min: "$scores" });
+    expect(jsmql("$min(...$.scores)")).toEqual({ $min: "$scores" });
   });
   it("flex op with mixed spread + scalar → $concatArrays", () => {
-    expect(mjsql("$max($.first, ...$.rest)")).toEqual({
+    expect(jsmql("$max($.first, ...$.rest)")).toEqual({
       $max: { $concatArrays: [["$first"], "$rest"] },
     });
   });
 
   // ── Edge cases ──────────────────────────────────────────────────────────────
   it("flex op with zero args throws", () => {
-    expect(() => mjsql("$min()")).toThrow(/at least 1 argument/);
+    expect(() => jsmql("$min()")).toThrow(/at least 1 argument/);
   });
   it("flex op with object literal arg → object as value (not object-shape)", () => {
     // Single arg that happens to be an object literal — parser flags this as object-style,
     // but $mergeObjects has flex shape (not object), so the literal is passed as a value.
-    expect(mjsql("$mergeObjects({ a: 1, b: $.x })")).toEqual({
+    expect(jsmql("$mergeObjects({ a: 1, b: $.x })")).toEqual({
       $mergeObjects: { a: 1, b: "$x" },
     });
   });
   it("$round with arithmetic still works (regression: existing 2-arg form)", () => {
-    expect(mjsql("$round($.price * 1.1, 2)")).toEqual({
+    expect(jsmql("$round($.price * 1.1, 2)")).toEqual({
       $round: [{ $multiply: ["$price", 1.1] }, 2],
     });
   });
@@ -2359,36 +2359,36 @@ describe("flex-shape operators", () => {
 
 describe("function overload", () => {
   it("accepts a no-param arrow", () => {
-    expect(mjsql(() => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql(() => $.age > 18)).toEqual({ $gt: ["$age", 18] });
   });
 
   it("accepts a $-param arrow (recommended idiom)", () => {
-    expect(mjsql(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
   });
 
   it("produces identical MQL to the equivalent string", () => {
-    expect(mjsql(($) => $.status == "active")).toEqual(mjsql('$.status == "active"'));
+    expect(jsmql(($) => $.status == "active")).toEqual(jsmql('$.status == "active"'));
   });
 
   it("the wrapper parameter is not bound inside the body — references resolve via $", () => {
     // `(doc) =>` is a typing/IDE hook only. Inside the body, `doc.foo` is treated as
     // an unknown identifier (and the user gets pointed at `$.doc` and the mql tag).
-    expect(() => mjsql((doc) => doc.foo)).toThrow(/Unknown identifier 'doc'/);
+    expect(() => jsmql((doc) => doc.foo)).toThrow(/Unknown identifier 'doc'/);
   });
 
   it("handles nested arrows in the body", () => {
-    expect(mjsql(($) => $.items.map((x) => x * 2))).toEqual({
+    expect(jsmql(($) => $.items.map((x) => x * 2))).toEqual({
       $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
     });
   });
 
   it("handles a parenthesised object-literal body", () => {
-    expect(mjsql(($) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
+    expect(jsmql(($) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
   });
 
   it("rejects `return` inside a block-body arrow with a clear error", () => {
     expect(() =>
-      mjsql(($) => {
+      jsmql(($) => {
         return $.age > 18;
       }),
     ).toThrow(/return/);
@@ -2396,19 +2396,19 @@ describe("function overload", () => {
 
   it("rejects a `function` declaration", () => {
     expect(() =>
-      mjsql(function () {
+      jsmql(function () {
         return $.age > 18;
       }),
     ).toThrow(/arrow function/);
   });
 
   it("rejects an async arrow", () => {
-    expect(() => mjsql(async () => $.age > 18)).toThrow(/async/);
+    expect(() => jsmql(async () => $.age > 18)).toThrow(/async/);
   });
 
   it("appends an mql`` hint when an outer-scope identifier is referenced", () => {
     const minAge = 21; // referenced from the closure on purpose
-    expect(() => mjsql(($) => $.age > minAge)).toThrow(/mql`` template tag/);
+    expect(() => jsmql(($) => $.age > minAge)).toThrow(/mql`` template tag/);
   });
 
   it("validate() reports the augmented hint for closure refs", () => {
@@ -2429,7 +2429,7 @@ describe("function overload", () => {
   });
 
   it("inline arrow in a hot loop produces consistent MQL across calls (cache correctness)", () => {
-    const make = () => mjsql(($) => $.status == "active");
+    const make = () => jsmql(($) => $.status == "active");
     const a = make();
     const b = make();
     expect(a).toEqual(b);
@@ -2439,10 +2439,10 @@ describe("function overload", () => {
     // The second arg is types-only — it gives users a destructure site that
     // silences IDE warnings on `$dateDiff`. The runtime strips the param list,
     // so this produces identical MQL to the string equivalent.
-    const fromFn = mjsql(($, { $dateDiff }) =>
+    const fromFn = jsmql(($, { $dateDiff }) =>
       $dateDiff({ startDate: $.a, endDate: $.b, unit: "day" }),
     );
-    const fromStr = mjsql('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day" })');
+    const fromStr = jsmql('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day" })');
     expect(fromFn).toEqual(fromStr);
   });
 });
@@ -2456,7 +2456,7 @@ describe("bitwise operators", () => {
     ["$bitXor", "$bitXor($.a, $.b)", { $bitXor: ["$a", "$b"] }],
     ["$bitNot", "$bitNot($.flags)", { $bitNot: "$flags" }],
   ])("%s emits the expected MQL", (_name, src, expected) => {
-    expect(mjsql(src)).toEqual(expected);
+    expect(jsmql(src)).toEqual(expected);
   });
 });
 
@@ -2479,18 +2479,18 @@ describe("misc / hash / timestamp / sigmoid / type / literal operators", () => {
     ["$literal field-ref pass-through", '$literal("$foo")', { $literal: "$foo" }],
     ["$meta keyword string", '$meta("textScore")', { $meta: "textScore" }],
   ])("%s emits the expected MQL", (_name, src, expected) => {
-    expect(mjsql(src)).toEqual(expected);
+    expect(jsmql(src)).toEqual(expected);
   });
 });
 
 describe("$hash and $hexHash (object shape)", () => {
   it("$hash positional", () => {
-    expect(mjsql('$hash($.password, "sha256")')).toEqual({
+    expect(jsmql('$hash($.password, "sha256")')).toEqual({
       $hash: { input: "$password", algorithm: "sha256" },
     });
   });
   it("$hexHash object-style", () => {
-    expect(mjsql('$hexHash({ input: $.token, algorithm: "sha512" })')).toEqual({
+    expect(jsmql('$hexHash({ input: $.token, algorithm: "sha512" })')).toEqual({
       $hexHash: { input: "$token", algorithm: "sha512" },
     });
   });
@@ -2499,7 +2499,7 @@ describe("$hash and $hexHash (object shape)", () => {
 describe("$accumulator and $function (custom aggregation)", () => {
   it("$function object-style", () => {
     expect(
-      mjsql('$function({ body: "function(x) { return x * 2; }", args: [$.value], lang: "js" })'),
+      jsmql('$function({ body: "function(x) { return x * 2; }", args: [$.value], lang: "js" })'),
     ).toEqual({
       $function: {
         body: "function(x) { return x * 2; }",
@@ -2510,7 +2510,7 @@ describe("$accumulator and $function (custom aggregation)", () => {
   });
   it("$accumulator object-style with subset of keys", () => {
     expect(
-      mjsql(
+      jsmql(
         '$accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", merge: "function(a, b) { return a + b; }", lang: "js" })',
       ),
     ).toEqual({
@@ -2526,12 +2526,12 @@ describe("$accumulator and $function (custom aggregation)", () => {
 
 describe("$median and $percentile (statistical accumulators)", () => {
   it("$median positional", () => {
-    expect(mjsql('$median($.scores, "approximate")')).toEqual({
+    expect(jsmql('$median($.scores, "approximate")')).toEqual({
       $median: { input: "$scores", method: "approximate" },
     });
   });
   it("$percentile positional", () => {
-    expect(mjsql('$percentile($.scores, [0.5, 0.95], "approximate")')).toEqual({
+    expect(jsmql('$percentile($.scores, [0.5, 0.95], "approximate")')).toEqual({
       $percentile: {
         input: "$scores",
         p: [0.5, 0.95],
@@ -2543,22 +2543,22 @@ describe("$median and $percentile (statistical accumulators)", () => {
 
 describe("encrypted-string operators ($encStr*)", () => {
   it("$encStrContains", () => {
-    expect(mjsql('$encStrContains($.encField, "secret")')).toEqual({
+    expect(jsmql('$encStrContains($.encField, "secret")')).toEqual({
       $encStrContains: { input: "$encField", substring: "secret" },
     });
   });
   it("$encStrStartsWith object-style", () => {
-    expect(mjsql('$encStrStartsWith({ input: $.encField, prefix: "abc" })')).toEqual({
+    expect(jsmql('$encStrStartsWith({ input: $.encField, prefix: "abc" })')).toEqual({
       $encStrStartsWith: { input: "$encField", prefix: "abc" },
     });
   });
   it("$encStrEndsWith", () => {
-    expect(mjsql('$encStrEndsWith($.encField, "xyz")')).toEqual({
+    expect(jsmql('$encStrEndsWith($.encField, "xyz")')).toEqual({
       $encStrEndsWith: { input: "$encField", suffix: "xyz" },
     });
   });
   it("$encStrNormalizedEq", () => {
-    expect(mjsql('$encStrNormalizedEq($.encField, "compare")')).toEqual({
+    expect(jsmql('$encStrNormalizedEq($.encField, "compare")')).toEqual({
       $encStrNormalizedEq: { input: "$encField", string: "compare" },
     });
   });
@@ -2574,41 +2574,41 @@ describe("window operators ($setWindowFields-only)", () => {
     ["$covariancePop", "$covariancePop($.x, $.y)", { $covariancePop: ["$x", "$y"] }],
     ["$covarianceSamp", "$covarianceSamp($.x, $.y)", { $covarianceSamp: ["$x", "$y"] }],
   ])("%s emits the expected MQL", (_name, src, expected) => {
-    expect(mjsql(src)).toEqual(expected);
+    expect(jsmql(src)).toEqual(expected);
   });
 
   it("$shift positional", () => {
-    expect(mjsql("$shift($.price, -1, 0)")).toEqual({
+    expect(jsmql("$shift($.price, -1, 0)")).toEqual({
       $shift: { output: "$price", by: -1, default: 0 },
     });
   });
 
   it("$shift object-style", () => {
-    expect(mjsql("$shift({ output: $.price, by: -1, default: 0 })")).toEqual({
+    expect(jsmql("$shift({ output: $.price, by: -1, default: 0 })")).toEqual({
       $shift: { output: "$price", by: -1, default: 0 },
     });
   });
 
   it("$expMovingAvg with N (positional)", () => {
-    expect(mjsql("$expMovingAvg($.price, 5)")).toEqual({
+    expect(jsmql("$expMovingAvg($.price, 5)")).toEqual({
       $expMovingAvg: { input: "$price", N: 5 },
     });
   });
 
   it("$expMovingAvg with alpha (object-style)", () => {
-    expect(mjsql("$expMovingAvg({ input: $.price, alpha: 0.3 })")).toEqual({
+    expect(jsmql("$expMovingAvg({ input: $.price, alpha: 0.3 })")).toEqual({
       $expMovingAvg: { input: "$price", alpha: 0.3 },
     });
   });
 
   it("$derivative positional", () => {
-    expect(mjsql('$derivative($.value, "hour")')).toEqual({
+    expect(jsmql('$derivative($.value, "hour")')).toEqual({
       $derivative: { input: "$value", unit: "hour" },
     });
   });
 
   it("$integral positional", () => {
-    expect(mjsql('$integral($.value, "hour")')).toEqual({
+    expect(jsmql('$integral($.value, "hour")')).toEqual({
       $integral: { input: "$value", unit: "hour" },
     });
   });

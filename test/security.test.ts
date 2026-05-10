@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mjsql, validate, mql, MqlInterpolationError } from "../src/index.ts";
+import { jsmql, validate, mql, MqlInterpolationError } from "../src/index.ts";
 
 describe("mql interpolation guards", () => {
   it("rejects undefined with a slot-pointing error", () => {
@@ -68,9 +68,9 @@ describe("recursion depth limits", () => {
     expect(result.errors[0].message).toMatch(/nests too deeply/);
   });
 
-  it("mjsql() throws ParseError with the depth message on deeply nested parens", () => {
+  it("jsmql() throws ParseError with the depth message on deeply nested parens", () => {
     const src = "(".repeat(2000) + "1" + ")".repeat(2000);
-    expect(() => mjsql(src)).toThrow(/nests too deeply/);
+    expect(() => jsmql(src)).toThrow(/nests too deeply/);
   });
 
   it("rejects deeply nested operator-call arguments", () => {
@@ -79,14 +79,14 @@ describe("recursion depth limits", () => {
     // when we recurse past it).
     let src = "true";
     for (let i = 0; i < 600; i++) src = `$not(${src})`;
-    expect(() => mjsql(src)).toThrow(/nests too deeply/);
+    expect(() => jsmql(src)).toThrow(/nests too deeply/);
   });
 
   it("typical-depth expressions still compile", () => {
     let src = "true";
     for (let i = 0; i < 50; i++) src = `$not(${src})`;
     // 50 levels nests inside MAX_RECURSION_DEPTH; should compile fine.
-    expect(() => mjsql(src)).not.toThrow();
+    expect(() => jsmql(src)).not.toThrow();
   });
 });
 
@@ -124,7 +124,7 @@ describe("function-body cache is bounded", () => {
     for (let i = 0; i < 300; i++) {
       // eslint-disable-next-line no-eval
       const fn = eval(`($) => $.field${i} > ${i}`) as ($: unknown) => unknown;
-      const result = mjsql(fn) as { $gt: [string, number] };
+      const result = jsmql(fn) as { $gt: [string, number] };
       expect(result).toEqual({ $gt: [`$field${i}`, i] });
     }
   });

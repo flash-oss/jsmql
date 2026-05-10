@@ -2148,7 +2148,7 @@ function generateRegexMethodCall(
  * Compile a top-level `MutationProgram` to either a single stage object (if
  * everything coalesces into one $set/$unset) or an array of stage objects.
  *
- * The shape mirrors `mjsql()`'s existing top-level convention: one stage →
+ * The shape mirrors `jsmql()`'s existing top-level convention: one stage →
  * bare object, multiple stages → array.
  */
 export function generateMutationProgram(prog: MutationProgram): object | object[] {
@@ -2162,7 +2162,7 @@ export function generateMutationProgram(prog: MutationProgram): object | object[
 }
 
 /**
- * Coalescer used by both mjsql() top-level mutations and by pipeline.ts when
+ * Coalescer used by both jsmql() top-level mutations and by pipeline.ts when
  * mutations appear as pipeline elements. Returns one or more stage objects.
  *
  * Grouping rule (preserves JS sequential semantics):

@@ -4,9 +4,9 @@
 
 | Path | Audience | Update when |
 |---|---|---|
-| `docs/LANGUAGE.md` | Users of mjsql | User-visible behaviour changes |
+| `docs/LANGUAGE.md` | Users of jsmql | User-visible behaviour changes |
 | `docs/DEVLOG.md` | Future-self / contributors asking "why?" | Every observable change — feature, refactor, naming, doc decision |
-| `docs/specs/*.md` | Claude / contributors implementing mjsql | Code structure or internal behaviour changes |
+| `docs/specs/*.md` | Claude / contributors implementing jsmql | Code structure or internal behaviour changes |
 
 Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples in the specs.
 
@@ -14,7 +14,7 @@ Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples
 
 ## docs/LANGUAGE.md
 
-The canonical user-facing reference. It must stay in sync with `src/index.ts` exports and the behaviour of `mjsql()`, `validate()`, and `mql`.
+The canonical user-facing reference. It must stay in sync with `src/index.ts` exports and the behaviour of `jsmql()`, `validate()`, and `mql`.
 
 When you add a new operator or syntax feature, add a table row or code example here first (docs-driven), then implement it.
 
@@ -28,7 +28,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | How operator shapes work, how to add/modify entries |
 | `specs/method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
-| `specs/aggregation-stages.md` | Pipeline-stage authoring through `mjsql()`: detection, lowering, sub-pipeline recursion, the `$match` `$expr`-wrap rule. |
+| `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` `$expr`-wrap rule. |
 | `specs/mutations.md` | Assignment (`=`, `+=`, `-=`, `*=`, `/=`) and `delete` statements: AST, target validation, coalescing into `$set`/`$unset` stages, pipeline integration. |
 
 Future work areas — not yet implemented and not yet specified — include query-predicate operators inside `$match` / `find()` (e.g. `$elemMatch`, `$exists`, `$jsonSchema`), projection operators (`$`, `$elemMatch`, `$slice`, `$meta`), the stage-spec integration for `$group` / `$setWindowFields` accumulator field bindings, and update-document operators (`$inc`, `$push`, `$rename`, …). Add a spec file when the work begins.

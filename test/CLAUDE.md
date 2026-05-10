@@ -23,7 +23,7 @@ When a new feature ships, add at least one case to `realistic.test.ts` that uses
 Two cases, both spawning a real `node` process:
 
 1. **Strippable-TS invariant.** `node src/index.ts` must run without errors. Vitest transforms TS through Vite's loader, which silently accepts `enum`, `namespace`, parameter properties, decorators, and other constructs the strippable-subset rule bans. Only the real Node stripper is authoritative — see `src/CLAUDE.md` for the full ban list.
-2. **Built-dist import.** When `dist/` exists (after `npm run build`), `import { mjsql, validate, mql } from './dist/index.js'` must resolve and produce the expected MQL for a few canonical expressions. Skipped when `dist/` is absent so local `npm test` stays fast; run `npm run smoke:dist` to build and exercise it on demand.
+2. **Built-dist import.** When `dist/` exists (after `npm run build`), `import { jsmql, validate, mql } from './dist/index.js'` must resolve and produce the expected MQL for a few canonical expressions. Skipped when `dist/` is absent so local `npm test` stays fast; run `npm run smoke:dist` to build and exercise it on demand.
 
 Do not add per-feature spot-checks here — those belong in `codegen.test.ts` or `realistic.test.ts`. Smoke covers only the runtime/packaging invariants.
 

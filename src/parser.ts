@@ -33,10 +33,10 @@ export class ParseError extends Error {
 
 /**
  * Raised by `Parser.parseFunctionInput()` when the source given to
- * `mjsql(($) => …)` is not a valid arrow function shape — `async`
+ * `jsmql(($) => …)` is not a valid arrow function shape — `async`
  * arrows, `function` declarations, missing arrow operator, unbalanced
  * params, `return` inside a block body, etc. Distinct from `ParseError`
- * because the failure is in the function-shape adapter, not in mjsql's
+ * because the failure is in the function-shape adapter, not in jsmql's
  * own grammar; `validate()` maps both to `SYNTAX_ERROR`.
  */
 export class FunctionInputError extends Error {
@@ -155,12 +155,12 @@ export class Parser {
   }
 
   /**
-   * Entry point for the function-input form (`mjsql(($) => …)`). The source
+   * Entry point for the function-input form (`jsmql(($) => …)`). The source
    * is the result of `Function.prototype.toString.call(fn)` — a full arrow
    * function expression. We consume the parameter list and `=>`, then dispatch
    * to either a block-body parser (`{ stmt; stmt; }`, the function-form mirror
    * of the implicit `;`-separated pipeline) or an expression-body parser (a
-   * single mjsql expression / mutation, with one optional trailing `;` allowed
+   * single jsmql expression / mutation, with one optional trailing `;` allowed
    * as a formatter artifact — single-statement bodies do NOT flip into pipeline
    * mode here).
    *
@@ -172,17 +172,17 @@ export class Parser {
     const first = this.lexer.peek();
     if (first.type === TokenType.Ident && first.value === "async") {
       throw new FunctionInputError(
-        "mjsql does not support async functions. Use a synchronous arrow: `($) => …`",
+        "jsmql does not support async functions. Use a synchronous arrow: `($) => …`",
       );
     }
     if (first.type === TokenType.Ident && first.value === "function") {
       throw new FunctionInputError(
-        "mjsql expects an arrow function, got a `function` declaration. Use: `($) => …`",
+        "jsmql expects an arrow function, got a `function` declaration. Use: `($) => …`",
       );
     }
     if (first.type !== TokenType.LParen) {
       throw new FunctionInputError(
-        "mjsql expects an arrow function `($) => …` as the function-form input.",
+        "jsmql expects an arrow function `($) => …` as the function-form input.",
       );
     }
     this.skipParameterList();
@@ -190,7 +190,7 @@ export class Parser {
     const arrowTok = this.lexer.peek();
     if (arrowTok.type !== TokenType.Arrow) {
       throw new FunctionInputError(
-        "mjsql could not find an arrow operator (`=>`) in the function source. Use: `($) => …`",
+        "jsmql could not find an arrow operator (`=>`) in the function source. Use: `($) => …`",
       );
     }
     this.lexer.next(); // consume `=>`
@@ -214,7 +214,7 @@ export class Parser {
       const tok = this.lexer.next();
       if (tok.type === TokenType.EOF) {
         throw new FunctionInputError(
-          "mjsql could not parse the function parameter list — unbalanced parentheses",
+          "jsmql could not parse the function parameter list — unbalanced parentheses",
         );
       }
       if (tok.type === TokenType.LParen) depth++;
@@ -239,7 +239,7 @@ export class Parser {
 
     if (this.lexer.peek().type === TokenType.RBrace) {
       throw new FunctionInputError(
-        "mjsql expects at least one statement inside a block-body arrow.",
+        "jsmql expects at least one statement inside a block-body arrow.",
       );
     }
 
@@ -273,11 +273,11 @@ export class Parser {
   }
 
   /**
-   * Parse the body of an expression-body arrow: a single mjsql statement,
+   * Parse the body of an expression-body arrow: a single jsmql statement,
    * with one optional trailing `;` consumed as a formatter artifact. The
    * trailing `;` does NOT trigger pipeline mode here — single-statement
    * expression bodies preserve their object-shaped output, matching the
-   * documented contract for `mjsql(($) => …)`.
+   * documented contract for `jsmql(($) => …)`.
    */
   private parseExpressionBody(): Program {
     const stmt = this.collectStatement();
@@ -302,8 +302,8 @@ export class Parser {
     const tok = this.lexer.peek();
     if (tok.type === TokenType.Ident && tok.value === "return") {
       throw new FunctionInputError(
-        "mjsql block-body arrows are a sequence of mjsql statements, not JavaScript control flow. " +
-          "Remove `return` — write the body as `;`-separated mjsql statements, or switch to an " +
+        "jsmql block-body arrows are a sequence of jsmql statements, not JavaScript control flow. " +
+          "Remove `return` — write the body as `;`-separated jsmql statements, or switch to an " +
           "expression-body arrow `($) => EXPR`.",
       );
     }
@@ -1056,7 +1056,7 @@ export class Parser {
       // a bare `$.x = expr`; matters because formatters (oxfmt, prettier)
       // wrap assignment expressions in parens when they appear in array
       // element position. Parse the assignment here so the function-input
-      // form `mjsql(($) => [($.a = 1)])` works the same as the bare form.
+      // form `jsmql(($) => [($.a = 1)])` works the same as the bare form.
       // The result is an AssignExpr; we surface it as an `Expr` and let
       // contextual handling in parseArrayLiteral / parse() / _generate
       // route it appropriately. Plain expression contexts (e.g. `1 + (a=2)`)

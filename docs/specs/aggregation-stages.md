@@ -2,7 +2,7 @@
 
 **Status:** implemented.
 
-This spec covers how `mjsql()` recognises a top-level aggregation pipeline and compiles it to an MQL stage array. The user-facing surface lives in [LANGUAGE.md](../LANGUAGE.md) under "Pipelines"; this file documents the implementation contract for future contributors.
+This spec covers how `jsmql()` recognises a top-level aggregation pipeline and compiles it to an MQL stage array. The user-facing surface lives in [LANGUAGE.md](../LANGUAGE.md) under "Pipelines"; this file documents the implementation contract for future contributors.
 
 ## Sources
 
@@ -13,7 +13,7 @@ This spec covers how `mjsql()` recognises a top-level aggregation pipeline and c
 
 ## Two pipeline forms
 
-mjsql accepts two surface forms that both compile through `src/pipeline.ts`:
+jsmql accepts two surface forms that both compile through `src/pipeline.ts`:
 
 1. **Bracketed `[…]`** — the long-standing form. `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent mutation elements **coalesce** through `generateMutationGroups`.
 2. **Implicit `;`-separated** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent mutation statements **never** coalesce across `;`.
@@ -22,7 +22,7 @@ The two forms agree on stage shapes, the `$match` `$expr` wrap rule, and sub-pip
 
 ## Detection (bracketed form)
 
-`mjsql()` runs in **pipeline mode** for an `[…]` literal when the parsed root AST satisfies `isPipelineAst(ast)`:
+`jsmql()` runs in **pipeline mode** for an `[…]` literal when the parsed root AST satisfies `isPipelineAst(ast)`:
 
 1. Root must be an `ArrayLiteral` with at least one element.
 2. The *first* element must be a **stage candidate**:
@@ -38,7 +38,7 @@ Once pipeline mode is active, every element is validated against the strict shap
 
 A failure at any element throws a `CodegenError` pinpointing the offending index. The error message includes a Levenshtein-based "Did you mean `$<closest>`?" suggestion when the unknown name is within edit distance 2 of a registered stage.
 
-When detection trigger 1 + 2 do not fire, the array is left to the existing expression-mode codegen — so `mjsql("[1, 2, 3]")` still compiles as an array literal expression. The detection rule is intentionally aggressive on `OperatorCall`-typed first elements (`$abs(1)` triggers pipeline mode and fails strictly) because top-level arrays of value-position operator calls are vanishingly rare in practice; copy-pasted MongoDB pipelines are the common case.
+When detection trigger 1 + 2 do not fire, the array is left to the existing expression-mode codegen — so `jsmql("[1, 2, 3]")` still compiles as an array literal expression. The detection rule is intentionally aggressive on `OperatorCall`-typed first elements (`$abs(1)` triggers pipeline mode and fails strictly) because top-level arrays of value-position operator calls are vanishingly rare in practice; copy-pasted MongoDB pipelines are the common case.
 
 ## Detection (implicit form)
 
@@ -70,7 +70,7 @@ The parser accepts `Dollar` + identifier tokens as a static object key in `parse
 
 ## Public API impact
 
-`mjsql()`'s return type is widened from `object` to `object | object[]` (`MjsqlOutput`). Pipeline mode returns the array; expression mode returns the single object. Both runtime values satisfy `object`, so existing code keeps type-checking. Pre-1.0; semver-tracked when 1.0 cuts.
+`jsmql()`'s return type is widened from `object` to `object | object[]` (`JsmqlOutput`). Pipeline mode returns the array; expression mode returns the single object. Both runtime values satisfy `object`, so existing code keeps type-checking. Pre-1.0; semver-tracked when 1.0 cuts.
 
 `validate()` reports pipeline errors as `CODEGEN_ERROR` (not `SYNTAX_ERROR`) — they are caught at the codegen stage after the AST parses cleanly.
 
@@ -86,7 +86,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 - Regression: plain value array `[1, 2, 3]` stays expression-mode.
 - `validate()` surfaces pipeline errors as `CODEGEN_ERROR`.
 - The `mql` template tag composes naturally.
-- Function-input form (`mjsql(($) => [ ... ])`).
+- Function-input form (`jsmql(($) => [ ... ])`).
 
 A realistic, multi-stage example also lives in [test/realistic.test.ts](../../test/realistic.test.ts) under "pipeline: top-orders report by department".
 
@@ -95,5 +95,5 @@ A realistic, multi-stage example also lives in [test/realistic.test.ts](../../te
 - **Drift-protection test for `STAGES`** against `vendor/mql-specifications/definitions/stage/`, parallel to `test/operator-spec-coverage.test.ts`. New stages added to MongoDB would be silently missed today.
 - **Query-predicate operators inside `$match` object-literal bodies.** Today the body is passed through verbatim; we don't validate `$gt`, `$in`, etc. at the query layer. Will get its own spec when work begins; see the "future work areas" note in [docs/CLAUDE.md](../CLAUDE.md#docsspecs).
 - **`$setWindowFields` static validation** — the stage compiles but window-only operators (`$rank`, `$denseRank`, `$documentNumber`, …) are not gated to that stage's body.
-- **Type-level overloads** of `mjsql()` so a literal pipeline input narrows the return to `object[]`. The widened union is enough for now.
+- **Type-level overloads** of `jsmql()` so a literal pipeline input narrows the return to `object[]`. The widened union is enough for now.
 - **Stage-call typo detection.** `$abs(1)` as the first array element triggers pipeline mode and fails strictly, but typos like `$prject({...})` are caught for the same reason — a mistyped stage name still produces a clear error. Object-form typos are caught with did-you-mean.

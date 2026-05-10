@@ -19,7 +19,7 @@ import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.ts";
 
 const SPEC_ROOT = resolve(import.meta.dirname, "..", "vendor", "mql-specifications", "definitions");
 
-// Folders whose operators may appear inside an mjsql expression. The spec also
+// Folders whose operators may appear inside an jsmql expression. The spec also
 // has pipeline/, query/, search/, stage/, types/, update/ — those are tracked
 // via separate spec stubs (see docs/specs/) and not yet implemented in the
 // expression-level operator registry.
@@ -29,7 +29,7 @@ const IN_SCOPE_FOLDERS = ["expression", "accumulator"];
 // top-level expression operators (e.g. $case is part of $switch.branches[]).
 const SUB_CONSTRUCTS = new Set(["$case"]);
 
-// Operators present in MongoDB's documentation (and in mjsql's registry) but
+// Operators present in MongoDB's documentation (and in jsmql's registry) but
 // not yet in the official YAML spec. Acceptable; document each addition here
 // so the gap is visible.
 const REGISTRY_ONLY = new Set([
@@ -43,8 +43,8 @@ const REGISTRY_ONLY = new Set([
   "$toUUID",
   "$toObject",
   "$toArray",
-  // Query predicate exposed as an expression for mjsql ergonomics. The spec
-  // tracks it in definitions/query/sampleRate.yaml; once mjsql implements
+  // Query predicate exposed as an expression for jsmql ergonomics. The spec
+  // tracks it in definitions/query/sampleRate.yaml; once jsmql implements
   // query-predicate support (see docs/specs/query-predicates.md), this entry
   // should move out of OPERATORS and into the query layer.
   "$sampleRate",
@@ -133,7 +133,7 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
   });
 
   it("object-shape registry entries use keys that exist in the spec", () => {
-    // mjsql's positional key order may legitimately differ from the spec's
+    // jsmql's positional key order may legitimately differ from the spec's
     // (changing it would be a breaking API change for callers using the
     // positional form). What we DO require is set membership: every key the
     // registry exposes for positional invocation must be a name the spec

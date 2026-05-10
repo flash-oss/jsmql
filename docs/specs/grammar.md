@@ -202,7 +202,7 @@ Every expression accepted by this grammar is also valid JavaScript syntax. Addin
 
 ## Function-form input is not part of the grammar
 
-`mjsql()` and `validate()` accept either a string or an arrow function (see [architecture.md](architecture.md)). When given a function, an adapter in `src/index.ts` extracts the body via `Function.prototype.toString()` and feeds the body to the parser — the arrow wrapper itself never reaches the parser and is **not** described by this grammar. The parser sees only the right-hand side of `=>`, which must conform to `expression` exactly as the string-input path does.
+`jsmql()` and `validate()` accept either a string or an arrow function (see [architecture.md](architecture.md)). When given a function, an adapter in `src/index.ts` extracts the body via `Function.prototype.toString()` and feeds the body to the parser — the arrow wrapper itself never reaches the parser and is **not** described by this grammar. The parser sees only the right-hand side of `=>`, which must conform to `expression` exactly as the string-input path does.
 
 ## Template literals
 

@@ -1,30 +1,30 @@
-# mjsql Language Reference
+# jsmql Language Reference
 
-> This is the **user-facing language reference** for mjsql. For implementation details, see `specs/`.
+> This is the **user-facing language reference** for jsmql. For implementation details, see `specs/`.
 
 ---
 
 ## Quick Start
 
-mjsql is a JavaScript-subset language that compiles to MongoDB aggregation expression JSON — like SQL but for MongoDB, using JS syntax you already know.
+jsmql is a JavaScript-subset language that compiles to MongoDB aggregation expression JSON — like SQL but for MongoDB, using JS syntax you already know.
 
 ```js
-const { mjsql } = require("mjsql");
+const { jsmql } = require("jsmql");
 
 // JS operators
-mjsql("$.age > 18 && $.status == 'active'");
+jsmql("$.age > 18 && $.status == 'active'");
 // → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
 
 // Method chains
-mjsql("$.email.split('@').at(1).toLowerCase()");
+jsmql("$.email.split('@').at(1).toLowerCase()");
 // → { $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } }
 
 // Lambdas
-mjsql("$.prices.map(p => p * 1.1)");
+jsmql("$.prices.map(p => p * 1.1)");
 // → { $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } } }
 
 // With template tag (for embedded values)
-const { mql } = require("mjsql");
+const { mql } = require("jsmql");
 const minAge = 21;
 mql`$.age >= ${minAge} && $.status == 'active'`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$status", "active"] }] }
@@ -59,7 +59,7 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 
 ## Expressions
 
-An mjsql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas — mjsql handles the translation. For MongoDB operators without a JS equivalent, use the `$op()` escape hatch (the direct operator form).
+An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas — jsmql handles the translation. For MongoDB operators without a JS equivalent, use the `$op()` escape hatch (the direct operator form).
 
 ### Valid Constructs
 
@@ -229,7 +229,7 @@ The shorthand value is treated as an identifier (lambda parameter); using shorth
 
 ## Comments
 
-mjsql accepts JavaScript-style comments and discards them as trivia — they have no effect on the compiled MQL. Both forms are valid anywhere whitespace is.
+jsmql accepts JavaScript-style comments and discards them as trivia — they have no effect on the compiled MQL. Both forms are valid anywhere whitespace is.
 
 ```js
 $.age >= 18  // line comment to end-of-line
@@ -260,7 +260,7 @@ $.items.map(x => x.id)[0]     // known array → { $arrayElemAt: [{ $map: ... },
 [1, 2, 3][$.idx]              // known array → { $arrayElemAt: [[1, 2, 3], "$idx"] }
 ```
 
-For a bare `$.field`, mjsql can't tell at compile time whether you mean array indexing
+For a bare `$.field`, jsmql can't tell at compile time whether you mean array indexing
 or object dynamic-key lookup, so it emits a runtime `$cond` on `$isArray` that picks
 the right form at query time:
 
@@ -573,7 +573,7 @@ $.scores.map(Number)            // coerce strings to numbers
 
 This is sugar for `x => Boolean(x)` / `x => Number(x)` / `x => String(x)`. Outside of a callback position the bare form errors at compile time — write `Boolean(x)` etc. to coerce a single value.
 
-**`parseInt` / `parseFloat` are intentionally not allowed bare.** In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its second (radix) argument. Rather than replicate the footgun, mjsql requires the call form: write `x => parseInt(x)` or `x => parseFloat(x)`.
+**`parseInt` / `parseFloat` are intentionally not allowed bare.** In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its second (radix) argument. Rather than replicate the footgun, jsmql requires the call form: write `x => parseInt(x)` or `x => parseFloat(x)`.
 
 ### Set methods (ES2025)
 
@@ -800,7 +800,7 @@ $.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoc
 $.createdAt.toISOString()          // { $dateToString: { date: "$createdAt", format: "%Y-%m-%dT%H:%M:%S.%LZ" } }
 ```
 
-**Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; mjsql subtracts 1 automatically.
+**Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; jsmql subtracts 1 automatically.
 
 ### Date Operator Calls
 
@@ -833,7 +833,7 @@ Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`
 
 ## Escape Hatch (Direct Operator Form)
 
-For MongoDB operators that have no JavaScript equivalent, use the `$opName()` escape hatch — a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way, and unknown operators pass through automatically, making mjsql forward-compatible with new MongoDB releases.
+For MongoDB operators that have no JavaScript equivalent, use the `$opName()` escape hatch — a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way, and unknown operators pass through automatically, making jsmql forward-compatible with new MongoDB releases.
 
 ### Examples:
 
@@ -867,7 +867,7 @@ $trunc($.value, 1)                 // { $trunc: ["$value", 1] }
 
 ### Accumulators (also valid as expressions)
 
-Some operators are commonly used as accumulators in `$group` (taking a single field expression) but also work as expression operators in `$project` (taking multiple expressions to compare). mjsql accepts both shapes — pass one argument for the accumulator form, multiple for the expression form:
+Some operators are commonly used as accumulators in `$group` (taking a single field expression) but also work as expression operators in `$project` (taking multiple expressions to compare). jsmql accepts both shapes — pass one argument for the accumulator form, multiple for the expression form:
 
 ```js
 $min($.scores)                     // { $min: "$scores" }              (single — accumulator-style)
@@ -932,7 +932,7 @@ $concatArrays(...$.arrs)           // { $concatArrays: "$arrs" }
 Object.assign(...$.docs)           // { $mergeObjects: "$docs" }
 ```
 
-When mixed with non-spread args, mjsql wraps the non-spreads in single-element arrays and joins via `$concatArrays`:
+When mixed with non-spread args, jsmql wraps the non-spreads in single-element arrays and joins via `$concatArrays`:
 
 ```js
 Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
@@ -973,7 +973,7 @@ $literal(42)                       // { $literal: 42 }       — equivalent to b
 
 ### `$meta` — per-document aggregation metadata
 
-⚠️ **Watch out:** `$meta` takes a **keyword string** (`"textScore"`, `"indexKey"`, `"searchScore"`, etc.), not an arbitrary expression. mjsql does not validate the keyword.
+⚠️ **Watch out:** `$meta` takes a **keyword string** (`"textScore"`, `"indexKey"`, `"searchScore"`, etc.), not an arbitrary expression. jsmql does not validate the keyword.
 
 ```js
 $meta("textScore")                 // { $meta: "textScore" }
@@ -981,7 +981,7 @@ $meta("textScore")                 // { $meta: "textScore" }
 
 ### Custom Aggregation: `$function` and `$accumulator`
 
-⚠️ **Watch out:** the `body`, `init`, `accumulate`, `merge`, and `finalize` fields are **JavaScript source code as a string**, executed by MongoDB's V8 engine on the server. They are NOT mjsql expressions — `$.field` references will not be substituted, and you must pass field values via the `args` / `accumulateArgs` arrays.
+⚠️ **Watch out:** the `body`, `init`, `accumulate`, `merge`, and `finalize` fields are **JavaScript source code as a string**, executed by MongoDB's V8 engine on the server. They are NOT jsmql expressions — `$.field` references will not be substituted, and you must pass field values via the `args` / `accumulateArgs` arrays.
 
 ```js
 $function({
@@ -1002,7 +1002,7 @@ $accumulator({
 
 ### Window Operators
 
-⚠️ **Watch out:** these are valid only inside the `$setWindowFields` stage. Calling `$rank()` from a `$project` stage produces nonsense MQL — mjsql does not validate the surrounding stage context.
+⚠️ **Watch out:** these are valid only inside the `$setWindowFields` stage. Calling `$rank()` from a `$project` stage produces nonsense MQL — jsmql does not validate the surrounding stage context.
 
 ```js
 $rank()                            // { $rank: {} }
@@ -1057,13 +1057,13 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each mutation compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple mutations coalesce into the smallest correct stage shape.
 
 ```js
-mjsql("$.score = 100")
+jsmql("$.score = 100")
 // → { $set: { score: 100 } }
 
-mjsql("$.cnt += 1")
+jsmql("$.cnt += 1")
 // → { $set: { cnt: { $add: ["$cnt", 1] } } }
 
-mjsql("delete $.tmp")
+jsmql("delete $.tmp")
 // → { $unset: "tmp" }
 ```
 
@@ -1072,7 +1072,7 @@ mjsql("delete $.tmp")
 Multiple mutations in the **same stage** are separated by `,` (trailing comma allowed):
 
 ```js
-mjsql("$.a = 1, $.b = 2")
+jsmql("$.a = 1, $.b = 2")
 // → { $set: { a: 1, b: 2 } }
 ```
 
@@ -1093,10 +1093,10 @@ $.user.name = "alice"  // ✓ — nested field path
 `+=`, `-=`, `*=`, `/=` are sugar for `$.x = $.x <op> rhs`. The `+=` operator inherits the language's type-aware addition: numeric `+=` produces `$add`, string `+=` produces `$concat`.
 
 ```js
-mjsql("$.score *= 2")
+jsmql("$.score *= 2")
 // → { $set: { score: { $multiply: ["$score", 2] } } }
 
-mjsql("$.greeting += '!'")
+jsmql("$.greeting += '!'")
 // → { $set: { greeting: { $concat: ["$greeting", "!"] } } }
 ```
 
@@ -1105,10 +1105,10 @@ mjsql("$.greeting += '!'")
 `x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. The prefix/postfix distinction is meaningful in JavaScript (return-then-mutate vs mutate-then-return), but in MongoDB pipeline context there is no "value of expression" for a statement-level mutation, so all four forms compile to the same `$set` stage.
 
 ```js
-mjsql("$.cnt++")
+jsmql("$.cnt++")
 // → { $set: { cnt: { $add: ["$cnt", 1] } } }
 
-mjsql("--$.lives")
+jsmql("--$.lives")
 // → { $set: { lives: { $subtract: ["$lives", 1] } } }
 ```
 
@@ -1119,7 +1119,7 @@ Like other mutations, inc/dec is a statement: invalid as a value (`1 + $.x++` is
 `$.a = $.b = expr` is supported (right-associative, like JavaScript); both fields receive the same RHS expression. Compound chains (`a += b += 1`) are rejected — too easy to misread.
 
 ```js
-mjsql("$.x = $.y = 0")
+jsmql("$.x = $.y = 0")
 // → { $set: { x: 0, y: 0 } }
 ```
 
@@ -1133,15 +1133,15 @@ Consecutive same-kind mutations (all assignments, or all deletes) are grouped in
 
 ```js
 // Independent assignments → one stage
-mjsql("$.a = 1, $.b = 2")
+jsmql("$.a = 1, $.b = 2")
 // → { $set: { a: 1, b: 2 } }
 
 // Read-after-write → two stages
-mjsql("$.a = 1, $.b = $.a")
+jsmql("$.a = 1, $.b = $.a")
 // → [{ $set: { a: 1 } }, { $set: { b: "$a" } }]
 
 // Kind change → two stages
-mjsql("delete $.a, delete $.b, $.status = 'done'")
+jsmql("delete $.a, delete $.b, $.status = 'done'")
 // → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
 ```
 
@@ -1150,7 +1150,7 @@ mjsql("delete $.a, delete $.b, $.status = 'done'")
 Mutations can appear as pipeline elements alongside ordinary stages. The same coalescing rule applies between adjacent mutation elements; non-mutation stages act as boundaries:
 
 ```js
-mjsql(`[
+jsmql(`[
   $match($.active),
   $.score += 1,
   $.lastSeenAt = $$NOW,
@@ -1165,7 +1165,7 @@ mjsql(`[
 
 ### Limits
 
-Mutations are **statements**, not expression values. They are valid only at the top level of a `mjsql()` call or as direct pipeline-array elements. They cannot appear:
+Mutations are **statements**, not expression values. They are valid only at the top level of a `jsmql()` call or as direct pipeline-array elements. They cannot appear:
 
 - Inside an arbitrary expression (`($.a = 1) + 2` — rejected)
 - Inside a lambda body (`$.list.map(x => $.a = x)` — rejected)
@@ -1177,14 +1177,14 @@ The `delete` keyword is statement-only — unlike JavaScript, it does not return
 
 ## Pipelines
 
-`mjsql()` also compiles **whole aggregation pipelines** — arrays of stage objects like `[{ $match: ... }, { $sort: ... }, { $limit: ... }]`. The same function detects pipeline mode from the input and returns an `object[]` instead of a single `object`. No new exports, no separate API.
+`jsmql()` also compiles **whole aggregation pipelines** — arrays of stage objects like `[{ $match: ... }, { $sort: ... }, { $limit: ... }]`. The same function detects pipeline mode from the input and returns an `object[]` instead of a single `object`. No new exports, no separate API.
 
 ### Two equivalent forms
 
 ```js
 // Stage-call form: terser, reads like JavaScript end-to-end. Recommended
 // when you're authoring a new pipeline.
-mjsql(`[
+jsmql(`[
   $match($.age > 18),
   $project({ name: 1, total: $.price * $.qty }),
   $group({ _id: $.dept, total: $sum($.salary) }),
@@ -1194,7 +1194,7 @@ mjsql(`[
 
 // Stage-object form: matches the shape MongoDB emits in Compass and the
 // docs. Useful when porting an existing pipeline you've copied verbatim.
-mjsql(`[
+jsmql(`[
   { $match: $.age > 18 },
   { $project: { name: 1, total: $.price * $.qty } },
   { $group: { _id: $.dept, total: $sum($.salary) } },
@@ -1203,15 +1203,15 @@ mjsql(`[
 ]`);
 ```
 
-The two forms compile to the same MQL pipeline and may be mixed in one array. Each stage body is a regular mjsql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
+The two forms compile to the same MQL pipeline and may be mixed in one array. Each stage body is a regular jsmql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
 
 ### Implicit pipelines: `;` between statements
 
-For short pipelines, you can drop the `[…]` and separate stages with `;` directly. Any `;` at the top level — including a single trailing `;` — flips `mjsql()` into pipeline mode and returns an array. Inside one `;`-separated chunk, `,` keeps its in-stage role for mutations:
+For short pipelines, you can drop the `[…]` and separate stages with `;` directly. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode and returns an array. Inside one `;`-separated chunk, `,` keeps its in-stage role for mutations:
 
 ```js
 // Three stages, no brackets needed
-mjsql("$match($.active); $.score += 1; $sort({ score: -1 })");
+jsmql("$match($.active); $.score += 1; $sort({ score: -1 })");
 // → [
 //     { $match: { $expr: "$active" } },
 //     { $set: { score: { $add: ["$score", 1] } } },
@@ -1219,7 +1219,7 @@ mjsql("$match($.active); $.score += 1; $sort({ score: -1 })");
 //   ]
 
 // `,` groups into one stage; `;` adds the next
-mjsql("$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1; $.status = 'done'");
+jsmql("$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1; $.status = 'done'");
 // → [
 //     { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
 //     { $set: { status: "done" } }
@@ -1233,13 +1233,13 @@ Two things to know:
 
 ### `$match` and `$expr`
 
-In real MongoDB, `$match`'s body can be either a *query document* or an *aggregation expression* — the latter must be wrapped in `$expr`. mjsql does the wrapping for you whenever the body is anything other than a plain object literal:
+In real MongoDB, `$match`'s body can be either a *query document* or an *aggregation expression* — the latter must be wrapped in `$expr`. jsmql does the wrapping for you whenever the body is anything other than a plain object literal:
 
 ```js
-mjsql("[{ $match: $.age > 18 }]");
+jsmql("[{ $match: $.age > 18 }]");
 // → [{ $match: { $expr: { $gt: ["$age", 18] } } }]   ← auto-wrapped
 
-mjsql("[{ $match: { age: { $gt: 18 } } }]");
+jsmql("[{ $match: { age: { $gt: 18 } } }]");
 // → [{ $match: { age: { $gt: 18 } } }]               ← raw query doc, untouched
 ```
 
@@ -1247,10 +1247,10 @@ Use the object-literal form when porting an existing query document; use any exp
 
 ### Sub-pipelines
 
-`$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. mjsql recognises these positions and recurses, so `$match`'s `$expr` rule and the strict typo check apply uniformly:
+`$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. jsmql recognises these positions and recurses, so `$match`'s `$expr` rule and the strict typo check apply uniformly:
 
 ```js
-mjsql(`[{
+jsmql(`[{
   $lookup: {
     from: "orders",
     let: { uid: $._id },
@@ -1268,12 +1268,12 @@ mjsql(`[{
 A top-level array enters pipeline mode when its first element looks like a stage attempt — a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage; mistakes surface immediately:
 
 ```js
-mjsql("[{ $macth: $.age > 18 }]");
+jsmql("[{ $macth: $.age > 18 }]");
 // → CodegenError: Element 0 of pipeline: '$macth' is not a known
 //                 aggregation stage. Did you mean '$match'?
 ```
 
-A plain value array like `[1, 2, 3]` is *not* a pipeline — the first element doesn't look like a stage attempt, so mjsql leaves it as a literal array expression.
+A plain value array like `[1, 2, 3]` is *not* a pipeline — the first element doesn't look like a stage attempt, so jsmql leaves it as a literal array expression.
 
 ### What stages are supported?
 
@@ -1283,15 +1283,15 @@ All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, 
 
 ## Function Form
 
-In addition to a string, `mjsql()` and `validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
+In addition to a string, `jsmql()` and `validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
 
 ```js
-const { mjsql } = require("mjsql");
+const { jsmql } = require("jsmql");
 
-mjsql(($) => $.age > 18);
+jsmql(($) => $.age > 18);
 // → { $gt: ["$age", 18] }
 
-mjsql(($) =>
+jsmql(($) =>
   [$.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
     .filter((x) => typeof x === "string" && x !== "")
     .map((x) => x.trim())
@@ -1301,14 +1301,14 @@ mjsql(($) =>
 // will indent and line-break it like any other JS — that is the whole point.
 ```
 
-**Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long mjsql expressions sit as one un-broken line. Wrapping the expression in a plain arrow function lets every JS formatter handle it for free — no plugin, no config.
+**Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long jsmql expressions sit as one un-broken line. Wrapping the expression in a plain arrow function lets every JS formatter handle it for free — no plugin, no config.
 
 ### Block-body arrows for pipelines
 
-A block-body arrow `($) => { stmt; stmt; }` is the function-form mirror of the implicit `;`-separated pipeline string form. The body is a sequence of mjsql statements separated by `;`, with `,` keeping its in-stage role:
+A block-body arrow `($) => { stmt; stmt; }` is the function-form mirror of the implicit `;`-separated pipeline string form. The body is a sequence of jsmql statements separated by `;`, with `,` keeping its in-stage role:
 
 ```js
-mjsql(($, { $match }) => {
+jsmql(($, { $match }) => {
   $match($.status === "pending" && $.paidAt != null);
   ($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1);
   delete $.tempToken, delete $._processingState;
@@ -1324,7 +1324,7 @@ mjsql(($, { $match }) => {
 
 Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage mutation chain, identical to the string form.
 
-`return` is **not** part of mjsql — block bodies are statement lists, not JavaScript control flow. Using `return` inside a block-body arrow throws a clear `FunctionInputError` pointing at either the `;`-separated form or an expression-body arrow as alternatives.
+`return` is **not** part of jsmql — block bodies are statement lists, not JavaScript control flow. Using `return` inside a block-body arrow throws a clear `FunctionInputError` pointing at either the `;`-separated form or an expression-body arrow as alternatives.
 
 ### Restrictions
 
@@ -1334,7 +1334,7 @@ Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-lev
 - **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Use the [`mql` template tag](#template-tag-mql) when you need to interpolate a value:
   ```js
   const minAge = 21;
-  mjsql(($) => $.age > minAge);   // ❌ error: Unknown identifier 'minAge'
+  jsmql(($) => $.age > minAge);   // ❌ error: Unknown identifier 'minAge'
   mql`$.age > ${minAge}`;         // ✓ works — value is interpolated
   ```
 - **The wrapper's parameter is not bound inside the body.** `($) =>` is the recommended idiom because `$` is also the document context, but other names (`(doc) =>`) act as a typing/IDE hook only — `doc.foo` in the body resolves as an unknown identifier, not as `$.foo`.
@@ -1346,7 +1346,7 @@ When an unknown identifier is encountered in the function-form path, the error m
 Direct `$op(...)` calls (e.g. `$dateDiff`, `$sampleRate`, `$stdDevPop`) work inside the function body, but TypeScript / your IDE will flag the operator name as an unknown identifier. To silence that warning, destructure the operators you use from the function's optional second parameter:
 
 ```js
-mjsql(($, { $dateDiff }) =>
+jsmql(($, { $dateDiff }) =>
   $dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }) ?? -1,
 );
 ```
@@ -1360,7 +1360,7 @@ The second parameter is types-only — the destructured names are typed as calla
 For expressions with embedded literal values, use the `mql` template tag:
 
 ```js
-const { mql } = require("mjsql");
+const { mql } = require("jsmql");
 
 const minAge = 21;
 const expr = mql`$.age > ${minAge}`;
@@ -1393,7 +1393,7 @@ mql`$.${field} > ${25}`  // syntax error
 Use the `validate()` function to check syntax without generating output:
 
 ```js
-const { validate } = require("mjsql");
+const { validate } = require("jsmql");
 
 validate("$.age > 18");
 // → { valid: true, errors: [] }
@@ -1418,22 +1418,22 @@ Use `validate()` for:
 
 ## Error Messages
 
-When you write invalid mjsql, you get clear error messages with suggestions:
+When you write invalid jsmql, you get clear error messages with suggestions:
 
 ```js
-mjsql("age > 18");
+jsmql("age > 18");
 // CodegenError: Unknown identifier 'age'. Did you mean '$.age'?
 
-mjsql("$.age > 18 &&");
+jsmql("$.age > 18 &&");
 // ParseError: Unexpected end of expression
 
-mjsql("$.age >>");
+jsmql("$.age >>");
 // ParseError: Unexpected token '>' at position 7
 
-mjsql('$.status in "active"');
+jsmql('$.status in "active"');
 // CodegenError: Right-hand side of 'in' must be an array literal or field reference, not a scalar value
 
-mjsql("$.name.frobulate()");
+jsmql("$.name.frobulate()");
 // CodegenError: Unknown method '.frobulate()'. String methods: trim, trimStart, ...
 ```
 
@@ -1445,15 +1445,15 @@ mjsql("$.name.frobulate()");
 
 ```js
 // Find adults
-mjsql("$.age >= 18")
+jsmql("$.age >= 18")
 // → { $gte: ["$age", 18] }
 
 // Price range
-mjsql("$.price > 10 && $.price <= 100")
+jsmql("$.price > 10 && $.price <= 100")
 // → { $and: [{ $gt: ["$price", 10] }, { $lte: ["$price", 100] }] }
 
 // Score calculation
-mjsql("($.correct + $.partial * 0.5) / $.total * 100")
+jsmql("($.correct + $.partial * 0.5) / $.total * 100")
 // → { $divide: [{ $multiply: [{ $add: ["$correct", { $multiply: ["$partial", 0.5] }] }, 100] }, "$total"] }
 ```
 
@@ -1461,15 +1461,15 @@ mjsql("($.correct + $.partial * 0.5) / $.total * 100")
 
 ```js
 // Full name
-mjsql('$.firstName + " " + $.lastName')
+jsmql('$.firstName + " " + $.lastName')
 // → { $concat: ["$firstName", " ", "$lastName"] }
 
 // Normalized email
-mjsql("$.email.toLowerCase().trim()")
+jsmql("$.email.toLowerCase().trim()")
 // → { $trim: { input: { $toLower: "$email" } } }
 
 // Check domain
-mjsql('$.email.substr($.email.indexOf("@") + 1)')
+jsmql('$.email.substr($.email.indexOf("@") + 1)')
 // → { $substrCP: ["$email", { $add: [{ $indexOfCP: ["$email", "@"] }, 1] }, ...] }
 ```
 
@@ -1477,11 +1477,11 @@ mjsql('$.email.substr($.email.indexOf("@") + 1)')
 
 ```js
 // Age category
-mjsql('$.age < 13 ? "child" : $.age < 18 ? "teen" : "adult"')
+jsmql('$.age < 13 ? "child" : $.age < 18 ? "teen" : "adult"')
 // → nested $cond chain
 
 // Fallback value (chained ?? flattens into a single $ifNull)
-mjsql("$.nickname ?? $.firstName ?? 'Unknown'")
+jsmql("$.nickname ?? $.firstName ?? 'Unknown'")
 // → { $ifNull: ["$nickname", "$firstName", "Unknown"] }
 ```
 
@@ -1489,19 +1489,19 @@ mjsql("$.nickname ?? $.firstName ?? 'Unknown'")
 
 ```js
 // Status filter
-mjsql('$.status in ["active", "pending"]')
+jsmql('$.status in ["active", "pending"]')
 // → { $in: ["$status", ["active", "pending"]] }
 
 // Transform array
-mjsql("$.prices.map(p => p * 1.1)")
+jsmql("$.prices.map(p => p * 1.1)")
 // → { $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } } }
 
 // Filter array
-mjsql("$.items.filter(x => x.qty > 0)")
+jsmql("$.items.filter(x => x.qty > 0)")
 // → { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } }
 
 // Sum array
-mjsql("$.amounts.reduce((acc, x) => acc + x, 0)")
+jsmql("$.amounts.reduce((acc, x) => acc + x, 0)")
 // → { $reduce: { input: "$amounts", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
@@ -1509,15 +1509,15 @@ mjsql("$.amounts.reduce((acc, x) => acc + x, 0)")
 
 ```js
 // Extract year from date field
-mjsql("$.createdAt.getFullYear()")
+jsmql("$.createdAt.getFullYear()")
 // → { $year: "$createdAt" }
 
 // Days since creation
-mjsql("$dateDiff($.createdAt, new Date(), 'day')")
+jsmql("$dateDiff($.createdAt, new Date(), 'day')")
 // → { $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }
 
 // Format date
-mjsql('$dateToString($.createdAt, "%Y-%m-%d")')
+jsmql('$dateToString($.createdAt, "%Y-%m-%d")')
 // → { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }
 ```
 
@@ -1525,11 +1525,11 @@ mjsql('$dateToString($.createdAt, "%Y-%m-%d")')
 
 ```js
 // Convert string to number
-mjsql("Number($.stringPrice) * 1.1")
+jsmql("Number($.stringPrice) * 1.1")
 // → { $multiply: [{ $toDouble: "$stringPrice" }, 1.1] }
 
 // Type check
-mjsql("typeof $.value == 'string'")
+jsmql("typeof $.value == 'string'")
 // → { $eq: [{ $type: "$value" }, "string"] }
 ```
 
@@ -1542,20 +1542,20 @@ const statusFilter = mql`$.status in ${["active", "pending"]}`;
 const ageFilter = mql`$.age > ${21}`;
 // → { $gt: ["$age", 21] }
 
-// Combine using mjsql() for dynamic composition
-const combined = mjsql(`$.age > 21 && $.status in ["active", "pending"]`);
+// Combine using jsmql() for dynamic composition
+const combined = jsmql(`$.age > 21 && $.status in ["active", "pending"]`);
 // → { $and: [{ $gt: ["$age", 21] }, { $in: ["$status", ["active", "pending"]] }] }
 ```
 
 ## Replacing Server-Side JavaScript
 
-MongoDB 8.0 deprecated three operators that run JavaScript on the server: `$function`, `$accumulator`, and `$where`. MongoDB's own docs say to rewrite this logic as native aggregation operators. mjsql does that for you — you write JavaScript, and mjsql compiles it to native operators.
+MongoDB 8.0 deprecated three operators that run JavaScript on the server: `$function`, `$accumulator`, and `$where`. MongoDB's own docs say to rewrite this logic as native aggregation operators. jsmql does that for you — you write JavaScript, and jsmql compiles it to native operators.
 
 For the full pros and cons of server-side JavaScript, see the [README](../README.md#pros-and-cons-of-server-side-javascript). Short version: it's deprecated, slow, can't use indexes, often turned off, and a security risk.
 
-**mjsql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
+**jsmql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
 
-Each migration below shows the deprecated form on top, then the mjsql replacement in **string form** (`` mql`…` ``) and **function form** (`mjsql(($) => …)`).
+Each migration below shows the deprecated form on top, then the jsmql replacement in **string form** (`` mql`…` ``) and **function form** (`jsmql(($) => …)`).
 
 ### `$function` — per-document JavaScript expression
 
@@ -1573,7 +1573,7 @@ Field arithmetic:
 mql`{ doubled: $.qty * 2 }`;
 
 // Function form
-mjsql(($) => ({ doubled: $.qty * 2 }));
+jsmql(($) => ({ doubled: $.qty * 2 }));
 ```
 
 Conditional reshaping:
@@ -1590,7 +1590,7 @@ Conditional reshaping:
 mql`$.score > 100 ? "high" : "low"`;
 
 // Function form
-mjsql(($) => ($.score > 100 ? "high" : "low"));
+jsmql(($) => ($.score > 100 ? "high" : "low"));
 ```
 
 String cleanup:
@@ -1607,7 +1607,7 @@ String cleanup:
 mql`$.email.toLowerCase().trim()`;
 
 // Function form
-mjsql(($) => $.email.toLowerCase().trim());
+jsmql(($) => $.email.toLowerCase().trim());
 ```
 
 ### `$where` — predicate inside `find()` / `$match`
@@ -1622,10 +1622,10 @@ db.users.find({ $where: "function() { return this.age > 18; }" });
 db.users.find({ $expr: mql`$.age > 18` });
 
 // Function form
-db.users.find({ $expr: mjsql(($) => $.age > 18) });
+db.users.find({ $expr: jsmql(($) => $.age > 18) });
 ```
 
-Inside an aggregation pipeline, you can use `$match` directly — mjsql wraps the body in `$expr` for you (see [Pipelines](#pipelines)):
+Inside an aggregation pipeline, you can use `$match` directly — jsmql wraps the body in `$expr` for you (see [Pipelines](#pipelines)):
 
 ```js
 // String form
@@ -1633,7 +1633,7 @@ mql`[{ $match: $.age > 18 }]`;
 // → [{ $match: { $expr: { $gt: ["$age", 18] } } }]
 
 // Function form
-mjsql(($) => [{ $match: $.age > 18 }]);
+jsmql(($) => [{ $match: $.age > 18 }]);
 ```
 
 ### `$accumulator` — custom accumulator inside `$group` / `$setWindowFields`
@@ -1657,7 +1657,7 @@ Most uses of `$accumulator` map to a built-in accumulator. Average:
 mql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
 
 // Function form
-mjsql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
+jsmql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 ```
 
 For accumulators that need custom state, `$reduce` handles the common shapes natively. Running min/max alongside count:
@@ -1676,7 +1676,7 @@ mql`
 `;
 
 // Function form
-mjsql(($) =>
+jsmql(($) =>
   $.values.reduce(
     (acc, x) => ({
       min: acc.min == null ? x : x < acc.min ? x : acc.min,
@@ -1693,7 +1693,7 @@ mjsql(($) =>
 The registry passthrough form still compiles:
 
 ```js
-mjsql(`$function({ body: "function(x) { return x * 2; }", args: [$.qty], lang: "js" })`);
+jsmql(`$function({ body: "function(x) { return x * 2; }", args: [$.qty], lang: "js" })`);
 // → { $function: { body: "...", args: ["$qty"], lang: "js" } }
 ```
 
@@ -1812,10 +1812,10 @@ null        = "null"
 ## FAQ
 
 **Q: How do I get an array's length?**
-A: Use `.length`: `$.items.length` works for both arrays and strings (mjsql dispatches by receiver type). The `$size()` escape hatch is also available if you want to force the array form: `$size($.items)`.
+A: Use `.length`: `$.items.length` works for both arrays and strings (jsmql dispatches by receiver type). The `$size()` escape hatch is also available if you want to force the array form: `$size($.items)`.
 
 **Q: Why doesn't `$.field.includes(x)` use `$in` for arrays?**
-A: A bare field reference's type is unknown at compile time, so mjsql defaults to string semantics for `.includes()`/`.indexOf()`/`.concat()`. When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — mjsql emits the array form. To force array semantics, use `$in($.items, x)` or rebuild the chain so the type is known (e.g. `$.items.map(x => x).includes(target)`).
+A: A bare field reference's type is unknown at compile time, so jsmql defaults to string semantics for `.includes()`/`.indexOf()`/`.concat()`. When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — jsmql emits the array form. To force array semantics, use `$in($.items, x)` or rebuild the chain so the type is known (e.g. `$.items.map(x => x).includes(target)`).
 
 **Q: Does `?.` actually short-circuit?**
 A: For field paths, MongoDB already returns `null`/missing when traversing through missing fields, so `$.a?.b?.c` and `$.a.b.c` produce the same MQL — `?.` is purely a JS-readability sugar.

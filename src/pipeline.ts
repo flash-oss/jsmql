@@ -11,7 +11,7 @@
 // triggered, every remaining element must also be a stage shape — otherwise
 // CodegenError pinpoints the offending element. If the first element does
 // not look like a stage, the array is left to the existing expression-mode
-// codegen (so `mjsql("[1, 2, 3]")` still compiles as a literal array).
+// codegen (so `jsmql("[1, 2, 3]")` still compiles as a literal array).
 //
 // $match has a single special-case body lowering: an object-literal body is
 // treated as a raw MongoDB query document and passed through; any other
@@ -109,7 +109,7 @@ export function isPipelineAst(ast: Expr): boolean {
  * element so the error message points at the offending position.
  *
  * Consecutive mutation elements (`$.a = 1`, `delete $.x`) coalesce through
- * the same algorithm `mjsql()` uses at the top level — see
+ * the same algorithm `jsmql()` uses at the top level — see
  * `generateMutationGroups` in codegen.ts. Non-mutation stages flush the
  * current mutation buffer and emit its compiled $set/$unset stage(s) inline.
  */

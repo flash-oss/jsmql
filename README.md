@@ -1,50 +1,50 @@
-# mjsql
+# jsmql
 
-Write MongoDB aggregation expressions in JavaScript. mjsql is a JS-subset language that compiles to MQL JSON — like SQL but for MongoDB, using syntax you already know.
+Write MongoDB aggregation expressions in JavaScript. jsmql is a JS-subset language that compiles to MQL JSON — like SQL but for MongoDB, using syntax you already know.
 
 ```js
-import { mjsql } from "mjsql";
+import { jsmql } from "jsmql";
 
-mjsql(($) => $.age > 18 && $.status == "active")
+jsmql(($) => $.age > 18 && $.status == "active")
 // → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
 
-mjsql(($) => $.name.trim().toLowerCase())
+jsmql(($) => $.name.trim().toLowerCase())
 // → { $toLower: { $trim: { input: "$name" } } }
 
-mjsql(($) => $.items.map((item) => item.price * item.qty).reduce((acc, x) => acc + x, 0))
+jsmql(($) => $.items.map((item) => item.price * item.qty).reduce((acc, x) => acc + x, 0))
 // → { $reduce: { input: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.price", "$$item.qty"] } } }, initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
-You can pass mjsql a **string** (`mjsql("…")`) or an **arrow function** (`mjsql(($) => …)`). The function form is recommended — your JS formatter (prettier, oxfmt) handles indentation and line breaks for long expressions automatically.
+You can pass jsmql a **string** (`jsmql("…")`) or an **arrow function** (`jsmql(($) => …)`). The function form is recommended — your JS formatter (prettier, oxfmt) handles indentation and line breaks for long expressions automatically.
 
-MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where` — three operators that run JavaScript on the server. They're slow, can't use indexes, and are turned off in many setups. mjsql is the replacement: you write your logic as plain JavaScript and it compiles to fast native MongoDB operators. See [Replacing server-side JavaScript](#replacing-server-side-javascript) for examples.
+MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where` — three operators that run JavaScript on the server. They're slow, can't use indexes, and are turned off in many setups. jsmql is the replacement: you write your logic as plain JavaScript and it compiles to fast native MongoDB operators. See [Replacing server-side JavaScript](#replacing-server-side-javascript) for examples.
 
 ## Install
 
 ```sh
-npm install mjsql
+npm install jsmql
 ```
 
 Works with **Node 24+**, Deno, and Bun. No build step needed in your project.
 
-The package is published as ESM. Node 24+ supports [`require(esm)`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require), so both `import { mjsql } from "mjsql"` and `const { mjsql } = require("mjsql")` work.
+The package is published as ESM. Node 24+ supports [`require(esm)`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require), so both `import { jsmql } from "jsmql"` and `const { jsmql } = require("jsmql")` work.
 
-**Try it without installing.** Clone the repo, run `npm install && npm run build`, then serve the repo root (`python3 -m http.server`) and open [`playground.html`](./playground.html) — a single-file static playground with a live mjsql → MQL JSON view.
+**Try it without installing.** Clone the repo, run `npm install && npm run build`, then serve the repo root (`python3 -m http.server`) and open [`playground.html`](./playground.html) — a single-file static playground with a live jsmql → MQL JSON view.
 
 ## Quick start
 
 ```js
-import { mjsql, validate, mql } from "mjsql";
+import { jsmql, validate, mql } from "jsmql";
 
 // JS operators and method chains — function form (recommended)
-mjsql(($) => $.price >= 100 && $.stock > 0)
+jsmql(($) => $.price >= 100 && $.stock > 0)
 // → { $and: [{ $gte: ["$price", 100] }, { $gt: ["$stock", 0] }] }
 
 // String form — equivalent
-mjsql("$.price >= 100 && $.stock > 0")
+jsmql("$.price >= 100 && $.stock > 0")
 
 // Use in a $match stage
-db.products.aggregate([{ $match: { $expr: mjsql(($) => $.price >= 100) } }]);
+db.products.aggregate([{ $match: { $expr: jsmql(($) => $.price >= 100) } }]);
 
 // Embed JS values with the template tag
 const minAge = 21;
@@ -58,7 +58,7 @@ validate(($) => $.age > 18);
 
 ## Syntax
 
-mjsql accepts a JS-like expression syntax that covers the full range of JavaScript operators and methods:
+jsmql accepts a JS-like expression syntax that covers the full range of JavaScript operators and methods:
 
 ```js
 // Arithmetic, comparison, logical
@@ -109,13 +109,13 @@ JavaScript-style line (`// …`) and block (`/* … */`) comments are supported 
 For document updates, use JS-natural assignment and `delete`. Each mutation compiles to a MongoDB pipeline `$set`/`$unset` stage; consecutive same-kind mutations coalesce automatically:
 
 ```js
-mjsql("$.score += 1")
+jsmql("$.score += 1")
 // → { $set: { score: { $add: ["$score", 1] } } }
 
-mjsql("$.total = $.price * $.qty, $.views += 1")
+jsmql("$.total = $.price * $.qty, $.views += 1")
 // → { $set: { total: { $multiply: ["$price", "$qty"] }, views: { $add: ["$views", 1] } } }
 
-mjsql("delete $.tempToken, delete $._processingState, $.status = 'complete'")
+jsmql("delete $.tempToken, delete $._processingState, $.status = 'complete'")
 // → [
 //     { $unset: ["tempToken", "_processingState"] },
 //     { $set: { status: "complete" } }
@@ -137,12 +137,12 @@ $dateTrunc({ date: $.createdAt, unit: "week" })
 $round($.price, 2)                 // { $round: ["$price", 2] }   (Math.round has no precision arg)
 ```
 
-mjsql knows 182 operators — every aggregation expression and accumulator from MongoDB's official specs, including the full Bitwise and Window categories. Unknown operators pass through, so mjsql works with new MongoDB versions out of the box.
+jsmql knows 182 operators — every aggregation expression and accumulator from MongoDB's official specs, including the full Bitwise and Window categories. Unknown operators pass through, so jsmql works with new MongoDB versions out of the box.
 
 In the function form, destructure escape-hatch operators from the second parameter to keep your IDE happy. The second parameter is types-only and never runs:
 
 ```js
-mjsql(($, { $dateDiff }) =>
+jsmql(($, { $dateDiff }) =>
   $dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }) ?? -1,
 );
 ```
@@ -160,11 +160,11 @@ See **[docs/LANGUAGE.md](docs/LANGUAGE.md)** for the full language reference.
 
 ## Real-world examples
 
-**[test/realistic.test.ts](test/realistic.test.ts)** contains end-to-end examples of realistic MongoDB aggregation expressions — tiered discounts, slug generation, date formatting, parameterised queries, and more. It is the best place to see what mjsql looks like in practice.
+**[test/realistic.test.ts](test/realistic.test.ts)** contains end-to-end examples of realistic MongoDB aggregation expressions — tiered discounts, slug generation, date formatting, parameterised queries, and more. It is the best place to see what jsmql looks like in practice.
 
 ## Replacing server-side JavaScript
 
-MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three operators run JavaScript on the server, and MongoDB's own docs say to replace them with native aggregation operators. mjsql does that for you — you write JavaScript, mjsql compiles it to native MongoDB operators.
+MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three operators run JavaScript on the server, and MongoDB's own docs say to replace them with native aggregation operators. jsmql does that for you — you write JavaScript, jsmql compiles it to native MongoDB operators.
 
 ### Pros and cons of server-side JavaScript
 
@@ -180,9 +180,9 @@ MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three op
 - Hides logic from the query planner — MongoDB can't reorder or push down through JavaScript.
 - Sharding issues — `$where` doesn't work cleanly across shards.
 - Security risk — running JavaScript on the server is a known attack surface, especially with user input.
-- Verbose — `$accumulator` is six JavaScript fields for what's usually one line in mjsql.
+- Verbose — `$accumulator` is six JavaScript fields for what's usually one line in jsmql.
 - Your IDE can't see the code — the body is just a string. No autocomplete, no rename, no go-to-definition, no ESLint, no formatter.
-- Hard to test — you need a real MongoDB instance with scripting enabled to run the JS body. mjsql expressions are plain JavaScript and test like any other function.
+- Hard to test — you need a real MongoDB instance with scripting enabled to run the JS body. jsmql expressions are plain JavaScript and test like any other function.
 - No syntax checking — typos blow up at runtime, not at compile time.
 
 ### `$where` becomes `$expr`
@@ -191,8 +191,8 @@ MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`. These three op
 // Deprecated in MongoDB 8.0
 db.users.find({ $where: "function() { return this.age > 18; }" });
 
-// mjsql
-db.users.find({ $expr: mjsql(($) => $.age > 18) });
+// jsmql
+db.users.find({ $expr: jsmql(($) => $.age > 18) });
 // → { $expr: { $gt: ["$age", 18] } }
 ```
 
@@ -215,10 +215,10 @@ For each shop, you want a count of orders by status: `{ pending: 12, paid: 87, r
 } } } }
 ```
 
-In mjsql, collect the statuses with `$push`, then build the object with `$reduce` and a computed key:
+In jsmql, collect the statuses with `$push`, then build the object with `$reduce` and a computed key:
 
 ```js
-mjsql(($) => [
+jsmql(($) => [
   { $group: { _id: $.shopId, statuses: $push($.status) } },
   {
     $project: {
@@ -234,7 +234,7 @@ See [docs/LANGUAGE.md#replacing-server-side-javascript](docs/LANGUAGE.md#replaci
 
 ## API
 
-### `mjsql(input: string | function): object | object[]`
+### `jsmql(input: string | function): object | object[]`
 
 Compiles your expression to MongoDB aggregation JSON. Throws a clear error if the input is invalid.
 
@@ -242,36 +242,36 @@ Returns either a single MQL object (for an expression) or an array of stages (fo
 
 ```js
 // Expression input → MQL object output
-mjsql(($) => $.age > 18);
+jsmql(($) => $.age > 18);
 // → { $gt: ["$age", 18] }
 
 // Pipeline input → MQL stage array output (and $match auto-wraps in $expr)
-mjsql(($) => [{ $match: $.age > 18 }, { $project: { name: 1 } }]);
+jsmql(($) => [{ $match: $.age > 18 }, { $project: { name: 1 } }]);
 // → [{ $match: { $expr: { $gt: ["$age", 18] } } }, { $project: { name: 1 } }]
 ```
 
 The function form accepts an **expression-body arrow function**:
 
 ```js
-mjsql(($) => $.age > 18);
-mjsql(($, { $dateDiff }) =>
+jsmql(($) => $.age > 18);
+jsmql(($, { $dateDiff }) =>
   $dateDiff({ startDate: $.t, endDate: new Date(), unit: "day" }),
 );
 ```
 
-Behind the scenes, mjsql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error.
+Behind the scenes, jsmql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error.
 
 Variables from outer scope don't survive `toString()` — use the `mql` template tag if you need closure values. Compiled bodies are cached, so inline arrows in hot loops only compile once.
 
 ### `validate(input: string | function): { valid: boolean, errors: object[] }`
 
-Same as `mjsql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. `validate()` never throws — even on stack overflow or unexpected internal errors, you get a structured result describing the failure.
+Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. `validate()` never throws — even on stack overflow or unexpected internal errors, you get a structured result describing the failure.
 
 Each error has `{ message: string, pos: number, code: "SYNTAX_ERROR" | "CODEGEN_ERROR" }`. `pos` is the character offset in the source (or `0` if not applicable).
 
 ### `` mql`...` `` (template tag)
 
-A template tag for injecting JavaScript values into mjsql expressions. Each `${value}` is JSON-stringified and dropped into the expression source:
+A template tag for injecting JavaScript values into jsmql expressions. Each `${value}` is JSON-stringified and dropped into the expression source:
 
 ```js
 const statuses = ["active", "pending"];
@@ -285,7 +285,7 @@ Accepts strings, numbers, booleans, `null`, arrays, and plain objects. Anything 
 
 ### Errors
 
-mjsql throws regular `Error` subclasses you can catch by class:
+jsmql throws regular `Error` subclasses you can catch by class:
 
 - `MqlInterpolationError` — `mql\`\`` got a value it can't safely embed (see above).
 - `FunctionInputError` — the function form got something it can't extract a body from (block body, `function` declaration, `async`).

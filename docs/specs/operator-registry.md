@@ -1,6 +1,6 @@
 # Operator Registry
 
-`src/operators.ts` is the single source of truth for how MongoDB operators are mapped to MQL output shapes, and the canonical catalog of every MongoDB expression and accumulator operator mjsql knows about.
+`src/operators.ts` is the single source of truth for how MongoDB operators are mapped to MQL output shapes, and the canonical catalog of every MongoDB expression and accumulator operator jsmql knows about.
 
 Each entry has three fields:
 
@@ -96,7 +96,7 @@ If an operator name is not found in the registry, the codegen falls through usin
 | one object literal | `{ $op: { key: val, … } }` |
 | two or more | `{ $op: [a, b, …] }` |
 
-This makes mjsql forward-compatible with new MongoDB operators that are not yet in the registry.
+This makes jsmql forward-compatible with new MongoDB operators that are not yet in the registry.
 
 ## Adding an operator
 
@@ -115,7 +115,7 @@ This makes mjsql forward-compatible with new MongoDB operators that are not yet 
 
 - Every operator in `definitions/expression/` and `definitions/accumulator/` exists in `OPERATORS`.
 - Every `OPERATORS` entry exists in the spec, except those documented in `REGISTRY_ONLY` (e.g. `$encStr*` Queryable Encryption ops, `$sampleRate` query predicate, `$toUUID/$toObject/$toArray` post-spec converters).
-- For object-shape entries, every positional key name is recognised by the spec for that operator. Set membership only — order may differ to preserve mjsql's API surface.
+- For object-shape entries, every positional key name is recognised by the spec for that operator. Set membership only — order may differ to preserve jsmql's API surface.
 - Every entry has a non-empty `description` and a known `category`.
 
 When the test fails, the message names the specific operator and the specific drift; act on it before merging.
