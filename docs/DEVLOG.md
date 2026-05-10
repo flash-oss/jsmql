@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Smoke checks codified in `test/smoke.test.ts`
+
+Two invariants that I'd been verifying by hand at the end of every session — `node src/index.ts` (strippable-TS rule) and a post-build ESM import of `dist/index.js` — are now part of the vitest suite. The strippable check spawns the real Node stripper because vitest's Vite-based loader silently accepts the very constructs the rule bans (`enum`, `namespace`, parameter properties, decorators, …); a regex/AST walker would drift from "what Node actually does", so the test runs the canonical command. The dist case uses `it.skipIf(!existsSync(...))` so local `npm test` stays fast and silent; `npm run smoke:dist` builds first and exercises it on demand.
+
+The motivation is straightforward: relying on muscle memory to enforce a documented invariant means it survives only as long as the human remembers. The real failure mode is silent — a contributor lands a `class` with a parameter property, every vitest case still passes, and the package breaks for Deno/Bun users at import time. `npm test` now catches it on the same commit.
+
+`test/CLAUDE.md` and the root `CLAUDE.md` "Things that matter" list now point at `test/smoke.test.ts` instead of the manual `node src/index.ts` ritual. Per-feature spot-checks (`node -e "console.log(mjsql('…'))"`) are explicitly *not* added — they duplicate `codegen.test.ts` / `realistic.test.ts` cases.
+
+---
+
 ## 2026-05-10 — Increment / decrement: `x++`, `++x`, `x--`, `--x`
 
 Follow-up to yesterday's mutations feature. JS's increment/decrement operators now compile to the same `$set` stage as `x += 1` / `x -= 1`. All four forms produce identical output — the prefix/postfix distinction (return-then-mutate vs mutate-then-return) is irrelevant in MongoDB pipeline context because stage-level mutations don't carry a "value of expression". Treating them as four spellings of the same statement keeps the surface JS-faithful without inventing semantics MQL can't represent.
