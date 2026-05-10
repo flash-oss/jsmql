@@ -10,33 +10,11 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-05-10 — Consolidated `mql` template tag into `jsmql`
+## 2026-05-11 — Playground examples auto-synced from `test/realistic.test.ts`
 
-The public API had three exports — `jsmql()`, `validate()`, and `mql` — and forced two micro-decisions on every use: import which one, then call which one. `mql` and `jsmql` answered effectively the same question ("compile this to MQL"), and the only material difference was whether the source needed `${value}` interpolation. The DX cost showed up in three places: every doc had to teach two entry points, the function-form's outer-scope-identifier hint had to point users at the *other* export, and `validate(mql\`…\`)` was structurally impossible because `mql` threw synchronously before `validate` ever saw anything (the security suite carried a workaround comment for it).
+The playground's `<select>` examples were hand-curated from `test/realistic.test.ts` when the page was first added, but the test file kept growing and the playground drifted to a stale subset of 13 of the now-41 realistic cases. `scripts/sync-playground.mjs` closes the loop: it walks every top-level `describe` in `test/realistic.test.ts` via the TypeScript compiler API, extracts the first query inside each describe (string literal, template literal, tagged-template `mql`, or arrow-body — `mql` template interpolations are resolved against `const` declarations in the same `it()`), and rewrites two delimited regions in [playground.html](../playground.html) (`<!-- BEGIN/END GENERATED OPTIONS -->` and `<!-- BEGIN/END GENERATED EXAMPLES -->`). The `validate(): realistic error cases` block is skipped since those queries don't compile and have no MQL output to show.
 
-`jsmql` is now polymorphic over three call shapes — string, arrow function, and template tag — dispatched by a `TemplateStringsArray` discriminator (`Array.isArray(arg) && Array.isArray(arg.raw)`, the standard "tag vs. function call" pattern from chalk / styled-components / lit-html). `validate` got the same treatment, so `` validate`$.x == ${val}` `` works as the non-throwing counterpart and the security-test workaround collapsed to a one-liner. Two exports, one mental model. The interpolation safety net (`stringifyInterpolation`) is unchanged — it just runs from inside the `jsmql` dispatcher now instead of from a separate `mql` function. See [src/index.ts](../src/index.ts).
-
-Bundled into the same `feat!:` because they're all parts of one shape change: `MqlInterpolationError` was renamed to `JsmqlInterpolationError` (the "Mql" prefix referenced the going-away `mql` export and would have left an orphan name in the public API), and `jsmql()` got a top-level `TypeError` guard so wrong-shape inputs (`jsmql(42)`, `jsmql({})`, `jsmql(null)`) produce a one-sentence "expects a string, an arrow function, or a template literal — got X" instead of crashing deep inside the parser. `validate()` routes that `TypeError` to a structured `SYNTAX_ERROR`, parallel to the existing `RangeError` arm. Pre-1.0 with no published artifact, so the breaking-change cost is the import-line update and one test/doc sweep — paid once, in this commit.
-
----
-
-## 2026-05-10 — Renamed project from `mjsql` to `jsmql`
-
-The old name read phonetically as "MySQL" — a relational database the project has nothing to do with. That's a DX trap on first contact: the name should help a reader place the tool, not mislead them. `jsmql` reads as "JS → MQL", which is exactly what the compiler does (JavaScript-subset syntax in, MongoDB MQL JSON out), and grounds the name in MongoDB's actual term for its query language.
-
-Mechanical rename across all 27 tracked files containing the old name: package identity (`package.json`, `package-lock.json`), the exported `jsmql()` function in [src/index.ts](../src/index.ts), the `JsmqlInput` / `JsmqlOutput` / `JsmqlOps` / `JsmqlFn` type names, parser error messages in [src/parser.ts](../src/parser.ts), every test, every doc, every CLAUDE.md, and the historical entries in this DEVLOG. The `mql` template tag is unchanged — it always referred to MongoDB's MQL output, not the project name. Pre-1.0 with no published npm artifact and no GitHub remote configured, so the rename is purely an in-repo change today; the containing folder `~/code/mjsql` and any future remote will be moved as a follow-up using `git worktree repair` (18 sibling worktrees share the parent directory).
-
-Marked `feat!:` because the import-path identity changed: anyone with `import { mjsql } from "mjsql"` in their code needs `import { jsmql } from "jsmql"`. The runtime contract (input shapes, output shapes, error types) is otherwise unchanged.
-
----
-
-## 2026-05-10 — JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
-
-Until now, `&&`/`||` compiled to `$and`/`$or` (which return *booleans*, not the operand value as JavaScript does), `!` compiled to `$not` over the raw value (using MQL truthiness), and `Boolean(x)` compiled to `$toBool` (where `""` is **truthy** in MongoDB). The result was a stealth gotcha: `$.building && $.building + ","` returned `true` instead of `"Acme,"`, and `[…].filter(Boolean)` kept empty strings. Both contradict the project's #1 pitch ("JS you already know"), so they had to go.
-
-The new codegen routes all of `&&`, `||`, `!`, `?:`, `Boolean()`, and the predicate-method bodies (`.filter`, `.find`, `.findLast`, `.findLastIndex`, `.some`, `.every`) through two helpers in [src/codegen.ts](../src/codegen.ts): `jsBool(value)` emits the JS-truthy check `{ $and: [{$ne:[v,null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }` (relying on type-bracketed `$ne` to handle cross-type comparisons safely), and `isProvablyBool(expr)` lets the codegen *elide* the wrap when the operand is already known to be a boolean (comparisons, `$and`/`$or` chains, `!x`, `BOOL_OUTPUT_OPS`-listed operators, `BOOL_RETURNING_METHODS`). All-bool chains keep emitting the cheap `$and: […]` / `$or: […]`; mixed chains fold right into operand-preserving `$cond` chains, with `$let` introduced only when the LHS is non-pure-ref non-bool (gensym'd against in-scope lambda params to avoid shadowing).
-
-Out of scope and deliberately deferred: NaN handling (MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison doesn't work; the only portable detection is per-value `$convert`-to-string, which would bloat every emitted wrapper — NaN is vanishingly rare in MongoDB data, so we accept the divergence and document it). Also out of scope: `$match: $expr` predicate position in [src/pipeline.ts](../src/pipeline.ts) — query-language semantics may want their own treatment, separate PR. Users who need MongoDB's raw semantics can call the operators directly: `$toBool($.x)`, `$op($and, …)` — those escapes are unaffected. Pre-1.0, so the breaking-change bar is "is the new behaviour the right one?" — and operand-preserving `&&`/`||` plus JS-faithful `Boolean` is unambiguously closer to the language we're claiming to ship.
+The script is wired into a PostToolUse hook in [.claude/settings.json](../.claude/settings.json) via [scripts/hook-post-edit-realistic.sh](../scripts/hook-post-edit-realistic.sh): whenever Claude Code's `Edit`/`Write`/`MultiEdit` touches `test/realistic.test.ts`, the script reruns and `git add`s the regenerated `playground.html` so it rides along with the test edit in a single commit. For non-Claude edits, run `npm run sync:playground` by hand. Idempotent: re-running with everything in sync is a no-op. Fails loudly (non-zero exit, clear message) when the markers are missing or a query can't be extracted — silent drift was the failure mode this change is trying to prevent.
 
 ---
 
@@ -95,6 +73,16 @@ Browsers refuse to load ESM from `file://`, so the page must be served over HTTP
 
 ---
 
+## 2026-05-10 — Consolidated `mql` template tag into `jsmql`
+
+The public API had three exports — `jsmql()`, `validate()`, and `mql` — and forced two micro-decisions on every use: import which one, then call which one. `mql` and `jsmql` answered effectively the same question ("compile this to MQL"), and the only material difference was whether the source needed `${value}` interpolation. The DX cost showed up in three places: every doc had to teach two entry points, the function-form's outer-scope-identifier hint had to point users at the *other* export, and `validate(mql\`…\`)` was structurally impossible because `mql` threw synchronously before `validate` ever saw anything (the security suite carried a workaround comment for it).
+
+`jsmql` is now polymorphic over three call shapes — string, arrow function, and template tag — dispatched by a `TemplateStringsArray` discriminator (`Array.isArray(arg) && Array.isArray(arg.raw)`, the standard "tag vs. function call" pattern from chalk / styled-components / lit-html). `validate` got the same treatment, so `` validate`$.x == ${val}` `` works as the non-throwing counterpart and the security-test workaround collapsed to a one-liner. Two exports, one mental model. The interpolation safety net (`stringifyInterpolation`) is unchanged — it just runs from inside the `jsmql` dispatcher now instead of from a separate `mql` function. See [src/index.ts](../src/index.ts).
+
+Bundled into the same `feat!:` because they're all parts of one shape change: `MqlInterpolationError` was renamed to `JsmqlInterpolationError` (the "Mql" prefix referenced the going-away `mql` export and would have left an orphan name in the public API), and `jsmql()` got a top-level `TypeError` guard so wrong-shape inputs (`jsmql(42)`, `jsmql({})`, `jsmql(null)`) produce a one-sentence "expects a string, an arrow function, or a template literal — got X" instead of crashing deep inside the parser. `validate()` routes that `TypeError` to a structured `SYNTAX_ERROR`, parallel to the existing `RangeError` arm. Pre-1.0 with no published artifact, so the breaking-change cost is the import-line update and one test/doc sweep — paid once, in this commit.
+
+---
+
 ## 2026-05-10 — Implicit pipelines: `;` is a pipeline-stage separator, `,` is in-stage
 
 `;` and `,` were interchangeable mutation-chain separators. They are not anymore. The new rule:
@@ -123,6 +111,16 @@ Follow-up to yesterday's mutations feature. JS's increment/decrement operators n
 Targets validate identically to compound assignments (field paths only). Misuse as a value (`1 + $.x++`) bubbles through to the existing codegen-level "Assignment is a statement, not a value" error.
 
 **Tests.** 18 new cases in `test/mutations.test.ts` covering all four forms across all four positions (top-level, mixed coalescing, pipeline element, parens), plus the `5 - -3` whitespace regression. Total now 644.
+
+---
+
+## 2026-05-10 — JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
+
+Until now, `&&`/`||` compiled to `$and`/`$or` (which return *booleans*, not the operand value as JavaScript does), `!` compiled to `$not` over the raw value (using MQL truthiness), and `Boolean(x)` compiled to `$toBool` (where `""` is **truthy** in MongoDB). The result was a stealth gotcha: `$.building && $.building + ","` returned `true` instead of `"Acme,"`, and `[…].filter(Boolean)` kept empty strings. Both contradict the project's #1 pitch ("JS you already know"), so they had to go.
+
+The new codegen routes all of `&&`, `||`, `!`, `?:`, `Boolean()`, and the predicate-method bodies (`.filter`, `.find`, `.findLast`, `.findLastIndex`, `.some`, `.every`) through two helpers in [src/codegen.ts](../src/codegen.ts): `jsBool(value)` emits the JS-truthy check `{ $and: [{$ne:[v,null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }` (relying on type-bracketed `$ne` to handle cross-type comparisons safely), and `isProvablyBool(expr)` lets the codegen *elide* the wrap when the operand is already known to be a boolean (comparisons, `$and`/`$or` chains, `!x`, `BOOL_OUTPUT_OPS`-listed operators, `BOOL_RETURNING_METHODS`). All-bool chains keep emitting the cheap `$and: […]` / `$or: […]`; mixed chains fold right into operand-preserving `$cond` chains, with `$let` introduced only when the LHS is non-pure-ref non-bool (gensym'd against in-scope lambda params to avoid shadowing).
+
+Out of scope and deliberately deferred: NaN handling (MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison doesn't work; the only portable detection is per-value `$convert`-to-string, which would bloat every emitted wrapper — NaN is vanishingly rare in MongoDB data, so we accept the divergence and document it). Also out of scope: `$match: $expr` predicate position in [src/pipeline.ts](../src/pipeline.ts) — query-language semantics may want their own treatment, separate PR. Users who need MongoDB's raw semantics can call the operators directly: `$toBool($.x)`, `$op($and, …)` — those escapes are unaffected. Pre-1.0, so the breaking-change bar is "is the new behaviour the right one?" — and operand-preserving `&&`/`||` plus JS-faithful `Boolean` is unambiguously closer to the language we're claiming to ship.
 
 ---
 
@@ -162,6 +160,16 @@ Same observable behaviour as the previous block-body-arrow entry; this is a code
 `FunctionInputError` moved from `src/index.ts` to `src/parser.ts` (re-exported from `index.ts` so the public import path is unchanged). `extractArrowBody` and the regex are gone; `src/index.ts` is now a thin wrapper that calls the right `Parser` entry point and lowers the resulting `Program` through a shared `lower()` helper.
 
 No test count change (still 669) — error messages match the prior shape, the `expression-body arrow` test in `codegen.test.ts` was renamed to "rejects `return` inside a block-body arrow" to match what it actually checks now.
+
+---
+
+## 2026-05-10 — Renamed project from `mjsql` to `jsmql`
+
+The old name read phonetically as "MySQL" — a relational database the project has nothing to do with. That's a DX trap on first contact: the name should help a reader place the tool, not mislead them. `jsmql` reads as "JS → MQL", which is exactly what the compiler does (JavaScript-subset syntax in, MongoDB MQL JSON out), and grounds the name in MongoDB's actual term for its query language.
+
+Mechanical rename across all 27 tracked files containing the old name: package identity (`package.json`, `package-lock.json`), the exported `jsmql()` function in [src/index.ts](../src/index.ts), the `JsmqlInput` / `JsmqlOutput` / `JsmqlOps` / `JsmqlFn` type names, parser error messages in [src/parser.ts](../src/parser.ts), every test, every doc, every CLAUDE.md, and the historical entries in this DEVLOG. The `mql` template tag is unchanged — it always referred to MongoDB's MQL output, not the project name. Pre-1.0 with no published npm artifact and no GitHub remote configured, so the rename is purely an in-repo change today; the containing folder `~/code/mjsql` and any future remote will be moved as a follow-up using `git worktree repair` (18 sibling worktrees share the parent directory).
+
+Marked `feat!:` because the import-path identity changed: anyone with `import { mjsql } from "mjsql"` in their code needs `import { jsmql } from "jsmql"`. The runtime contract (input shapes, output shapes, error types) is otherwise unchanged.
 
 ---
 
