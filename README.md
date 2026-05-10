@@ -29,6 +29,8 @@ Works with **Node 24+**, Deno, and Bun. No build step needed in your project.
 
 The package is published as ESM. Node 24+ supports [`require(esm)`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require), so both `import { mjsql } from "mjsql"` and `const { mjsql } = require("mjsql")` work.
 
+**Try it without installing.** Clone the repo, run `npm install && npm run build`, then serve the repo root (`python3 -m http.server`) and open [`playground.html`](./playground.html) — a single-file static playground with a live mjsql → MQL JSON view.
+
 ## Quick start
 
 ```js

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mjsql playground</title>
+    <style>
+      :root {
+        --fg: #1a1a1a;
+        --muted: #666;
+        --bg: #fafafa;
+        --panel: #fff;
+        --border: #e2e2e2;
+        --accent: #2a6df4;
+        --error: #c0392b;
+        --error-bg: #fdf3f2;
+        --mono:
+          ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        font-size: 13px;
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      header strong {
+        font-size: 14px;
+      }
+
+      header .tag {
+        color: var(--muted);
+      }
+
+      header a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      header a:hover {
+        text-decoration: underline;
+      }
+
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 0;
+        background: var(--panel);
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+      }
+
+      .panel + .panel {
+        border-left: 1px solid var(--border);
+      }
+
+      .label {
+        padding: 6px 12px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+        background: var(--bg);
+      }
+
+      #input {
+        flex: 1;
+        width: 100%;
+        border: 0;
+        outline: 0;
+        resize: none;
+        padding: 14px 16px;
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.5;
+        color: var(--fg);
+        background: var(--panel);
+        tab-size: 2;
+      }
+
+      #output {
+        flex: 1;
+        margin: 0;
+        padding: 14px 16px;
+        overflow: auto;
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: var(--panel);
+        border-left: 3px solid transparent;
+      }
+
+      #output.error {
+        background: var(--error-bg);
+        color: var(--error);
+        border-left-color: var(--error);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>mjsql playground</strong>
+      <span class="tag">type an expression on the left, see the compiled MQL on the right</span>
+      <a href="docs/LANGUAGE.md">syntax reference</a>
+    </header>
+    <main>
+      <section class="panel">
+        <div class="label">mjsql input</div>
+        <textarea
+          id="input"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          autocorrect="off"
+          autofocus
+        ></textarea>
+      </section>
+      <section class="panel">
+        <div class="label">MQL output (JSON)</div>
+        <pre id="output"></pre>
+      </section>
+    </main>
+
+    <script type="module">
+      import { mjsql, validate } from "./dist/index.js";
+
+      const input = document.getElementById("input");
+      const output = document.getElementById("output");
+
+      function render() {
+        const src = input.value;
+        if (src.trim() === "") {
+          output.textContent = "";
+          output.classList.remove("error");
+          return;
+        }
+        const result = validate(src);
+        if (result.valid) {
+          output.textContent = JSON.stringify(mjsql(src), null, 2);
+          output.classList.remove("error");
+        } else {
+          const e = result.errors[0];
+          output.textContent = `${e.code} at position ${e.pos}\n\n${e.message}`;
+          output.classList.add("error");
+        }
+      }
+
+      input.addEventListener("input", render);
+      input.value = "$.price >= 100 && $.stock > 0";
+      render();
+    </script>
+  </body>
+</html>
