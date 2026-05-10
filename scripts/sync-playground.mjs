@@ -3,7 +3,7 @@
  * Sync `playground.html` examples from `test/realistic.test.ts`.
  *
  * Walks every top-level `describe(title, () => { it(...) })` block, extracts
- * the first `jsmql(...)` call or `` mql`...` `` tagged template inside its
+ * the first `jsmql(...)` call or `` jsmql`...` `` tagged template inside its
  * first `it(...)`, and rewrites the delimited regions in `playground.html`:
  *
  *   <!-- BEGIN GENERATED OPTIONS  --> … <!-- END GENERATED OPTIONS  -->
@@ -152,7 +152,7 @@ function extractFromArrow(arr) {
 }
 
 function extractQuery(itBody) {
-  const call = findFirstCallOrTag(itBody, ["jsmql", "mql"]);
+  const call = findFirstCallOrTag(itBody, ["jsmql"]);
   if (!call) return null;
 
   if (ts.isTaggedTemplateExpression(call)) {
