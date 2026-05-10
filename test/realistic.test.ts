@@ -440,17 +440,27 @@ describe("location: full address formatter", () => {
         .join(" ")
     `);
 
+    // `$.building && $.building + ","` follows JS operand-preservation —
+    // returns the suffix when truthy, the building value (which is then
+    // dropped by the filter) when falsy. `.filter(Boolean)` uses JS truthy/
+    // falsy via the jsBool wrapper, so empty/null/missing fields drop out.
     expect(result).toEqual({
       $reduce: {
         input: {
           $filter: {
             input: [
               {
-                $and: [
-                  "$building",
+                $cond: [
                   {
-                    $concat: ["$building", ","],
+                    $and: [
+                      { $ne: ["$building", null] },
+                      { $ne: ["$building", false] },
+                      { $ne: ["$building", ""] },
+                      { $ne: ["$building", 0] },
+                    ],
                   },
+                  { $concat: ["$building", ","] },
+                  "$building",
                 ],
               },
               "$streetNo",
@@ -462,28 +472,21 @@ describe("location: full address formatter", () => {
             ],
             as: "v",
             cond: {
-              $toBool: "$$v",
+              $and: [
+                { $ne: ["$$v", null] },
+                { $ne: ["$$v", false] },
+                { $ne: ["$$v", ""] },
+                { $ne: ["$$v", 0] },
+              ],
             },
           },
         },
         initialValue: "",
         in: {
           $cond: [
-            {
-              $eq: ["$$value", ""],
-            },
-            {
-              $toString: "$$this",
-            },
-            {
-              $concat: [
-                "$$value",
-                " ",
-                {
-                  $toString: "$$this",
-                },
-              ],
-            },
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", " ", { $toString: "$$this" }] },
           ],
         },
       },
