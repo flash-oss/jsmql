@@ -11,9 +11,18 @@ This spec covers how `mjsql()` recognises a top-level aggregation pipeline and c
 - **Registry:** [src/stages.ts](../../src/stages.ts) — `STAGES` is the single source of truth for stage names, descriptions, and per-stage sub-pipeline fields.
 - **Detection + lowering:** [src/pipeline.ts](../../src/pipeline.ts).
 
-## Detection
+## Two pipeline forms
 
-`mjsql()` runs in **pipeline mode** when the parsed root AST satisfies `isPipelineAst(ast)`:
+mjsql accepts two surface forms that both compile through `src/pipeline.ts`:
+
+1. **Bracketed `[…]`** — the long-standing form. `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent mutation elements **coalesce** through `generateMutationGroups`.
+2. **Implicit `;`-separated** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent mutation statements **never** coalesce across `;`.
+
+The two forms agree on stage shapes, the `$match` `$expr` wrap rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups mutations), `;` is a hard stage boundary.
+
+## Detection (bracketed form)
+
+`mjsql()` runs in **pipeline mode** for an `[…]` literal when the parsed root AST satisfies `isPipelineAst(ast)`:
 
 1. Root must be an `ArrayLiteral` with at least one element.
 2. The *first* element must be a **stage candidate**:
@@ -31,6 +40,10 @@ A failure at any element throws a `CodegenError` pinpointing the offending index
 
 When detection trigger 1 + 2 do not fire, the array is left to the existing expression-mode codegen — so `mjsql("[1, 2, 3]")` still compiles as an array literal expression. The detection rule is intentionally aggressive on `OperatorCall`-typed first elements (`$abs(1)` triggers pipeline mode and fails strictly) because top-level arrays of value-position operator calls are vanishingly rare in practice; copy-pasted MongoDB pipelines are the common case.
 
+## Detection (implicit form)
+
+When `Parser.parse()` sees any `;` token at the top level, it returns a `Pipeline` node directly — there is no `isPipelineAst`-style heuristic on the resulting elements. Each statement contributes to the pipeline regardless of whether its first form looks like a stage; non-stage expressions are reported with the usual stage-suggestion error during lowering.
+
 ## Lowering
 
 `generatePipeline(ast)` walks the array and emits a stage object per element via `generateStageBody(stageName, body)`. The single stage-aware transform is the **`$match` `$expr` wrap rule**:
@@ -39,6 +52,8 @@ When detection trigger 1 + 2 do not fire, the array is left to the existing expr
 - `{ $match: <anything else> }` → `{ $match: { $expr: <generated body> } }`.
 
 For other stages, the body is generated with the existing `generate()` infrastructure, so accumulators (`$sum`, `$avg`, …), expression operators, field refs, and method chains all compose naturally inside stage bodies.
+
+`generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `MutationProgram` chunk goes through `generateMutationProgram` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` wrap rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so mutations on either side of a `;` never combine.
 
 ## Sub-pipeline recursion
 

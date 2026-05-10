@@ -1021,15 +1021,14 @@ mjsql("delete $.tmp")
 
 ### Sequencing
 
-Multiple mutations are separated by `;` or `,` (interchangeable; trailing separator allowed):
+Multiple mutations in the **same stage** are separated by `,` (trailing comma allowed):
 
 ```js
-mjsql("$.a = 1; $.b = 2")        // single $set with both
-// → { $set: { a: 1, b: 2 } }
-
-mjsql("$.a = 1, $.b = 2")        // same, comma form
+mjsql("$.a = 1, $.b = 2")
 // → { $set: { a: 1, b: 2 } }
 ```
+
+A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#pipelines) for the implicit `;`-separated pipeline form.
 
 ### Targets
 
@@ -1086,15 +1085,15 @@ Consecutive same-kind mutations (all assignments, or all deletes) are grouped in
 
 ```js
 // Independent assignments → one stage
-mjsql("$.a = 1; $.b = 2")
+mjsql("$.a = 1, $.b = 2")
 // → { $set: { a: 1, b: 2 } }
 
 // Read-after-write → two stages
-mjsql("$.a = 1; $.b = $.a")
+mjsql("$.a = 1, $.b = $.a")
 // → [{ $set: { a: 1 } }, { $set: { b: "$a" } }]
 
 // Kind change → two stages
-mjsql("delete $.a; delete $.b; $.status = 'done'")
+mjsql("delete $.a, delete $.b, $.status = 'done'")
 // → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
 ```
 
@@ -1157,6 +1156,32 @@ mjsql(`[
 ```
 
 The two forms compile to the same MQL pipeline and may be mixed in one array. Each stage body is a regular mjsql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
+
+### Implicit pipelines: `;` between statements
+
+For short pipelines, you can drop the `[…]` and separate stages with `;` directly. Any `;` at the top level — including a single trailing `;` — flips `mjsql()` into pipeline mode and returns an array. Inside one `;`-separated chunk, `,` keeps its in-stage role for mutations:
+
+```js
+// Three stages, no brackets needed
+mjsql("$match($.active); $.score += 1; $sort({ score: -1 })");
+// → [
+//     { $match: { $expr: "$active" } },
+//     { $set: { score: { $add: ["$score", 1] } } },
+//     { $sort: { score: -1 } }
+//   ]
+
+// `,` groups into one stage; `;` adds the next
+mjsql("$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1; $.status = 'done'");
+// → [
+//     { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
+//     { $set: { status: "done" } }
+//   ]
+```
+
+Two things to know:
+
+- **`;` is a hard stage boundary.** Adjacent mutations across `;` do **not** coalesce — `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` if you want a single coalesced stage.
+- **A trailing `;` is enough.** `$.a = 1;` returns `[{ $set: { a: 1 } }]`; `$.a = 1` (no `;`) returns `{ $set: { a: 1 } }`. Pick the form that matches what you want from MongoDB — a stage object or a pipeline array.
 
 ### `$match` and `$expr`
 

@@ -17,7 +17,7 @@ type MutationProgram = { type: "MutationProgram"; mutations: Mutation[] };
 
 `AssignExpr` does not carry an `op` field. The parser desugars compound operators (`+=`, `-=`, `*=`, `/=`) at construction time: `$.a += rhs` becomes `AssignExpr { target: $.a, value: BinaryExpr("+", $.a, rhs) }`. Codegen therefore only sees plain `=` assignments.
 
-`MutationProgram` is its own type, not part of the `Expr` union. `Parser.parse()` returns `Program = Expr | MutationProgram`; `compile()` in `src/index.ts` dispatches on the discriminant.
+`MutationProgram` is its own type, not part of the `Expr` union. `Parser.parse()` returns `Program = Expr | MutationProgram | Pipeline`; `compile()` in `src/index.ts` dispatches on the discriminant. `Pipeline` (from `aggregation-stages.md`) wraps a sequence of `;`-separated top-level statements where each statement is itself an `Expr` or a `MutationProgram`.
 
 `ArrayElement` is widened to `Expr | SpreadElement | AssignExpr | DeleteStmt` so mutations can sit inside pipeline-array literals. Non-pipeline `ArrayLiteral` codegen rejects mutation elements with a clear error.
 
@@ -32,19 +32,25 @@ Six new tokens (`src/lexer.ts`):
 | `MinusEq`   | `-=`   | Same as above for `Minus` |
 | `StarEq`    | `*=`   | Checked after `**` (StarStar) and before `*` (Star) |
 | `SlashEq`   | `/=`   | Only emitted in division-context (`lastTokenType` is value-ending). In regex-context, the `=` after `/` is part of a regex literal. |
-| `Semi`      | `;`    | Statement separator |
+| `Semi`      | `;`    | Top-level pipeline-stage separator (see `aggregation-stages.md` § Implicit `;`-separated form). Not consumed by `parseMutationProgramRest`. |
 
 One new keyword: `Delete` (added to `keywordToken()` switch alongside `typeof`/`new`/`in`).
 
 ## Parser
 
-Top-level dispatch (`Parser.parse()`):
+Top-level dispatch (`Parser.parse()`) is a `;`-separated statement loop, not a single dispatch:
 
-1. If the first token is `Delete` → `parseMutationProgram()` directly.
-2. Otherwise speculatively `parseExpression()`. If an assignment operator follows, the expression is the first mutation target; flow merges into `parseMutationProgramFrom(target)`.
-3. Otherwise expect EOF (regular expression input).
+1. Collect the first statement via `collectStatement()`. Inside that helper:
+   1. If the first token is `Delete`, `++`, or `--` → `parseMutationProgram()` directly.
+   2. Otherwise speculatively `parseExpression()`. If an assignment operator follows, the expression is the first mutation target; flow merges into `parseMutationProgramFrom(target)`. If a postfix `++`/`--` follows, route through `parseMutationProgramFromPostfix(target)`.
+   3. Otherwise return the expression unchanged.
+2. While the next token is `;`: consume it, mark the input as pipeline-shaped, and (unless EOF follows — trailing `;` is allowed) collect another statement.
+3. Expect EOF.
+4. If no `;` was seen, return the single statement (`Expr` or `MutationProgram`). Otherwise return a `Pipeline` whose `stmts` are the collected statements.
 
-Inside `parseArrayLiteral`, the same per-element heuristic applies: a leading `Delete` token, or an expression followed by an assignment operator, becomes a mutation element. This is what enables `[$match(...), $.a = 1, delete $.tmp, $sort(...)]`.
+`parseMutationProgramRest` only consumes `,` separators — `;` is a top-level boundary, never a mutation-chain separator.
+
+Inside `parseArrayLiteral`, the same per-element heuristic applies: a leading `Delete`/`++`/`--` token, or an expression followed by an assignment operator, becomes a mutation element. This is what enables `[$match(...), $.a = 1, delete $.tmp, $sort(...)]`. Inside the bracketed form, `,` is the only separator (JS syntax).
 
 ### Chained `=` (right-associative)
 
@@ -115,9 +121,10 @@ The codegen never inspects the original compound operator — by the time it run
 
 ## Pipeline integration
 
-`isStageCandidate` in `src/pipeline.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare mutation (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline.
+There are two pipeline forms, with one important behavioural difference:
 
-`generatePipeline` walks elements left-to-right with a `mutationBuffer`. Consecutive mutation elements accumulate; non-mutation stages flush the buffer through `generateMutationGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage. The final flush handles a trailing run of mutations.
+- **Bracketed `[…]`** — `isStageCandidate` in `src/pipeline.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare mutation (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline. `generatePipeline` walks elements left-to-right with a `mutationBuffer`. Consecutive mutation elements accumulate; non-mutation stages flush the buffer through `generateMutationGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage.
+- **Implicit `;`-separated** — `generateImplicitPipeline` in `src/pipeline.ts` lowers each `;`-separated statement in isolation. A `MutationProgram` chunk goes through `generateMutationProgram` (which already handles RAW splits inside its `,`-grouped chain); a stage expression goes through the same single-element path used for bracketed pipelines. Adjacent mutation statements **never** coalesce across `;` — the boundary is hard. Comma-grouped mutations inside one `;` chunk still coalesce via the usual rules.
 
 ## Error message conventions
 

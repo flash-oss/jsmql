@@ -16,6 +16,8 @@ import type {
   DeleteStmt,
   Mutation,
   MutationProgram,
+  Pipeline,
+  PipelineStmt,
   Program,
 } from "./ast.ts";
 
@@ -104,12 +106,44 @@ export class Parser {
   }
 
   parse(): Program {
+    // Top-level grammar:
+    //   program := stmt (";" stmt)* ";"?
+    // where each `stmt` is either an expression or a mutation chain (one or
+    // more comma-separated mutations). Any presence of `;` — including a
+    // single trailing one — flips the input to pipeline mode (`Pipeline`),
+    // and each `;`-separated chunk becomes its own stage(s) in the lowerer
+    // with no cross-coalescing. Without any `;`, behaviour is unchanged:
+    // the single statement is returned as `Expr` or `MutationProgram`.
+    const stmts: PipelineStmt[] = [this.collectStatement()];
+    let sawSemi = false;
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next(); // consume `;`
+      sawSemi = true;
+      if (this.lexer.peek().type === TokenType.EOF) break; // trailing `;`
+      stmts.push(this.collectStatement());
+    }
+
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
+    }
+
+    if (!sawSemi) return stmts[0];
+    return { type: "Pipeline", stmts };
+  }
+
+  /**
+   * Parse one top-level statement: either an expression or a mutation chain
+   * (one or more comma-separated mutations sharing a stage). Stops at the
+   * first `;` or EOF; the caller (`parse()`) handles the `;` boundary.
+   */
+  private collectStatement(): PipelineStmt {
     const first = this.lexer.peek();
 
     // Tokens that can ONLY start a mutation program: `delete`, `++`, `--`.
-    // Their presence at position 0 unambiguously commits us to mutation
-    // parsing. Other mutation forms (=, +=, x++, …) reveal themselves only
-    // after a target expression has been parsed — handled below.
+    // Their presence at the start of a statement unambiguously commits us
+    // to mutation parsing. Other mutation forms (=, +=, x++, …) reveal
+    // themselves only after a target expression has been parsed — below.
     if (
       first.type === TokenType.Delete ||
       first.type === TokenType.PlusPlus ||
@@ -122,31 +156,28 @@ export class Parser {
     const expr = this.parseExpression();
 
     // If an assignment operator follows, the expression we just parsed was
-    // actually a mutation target — treat the whole input as a mutation program.
+    // actually a mutation target — treat the rest of the statement as a
+    // mutation chain.
     if (this.peekAssignOp() !== null) {
       this.validateMutationTarget(expr);
       return this.parseMutationProgramFrom(expr);
     }
 
-    // Postfix `x++` / `x--` — same dispatch as a leading assignment operator.
+    // Postfix `x++` / `x--`.
     if (this.peekIncDecOp() !== null) {
       this.validateMutationTarget(expr);
       return this.parseMutationProgramFromPostfix(expr);
     }
 
     // `parseExpression` may have surfaced an `AssignExpr` from a parenthesized
-    // top-level assignment (`($.a = 5)`) via parseGrouped's handling. Wrap it
-    // in a MutationProgram so codegen routes through the mutation path.
+    // top-level assignment (`($.a = 5)`). Wrap it in a MutationProgram so
+    // codegen routes through the mutation path.
     if ((expr as unknown as { type: string }).type === "AssignExpr") {
       const mutations: Mutation[] = [expr as unknown as AssignExpr];
       this.parseMutationProgramRest(mutations);
       return { type: "MutationProgram", mutations };
     }
 
-    const eof = this.lexer.peek();
-    if (eof.type !== TokenType.EOF) {
-      throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
-    }
     return expr;
   }
 
@@ -184,17 +215,17 @@ export class Parser {
     return { type: "MutationProgram", mutations };
   }
 
-  /** After the first mutation is parsed, consume any `;`/`,`-separated tail. */
+  /**
+   * After the first mutation is parsed, consume any `,`-separated tail.
+   * Stops at the first non-`,` token (typically `;` or EOF) and leaves
+   * the cursor there for the caller to handle.
+   */
   private parseMutationProgramRest(mutations: Mutation[]): void {
-    for (;;) {
-      if (!this.peekMutationSeparator()) break;
-      this.lexer.next(); // consume `;` or `,`
-      if (this.lexer.peek().type === TokenType.EOF) break; // trailing separator
+    while (this.peekMutationSeparator()) {
+      this.lexer.next(); // consume `,`
+      const next = this.lexer.peek().type;
+      if (next === TokenType.EOF || next === TokenType.Semi) break; // trailing separator
       mutations.push(...this.parseMutation());
-    }
-    const tok = this.lexer.peek();
-    if (tok.type !== TokenType.EOF) {
-      throw new ParseError(`Unexpected token '${tok.value}' at position ${tok.pos}`, tok.pos);
     }
   }
 
@@ -306,8 +337,7 @@ export class Parser {
   }
 
   private peekMutationSeparator(): boolean {
-    const t = this.lexer.peek().type;
-    return t === TokenType.Semi || t === TokenType.Comma;
+    return this.lexer.peek().type === TokenType.Comma;
   }
 
   /**

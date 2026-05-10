@@ -5,7 +5,7 @@ import {
   CodegenError,
   UnknownIdentifierError,
 } from "./codegen.ts";
-import { isPipelineAst, generatePipeline } from "./pipeline.ts";
+import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
 import { LexError } from "./lexer.ts";
 
 export type ValidationError = {
@@ -202,6 +202,7 @@ function stringifyInterpolation(value: unknown, slot: number): string {
 function compile(expression: string): MjsqlOutput {
   const parser = new Parser(expression);
   const ast = parser.parse();
+  if (ast.type === "Pipeline") return generateImplicitPipeline(ast);
   if (ast.type === "MutationProgram") return generateMutationProgram(ast);
   if (isPipelineAst(ast)) return generatePipeline(ast);
   return generate(ast) as object;

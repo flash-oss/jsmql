@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Implicit pipelines: `;` is a pipeline-stage separator, `,` is in-stage
+
+`;` and `,` were interchangeable mutation-chain separators. They are not anymore. The new rule:
+
+- `;` is **the** pipeline-stage separator. Any `;` at the top level — including a single trailing `;` — flips `mjsql()` into pipeline mode and returns an array. Each `;`-separated chunk becomes its own stage(s); adjacent mutation statements **never** coalesce across `;`.
+- `,` is the in-stage mutation separator. It still groups mutations into one `$set`/`$unset` stage, with the existing kind / read-after-write splits.
+
+The motivation is DX: short pipelines no longer need `[…]` brackets, and the role of each separator is now unambiguous. `$match($.active); $.score += 1; $sort({score: -1})` reads naturally as three stages and compiles directly without ceremony.
+
+**Breaking change.** Two existing inputs change shape: `$.a = 1;` (trailing `;`) was `{ $set: { a: 1 } }` and is now `[{ $set: { a: 1 } }]`; `$.a = 1; $.b = 2` was `{ $set: { a: 1, b: 2 } }` and is now `[{ $set: { a: 1 } }, { $set: { b: 2 } }]` (two stages, no merge across `;`). Migration is mechanical: replace `;` with `,` to keep the old single-stage shape.
+
+**Implementation.** New `Pipeline` AST node; `Parser.parse()` rewritten as a `;`-separated statement loop calling a factored-out `collectStatement()`; `peekMutationSeparator` no longer recognises `;`; new `generateImplicitPipeline` in `src/pipeline.ts` lowers each `;`-separated statement in isolation (mutation chunks via `generateMutationProgram`, stage expressions via single-element `generatePipeline`). The bracketed `[…]` form is unchanged and still coalesces adjacent mutation elements via `generateMutationGroups` — that is the documented difference between the two pipeline forms.
+
+**Tests.** 21 new cases in `test/implicit-pipeline.test.ts` covering trailing `;`, multi-statement, mixed `;`+`,`, RAW splits inside one chunk, and stage-call errors. One new realistic test in `test/realistic.test.ts` showing the implicit form compiling identically to a hand-written `[…]` pipeline. Existing `test/mutations.test.ts` cases that used `;` as a mutation separator now use `,`. Total goes from 644 to 663.
+
+---
+
 ## 2026-05-10 — Increment / decrement: `x++`, `++x`, `x--`, `--x`
 
 Follow-up to yesterday's mutations feature. JS's increment/decrement operators now compile to the same `$set` stage as `x += 1` / `x -= 1`. All four forms produce identical output — the prefix/postfix distinction (return-then-mutate vs mutate-then-return) is irrelevant in MongoDB pipeline context because stage-level mutations don't carry a "value of expression". Treating them as four spellings of the same statement keeps the surface JS-faithful without inventing semantics MQL can't represent.

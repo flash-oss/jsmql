@@ -5,17 +5,28 @@ The formal grammar for the expression syntax accepted by the parser.
 ## EBNF
 
 ```ebnf
-program        = mutation_program EOF
+program        = pipeline_program EOF
+               | mutation_program EOF
                | expression EOF
 
+pipeline_program
+               = pipeline_stmt (";" pipeline_stmt)+ ";"?
+               | pipeline_stmt ";"          (* trailing `;` triggers pipeline mode *)
+               (* any `;` at the top level flips parsing into pipeline mode;
+                  each `;`-separated chunk becomes its own pipeline stage(s)
+                  with no cross-coalescing *)
+
+pipeline_stmt  = mutation_program
+               | expression           (* must compile to a stage at codegen *)
+
 mutation_program
-               = mutation (separator mutation)* separator?
+               = mutation ("," mutation)* ","?
                (* parser dispatch:
-                  - leading `delete` token, OR
+                  - leading `delete`, `++`, or `--`, OR
                   - leading expression followed by an assignment operator
                   triggers mutation_program; otherwise expression *)
 
-separator      = ";" | ","
+separator      = ","                   (* in-stage mutation separator *)
 
 mutation       = "delete" target
                | assignment_chain
@@ -157,6 +168,30 @@ null           = "null"
 IDENT          = [a-zA-Z_][a-zA-Z0-9_]*
 IDENT_OR_KW    = IDENT | "in" | "new" | "typeof"
 ```
+
+## Top-level statements: `;` vs `,`
+
+The two top-level separators have distinct roles:
+
+- `;` is the **pipeline-stage separator**. Any `;` at the top level flips
+  the input to pipeline mode (array output). Each `;`-separated chunk is
+  lowered in isolation — adjacent mutation statements never coalesce
+  across `;`. A single trailing `;` is enough to trigger pipeline mode
+  (`$.a = 1;` → `[{ $set: { a: 1 } }]`).
+- `,` is the **in-stage mutation separator**. Comma-grouped mutations
+  share one stage and coalesce through the existing kind / read-after-write
+  rules in `src/codegen.ts`.
+
+Mixed forms compose naturally: in `$.a = 1, $.b = 2; $match(…)`, the `,`
+keeps `a` and `b` in one `$set` stage, and the `;` adds the `$match` as
+the next stage. Inside an explicit `[…]` pipeline, only `,` is valid (JS
+syntax) and adjacent mutation elements coalesce — that is the
+documented difference between the two pipeline forms.
+
+Implemented in `Parser.parse()` (top-level `;` loop) and
+`generateImplicitPipeline` in `src/pipeline.ts`. `generatePipeline` (for
+`[…]`) keeps coalescing across elements; `generateImplicitPipeline` (for
+`;`-separated) does not.
 
 ## Strict-JS-subset rule
 

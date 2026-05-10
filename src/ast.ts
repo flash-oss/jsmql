@@ -44,16 +44,37 @@ export type Mutation = AssignExpr | DeleteStmt;
 
 /**
  * Top-level mutation program: one or more assignments and/or deletes,
- * separated by `;` or `,` in source. Distinct from `Expr` because mutations
+ * separated by `,` in source. Distinct from `Expr` because mutations
  * are statements with stage-level effect, not expression values.
+ *
+ * `;` is reserved for the top-level pipeline separator (see `Pipeline`)
+ * and is not a mutation-chain separator.
  */
 export type MutationProgram = {
   type: "MutationProgram";
   mutations: Mutation[];
 };
 
-/** What `Parser.parse()` returns: either an expression (incl. pipeline arrays) or a mutation program. */
-export type Program = Expr | MutationProgram;
+/**
+ * One element of an implicit pipeline (`;`-separated at top level). Each
+ * element is lowered in isolation — a `MutationProgram` may itself emit
+ * multiple stages (read-after-write splits inside a `,`-grouped chain),
+ * but adjacent elements never coalesce.
+ */
+export type PipelineStmt = MutationProgram | Expr;
+
+/**
+ * Top-level pipeline assembled from `;`-separated statements. Distinct from
+ * `ArrayLiteral`-shaped pipelines (`[...]`) because elements come pre-grouped
+ * into stages and must NOT cross-coalesce. See `generateImplicitPipeline`.
+ */
+export type Pipeline = {
+  type: "Pipeline";
+  stmts: PipelineStmt[];
+};
+
+/** What `Parser.parse()` returns: an expression, a mutation program, or a `;`-separated pipeline. */
+export type Program = Expr | MutationProgram | Pipeline;
 
 export type BinaryOp =
   | "+"

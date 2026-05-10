@@ -116,7 +116,7 @@ describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
   });
 
   it("multiple inc/dec coalesce into one $set", () => {
-    expect(mjsql("$.a++; $.b--; ++$.c")).toEqual({
+    expect(mjsql("$.a++, $.b--, ++$.c")).toEqual({
       $set: {
         a: { $add: ["$a", 1] },
         b: { $subtract: ["$b", 1] },
@@ -199,45 +199,31 @@ describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
 });
 
 describe("mutations: sequencing", () => {
-  it("two independent assignments coalesce into one $set (semicolon separator)", () => {
-    expect(mjsql("$.a = 1; $.b = 2")).toEqual({ $set: { a: 1, b: 2 } });
-  });
-
   it("two independent assignments coalesce into one $set (comma separator)", () => {
     expect(mjsql("$.a = 1, $.b = 2")).toEqual({ $set: { a: 1, b: 2 } });
   });
 
   it("read-after-write splits into two $set stages", () => {
-    expect(mjsql("$.a = 1; $.b = $.a")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a" } }]);
+    expect(mjsql("$.a = 1, $.b = $.a")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a" } }]);
   });
 
   it("write-after-write to same path splits", () => {
-    expect(mjsql("$.a = 1; $.a = 2")).toEqual([{ $set: { a: 1 } }, { $set: { a: 2 } }]);
+    expect(mjsql("$.a = 1, $.a = 2")).toEqual([{ $set: { a: 1 } }, { $set: { a: 2 } }]);
   });
 
   it("parent-child path collision splits", () => {
-    expect(mjsql("$.a = 1; $.a.b = 2")).toEqual([{ $set: { a: 1 } }, { $set: { "a.b": 2 } }]);
+    expect(mjsql("$.a = 1, $.a.b = 2")).toEqual([{ $set: { a: 1 } }, { $set: { "a.b": 2 } }]);
   });
 
   it("three-way with middle dependency", () => {
-    expect(mjsql("$.a = 1; $.b = $.a; $.c = 3")).toEqual([
+    expect(mjsql("$.a = 1, $.b = $.a, $.c = 3")).toEqual([
       { $set: { a: 1 } },
       { $set: { b: "$a", c: 3 } },
     ]);
   });
 
-  it("trailing semicolon allowed", () => {
-    expect(mjsql("$.a = 1;")).toEqual({ $set: { a: 1 } });
-  });
-
   it("trailing comma allowed", () => {
     expect(mjsql("$.a = 1,")).toEqual({ $set: { a: 1 } });
-  });
-
-  it("mixed `;` and `,` separators", () => {
-    expect(mjsql("$.a = 1; $.b = 2, $.c = 3")).toEqual({
-      $set: { a: 1, b: 2, c: 3 },
-    });
   });
 });
 
@@ -267,29 +253,29 @@ describe("mutations: delete", () => {
   });
 
   it("two consecutive deletes coalesce into array form", () => {
-    expect(mjsql("delete $.a; delete $.b")).toEqual({ $unset: ["a", "b"] });
+    expect(mjsql("delete $.a, delete $.b")).toEqual({ $unset: ["a", "b"] });
   });
 
   it("three consecutive deletes coalesce", () => {
-    expect(mjsql("delete $.a; delete $.b; delete $.c")).toEqual({
+    expect(mjsql("delete $.a, delete $.b, delete $.c")).toEqual({
       $unset: ["a", "b", "c"],
     });
   });
 
   it("delete-then-assign breaks (kind change)", () => {
-    expect(mjsql("delete $.a; $.b = 1")).toEqual([{ $unset: "a" }, { $set: { b: 1 } }]);
+    expect(mjsql("delete $.a, $.b = 1")).toEqual([{ $unset: "a" }, { $set: { b: 1 } }]);
   });
 
   it("assign-then-delete breaks (kind change)", () => {
-    expect(mjsql("$.a = 1; delete $.b")).toEqual([{ $set: { a: 1 } }, { $unset: "b" }]);
+    expect(mjsql("$.a = 1, delete $.b")).toEqual([{ $set: { a: 1 } }, { $unset: "b" }]);
   });
 
   it("delete a path the prior assignment wrote splits", () => {
-    expect(mjsql("$.a = 1; delete $.a")).toEqual([{ $set: { a: 1 } }, { $unset: "a" }]);
+    expect(mjsql("$.a = 1, delete $.a")).toEqual([{ $set: { a: 1 } }, { $unset: "a" }]);
   });
 
   it("delete a child of an assigned parent splits", () => {
-    expect(mjsql("$.a = 1; delete $.a.b")).toEqual([{ $set: { a: 1 } }, { $unset: "a.b" }]);
+    expect(mjsql("$.a = 1, delete $.a.b")).toEqual([{ $set: { a: 1 } }, { $unset: "a.b" }]);
   });
 });
 
