@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate, mql } from "../src/index.ts";
+import { jsmql, validate } from "../src/index.ts";
 
 describe("pipeline detection", () => {
   it("compiles a single-stage pipeline as an array", () => {
@@ -233,11 +233,11 @@ describe("pipeline — error cases", () => {
   });
 });
 
-describe("pipeline — mql template tag", () => {
+describe("pipeline — jsmql template-tag form", () => {
   it("interpolates a value into a stage body", () => {
     const minAge = 18;
     const limit = 25;
-    expect(mql`[ { $match: $.age > ${minAge} }, { $limit: ${limit} } ]`).toEqual([
+    expect(jsmql`[ { $match: $.age > ${minAge} }, { $limit: ${limit} } ]`).toEqual([
       { $match: { $expr: { $gt: ["$age", 18] } } },
       { $limit: 25 },
     ]);

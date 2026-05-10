@@ -34,7 +34,7 @@ The package is published as ESM. Node 24+ supports [`require(esm)`](https://node
 ## Quick start
 
 ```js
-import { jsmql, validate, mql } from "jsmql";
+import { jsmql, validate } from "jsmql";
 
 // JS operators and method chains — function form (recommended)
 jsmql(($) => $.price >= 100 && $.stock > 0)
@@ -46,9 +46,9 @@ jsmql("$.price >= 100 && $.stock > 0")
 // Use in a $match stage
 db.products.aggregate([{ $match: { $expr: jsmql(($) => $.price >= 100) } }]);
 
-// Embed JS values with the template tag
+// Embed JS values with the template-tag form
 const minAge = 21;
-const filter = mql`$.age >= ${minAge} && $.active == true`;
+const filter = jsmql`$.age >= ${minAge} && $.active == true`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$active", true] }] }
 
 // Check syntax without throwing
@@ -234,7 +234,7 @@ See [docs/LANGUAGE.md#replacing-server-side-javascript](docs/LANGUAGE.md#replaci
 
 ## API
 
-### `jsmql(input: string | function): object | object[]`
+### `jsmql(input): object | object[]`
 
 Compiles your expression to MongoDB aggregation JSON. Throws a clear error if the input is invalid.
 
@@ -250,7 +250,9 @@ jsmql(($) => [{ $match: $.age > 18 }, { $project: { name: 1 } }]);
 // → [{ $match: { $expr: { $gt: ["$age", 18] } } }, { $project: { name: 1 } }]
 ```
 
-The function form accepts an **expression-body arrow function**:
+`jsmql` accepts three call shapes — pick whichever fits the moment:
+
+**1. Arrow function** (recommended for inline expressions):
 
 ```js
 jsmql(($) => $.age > 18);
@@ -259,35 +261,39 @@ jsmql(($, { $dateDiff }) =>
 );
 ```
 
-Behind the scenes, jsmql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error.
+Behind the scenes, jsmql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error. Compiled bodies are cached, so inline arrows in hot loops only compile once.
 
-Variables from outer scope don't survive `toString()` — use the `mql` template tag if you need closure values. Compiled bodies are cached, so inline arrows in hot loops only compile once.
+**2. String** (when the source comes from elsewhere):
 
-### `validate(input: string | function): { valid: boolean, errors: object[] }`
+```js
+jsmql("$.price >= 100 && $.stock > 0");
+```
 
-Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. `validate()` never throws — even on stack overflow or unexpected internal errors, you get a structured result describing the failure.
-
-Each error has `{ message: string, pos: number, code: "SYNTAX_ERROR" | "CODEGEN_ERROR" }`. `pos` is the character offset in the source (or `0` if not applicable).
-
-### `` mql`...` `` (template tag)
-
-A template tag for injecting JavaScript values into jsmql expressions. Each `${value}` is JSON-stringified and dropped into the expression source:
+**3. Template tag** (when you need to embed runtime values from outer scope):
 
 ```js
 const statuses = ["active", "pending"];
-mql`$.status in ${statuses}`;
+jsmql`$.status in ${statuses}`;
 // → { $in: ["$status", ["active", "pending"]] }
 ```
 
-Use it when you need values from outer scope inside a function-form expression — those values don't survive `Function.prototype.toString()`, but `mql` template-interpolation works fine.
+Each `${value}` is JSON-stringified and dropped into the expression source. Accepts strings, numbers, booleans, `null`, arrays, and plain objects. Anything else (`undefined`, functions, `Symbol`, `NaN`, `±Infinity`, `BigInt`, circular structures) throws `JsmqlInterpolationError` so you find out at the call site, not via a confusing parse error downstream.
 
-Accepts strings, numbers, booleans, `null`, arrays, and plain objects. Anything else (`undefined`, functions, `Symbol`, `NaN`, `±Infinity`, `BigInt`, circular structures) throws `MqlInterpolationError` so you find out at the call site, not via a confusing parse error downstream.
+The template-tag form is the right tool when the function form's `Function.prototype.toString()` would lose closure variables you need to embed.
+
+A wrong-shape input (e.g. `jsmql(42)`, `jsmql({})`) throws a `TypeError` naming the three accepted shapes.
+
+### `validate(input): { valid: boolean, errors: object[] }`
+
+Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` validate`$.x == ${val}` `` works the same as `validate("$.x == 1")`. `validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
+
+Each error has `{ message: string, pos: number, code: "SYNTAX_ERROR" | "CODEGEN_ERROR" }`. `pos` is the character offset in the source (or `0` if not applicable).
 
 ### Errors
 
 jsmql throws regular `Error` subclasses you can catch by class:
 
-- `MqlInterpolationError` — `mql\`\`` got a value it can't safely embed (see above).
+- `JsmqlInterpolationError` — the template-tag form got a value it can't safely embed (see above).
 - `FunctionInputError` — the function form got something it can't extract a body from (block body, `function` declaration, `async`).
 
 Parse and codegen failures throw plain `Error`s with descriptive messages.

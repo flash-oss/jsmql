@@ -85,7 +85,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 - Negatives: unknown stage with did-you-mean, mid-pipeline non-stage element, multi-key stage object.
 - Regression: plain value array `[1, 2, 3]` stays expression-mode.
 - `validate()` surfaces pipeline errors as `CODEGEN_ERROR`.
-- The `mql` template tag composes naturally.
+- The template-tag form of `jsmql` composes naturally.
 - Function-input form (`jsmql(($) => [ ... ])`).
 
 A realistic, multi-stage example also lives in [test/realistic.test.ts](../../test/realistic.test.ts) under "pipeline: top-orders report by department".

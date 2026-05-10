@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate, mql } from "../src/index.ts";
+import { jsmql, validate } from "../src/index.ts";
 
 // Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
@@ -389,22 +389,49 @@ describe("$cond", () => {
   });
 });
 
-describe("mql template tag", () => {
+describe("jsmql template-tag form", () => {
   it("interpolates number", () => {
     const age = 21;
-    expect(mql`$gt($.age, ${age})`).toEqual({ $gt: ["$age", 21] });
+    expect(jsmql`$gt($.age, ${age})`).toEqual({ $gt: ["$age", 21] });
   });
 
   it("interpolates array", () => {
     const statuses = ["active", "pending"];
-    expect(mql`$in($.status, ${statuses})`).toEqual({
+    expect(jsmql`$in($.status, ${statuses})`).toEqual({
       $in: ["$status", ["active", "pending"]],
     });
   });
 
   it("interpolates string", () => {
     const prefix = "admin";
-    expect(mql`$eq($.role, ${prefix})`).toEqual({ $eq: ["$role", "admin"] });
+    expect(jsmql`$eq($.role, ${prefix})`).toEqual({ $eq: ["$role", "admin"] });
+  });
+
+  it("works with no interpolations (template-tag detection survives empty values)", () => {
+    expect(jsmql`$.age > 18`).toEqual({ $gt: ["$age", 18] });
+  });
+});
+
+describe("jsmql() input-shape guard", () => {
+  it("throws TypeError with an actionable message for a number", () => {
+    expect(() => (jsmql as (x: unknown) => unknown)(42)).toThrow(TypeError);
+    expect(() => (jsmql as (x: unknown) => unknown)(42)).toThrow(
+      /string, an arrow function, or a template literal — got number/,
+    );
+  });
+
+  it("throws TypeError for null and reports it as 'null' (not 'object')", () => {
+    expect(() => (jsmql as (x: unknown) => unknown)(null)).toThrow(/got null/);
+  });
+
+  it("throws TypeError for a plain object", () => {
+    expect(() => (jsmql as (x: unknown) => unknown)({})).toThrow(/got object/);
+  });
+
+  it("validate() routes a wrong-typed input to a structured SYNTAX_ERROR (never throws)", () => {
+    const r = (validate as (x: unknown) => { valid: boolean; errors: { code: string }[] })(42);
+    expect(r.valid).toBe(false);
+    expect(r.errors[0]?.code).toBe("SYNTAX_ERROR");
   });
 });
 
@@ -2372,7 +2399,7 @@ describe("function overload", () => {
 
   it("the wrapper parameter is not bound inside the body — references resolve via $", () => {
     // `(doc) =>` is a typing/IDE hook only. Inside the body, `doc.foo` is treated as
-    // an unknown identifier (and the user gets pointed at `$.doc` and the mql tag).
+    // an unknown identifier (and the user gets pointed at `$.doc` and the jsmql tag).
     expect(() => jsmql((doc) => doc.foo)).toThrow(/Unknown identifier 'doc'/);
   });
 
@@ -2406,9 +2433,9 @@ describe("function overload", () => {
     expect(() => jsmql(async () => $.age > 18)).toThrow(/async/);
   });
 
-  it("appends an mql`` hint when an outer-scope identifier is referenced", () => {
+  it("appends a jsmql`` hint when an outer-scope identifier is referenced", () => {
     const minAge = 21; // referenced from the closure on purpose
-    expect(() => jsmql(($) => $.age > minAge)).toThrow(/mql`` template tag/);
+    expect(() => jsmql(($) => $.age > minAge)).toThrow(/jsmql`` template tag/);
   });
 
   it("validate() reports the augmented hint for closure refs", () => {
@@ -2417,7 +2444,7 @@ describe("function overload", () => {
     expect(r.valid).toBe(false);
     expect(r.errors[0]?.code).toBe("CODEGEN_ERROR");
     expect(r.errors[0]?.message).toMatch(/Unknown identifier 'minAge'/);
-    expect(r.errors[0]?.message).toMatch(/mql`` template tag/);
+    expect(r.errors[0]?.message).toMatch(/jsmql`` template tag/);
   });
 
   it("validate() reports SYNTAX_ERROR for an unsupported function shape", () => {

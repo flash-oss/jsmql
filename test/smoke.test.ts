@@ -43,15 +43,19 @@ describe("smoke: built dist", () => {
     "dist/index.js loads via ESM import and produces correct MQL",
     () => {
       const script = `
-        import { jsmql, validate, mql } from ${JSON.stringify(distUrl)};
+        import { jsmql, validate } from ${JSON.stringify(distUrl)};
         const out = jsmql("$.age > 18");
         if (JSON.stringify(out) !== '{"$gt":["$age",18]}') {
-          throw new Error("jsmql() output mismatch: " + JSON.stringify(out));
+          throw new Error("jsmql(string) output mismatch: " + JSON.stringify(out));
         }
         if (!validate("$.age > 18").valid) throw new Error("validate() failed");
-        const tag = mql\`$.x > \${5}\`;
+        const tag = jsmql\`$.x > \${5}\`;
         if (JSON.stringify(tag) !== '{"$gt":["$x",5]}') {
-          throw new Error("mql tag mismatch: " + JSON.stringify(tag));
+          throw new Error("jsmql template-tag mismatch: " + JSON.stringify(tag));
+        }
+        const fn = jsmql(($) => $.age > 18);
+        if (JSON.stringify(fn) !== '{"$gt":["$age",18]}') {
+          throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }
       `;
       const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {

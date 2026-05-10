@@ -23,10 +23,9 @@ jsmql("$.email.split('@').at(1).toLowerCase()");
 jsmql("$.prices.map(p => p * 1.1)");
 // → { $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } } }
 
-// With template tag (for embedded values)
-const { mql } = require("jsmql");
+// With the template-tag form of jsmql (for embedded values)
 const minAge = 21;
-mql`$.age >= ${minAge} && $.status == 'active'`;
+jsmql`$.age >= ${minAge} && $.status == 'active'`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$status", "active"] }] }
 ```
 
@@ -49,7 +48,7 @@ mql`$.age >= ${minAge} && $.status == 'active'`;
 13. [Mutations](#mutations)
 14. [Pipelines](#pipelines)
 15. [Function Form](#function-form)
-16. [Template Tag (`mql`)](#template-tag-mql)
+16. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
 17. [Validation](#validation)
 18. [Error Messages](#error-messages)
 19. [Examples](#examples)
@@ -1331,15 +1330,15 @@ Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-lev
 - **Arrow functions only.** `function` declarations are rejected. Use `() => …`.
 - **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`.
 - **No `async`, no generators.**
-- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Use the [`mql` template tag](#template-tag-mql) when you need to interpolate a value:
+- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Use the [template-tag form of `jsmql`](#template-tag-form-jsmql) when you need to interpolate a value:
   ```js
   const minAge = 21;
   jsmql(($) => $.age > minAge);   // ❌ error: Unknown identifier 'minAge'
-  mql`$.age > ${minAge}`;         // ✓ works — value is interpolated
+  jsmql`$.age > ${minAge}`;       // ✓ works — value is interpolated
   ```
 - **The wrapper's parameter is not bound inside the body.** `($) =>` is the recommended idiom because `$` is also the document context, but other names (`(doc) =>`) act as a typing/IDE hook only — `doc.foo` in the body resolves as an unknown identifier, not as `$.foo`.
 
-When an unknown identifier is encountered in the function-form path, the error message also points at the `mql` tag as the right tool for closure interpolation.
+When an unknown identifier is encountered in the function-form path, the error message also points at the template-tag form of `jsmql` as the right tool for closure interpolation.
 
 ### Escape-hatch operators (`$op` destructure)
 
@@ -1355,36 +1354,38 @@ The second parameter is types-only — the destructured names are typed as calla
 
 ---
 
-## Template Tag (`mql`)
+## Template-Tag Form (`` jsmql`…` ``)
 
-For expressions with embedded literal values, use the `mql` template tag:
+For expressions with embedded literal values, call `jsmql` as a template tag:
 
 ```js
-const { mql } = require("jsmql");
+const { jsmql } = require("jsmql");
 
 const minAge = 21;
-const expr = mql`$.age > ${minAge}`;
+const expr = jsmql`$.age > ${minAge}`;
 // → { $gt: ["$age", 21] }
 
 const statuses = ["active", "pending"];
-const expr2 = mql`$.status in ${statuses}`;
+const expr2 = jsmql`$.status in ${statuses}`;
 // → { $in: ["$status", ["active", "pending"]] }
 
 // Complex expression
-const expr3 = mql`$.age > ${21} && $.status in ${["active"]}`;
+const expr3 = jsmql`$.age > ${21} && $.status in ${["active"]}`;
 // → { $and: [{ $gt: ["$age", 21] }, { $in: ["$status", ["active"]] }] }
 ```
 
-Template values must be **literals** (numbers, strings, booleans, null, or arrays). Field references go in the template string:
+Template values must be **literals** (numbers, strings, booleans, null, arrays, or plain objects). Field references go in the template string:
 
 ```js
 // ✓ Correct
-mql`$.age > ${25}`
+jsmql`$.age > ${25}`
 
 // ❌ Wrong — can't interpolate field names as values
 const field = "age";
-mql`$.${field} > ${25}`  // syntax error
+jsmql`$.${field} > ${25}`  // syntax error
 ```
+
+`validate` is polymorphic in the same way, so `` validate`$.age > ${minAge}` `` works as the non-throwing counterpart.
 
 ---
 
@@ -1536,10 +1537,10 @@ jsmql("typeof $.value == 'string'")
 ### With Template Tag
 
 ```js
-const statusFilter = mql`$.status in ${["active", "pending"]}`;
+const statusFilter = jsmql`$.status in ${["active", "pending"]}`;
 // → { $in: ["$status", ["active", "pending"]] }
 
-const ageFilter = mql`$.age > ${21}`;
+const ageFilter = jsmql`$.age > ${21}`;
 // → { $gt: ["$age", 21] }
 
 // Combine using jsmql() for dynamic composition
@@ -1555,7 +1556,7 @@ For the full pros and cons of server-side JavaScript, see the [README](../README
 
 **jsmql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
 
-Each migration below shows the deprecated form on top, then the jsmql replacement in **string form** (`` mql`…` ``) and **function form** (`jsmql(($) => …)`).
+Each migration below shows the deprecated form on top, then the jsmql replacement in **template-tag form** (`` jsmql`…` ``) and **function form** (`jsmql(($) => …)`).
 
 ### `$function` — per-document JavaScript expression
 
@@ -1569,8 +1570,8 @@ Field arithmetic:
     lang: "js"
 } } } }
 
-// String form
-mql`{ doubled: $.qty * 2 }`;
+// Template-tag form
+jsmql`{ doubled: $.qty * 2 }`;
 
 // Function form
 jsmql(($) => ({ doubled: $.qty * 2 }));
@@ -1586,8 +1587,8 @@ Conditional reshaping:
     lang: "js"
 } }
 
-// String form
-mql`$.score > 100 ? "high" : "low"`;
+// Template-tag form
+jsmql`$.score > 100 ? "high" : "low"`;
 
 // Function form
 jsmql(($) => ($.score > 100 ? "high" : "low"));
@@ -1603,8 +1604,8 @@ String cleanup:
     lang: "js"
 } }
 
-// String form
-mql`$.email.toLowerCase().trim()`;
+// Template-tag form
+jsmql`$.email.toLowerCase().trim()`;
 
 // Function form
 jsmql(($) => $.email.toLowerCase().trim());
@@ -1618,8 +1619,8 @@ jsmql(($) => $.email.toLowerCase().trim());
 // Deprecated
 db.users.find({ $where: "function() { return this.age > 18; }" });
 
-// String form
-db.users.find({ $expr: mql`$.age > 18` });
+// Template-tag form
+db.users.find({ $expr: jsmql`$.age > 18` });
 
 // Function form
 db.users.find({ $expr: jsmql(($) => $.age > 18) });
@@ -1628,8 +1629,8 @@ db.users.find({ $expr: jsmql(($) => $.age > 18) });
 Inside an aggregation pipeline, you can use `$match` directly — jsmql wraps the body in `$expr` for you (see [Pipelines](#pipelines)):
 
 ```js
-// String form
-mql`[{ $match: $.age > 18 }]`;
+// Template-tag form
+jsmql`[{ $match: $.age > 18 }]`;
 // → [{ $match: { $expr: { $gt: ["$age", 18] } } }]
 
 // Function form
@@ -1653,8 +1654,8 @@ Most uses of `$accumulator` map to a built-in accumulator. Average:
         lang: "js"
 } } } }
 
-// String form
-mql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
+// Template-tag form
+jsmql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
 
 // Function form
 jsmql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
@@ -1663,8 +1664,8 @@ jsmql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 For accumulators that need custom state, `$reduce` handles the common shapes natively. Running min/max alongside count:
 
 ```js
-// String form
-mql`
+// Template-tag form
+jsmql`
   $.values.reduce(
     (acc, x) => ({
       min: acc.min == null ? x : (x < acc.min ? x : acc.min),

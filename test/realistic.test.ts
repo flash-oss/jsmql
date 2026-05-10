@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { jsmql, validate, mql } from "../src/index.ts";
+import { jsmql, validate } from "../src/index.ts";
 
 // ── E-commerce ────────────────────────────────────────────────────────────────
 
@@ -556,11 +556,11 @@ describe("access control: admin permission check", () => {
 
 // ── Template tag ──────────────────────────────────────────────────────────────
 
-describe("mql template tag: parameterised threshold query", () => {
+describe("jsmql template-tag form: parameterised threshold query", () => {
   it("interpolates JS values into a JS-syntax expression", () => {
     const minScore = 75;
     const passingGrades = ["A", "B"];
-    const result = mql`
+    const result = jsmql`
       $.score >= ${minScore} &&
       $.grade in ${passingGrades} &&
       $.submitted == true
@@ -934,7 +934,7 @@ describe("pipeline: top-orders report by department", () => {
   // pipeline reads like the JavaScript that built it. $match's body is
   // auto-wrapped in $expr because it isn't an object literal.
   it("authors a realistic multi-stage pipeline using JS-expression bodies", () => {
-    const result1 = mql`[
+    const result1 = jsmql`[
       $match($.status === "shipped" && $.placedAt >= "2026-01-01"),
       $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" }),
       $unwind($.buyer),
@@ -986,7 +986,7 @@ describe("pipeline: count orders by status per shop ($accumulator replacement)",
   // dispatches at evaluation time. The dead $arrayElemAt branch never runs
   // for this particular reducer, but the codegen stays type-agnostic.
   it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
-    const result1 = mql`[
+    const result1 = jsmql`[
       { $group: { _id: $.shopId, statuses: $push($.status) } },
       { $project: {
           counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})

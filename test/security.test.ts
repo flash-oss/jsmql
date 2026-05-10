@@ -1,51 +1,51 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate, mql, MqlInterpolationError } from "../src/index.ts";
+import { jsmql, validate, JsmqlInterpolationError } from "../src/index.ts";
 
-describe("mql interpolation guards", () => {
+describe("jsmql template-tag interpolation guards", () => {
   it("rejects undefined with a slot-pointing error", () => {
-    expect(() => mql`$.x == ${undefined}`).toThrow(MqlInterpolationError);
-    expect(() => mql`$.x == ${undefined}`).toThrow(/slot 1.*undefined/);
+    expect(() => jsmql`$.x == ${undefined}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x == ${undefined}`).toThrow(/slot 1.*undefined/);
   });
 
   it("rejects function values", () => {
     const fn = () => 1;
-    expect(() => mql`$.x == ${fn}`).toThrow(MqlInterpolationError);
+    expect(() => jsmql`$.x == ${fn}`).toThrow(JsmqlInterpolationError);
   });
 
   it("rejects Symbol values", () => {
-    expect(() => mql`$.x == ${Symbol("x")}`).toThrow(MqlInterpolationError);
+    expect(() => jsmql`$.x == ${Symbol("x")}`).toThrow(JsmqlInterpolationError);
   });
 
   it("rejects NaN, Infinity, -Infinity", () => {
-    expect(() => mql`$.x == ${NaN}`).toThrow(MqlInterpolationError);
-    expect(() => mql`$.x == ${Infinity}`).toThrow(MqlInterpolationError);
-    expect(() => mql`$.x == ${-Infinity}`).toThrow(MqlInterpolationError);
+    expect(() => jsmql`$.x == ${NaN}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x == ${Infinity}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x == ${-Infinity}`).toThrow(JsmqlInterpolationError);
   });
 
   it("rejects BigInt with a serialisation error", () => {
-    expect(() => mql`$.x == ${BigInt(1)}`).toThrow(MqlInterpolationError);
+    expect(() => jsmql`$.x == ${BigInt(1)}`).toThrow(JsmqlInterpolationError);
   });
 
   it("rejects circular objects", () => {
     const cyc: Record<string, unknown> = {};
     cyc.self = cyc;
-    expect(() => mql`$.x == ${cyc}`).toThrow(MqlInterpolationError);
+    expect(() => jsmql`$.x == ${cyc}`).toThrow(JsmqlInterpolationError);
   });
 
   it("reports the correct slot index", () => {
-    expect(() => mql`$.a == ${1} && $.b == ${undefined}`).toThrow(/slot 2/);
+    expect(() => jsmql`$.a == ${1} && $.b == ${undefined}`).toThrow(/slot 2/);
   });
 });
 
-describe("mql interpolation cannot inject syntax", () => {
+describe("jsmql template-tag interpolation cannot inject syntax", () => {
   it("breakout-attempt strings round-trip as literal values", () => {
     const evil = '"); $where: 1; (';
-    expect(mql`$eq($.field, ${evil})`).toEqual({ $eq: ["$field", evil] });
+    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $eq: ["$field", evil] });
   });
 
   it("backticks and template-style payloads stay literal", () => {
     const evil = "`${$.password}`";
-    expect(mql`$eq($.field, ${evil})`).toEqual({ $eq: ["$field", evil] });
+    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $eq: ["$field", evil] });
   });
 
   it("an object whose keys look like operators is emitted as data, not invoked", () => {
@@ -53,7 +53,7 @@ describe("mql interpolation cannot inject syntax", () => {
     // Interpolating the object lands inside a value position, so codegen treats
     // it as a plain object literal — keys become output keys, NOT operator dispatch.
     // (Operator dispatch is triggered by `$name(...)` call syntax in the source.)
-    const result = mql`$eq($.field, ${payload})` as { $eq: [string, unknown] };
+    const result = jsmql`$eq($.field, ${payload})` as { $eq: [string, unknown] };
     expect(result.$eq[0]).toEqual("$field");
     expect(result.$eq[1]).toEqual(payload);
   });
@@ -91,19 +91,15 @@ describe("recursion depth limits", () => {
 });
 
 describe("validate() error contract", () => {
-  it("never throws on BigInt-via-mql interpolation; returns structured error", () => {
-    // Build the source the way mql() would, but route through validate() to
-    // confirm validate's catch chain captures MqlInterpolationError. We can't
-    // call validate(mql\`...\`) because mql() throws synchronously before
-    // validate gets the string. Instead, use the same code path the user hits
-    // when mql is wrapped: validate of a function body that uses mql.
-    let thrown: unknown = null;
-    try {
-      mql`$.x == ${BigInt(1)}`;
-    } catch (e) {
-      thrown = e;
-    }
-    expect(thrown).toBeInstanceOf(MqlInterpolationError);
+  it("never throws on BigInt-via-template-tag interpolation; returns structured error", () => {
+    // Now that `validate` is itself polymorphic, the workaround the previous
+    // test had to dance around is gone — `validate` accepts the template-tag
+    // form directly and turns the JsmqlInterpolationError into a structured
+    // SYNTAX_ERROR, never throwing.
+    const result = validate`$.x == ${BigInt(1)}`;
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].code).toBe("SYNTAX_ERROR");
+    expect(result.errors[0].message).toMatch(/slot 1/);
   });
 
   it("turns RangeError into a structured SYNTAX_ERROR via the depth-limit path", () => {

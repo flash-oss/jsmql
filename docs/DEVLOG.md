@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Consolidated `mql` template tag into `jsmql`
+
+The public API had three exports — `jsmql()`, `validate()`, and `mql` — and forced two micro-decisions on every use: import which one, then call which one. `mql` and `jsmql` answered effectively the same question ("compile this to MQL"), and the only material difference was whether the source needed `${value}` interpolation. The DX cost showed up in three places: every doc had to teach two entry points, the function-form's outer-scope-identifier hint had to point users at the *other* export, and `validate(mql\`…\`)` was structurally impossible because `mql` threw synchronously before `validate` ever saw anything (the security suite carried a workaround comment for it).
+
+`jsmql` is now polymorphic over three call shapes — string, arrow function, and template tag — dispatched by a `TemplateStringsArray` discriminator (`Array.isArray(arg) && Array.isArray(arg.raw)`, the standard "tag vs. function call" pattern from chalk / styled-components / lit-html). `validate` got the same treatment, so `` validate`$.x == ${val}` `` works as the non-throwing counterpart and the security-test workaround collapsed to a one-liner. Two exports, one mental model. The interpolation safety net (`stringifyInterpolation`) is unchanged — it just runs from inside the `jsmql` dispatcher now instead of from a separate `mql` function. See [src/index.ts](../src/index.ts).
+
+Bundled into the same `feat!:` because they're all parts of one shape change: `MqlInterpolationError` was renamed to `JsmqlInterpolationError` (the "Mql" prefix referenced the going-away `mql` export and would have left an orphan name in the public API), and `jsmql()` got a top-level `TypeError` guard so wrong-shape inputs (`jsmql(42)`, `jsmql({})`, `jsmql(null)`) produce a one-sentence "expects a string, an arrow function, or a template literal — got X" instead of crashing deep inside the parser. `validate()` routes that `TypeError` to a structured `SYNTAX_ERROR`, parallel to the existing `RangeError` arm. Pre-1.0 with no published artifact, so the breaking-change cost is the import-line update and one test/doc sweep — paid once, in this commit.
+
+---
+
 ## 2026-05-10 — Renamed project from `mjsql` to `jsmql`
 
 The old name read phonetically as "MySQL" — a relational database the project has nothing to do with. That's a DX trap on first contact: the name should help a reader place the tool, not mislead them. `jsmql` reads as "JS → MQL", which is exactly what the compiler does (JavaScript-subset syntax in, MongoDB MQL JSON out), and grounds the name in MongoDB's actual term for its query language.

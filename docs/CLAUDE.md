@@ -14,7 +14,7 @@ Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples
 
 ## docs/LANGUAGE.md
 
-The canonical user-facing reference. It must stay in sync with `src/index.ts` exports and the behaviour of `jsmql()`, `validate()`, and `mql`.
+The canonical user-facing reference. It must stay in sync with `src/index.ts` exports and the behaviour of `jsmql()` and `validate()` (across all three call shapes — string, arrow, template tag).
 
 When you add a new operator or syntax feature, add a table row or code example here first (docs-driven), then implement it.
 

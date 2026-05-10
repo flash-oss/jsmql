@@ -3,15 +3,20 @@
 ## Pipeline
 
 ```
-jsmql(string | Function)
+jsmql(string | Function | TemplateStringsArray + values)
     │
     ▼
-Function-input adapter (src/index.ts)
-    Only when input is a function. Calls Function.prototype.toString(),
-    rejects non-arrow / async / generator / block-body shapes, splits on the
-    first `=>` and takes the right-hand side as the expression source.
-    Compiled bodies are cached LRU keyed on the extracted body string
-    (cache-key choice rationale: see below).
+Input dispatcher (src/index.ts)
+    Branches on the first argument:
+      - TemplateStringsArray (Array with .raw Array): joins strings with
+        JSON-stringified values (per-slot validation in
+        stringifyInterpolation()), then feeds the resulting source string
+        into the parser path.
+      - Function: calls Function.prototype.toString(), rejects non-arrow /
+        async / generator shapes, strips the parameter list at the first
+        `=>`, parses, and caches the result LRU keyed on the body string.
+      - String: parses directly.
+      - Anything else: throws TypeError naming the three accepted shapes.
     │
     ▼
 Lexer (src/lexer.ts)
@@ -89,16 +94,19 @@ type JsmqlOutput = object | object[];
 // see specs/aggregation-stages.md.
 
 jsmql(input: JsmqlInput): JsmqlOutput
-// Parses and transpiles. Throws LexError | ParseError | CodegenError | FunctionInputError.
-// For function input, the body is extracted (toString + arrow strip) and the result is cached.
+jsmql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
+// Polymorphic over three call shapes: string, arrow function, and template tag.
+// The template-tag form interpolates values via JSON.stringify (with validation —
+// see JsmqlInterpolationError below) and feeds the result into the same parser
+// path as the string form. Function input has its body extracted (toString +
+// arrow-list strip) and cached LRU. Throws LexError | ParseError | CodegenError
+// | FunctionInputError | JsmqlInterpolationError | TypeError.
 
 validate(input: JsmqlInput): ValidationResult
-// Same pipeline, but catches all errors and returns { valid, errors[] } instead.
-// Total — never throws (see error-mapping table below).
-
-mql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
-// Template tag. Interpolates values via JSON.stringify (with validation —
-// see MqlInterpolationError below), then calls jsmql().
+validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult
+// Same three call shapes as jsmql(), same pipeline — but catches all errors and
+// returns { valid, errors[] } instead. Total — never throws (see error-mapping
+// table below).
 ```
 
 ### Function-input cache
@@ -116,9 +124,10 @@ All errors are classes with a `.message` string. Positional errors also have `.p
 | `LexError` | `lexer.ts` | yes | |
 | `ParseError` | `parser.ts` | yes | |
 | `CodegenError` | `codegen.ts` | no | Includes pipeline-detection errors raised by `pipeline.ts`. |
-| `UnknownIdentifierError` | `codegen.ts` | no | Subclass of `CodegenError`. Carries `.identifier` so the function-input path can append an `mql` hint to the message. |
+| `UnknownIdentifierError` | `codegen.ts` | no | Subclass of `CodegenError`. Carries `.identifier` so the function-input path can append a `` jsmql`…` `` template-tag hint to the message. |
 | `FunctionInputError` | `index.ts` | no | Function source isn't a supported shape (block body, async, `function` keyword, missing `=>`). |
-| `MqlInterpolationError` | `index.ts` | no | Raised by the `mql` template tag when an interpolated value cannot be safely embedded as a JSON literal (function/Symbol/`undefined`, NaN/±Infinity, BigInt, circular refs). Carries `.slot: number` pointing to the offending interpolation slot. |
+| `JsmqlInterpolationError` | `index.ts` | no | Raised by the template-tag form of `jsmql` (and `validate`) when an interpolated value cannot be safely embedded as a JSON literal (function/Symbol/`undefined`, NaN/±Infinity, BigInt, circular refs). Carries `.slot: number` pointing to the offending interpolation slot. |
+| `TypeError` | `index.ts` | no | Raised by `jsmql()`'s top-level guard when the first argument isn't a string, function, or `TemplateStringsArray` (e.g. `jsmql(42)`, `jsmql({})`). |
 
 `validate()` maps errors as follows:
 
@@ -126,6 +135,6 @@ All errors are classes with a `.message` string. Positional errors also have `.p
 |---|---|---|
 | `LexError`, `ParseError` | `SYNTAX_ERROR` | original `.pos` |
 | `CodegenError` and subclasses | `CODEGEN_ERROR` | `0` |
-| `FunctionInputError`, `MqlInterpolationError` | `SYNTAX_ERROR` | `0` |
-| `RangeError` | `SYNTAX_ERROR` | `0` (defensive — should be unreachable now that the parser/codegen depth caps trip first) |
+| `FunctionInputError`, `JsmqlInterpolationError` | `SYNTAX_ERROR` | `0` |
+| `RangeError`, `TypeError` | `SYNTAX_ERROR` | `0` (`RangeError` is defensive — should be unreachable now that the parser/codegen depth caps trip first; `TypeError` comes from the top-level input-shape guard) |
 | anything else | `CODEGEN_ERROR` | `0` (wrapped as `internal error: …` to keep `validate()` total) |

@@ -24,19 +24,19 @@ export type ValidationResult = {
   errors: ValidationError[];
 };
 
-// Raised by the `mql` template tag when an interpolated value cannot be safely
-// embedded as a JSON literal. Covers the three cases JSON.stringify mishandles:
-// values it returns `undefined` for (functions, Symbols, plain `undefined`), the
-// non-finite numbers it silently coerces to `null` (NaN/Infinity/-Infinity), and
-// values it throws on (BigInt, circular references). Surfacing these as a
-// dedicated error means the caller learns about the problem at interpolation
-// time instead of getting a confusing parse error or silent data loss
-// downstream.
-export class MqlInterpolationError extends Error {
+// Raised by the template-tag invocation of `jsmql` when an interpolated value
+// cannot be safely embedded as a JSON literal. Covers the three cases
+// JSON.stringify mishandles: values it returns `undefined` for (functions,
+// Symbols, plain `undefined`), the non-finite numbers it silently coerces to
+// `null` (NaN/Infinity/-Infinity), and values it throws on (BigInt, circular
+// references). Surfacing these as a dedicated error means the caller learns
+// about the problem at interpolation time instead of getting a confusing parse
+// error or silent data loss downstream.
+export class JsmqlInterpolationError extends Error {
   readonly slot: number;
   constructor(message: string, slot: number) {
     super(message);
-    this.name = "MqlInterpolationError";
+    this.name = "JsmqlInterpolationError";
     this.slot = slot;
   }
 }
@@ -91,7 +91,30 @@ function cacheSet(body: string, compiled: JsmqlOutput): void {
   fnBodyCache.set(body, compiled);
 }
 
-export function jsmql(input: JsmqlInput): JsmqlOutput {
+// `jsmql` has three call shapes — string, arrow function, and template tag —
+// dispatched on the first argument. The template-tag form is detected by the
+// standard "frozen `TemplateStringsArray`" discriminator: an Array whose `raw`
+// property is also an Array. The current `JsmqlInput` excludes arrays, so this
+// check collides with nothing in the typed surface. Note: if `JsmqlInput` is
+// ever widened to include plain pipeline arrays, the discriminator must still
+// run first — `Array.isArray` alone would no longer disambiguate.
+function isTemplateStringsArray(x: unknown): x is TemplateStringsArray {
+  return Array.isArray(x) && Array.isArray((x as { raw?: unknown }).raw);
+}
+
+export function jsmql(input: JsmqlInput): JsmqlOutput;
+export function jsmql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
+export function jsmql(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
+  if (isTemplateStringsArray(input)) {
+    let src = "";
+    for (let i = 0; i < input.length; i++) {
+      src += input[i];
+      if (i < values.length) {
+        src += stringifyInterpolation(values[i], i + 1);
+      }
+    }
+    return lower(new Parser(src).parse());
+  }
   if (typeof input === "function") {
     const src = Function.prototype.toString.call(input).trim();
     const cached = cacheGet(src);
@@ -105,12 +128,31 @@ export function jsmql(input: JsmqlInput): JsmqlOutput {
     cacheSet(src, compiled);
     return compiled;
   }
-  return lower(new Parser(input).parse());
+  if (typeof input === "string") {
+    return lower(new Parser(input).parse());
+  }
+  // Polymorphism widens the runtime input space — without this guard, a
+  // wrong-typed call (e.g. `jsmql(42)`, `jsmql({})`) would crash deep inside
+  // the parser with a confusing message. DX priority #1 says vague errors are
+  // not acceptable, so name the contract here.
+  const ty = input === null ? "null" : typeof input;
+  throw new TypeError(
+    `jsmql() expects a string, an arrow function, or a template literal — got ${ty}.`,
+  );
 }
 
-export function validate(input: JsmqlInput): ValidationResult {
+export function validate(input: JsmqlInput): ValidationResult;
+export function validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult;
+export function validate(
+  input: JsmqlInput | TemplateStringsArray,
+  ...values: unknown[]
+): ValidationResult {
   try {
-    jsmql(input);
+    if (isTemplateStringsArray(input)) {
+      jsmql(input, ...values);
+    } else {
+      jsmql(input);
+    }
     return { valid: true, errors: [] };
   } catch (err) {
     if (err instanceof ParseError || err instanceof LexError) {
@@ -125,7 +167,7 @@ export function validate(input: JsmqlInput): ValidationResult {
         errors: [{ message: err.message, pos: 0, code: "CODEGEN_ERROR" }],
       };
     }
-    if (err instanceof FunctionInputError || err instanceof MqlInterpolationError) {
+    if (err instanceof FunctionInputError || err instanceof JsmqlInterpolationError) {
       return {
         valid: false,
         errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],
@@ -134,8 +176,10 @@ export function validate(input: JsmqlInput): ValidationResult {
     // RangeError is what V8 throws on stack overflow — caused by input shape,
     // so it belongs in the SYNTAX_ERROR bucket. Should be unreachable in
     // practice now that the parser/codegen depth limits trip first, but keep
-    // the catch as a belt-and-braces safeguard.
-    if (err instanceof RangeError) {
+    // the catch as a belt-and-braces safeguard. TypeError lands here too: it
+    // comes from `jsmql()`'s top-level guard rejecting a wrong-shape input,
+    // which is a "your input is wrong" failure from the caller's perspective.
+    if (err instanceof RangeError || err instanceof TypeError) {
       return {
         valid: false,
         errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],
@@ -152,19 +196,9 @@ export function validate(input: JsmqlInput): ValidationResult {
   }
 }
 
-export function mql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
-  let src = "";
-  for (let i = 0; i < strings.length; i++) {
-    src += strings[i];
-    if (i < values.length) {
-      src += stringifyInterpolation(values[i], i + 1);
-    }
-  }
-  return jsmql(src);
-}
-
-// Wrap JSON.stringify with the validation needed to keep the `mql` template
-// tag a safe boundary. Three failure modes that JSON.stringify quietly hides:
+// Wrap JSON.stringify with the validation needed to keep the template-tag
+// invocation of `jsmql` a safe boundary. Three failure modes that
+// JSON.stringify quietly hides:
 //   - returns `undefined` for unsupported value types (function/Symbol/the
 //     literal `undefined`); concatenating that into the source produces the
 //     bare text "undefined" which the parser then misreads as an identifier.
@@ -172,8 +206,8 @@ export function mql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlO
 //   - throws TypeError for BigInt values and circular references.
 function stringifyInterpolation(value: unknown, slot: number): string {
   if (typeof value === "number" && !Number.isFinite(value)) {
-    throw new MqlInterpolationError(
-      `mql interpolation slot ${slot}: ${value} is not a valid JSON value (NaN and ±Infinity have no JSON representation). Replace with null or a finite number.`,
+    throw new JsmqlInterpolationError(
+      `jsmql interpolation slot ${slot}: ${value} is not a valid JSON value (NaN and ±Infinity have no JSON representation). Replace with null or a finite number.`,
       slot,
     );
   }
@@ -182,15 +216,15 @@ function stringifyInterpolation(value: unknown, slot: number): string {
     json = JSON.stringify(value);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    throw new MqlInterpolationError(
-      `mql interpolation slot ${slot} could not be serialised: ${reason}`,
+    throw new JsmqlInterpolationError(
+      `jsmql interpolation slot ${slot} could not be serialised: ${reason}`,
       slot,
     );
   }
   if (json === undefined) {
     const ty = value === undefined ? "undefined" : typeof value;
-    throw new MqlInterpolationError(
-      `mql interpolation slot ${slot} has type '${ty}', which has no JSON representation. Pass a string, number, boolean, null, array, or plain object instead.`,
+    throw new JsmqlInterpolationError(
+      `jsmql interpolation slot ${slot} has type '${ty}', which has no JSON representation. Pass a string, number, boolean, null, array, or plain object instead.`,
       slot,
     );
   }
@@ -213,8 +247,8 @@ function augmentForFunctionInput(err: unknown): unknown {
   if (err instanceof UnknownIdentifierError) {
     err.message =
       `${err.message}\n` +
-      `If '${err.identifier}' is a value from outer scope, use the mql\`\` template tag: ` +
-      `mql\`… \${${err.identifier}} …\``;
+      `If '${err.identifier}' is a value from outer scope, use the jsmql\`\` template tag: ` +
+      `jsmql\`… \${${err.identifier}} …\``;
   }
   return err;
 }
