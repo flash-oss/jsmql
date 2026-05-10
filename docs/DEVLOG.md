@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
+
+Until now, `&&`/`||` compiled to `$and`/`$or` (which return *booleans*, not the operand value as JavaScript does), `!` compiled to `$not` over the raw value (using MQL truthiness), and `Boolean(x)` compiled to `$toBool` (where `""` is **truthy** in MongoDB). The result was a stealth gotcha: `$.building && $.building + ","` returned `true` instead of `"Acme,"`, and `[…].filter(Boolean)` kept empty strings. Both contradict the project's #1 pitch ("JS you already know"), so they had to go.
+
+The new codegen routes all of `&&`, `||`, `!`, `?:`, `Boolean()`, and the predicate-method bodies (`.filter`, `.find`, `.findLast`, `.findLastIndex`, `.some`, `.every`) through two helpers in [src/codegen.ts](../src/codegen.ts): `jsBool(value)` emits the JS-truthy check `{ $and: [{$ne:[v,null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }` (relying on type-bracketed `$ne` to handle cross-type comparisons safely), and `isProvablyBool(expr)` lets the codegen *elide* the wrap when the operand is already known to be a boolean (comparisons, `$and`/`$or` chains, `!x`, `BOOL_OUTPUT_OPS`-listed operators, `BOOL_RETURNING_METHODS`). All-bool chains keep emitting the cheap `$and: […]` / `$or: […]`; mixed chains fold right into operand-preserving `$cond` chains, with `$let` introduced only when the LHS is non-pure-ref non-bool (gensym'd against in-scope lambda params to avoid shadowing).
+
+Out of scope and deliberately deferred: NaN handling (MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison doesn't work; the only portable detection is per-value `$convert`-to-string, which would bloat every emitted wrapper — NaN is vanishingly rare in MongoDB data, so we accept the divergence and document it). Also out of scope: `$match: $expr` predicate position in [src/pipeline.ts](../src/pipeline.ts) — query-language semantics may want their own treatment, separate PR. Users who need MongoDB's raw semantics can call the operators directly: `$toBool($.x)`, `$op($and, …)` — those escapes are unaffected. Pre-1.0, so the breaking-change bar is "is the new behaviour the right one?" — and operand-preserving `&&`/`||` plus JS-faithful `Boolean` is unambiguously closer to the language we're claiming to ship.
+
+---
+
 ## 2026-05-10 — `scripts/merge-devlog.mjs`: auto-resolve DEVLOG merge conflicts
 
 Parallel-session work on this project hits the same papercut on every merge: each branch prepends a new entry to `docs/DEVLOG.md`, git can't pick a winner, and a human (or the agent) has to read both sides and stitch them back together. That manual stitch was costing minutes per merge — a tax that scales linearly with the number of in-flight branches.

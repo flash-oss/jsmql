@@ -343,6 +343,30 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 
 When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions: string and template literals, `String(x)` casts, `typeof x`, any `OperatorCall` in `STRING_OUTPUT_OPS`, any `MethodCall` to a method in `STRING_RETURNING_METHODS` — both sets are defined in `src/codegen.ts` — and recursively, a nested `+` chain with at least one string-producing operand.
 
+## JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
+
+The codegen helpers `jsBool(value)` and `isProvablyBool(expr)` (in `src/codegen.ts`) implement JavaScript's truthy/falsy rules over MQL primitives.
+
+- `jsBool(value)` emits `{ $and: [{$ne:[v,null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. `$ne` against `null` matches both null AND missing (MongoDB treats them equal in `$ne`); the cross-type `$ne` checks rely on type-bracketed comparison (e.g. `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. NaN is treated as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
+- `isProvablyBool(expr)` returns true when an AST node always compiles to a boolean MQL value: `BooleanLiteral`; `UnaryExpr` op `!`; comparison `BinaryExpr` (`==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in`); `&&` / `||` whose every operand is itself provably bool; `TypeCast` cast `Boolean`; `OperatorCall` whose name is in `BOOL_OUTPUT_OPS` (registry-driven); `MethodCall` whose name is in `BOOL_RETURNING_METHODS`. When true the codegen elides the `jsBool` wrap.
+
+**Codegen rules:**
+
+| Construct | Output |
+|---|---|
+| `Boolean(x)` | `jsBoolIfNeeded(x)` — bare value when `x` already bool |
+| `!x` | `{$not: jsBoolIfNeeded(x)}`; `!!x` peephole → `jsBool(x)` |
+| `a ? b : c` | `{$cond: [jsBoolIfNeeded(a), b, c]}` |
+| `a && b` (all-bool chain) | `{$and: [...operands]}` (cheap form) |
+| `a && b` (mixed chain, pure-ref or bool LHS) | `{$cond: [jsBoolIfNeeded(a), b, a]}` (operand-preserving) |
+| `a && b` (mixed chain, expensive LHS) | `$let` binds `_v = a`, then `$cond` on `$$_v` (no double-eval). `_v` gensyms against in-scope lambda params. |
+| `a \|\| b` | mirror of `&&` with `$cond` branches swapped |
+| `arr.filter(p)` etc. | predicate body wrapped in `jsBoolIfNeeded` |
+
+Direct operator escapes (`$toBool($.x)`, `$op($and, …)`, `$cond({…})`) bypass these wrappers — they are explicit MongoDB semantics.
+
+`a ?? b` keeps the existing `$ifNull` codegen — JS's `??` already matches MongoDB's null/undefined-fallback behaviour.
+
 ## `in` operator — RHS validation
 
 The `in` operator is parsed like any relational operator, but **codegen validates the right-hand side**: if the RHS is a scalar literal (`StringLiteral`, `NumberLiteral`, `BooleanLiteral`, `NullLiteral`), codegen throws:

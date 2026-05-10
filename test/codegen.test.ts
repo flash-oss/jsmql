@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { mjsql, validate, mql } from "../src/index.ts";
 
+// Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
+// (or missing), "", and 0 are falsy; everything else is truthy. Used in
+// expected outputs for `&&`, `||`, `!`, `?:`, `Boolean()`, and predicate-
+// method bodies wherever the operand is not provably boolean.
+const truthy = (v: unknown) => ({
+  $and: [{ $ne: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+});
+
 describe("basic literals", () => {
   it("passes number through", () => {
     expect(mjsql("$abs(42)")).toEqual({ $abs: 42 });
@@ -489,29 +497,64 @@ describe("comparison operators", () => {
 });
 
 describe("logical operators", () => {
-  it("&&", () => {
-    expect(mjsql("$.a && $.b")).toEqual({ $and: ["$a", "$b"] });
+  it("&& on field refs returns operand (JS semantics)", () => {
+    expect(mjsql("$.a && $.b")).toEqual({
+      $cond: [truthy("$a"), "$b", "$a"],
+    });
   });
-  it("||", () => {
-    expect(mjsql("$.a || $.b")).toEqual({ $or: ["$a", "$b"] });
+  it("|| on field refs returns operand (JS semantics)", () => {
+    expect(mjsql("$.a || $.b")).toEqual({
+      $cond: [truthy("$a"), "$a", "$b"],
+    });
   });
-  it("! unary", () => {
-    expect(mjsql("!$.active")).toEqual({ $not: "$active" });
+  it("&& on bool comparisons stays as $and (no operand-preservation needed)", () => {
+    expect(mjsql("$.a > 0 && $.b > 0")).toEqual({
+      $and: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
+    });
   });
-  it("!! double negation", () => {
-    expect(mjsql("!!$.active")).toEqual({ $not: { $not: "$active" } });
+  it("|| on bool comparisons stays as $or", () => {
+    expect(mjsql("$.a > 0 || $.b > 0")).toEqual({
+      $or: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
+    });
+  });
+  it("! unary uses JS truthiness", () => {
+    expect(mjsql("!$.active")).toEqual({ $not: truthy("$active") });
+  });
+  it("!! double negation peephole → jsBool (no $not-of-$not)", () => {
+    expect(mjsql("!!$.active")).toEqual(truthy("$active"));
+  });
+  it("! on a comparison elides the jsBool wrap", () => {
+    expect(mjsql("!($.a > 0)")).toEqual({ $not: { $gt: ["$a", 0] } });
+  });
+  it("&& with non-pure-ref LHS uses $let to bind once", () => {
+    expect(mjsql("($.a + $.b) && $.c")).toEqual({
+      $let: {
+        vars: { _v: { $add: ["$a", "$b"] } },
+        in: { $cond: [truthy("$$_v"), "$c", "$$_v"] },
+      },
+    });
+  });
+  it("|| short-circuit chain with default (user's idiom)", () => {
+    expect(mjsql('$.nickname || "anonymous"')).toEqual({
+      $cond: [truthy("$nickname"), "$nickname", "anonymous"],
+    });
   });
 });
 
 describe("ternary", () => {
-  it("basic ternary", () => {
+  it("basic ternary with bool condition (no jsBool wrap)", () => {
     expect(mjsql("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
       $cond: [{ $gte: ["$age", 18] }, "adult", "minor"],
     });
   });
-  it("nested ternary (right-associative)", () => {
+  it("ternary with non-bool condition wraps in jsBool", () => {
+    expect(mjsql('$.name ? "yes" : "no"')).toEqual({
+      $cond: [truthy("$name"), "yes", "no"],
+    });
+  });
+  it("nested ternary (right-associative) wraps each non-bool condition", () => {
     expect(mjsql("$.a ? 'x' : $.b ? 'y' : 'z'")).toEqual({
-      $cond: ["$a", "x", { $cond: ["$b", "y", "z"] }],
+      $cond: [truthy("$a"), "x", { $cond: [truthy("$b"), "y", "z"] }],
     });
   });
 });
@@ -549,11 +592,25 @@ describe("operator flattening", () => {
   it("* flattened to $multiply", () => {
     expect(mjsql("$.a * $.b * $.c")).toEqual({ $multiply: ["$a", "$b", "$c"] });
   });
-  it("&& flattened to $and", () => {
-    expect(mjsql("$.a && $.b && $.c")).toEqual({ $and: ["$a", "$b", "$c"] });
+  it("&& on bool comparisons flattened to $and", () => {
+    expect(mjsql("$.a > 0 && $.b > 0 && $.c > 0")).toEqual({
+      $and: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }, { $gt: ["$c", 0] }],
+    });
   });
-  it("|| flattened to $or", () => {
-    expect(mjsql("$.a || $.b || $.c")).toEqual({ $or: ["$a", "$b", "$c"] });
+  it("|| on bool comparisons flattened to $or", () => {
+    expect(mjsql("$.a > 0 || $.b > 0 || $.c > 0")).toEqual({
+      $or: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }, { $gt: ["$c", 0] }],
+    });
+  });
+  it("&& on non-bool operands folds right into nested $cond (operand-preserving)", () => {
+    expect(mjsql("$.a && $.b && $.c")).toEqual({
+      $cond: [truthy("$a"), { $cond: [truthy("$b"), "$c", "$b"] }, "$a"],
+    });
+  });
+  it("|| on non-bool operands folds right (operand-preserving)", () => {
+    expect(mjsql("$.a || $.b || $.c")).toEqual({
+      $cond: [truthy("$a"), "$a", { $cond: [truthy("$b"), "$b", "$c"] }],
+    });
   });
   it("?? flattened to $ifNull (4 operands)", () => {
     expect(mjsql("$.a ?? $.b ?? $.c ?? 0")).toEqual({ $ifNull: ["$a", "$b", "$c", 0] });
@@ -692,19 +749,19 @@ describe("operator precedence", () => {
       $add: ["$a", { $multiply: ["$b", "$c"] }],
     });
   });
-  it("comparison before &&", () => {
+  it("comparison before && (mixed-bool chain folds operand-preserving)", () => {
     expect(mjsql("$.age > 18 && $.active")).toEqual({
-      $and: [{ $gt: ["$age", 18] }, "$active"],
+      $cond: [{ $gt: ["$age", 18] }, "$active", { $gt: ["$age", 18] }],
     });
   });
   it("&& before ||", () => {
     expect(mjsql("$.a || $.b && $.c")).toEqual({
-      $or: ["$a", { $and: ["$b", "$c"] }],
+      $cond: [truthy("$a"), "$a", { $cond: [truthy("$b"), "$c", "$b"] }],
     });
   });
-  it("! before &&", () => {
+  it("! before && (LHS is provably bool, no $let)", () => {
     expect(mjsql("!$.a && $.b")).toEqual({
-      $and: [{ $not: "$a" }, "$b"],
+      $cond: [{ $not: truthy("$a") }, "$b", { $not: truthy("$a") }],
     });
   });
 });
@@ -945,9 +1002,9 @@ describe("array methods (with lambda)", () => {
 });
 
 describe("bare type-cast callbacks", () => {
-  it("filter(Boolean) drops falsy elements", () => {
+  it("filter(Boolean) drops JS-falsy elements", () => {
     expect(mjsql("$.items.filter(Boolean)")).toEqual({
-      $filter: { input: "$items", as: "v", cond: { $toBool: "$$v" } },
+      $filter: { input: "$items", as: "v", cond: truthy("$$v") },
     });
   });
   it("map(Number) coerces to double", () => {
@@ -960,19 +1017,19 @@ describe("bare type-cast callbacks", () => {
       $map: { input: "$xs", as: "v", in: { $toString: "$$v" } },
     });
   });
-  it("find(Boolean) returns first truthy element", () => {
+  it("find(Boolean) returns first JS-truthy element", () => {
     expect(mjsql("$.xs.find(Boolean)")).toEqual({
-      $arrayElemAt: [{ $filter: { input: "$xs", as: "v", cond: { $toBool: "$$v" } } }, 0],
+      $arrayElemAt: [{ $filter: { input: "$xs", as: "v", cond: truthy("$$v") } }, 0],
     });
   });
-  it("some(Boolean) is any-truthy", () => {
+  it("some(Boolean) is any-JS-truthy", () => {
     expect(mjsql("$.xs.some(Boolean)")).toEqual({
-      $anyElementTrue: { $map: { input: "$xs", as: "v", in: { $toBool: "$$v" } } },
+      $anyElementTrue: { $map: { input: "$xs", as: "v", in: truthy("$$v") } },
     });
   });
-  it("every(Boolean) is all-truthy", () => {
+  it("every(Boolean) is all-JS-truthy", () => {
     expect(mjsql("$.xs.every(Boolean)")).toEqual({
-      $allElementsTrue: { $map: { input: "$xs", as: "v", in: { $toBool: "$$v" } } },
+      $allElementsTrue: { $map: { input: "$xs", as: "v", in: truthy("$$v") } },
     });
   });
   it("flatMap(Number) survives the desugar", () => {
@@ -987,7 +1044,7 @@ describe("bare type-cast callbacks", () => {
   it("composes through chaining: filter(Boolean).join(' ')", () => {
     expect(mjsql('$.parts.filter(Boolean).join(" ")')).toEqual({
       $reduce: {
-        input: { $filter: { input: "$parts", as: "v", cond: { $toBool: "$$v" } } },
+        input: { $filter: { input: "$parts", as: "v", cond: truthy("$$v") } },
         initialValue: "",
         in: {
           $cond: [
@@ -1068,8 +1125,14 @@ describe("type casts", () => {
   it("String()", () => {
     expect(mjsql("String($.n)")).toEqual({ $toString: "$n" });
   });
-  it("Boolean()", () => {
-    expect(mjsql("Boolean($.x)")).toEqual({ $toBool: "$x" });
+  it("Boolean() uses JS truthy semantics (not MQL's $toBool)", () => {
+    expect(mjsql("Boolean($.x)")).toEqual(truthy("$x"));
+  });
+  it("Boolean() on a provably-bool value elides the wrap", () => {
+    expect(mjsql("Boolean($.x > 0)")).toEqual({ $gt: ["$x", 0] });
+  });
+  it("$toBool() direct operator escape preserves raw MongoDB semantics", () => {
+    expect(mjsql("$toBool($.x)")).toEqual({ $toBool: "$x" });
   });
   it("parseInt()", () => {
     expect(mjsql("parseInt($.s)")).toEqual({ $toInt: "$s" });
@@ -1192,8 +1255,12 @@ describe("bitwise infix operators", () => {
     });
   });
   it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
+    // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
     expect(mjsql("$.a | $.b && $.c")).toEqual({
-      $and: [{ $bitOr: ["$a", "$b"] }, "$c"],
+      $let: {
+        vars: { _v: { $bitOr: ["$a", "$b"] } },
+        in: { $cond: [truthy("$$_v"), "$c", "$$_v"] },
+      },
     });
   });
   it("== binds tighter than & (so a == b & c → (a == b) & c)", () => {
@@ -1264,21 +1331,21 @@ describe("immutable array methods", () => {
       },
     });
   });
-  it(".findLast(p) returns last matching element", () => {
+  it(".findLast(p) returns last matching element (predicate body wrapped in jsBool)", () => {
     expect(mjsql("$.items.findLast(x => x.active)")).toEqual({
       $arrayElemAt: [
         {
           $filter: {
             input: "$items",
             as: "x",
-            cond: "$$x.active",
+            cond: truthy("$$x.active"),
           },
         },
         -1,
       ],
     });
   });
-  it(".findLastIndex(p) reduces (idx, el) pairs", () => {
+  it(".findLastIndex(p) reduces (idx, el) pairs (predicate body wrapped in jsBool)", () => {
     expect(mjsql("$.items.findLastIndex(x => x.active)")).toEqual({
       $reduce: {
         input: {
@@ -1289,7 +1356,7 @@ describe("immutable array methods", () => {
           $let: {
             vars: { x: { $arrayElemAt: ["$$this", 1] } },
             in: {
-              $cond: ["$$x.active", { $arrayElemAt: ["$$this", 0] }, "$$value"],
+              $cond: [truthy("$$x.active"), { $arrayElemAt: ["$$this", 0] }, "$$value"],
             },
           },
         },
