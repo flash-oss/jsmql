@@ -234,12 +234,32 @@ function extractArrowBody(fn: (...args: any[]) => unknown): string {
   let body = src.slice(arrowIdx + 2).trim();
 
   if (body.startsWith("{")) {
-    throw new FunctionInputError(
-      "mjsql expects an expression-body arrow function, not a block body. " +
-        "Use `($) => EXPR`, not `($) => { return EXPR; }`",
-    );
+    // Block-body arrow: a sequence of mjsql statements separated by `;`,
+    // matching the implicit-pipeline form of the string input. We strip the
+    // outer braces and pass the inner content to the parser unchanged — `;`s
+    // inside the block are pipeline-stage separators, not formatter artifacts.
+    if (!body.endsWith("}")) {
+      throw new FunctionInputError(
+        "mjsql could not parse arrow body — expected `}` to close the block body",
+      );
+    }
+    const inner = body.slice(1, -1).trim();
+    // `return` is JavaScript control flow, not part of mjsql. Surface a clear
+    // error rather than the parser's "unknown identifier" message. The check
+    // is positional (preceded by start-of-input, whitespace, `;`, `{`, or `}`)
+    // so it doesn't false-match `return` inside identifiers.
+    if (/(?:^|[\s;{}])return\b/.test(inner)) {
+      throw new FunctionInputError(
+        "mjsql block-body arrows are a sequence of mjsql statements, not JavaScript control flow. Remove `return` — write the body as `;`-separated mjsql statements, or switch to an expression-body arrow `($) => EXPR`.",
+      );
+    }
+    return inner;
   }
 
+  // Expression-body arrow: trim trailing `;`s left by formatters. Stripping
+  // here keeps `($) => $.a = 1` (with an editor-added trailing `;`) from
+  // accidentally flipping into pipeline mode — single-statement expression
+  // arrows preserve their object-shaped output.
   while (body.endsWith(";")) body = body.slice(0, -1).trimEnd();
   return body;
 }

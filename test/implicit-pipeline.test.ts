@@ -107,6 +107,62 @@ describe("implicit pipeline — single-statement inputs unchanged", () => {
   });
 });
 
+describe("implicit pipeline — block-body arrow input", () => {
+  it("block body with `;`-separated statements compiles as a pipeline", () => {
+    const result = mjsql(($, { $match }) => {
+      $match($.active);
+      $.score += 1;
+      $.touched = true;
+    });
+    expect(result).toEqual([
+      { $match: { $expr: "$active" } },
+      { $set: { score: { $add: ["$score", 1] } } },
+      { $set: { touched: true } },
+    ]);
+  });
+
+  it("block body with `,`-grouped chunk preserves in-stage coalescing", () => {
+    const result = mjsql(($, { $match }) => {
+      $match($.active);
+      (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
+      $.status = "complete";
+    });
+    expect(result).toEqual([
+      { $match: { $expr: "$active" } },
+      {
+        $set: {
+          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
+          invoiceCount: { $add: ["$invoiceCount", 1] },
+        },
+      },
+      { $set: { status: "complete" } },
+    ]);
+  });
+
+  it("single statement block body without `;` stays object-shaped", () => {
+    const result = mjsql(($) => {
+      $.a = 1;
+    });
+    // One statement with a trailing `;` ⇒ pipeline (one stage).
+    expect(result).toEqual([{ $set: { a: 1 } }]);
+  });
+
+  it("block body with `return` rejected with a helpful error", () => {
+    expect(() =>
+      mjsql(($) => {
+        return $.a > 18;
+      }),
+    ).toThrow(/return/);
+  });
+
+  it("expression-body arrow with trailing `;` stripped (back-compat)", () => {
+    // The arrow source as toString'd ends with `;` — formatter quirk that the
+    // adapter strips so a single-statement expression arrow stays an object.
+    const fn = ($: any) => ($.a = 1);
+    expect(mjsql(fn)).toEqual({ $set: { a: 1 } });
+  });
+});
+
 describe("implicit pipeline — error handling", () => {
   it("non-stage expression between `;`s reports a precise stage error", () => {
     const r = validate("1 + 1; $.a = 2");

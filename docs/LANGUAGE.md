@@ -1255,10 +1255,33 @@ mjsql(($) =>
 
 **Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long mjsql expressions sit as one un-broken line. Wrapping the expression in a plain arrow function lets every JS formatter handle it for free — no plugin, no config.
 
+### Block-body arrows for pipelines
+
+A block-body arrow `($) => { stmt; stmt; }` is the function-form mirror of the implicit `;`-separated pipeline string form. The body is a sequence of mjsql statements separated by `;`, with `,` keeping its in-stage role:
+
+```js
+mjsql(($, { $match }) => {
+  $match($.status === "pending" && $.paidAt != null);
+  ($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1);
+  delete $.tempToken, delete $._processingState;
+  $.status = "complete";
+});
+// → [
+//     { $match: { $expr: { $and: […] } } },
+//     { $set: { lineTotal: …, invoiceCount: { $add: ["$invoiceCount", 1] } } },
+//     { $unset: ["tempToken", "_processingState"] },
+//     { $set: { status: "complete" } }
+//   ]
+```
+
+Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage mutation chain, identical to the string form.
+
+`return` is **not** part of mjsql — block bodies are statement lists, not JavaScript control flow. Using `return` inside a block-body arrow throws a clear `FunctionInputError` pointing at either the `;`-separated form or an expression-body arrow as alternatives.
+
 ### Restrictions
 
 - **Arrow functions only.** `function` declarations are rejected. Use `() => …`.
-- **Expression-body only.** `() => $.age > 18` works; `() => { return $.age > 18; }` does not.
+- **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`.
 - **No `async`, no generators.**
 - **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Use the [`mql` template tag](#template-tag-mql) when you need to interpolate a value:
   ```js

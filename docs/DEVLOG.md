@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Block-body arrows for the function-input form
+
+The `mjsql(($) => …)` adapter now accepts block-body arrows alongside expression bodies. The body inside `{ … }` is a sequence of mjsql statements separated by `;` — the function-form mirror of the implicit-pipeline string syntax shipped earlier today. This lets users author multi-stage pipelines as plain JS that prettier and oxfmt indent and line-break for free, without any `[…]` ceremony:
+
+```js
+mjsql(($, { $match }) => {
+  $match($.status === "pending" && $.paidAt != null);
+  ($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1);
+  delete $.tempToken, delete $._processingState;
+  $.status = "complete";
+});
+```
+
+`extractArrowBody` in `src/index.ts` strips the outer braces and passes the inner content unchanged. `;`s are preserved (they are the pipeline-stage separator); the existing trailing-`;` strip is now scoped to expression bodies only — single-statement expression arrows still produce object output.
+
+`return` inside a block body throws a precise `FunctionInputError` rather than the parser's "unknown identifier" message, pointing the user at the `;`-separated form or an expression-body arrow.
+
+**Tests.** Five new cases in `test/implicit-pipeline.test.ts` covering block-body arrows (multi-statement, comma-grouped chunks, single-statement, `return` rejection, and the expression-body trailing-`;` regression). One new realistic case in `test/realistic.test.ts` showing the block-body form compiling identically to the string form for the invoice-finalisation pipeline. Total 663 → 669.
+
+---
+
 ## 2026-05-10 — Implicit pipelines: `;` is a pipeline-stage separator, `,` is in-stage
 
 `;` and `,` were interchangeable mutation-chain separators. They are not anymore. The new rule:

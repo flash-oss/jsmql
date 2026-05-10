@@ -1051,6 +1051,27 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
     `);
     expect(implicit).toEqual(bracketed);
   });
+
+  // Same intent again, this time as a block-body arrow function. The body
+  // inside `{ … }` is a sequence of mjsql statements separated by `;`, with
+  // `,` keeping the in-stage role for mutations. The `($, { $match })`
+  // destructured second parameter is types-only — it just gives IDEs a place
+  // to hand `$match` to the user without complaining about an unknown name.
+  it("block-body arrow function compiles identically to the string forms", () => {
+    const stringForm = mjsql(`
+      $match($.status === 'pending' && $.paidAt != null);
+      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
+      delete $.tempToken, delete $._processingState;
+      $.status = 'complete'
+    `);
+    const implicitAsFunc = mjsql(($, { $match }) => {
+      $match($.status === "pending" && $.paidAt != null);
+      (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
+      (delete $.tempToken, delete $._processingState);
+      $.status = "complete";
+    });
+    expect(implicitAsFunc).toEqual(stringForm);
+  });
 });
 
 // ── validate() ────────────────────────────────────────────────────────────────
