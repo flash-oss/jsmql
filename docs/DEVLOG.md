@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Browser playground (`playground.html`)
+
+A single-file static playground at the repo root: vertical split with an mjsql input on the left and the compiled MQL JSON live-rendering on the right. Loads the local `dist/index.js` directly via `<script type="module">`, so there is no build step beyond `npm run build` and no bundler. Default expression is the README quick-start (`$.price >= 100 && $.stock > 0`) so first paint shows recognisable output.
+
+The render path uses `validate()` for the structured-error guarantee and only calls `mjsql()` once validation passes — that keeps the textarea handler `try/catch`-free and lets us show the error `code` and `pos` plainly. No debouncing: the parser/codegen run in microseconds and recompiling on every keystroke gives the most responsive feel.
+
+Browsers refuse to load ESM from `file://`, so the page must be served over HTTP — the README pointer mentions `python3 -m http.server` (the project bans `npx`, and that one-liner ships with macOS). Not added to `package.json` `files`: the playground is a contributor/demo tool, not part of the published npm artifact.
+
+---
+
 ## 2026-05-10 — `scripts/merge-devlog.mjs`: auto-resolve DEVLOG merge conflicts
 
 Parallel-session work on this project hits the same papercut on every merge: each branch prepends a new entry to `docs/DEVLOG.md`, git can't pick a winner, and a human (or the agent) has to read both sides and stitch them back together. That manual stitch was costing minutes per merge — a tax that scales linearly with the number of in-flight branches.
