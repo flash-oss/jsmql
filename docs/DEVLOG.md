@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-11 — Playground examples auto-synced from `test/realistic.test.ts`
+
+The playground's `<select>` examples were hand-curated from `test/realistic.test.ts` when the page was first added, but the test file kept growing and the playground drifted to a stale subset of 13 of the now-41 realistic cases. `scripts/sync-playground.mjs` closes the loop: it walks every top-level `describe` in `test/realistic.test.ts` via the TypeScript compiler API, extracts the first query inside each describe (string literal, template literal, tagged-template `mql`, or arrow-body — `mql` template interpolations are resolved against `const` declarations in the same `it()`), and rewrites two delimited regions in [playground.html](../playground.html) (`<!-- BEGIN/END GENERATED OPTIONS -->` and `<!-- BEGIN/END GENERATED EXAMPLES -->`). The `validate(): realistic error cases` block is skipped since those queries don't compile and have no MQL output to show.
+
+The script is wired into a PostToolUse hook in [.claude/settings.json](../.claude/settings.json) via [scripts/hook-post-edit-realistic.sh](../scripts/hook-post-edit-realistic.sh): whenever Claude Code's `Edit`/`Write`/`MultiEdit` touches `test/realistic.test.ts`, the script reruns and `git add`s the regenerated `playground.html` so it rides along with the test edit in a single commit. For non-Claude edits, run `npm run sync:playground` by hand. Idempotent: re-running with everything in sync is a no-op. Fails loudly (non-zero exit, clear message) when the markers are missing or a query can't be extracted — silent drift was the failure mode this change is trying to prevent.
+
+---
+
 ## 2026-05-10 — Renamed project from `mjsql` to `jsmql`
 
 The old name read phonetically as "MySQL" — a relational database the project has nothing to do with. That's a DX trap on first contact: the name should help a reader place the tool, not mislead them. `jsmql` reads as "JS → MQL", which is exactly what the compiler does (JavaScript-subset syntax in, MongoDB MQL JSON out), and grounds the name in MongoDB's actual term for its query language.

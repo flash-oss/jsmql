@@ -35,5 +35,18 @@
       "Bash(true:*)",
       "Bash(false:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/hook-post-edit-realistic.sh"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -21,7 +21,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:dist": "npm run build && vitest run test/smoke.test.ts",
-    "format": "oxfmt ."
+    "format": "oxfmt .",
+    "sync:playground": "node scripts/sync-playground.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
