@@ -529,6 +529,25 @@ $.numbers.reduce((acc, x) => acc + x, 0)
 
 **Note:** In `reduce`, the accumulator and element are mapped to MongoDB's `$$value` and `$$this` variables.
 
+### Bare type-cast callbacks
+
+`Boolean`, `Number`, and `String` can be passed bare as the callback to any of the lambda-taking array methods, just like in plain JavaScript:
+
+```js
+$.items.filter(Boolean)         // drop falsy values
+// → { $filter: { input: "$items", as: "v", cond: { $toBool: "$$v" } } }
+
+$.scores.map(Number)            // coerce strings to numbers
+// → { $map: { input: "$scores", as: "v", in: { $toDouble: "$$v" } } }
+
+[$.first, $.middle, $.last].filter(Boolean).join(" ")
+// composed display name, skipping missing parts
+```
+
+This is sugar for `x => Boolean(x)` / `x => Number(x)` / `x => String(x)`. Outside of a callback position the bare form errors at compile time — write `Boolean(x)` etc. to coerce a single value.
+
+**`parseInt` / `parseFloat` are intentionally not allowed bare.** In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its second (radix) argument. Rather than replicate the footgun, mjsql requires the call form: write `x => parseInt(x)` or `x => parseFloat(x)`.
+
 ### Set methods (ES2025)
 
 Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag — MQL has no Set type, so the underlying arrays go straight into the operator.

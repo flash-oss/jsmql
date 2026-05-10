@@ -313,6 +313,15 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "TypeCast":
       return generateTypeCast(expr.cast, expr.arg, ctx);
 
+    case "TypeCastRef":
+      // A bare `Boolean` / `Number` / `String` outside callback position.
+      // Inside `.filter(Boolean)` etc. this node is desugared away in
+      // requireLambda(); reaching this case means the user wrote it as a
+      // value (e.g. `Boolean + 5`), which has no MQL counterpart.
+      throw new CodegenError(
+        `'${expr.cast}' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.filter(${expr.cast})). To coerce a single value, write ${expr.cast}(value).`,
+      );
+
     case "MathCall":
       return generateMathCall(expr.method, expr.args, ctx);
 
@@ -1498,6 +1507,14 @@ function requireLambda(
   method: string,
 ): { type: "Lambda"; params: string[]; body: Expr } {
   const first = args[0];
+  // Bare type-cast callback: `.filter(Boolean)` desugars to `.filter(v => Boolean(v))`.
+  if (first?.type === "TypeCastRef") {
+    return {
+      type: "Lambda",
+      params: ["v"],
+      body: { type: "TypeCast", cast: first.cast, arg: { type: "ParamRef", name: "v" } },
+    };
+  }
   if (!first || first.type !== "Lambda") {
     throw new CodegenError(`.${method}() requires a lambda as its first argument, e.g. x => x > 0`);
   }
@@ -2100,6 +2117,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "ParamRef":
     case "MathConst":
     case "DateNow":
+    case "TypeCastRef":
       return;
     case "ArrayLiteral":
       for (const el of expr.elements) {

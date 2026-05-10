@@ -80,6 +80,8 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.flatMap(x => body)` | `$reduce` over `$map` (concatenating each element's mapped array) |
 | `.reduce((acc, x) => body, init)` | `{ $reduce: { input, initialValue: init, in: body } }` |
 
+**Bare type-cast callbacks.** All single-param lambda callbacks above also accept a bare `Boolean` / `Number` / `String` reference (`TypeCastRef` AST node) in place of a `Lambda`. `requireLambda()` in `codegen.ts` desugars `TypeCastRef { cast }` to a synthetic `Lambda { params: ["v"], body: TypeCast(cast, ParamRef("v")) }` before the per-method handler runs — so all eight handlers above support `.filter(Boolean)` etc. with no per-method changes. `.reduce()` rejects this through its existing 2-param check (synthetic lambda has 1 param). `parseInt`/`parseFloat` are deliberately not bare-callable; see [grammar.md](grammar.md#type-cast-call-vs-bare-reference).
+
 ### Date methods
 
 | Method | MQL output | Note |

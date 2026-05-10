@@ -944,6 +944,75 @@ describe("array methods (with lambda)", () => {
   });
 });
 
+describe("bare type-cast callbacks", () => {
+  it("filter(Boolean) drops falsy elements", () => {
+    expect(mjsql("$.items.filter(Boolean)")).toEqual({
+      $filter: { input: "$items", as: "v", cond: { $toBool: "$$v" } },
+    });
+  });
+  it("map(Number) coerces to double", () => {
+    expect(mjsql("$.nums.map(Number)")).toEqual({
+      $map: { input: "$nums", as: "v", in: { $toDouble: "$$v" } },
+    });
+  });
+  it("map(String) coerces to string", () => {
+    expect(mjsql("$.xs.map(String)")).toEqual({
+      $map: { input: "$xs", as: "v", in: { $toString: "$$v" } },
+    });
+  });
+  it("find(Boolean) returns first truthy element", () => {
+    expect(mjsql("$.xs.find(Boolean)")).toEqual({
+      $arrayElemAt: [{ $filter: { input: "$xs", as: "v", cond: { $toBool: "$$v" } } }, 0],
+    });
+  });
+  it("some(Boolean) is any-truthy", () => {
+    expect(mjsql("$.xs.some(Boolean)")).toEqual({
+      $anyElementTrue: { $map: { input: "$xs", as: "v", in: { $toBool: "$$v" } } },
+    });
+  });
+  it("every(Boolean) is all-truthy", () => {
+    expect(mjsql("$.xs.every(Boolean)")).toEqual({
+      $allElementsTrue: { $map: { input: "$xs", as: "v", in: { $toBool: "$$v" } } },
+    });
+  });
+  it("flatMap(Number) survives the desugar", () => {
+    expect(mjsql("$.xs.flatMap(Number)")).toEqual({
+      $reduce: {
+        input: { $map: { input: "$xs", as: "v", in: { $toDouble: "$$v" } } },
+        initialValue: [],
+        in: { $concatArrays: ["$$value", "$$this"] },
+      },
+    });
+  });
+  it("composes through chaining: filter(Boolean).join(' ')", () => {
+    expect(mjsql('$.parts.filter(Boolean).join(" ")')).toEqual({
+      $reduce: {
+        input: { $filter: { input: "$parts", as: "v", cond: { $toBool: "$$v" } } },
+        initialValue: "",
+        in: {
+          $cond: [
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", " ", { $toString: "$$this" }] },
+          ],
+        },
+      },
+    });
+  });
+  it("Boolean as a value (outside callback) errors with the call form suggested", () => {
+    expect(() => mjsql("Boolean + 5")).toThrow(/used as a value.*Boolean\(value\)/);
+  });
+  it("reduce(Boolean, 0) hits the existing 2-param error", () => {
+    expect(() => mjsql("$.xs.reduce(Boolean, 0)")).toThrow(/exactly 2 parameters/);
+  });
+  it("parseInt is intentionally not supported bare (avoids the JS index-as-radix footgun)", () => {
+    expect(() => mjsql("$.xs.filter(parseInt)")).toThrow(/Expected LParen/);
+  });
+  it("parseFloat is intentionally not supported bare", () => {
+    expect(() => mjsql("$.xs.filter(parseFloat)")).toThrow(/Expected LParen/);
+  });
+});
+
 describe("date methods", () => {
   it("getFullYear", () => {
     expect(mjsql("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
