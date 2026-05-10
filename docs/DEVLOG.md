@@ -106,6 +106,12 @@ Three additive enhancements to `playground.html` (initial entry below):
 
 ---
 
+## 2026-05-10 — Playground: highlight error position in the input editor
+
+When `validate()` returns a `SYNTAX_ERROR`, the playground now underlines the offending character in the input via `cm.markText`. The flat `pos` offset is converted with `cm.posFromIndex`; positions past end-of-input (the common case for unterminated expressions like `$.x &&`) are clamped back to the last character so the marker is always visible. `CODEGEN_ERROR` carries `pos: 0` as a placeholder rather than a real location, so the marker is suppressed in that branch — underlining the first character would be misleading.
+
+---
+
 ## 2026-05-10 — refactor: function-input parsing lives in `parser.ts`
 
 Same observable behaviour as the previous block-body-arrow entry; this is a code-organization fix. The earlier landing did the arrow-source work as string slicing + a regex `return` check inside `extractArrowBody` in `src/index.ts`. That belongs in the parser: arrow function syntax is grammar, not a runtime adapter concern, and the regex was fragile (it false-matched `return` inside string literals).

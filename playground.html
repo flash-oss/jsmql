@@ -171,6 +171,11 @@
       .panel.error .CodeMirror-line span {
         color: var(--error) !important;
       }
+
+      .cm-error-marker {
+        background: rgba(192, 57, 43, 0.18);
+        border-bottom: 2px solid var(--error);
+      }
     </style>
   </head>
   <body>
@@ -366,9 +371,31 @@
         return lines.map((l) => l.slice(minIndent)).join("\n");
       }
 
+      let errorMarker = null;
+      function clearErrorMarker() {
+        if (errorMarker) {
+          errorMarker.clear();
+          errorMarker = null;
+        }
+      }
+
+      function highlightErrorAt(pos) {
+        clearErrorMarker();
+        const src = inputCm.getValue();
+        if (src.length === 0) return;
+        // Clamp positions past end-of-input back to the last character so the
+        // marker is always visible (e.g. unterminated `$.x &&` points just
+        // beyond the source).
+        const safePos = Math.min(pos, src.length - 1);
+        const from = inputCm.posFromIndex(safePos);
+        const to = inputCm.posFromIndex(safePos + 1);
+        errorMarker = inputCm.markText(from, to, { className: "cm-error-marker" });
+      }
+
       function render() {
         const src = inputCm.getValue();
         if (src.trim() === "") {
+          clearErrorMarker();
           outputCm.setValue("");
           outputCm.setOption("mode", { name: "javascript", json: true });
           outputPanel.classList.remove("error");
@@ -376,12 +403,17 @@
         }
         const result = validate(src);
         if (result.valid) {
+          clearErrorMarker();
           const indent = prettify.checked ? 2 : 0;
           outputCm.setOption("mode", { name: "javascript", json: true });
           outputCm.setValue(JSON.stringify(mjsql(src), null, indent));
           outputPanel.classList.remove("error");
         } else {
           const e = result.errors[0];
+          // CODEGEN_ERROR carries pos: 0 as a placeholder, not a real
+          // location — only highlight when the position is meaningful.
+          if (e.code === "SYNTAX_ERROR") highlightErrorAt(e.pos);
+          else clearErrorMarker();
           outputCm.setOption("mode", null);
           outputCm.setValue(`${e.code} at position ${e.pos}\n\n${e.message}`);
           outputPanel.classList.add("error");
