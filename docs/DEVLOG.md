@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-10 — Playground: copy-to-clipboard button on the MQL output
+
+A small "Copy" button next to the Prettify checkbox writes the current MQL JSON to the clipboard via `navigator.clipboard.writeText`. Disabled (no-ops) when the output is empty or showing an error message — copying an error string would be a footgun. Brief inline feedback ("Copied!" / "Copy failed") replaces the label for 1.2 s after a click; a single shared timer is reset on each click so rapid presses don't leave the label stuck.
+
+---
+
 ## 2026-05-10 — Playground: highlight error position in the input editor
 
 When `validate()` returns a `SYNTAX_ERROR`, the playground now underlines the offending character in the input via `cm.markText`. The flat `pos` offset is converted with `cm.posFromIndex`; positions past end-of-input (the common case for unterminated expressions like `$.x &&`) are clamped back to the last character so the marker is always visible. `CODEGEN_ERROR` carries `pos: 0` as a placeholder rather than a real location, so the marker is suppressed in that branch — underlining the first character would be misleading.

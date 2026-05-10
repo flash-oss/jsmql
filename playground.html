@@ -135,6 +135,34 @@
         max-width: 320px;
       }
 
+      .label button {
+        font-family: inherit;
+        font-size: 11px;
+        text-transform: none;
+        letter-spacing: normal;
+        color: var(--fg);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 2px 8px;
+        cursor: pointer;
+      }
+
+      .label button:hover {
+        background: var(--bg);
+      }
+
+      .label button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .label .controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
       #output {
         flex: 1;
         min-height: 0;
@@ -229,7 +257,10 @@
       <section class="panel" id="output-panel">
         <div class="label">
           <span>MQL output (JSON)</span>
-          <label><input type="checkbox" id="prettify" checked /> Prettify</label>
+          <span class="controls">
+            <label><input type="checkbox" id="prettify" checked /> Prettify</label>
+            <button type="button" id="copy">Copy</button>
+          </span>
         </div>
         <div id="output"></div>
       </section>
@@ -337,6 +368,7 @@
       const outputPanel = document.getElementById("output-panel");
       const prettify = document.getElementById("prettify");
       const example = document.getElementById("example");
+      const copyBtn = document.getElementById("copy");
 
       const inputCm = CodeMirror.fromTextArea(inputEl, {
         mode: { name: "javascript" },
@@ -424,6 +456,22 @@
       prettify.addEventListener("change", render);
       example.addEventListener("change", () => {
         inputCm.setValue(loadExample(example.value));
+      });
+
+      let copyResetTimer = null;
+      copyBtn.addEventListener("click", async () => {
+        const text = outputCm.getValue();
+        if (text === "" || outputPanel.classList.contains("error")) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = "Copied!";
+        } catch {
+          copyBtn.textContent = "Copy failed";
+        }
+        clearTimeout(copyResetTimer);
+        copyResetTimer = setTimeout(() => {
+          copyBtn.textContent = "Copy";
+        }, 1200);
       });
 
       inputCm.setValue(loadExample(example.value));
