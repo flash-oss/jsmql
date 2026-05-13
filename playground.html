@@ -529,7 +529,7 @@
     <!-- END GENERATED EXAMPLES -->
 
     <script type="module">
-      import { jsmql, validate } from "./dist/index.js";
+      import { jsmql } from "./dist/index.js";
 
       const inputEl = document.getElementById("input");
       const outputEl = document.getElementById("output");
@@ -601,7 +601,7 @@
           outputPanel.classList.remove("error");
           return;
         }
-        const result = validate(src);
+        const result = jsmql.validate(src);
         if (result.valid) {
           clearErrorMarker();
           const indent = prettify.checked ? 2 : 0;
