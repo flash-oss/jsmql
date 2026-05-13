@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-13 — Playground examples move to a JSON manifest (dedup)
+
+`scripts/sync-playground.mjs` used to inline every realistic-test query into [playground.html](../playground.html) between `<!-- BEGIN/END GENERATED EXAMPLES -->` markers, plus a parallel `<!-- BEGIN/END GENERATED OPTIONS -->` block for the `<select>`. Each test case therefore appeared in two places (its `it()` body in `test/realistic.test.ts` and a `<script type="text/plain" data-ex>` in the HTML); the script's job was to keep them in sync. The HTML got long, every test-file edit produced a noisy `playground.html` diff alongside the test diff, and the duplication was load-bearing — the playground page read its examples from the inline `<script>` blocks rather than from the canonical test source.
+
+Replaced the inline copies with a sidecar JSON manifest. `sync-playground.mjs` now writes [playground-examples.json](../playground-examples.json) (an array of `{ slug, title, query }` objects) next to `playground.html`. The page fetches the manifest on load and populates the `<select>` and example map at runtime. The generated regions in `playground.html` are gone (file shrank from ~648 lines to ~387); a `git diff` after a test-file rename now touches the JSON manifest only. Same hook wiring as before — `scripts/hook-post-edit-realistic.sh` regenerates the manifest whenever Claude Code edits `test/realistic.test.ts`, and `git add`s the new file so it commits alongside the test change.
+
+Manual smoke after the move: `npm run sync:playground` produces a JSON manifest, `python3 -m http.server` then `playground.html` populates the dropdown and renders the selected example. The HTTP requirement is unchanged — the README already calls for a static server, and `fetch()` from `file://` was never going to work for the dist module either.
+
+---
+
 ## 2026-05-13 — `$match` emits index-friendly query docs by default
 
 A naïve `$match($.email === "alice")` used to compile to `{ $match: { $expr: { $eq: ["$email", "alice"] } } }`. The wrapping was correct MQL — and a silent performance cliff. MongoDB's planner won't use indexes inside `$expr`, so what looks like a one-field lookup becomes a collection scan. Users who hadn't read the MongoDB internals couldn't tell from the jsmql expression that anything was wrong.

@@ -218,51 +218,8 @@
           <span>jsmql input</span>
           <label
             >Examples
-            <select id="example">
-              <!-- BEGIN GENERATED OPTIONS -->
-              <option value="order-eligibility-for-free-shipping" selected>e-commerce: order eligibility for free shipping</option>
-              <option value="tiered-loyalty-discount-price">e-commerce: tiered loyalty discount price</option>
-              <option value="seasonal-discount-with-eligibility-check">e-commerce: seasonal discount with eligibility check</option>
-              <option value="discount-breakdown-via-iife-let">e-commerce: discount breakdown via IIFE → $let</option>
-              <option value="cart-subtotal">e-commerce: cart subtotal</option>
-              <option value="email-domain-extraction">user analytics: email domain extraction</option>
-              <option value="score-normalisation">user analytics: score normalisation</option>
-              <option value="age-decade-bucket">user analytics: age decade bucket</option>
-              <option value="days-since-last-login">user analytics: days since last login</option>
-              <option value="url-slug">content pipeline: URL slug</option>
-              <option value="full-display-name-skipping-missing-parts">content pipeline: full display name (skipping missing parts)</option>
-              <option value="lowercase-display-name">content pipeline: lowercase display name</option>
-              <option value="formatted-date-label">reporting: formatted date label</option>
-              <option value="days-since-document-was-created">reporting: days since document was created</option>
-              <option value="stock-status-label">inventory: stock status label</option>
-              <option value="reorder-alert">inventory: reorder alert</option>
-              <option value="invoice-line-total-with-compound-tax">financial: invoice line total with compound tax</option>
-              <option value="full-name-with-null-fallback">user display: full name with null fallback</option>
-              <option value="full-address-formatter">location: full address formatter</option>
-              <option value="csv-field-word-count">data quality: CSV field word count</option>
-              <option value="normalise-string-vs-number-field">data quality: normalise string vs number field</option>
-              <option value="admin-permission-check">access control: admin permission check</option>
-              <option value="parameterised-threshold-query">jsmql template-tag form: parameterised threshold query</option>
-              <option value="invoice-line-greeting-template-literal-optional-chain-startswith">invoice line greeting (template literal + optional chain + .startsWith)</option>
-              <option value="analytics-flatmap-math-max-gettime">analytics — flatMap + Math.max + .getTime</option>
-              <option value="shopping-cart-total-with-numeric-separators-reduce">shopping cart total with numeric separators + .reduce</option>
-              <option value="pivot-table-row-computed-keys-object-fromentries">pivot table row (computed keys + Object.fromEntries)</option>
-              <option value="flex-shape-accumulators-in-realistic-pipelines">flex-shape accumulators in realistic pipelines</option>
-              <option value="file-upload-validation-includes-on-array-literal-endswith-numeric-separator">file upload validation (.includes on array literal + .endsWith + numeric separator)</option>
-              <option value="score-range-with-spread-array-isarray-guard">score range with spread + Array.isArray guard</option>
-              <option value="moderator-membership-check-with-array-spread">moderator membership check with array spread</option>
-              <option value="days-since-event-date-now-gettime-numeric-separator">days since event (Date.now + .getTime + numeric separator)</option>
-              <option value="audit-log-line-template-literal-toisostring-charat-touppercase">audit log line (template literal + .toISOString + .charAt + .toUpperCase)</option>
-              <option value="tag-aggregation-flat-join">tag aggregation (.flat + .join)</option>
-              <option value="scientific-projection-math-hypot-math-log2-log10-math-sign-math-cbrt-math-pi-e">scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)</option>
-              <option value="dynamic-pivot-row-computed-key-in-literal-shorthand-property">dynamic pivot row (computed key in literal + shorthand property)</option>
-              <option value="annotated-insurance-underwriting-rule-and-comments">annotated insurance underwriting rule (// and /* */ comments)</option>
-              <option value="top-orders-report-by-department">pipeline: top-orders report by department</option>
-              <option value="order-pricing-with-let-bindings-commentary">pipeline: order pricing with let bindings + commentary</option>
-              <option value="count-orders-by-status-per-shop-accumulator-replacement">pipeline: count orders by status per shop ($accumulator replacement)</option>
-              <option value="invoice-finalisation-pipeline-mutations-match">e-commerce: invoice finalisation pipeline (mutations + $match)</option>
-              <option value="invoice-finalisation-pipeline-implicit-form">e-commerce: invoice finalisation pipeline (implicit `;` form)</option>
-              <!-- END GENERATED OPTIONS -->
+            <select id="example" disabled>
+              <option value="">loading examples…</option>
             </select>
           </label>
         </div>
@@ -286,247 +243,6 @@
         <div id="output"></div>
       </section>
     </main>
-
-    <!-- BEGIN GENERATED EXAMPLES -->
-    <script type="text/plain" data-ex="order-eligibility-for-free-shipping">
-      $.cart.total >= 50 &&
-      $.customer.status in ["premium", "gold", "platinum"] &&
-      $.cart.items.length < 20 &&
-      $.customer.region.trim().toLowerCase() === "us"
-    </script>
-
-    <script type="text/plain" data-ex="tiered-loyalty-discount-price">
-      $round(
-        $.price * (
-          $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :
-          $.loyalty.years >= 2 ? 0.92 : 1
-        ),
-        2
-      )
-    </script>
-
-    <script type="text/plain" data-ex="seasonal-discount-with-eligibility-check">
-      $.quantity > 1 && $.price >= 10 && $.category in ["sale", "clearance"]
-        ? $.price * 0.8
-        : $.price
-    </script>
-
-    <script type="text/plain" data-ex="discount-breakdown-via-iife-let">
-      ((discount) => ({
-        finalPrice: $.price - discount,
-        savings: discount,
-        savingsPercent: Math.round((discount / $.price) * 100),
-      }))($.price * (1 - $.loyalty.multiplier))
-    </script>
-
-    <script type="text/plain" data-ex="cart-subtotal">
-      $.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)
-    </script>
-
-    <script type="text/plain" data-ex="email-domain-extraction">
-      $.email.split("@").at(1).toLowerCase()
-    </script>
-
-    <script type="text/plain" data-ex="score-normalisation">
-      ($.score - $.minScore) / ($.maxScore - $.minScore) * 100
-    </script>
-
-    <script type="text/plain" data-ex="age-decade-bucket">
-      Math.floor($.age / 10) * 10
-    </script>
-
-    <script type="text/plain" data-ex="days-since-last-login">
-      Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)
-    </script>
-
-    <script type="text/plain" data-ex="url-slug">
-      String($.articleId) + "-" + $.title.toLowerCase().trim().replaceAll(" ", "-")
-    </script>
-
-    <script type="text/plain" data-ex="full-display-name-skipping-missing-parts">
-      [$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")
-    </script>
-
-    <script type="text/plain" data-ex="lowercase-display-name">
-      $toLower($.firstName + " " + $.lastName)
-    </script>
-
-    <script type="text/plain" data-ex="formatted-date-label">
-      $dateToString({ date: $.publishedAt, format: "%Y-%m-%d" }) ??
-      $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
-      "unknown"
-    </script>
-
-    <script type="text/plain" data-ex="days-since-document-was-created">
-      $dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })
-    </script>
-
-    <script type="text/plain" data-ex="stock-status-label">
-      $.stock >= $.reorderPoint ? "ok" : $.stock > 0 ? "low" : "out-of-stock"
-    </script>
-
-    <script type="text/plain" data-ex="reorder-alert">
-      !$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel
-    </script>
-
-    <script type="text/plain" data-ex="invoice-line-total-with-compound-tax">
-      $round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)
-    </script>
-
-    <script type="text/plain" data-ex="full-name-with-null-fallback">
-      $.firstName ?? $.aliases.at(0) ?? "anonymous"
-    </script>
-
-    <script type="text/plain" data-ex="full-address-formatter">
-      [$.building && $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
-        .filter(Boolean)
-        .join(" ")
-    </script>
-
-    <script type="text/plain" data-ex="csv-field-word-count">
-      $.tags.split(",").length
-    </script>
-
-    <script type="text/plain" data-ex="normalise-string-vs-number-field">
-      typeof $.value === "string" ? $.value.trim() : String($.value)
-    </script>
-
-    <script type="text/plain" data-ex="admin-permission-check">
-      $.active && $.role.toLowerCase().includes("admin") && $.name.trim().length > 0
-    </script>
-
-    <script type="text/plain" data-ex="parameterised-threshold-query">
-      $.score >= 75 &&
-      $.grade in ["A", "B"] &&
-      $.submitted === true
-    </script>
-
-    <script type="text/plain" data-ex="invoice-line-greeting-template-literal-optional-chain-startswith">
-      `Hi ${$.customer?.firstName ?? 'there'} — your ${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`
-    </script>
-
-    <script type="text/plain" data-ex="analytics-flatmap-math-max-gettime">
-      $.sessions
-        .flatMap(s => s.events)
-        .map(e => e.ts.getTime())
-        .reduce((acc, t) => Math.max(acc, t), 0)
-    </script>
-
-    <script type="text/plain" data-ex="shopping-cart-total-with-numeric-separators-reduce">
-      Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))
-    </script>
-
-    <script type="text/plain" data-ex="pivot-table-row-computed-keys-object-fromentries">
-      Object.fromEntries($.metrics.map(m => [m.name, m.value]))
-    </script>
-
-    <script type="text/plain" data-ex="flex-shape-accumulators-in-realistic-pipelines">
-      $round($sum($.lineTotal), 2)
-    </script>
-
-    <script type="text/plain" data-ex="file-upload-validation-includes-on-array-literal-endswith-numeric-separator">
-      [".jpg", ".png", ".pdf", ".docx"].includes($.file.ext.toLowerCase()) &&
-      $.file.name.endsWith($.file.ext) &&
-      $.file.size <= 25_000_000
-    </script>
-
-    <script type="text/plain" data-ex="score-range-with-spread-array-isarray-guard">
-      Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0
-    </script>
-
-    <script type="text/plain" data-ex="moderator-membership-check-with-array-spread">
-      [...$.moderators, ...$.room.mods, "root"].includes($.userId)
-    </script>
-
-    <script type="text/plain" data-ex="days-since-event-date-now-gettime-numeric-separator">
-      Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)
-    </script>
-
-    <script type="text/plain" data-ex="audit-log-line-template-literal-toisostring-charat-touppercase">
-      `${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`
-    </script>
-
-    <script type="text/plain" data-ex="tag-aggregation-flat-join">
-      $.posts.map(p => p.tags).flat().join(", ")
-    </script>
-
-    <script type="text/plain" data-ex="scientific-projection-math-hypot-math-log2-log10-math-sign-math-cbrt-math-pi-e">
-      {
-        distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),
-        octave: Math.log2($.frequency / 440),
-        decibels: Math.log10($.amplitude) * 20,
-        fovRad: $.fovDeg * Math.PI / 180,
-        growthFactor: Math.E ** $.rate,
-        trend: Math.sign($.delta),
-        cubeSide: Math.cbrt($.volume)
-      }
-    </script>
-
-    <script type="text/plain" data-ex="dynamic-pivot-row-computed-key-in-literal-shorthand-property">
-      $.products.map(p => ({ [p.category]: p.price, p }))
-    </script>
-
-    <script type="text/plain" data-ex="annotated-insurance-underwriting-rule-and-comments">
-      // age window: 25 to 70 inclusive
-      $.driver.age >= 25 && $.driver.age <= 70 &&
-
-      /* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */
-      $.policy.kmPerYear <= 30_000 &&
-
-      // hard-list occupations that bump the applicant to the high-risk tier
-      !($.driver.occupation in ["stunt-double", "test-pilot", "demolition-engineer"])
-    </script>
-
-    <script type="text/plain" data-ex="top-orders-report-by-department">
-      [
-            $match($.status === "shipped" && $.placedAt >= "2026-01-01"),
-            $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" }),
-            $unwind($.buyer),
-            $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) }),
-            $set({ avgOrder: $.revenue / $.orders }),
-            $sort({ revenue: -1 }),
-            $limit(3)
-          ]
-    </script>
-
-    <script type="text/plain" data-ex="order-pricing-with-let-bindings-commentary">
-      let subtotal = $.price * $.qty;       // sub-total before tax/shipping
-      let withTax  = subtotal * 1.2;        // with tax
-      let withShip = withTax + $.shipping;  // with tax and shipping
-      $project({ sku: 1, subtotal, withTax, final: withShip });
-    </script>
-
-    <script type="text/plain" data-ex="count-orders-by-status-per-shop-accumulator-replacement">
-      [
-            { $group: { _id: $.shopId, statuses: $push($.status) } },
-            { $project: {
-                counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
-            } }
-          ]
-    </script>
-
-    <script type="text/plain" data-ex="invoice-finalisation-pipeline-mutations-match">
-      [
-            $match($.status === 'pending' && $.paidAt != null),
-            $.lineTotal = $.qty * $.unitPrice,
-            $.invoiceCount += 1,
-            delete $.tempToken,
-            delete $._processingState,
-            $.status = 'complete'
-          ]
-    </script>
-
-    <script type="text/plain" data-ex="invoice-finalisation-pipeline-implicit-form">
-      [
-            $match($.status === 'pending' && $.paidAt != null),
-            $.lineTotal = $.qty * $.unitPrice,
-            $.invoiceCount += 1,
-            delete $.tempToken,
-            delete $._processingState,
-            $.status = 'complete'
-          ]
-    </script>
-    <!-- END GENERATED EXAMPLES -->
 
     <script type="module">
       import { jsmql } from "./dist/index.js";
@@ -554,21 +270,33 @@
         value: "",
       });
 
+      // Example queries live in test/realistic.test.ts. `scripts/sync-
+      // playground.mjs` extracts the first jsmql(...) call from each top-
+      // level describe and writes the result to playground-examples.json,
+      // which we fetch here at load time so there's only one copy of the
+      // queries in the repo.
+      const examples = new Map(); // slug → { title, query }
+
       function loadExample(key) {
-        const block = document.querySelector(`script[data-ex="${key}"]`);
-        if (!block) return "";
-        const raw = block.textContent.replace(/^\n/, "").replace(/\n\s*$/, "");
-        // The HTML formatter indents the contents of these blocks; strip the
-        // common leading-whitespace prefix so the example shows up unindented.
-        const lines = raw.split("\n");
-        let minIndent = Infinity;
-        for (const line of lines) {
-          if (line.trim() === "") continue;
-          const m = line.match(/^( *)/);
-          if (m) minIndent = Math.min(minIndent, m[1].length);
+        const e = examples.get(key);
+        return e ? e.query : "";
+      }
+
+      async function loadManifest() {
+        const res = await fetch("./playground-examples.json", { cache: "no-cache" });
+        if (!res.ok) throw new Error(`HTTP ${res.status} fetching playground-examples.json`);
+        const list = await res.json();
+        examples.clear();
+        const frag = document.createDocumentFragment();
+        for (const { slug, title, query } of list) {
+          examples.set(slug, { title, query });
+          const opt = document.createElement("option");
+          opt.value = slug;
+          opt.textContent = title;
+          frag.appendChild(opt);
         }
-        if (!Number.isFinite(minIndent) || minIndent === 0) return raw;
-        return lines.map((l) => l.slice(minIndent)).join("\n");
+        example.replaceChildren(frag);
+        example.disabled = false;
       }
 
       let errorMarker = null;
@@ -642,7 +370,17 @@
         }, 1200);
       });
 
-      inputCm.setValue(loadExample(example.value));
+      try {
+        await loadManifest();
+        inputCm.setValue(loadExample(example.value));
+      } catch (err) {
+        outputCm.setValue(
+          `Failed to load examples manifest:\n\n${err.message}\n\n` +
+            `The playground reads queries from playground-examples.json, generated by\n` +
+            `scripts/sync-playground.mjs. Run \`npm run sync:playground\` and reload.`,
+        );
+        outputPanel.classList.add("error");
+      }
     </script>
   </body>
 </html>
