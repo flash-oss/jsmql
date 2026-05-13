@@ -22,6 +22,16 @@ Test coverage in [test/codegen.test.ts](../test/codegen.test.ts) under the new `
 
 ---
 
+## 2026-05-14 — `tsconfig.test.json` so the IDE stops flagging `node:` imports in test files
+
+The root [tsconfig.json](../tsconfig.json) has `rootDir: "src"` and `include: ["src"]` because that's what the published build needs. Side effect: when the IDE opens a file under `test/`, the TypeScript language service decides the file doesn't belong to any project, falls back to inferred-project mode, and never auto-picks `@types/node`. Result is `TS2591: Cannot find name node:child_process` on every `import { spawnSync } from "node:child_process"` in `test/smoke.test.ts`, `test/operator-spec-coverage.test.ts`, etc. The IDE's own JS/TS resolver still finds the symbols, so hovers and completions work — but the module specifier sits there permanently red.
+
+Fix is a dedicated [tsconfig.test.json](../tsconfig.test.json) that extends the root config, covers `test/`, sets `noEmit: true`, and explicitly opts back out of TS 6's strict-by-default (`strict: false`, `noImplicitAny: false`, plus `types: ["node"]` since auto-include of `@types/*` doesn't always fire under `moduleResolution: "bundler"` when `types` is unset). Kept lenient on purpose — the goal is to scope test files into a project so `@types/node` resolves, not to start type-checking the test corpus, which has long-standing intentional patterns (e.g. `jsmql(() => $.age > 18)` references a `$` that only exists in the source-text view, not the JS scope) that wouldn't survive strict mode and aren't a real bug.
+
+`npm test` is unaffected — vitest does its own transpilation and doesn't look at this file. The only consumer is the IDE/editor TypeScript service. `scripts/*.mjs` weren't included because they're plain JS, not TS, so the original error never reached them.
+
+---
+
 ## 2026-05-13 — `$match` emits index-friendly query docs by default
 
 A naïve `$match($.email === "alice")` used to compile to `{ $match: { $expr: { $eq: ["$email", "alice"] } } }`. The wrapping was correct MQL — and a silent performance cliff. MongoDB's planner won't use indexes inside `$expr`, so what looks like a one-field lookup becomes a collection scan. Users who hadn't read the MongoDB internals couldn't tell from the jsmql expression that anything was wrong.

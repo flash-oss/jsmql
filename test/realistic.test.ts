@@ -1131,6 +1131,12 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
   // `;`. Inside one `;` chunk, `,` still groups mutations into one stage with
   // the usual kind / read-after-write splits.
   it("compiles `;`-separated stages identically to the bracketed form", () => {
+    const implicit = jsmql(`
+      $match($.status === 'pending' && $.paidAt != null);
+      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
+      delete $.tempToken, delete $._processingState;
+      $.status = 'complete'
+    `);
     const bracketed = jsmql(`[
       $match($.status === 'pending' && $.paidAt != null),
       $.lineTotal = $.qty * $.unitPrice,
@@ -1139,12 +1145,6 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
       delete $._processingState,
       $.status = 'complete'
     ]`);
-    const implicit = jsmql(`
-      $match($.status === 'pending' && $.paidAt != null);
-      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
-      delete $.tempToken, delete $._processingState;
-      $.status = 'complete'
-    `);
     expect(implicit).toEqual(bracketed);
   });
 
