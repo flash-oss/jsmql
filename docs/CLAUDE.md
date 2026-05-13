@@ -28,7 +28,8 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | How operator shapes work, how to add/modify entries |
 | `specs/method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
-| `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` `$expr`-wrap rule. |
+| `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body translation rule. |
+| `specs/match-query-translation.md` | The `$match` expression-body → query-language translator: full translation table, partial-extraction algorithm, the four documented divergences from aggregation `$eq`, and the `$match({ $expr: ... })` escape hatch. |
 | `specs/mutations.md` | Assignment (`=`, `+=`, `-=`, `*=`, `/=`) and `delete` statements: AST, target validation, coalescing into `$set`/`$unset` stages, pipeline integration. |
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`): AST, parser/codegen wiring, namespace storage under `__jsmql`, scope-reshaping stage rules, sub-pipeline isolation. |
 

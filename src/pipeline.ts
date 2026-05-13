@@ -13,10 +13,20 @@
 // not look like a stage, the array is left to the existing expression-mode
 // codegen (so `jsmql("[1, 2, 3]")` still compiles as a literal array).
 //
-// $match has a single special-case body lowering: an object-literal body is
-// treated as a raw MongoDB query document and passed through; any other
-// expression is wrapped in $expr so the user can write `{ $match: $.age > 18 }`
-// and get `{ $match: { $expr: { $gt: ["$age", 18] } } }`.
+// $match has a special-case body lowering with two layers:
+//   1. An object-literal body is treated as a raw MongoDB query document and
+//      passed through verbatim. This is the explicit escape hatch for users
+//      who want strict aggregation `$eq` semantics (`$match({ $expr: ... })`).
+//   2. An expression body goes through `translateMatchBody` (see
+//      `match-translation.ts`), which emits an index-friendly query document
+//      for the translatable subset (field-vs-literal comparisons combined
+//      with `&&`/`||`). Untranslatable sub-expressions are returned as a
+//      residual and wrapped in `$expr`, yielding e.g.
+//      `{ $match: { status: "active", $expr: <residual> } }` — indexes still
+//      apply to the `status` predicate.
+// See `docs/specs/match-query-translation.md` for the translation rules and
+// the four documented semantic divergences between query-language equality
+// and aggregation `$eq`.
 //
 // `let` bindings (see docs/specs/let-bindings.md) are pipeline-scoped local
 // variables that materialise under a single compiler-owned namespace field
@@ -28,7 +38,10 @@
 // drop the document and so drop all lets; later references become precise
 // "let X can't be read after $group" errors. Sub-pipelines (`$lookup.pipeline`,
 // `$unionWith.pipeline`, `$facet.*`) get a fresh empty let scope — outer lets
-// do not cross sub-pipeline boundaries in v1.
+// do not cross sub-pipeline boundaries in v1. The `$match` translator returns
+// AST residuals that the caller re-lowers; we re-lower them with the current
+// pipeline ctx so a let referenced inside an otherwise-translatable $match body
+// still resolves correctly.
 
 import type { Expr, ArrayElement, Mutation, Pipeline, LetDecl } from "./ast.ts";
 import {
@@ -45,6 +58,7 @@ import {
 } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
+import { translateMatchBody } from "./match-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -260,12 +274,20 @@ function lowerStageElement(el: ArrayElement, index: number, ctx: GenerateCtx): S
 }
 
 function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
-  // $match: ObjectLiteral body → raw query document; otherwise wrap in $expr.
+  // $match: ObjectLiteral body → raw query document (also the `$expr` escape
+  // hatch). Expression body → query-language translation with $expr fallback
+  // for residual sub-expressions. Residual lowering re-enters codegen with the
+  // pipeline ctx so a let referenced inside the residual still resolves to its
+  // namespace field path.
   if (stageName === "$match") {
     if (body.type === "ObjectLiteral") {
       return generateBodyObject(body, stageName, ctx);
     }
-    return { $expr: generateWithCtx(body, ctx) };
+    const t = translateMatchBody(body);
+    const queryEmpty = Object.keys(t.query).length === 0;
+    if (queryEmpty) return { $expr: generateWithCtx(body, ctx) };
+    if (t.residual === null) return t.query;
+    return { ...t.query, $expr: generateWithCtx(t.residual, ctx) };
   }
 
   // Other stages: if the body is an object literal, walk its entries so we

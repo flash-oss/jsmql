@@ -18,7 +18,7 @@ jsmql accepts two surface forms that both compile through `src/pipeline.ts`:
 1. **Bracketed `[…]`** — the long-standing form. `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent mutation elements **coalesce** through `generateMutationGroups`.
 2. **Implicit `;`-separated** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent mutation statements **never** coalesce across `;`.
 
-The two forms agree on stage shapes, the `$match` `$expr` wrap rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups mutations), `;` is a hard stage boundary.
+The two forms agree on stage shapes, the `$match` body translation rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups mutations), `;` is a hard stage boundary.
 
 ## Detection (bracketed form)
 
@@ -46,14 +46,14 @@ When `Parser.parse()` sees any `;` token at the top level, it returns a `Pipelin
 
 ## Lowering
 
-`generatePipeline(ast)` walks the array and emits a stage object per element via `generateStageBody(stageName, body)`. The single stage-aware transform is the **`$match` `$expr` wrap rule**:
+`generatePipeline(ast)` walks the array and emits a stage object per element via `generateStageBody(stageName, body)`. The single stage-aware transform is the **`$match` body translation rule** ([src/match-translation.ts](../../src/match-translation.ts), full rules in [match-query-translation.md](match-query-translation.md)):
 
-- `{ $match: <ObjectLiteral> }` → raw passthrough (interpreted as a MongoDB query document; the existing object-literal codegen produces the right shape verbatim).
-- `{ $match: <anything else> }` → `{ $match: { $expr: <generated body> } }`.
+- `{ $match: <ObjectLiteral> }` → raw passthrough (interpreted as a MongoDB query document; the existing object-literal codegen produces the right shape verbatim). This is also the explicit escape hatch: `$match({ $expr: $.foo === 5 })` forces strict aggregation `$eq` semantics.
+- `{ $match: <other expression> }` → `translateMatchBody(body)` returns a query-language fragment plus an optional residual. Fully-translatable bodies emit `{ $match: <queryDoc> }` (index-friendly). Partially-translatable bodies emit `{ $match: { ...<queryDoc>, $expr: <residual> } }` so the planner still uses indexes on the translatable half. Fully-untranslatable bodies emit `{ $match: { $expr: <body> } }`.
 
 For other stages, the body is generated with the existing `generate()` infrastructure, so accumulators (`$sum`, `$avg`, …), expression operators, field refs, and method chains all compose naturally inside stage bodies.
 
-`generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `MutationProgram` chunk goes through `generateMutationProgram` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` wrap rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so mutations on either side of a `;` never combine.
+`generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `MutationProgram` chunk goes through `generateMutationProgram` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` translation rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so mutations on either side of a `;` never combine.
 
 ## Sub-pipeline recursion
 
@@ -80,7 +80,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 
 - Each stage in stage-object and stage-call form, with assertions on exact MQL output.
 - Mixed-form pipelines.
-- `$match` auto-`$expr` wrap (expression body) and raw passthrough (object-literal body).
+- `$match` body translation (expression body) and raw passthrough (object-literal body). Full translation-rule coverage in [test/match-translation.test.ts](../../test/match-translation.test.ts).
 - Sub-pipeline recursion in `$lookup.pipeline`, `$unionWith.pipeline`, `$facet`.
 - Negatives: unknown stage with did-you-mean, mid-pipeline non-stage element, multi-key stage object.
 - Regression: plain value array `[1, 2, 3]` stays expression-mode.

@@ -22,10 +22,11 @@ describe("pipeline detection", () => {
 });
 
 describe("pipeline — stage-object form", () => {
-  it("$match with expression body wraps in $expr", () => {
-    expect(jsmql("[{ $match: $.age > 18 }]")).toEqual([
-      { $match: { $expr: { $gt: ["$age", 18] } } },
-    ]);
+  it("$match with translatable expression body emits an index-friendly query doc", () => {
+    // See `docs/specs/match-query-translation.md` for the full rules; cases
+    // that fall outside the translatable subset are exercised in
+    // `test/match-translation.test.ts`.
+    expect(jsmql("[{ $match: $.age > 18 }]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("$match with object-literal body passes through as raw query doc", () => {
@@ -81,8 +82,8 @@ describe("pipeline — stage-object form", () => {
 });
 
 describe("pipeline — stage-call form", () => {
-  it("$match expression body wraps in $expr", () => {
-    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { $expr: { $gt: ["$age", 18] } } }]);
+  it("$match expression body translates to a query doc", () => {
+    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("$match object-literal body is raw query doc", () => {
@@ -127,11 +128,7 @@ describe("pipeline — mixed forms", () => {
         $sort({ created: -1 }),
         { $limit: 25 }
       ]`),
-    ).toEqual([
-      { $match: { $expr: { $eq: ["$active", true] } } },
-      { $sort: { created: -1 } },
-      { $limit: 25 },
-    ]);
+    ).toEqual([{ $match: { active: true } }, { $sort: { created: -1 } }, { $limit: 25 }]);
   });
 
   it("the two forms produce identical output for the same stage", () => {
@@ -160,7 +157,7 @@ describe("pipeline — sub-pipelines", () => {
         $lookup: {
           from: "orders",
           let: { uid: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", 42] } } }, { $project: { total: 1 } }],
+          pipeline: [{ $match: { userId: 42 } }, { $project: { total: 1 } }],
           as: "userOrders",
         },
       },
@@ -199,7 +196,7 @@ describe("pipeline — sub-pipelines", () => {
       {
         $unionWith: {
           coll: "archive",
-          pipeline: [{ $match: { $expr: { $lt: ["$year", 2020] } } }],
+          pipeline: [{ $match: { year: { $lt: 2020 } } }],
         },
       },
     ]);
@@ -238,7 +235,7 @@ describe("pipeline — jsmql template-tag form", () => {
     const minAge = 18;
     const limit = 25;
     expect(jsmql`[ { $match: $.age > ${minAge} }, { $limit: ${limit} } ]`).toEqual([
-      { $match: { $expr: { $gt: ["$age", 18] } } },
+      { $match: { age: { $gt: 18 } } },
       { $limit: 25 },
     ]);
   });
@@ -248,10 +245,6 @@ describe("pipeline — function input", () => {
   it("compiles an arrow returning a pipeline", () => {
     expect(
       jsmql(($) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }]),
-    ).toEqual([
-      { $match: { $expr: { $eq: ["$active", true] } } },
-      { $sort: { created: -1 } },
-      { $limit: 10 },
-    ]);
+    ).toEqual([{ $match: { active: true } }, { $sort: { created: -1 } }, { $limit: 10 }]);
   });
 });

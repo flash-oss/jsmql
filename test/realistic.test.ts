@@ -931,8 +931,9 @@ describe("pipeline: top-orders report by department", () => {
   // size, then keep the top three departments by revenue. Stages use the
   // call form ($match(...), $unwind(...), …) and bodies use plain JS
   // expressions — comparison operators, field refs, arithmetic — so the
-  // pipeline reads like the JavaScript that built it. $match's body is
-  // auto-wrapped in $expr because it isn't an object literal.
+  // pipeline reads like the JavaScript that built it. The `$match` body is
+  // a translatable conjunction of field-vs-literal comparisons, so it
+  // emits an index-friendly query document instead of `$expr`.
   it("authors a realistic multi-stage pipeline using JS-expression bodies", () => {
     const result1 = jsmql`[
       $match($.status === "shipped" && $.placedAt >= "2026-01-01"),
@@ -955,11 +956,7 @@ describe("pipeline: top-orders report by department", () => {
 
     expect(result1).toEqual(result2);
     expect(result1).toEqual([
-      {
-        $match: {
-          $expr: { $and: [{ $eq: ["$status", "shipped"] }, { $gte: ["$placedAt", "2026-01-01"] }] },
-        },
-      },
+      { $match: { status: "shipped", placedAt: { $gte: "2026-01-01" } } },
       { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
       { $unwind: "$buyer" },
       { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
@@ -1107,13 +1104,7 @@ describe("e-commerce: invoice finalisation pipeline (mutations + $match)", () =>
     expect(result1).toEqual(result2);
 
     expect(result1).toEqual([
-      {
-        $match: {
-          $expr: {
-            $and: [{ $eq: ["$status", "pending"] }, { $ne: ["$paidAt", null] }],
-          },
-        },
-      },
+      { $match: { status: "pending", paidAt: { $ne: null } } },
       {
         $set: {
           lineTotal: { $multiply: ["$qty", "$unitPrice"] },

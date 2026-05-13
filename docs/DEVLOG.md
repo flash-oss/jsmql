@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-13 — `$match` emits index-friendly query docs by default
+
+A naïve `$match($.email === "alice")` used to compile to `{ $match: { $expr: { $eq: ["$email", "alice"] } } }`. The wrapping was correct MQL — and a silent performance cliff. MongoDB's planner won't use indexes inside `$expr`, so what looks like a one-field lookup becomes a collection scan. Users who hadn't read the MongoDB internals couldn't tell from the jsmql expression that anything was wrong.
+
+The new behaviour: when the `$match` body is a translatable predicate — field-vs-literal comparisons (`===`/`==`/`!==`/`!=`/`>`/`>=`/`<`/`<=`) combined with `&&` and `||` — it lowers to the query-document form (`{ email: "alice" }`, `{ age: { $gt: 18 } }`, `{ $or: [...] }`). Indexes work; the developer didn't have to know. When part of the predicate is translatable and part isn't, the translator extracts what it can and emits both: `{ status: "active", $expr: <residual> }`. The planner uses the `status` index, then evaluates the residual on the narrowed set. The fully-untranslatable path still wraps in `$expr` — methods, ternaries, field-to-field comparisons, computed values.
+
+Implementation in [src/match-translation.ts](../src/match-translation.ts); wired into the existing `$match` lowering in [src/pipeline.ts](../src/pipeline.ts). The query-language semantics differ from aggregation `$eq` in four ways (array-element matching, `$ne` and missing fields, field-to-field comparison, `=== null` matching missing) — these are documented and accepted as the right defaults; users who need strict aggregation `$eq` opt out via the existing object-literal body path (`$match({ $expr: <expr> })`). Full translation rules and rationale: [docs/specs/match-query-translation.md](specs/match-query-translation.md).
+
+Breaking output-shape change, locked in by tests in [test/pipeline.test.ts](../test/pipeline.test.ts), [test/realistic.test.ts](../test/realistic.test.ts), and the new [test/match-translation.test.ts](../test/match-translation.test.ts). Pre-1.0; the public API contract still cycles freely until the package commits to a 1.0.
+
+---
+
 ## 2026-05-13 — Pipeline-scoped `let` bindings
 
 Added `let <name> = <expr>;` as a new pipeline statement that materialises the value under a single compiler-owned namespace field (`__jsmql.<name>`) and gets auto-`$unset` at the end of the pipeline. The construct sits on top of the existing mutations machinery — every primitive needed was already in `src/pipeline.ts` and `src/codegen.ts` — and adds three things plain mutations don't give you: auto-cleanup (no manual `delete`), collision-safe storage (a real document field named `subtotal` is never clobbered), and bare-identifier reference at call sites (`subtotal` not `$.subtotal`, so scratch helpers read visually distinct from real fields). The motivating DX win turned out to be **comments**: `let x = $.a + $.b; // why this matters` puts each derived value on its own line with a natural one-liner intent comment, which the alternative `$.tmp = ...` form doesn't, because temps interleave with real-field writes.

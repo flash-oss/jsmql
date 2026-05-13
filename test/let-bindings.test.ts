@@ -109,7 +109,7 @@ describe("let bindings — bracketed pipeline form", () => {
     // each contribute their own stage. The trailing `$unset` is for the let,
     // not the mutation.
     expect(jsmql("[$match($.x > 0), let y = $.x * 2, $.flag = true, $sort({ y: 1 })]")).toEqual([
-      { $match: { $expr: { $gt: ["$x", 0] } } },
+      { $match: { x: { $gt: 0 } } },
       { $set: { "__jsmql.y": { $multiply: ["$x", 2] } } },
       { $set: { flag: true } },
       { $sort: { y: 1 } },
@@ -262,7 +262,7 @@ describe("let bindings — validate() integration", () => {
 describe("let bindings — does not affect pipelines without `let`", () => {
   it("a pipeline with no lets produces no __jsmql trace and no trailing $unset", () => {
     expect(jsmql("$match($.x > 0); $sort({ x: 1 })")).toEqual([
-      { $match: { $expr: { $gt: ["$x", 0] } } },
+      { $match: { x: { $gt: 0 } } },
       { $sort: { x: 1 } },
     ]);
   });
@@ -542,13 +542,13 @@ describe("let bindings — multi-stage visibility", () => {
     expect(result).toHaveLength(12); // 10 $set + 1 $match + 1 $unset
     expect(result[0]).toEqual({ $set: { "__jsmql.v0": 0 } });
     expect(result[9]).toEqual({ $set: { "__jsmql.v9": 9 } });
-    expect(result[10]).toEqual({ $match: { $expr: { $gt: ["$a", 0] } } });
+    expect(result[10]).toEqual({ $match: { a: { $gt: 0 } } });
     expect(result[11]).toEqual({ $unset: "__jsmql" });
   });
 
   it("a let between two real stages is bound in the right place", () => {
     expect(jsmql("$match($.x > 0); let s = $.a + $.b; $sort({ x: 1 }); $project({ s })")).toEqual([
-      { $match: { $expr: { $gt: ["$x", 0] } } },
+      { $match: { x: { $gt: 0 } } },
       { $set: { "__jsmql.s": { $add: ["$a", "$b"] } } },
       { $sort: { x: 1 } },
       { $project: { s: "$__jsmql.s" } },
