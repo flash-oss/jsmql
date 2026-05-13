@@ -102,12 +102,22 @@ jsmql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
 // arrow-list strip) and cached LRU. Throws LexError | ParseError | CodegenError
 // | FunctionInputError | JsmqlInterpolationError | TypeError.
 
-validate(input: JsmqlInput): ValidationResult
-validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult
+jsmql.compile<P>(fn: (params: P, $?, ops?) => unknown): (params: P) => JsmqlOutput
+// Parse once, bind many. The arrow's first slot is a destructure pattern naming
+// the parameter bindings; the returned callable inlines fresh values from the
+// params object into the AST on each call (no re-parse). Output shape matches
+// the template-tag form — values appear as JSON literals, never wrapped in
+// $let. See specs/function-form-params.md.
+
+jsmql.validate(input: JsmqlInput): ValidationResult
+jsmql.validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult
 // Same three call shapes as jsmql(), same pipeline — but catches all errors and
 // returns { valid, errors[] } instead. Total — never throws (see error-mapping
-// table below).
+// table below). The compile-form path stays throw-style; there is intentionally
+// no `jsmql.validate.compile`.
 ```
+
+The three entries are attached to `jsmql` via `Object.assign` (the strippable-TS rule in [src/CLAUDE.md](../../src/CLAUDE.md) forbids `namespace` declarations). The pre-1.0 import surface moved from `{ jsmql, validate } from "jsmql"` to `{ jsmql } from "jsmql"` with `validate` reachable as `jsmql.validate`.
 
 ### Function-input cache
 

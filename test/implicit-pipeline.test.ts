@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate } from "../src/index.ts";
+import { jsmql } from "../src/index.ts";
 
 // `;` at top level is the implicit pipeline-stage separator. Each `;`-separated
 // chunk becomes its own stage(s) with no cross-coalescing — in contrast to the
@@ -162,13 +162,13 @@ describe("implicit pipeline — block-body arrow input", () => {
 
 describe("implicit pipeline — error handling", () => {
   it("non-stage expression between `;`s reports a precise stage error", () => {
-    const r = validate("1 + 1; $.a = 2");
+    const r = jsmql.validate("1 + 1; $.a = 2");
     expect(r.valid).toBe(false);
     expect(r.errors[0].message).toMatch(/not a recognised stage|not a known aggregation stage/);
   });
 
   it("typo in stage name suggests the closest match", () => {
-    const r = validate("$macth($.a); $.b = 1");
+    const r = jsmql.validate("$macth($.a); $.b = 1");
     expect(r.valid).toBe(false);
     expect(r.errors[0].message).toMatch(/\$match/);
   });

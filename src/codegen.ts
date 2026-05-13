@@ -51,6 +51,16 @@ export type GenerateCtx = {
    * the generic "unknown identifier" fallback.
    */
   droppedLets?: ReadonlyMap<string, string>;
+  /**
+   * Function-form parameter bindings in scope. Key is the destructured binding
+   * name; value is the raw JS value supplied at call time (already validated
+   * JSON-safe by `validateInterpolatable`). A `ParamRef` whose name lives here
+   * emits the value as an inline literal in the MQL output — the same shape
+   * the template-tag form produces from `${value}` interpolation. Bindings
+   * are *compile-time constants*, not document state, so unlike `pipelineLets`
+   * they cross sub-pipeline boundaries; `freshSubPipelineCtx` preserves them.
+   */
+  bindings?: ReadonlyMap<string, unknown>;
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -61,6 +71,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     reduceRemap: ctx.reduceRemap,
     pipelineLets: ctx.pipelineLets,
     droppedLets: ctx.droppedLets,
+    bindings: ctx.bindings,
   };
 }
 
@@ -84,9 +95,24 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
   return (ctx.pipelineLets?.size ?? 0) > 0;
 }
 
-/** Construct a fresh ctx for sub-pipeline lowering. Outer lets do NOT cross. */
-export function freshSubPipelineCtx(): GenerateCtx {
-  return { lambdaParams: new Set() };
+/**
+ * Construct a fresh ctx for sub-pipeline lowering. Outer `let` bindings do NOT
+ * cross — they're per-document state and the sub-pipeline starts against a
+ * different document (e.g. `$lookup.pipeline` runs against the foreign
+ * collection). Function-form `bindings` DO cross: they are compile-time
+ * constants, not document state, and inlining them inside a sub-pipeline is
+ * the same shape as the user writing the literal there directly.
+ */
+export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
+  return { lambdaParams: new Set(), bindings: outer.bindings };
+}
+
+/** Return a fresh ctx with the given function-form parameter bindings applied. */
+export function withBindings(
+  ctx: GenerateCtx,
+  bindings: ReadonlyMap<string, unknown>,
+): GenerateCtx {
+  return { ...ctx, bindings };
 }
 
 /** Public re-export of EMPTY_CTX for pipeline.ts. */
@@ -427,6 +453,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       );
 
     case "ParamRef": {
+      // Resolution order (innermost wins):
+      //   1. `.reduce()` parameter remap (renamed to MQL's fixed $$value/$$this)
+      //   2. lambda parameter — emit `$$name`
+      //   3. pipeline `let` binding — emit `$<fieldPath>` (document field)
+      //   4. function-form parameter binding — emit the inlined literal value
+      //   5. dropped let — precise post-reshape error
+      //   6. otherwise — unknown identifier
+      // (3) and (4) are name-disjoint by construction (pipeline.ts rejects a
+      //  `let` that shadows a function-form binding), so their relative order
+      //  affects only the error path, not correctness for valid programs.
       if (ctx.reduceRemap?.has(expr.name)) {
         return `$$${ctx.reduceRemap.get(expr.name)!}`;
       }
@@ -436,6 +472,9 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       const letPath = ctx.pipelineLets?.get(expr.name);
       if (letPath !== undefined) {
         return `$${letPath}`;
+      }
+      if (ctx.bindings?.has(expr.name)) {
+        return ctx.bindings.get(expr.name);
       }
       const droppedBy = ctx.droppedLets?.get(expr.name);
       if (droppedBy !== undefined) {

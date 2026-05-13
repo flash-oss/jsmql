@@ -34,7 +34,7 @@ The package is published as ESM. Node 24+ supports [`require(esm)`](https://node
 ## Quick start
 
 ```js
-import { jsmql, validate } from "jsmql";
+import { jsmql } from "jsmql";
 
 // JS operators and method chains — function form (recommended)
 jsmql(($) => $.price >= 100 && $.stock > 0)
@@ -51,8 +51,16 @@ const minAge = 21;
 const filter = jsmql`$.age >= ${minAge} && $.active == true`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$active", true] }] }
 
+// Compile once, bind many — for queries that run repeatedly with different values
+const eligible = jsmql.compile(
+  ({ minAge, region }, $, { $match }) =>
+    [$match($.age >= minAge && $.region == region)],
+);
+eligible({ minAge: 21, region: "AU" });
+// → [{ $match: { age: { $gte: 21 }, region: "AU" } }]
+
 // Check syntax without throwing
-validate(($) => $.age > 18);
+jsmql.validate(($) => $.age > 18);
 // → { valid: true, errors: [] }
 ```
 
@@ -283,9 +291,25 @@ The template-tag form is the right tool when the function form's `Function.proto
 
 A wrong-shape input (e.g. `jsmql(42)`, `jsmql({})`) throws a `TypeError` naming the three accepted shapes.
 
-### `validate(input): { valid: boolean, errors: object[] }`
+### `jsmql.compile<P>(fn): (params: P) => object | object[]`
 
-Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` validate`$.x == ${val}` `` works the same as `validate("$.x == 1")`. `validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
+Compile a parameterised arrow function once and bind fresh values on every call. The arrow's first slot is a destructure pattern that names the bindings; the same names must appear as keys on the params object passed at call time. Output shape matches the template tag — each value appears as an inline MQL literal, never wrapped in `$let` — so `$match` keeps its index-friendly translation even when the comparison value is dynamic.
+
+```js
+const q = jsmql.compile(({ minAge, region }, $, { $match }) =>
+  [$match($.age >= minAge && $.region == region)],
+);
+q({ minAge: 21, region: "AU" });
+// → [{ $match: { age: { $gte: 21 }, region: "AU" } }]
+```
+
+Defaults in the destructure (`{ minAge = 18 }`) are rejected with a long-form error pointing at the JS `??` fallback for runtime defaults and the template-tag form for hardcoded values. See [docs/LANGUAGE.md § Parameterised Queries](docs/LANGUAGE.md#parameterised-queries-jsmqlcompile) for the full surface.
+
+### `jsmql.validate(input): { valid: boolean, errors: object[] }`
+
+Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` jsmql.validate`$.x == ${val}` `` works the same as `jsmql.validate("$.x == 1")`. `jsmql.validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
+
+The parameterised path stays throw-style: `jsmql.compile(fn)(params)` throws on bad input. There is no `jsmql.validate.compile` — wrap the compiled callable in your own `try`/`catch` if you need structured per-call errors.
 
 Each error has `{ message: string, pos: number, code: "SYNTAX_ERROR" | "CODEGEN_ERROR" }`. `pos` is the character offset in the source (or `0` if not applicable).
 

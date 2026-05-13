@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate } from "../src/index.ts";
+import { jsmql } from "../src/index.ts";
 
 describe("mutations: simple assignment (=)", () => {
   it("emits a single $set stage for one assignment", () => {
@@ -167,26 +167,26 @@ describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
   });
 
   it("rejects inc/dec on a bare identifier", () => {
-    const result = validate("x++");
+    const result = jsmql.validate("x++");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/field path|bare identifier/i);
   });
 
   it("rejects prefix inc/dec on a bare identifier", () => {
-    const result = validate("++x");
+    const result = jsmql.validate("++x");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/field path|bare identifier/i);
   });
 
   it("rejects inc/dec on index access", () => {
-    const result = validate("$.items[0]++");
+    const result = jsmql.validate("$.items[0]++");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/index access|computed/i);
   });
 
   it("rejects inc/dec used as a value (postfix in expression context)", () => {
     // `1 + $.x++` — $.x++ is a statement, not a value
-    const result = validate("1 + $.x++");
+    const result = jsmql.validate("1 + $.x++");
     expect(result.valid).toBe(false);
   });
 
@@ -389,54 +389,54 @@ describe("mutations: parenthesized form (formatter-friendly)", () => {
 
 describe("mutations: validation errors", () => {
   it("rejects bare identifier as target", () => {
-    const result = validate("x = 5");
+    const result = jsmql.validate("x = 5");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/field path|bare identifier/i);
   });
 
   it("rejects bare identifier in delete", () => {
-    const result = validate("delete x");
+    const result = jsmql.validate("delete x");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/field path|bare identifier/i);
   });
 
   it("rejects index-access target", () => {
-    const result = validate("$.items[0] = 5");
+    const result = jsmql.validate("$.items[0] = 5");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/index access|computed/i);
   });
 
   it("rejects assignment inside lambda body", () => {
-    const result = validate("$.list.map(x => $.a = x)");
+    const result = jsmql.validate("$.list.map(x => $.a = x)");
     expect(result.valid).toBe(false);
   });
 
   it("rejects compound chained assignment", () => {
-    const result = validate("$.a += $.b += 1");
+    const result = jsmql.validate("$.a += $.b += 1");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/chained|chain/i);
   });
 
   it("rejects missing RHS", () => {
-    const result = validate("$.a =");
+    const result = jsmql.validate("$.a =");
     expect(result.valid).toBe(false);
   });
 
   it("rejects bare delete with no target", () => {
-    const result = validate("delete");
+    const result = jsmql.validate("delete");
     expect(result.valid).toBe(false);
   });
 
   it("rejects mutation inside parenthesized expression context", () => {
     // ($.a = 1) + 2 — assignment used as a value (codegen-level rejection
     // since parseGrouped now accepts the parens-form syntactically)
-    const result = validate("($.a = 1) + 2");
+    const result = jsmql.validate("($.a = 1) + 2");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/statement, not a value/i);
   });
 
   it("rejects chained assignment inside parens", () => {
-    const result = validate("($.a = $.b = 5)");
+    const result = jsmql.validate("($.a = $.b = 5)");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/chained assignment inside parentheses/i);
   });

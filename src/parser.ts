@@ -47,6 +47,31 @@ export class FunctionInputError extends Error {
   }
 }
 
+/**
+ * One entry in the params destructure of a function-form arrow.
+ * - `key` is the property looked up on the params object at call time
+ *   (the *outer* destructure key).
+ * - `name` is the identifier used in the function body (the *inner* alias if
+ *   the user wrote `{ key: alias }`, or the same as `key` otherwise).
+ *
+ * Most users never alias and both fields are identical; aliasing exists so a
+ * verbose public param name can have a short body-local synonym.
+ */
+export type ParamBinding = { key: string; name: string };
+
+/**
+ * Result of `Parser.parseFunctionInput()`. The function source is split into a
+ * parsed body (`program`) and the parameter bindings extracted from the params
+ * slot (`bindings`, empty when the arrow has no params destructure). The two
+ * pieces travel together because codegen needs the binding names to interpret
+ * bare identifiers in the body as parameter references rather than unknown
+ * idents.
+ */
+export type FunctionInputResult = {
+  program: Program;
+  bindings: ParamBinding[];
+};
+
 const MATH_METHODS = new Set<string>([
   "abs",
   "ceil",
@@ -173,7 +198,7 @@ export class Parser {
    * (`async`, `function`, missing arrow, `return` in a block body, …) and
    * `ParseError`/`LexError` for grammar problems inside the body itself.
    */
-  parseFunctionInput(): Program {
+  parseFunctionInput(): FunctionInputResult {
     const first = this.lexer.peek();
     if (first.type === TokenType.Ident && first.value === "async") {
       throw new FunctionInputError(
@@ -190,7 +215,7 @@ export class Parser {
         "jsmql expects an arrow function `($) => …` as the function-form input.",
       );
     }
-    this.skipParameterList();
+    const bindings = this.parseParameterList();
 
     const arrowTok = this.lexer.peek();
     if (arrowTok.type !== TokenType.Arrow) {
@@ -200,31 +225,251 @@ export class Parser {
     }
     this.lexer.next(); // consume `=>`
 
-    if (this.lexer.peek().type === TokenType.LBrace) {
-      return this.parseBlockBody();
-    }
-    return this.parseExpressionBody();
+    const program =
+      this.lexer.peek().type === TokenType.LBrace
+        ? this.parseBlockBody()
+        : this.parseExpressionBody();
+    return { program, bindings };
   }
 
   /**
-   * Skip the parenthesised parameter list of the function-form arrow. We
-   * never inspect the params (they are types-only — see docs/LANGUAGE.md
-   * § Function Form), so we just balance-count parens and discard tokens.
-   * Cursor is left immediately after the matching `)`.
+   * Parse and classify the parenthesised parameter list of the function-form
+   * arrow. Each top-level parameter slot is one of three *shapes*:
+   *
+   *   - **Plain identifier** (`$`, `doc`, anything) — the document-context slot.
+   *     Discarded; the body parser doesn't need the name.
+   *   - **Destructure pattern with all keys starting with `$`** (`{ $dateDiff }`,
+   *     `{ $match, $project }`) — the ops-hint slot (types-only IDE
+   *     autocomplete). Discarded; the keys don't reach codegen.
+   *   - **Destructure pattern with at least one non-`$` key** (`{ minAge }`) —
+   *     the function-form parameter bindings. Names are returned so codegen can
+   *     inline values supplied at `jsmql.compile()` call time.
+   *
+   * The legal slot orderings are: `()`, `(doc)`, `(ops)`, `(params)`,
+   * `(doc, ops)`, `(params, doc)`, `(params, ops)`, `(params, doc, ops)`.
+   * Anything else throws `FunctionInputError` with a precise message.
+   *
+   * Returns the binding names extracted from the params slot (in source
+   * order). Cursor is left immediately after the closing `)`.
    */
-  private skipParameterList(): void {
+  private parseParameterList(): ParamBinding[] {
     this.lexer.next(); // consume opening `(`
-    let depth = 1;
-    while (depth > 0) {
-      const tok = this.lexer.next();
-      if (tok.type === TokenType.EOF) {
+
+    type Slot = { kind: "doc" } | { kind: "ops" } | { kind: "params"; bindings: ParamBinding[] };
+    const slots: Slot[] = [];
+
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      while (true) {
+        slots.push(this.parseParameterSlot());
+        const sep = this.lexer.peek();
+        if (sep.type === TokenType.Comma) {
+          this.lexer.next();
+          continue;
+        }
+        if (sep.type === TokenType.RParen) break;
         throw new FunctionInputError(
-          "jsmql could not parse the function parameter list — unbalanced parentheses",
+          `jsmql could not parse the function parameter list — expected ',' or ')' at position ${sep.pos}, got '${sep.value}'.`,
         );
       }
-      if (tok.type === TokenType.LParen) depth++;
-      else if (tok.type === TokenType.RParen) depth--;
     }
+    this.lexer.next(); // consume `)`
+
+    if (slots.length > 3) {
+      throw new FunctionInputError(
+        `jsmql's compile-form arrow takes at most three parameters in the order \`(params, $, opsHint)\`. ` +
+          `Got ${slots.length} parameters. Reorder to \`(params, $, opsHint)\` and drop any extras.`,
+      );
+    }
+
+    // Validate slot ordering. The legal orderings are: each slot kind appears
+    // at most once, and the order (when all present) is params → doc → ops.
+    let sawParams = false;
+    let sawDoc = false;
+    let sawOps = false;
+    let bindings: ParamBinding[] = [];
+    for (const slot of slots) {
+      if (slot.kind === "params") {
+        if (sawParams) {
+          throw new FunctionInputError(
+            "jsmql params destructure may only appear once. Combine the bindings into a single parameter: `({ a, b }, …) => …`.",
+          );
+        }
+        if (sawDoc || sawOps) {
+          throw new FunctionInputError(
+            "jsmql expects the params destructure to appear before the `$` doc-context parameter and the ops-hint destructure. " +
+              "Reorder to `(params, $, opsHint)`.",
+          );
+        }
+        sawParams = true;
+        bindings = slot.bindings;
+      } else if (slot.kind === "doc") {
+        if (sawDoc) {
+          throw new FunctionInputError(
+            "jsmql's compile-form arrow takes at most one document-context parameter (`$`).",
+          );
+        }
+        if (sawOps) {
+          throw new FunctionInputError(
+            "jsmql expects the `$` doc-context parameter to appear before the ops-hint destructure. " +
+              "Reorder to `(params, $, opsHint)`.",
+          );
+        }
+        sawDoc = true;
+      } else {
+        if (sawOps) {
+          throw new FunctionInputError(
+            "jsmql's compile-form arrow takes at most one ops-hint destructure (e.g. `{ $match }`).",
+          );
+        }
+        sawOps = true;
+      }
+    }
+    return bindings;
+  }
+
+  /**
+   * Parse a single parameter slot and classify it by shape. Called by
+   * `parseParameterList`; advances the lexer past the slot.
+   */
+  private parseParameterSlot():
+    | { kind: "doc" }
+    | { kind: "ops" }
+    | { kind: "params"; bindings: ParamBinding[] } {
+    const head = this.lexer.peek();
+    if (head.type === TokenType.LBracket) {
+      throw new FunctionInputError(
+        "jsmql params must be an object destructure pattern: `{ a, b }`. " +
+          "Array destructure is not accepted — params are always named, never positional.",
+      );
+    }
+    if (head.type === TokenType.Ident) {
+      // Plain-identifier slot — discard the name.
+      this.lexer.next();
+      return { kind: "doc" };
+    }
+    if (head.type === TokenType.Dollar) {
+      // Plain `$` identifier in the doc slot.
+      this.lexer.next();
+      return { kind: "doc" };
+    }
+    if (head.type !== TokenType.LBrace) {
+      throw new FunctionInputError(
+        `jsmql expects each parameter to be an identifier or an object destructure pattern. Got '${head.value}' at position ${head.pos}.`,
+      );
+    }
+    return this.parseDestructureSlot();
+  }
+
+  /**
+   * Parse `{ key (: alias)? (, key)* (,)? }` and classify the slot as `ops`
+   * (every key starts with `$`) or `params` (at least one non-`$` key).
+   * Rejects defaults, nested destructure, rest, and mixed `$`/non-`$` keys
+   * with the user-facing error messages from `docs/LANGUAGE.md`.
+   */
+  private parseDestructureSlot(): { kind: "ops" } | { kind: "params"; bindings: ParamBinding[] } {
+    this.lexer.next(); // consume `{`
+    const opsKeys: string[] = [];
+    const paramBindings: ParamBinding[] = [];
+
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      // Empty destructure — treat as ops-hint (no-op).
+      this.lexer.next();
+      return { kind: "ops" };
+    }
+
+    while (true) {
+      const key = this.lexer.peek();
+      if (key.type === TokenType.Spread) {
+        throw new FunctionInputError(
+          "jsmql does not support rest patterns in params: `{ ...rest }`. " +
+            "The set of bindings must be statically known at compile time so the generated MQL can reference each by name. " +
+            "List each binding explicitly: `{ a, b, c }`.",
+        );
+      }
+      // Either `$name` (Dollar followed by Ident) for ops-hint keys, or
+      // `name` (Ident) for params keys.
+      let keyName: string;
+      let isOpsKey: boolean;
+      if (key.type === TokenType.Dollar) {
+        this.lexer.next();
+        const ident = this.lexer.peek();
+        if (ident.type !== TokenType.Ident) {
+          throw new FunctionInputError(
+            `jsmql expected an identifier after '$' in the destructure key at position ${ident.pos}.`,
+          );
+        }
+        this.lexer.next();
+        keyName = `$${ident.value}`;
+        isOpsKey = true;
+      } else if (key.type === TokenType.Ident) {
+        this.lexer.next();
+        keyName = key.value;
+        isOpsKey = false;
+      } else {
+        throw new FunctionInputError(
+          `jsmql expected an identifier in the destructure pattern at position ${key.pos}, got '${key.value}'.`,
+        );
+      }
+
+      // Optional alias: `{ key: alias }`. Used for params keys to give the
+      // body identifier a different (usually shorter) name than the param
+      // object property name. Ignored for ops keys — the alias would only
+      // serve IDE autocomplete, which the original key already provides.
+      let bindingName = keyName;
+      if (this.lexer.peek().type === TokenType.Colon) {
+        this.lexer.next(); // consume `:`
+        const alias = this.lexer.peek();
+        if (alias.type === TokenType.LBrace || alias.type === TokenType.LBracket) {
+          throw new FunctionInputError(
+            "jsmql does not support nested destructure in params: `{ <name>: { … } }`. " +
+              "Params is a flat key→value map at the MQL level. Use a single level of destructure and reference nested fields explicitly at the call site, e.g. `q({ b: source.a.b })`.",
+          );
+        }
+        if (alias.type !== TokenType.Ident) {
+          throw new FunctionInputError(
+            `jsmql expected an alias identifier after ':' in the destructure pattern at position ${alias.pos}, got '${alias.value}'.`,
+          );
+        }
+        this.lexer.next();
+        bindingName = alias.value;
+      }
+
+      // Optional default: `{ key = expr }` — always rejected.
+      if (this.lexer.peek().type === TokenType.Eq) {
+        throw new FunctionInputError(
+          "jsmql does not support default values in the params destructure: `{ <name> = <expr> }`.\n\n" +
+            "jsmql compiles your function to MQL at parse time. It reads the function's source text but cannot evaluate the default expression — for `= config.minAge` or `= Date.now()` there is no runtime to ask, since jsmql never actually calls your arrow. Restricting defaults to literals (`= 18`) would make the rule silently inconsistent with the rest of the destructure, where any value is fine at call time.\n\n" +
+            "Instead:\n" +
+            "  - For a runtime fallback, use JS's `??` at the call site: `q({ minAge: input ?? 18 })`.\n" +
+            "  - For a value that's always the same and never overridden, the template-tag form already inlines hardcoded values: `` jsmql`$.age > ${18}` ``.",
+        );
+      }
+
+      if (isOpsKey) opsKeys.push(keyName);
+      else paramBindings.push({ key: keyName, name: bindingName });
+
+      const sep = this.lexer.peek();
+      if (sep.type === TokenType.Comma) {
+        this.lexer.next();
+        // Allow trailing comma.
+        if (this.lexer.peek().type === TokenType.RBrace) break;
+        continue;
+      }
+      if (sep.type === TokenType.RBrace) break;
+      throw new FunctionInputError(
+        `jsmql could not parse the destructure pattern — expected ',' or '}' at position ${sep.pos}, got '${sep.value}'.`,
+      );
+    }
+    this.lexer.next(); // consume `}`
+
+    if (opsKeys.length > 0 && paramBindings.length > 0) {
+      throw new FunctionInputError(
+        "jsmql expects the operator-hint destructure (e.g. `{ $match, $project }`) to be separate from the params destructure (e.g. `{ minAge }`). " +
+          "Split into two parameters: `(params, $, opsHint) => …`.",
+      );
+    }
+    if (paramBindings.length > 0) return { kind: "params", bindings: paramBindings };
+    return { kind: "ops" };
   }
 
   /**

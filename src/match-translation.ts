@@ -25,18 +25,30 @@ export type MatchTranslation = {
   residual: Expr | null;
 };
 
-export function translateMatchBody(body: Expr): MatchTranslation {
-  return translate(body);
+/**
+ * Optional context passed in by the pipeline lowerer. `bindings` lets the
+ * translator treat function-form parameter references as literals — the
+ * `ParamRef` node still says "param x", but its value at this codegen call
+ * is a compile-time constant from `jsmql.compile(fn)(params)`. Without this
+ * hook the index-friendly path can't see across the binding and would emit
+ * `$expr` for every comparison that touches a parameter.
+ */
+export type TranslateCtx = {
+  bindings?: ReadonlyMap<string, unknown>;
+};
+
+export function translateMatchBody(body: Expr, ctx: TranslateCtx = {}): MatchTranslation {
+  return translate(body, ctx);
 }
 
-function translate(expr: Expr): MatchTranslation {
+function translate(expr: Expr, ctx: TranslateCtx): MatchTranslation {
   if (expr.type === "BinaryExpr" && expr.op === "&&") {
-    return combineAnd(translate(expr.left), translate(expr.right));
+    return combineAnd(translate(expr.left, ctx), translate(expr.right, ctx));
   }
   if (expr.type === "BinaryExpr" && expr.op === "||") {
-    return combineOr(translate(expr.left), translate(expr.right), expr);
+    return combineOr(translate(expr.left, ctx), translate(expr.right, ctx), expr);
   }
-  const leaf = translateLeaf(expr);
+  const leaf = translateLeaf(expr, ctx);
   if (leaf === null) return { query: {}, residual: expr };
   return { query: leaf, residual: null };
 }
@@ -95,14 +107,14 @@ function combineResidualsAnd(a: Expr | null, b: Expr | null): Expr | null {
   return { type: "BinaryExpr", op: "&&", left: a, right: b };
 }
 
-function translateLeaf(expr: Expr): Record<string, unknown> | null {
+function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> | null {
   if (expr.type !== "BinaryExpr") return null;
   const op = expr.op;
   if (isEqualityOp(op)) {
-    return translateEquality(expr.left, expr.right, op);
+    return translateEquality(expr.left, expr.right, op, ctx);
   }
   if (isOrderedOp(op)) {
-    return translateOrderedCompare(expr.left, expr.right, op);
+    return translateOrderedCompare(expr.left, expr.right, op, ctx);
   }
   return null;
 }
@@ -111,8 +123,9 @@ function translateEquality(
   left: Expr,
   right: Expr,
   op: "===" | "==" | "!==" | "!=",
+  ctx: TranslateCtx,
 ): Record<string, unknown> | null {
-  const oriented = orientFieldLiteral(left, right, anyEqualityLiteral);
+  const oriented = orientFieldLiteral(left, right, (e) => anyEqualityLiteral(e, ctx));
   if (oriented === null) return null;
   const { field, value } = oriented;
   if (op === "===" || op === "==") return { [field]: value };
@@ -123,6 +136,7 @@ function translateOrderedCompare(
   left: Expr,
   right: Expr,
   op: ">" | ">=" | "<" | "<=",
+  ctx: TranslateCtx,
 ): Record<string, unknown> | null {
   const leftField = asFieldPath(left);
   const rightField = asFieldPath(right);
@@ -130,12 +144,12 @@ function translateOrderedCompare(
   let value: unknown;
   let effectiveOp: ">" | ">=" | "<" | "<=" = op;
   if (leftField !== null && rightField === null) {
-    const lit = anyOrderedLiteral(right);
+    const lit = anyOrderedLiteral(right, ctx);
     if (lit === null) return null;
     field = leftField;
     value = lit.value;
   } else if (leftField === null && rightField !== null) {
-    const lit = anyOrderedLiteral(left);
+    const lit = anyOrderedLiteral(left, ctx);
     if (lit === null) return null;
     field = rightField;
     value = lit.value;
@@ -196,7 +210,7 @@ function flipOrderedOp(op: ">" | ">=" | "<" | "<="): ">" | ">=" | "<" | "<=" {
  *   - BigInt literals compile to `{ $toLong: "..." }` in aggregation form,
  *     which the query language doesn't recognise as a value.
  */
-function anyEqualityLiteral(expr: Expr): { value: unknown } | null {
+function anyEqualityLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | null {
   switch (expr.type) {
     case "NumberLiteral":
       return { value: expr.value };
@@ -206,6 +220,8 @@ function anyEqualityLiteral(expr: Expr): { value: unknown } | null {
       return { value: expr.value };
     case "NullLiteral":
       return { value: null };
+    case "ParamRef":
+      return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ false);
     default:
       return null;
   }
@@ -217,15 +233,47 @@ function anyEqualityLiteral(expr: Expr): { value: unknown } | null {
  * position — let them fall through to $expr so the (rare) intentional case
  * still works.
  */
-function anyOrderedLiteral(expr: Expr): { value: unknown } | null {
+function anyOrderedLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | null {
   switch (expr.type) {
     case "NumberLiteral":
       return { value: expr.value };
     case "StringLiteral":
       return { value: expr.value };
+    case "ParamRef":
+      return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ true);
     default:
       return null;
   }
+}
+
+/**
+ * If a `ParamRef` resolves to a function-form parameter binding, return its
+ * substituted value as if it were a literal. The `orderedOnly` flag keeps the
+ * type-divergence rules from `anyOrderedLiteral` honest: booleans and nulls
+ * are almost certainly user bugs when used as `>` / `<` operands, so we let
+ * them fall through to `$expr` instead of silently translating.
+ */
+function paramRefAsLiteral(
+  expr: Expr & { type: "ParamRef" },
+  ctx: TranslateCtx,
+  orderedOnly: boolean,
+): { value: unknown } | null {
+  if (!ctx.bindings?.has(expr.name)) return null;
+  const value = ctx.bindings.get(expr.name);
+  if (orderedOnly) {
+    if (typeof value !== "number" && typeof value !== "string") return null;
+  } else {
+    // Equality-side: accept the same primitives the literal-AST path accepts,
+    // and refuse arrays/objects (their `==` semantics in MQL query language
+    // diverge sharply from JS).
+    const ok =
+      value === null ||
+      typeof value === "number" ||
+      typeof value === "string" ||
+      typeof value === "boolean";
+    if (!ok) return null;
+  }
+  return { value };
 }
 
 /**

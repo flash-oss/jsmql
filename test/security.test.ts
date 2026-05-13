@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate, JsmqlInterpolationError } from "../src/index.ts";
+import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
 
 describe("jsmql template-tag interpolation guards", () => {
   it("rejects undefined with a slot-pointing error", () => {
@@ -60,9 +60,9 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
 });
 
 describe("recursion depth limits", () => {
-  it("validate() catches deeply nested input as SYNTAX_ERROR (no uncaught RangeError)", () => {
+  it("jsmql.validate() catches deeply nested input as SYNTAX_ERROR (no uncaught RangeError)", () => {
     const src = "(".repeat(2000) + "1" + ")".repeat(2000);
-    const result = validate(src);
+    const result = jsmql.validate(src);
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("SYNTAX_ERROR");
     expect(result.errors[0].message).toMatch(/nests too deeply/);
@@ -90,13 +90,13 @@ describe("recursion depth limits", () => {
   });
 });
 
-describe("validate() error contract", () => {
+describe("jsmql.validate() error contract", () => {
   it("never throws on BigInt-via-template-tag interpolation; returns structured error", () => {
-    // Now that `validate` is itself polymorphic, the workaround the previous
-    // test had to dance around is gone — `validate` accepts the template-tag
+    // Now that `jsmql.validate` is itself polymorphic, the workaround the previous
+    // test had to dance around is gone — `jsmql.validate` accepts the template-tag
     // form directly and turns the JsmqlInterpolationError into a structured
     // SYNTAX_ERROR, never throwing.
-    const result = validate`$.x == ${BigInt(1)}`;
+    const result = jsmql.validate`$.x == ${BigInt(1)}`;
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("SYNTAX_ERROR");
     expect(result.errors[0].message).toMatch(/slot 1/);
@@ -104,9 +104,9 @@ describe("validate() error contract", () => {
 
   it("turns RangeError into a structured SYNTAX_ERROR via the depth-limit path", () => {
     // Already covered by the depth-limit test, but assert the contract shape
-    // here: validate() returns, never throws, regardless of input.
+    // here: jsmql.validate() returns, never throws, regardless of input.
     const src = "(".repeat(2000) + "1" + ")".repeat(2000);
-    expect(() => validate(src)).not.toThrow();
+    expect(() => jsmql.validate(src)).not.toThrow();
   });
 });
 

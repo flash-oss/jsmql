@@ -48,11 +48,12 @@ jsmql`$.age >= ${minAge} && $.status == 'active'`;
 13. [Mutations](#mutations)
 14. [Pipelines](#pipelines)
 15. [Function Form](#function-form)
-16. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
-17. [Validation](#validation)
-18. [Error Messages](#error-messages)
-19. [Examples](#examples)
-20. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
+16. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
+17. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
+18. [Validation](#validation)
+19. [Error Messages](#error-messages)
+20. [Examples](#examples)
+21. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
 
 ---
 
@@ -1392,7 +1393,7 @@ All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, 
 
 ## Function Form
 
-In addition to a string, `jsmql()` and `validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
+In addition to a string, `jsmql()` and `jsmql.validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
 
 ```js
 const { jsmql } = require("jsmql");
@@ -1440,11 +1441,12 @@ Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-lev
 - **Arrow functions only.** `function` declarations are rejected. Use `() => …`.
 - **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`.
 - **No `async`, no generators.**
-- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Use the [template-tag form of `jsmql`](#template-tag-form-jsmql) when you need to interpolate a value:
+- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Two options for parameterising a query exist instead: the [template-tag form](#template-tag-form-jsmql) for one-shot interpolation, and the [`jsmql.compile(fn)` form](#parameterised-queries-jsmqlcompile) for reusable parameterised queries:
   ```js
   const minAge = 21;
-  jsmql(($) => $.age > minAge);   // ❌ error: Unknown identifier 'minAge'
-  jsmql`$.age > ${minAge}`;       // ✓ works — value is interpolated
+  jsmql(($) => $.age > minAge);                  // ❌ error: Unknown identifier 'minAge'
+  jsmql`$.age > ${minAge}`;                      // ✓ template tag — value interpolated
+  jsmql.compile(({ minAge }, $) => $.age > minAge)({ minAge });   // ✓ named param
   ```
 - **The wrapper's parameter is not bound inside the body.** `($) =>` is the recommended idiom because `$` is also the document context, but other names (`(doc) =>`) act as a typing/IDE hook only — `doc.foo` in the body resolves as an unknown identifier, not as `$.foo`.
 
@@ -1461,6 +1463,81 @@ jsmql(($, { $dateDiff }) =>
 ```
 
 The second parameter is types-only — the destructured names are typed as callables but never evaluated. The runtime strips the parameter list before parsing, so the body is identical to writing the call directly. Any `$`-prefixed name destructured from the second parameter is accepted by the type system; whether it is a real MongoDB operator is checked at compile time by the codegen.
+
+---
+
+## Parameterised Queries (`jsmql.compile`)
+
+For queries that run repeatedly with different values — a typical "list users in region X above age Y" handler — use `jsmql.compile(fn)`. It parses the arrow once and returns a callable that you invoke with a fresh **params object** on every call. Each call walks the cached AST and substitutes the bound values inline as MQL literals; no re-parsing happens.
+
+```js
+const { jsmql } = require("jsmql");
+
+const eligibleUsersQuery = jsmql.compile(
+  ({ minAge, region }, $, { $match, $project }) => [
+    $match($.age >= minAge && $.region == region && $.status == "active"),
+    $project({ id: $._id, name: $.name, email: $.email }),
+  ],
+);
+
+eligibleUsersQuery({ minAge: 21, region: "AU" });
+// → [
+//   { $match: { age: { $gte: 21 }, region: "AU", status: "active" } },
+//   { $project: { id: "$_id", name: "$name", email: "$email" } }
+// ]
+
+eligibleUsersQuery({ minAge: 65, region: "US" });
+// → same shape, with new values
+```
+
+### The arrow signature
+
+The compile-form arrow takes up to three parameters, all optional, in this order:
+
+```
+(paramsObj?, $?, { $opsHint }?) => body
+```
+
+Each slot is recognised by **shape**:
+
+| Slot shape | Interpretation |
+|------------|----------------|
+| Plain identifier (`$`, `doc`, anything else) | Doc-context slot — same role as the existing `($) => …` form. |
+| Destructure with all `$`-prefixed keys (`{ $match, $project }`) | Ops-hint slot — types-only, for IDE autocomplete on escape-hatch calls and stage names. |
+| Destructure with at least one non-`$` key (`{ minAge, region }`) | Params slot — the binding names listed here must be keys on the params object at call time. |
+
+You can omit any combination as long as the remaining slots stay in the order above. `jsmql.compile(({ minAge }) => …)` is the minimal form when you only need the params.
+
+### Values are inlined as MQL literals
+
+A binding value flows into the MQL output exactly the way an interpolated template-tag value does — as a JSON literal:
+
+```js
+jsmql.compile(({ allowed }, $) => $.grade in allowed)({ allowed: ["A", "B"] });
+// → { $in: ["$grade", ["A", "B"]] }
+```
+
+In particular, `$match` keeps its **index-friendly** translation when the comparison is against a binding: the compiled stage emits MongoDB query-language form, not `$expr`-wrapped aggregation form, so indexes on the compared field still work.
+
+### Restrictions on the params destructure
+
+- **No defaults** — `({ minAge = 18 }) => …` is rejected. The parser cannot evaluate arbitrary default expressions (e.g. `= config.x`), and allowing only literal defaults would create a confusing JS-subset rule. For a runtime fallback, use nullish coalescing at the call site: `q({ minAge: input ?? 18 })`.
+- **No nested destructure** — `({ a: { b } })`. Use a flat key→value map.
+- **No rest pattern** — `({ ...rest })`. List bindings explicitly.
+- **No array destructure** — `[a, b]`. Params is always an object.
+- **No mixing `$`-keys and non-`$`-keys** in the same destructure. Split into separate parameters: `(params, $, opsHint) => …`.
+
+Each restriction produces a clear `FunctionInputError` that names the problem and points at the fix.
+
+### Param values
+
+Each value on the params object must be a JSON-safe literal: number, string, boolean, null, plain array, or plain object. The same validation that template-tag interpolation uses rejects `NaN`, `Infinity`, functions, Symbols, `undefined`, BigInts, and circular references — at call time, with a `JsmqlInterpolationError` that names the binding key.
+
+If a binding referenced in the body is missing from the params object, the call throws `UnknownIdentifierError` naming the binding (and the aliased outer key if `{ key: alias }` was used).
+
+### Validation
+
+`jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` exists for the one-shot input shapes (string, arrow, template tag); the parameterised path stays throw-only.
 
 ---
 
@@ -1495,21 +1572,21 @@ const field = "age";
 jsmql`$.${field} > ${25}`  // syntax error
 ```
 
-`validate` is polymorphic in the same way, so `` validate`$.age > ${minAge}` `` works as the non-throwing counterpart.
+`jsmql.validate` is polymorphic in the same way, so `` jsmql.validate`$.age > ${minAge}` `` works as the non-throwing counterpart.
 
 ---
 
 ## Validation
 
-Use the `validate()` function to check syntax without generating output:
+Use `jsmql.validate()` to check syntax without generating output:
 
 ```js
-const { validate } = require("jsmql");
+const { jsmql } = require("jsmql");
 
-validate("$.age > 18");
+jsmql.validate("$.age > 18");
 // → { valid: true, errors: [] }
 
-validate("age > 18");
+jsmql.validate("age > 18");
 // → {
 //     valid: false,
 //     errors: [{
@@ -1520,7 +1597,7 @@ validate("age > 18");
 //   }
 ```
 
-Use `validate()` for:
+Use `jsmql.validate()` for:
 - IDE linters and code completion
 - Pre-flight checks before building expressions
 - User input validation in forms
