@@ -90,6 +90,11 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 
 A realistic, multi-stage example also lives in [test/realistic.test.ts](../../test/realistic.test.ts) under "pipeline: top-orders report by department".
 
+## Related
+
+- [Mutations](mutations.md) — how `$.x = ...` / `delete $.x` lower to `$set` / `$unset` stages and coalesce.
+- [Let bindings](let-bindings.md) — pipeline-scoped local variables (`let x = ...`) that materialise under a single namespace field and auto-clean up.
+
 ## Out of scope (future work)
 
 - **Drift-protection test for `STAGES`** against `vendor/mql-specifications/definitions/stage/`, parallel to `test/operator-spec-coverage.test.ts`. New stages added to MongoDB would be silently missed today.

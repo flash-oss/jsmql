@@ -1244,6 +1244,84 @@ jsmql("[{ $match: { age: { $gt: 18 } } }]");
 
 Use the object-literal form when porting an existing query document; use any expression when you want aggregation operators inside `$match`.
 
+### Local bindings (`let`)
+
+Pipelines can introduce **named local helpers** with `let`. Each binding is scoped to the rest of the pipeline; the compiler materialises it under a single compiler-owned namespace (`__jsmql.<name>`) and emits one cleanup `$unset` at the end.
+
+```js
+jsmql`
+  let subtotal = $.price * $.qty;       // sub-total before tax/shipping
+  let withTax  = subtotal * 1.2;        // with tax
+  let withShip = withTax + $.shipping;  // with tax and shipping
+  $project({ sku: 1, subtotal, withTax, final: withShip });
+`;
+```
+
+Lowers to:
+
+```js
+[
+  { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
+  { $set: { "__jsmql.withTax":  { $multiply: ["$__jsmql.subtotal", 1.2] } } },
+  { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
+  { $project: { sku: 1,
+                subtotal: "$__jsmql.subtotal",
+                withTax:  "$__jsmql.withTax",
+                final:    "$__jsmql.withShip" } },
+  { $unset: "__jsmql" }
+]
+```
+
+Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
+
+- Each derived value sits on its own line — natural spot for a one-line `// …` comment.
+- No collision risk: even if your document has a real field named `subtotal`, the let lives under `__jsmql.subtotal` and never touches it.
+- No forgotten cleanup — the compiler appends the `$unset` automatically.
+- `subtotal` (a bare identifier) at call sites reads visually distinct from `$.subtotal` (a real document field).
+
+**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: stages that *replace* the document drop the let. Those stages are `$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, and `$replaceWith`. Referring to a let after any of these is a compile-time error:
+
+```js
+jsmql`
+  let total = $.price * $.qty;
+  $group({ _id: $.cat });
+  $match(total > 100);  // ← error
+`;
+// → CodegenError: `total` is a `let` binding and can't be read after `$group` —
+//   the stage replaces the document. Inline the expression into the $group body,
+//   or rebind after the stage with another `let`.
+```
+
+`$project` is **not** in the reshape-clearing set, because expression-mode (`{ x: $.y + 1 }`) and exclusion-mode (`{ a: 0 }`) projections preserve the rest of the document. If you write an inclusion-mode `$project` that omits `__jsmql`, any later let reference will silently coerce to `null` at runtime — same trap as today's manual `$.tmp = …` + `delete` pattern. Place inclusion-mode projections at the end of the pipeline whenever possible.
+
+**Indexing pitfall.** A let materialises through `$addFields`/`$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place index-eligible `$match`es on real document fields **before** your `let` bindings:
+
+```js
+// Good — index on $.status is preserved by the leading $match
+jsmql`
+  $match({ status: "shipped" });
+  let revenue = $.price * $.qty;
+  $sort({ revenue: -1 });
+`;
+
+// Suboptimal — the $match below the let cannot use any index on $.status
+jsmql`
+  let revenue = $.price * $.qty;
+  $match($.status === "shipped" && revenue > 100);
+  $sort({ revenue: -1 });
+`;
+```
+
+**Bracketed form.** `let` also works as an element of a `[…]`-form pipeline:
+
+```js
+jsmql("[let big = $.score > 100, $match(big), $sort({ score: -1 })]");
+```
+
+**Sub-pipelines.** Outer lets are not visible inside `$lookup.pipeline`, `$unionWith.pipeline`, or `$facet.*` branches. Each sub-pipeline can declare its own lets independently — they live inside that sub-pipeline only.
+
+**Not the same as `$let`.** MongoDB's `$let` operator is *expression-scoped* — the binding lives inside one `in:` clause. jsmql's `let` is *pipeline-scoped*. They are different constructs that happen to share a name.
+
 ### Sub-pipelines
 
 `$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. jsmql recognises these positions and recurses, so `$match`'s `$expr` rule and the strict typo check apply uniformly:

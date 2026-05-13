@@ -85,6 +85,7 @@ export const TokenType = {
   New: "New", // new
   Typeof: "Typeof", // typeof
   Delete: "Delete", // delete
+  Let: "Let", // let
 
   // Identifier
   Ident: "Ident",
@@ -766,6 +767,8 @@ export class Lexer {
         return { type: TokenType.Typeof, value: "typeof", pos };
       case "delete":
         return { type: TokenType.Delete, value: "delete", pos };
+      case "let":
+        return { type: TokenType.Let, value: "let", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }

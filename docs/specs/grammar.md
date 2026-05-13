@@ -17,7 +17,14 @@ pipeline_program
                   with no cross-coalescing *)
 
 pipeline_stmt  = mutation_program
+               | let_decl
                | expression           (* must compile to a stage at codegen *)
+
+let_decl       = "let" IDENT "=" expression
+               (* pipeline-scoped local binding; see docs/specs/let-bindings.md.
+                  Only valid inside a pipeline (any `;`-separated form or a
+                  bracketed `[...]` pipeline element). A top-level `let` in
+                  expression mode is a parse error. *)
 
 mutation_program
                = mutation ("," mutation)* ","?

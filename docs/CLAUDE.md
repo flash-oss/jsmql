@@ -30,6 +30,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` `$expr`-wrap rule. |
 | `specs/mutations.md` | Assignment (`=`, `+=`, `-=`, `*=`, `/=`) and `delete` statements: AST, target validation, coalescing into `$set`/`$unset` stages, pipeline integration. |
+| `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`): AST, parser/codegen wiring, namespace storage under `__jsmql`, scope-reshaping stage rules, sub-pipeline isolation. |
 
 Future work areas — not yet implemented and not yet specified — include query-predicate operators inside `$match` / `find()` (e.g. `$elemMatch`, `$exists`, `$jsonSchema`), projection operators (`$`, `$elemMatch`, `$slice`, `$meta`), the stage-spec integration for `$group` / `$setWindowFields` accumulator field bindings, and update-document operators (`$inc`, `$push`, `$rename`, …). Add a spec file when the work begins.
 

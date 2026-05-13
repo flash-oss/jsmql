@@ -14,10 +14,10 @@ export type KeyValueEntry = {
 };
 
 export type ObjectEntry = KeyValueEntry | SpreadElement;
-// AssignExpr and DeleteStmt are valid as ArrayElements ONLY when the array is
-// a pipeline (first element is a stage candidate). Codegen for a non-pipeline
-// ArrayLiteral throws on these — see codegen.ts:generateArrayLiteral.
-export type ArrayElement = Expr | SpreadElement | AssignExpr | DeleteStmt;
+// AssignExpr, DeleteStmt, and LetDecl are valid as ArrayElements ONLY when the
+// array is a pipeline (first element is a stage candidate). Codegen for a
+// non-pipeline ArrayLiteral throws on these — see codegen.ts:generateArrayLiteral.
+export type ArrayElement = Expr | SpreadElement | AssignExpr | DeleteStmt | LetDecl;
 
 /** Argument position that may be a spread (call sites that allow `...x`) */
 export type CallArg = Expr | SpreadElement;
@@ -43,6 +43,19 @@ export type DeleteStmt = {
 export type Mutation = AssignExpr | DeleteStmt;
 
 /**
+ * Pipeline-scoped local binding: `let <name> = <value>`. Only valid at the top
+ * level of a pipeline (either as a `;`-separated PipelineStmt or as an element
+ * inside a bracketed `[...]` pipeline). The value is materialised under a
+ * single compiler-owned namespace (`__jsmql.<name>`) and the namespace is
+ * `$unset` at the end of the pipeline. See `docs/specs/let-bindings.md`.
+ */
+export type LetDecl = {
+  type: "LetDecl";
+  name: string;
+  value: Expr;
+};
+
+/**
  * Top-level mutation program: one or more assignments and/or deletes,
  * separated by `,` in source. Distinct from `Expr` because mutations
  * are statements with stage-level effect, not expression values.
@@ -59,9 +72,11 @@ export type MutationProgram = {
  * One element of an implicit pipeline (`;`-separated at top level). Each
  * element is lowered in isolation — a `MutationProgram` may itself emit
  * multiple stages (read-after-write splits inside a `,`-grouped chain),
- * but adjacent elements never coalesce.
+ * but adjacent elements never coalesce. `LetDecl` contributes one `$set`
+ * stage plus a binding visible to subsequent statements (see
+ * `generateImplicitPipeline`).
  */
-export type PipelineStmt = MutationProgram | Expr;
+export type PipelineStmt = MutationProgram | Expr | LetDecl;
 
 /**
  * Top-level pipeline assembled from `;`-separated statements. Distinct from

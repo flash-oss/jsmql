@@ -34,16 +34,63 @@ export class UnknownIdentifierError extends CodegenError {
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
-type GenerateCtx = {
+export type GenerateCtx = {
   lambdaParams: ReadonlySet<string>;
   reduceRemap?: ReadonlyMap<string, string>;
+  /**
+   * Pipeline-scoped `let` bindings in scope. Key is the user-facing name; value
+   * is the field-path string to read it back (e.g. `"__jsmql.subtotal"` — no
+   * leading `$`, that gets prepended at lookup sites). Threaded through
+   * pipeline lowering by `pipeline.ts`; ignored in expression-mode codegen.
+   */
+  pipelineLets?: ReadonlyMap<string, string>;
+  /**
+   * Names of lets that were dropped by an earlier scope-reshaping stage
+   * (`$group`, `$replaceRoot`, …). Value is the stage that dropped them, used
+   * to produce a precise "let X can't be read after $group" error rather than
+   * the generic "unknown identifier" fallback.
+   */
+  droppedLets?: ReadonlyMap<string, string>;
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
 
 function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
-  return { lambdaParams: new Set([...ctx.lambdaParams, ...params]) };
+  return {
+    lambdaParams: new Set([...ctx.lambdaParams, ...params]),
+    reduceRemap: ctx.reduceRemap,
+    pipelineLets: ctx.pipelineLets,
+    droppedLets: ctx.droppedLets,
+  };
 }
+
+/** Add a new pipeline let to the context. Returns a fresh ctx; never mutates. */
+export function extendCtxLets(ctx: GenerateCtx, name: string, fieldPath: string): GenerateCtx {
+  const next = new Map(ctx.pipelineLets ?? []);
+  next.set(name, fieldPath);
+  return { ...ctx, pipelineLets: next };
+}
+
+/** Drop all pipeline lets, moving them to `droppedLets` with the stage name. */
+export function clearCtxLets(ctx: GenerateCtx, droppedByStage: string): GenerateCtx {
+  if (!ctx.pipelineLets || ctx.pipelineLets.size === 0) return ctx;
+  const dropped = new Map(ctx.droppedLets ?? []);
+  for (const name of ctx.pipelineLets.keys()) dropped.set(name, droppedByStage);
+  return { ...ctx, pipelineLets: new Map(), droppedLets: dropped };
+}
+
+/** Public access for pipeline.ts to read the let-bindings count. */
+export function ctxHasLets(ctx: GenerateCtx): boolean {
+  return (ctx.pipelineLets?.size ?? 0) > 0;
+}
+
+/** Construct a fresh ctx for sub-pipeline lowering. Outer lets do NOT cross. */
+export function freshSubPipelineCtx(): GenerateCtx {
+  return { lambdaParams: new Set() };
+}
+
+/** Public re-export of EMPTY_CTX for pipeline.ts. */
+export { EMPTY_CTX };
 
 // ── String-producing helpers ──────────────────────────────────────────────────
 
@@ -280,6 +327,11 @@ export function generate(expr: Expr): unknown {
   return _generate(expr, EMPTY_CTX);
 }
 
+/** Generate an expression with an explicit context (e.g. pipeline-let bindings). */
+export function generateWithCtx(expr: Expr, ctx: GenerateCtx): unknown {
+  return _generate(expr, ctx);
+}
+
 // ── Core generator ────────────────────────────────────────────────────────────
 
 function _generate(expr: Expr, ctx: GenerateCtx): unknown {
@@ -296,6 +348,12 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     throw new CodegenError(
       `${dynType === "AssignExpr" ? "Assignment" : "delete"} is a statement, not a value. ` +
         `It is only valid at the top level or as a pipeline-array element.`,
+    );
+  }
+  if (dynType === "LetDecl") {
+    throw new CodegenError(
+      "`let` is a pipeline statement, not a value. " +
+        "It is only valid at the top level of a pipeline.",
     );
   }
   switch (expr.type) {
@@ -374,6 +432,18 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       }
       if (ctx.lambdaParams.has(expr.name)) {
         return `$$${expr.name}`;
+      }
+      const letPath = ctx.pipelineLets?.get(expr.name);
+      if (letPath !== undefined) {
+        return `$${letPath}`;
+      }
+      const droppedBy = ctx.droppedLets?.get(expr.name);
+      if (droppedBy !== undefined) {
+        throw new CodegenError(
+          `\`${expr.name}\` is a \`let\` binding and can't be read after \`${droppedBy}\` — ` +
+            `the stage replaces the document. Inline the expression into the \`${droppedBy}\` body, ` +
+            `or rebind after the stage with another \`let\`.`,
+        );
       }
       throw new UnknownIdentifierError(expr.name);
     }
@@ -459,6 +529,10 @@ function asFieldPath(expr: Expr, ctx: GenerateCtx): string | null {
     }
     if (ctx.lambdaParams.has(expr.name)) {
       return `$$${expr.name}`;
+    }
+    const letPath = ctx.pipelineLets?.get(expr.name);
+    if (letPath !== undefined) {
+      return `$${letPath}`;
     }
     return null;
   }
@@ -752,6 +826,12 @@ function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx): unkno
           `If this array is meant to be a pipeline, ensure its first element is a stage like \`$match(...)\`.`,
       );
     }
+    if (el.type === "LetDecl") {
+      throw new CodegenError(
+        "`let` is a pipeline statement, not a value, and is only valid as a pipeline-array element. " +
+          "If this array is meant to be a pipeline, ensure its first element is a stage like `$match(...)`.",
+      );
+    }
   }
 
   const hasSpread = elements.some((el) => el.type === "SpreadElement");
@@ -773,7 +853,7 @@ function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx): unkno
     if (el.type === "SpreadElement") {
       flushBuffer();
       operands.push(_generate(el.argument, ctx));
-    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
       // Already rejected above; unreachable.
       continue;
     } else {
@@ -1561,6 +1641,8 @@ function generateMethodCall(
           [lambda.params[0], "value"],
           [lambda.params[1], "this"],
         ]),
+        pipelineLets: ctx.pipelineLets,
+        droppedLets: ctx.droppedLets,
       };
       return {
         $reduce: {
@@ -1936,6 +2018,8 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
       const keyCtx: GenerateCtx = {
         lambdaParams: new Set([...ctx.lambdaParams, lambda.params[0]]),
         reduceRemap: new Map([[lambda.params[0], "this"]]),
+        pipelineLets: ctx.pipelineLets,
+        droppedLets: ctx.droppedLets,
       };
       const keyBody = _generate(lambda.body, keyCtx);
       const keyExpr = isStringProducing(lambda.body) ? keyBody : { $toString: keyBody };
@@ -2151,12 +2235,15 @@ function generateRegexMethodCall(
  * The shape mirrors `jsmql()`'s existing top-level convention: one stage →
  * bare object, multiple stages → array.
  */
-export function generateMutationProgram(prog: MutationProgram): object | object[] {
+export function generateMutationProgram(
+  prog: MutationProgram,
+  ctx: GenerateCtx = EMPTY_CTX,
+): object | object[] {
   if (prog.mutations.length === 0) {
     throw new CodegenError("Mutation program must contain at least one assignment or delete");
   }
   const groups = groupMutations(prog.mutations);
-  const stages = groups.map((g) => generateMutationGroup(g));
+  const stages = groups.map((g) => generateMutationGroup(g, ctx));
   if (stages.length === 1) return stages[0];
   return stages;
 }
@@ -2172,9 +2259,9 @@ export function generateMutationProgram(prog: MutationProgram): object | object[
  *   - For assignments: the new RHS reads any path that was written earlier in
  *     the group. (Delete has no reads.)
  */
-export function generateMutationGroups(muts: Mutation[]): object[] {
+export function generateMutationGroups(muts: Mutation[], ctx: GenerateCtx = EMPTY_CTX): object[] {
   const groups = groupMutations(muts);
-  return groups.map((g) => generateMutationGroup(g));
+  return groups.map((g) => generateMutationGroup(g, ctx));
 }
 
 function groupMutations(muts: Mutation[]): Mutation[][] {
@@ -2225,7 +2312,7 @@ function groupMutations(muts: Mutation[]): Mutation[][] {
   return groups;
 }
 
-function generateMutationGroup(group: Mutation[]): object {
+function generateMutationGroup(group: Mutation[], ctx: GenerateCtx): object {
   if (group.length === 0) {
     throw new CodegenError("Internal: empty mutation group");
   }
@@ -2239,7 +2326,7 @@ function generateMutationGroup(group: Mutation[]): object {
       if (Object.prototype.hasOwnProperty.call(fields, path)) {
         throw new CodegenError(`Internal: field '${path}' written twice in same group`);
       }
-      fields[path] = generate(m.value);
+      fields[path] = _generate(m.value, ctx);
     }
     return { $set: fields };
   }
@@ -2308,8 +2395,8 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "ArrayLiteral":
       for (const el of expr.elements) {
         if (el.type === "SpreadElement") collectReadsInto(el.argument, out);
-        else if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
-          // mutations inside expressions are rejected elsewhere; ignore here
+        else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+          // mutations/lets inside expressions are rejected elsewhere; ignore here
         } else collectReadsInto(el, out);
       }
       return;

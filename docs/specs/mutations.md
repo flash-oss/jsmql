@@ -137,6 +137,14 @@ There are two pipeline forms, with one important behavioural difference:
 | Mutation in a value array       | codegen      | "Assignment is a statement, not a value, and is only valid at the top level or as a pipeline-array element" |
 | Empty mutation program          | codegen      | "Mutation program must contain at least one assignment or delete" (defensive — parser shouldn't produce this) |
 
+## Related
+
+- [Let bindings](let-bindings.md) — `let x = ...` is sugar over mutations: it
+  emits a `$set` per binding under a single compiler-owned namespace, with an
+  auto-emitted trailing `$unset`. Use `let` when you want a temporary scratch
+  value; use mutations (`$.x = ...`) when you want to persist `x` on the output
+  document.
+
 ## Tests
 
 - `test/mutations.test.ts` — focused unit tests, one case per behavior.

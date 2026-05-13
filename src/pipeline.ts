@@ -17,18 +17,48 @@
 // treated as a raw MongoDB query document and passed through; any other
 // expression is wrapped in $expr so the user can write `{ $match: $.age > 18 }`
 // and get `{ $match: { $expr: { $gt: ["$age", 18] } } }`.
+//
+// `let` bindings (see docs/specs/let-bindings.md) are pipeline-scoped local
+// variables that materialise under a single compiler-owned namespace field
+// (`__jsmql.<name>`) for the duration of the pipeline, with one trailing
+// `$unset: "__jsmql"` stage to clean up. The let scope is threaded through
+// stage lowering via a GenerateCtx so subsequent stages can resolve bare-
+// identifier references to the corresponding field path. Reshape-clearing
+// stages (`$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, `$replaceWith`)
+// drop the document and so drop all lets; later references become precise
+// "let X can't be read after $group" errors. Sub-pipelines (`$lookup.pipeline`,
+// `$unionWith.pipeline`, `$facet.*`) get a fresh empty let scope — outer lets
+// do not cross sub-pipeline boundaries in v1.
 
-import type { Expr, ArrayElement, Mutation, Pipeline } from "./ast.ts";
+import type { Expr, ArrayElement, Mutation, Pipeline, LetDecl } from "./ast.ts";
 import {
-  generate,
+  generateWithCtx,
   generateMutationGroups,
   generateMutationProgram,
   CodegenError,
+  EMPTY_CTX,
+  extendCtxLets,
+  clearCtxLets,
+  ctxHasLets,
+  freshSubPipelineCtx,
+  type GenerateCtx,
 } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 
 type StageShape = { name: string; body: Expr };
+
+/** Stages that replace the document and so drop all in-scope `let` bindings. */
+const RESHAPE_CLEARING_STAGES = new Set([
+  "$group",
+  "$bucket",
+  "$bucketAuto",
+  "$replaceRoot",
+  "$replaceWith",
+]);
+
+/** Compiler-owned namespace for materialised `let` bindings. */
+const LET_NAMESPACE = "__jsmql";
 
 /**
  * Loose detection: does `el` look like the user *intended* a pipeline stage?
@@ -44,10 +74,13 @@ type StageShape = { name: string; body: Expr };
  */
 function isStageCandidate(el: ArrayElement): boolean {
   if (el.type === "SpreadElement") return false;
-  // Mutations (`$.a = 1`, `delete $.x`) are pipeline stages — they lower to
-  // $set/$unset stages via the coalescer. Recognising them here flips the
-  // array into pipeline mode even when no `$stage`-shaped element comes first.
-  if (el.type === "AssignExpr" || el.type === "DeleteStmt") return true;
+  // Mutations (`$.a = 1`, `delete $.x`) and `let` bindings are pipeline
+  // statements — they lower to $set / $unset stages. Recognising them here
+  // flips the array into pipeline mode even when no `$stage`-shaped element
+  // comes first (`[let x = 5, $match(x > 0)]` is a pipeline).
+  if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+    return true;
+  }
   if (el.type === "ObjectLiteral") {
     if (el.entries.length === 0) return false;
     const first = el.entries[0];
@@ -112,6 +145,10 @@ export function isPipelineAst(ast: Expr): boolean {
  * the same algorithm `jsmql()` uses at the top level — see
  * `generateMutationGroups` in codegen.ts. Non-mutation stages flush the
  * current mutation buffer and emit its compiled $set/$unset stage(s) inline.
+ *
+ * `let` bindings extend a pipeline-scoped GenerateCtx that downstream stages
+ * inherit; reshape-clearing stages drop the scope; a trailing `$unset` is
+ * appended once if any let was declared.
  */
 export function generatePipeline(ast: Expr): unknown[] {
   if (ast.type !== "ArrayLiteral") {
@@ -119,10 +156,12 @@ export function generatePipeline(ast: Expr): unknown[] {
   }
   const out: unknown[] = [];
   let mutationBuffer: Mutation[] = [];
+  let ctx: GenerateCtx = EMPTY_CTX;
+  let everHadLet = false;
 
   const flushMutations = () => {
     if (mutationBuffer.length === 0) return;
-    for (const stage of generateMutationGroups(mutationBuffer)) out.push(stage);
+    for (const stage of generateMutationGroups(mutationBuffer, ctx)) out.push(stage);
     mutationBuffer = [];
   };
 
@@ -131,10 +170,21 @@ export function generatePipeline(ast: Expr): unknown[] {
       mutationBuffer.push(el);
       return;
     }
+    if (el.type === "LetDecl") {
+      flushMutations();
+      const stage = lowerLetDecl(el, ctx);
+      out.push(stage.set);
+      ctx = stage.ctx;
+      everHadLet = true;
+      return;
+    }
     flushMutations();
-    out.push(stageFromElement(el, i));
+    const result = lowerStageElement(el, i, ctx);
+    out.push(result.stage);
+    ctx = result.ctx;
   });
   flushMutations();
+  if (everHadLet) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
@@ -149,52 +199,94 @@ export function generatePipeline(ast: Expr): unknown[] {
  * contrast to `generatePipeline` (the `[…]` form), where consecutive
  * mutation elements coalesce through `generateMutationGroups`. This is the
  * core difference between the two pipeline forms.
+ *
+ * `let` declarations contribute one `$set` stage each and extend the let
+ * scope visible to subsequent statements.
  */
 export function generateImplicitPipeline(p: Pipeline): unknown[] {
   const out: unknown[] = [];
+  let ctx: GenerateCtx = EMPTY_CTX;
+  let everHadLet = false;
+
   p.stmts.forEach((stmt, i) => {
+    if (stmt.type === "LetDecl") {
+      const stage = lowerLetDecl(stmt, ctx);
+      out.push(stage.set);
+      ctx = stage.ctx;
+      everHadLet = true;
+      return;
+    }
     if (stmt.type === "MutationProgram") {
-      const result = generateMutationProgram(stmt);
+      const result = generateMutationProgram(stmt, ctx);
       if (Array.isArray(result)) out.push(...result);
       else out.push(result);
       return;
     }
-    out.push(stageFromElement(stmt, i));
+    const result = lowerStageElement(stmt, i, ctx);
+    out.push(result.stage);
+    ctx = result.ctx;
   });
+
+  if (everHadLet) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
-function stageFromElement(el: ArrayElement, index: number): Record<string, unknown> {
-  const stage = asStageShape(el);
-  if (!stage) throw new CodegenError(formatNotAStageError(el, index));
-  return { [stage.name]: generateStageBody(stage.name, stage.body) };
+type LetLowering = { set: Record<string, unknown>; ctx: GenerateCtx };
+
+function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
+  if (ctx.pipelineLets?.has(decl.name)) {
+    throw new CodegenError(
+      `\`let ${decl.name}\` is already declared earlier in this pipeline. ` +
+        `Re-declaration in the same scope is not allowed — pick a different name, ` +
+        `or rebind after a reshape stage (\`$group\`, \`$replaceRoot\`, …).`,
+    );
+  }
+  const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
+  const value = generateWithCtx(decl.value, ctx);
+  return {
+    set: { $set: { [fieldPath]: value } },
+    ctx: extendCtxLets(ctx, decl.name, fieldPath),
+  };
 }
 
-function generateStageBody(stageName: string, body: Expr): unknown {
+type StageLowering = { stage: Record<string, unknown>; ctx: GenerateCtx };
+
+function lowerStageElement(el: ArrayElement, index: number, ctx: GenerateCtx): StageLowering {
+  const stage = asStageShape(el);
+  if (!stage) throw new CodegenError(formatNotAStageError(el, index));
+  const body = generateStageBody(stage.name, stage.body, ctx);
+  const nextCtx = RESHAPE_CLEARING_STAGES.has(stage.name) ? clearCtxLets(ctx, stage.name) : ctx;
+  return { stage: { [stage.name]: body }, ctx: nextCtx };
+}
+
+function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
   // $match: ObjectLiteral body → raw query document; otherwise wrap in $expr.
   if (stageName === "$match") {
     if (body.type === "ObjectLiteral") {
-      return generateBodyObject(body, stageName);
+      return generateBodyObject(body, stageName, ctx);
     }
-    return { $expr: generate(body) };
+    return { $expr: generateWithCtx(body, ctx) };
   }
 
   // Other stages: if the body is an object literal, walk its entries so we
   // can spot sub-pipeline slots; otherwise generate directly.
   if (body.type === "ObjectLiteral") {
-    return generateBodyObject(body, stageName);
+    return generateBodyObject(body, stageName, ctx);
   }
-  return generate(body);
+  return generateWithCtx(body, ctx);
 }
 
 /**
  * Walk a stage's object-literal body, recursing into sub-pipeline slots
  * (configured per-stage in STAGES). Non-pipeline slots fall through to the
- * normal expression codegen.
+ * normal expression codegen with the parent's ctx (so lets are visible in
+ * stage-body expressions). Sub-pipelines get a fresh empty ctx — outer lets
+ * do not cross sub-pipeline boundaries.
  */
 function generateBodyObject(
   body: Expr & { type: "ObjectLiteral" },
   stageName: string,
+  ctx: GenerateCtx,
 ): Record<string, unknown> {
   const stage = lookupStage(stageName)!;
   const allValuesArePipelines = stage.subPipelineFields.includes("*");
@@ -211,11 +303,56 @@ function generateBodyObject(
     const key = entry.key.name;
     const isPipelineSlot = allValuesArePipelines || pipelineSlot.has(key);
     if (isPipelineSlot && isPipelineAst(entry.value)) {
-      out[key] = generatePipeline(entry.value);
+      // Sub-pipelines run in a fresh scope. Outer lets do not cross.
+      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx());
     } else {
-      out[key] = generate(entry.value);
+      out[key] = generateWithCtx(entry.value, ctx);
     }
   }
+  return out;
+}
+
+/**
+ * Sub-pipeline entry point. Same as `generatePipeline` but starts from a
+ * caller-supplied ctx. Currently used only for sub-pipeline slots (where the
+ * ctx is fresh-empty); the top-level entry stays parameter-less for API
+ * stability.
+ */
+function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
+  if (ast.type !== "ArrayLiteral") {
+    throw new CodegenError("generatePipelineWithCtx expects an ArrayLiteral AST");
+  }
+  const out: unknown[] = [];
+  let mutationBuffer: Mutation[] = [];
+  let ctx: GenerateCtx = startCtx;
+  let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
+
+  const flushMutations = () => {
+    if (mutationBuffer.length === 0) return;
+    for (const stage of generateMutationGroups(mutationBuffer, ctx)) out.push(stage);
+    mutationBuffer = [];
+  };
+
+  ast.elements.forEach((el, i) => {
+    if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      mutationBuffer.push(el);
+      return;
+    }
+    if (el.type === "LetDecl") {
+      flushMutations();
+      const stage = lowerLetDecl(el, ctx);
+      out.push(stage.set);
+      ctx = stage.ctx;
+      everHadLet = true;
+      return;
+    }
+    flushMutations();
+    const result = lowerStageElement(el, i, ctx);
+    out.push(result.stage);
+    ctx = result.ctx;
+  });
+  flushMutations();
+  if (everHadLet) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 

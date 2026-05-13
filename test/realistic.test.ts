@@ -970,6 +970,36 @@ describe("pipeline: top-orders report by department", () => {
   });
 });
 
+describe("pipeline: order pricing with let bindings + commentary", () => {
+  // Realistic order-pricing computation: derive sub-total, tax-inclusive total,
+  // and shipping-inclusive total step by step, with each derived value
+  // explained by an inline comment. `let` bindings keep the helpers visibly
+  // distinct from real document fields and the compiler auto-emits the cleanup
+  // $unset at the end of the pipeline.
+  it("compiles let-chained derivations into $set/$set/$set + $project + $unset", () => {
+    const result = jsmql`
+      let subtotal = $.price * $.qty;       // sub-total before tax/shipping
+      let withTax  = subtotal * 1.2;        // with tax
+      let withShip = withTax + $.shipping;  // with tax and shipping
+      $project({ sku: 1, subtotal, withTax, final: withShip });
+    `;
+    expect(result).toEqual([
+      { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.withTax": { $multiply: ["$__jsmql.subtotal", 1.2] } } },
+      { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
+      {
+        $project: {
+          sku: 1,
+          subtotal: "$__jsmql.subtotal",
+          withTax: "$__jsmql.withTax",
+          final: "$__jsmql.withShip",
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 describe("pipeline: count orders by status per shop ($accumulator replacement)", () => {
   // Realistic analytics output: for each shop, a count of orders by status —
   // { pending: 12, paid: 87, refunded: 3 }. The dynamic-keyed object (one

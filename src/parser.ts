@@ -15,6 +15,7 @@ import type {
   CallArg,
   AssignExpr,
   DeleteStmt,
+  LetDecl,
   Mutation,
   MutationProgram,
   Pipeline,
@@ -150,7 +151,11 @@ export class Parser {
       throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
     }
 
-    if (!sawSemi) return stmts[0];
+    if (!sawSemi) {
+      const only = stmts[0];
+      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name);
+      return only;
+    }
     return { type: "Pipeline", stmts };
   }
 
@@ -268,7 +273,11 @@ export class Parser {
       throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
     }
 
-    if (!sawSemi) return stmts[0];
+    if (!sawSemi) {
+      const only = stmts[0];
+      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name);
+      return only;
+    }
     return { type: "Pipeline", stmts };
   }
 
@@ -288,7 +297,23 @@ export class Parser {
     if (eof.type !== TokenType.EOF) {
       throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
     }
+    if (stmt.type === "LetDecl") this.throwLetOutsidePipeline(stmt.name);
     return stmt;
+  }
+
+  /**
+   * Raised when a `let` declaration appears at the top of an input that turns
+   * out to be expression-mode (no `;` separator, not a bracketed pipeline).
+   * `let` only makes sense as a pipeline statement — there's no enclosing
+   * scope for the binding to live in otherwise.
+   */
+  private throwLetOutsidePipeline(name: string): never {
+    throw new ParseError(
+      `\`let ${name} = …\` is only valid inside a pipeline. ` +
+        `Add a trailing \`;\` to flip into pipeline mode (e.g. \`let ${name} = …; { $project: … }\`), ` +
+        `or use the bracketed form \`[ let ${name} = …, { $project: … } ]\`.`,
+      0,
+    );
   }
 
   /**
@@ -316,6 +341,13 @@ export class Parser {
    */
   private collectStatement(): PipelineStmt {
     const first = this.lexer.peek();
+
+    // `let <ident> = <expr>` — pipeline-scoped local binding. Only legal in a
+    // pipeline context; codegen errors if it shows up in expression-mode input
+    // (no `;` boundary and not inside a bracketed pipeline).
+    if (first.type === TokenType.Let) {
+      return this.parseLetDecl();
+    }
 
     // Tokens that can ONLY start a mutation program: `delete`, `++`, `--`.
     // Their presence at the start of a statement unambiguously commits us
@@ -356,6 +388,38 @@ export class Parser {
     }
 
     return expr;
+  }
+
+  // ── Let declaration ──────────────────────────────────────────────────────
+
+  /**
+   * Parse `let <ident> = <expr>`. The leading `let` token must already be the
+   * current peek; this consumes it and the rest of the declaration. The cursor
+   * is left at whatever follows the value expression (typically `;` or `,` in
+   * the array-pipeline form). No re-declaration check here — that needs a
+   * pipeline-level view and lives in codegen.
+   */
+  private parseLetDecl(): LetDecl {
+    this.lexer.next(); // consume `let`
+    const ident = this.lexer.peek();
+    if (ident.type !== TokenType.Ident) {
+      throw new ParseError(
+        `Expected an identifier after \`let\` at position ${ident.pos}, got '${ident.value}'`,
+        ident.pos,
+      );
+    }
+    this.lexer.next(); // consume the identifier
+    const eq = this.lexer.peek();
+    if (eq.type !== TokenType.Eq) {
+      throw new ParseError(
+        `Expected '=' after \`let ${ident.value}\` at position ${eq.pos}, got '${eq.value}'. ` +
+          `\`let\` requires an initialiser — write \`let ${ident.value} = <expr>\`.`,
+        eq.pos,
+      );
+    }
+    this.lexer.next(); // consume `=`
+    const value = this.parseExpression();
+    return { type: "LetDecl", name: ident.value, value };
   }
 
   // ── Mutation program ─────────────────────────────────────────────────────
@@ -1163,7 +1227,8 @@ export class Parser {
       t.type === TokenType.Ident ||
       t.type === TokenType.In ||
       t.type === TokenType.New ||
-      t.type === TokenType.Typeof
+      t.type === TokenType.Typeof ||
+      t.type === TokenType.Let
     );
   }
 
@@ -1448,6 +1513,10 @@ export class Parser {
         // `delete $.x` as a pipeline element. Codegen rejects it if the array
         // turns out not to be a pipeline.
         elements.push(this.parseDeleteStmt());
+      } else if (this.lexer.peek().type === TokenType.Let) {
+        // `let x = expr` as a pipeline element. Codegen rejects it if the
+        // array is not a pipeline (parallel to AssignExpr/DeleteStmt handling).
+        elements.push(this.parseLetDecl());
       } else if (this.peekIncDecOp() !== null) {
         // Prefix `++$.x` / `--$.x` as a pipeline element.
         elements.push(this.parsePrefixIncDec());
@@ -1541,6 +1610,19 @@ export class Parser {
       this.lexer.expect(TokenType.Colon);
       const value = this.parseExpression();
       const key: ObjectKey = { kind: "static", name: `$${ident.value}` };
+      return { type: "KeyValueEntry", key, value };
+    }
+
+    // `let` is a jsmql keyword but is also a legitimate MongoDB object-key name
+    // (`$lookup`, `$graphLookup`, `$documents`, and top-level `aggregate({ let: ... })`
+    // all carry a `let:` field). Accept it as an object key so those stage shapes
+    // continue to parse. Shorthand `{ let }` is intentionally rejected — that
+    // would conflict with `let x = …` statements and serve no useful purpose.
+    if (tok.type === TokenType.Let) {
+      this.lexer.next();
+      this.lexer.expect(TokenType.Colon);
+      const value = this.parseExpression();
+      const key: ObjectKey = { kind: "static", name: "let" };
       return { type: "KeyValueEntry", key, value };
     }
 
