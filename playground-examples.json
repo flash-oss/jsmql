@@ -207,6 +207,6 @@
   {
     "slug": "invoice-finalisation-pipeline-implicit-form",
     "title": "e-commerce: invoice finalisation pipeline (implicit `;` form)",
-    "query": "[\n      $match($.status === 'pending' && $.paidAt != null),\n      $.lineTotal = $.qty * $.unitPrice,\n      $.invoiceCount += 1,\n      delete $.tempToken,\n      delete $._processingState,\n      $.status = 'complete'\n    ]"
+    "query": "$match($.status === 'pending' && $.paidAt != null);\n$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;\ndelete $.tempToken, delete $._processingState;\n$.status = 'complete'"
   }
 ]
