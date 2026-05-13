@@ -444,8 +444,10 @@ describe("mutations: validation errors", () => {
 
 describe("mutations: lex regression checks", () => {
   // Make sure adding `=`, `+=`, etc. didn't break existing operators.
-  it("== still parses as equality", () => {
-    expect(jsmql("$.a == 1")).toEqual({ $eq: ["$a", 1] });
+  it("== null still parses (loose null check)", () => {
+    expect(jsmql("$.a == null")).toEqual({
+      $in: [{ $type: "$a" }, ["null", "missing"]],
+    });
   });
 
   it("=== still parses as strict equality", () => {
@@ -463,8 +465,10 @@ describe("mutations: lex regression checks", () => {
     expect(jsmql("$.a <= 1")).toEqual({ $lte: ["$a", 1] });
   });
 
-  it("!= and !== still parse", () => {
-    expect(jsmql("$.a != 1")).toEqual({ $ne: ["$a", 1] });
+  it("!= null and !== still parse", () => {
+    expect(jsmql("$.a != null")).toEqual({
+      $not: [{ $in: [{ $type: "$a" }, ["null", "missing"]] }],
+    });
     expect(jsmql("$.a !== 1")).toEqual({ $ne: ["$a", 1] });
   });
 

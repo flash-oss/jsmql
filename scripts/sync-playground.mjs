@@ -1,26 +1,28 @@
 #!/usr/bin/env node
 /**
- * Sync `playground.html` examples from `test/realistic.test.ts`.
+ * Sync `playground-examples.json` from `test/realistic.test.ts`.
  *
  * Walks every top-level `describe(title, () => { it(...) })` block, extracts
  * the first `jsmql(...)` call or `` jsmql`...` `` tagged template inside its
- * first `it(...)`, and rewrites the delimited regions in `playground.html`:
- *
- *   <!-- BEGIN GENERATED OPTIONS  --> … <!-- END GENERATED OPTIONS  -->
- *   <!-- BEGIN GENERATED EXAMPLES --> … <!-- END GENERATED EXAMPLES -->
+ * first `it(...)`, and writes the result to `playground-examples.json` next
+ * to `playground.html`. The playground page fetches this manifest at load
+ * time and uses it to populate the `<select>` and render the chosen
+ * example — keeping the realistic.test.ts queries as the single source of
+ * truth and removing the inline `<script data-ex>` duplicates that this
+ * script used to write into `playground.html`.
  *
  * Skips the `validate(): realistic error cases` block (queries don't compile)
  * and warns on `describe`s where no string-form query can be extracted.
  *
  * Hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script
- * whenever Claude Code edits `test/realistic.test.ts`, so the playground
- * update is already staged when the next commit happens. Run manually as
+ * whenever Claude Code edits `test/realistic.test.ts`, so the manifest is
+ * already staged when the next commit happens. Run manually as
  *
  *   npm run sync:playground
  *
  * after editing the test file outside Claude Code.
  *
- * Idempotent: if the rewritten file is byte-identical to what's on disk, the
+ * Idempotent: if the new manifest is byte-identical to what's on disk, the
  * script exits 0 without writing or staging.
  */
 
@@ -32,24 +34,11 @@ import path from "node:path";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
-const PLAYGROUND = path.join(ROOT, "playground.html");
-
-const OPT_BEGIN = "<!-- BEGIN GENERATED OPTIONS -->";
-const OPT_END = "<!-- END GENERATED OPTIONS -->";
-const EX_BEGIN = "<!-- BEGIN GENERATED EXAMPLES -->";
-const EX_END = "<!-- END GENERATED EXAMPLES -->";
+const MANIFEST = path.join(ROOT, "playground-examples.json");
 
 function fail(msg) {
   console.error(`sync-playground: ${msg}`);
   process.exit(1);
-}
-
-function escapeHtml(s) {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function makeSlug(title, used) {
@@ -252,56 +241,23 @@ if (skipped.length) {
   for (const s of skipped) console.error(`  skipped: ${s.title} — ${s.why}`);
 }
 
-const html = readFileSync(PLAYGROUND, "utf8");
+// Pretty-printed JSON with one example per line block so a `git diff` on the
+// manifest is readable when a test gets renamed or its query changes.
+const manifest = JSON.stringify(examples, null, 2) + "\n";
 
-const optStart = html.indexOf(OPT_BEGIN);
-const optEnd = html.indexOf(OPT_END);
-const exStart = html.indexOf(EX_BEGIN);
-const exEnd = html.indexOf(EX_END);
+let existing = null;
+try {
+  existing = readFileSync(MANIFEST, "utf8");
+} catch {
+  // First run — `existing` stays null.
+}
 
-if (optStart < 0 || optEnd < 0)
-  fail(`missing options markers in playground.html — need ${OPT_BEGIN} … ${OPT_END}`);
-if (exStart < 0 || exEnd < 0)
-  fail(`missing examples markers in playground.html — need ${EX_BEGIN} … ${EX_END}`);
-if (optStart > optEnd) fail("OPTIONS markers reversed");
-if (exStart > exEnd) fail("EXAMPLES markers reversed");
-
-const prevSelectedMatch = html.slice(optStart, optEnd).match(/<option value="([^"]+)" selected/);
-const previouslySelected = prevSelectedMatch ? prevSelectedMatch[1] : null;
-const stillExists = previouslySelected && examples.some((e) => e.slug === previouslySelected);
-const selectedSlug = stillExists ? previouslySelected : examples[0].slug;
-
-const optBlock = examples
-  .map((e) => {
-    const sel = e.slug === selectedSlug ? " selected" : "";
-    return `              <option value="${escapeHtml(e.slug)}"${sel}>${escapeHtml(e.title)}</option>`;
-  })
-  .join("\n");
-
-const exBlock = examples
-  .map((e) => {
-    const indented = e.query
-      .split("\n")
-      .map((l) => (l === "" ? "" : "      " + l))
-      .join("\n");
-    return `    <script type="text/plain" data-ex="${escapeHtml(e.slug)}">\n${indented}\n    </script>`;
-  })
-  .join("\n\n");
-
-const newOpt = `${OPT_BEGIN}\n${optBlock}\n              ${OPT_END}`;
-const newEx = `${EX_BEGIN}\n${exBlock}\n    ${EX_END}`;
-
-let out = html.slice(0, optStart) + newOpt + html.slice(optEnd + OPT_END.length);
-const exStart2 = out.indexOf(EX_BEGIN);
-const exEnd2 = out.indexOf(EX_END);
-out = out.slice(0, exStart2) + newEx + out.slice(exEnd2 + EX_END.length);
-
-if (out === html) {
+if (existing === manifest) {
   console.log(`sync-playground: ${examples.length} examples already in sync (no change)`);
   process.exit(0);
 }
 
-writeFileSync(PLAYGROUND, out);
+writeFileSync(MANIFEST, manifest);
 
 const inGitRepo =
   spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
@@ -309,11 +265,11 @@ const inGitRepo =
     stdio: "ignore",
   }).status === 0;
 if (inGitRepo) {
-  const add = spawnSync("git", ["add", path.relative(ROOT, PLAYGROUND)], {
+  const add = spawnSync("git", ["add", path.relative(ROOT, MANIFEST)], {
     cwd: ROOT,
     stdio: "inherit",
   });
-  if (add.status !== 0) fail("git add playground.html failed");
+  if (add.status !== 0) fail("git add playground-examples.json failed");
 }
 
-console.log(`sync-playground: synced ${examples.length} examples → playground.html`);
+console.log(`sync-playground: synced ${examples.length} examples → playground-examples.json`);

@@ -125,11 +125,51 @@ function translateEquality(
   op: "===" | "==" | "!==" | "!=",
   ctx: TranslateCtx,
 ): Record<string, unknown> | null {
+  // `==` / `!=` are restricted to comparisons against null (loose null check).
+  // Validation lives in codegen — here we just don't translate them so the
+  // body falls through to $expr, which then surfaces the codegen error.
+  if (op === "==" || op === "!=") {
+    if (left.type !== "NullLiteral" && right.type !== "NullLiteral") return null;
+    return translateLooseNull(left, right, op);
+  }
+  // Strict equality (`===` / `!==`) against null gets `$type: "null"` so the
+  // match excludes missing-field docs, matching JS semantics.
+  if (left.type === "NullLiteral" || right.type === "NullLiteral") {
+    return translateStrictNull(left, right, op);
+  }
   const oriented = orientFieldLiteral(left, right, (e) => anyEqualityLiteral(e, ctx));
   if (oriented === null) return null;
   const { field, value } = oriented;
-  if (op === "===" || op === "==") return { [field]: value };
+  if (op === "===") return { [field]: value };
   return { [field]: { $ne: value } };
+}
+
+function translateLooseNull(
+  left: Expr,
+  right: Expr,
+  op: "==" | "!=",
+): Record<string, unknown> | null {
+  const fieldExpr = left.type === "NullLiteral" ? right : left;
+  const field = asFieldPath(fieldExpr);
+  if (field === null) return null;
+  // Query language `{ field: null }` already matches null OR missing, which is
+  // exactly the loose semantics. Keep the index-friendly shape unchanged.
+  if (op === "==") return { [field]: null };
+  return { [field]: { $ne: null } };
+}
+
+function translateStrictNull(
+  left: Expr,
+  right: Expr,
+  op: "===" | "!==",
+): Record<string, unknown> | null {
+  const fieldExpr = left.type === "NullLiteral" ? right : left;
+  const field = asFieldPath(fieldExpr);
+  if (field === null) return null;
+  // `$type: "null"` matches only docs where the field is the BSON null type —
+  // missing fields are excluded, matching JS strict equality.
+  if (op === "===") return { [field]: { $type: "null" } };
+  return { [field]: { $not: { $type: "null" } } };
 }
 
 function translateOrderedCompare(

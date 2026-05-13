@@ -5,7 +5,7 @@ Write MongoDB aggregation expressions in JavaScript. jsmql is a JS-subset langua
 ```js
 import { jsmql } from "jsmql";
 
-jsmql(($) => $.age > 18 && $.status == "active")
+jsmql(($) => $.age > 18 && $.status === "active")
 // → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
 
 jsmql(($) => $.name.trim().toLowerCase())
@@ -48,13 +48,13 @@ db.products.aggregate([{ $match: { $expr: jsmql(($) => $.price >= 100) } }]);
 
 // Embed JS values with the template-tag form
 const minAge = 21;
-const filter = jsmql`$.age >= ${minAge} && $.active == true`;
+const filter = jsmql`$.age >= ${minAge} && $.active === true`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$active", true] }] }
 
 // Compile once, bind many — for queries that run repeatedly with different values
 const eligible = jsmql.compile(
   ({ minAge, region }, $, { $match }) =>
-    [$match($.age >= minAge && $.region == region)],
+    [$match($.age >= minAge && $.region === region)],
 );
 eligible({ minAge: 21, region: "AU" });
 // → [{ $match: { age: { $gte: 21 }, region: "AU" } }]
@@ -71,7 +71,7 @@ jsmql accepts a JS-like expression syntax that covers the full range of JavaScri
 ```js
 // Arithmetic, comparison, logical
 $.price * 1.1 > $.msrp
-$.age >= 18 && $.status == "active"
+$.age >= 18 && $.status === "active"
 $.nickname ?? $.firstName ?? "Anonymous"
 
 // Template literals and optional chaining
@@ -95,7 +95,7 @@ Math.min(...$.scores)              // spread args
 Math.hypot($.dx, $.dy)             // Euclidean distance
 Math.log10($.amplitude) * 20       /* signal in dB */
 Math.PI * $.radius ** 2            // Math.PI / Math.E constants
-typeof $.field == "string" ? $.field.trim() : String($.field)
+typeof $.field === "string" ? $.field.trim() : String($.field)
 Array.isArray($.tags) && $.tags.length > 0
 
 // Dates
@@ -297,7 +297,7 @@ Compile a parameterised arrow function once and bind fresh values on every call.
 
 ```js
 const q = jsmql.compile(({ minAge, region }, $, { $match }) =>
-  [$match($.age >= minAge && $.region == region)],
+  [$match($.age >= minAge && $.region === region)],
 );
 q({ minAge: 21, region: "AU" });
 // → [{ $match: { age: { $gte: 21 }, region: "AU" } }]
@@ -307,7 +307,7 @@ Defaults in the destructure (`{ minAge = 18 }`) are rejected with a long-form er
 
 ### `jsmql.validate(input): { valid: boolean, errors: object[] }`
 
-Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` jsmql.validate`$.x == ${val}` `` works the same as `jsmql.validate("$.x == 1")`. `jsmql.validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
+Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` jsmql.validate`$.x === ${val}` `` works the same as `jsmql.validate("$.x === 1")`. `jsmql.validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
 
 The parameterised path stays throw-style: `jsmql.compile(fn)(params)` throws on bad input. There is no `jsmql.validate.compile` — wrap the compiled callable in your own `try`/`catch` if you need structured per-call errors.
 

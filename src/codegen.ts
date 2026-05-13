@@ -599,9 +599,10 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "**":
       return { $pow: [_generate(left, ctx), _generate(right, ctx)] };
     case "==":
+    case "!=":
+      return generateLooseEquality(op, left, right, ctx);
     case "===":
       return { $eq: [_generate(left, ctx), _generate(right, ctx)] };
-    case "!=":
     case "!==":
       return { $ne: [_generate(left, ctx), _generate(right, ctx)] };
     case ">":
@@ -627,6 +628,34 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "in":
       return generateInExpr(left, right, ctx);
   }
+}
+
+/**
+ * Loose equality (`==`, `!=`) is restricted to comparisons against `null` —
+ * the one JS use of `==` that is unambiguous and useful (matches null or
+ * missing). Any other use is a footgun (JS type coercion) and is rejected
+ * with a message pointing the user at `===`.
+ *
+ * `$.x == null` compiles to a $type check covering both BSON "null" and
+ * "missing", so missing-field docs match the same way they do in MongoDB's
+ * query language (`{ field: null }`). `$.x != null` is the negation.
+ */
+function generateLooseEquality(
+  op: "==" | "!=",
+  left: Expr,
+  right: Expr,
+  ctx: GenerateCtx,
+): unknown {
+  const leftIsNull = left.type === "NullLiteral";
+  const rightIsNull = right.type === "NullLiteral";
+  if (!leftIsNull && !rightIsNull) {
+    throw new CodegenError(
+      `'${op}' is only allowed against null in jsmql. Use '${op === "==" ? "===" : "!=="}' for JS-like strict equality (no surprising type coercion). To match "null or missing", write '$.x ${op} null'.`,
+    );
+  }
+  const operand = _generate(leftIsNull ? right : left, ctx);
+  const inNullOrMissing = { $in: [{ $type: operand }, ["null", "missing"]] };
+  return op === "==" ? inNullOrMissing : { $not: [inNullOrMissing] };
 }
 
 /**

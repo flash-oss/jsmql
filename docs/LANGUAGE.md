@@ -12,7 +12,7 @@ jsmql is a JavaScript-subset language that compiles to MongoDB aggregation expre
 const { jsmql } = require("jsmql");
 
 // JS operators
-jsmql("$.age > 18 && $.status == 'active'");
+jsmql("$.age > 18 && $.status === 'active'");
 // → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
 
 // Method chains
@@ -25,7 +25,7 @@ jsmql("$.prices.map(p => p * 1.1)");
 
 // With the template-tag form of jsmql (for embedded values)
 const minAge = 21;
-jsmql`$.age >= ${minAge} && $.status == 'active'`;
+jsmql`$.age >= ${minAge} && $.status === 'active'`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$status", "active"] }] }
 ```
 
@@ -71,7 +71,7 @@ An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 - Bracket access: `$.items[0]`, `$.arr[$.idx]`
 - Computed object keys: `{ [$.k]: 1 }`
 - Shorthand object properties: `x => ({ x })` (sugar for `{ x: x }`)
-- Binary operators: `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `>`, `>=`, `<`, `<=`, `&&`, `||`, `??`, `in`, `**`
+- Binary operators: `+`, `-`, `*`, `/`, `%`, `===`, `!==`, `==`/`!=` (against `null` only — see [Comparison](#comparison)), `>`, `>=`, `<`, `<=`, `&&`, `||`, `??`, `in`, `**`
 - Unary operators: `!`, `-`
 - Ternary operator: `? :`
 - String methods: `.trim()`, `.toLowerCase()`, `.startsWith()`, etc.
@@ -342,8 +342,8 @@ $.a + ""            // → { $concat: ["$a", ""] }
 ### Comparison
 
 ```js
-$.status == "active"                // { $eq: ["$status", "active"] }
-$.status != null                    // { $ne: ["$status", null] }
+$.status === "active"               // { $eq: ["$status", "active"] }
+$.status !== "archived"             // { $ne: ["$status", "archived"] }
 $.age > 18                          // { $gt: ["$age", 18] }
 $.age >= 21                         // { $gte: ["$age", 21] }
 $.score < 50                        // { $lt: ["$score", 50] }
@@ -352,7 +352,27 @@ $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]]
 $.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (property existence)
 ```
 
-**Note:** `===` and `!==` work the same as `==` and `!=`.
+#### `===` / `!==` vs `==` / `!=` — null and missing fields
+
+jsmql tracks the JS distinction between strict and loose equality, mapped to the two natural MongoDB semantics around `null` / missing fields:
+
+- **`===` / `!==`** are JS-like strict equality. Use them for every comparison except null-vs-missing checks.
+- **`==` / `!=`** are restricted to comparisons against `null` — the one JS idiom where `==` has a clear, useful meaning (matches null or missing). Any other use is a compile error pointing you at `===`. This eliminates the usual JS `==` footgun (silent type coercion).
+
+| jsmql              | Matches                              | MQL (expression context)                                              | MQL (`$match` body)                          |
+| ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
+| `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{ x: { $type: "null" } }`                   |
+| `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{ x: { $not: { $type: "null" } } }`         |
+| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{ x: null }`                                |
+| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{ x: { $ne: null } }`                       |
+| `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{ x: 5 }`                                   |
+| `$.x == 5`         | **compile error**                    | —                                                                     | —                                            |
+
+The error for non-null `==`:
+
+> `'=='` is only allowed against null in jsmql. Use `'==='` for JS-like strict equality (no surprising type coercion). To match "null or missing", write `$.x == null`.
+
+`null` may appear on either side: `null == $.x` is identical to `$.x == null`.
 
 **`in` operator semantics:**
 - Array on the right → value membership: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3. *(JavaScript itself uses index existence here — we deliberately diverge because value membership is what users want for MongoDB queries.)*
@@ -418,7 +438,7 @@ $.a ^ $.b                           // { $bitXor: ["$a", "$b"] }
 ~$.flags                            // { $bitNot: "$flags" }
 ```
 
-**Precedence** matches JS: `==` / `!=` bind tighter than `&` / `^` / `|`, which bind tighter than `&&` / `||`. So `$.a == $.b & $.c` parses as `($.a == $.b) & $.c`, just like in JavaScript.
+**Precedence** matches JS: `===` / `!==` (and the null-restricted `==` / `!=`) bind tighter than `&` / `^` / `|`, which bind tighter than `&&` / `||`. So `$.a === $.b & $.c` parses as `($.a === $.b) & $.c`, just like in JavaScript.
 
 **No shift operators.** MongoDB has no `<<` / `>>` / `>>>`; those tokens are not accepted.
 
@@ -529,7 +549,7 @@ $.items.filter(x => x > 0)
 // → { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } } }
 
 // find — first matching element
-$.items.find(x => x.status == "active")
+$.items.find(x => x.status === "active")
 // → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: { $eq: ["$$x.status", "active"] } } }, 0] }
 
 // findLast — last matching element (ES2023)
@@ -737,7 +757,7 @@ parseFloat($.stringField)          // { $toDouble: "$stringField" }
 
 ```js
 typeof $.field                     // { $type: "$field" }
-typeof $.age == "number"           // { $eq: [{ $type: "$age" }, "number"] }
+typeof $.age === "number"          // { $eq: [{ $type: "$age" }, "number"] }
 ```
 
 Returns the BSON type name as a string (e.g. `"double"`, `"string"`, `"bool"`, `"objectId"`, `"date"`, `"null"`, `"array"`, `"object"`).
@@ -1267,12 +1287,16 @@ jsmql("[{ $match: { age: { $gt: 18 } } }]");
 // → [{ $match: { age: { $gt: 18 } } }]
 ```
 
-**Known semantic divergences.** Query-language equality differs from aggregation `$eq` in four ways: array fields (query mode matches array elements), `$ne` with missing fields, field-to-field comparison (not done; stays in `$expr`), and `=== null` (matches missing fields too). For most code these match what users mean. When you need the strict aggregation semantics, opt out with the explicit `$expr` form:
+**Known semantic divergences.** Query-language equality differs from aggregation `$eq` in three ways: array fields (query mode matches array elements), `$ne` with missing fields (the `!== <value>` shape excludes missing docs), and field-to-field comparison (not done; stays in `$expr`). For null/missing handling, `===` / `!==` and `==` / `!=` translate to two distinct index-friendly shapes — see the [strict vs loose null table](#-vs--null-and-missing-fields).
 
 ```js
-// Force strict aggregation $eq — matches only explicit null, not missing fields
-jsmql("[{ $match: { $expr: $.deletedAt === null } }]");
-// → [{ $match: { $expr: { $eq: ["$deletedAt", null] } } }]
+// Strict — only explicit null matches; missing fields excluded
+jsmql("[{ $match: $.deletedAt === null }]");
+// → [{ $match: { deletedAt: { $type: "null" } } }]
+
+// Loose — both null AND missing match
+jsmql("[{ $match: $.deletedAt == null }]");
+// → [{ $match: { deletedAt: null } }]
 ```
 
 The full rule table and divergence reference live in [docs/specs/match-query-translation.md](specs/match-query-translation.md).
@@ -1475,7 +1499,7 @@ const { jsmql } = require("jsmql");
 
 const eligibleUsersQuery = jsmql.compile(
   ({ minAge, region }, $, { $match, $project }) => [
-    $match($.age >= minAge && $.region == region && $.status == "active"),
+    $match($.age >= minAge && $.region === region && $.status === "active"),
     $project({ id: $._id, name: $.name, email: $.email }),
   ],
 );
@@ -1759,7 +1783,7 @@ jsmql("Number($.stringPrice) * 1.1")
 // → { $multiply: [{ $toDouble: "$stringPrice" }, 1.1] }
 
 // Type check
-jsmql("typeof $.value == 'string'")
+jsmql("typeof $.value === 'string'")
 // → { $eq: [{ $type: "$value" }, "string"] }
 ```
 

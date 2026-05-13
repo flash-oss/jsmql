@@ -12,7 +12,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("single trailing `;` after a stage call wraps as a one-stage pipeline", () => {
-    expect(jsmql("$match($.a == 0);")).toEqual([{ $match: { a: 0 } }]);
+    expect(jsmql("$match($.a === 0);")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("single trailing `;` after a stage-object wraps as a one-stage pipeline", () => {
@@ -35,7 +35,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("stage call followed by mutation", () => {
-    expect(jsmql("$match($.a == 0); $.b = 1")).toEqual([{ $match: { a: 0 } }, { $set: { b: 1 } }]);
+    expect(jsmql("$match($.a === 0); $.b = 1")).toEqual([{ $match: { a: 0 } }, { $set: { b: 1 } }]);
   });
 
   it("two stage calls produce two stages", () => {
@@ -92,7 +92,7 @@ describe("implicit pipeline — single-statement inputs unchanged", () => {
   it("bare stage call without `;` stays expression-mode (no $expr wrap on $match body)", () => {
     // No `;` means expression mode, so `$match(…)` is just a generic operator
     // call — the $match-body $expr-wrap rule only fires inside pipeline mode.
-    expect(jsmql("$match($.a == 0)")).toEqual({ $match: { $eq: ["$a", 0] } });
+    expect(jsmql("$match($.a === 0)")).toEqual({ $match: { $eq: ["$a", 0] } });
   });
 
   it("comma-grouped chain without `;` stays a single coalesced $set object", () => {

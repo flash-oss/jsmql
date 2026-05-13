@@ -30,7 +30,7 @@ describe("e-commerce: order eligibility for free shipping", () => {
       $.cart.total >= 50 &&
       $.customer.status in ["premium", "gold", "platinum"] &&
       $.cart.items.length < 20 &&
-      $.customer.region.trim().toLowerCase() == "us"
+      $.customer.region.trim().toLowerCase() === "us"
     `);
 
     expect(result).toEqual({
@@ -515,7 +515,7 @@ describe("data quality: CSV field word count", () => {
 describe("data quality: normalise string vs number field", () => {
   it("uses typeof in ternary to coerce mixed-type input", () => {
     // Return trimmed string if already a string, else convert to string
-    const result = jsmql('typeof $.value == "string" ? $.value.trim() : String($.value)');
+    const result = jsmql('typeof $.value === "string" ? $.value.trim() : String($.value)');
 
     expect(result).toEqual({
       $cond: [
@@ -570,7 +570,7 @@ describe("jsmql template-tag form: parameterised threshold query", () => {
     const result = jsmql`
       $.score >= ${minScore} &&
       $.grade in ${passingGrades} &&
-      $.submitted == true
+      $.submitted === true
     `;
 
     expect(result).toEqual({
@@ -1185,7 +1185,7 @@ describe("e-commerce: reusable eligible-users query via jsmql.compile", () => {
         $,
         { $match, $project }: JsmqlOps,
       ) => [
-        $match($.age >= minAge && $.region == region && $.status == "active"),
+        $match($.age >= minAge && $.region === region && $.status === "active"),
         $project({ id: $._id, name: $.name, email: $.email }),
       ],
     );
@@ -1214,7 +1214,7 @@ describe('e-commerce: reusable eligible-users query via `import "jsmql/ops"`', (
   it("works without an ops-hint destructure", () => {
     const eligibleUsersQuery = jsmql.compile(
       ({ minAge, region }: { minAge: number; region: string }, $) => [
-        $match($.age >= minAge && $.region == region && $.status == "active"),
+        $match($.age >= minAge && $.region === region && $.status === "active"),
         $project({ id: $._id, name: $.name, email: $.email }),
       ],
     );
