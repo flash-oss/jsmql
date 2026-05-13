@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="BitbucketMajeraCodeReviewSettings">
+    <option name="popularEmojiShortcuts">
+      <list />
+    </option>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="77934684-15b2-4bb8-9127-e87259583863" name="Changes" comment="chore(dependencies): update package versions and metadata in package-lock.json" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ChangesViewManager">
+    <option name="groupingKeys">
+      <option value="directory" />
+      <option value="repository" />
+    </option>
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="382" />
+    <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 6,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3DHZVytWUpgf8Mxb43PsKf1c1yR" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Git.Working.Tree.Tab.closed.by.user&quot;: &quot;opened&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;Vitest.content pipeline: full display name (skipping missing parts).uses bare-Boolean filter callback and .join() to compose a display name.executor&quot;: &quot;Run&quot;,
+    &quot;Vitest.e-commerce: discount breakdown via IIFE → $let.binds the discount once and reuses it across three projected fields.executor&quot;: &quot;Run&quot;,
+    &quot;Vitest.location: full address formatter.builds a formatted address string using filter + reduce, server-side.executor&quot;: &quot;Run&quot;,
+    &quot;Vitest.pipeline: top-orders report by department.authors a realistic multi-stage pipeline using JS-expression bodies.executor&quot;: &quot;Run&quot;,
+    &quot;Vitest.v4: analytics — flatMap + Math.max + Date.now.executor&quot;: &quot;Run&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/vasyl/code/jsmql&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;OxfmtConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;ts.external.directory.path&quot;: &quot;/Users/vasyl/code/jsmql/node_modules/typescript/lib&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RunManager" selected="Vitest.content pipeline: full display name (skipping missing parts).uses bare-Boolean filter callback and .join() to compose a display name">
+    <configuration name="content pipeline: full display name (skipping missing parts).uses bare-Boolean filter callback and .join() to compose a display name" type="JavaScriptTestRunnerVitest" temporary="true" nameIsGenerated="true">
+      <node-interpreter value="project" />
+      <vitest-package value="$PROJECT_DIR$/node_modules/vitest" />
+      <working-dir value="$PROJECT_DIR$" />
+      <vitest-options value="--run" />
+      <envs />
+      <scope-kind value="TEST" />
+      <test-file value="$PROJECT_DIR$/test/realistic.test.ts" />
+      <test-names>
+        <test-name value="content pipeline: full display name (skipping missing parts)" />
+        <test-name value="uses bare-Boolean filter callback and .join() to compose a display name" />
+      </test-names>
+      <method v="2" />
+    </configuration>
+    <configuration name="e-commerce: discount breakdown via IIFE → $let.binds the discount once and reuses it across three projected fields" type="JavaScriptTestRunnerVitest" temporary="true" nameIsGenerated="true">
+      <node-interpreter value="project" />
+      <vitest-package value="$PROJECT_DIR$/node_modules/vitest" />
+      <working-dir value="$PROJECT_DIR$" />
+      <vitest-options value="--run" />
+      <envs />
+      <scope-kind value="TEST" />
+      <test-file value="$PROJECT_DIR$/test/realistic.test.ts" />
+      <test-names>
+        <test-name value="e-commerce: discount breakdown via IIFE → $let" />
+        <test-name value="binds the discount once and reuses it across three projected fields" />
+      </test-names>
+      <method v="2" />
+    </configuration>
+    <configuration name="location: full address formatter.builds a formatted address string using filter + reduce, server-side" type="JavaScriptTestRunnerVitest" temporary="true" nameIsGenerated="true">
+      <node-interpreter value="project" />
+      <vitest-package value="$PROJECT_DIR$/node_modules/vitest" />
+      <working-dir value="$PROJECT_DIR$" />
+      <vitest-options value="--run" />
+      <envs />
+      <scope-kind value="TEST" />
+      <test-file value="$PROJECT_DIR$/test/realistic.test.ts" />
+      <test-names>
+        <test-name value="location: full address formatter" />
+        <test-name value="builds a formatted address string using filter + reduce, server-side" />
+      </test-names>
+      <method v="2" />
+    </configuration>
+    <configuration name="pipeline: top-orders report by department.authors a realistic multi-stage pipeline using JS-expression bodies" type="JavaScriptTestRunnerVitest" temporary="true" nameIsGenerated="true">
+      <node-interpreter value="project" />
+      <vitest-package value="$PROJECT_DIR$/node_modules/vitest" />
+      <working-dir value="$PROJECT_DIR$" />
+      <vitest-options value="--run" />
+      <envs />
+      <scope-kind value="TEST" />
+      <test-file value="$PROJECT_DIR$/test/realistic.test.ts" />
+      <test-names>
+        <test-name value="pipeline: top-orders report by department" />
+        <test-name value="authors a realistic multi-stage pipeline using JS-expression bodies" />
+      </test-names>
+      <method v="2" />
+    </configuration>
+    <configuration name="v4: analytics — flatMap + Math.max + Date.now" type="JavaScriptTestRunnerVitest" temporary="true" nameIsGenerated="true">
+      <node-interpreter value="project" />
+      <vitest-package value="$PROJECT_DIR$/node_modules/vitest" />
+      <working-dir value="$PROJECT_DIR$" />
+      <vitest-options value="--run" />
+      <envs />
+      <scope-kind value="SUITE" />
+      <test-file value="$PROJECT_DIR$/test/realistic.test.ts" />
+      <test-names>
+        <test-name value="v4: analytics — flatMap + Math.max + Date.now" />
+      </test-names>
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Vitest.content pipeline: full display name (skipping missing parts).uses bare-Boolean filter callback and .join() to compose a display name" />
+        <item itemvalue="Vitest.pipeline: top-orders report by department.authors a realistic multi-stage pipeline using JS-expression bodies" />
+        <item itemvalue="Vitest.e-commerce: discount breakdown via IIFE → $let.binds the discount once and reuses it across three projected fields" />
+        <item itemvalue="Vitest.location: full address formatter.builds a formatted address string using filter + reduce, server-side" />
+        <item itemvalue="Vitest.v4: analytics — flatMap + Math.max + Date.now" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-31caf2ab9e3c-JavaScript-WS-261.23567.141" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="77934684-15b2-4bb8-9127-e87259583863" name="Changes" comment="" />
+      <created>1777940982529</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1777940982529</updated>
+    </task>
+    <task id="LOCAL-00001" summary="test: refine building field filter in realistic test&#10;&#10;Ensure `$building` is a non-empty string before appending a comma, rejecting invalid types or empty values.">
+      <option name="closed" value="true" />
+      <created>1777989766442</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1777989766442</updated>
+    </task>
+    <task id="LOCAL-00002" summary="chore: add .oxfmtrc.json configuration file with schema link and ignore patterns">
+      <option name="closed" value="true" />
+      <created>1778027843012</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1778027843012</updated>
+    </task>
+    <task id="LOCAL-00003" summary="test: use new .join(sep) instead of the .reduce() in the realistic.test.ts">
+      <option name="closed" value="true" />
+      <created>1778033281021</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1778033281021</updated>
+    </task>
+    <task id="LOCAL-00004" summary="test: trim inputs and improve field filtering logic&#10;&#10;Enhances string handling in realistic.test.ts by trimming input values during filtering and concatenation to ensure cleaner, more predictable outputs.">
+      <option name="closed" value="true" />
+      <created>1778038142224</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1778038142224</updated>
+    </task>
+    <task id="LOCAL-00005" summary="chore: remove CHANGELOG.md from package files, update dependencies in lockfile">
+      <option name="closed" value="true" />
+      <created>1778048438615</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1778048438615</updated>
+    </task>
+    <task id="LOCAL-00006" summary="refactor: simplify nested $reduce expressions in realistic.test.ts&#10;&#10;Refactored redundant structures in `$cond`, `$and`, and `$concat` statements to compact and more readable form. No changes to test logic or output.">
+      <option name="closed" value="true" />
+      <created>1778052751929</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1778052751929</updated>
+    </task>
+    <task id="LOCAL-00007" summary="docs: update API section to reflect widened `mjsql` input types">
+      <option name="closed" value="true" />
+      <created>1778059991663</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1778059991663</updated>
+    </task>
+    <task id="LOCAL-00008" summary="test: align \$let IIFE usage and improve test parity">
+      <option name="closed" value="true" />
+      <created>1778136411873</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1778136411873</updated>
+    </task>
+    <task id="LOCAL-00009" summary="test: add parity check for mjsql pipeline and JS-expression bodies&#10;&#10;Revised the realistic pipeline test to compare output from `mjsql`'s JS-expression syntax against function-form input, ensuring both compile to identical stages.">
+      <option name="closed" value="true" />
+      <created>1778149982549</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1778149982549</updated>
+    </task>
+    <task id="LOCAL-00010" summary="expand `files` field in package.json to include sources and tests">
+      <option name="closed" value="true" />
+      <created>1778330669352</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1778330669352</updated>
+    </task>
+    <task id="LOCAL-00011" summary="expand `files` field in package.json to include sources and tests">
+      <option name="closed" value="true" />
+      <created>1778398694104</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1778398694104</updated>
+    </task>
+    <task id="LOCAL-00012" summary="add `.claude` settings and Node.js version specifier (`.nvmrc`); update dependencies in `package-lock.json`">
+      <option name="closed" value="true" />
+      <created>1778398808255</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1778398808255</updated>
+    </task>
+    <task id="LOCAL-00013" summary="chore(dependencies): update package versions and metadata in package-lock.json">
+      <option name="closed" value="true" />
+      <created>1778452213827</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1778452213827</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="RECENT_FILTERS">
+      <map>
+        <entry key="Branch">
+          <value>
+            <list>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="HEAD" />
+                </option>
+              </RecentGroup>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="test: refine building field filter in realistic test&#10;&#10;Ensure `$building` is a non-empty string before appending a comma, rejecting invalid types or empty values." />
+    <MESSAGE value="chore: add .oxfmtrc.json configuration file with schema link and ignore patterns" />
+    <MESSAGE value="test: use new .join(sep) instead of the .reduce() in the realistic.test.ts" />
+    <MESSAGE value="test: trim inputs and improve field filtering logic&#10;&#10;Enhances string handling in realistic.test.ts by trimming input values during filtering and concatenation to ensure cleaner, more predictable outputs." />
+    <MESSAGE value="chore: remove CHANGELOG.md from package files, update dependencies in lockfile" />
+    <MESSAGE value="refactor: simplify nested $reduce expressions in realistic.test.ts&#10;&#10;Refactored redundant structures in `$cond`, `$and`, and `$concat` statements to compact and more readable form. No changes to test logic or output." />
+    <MESSAGE value="docs: update API section to reflect widened `mjsql` input types" />
+    <MESSAGE value="test: align \$let IIFE usage and improve test parity" />
+    <MESSAGE value="test: add parity check for mjsql pipeline and JS-expression bodies&#10;&#10;Revised the realistic pipeline test to compare output from `mjsql`'s JS-expression syntax against function-form input, ensuring both compile to identical stages." />
+    <MESSAGE value="expand `files` field in package.json to include sources and tests" />
+    <MESSAGE value="add `.claude` settings and Node.js version specifier (`.nvmrc`); update dependencies in `package-lock.json`" />
+    <MESSAGE value="chore: add `.claude` settings, Node.js version specifier, and update dependencies in `package-lock.json`" />
+    <MESSAGE value="chore(dependencies): update package versions and metadata in package-lock.json" />
+    <option name="LAST_COMMIT_MESSAGE" value="chore(dependencies): update package versions and metadata in package-lock.json" />
+  </component>
+</project>
