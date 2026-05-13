@@ -17,8 +17,10 @@ All three slots are optional. The parser classifies each slot by **shape**, not 
 | Slot shape | Interpretation |
 |------------|----------------|
 | Plain identifier | Doc context (the canonical `$`; discarded after parsing). |
-| Destructure with all `$`-prefixed keys | Ops-hint (types-only IDE autocomplete; the keys are discarded). |
+| Destructure with all `$`-prefixed keys | Ops-hint (types-only IDE autocomplete; the keys are discarded). See note below. |
 | Destructure with at least one non-`$` key | Params slot — names become bindings. |
+
+> The ops-hint slot remains supported, but the **preferred alternative** is `import type "jsmql/ops"` (see [`ops-generation.md`](ops-generation.md)). The subpath module surfaces every stage and operator as an ambient global with a spec-derived signature, so users get IDE autocomplete without listing names per call site. The slot stays in the grammar for back-compat with existing code.
 
 When all three appear, the only legal order is `(params, doc, ops)`. Shorter combinations preserve that relative order: `(params, doc)`, `(params, ops)`, `(doc, ops)`, `(params)`, `(doc)`, `(ops)`, and `()`. Anything else throws `FunctionInputError` with the actual and expected orderings.
 

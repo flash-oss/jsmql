@@ -19,7 +19,7 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -63,6 +63,35 @@ describe("smoke: built dist", () => {
         encoding: "utf8",
       });
       expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  const opsJs = resolve(ROOT, "dist/ops.js");
+  const opsDts = resolve(ROOT, "dist/ops.d.ts");
+
+  it.skipIf(!existsSync(distPath))(
+    "dist/ops.{js,d.ts} are emitted with stage and operator declarations",
+    () => {
+      // `jsmql/ops` is a pure-types module — the runtime ops.js is essentially
+      // empty (`export {};`), but it must exist so accidental non-type imports
+      // resolve. The .d.ts is the artifact users actually consume.
+      if (!existsSync(opsJs)) {
+        throw new Error(
+          `expected dist/ops.js to exist after build; rebuild with \`npm run build\``,
+        );
+      }
+      if (!existsSync(opsDts)) {
+        throw new Error(
+          `expected dist/ops.d.ts to exist after build; rebuild with \`npm run build\``,
+        );
+      }
+      const dts = readFileSync(opsDts, "utf8");
+      // Spot-check that the declaration block is intact and includes both a
+      // canonical stage and a canonical expression operator. If the generator
+      // silently emitted an empty file (e.g. specs not vendored), this fails.
+      expect(dts).toMatch(/declare global/);
+      expect(dts).toMatch(/function \$match\(/);
+      expect(dts).toMatch(/function \$dateAdd\(/);
     },
   );
 });

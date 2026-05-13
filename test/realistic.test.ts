@@ -10,7 +10,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { jsmql } from "../src/index.ts";
+import { jsmql, type JsmqlOps } from "../src/index.ts";
+// Side-effect import — pulls in the `declare global` block in src/ops.ts so
+// the IDE recognises `$match`, `$project`, `$dateDiff`, … as typed
+// identifiers inside the test bodies below. In a user's project this is
+// `import "jsmql/ops";`. The compiled module is `export {};` — bundlers
+// tree-shake it. See the `e-commerce: reusable eligible-users query via
+// "jsmql/ops"` describe below for the end-to-end usage.
+import "../src/ops.ts";
 
 // ── E-commerce ────────────────────────────────────────────────────────────────
 
@@ -1176,13 +1183,7 @@ describe("e-commerce: reusable eligible-users query via jsmql.compile", () => {
       (
         { minAge, region }: { minAge: number; region: string },
         $,
-        {
-          $match,
-          $project,
-        }: {
-          $match: (...a: unknown[]) => unknown;
-          $project: (...a: unknown[]) => unknown;
-        },
+        { $match, $project }: JsmqlOps,
       ) => [
         $match($.age >= minAge && $.region == region && $.status == "active"),
         $project({ id: $._id, name: $.name, email: $.email }),
@@ -1198,6 +1199,28 @@ describe("e-commerce: reusable eligible-users query via jsmql.compile", () => {
     // walk that inlines the new values as literals.
     expect(eligibleUsersQuery({ minAge: 65, region: "US" })).toEqual([
       { $match: { age: { $gte: 65 }, region: "US", status: "active" } },
+      { $project: { id: "$_id", name: "$name", email: "$email" } },
+    ]);
+  });
+});
+
+describe('e-commerce: reusable eligible-users query via `import "jsmql/ops"`', () => {
+  // Same pipeline as the previous block, but with no per-callsite ops-hint
+  // destructure. The user adds a single `import "jsmql/ops";` line at the
+  // top of the file and `$match`, `$project`, etc. become ambient globals
+  // visible across the project — IDE autocomplete and typo-check work
+  // without manually listing names. Runtime is identical: the parser strips
+  // the function body and recognises bare `$stage(...)` calls via STAGES.
+  it("works without an ops-hint destructure", () => {
+    const eligibleUsersQuery = jsmql.compile(
+      ({ minAge, region }: { minAge: number; region: string }, $) => [
+        $match($.age >= minAge && $.region == region && $.status == "active"),
+        $project({ id: $._id, name: $.name, email: $.email }),
+      ],
+    );
+
+    expect(eligibleUsersQuery({ minAge: 21, region: "AU" })).toEqual([
+      { $match: { age: { $gte: 21 }, region: "AU", status: "active" } },
       { $project: { id: "$_id", name: "$name", email: "$email" } },
     ]);
   });

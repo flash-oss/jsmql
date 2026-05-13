@@ -9,23 +9,36 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./ops": {
+      "types": "./dist/ops.d.ts",
+      "default": "./dist/ops.js"
     }
   },
-  "files": ["src/**.ts", "test/realistic.test.ts", "dist", "README.md", "docs/LANGUAGE.md"],
+  "files": [
+    "src/**.ts",
+    "test/realistic.test.ts",
+    "dist",
+    "README.md",
+    "docs/LANGUAGE.md"
+  ],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "build": "tsc",
-    "pretest": "node vendor/fetch-mql-specs.mjs",
+    "prebuild": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs",
+    "pretest": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:dist": "npm run build && vitest run test/smoke.test.ts",
     "format": "oxfmt .",
+    "generate:ops": "node scripts/generate-ops.mjs",
     "sync:playground": "node scripts/sync-playground.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.7.0",
     "js-yaml": "^4.1.0",
     "oxfmt": "^0.47.0",
     "typescript": "^6.0.0",

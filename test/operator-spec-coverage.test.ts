@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 import yaml from "js-yaml";
 import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.ts";
+import { generateOpsSource } from "../scripts/generate-ops.mjs";
 
 // ---------------------------------------------------------------------------
 // Drift-protection test: keep OPERATORS in sync with mongodb/mql-specifications.
@@ -130,6 +132,30 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
       if (!known.has(def.category)) bad.push([name, def.category]);
     }
     expect(bad).toEqual([]);
+  });
+
+  it("src/ops.ts is byte-equal to the generator output", () => {
+    // The committed src/ops.ts is the artifact that ships in the npm package.
+    // The generator runs as part of `prebuild` and `pretest`, but a contributor
+    // who edits OPERATORS/STAGES without re-running the generator (or who edits
+    // src/ops.ts by hand) would otherwise ship drifted types. Catch that here.
+    //
+    // The generator's CLI writes the file through oxfmt before exit, so we
+    // mirror that by piping the generated string through oxfmt before
+    // comparing — otherwise the test would always fail on whitespace.
+    const raw = generateOpsSource();
+    const root = resolve(import.meta.dirname, "..");
+    const oxfmt = resolve(root, "node_modules/.bin/oxfmt");
+    const formatted = execSync(`${JSON.stringify(oxfmt)} --stdin-filepath=ops.ts`, {
+      input: raw,
+      encoding: "utf8",
+    });
+    const actual = readFileSync(resolve(root, "src/ops.ts"), "utf8");
+    if (actual !== formatted) {
+      throw new Error(
+        "src/ops.ts is out of date relative to its generator. Run `npm run generate:ops` to refresh.",
+      );
+    }
   });
 
   it("object-shape registry entries use keys that exist in the spec", () => {

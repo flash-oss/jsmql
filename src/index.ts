@@ -72,7 +72,14 @@ export type JsmqlInput = string | JsmqlFn;
 // ops-hint slots remain optional and order-disambiguated by shape — see
 // `Parser.parseParameterList` for the rule and docs/LANGUAGE.md for the
 // user-facing reference.
-type JsmqlCompileFn<P> = (params: P, $?: any, ops?: JsmqlOps) => unknown;
+//
+// `$` and `ops` are declared as required (not `?:`) so that users who
+// explicitly annotate them with a destructure type — `({ $match }: JsmqlOps)`
+// — get clean type inference. TypeScript already lets users omit trailing
+// parameters when assigning to a function type, so `(params) => …` and
+// `(params, $) => …` still work; the parser also strips the parameter list
+// at extraction time, so the runtime never sees any of these declarations.
+type JsmqlCompileFn<P> = (params: P, $: any, ops: JsmqlOps) => unknown;
 
 // `jsmql()` returns either a single compiled MQL expression object, or — when
 // the input is a top-level aggregation pipeline `[ { $stage: ... }, ... ]` —
