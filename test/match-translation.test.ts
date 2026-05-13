@@ -23,8 +23,8 @@ describe("$match translation — equality", () => {
     expect(jsmql("[$match($.active === true)]")).toEqual([{ $match: { active: true } }]);
   });
 
-  it("translates `==` identically to `===` (both compile to $eq at MQL level)", () => {
-    expect(jsmql("[$match($.userId == 42)]")).toEqual([{ $match: { userId: 42 } }]);
+  it("rejects `==` against a non-null literal in `$match`", () => {
+    expect(() => jsmql("[$match($.userId == 42)]")).toThrow(/'=='.*only allowed against null/);
   });
 
   it("translates `!==` to query-language $ne", () => {
@@ -33,10 +33,10 @@ describe("$match translation — equality", () => {
     ]);
   });
 
-  it("translates `!=` identically to `!==`", () => {
-    expect(jsmql('[$match($.status != "archived")]')).toEqual([
-      { $match: { status: { $ne: "archived" } } },
-    ]);
+  it("rejects `!=` against a non-null literal in `$match`", () => {
+    expect(() => jsmql('[$match($.status != "archived")]')).toThrow(
+      /'!='.*only allowed against null/,
+    );
   });
 
   it("accepts the field on either side (5 < $.age flips to $.age > 5)", () => {
@@ -73,17 +73,35 @@ describe("$match translation — ordered comparisons", () => {
   });
 });
 
-describe("$match translation — null handling (documented divergence)", () => {
-  // Query-language `{ field: null }` matches docs where field is null OR
-  // missing. $expr's $eq would only match explicit null. This is a known
-  // divergence; users who need strict aggregation semantics use the
-  // `$match({ $expr: ... })` escape hatch.
-  it("translates `=== null` to `{ field: null }` (matches missing too)", () => {
-    expect(jsmql("[$match($.deletedAt === null)]")).toEqual([{ $match: { deletedAt: null } }]);
+describe("$match translation — null vs missing semantics", () => {
+  // `===` / `!==` are strict (JS-like): missing fields are NOT null.
+  // `==` / `!=` are loose: missing fields are treated as null.
+  // The strict form compiles to `$type: "null"` so MongoDB excludes
+  // missing-field docs; the loose form keeps the query-language shape
+  // which already matches "null OR missing".
+
+  it("translates `=== null` to `{ field: { $type: 'null' } }` (strict — excludes missing)", () => {
+    expect(jsmql("[$match($.deletedAt === null)]")).toEqual([
+      { $match: { deletedAt: { $type: "null" } } },
+    ]);
   });
 
-  it("translates `!== null` to `{ field: { $ne: null } }`", () => {
-    expect(jsmql("[$match($.paidAt !== null)]")).toEqual([{ $match: { paidAt: { $ne: null } } }]);
+  it("translates `!== null` to `{ field: { $not: { $type: 'null' } } }` (strict — missing fields pass)", () => {
+    expect(jsmql("[$match($.paidAt !== null)]")).toEqual([
+      { $match: { paidAt: { $not: { $type: "null" } } } },
+    ]);
+  });
+
+  it("translates `== null` to `{ field: null }` (loose — matches null OR missing)", () => {
+    expect(jsmql("[$match($.deletedAt == null)]")).toEqual([{ $match: { deletedAt: null } }]);
+  });
+
+  it("translates `!= null` to `{ field: { $ne: null } }` (loose — excludes both null AND missing)", () => {
+    expect(jsmql("[$match($.paidAt != null)]")).toEqual([{ $match: { paidAt: { $ne: null } } }]);
+  });
+
+  it("accepts `null` on the left for the loose form", () => {
+    expect(jsmql("[$match(null == $.x)]")).toEqual([{ $match: { x: null } }]);
   });
 });
 

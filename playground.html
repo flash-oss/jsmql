@@ -357,7 +357,7 @@
       $.cart.total >= 50 &&
       $.customer.status in ["premium", "gold", "platinum"] &&
       $.cart.items.length < 20 &&
-      $.customer.region.trim().toLowerCase() == "us"
+      $.customer.region.trim().toLowerCase() === "us"
     </script>
 
     <script type="text/plain" data-ex="tiered-loyalty-discount-price">
@@ -453,7 +453,7 @@
     </script>
 
     <script type="text/plain" data-ex="normalise-string-vs-number-field">
-      typeof $.value == "string" ? $.value.trim() : String($.value)
+      typeof $.value === "string" ? $.value.trim() : String($.value)
     </script>
 
     <script type="text/plain" data-ex="admin-permission-check">
@@ -463,7 +463,7 @@
     <script type="text/plain" data-ex="parameterised-threshold-query">
       $.score >= 75 &&
       $.grade in ["A", "B"] &&
-      $.submitted == true
+      $.submitted === true
     </script>
 
     <script

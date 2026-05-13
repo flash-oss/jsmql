@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-13 — Split `==` / `===` semantics around `null`
+
+Lexer and parser have always distinguished `==`/`===` and `!=`/`!==`, but codegen collapsed them — both pairs emitted `$eq`/`$ne`. That left jsmql doing the same thing for two operators that JS developers reach for with different intent, which is exactly the "silent surprise" CLAUDE.md says to avoid. JS itself has a clean null/missing distinction (loose `== null` matches null or undefined; strict `=== null` matches only null), and MongoDB's query language and aggregation `$eq` happen to encode the same two semantics — so we can make the operators mean what JS developers already think they mean, with no loss of expressive power.
+
+The new rule: `===`/`!==` are strict (JS-faithful); `==`/`!=` are restricted to comparisons against `null` and produce loose null-or-missing checks. Any other use of `==`/`!=` is a compile error pointing at `===`. In expression context, `$.x == null` emits `{ $in: [{ $type: "$x" }, ["null", "missing"]] }` and `$.x === null` keeps the strict `{ $eq: ["$x", null] }`. In `$match` query context, `$.x == null` stays the index-friendly `{ x: null }` (already loose in MongoDB) and `$.x === null` becomes `{ x: { $type: "null" } }` so missing-field docs are excluded. Both code paths agree on semantics, so the `$expr` fallback never disagrees with the translated form.
+
+Breaking change to the public output. Pipelines written with `==` or `!=` against non-null values (`$.status == "active"`) now throw; the fix is a mechanical `==` → `===` find-and-replace, and the error message is the migration guide. Implementation: a new `generateLooseEquality` branch in [src/codegen.ts](../src/codegen.ts) and a three-way split in `translateEquality` in [src/match-translation.ts](../src/match-translation.ts) plus two new helpers (`translateLooseNull`, `translateStrictNull`). Updated specs: [docs/specs/match-query-translation.md](specs/match-query-translation.md); updated user-facing docs: [docs/LANGUAGE.md](LANGUAGE.md) ("`===` / `!==` vs `==` / `!=`" subsection under Comparison).
+
+---
+
 ## 2026-05-13 — `$match` emits index-friendly query docs by default
 
 A naïve `$match($.email === "alice")` used to compile to `{ $match: { $expr: { $eq: ["$email", "alice"] } } }`. The wrapping was correct MQL — and a silent performance cliff. MongoDB's planner won't use indexes inside `$expr`, so what looks like a one-field lookup becomes a collection scan. Users who hadn't read the MongoDB internals couldn't tell from the jsmql expression that anything was wrong.

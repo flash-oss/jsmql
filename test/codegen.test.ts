@@ -183,7 +183,7 @@ describe("escape-hatch operators (single-arg, expression-shaped)", () => {
 
 describe("regex literal in standalone position", () => {
   it("rejects /pattern/ as a binary operand with a clear error", () => {
-    expect(() => jsmql("$.x == /foo/")).toThrow(
+    expect(() => jsmql("$.x === /foo/")).toThrow(
       /Regex literals are only valid as arguments to \.match\(\)/,
     );
   });
@@ -492,17 +492,38 @@ describe("arithmetic operators", () => {
 });
 
 describe("comparison operators", () => {
-  it("==", () => {
-    expect(jsmql("$.status == 'active'")).toEqual({ $eq: ["$status", "active"] });
+  it("== null (loose: matches null OR missing via $type check)", () => {
+    expect(jsmql("$.status == null")).toEqual({
+      $in: [{ $type: "$status" }, ["null", "missing"]],
+    });
   });
-  it("===", () => {
+  it("=== (strict equality against any value)", () => {
     expect(jsmql("$.status === 'active'")).toEqual({ $eq: ["$status", "active"] });
   });
-  it("!=", () => {
-    expect(jsmql("$.status != null")).toEqual({ $ne: ["$status", null] });
+  it("=== null (strict: matches only explicit null)", () => {
+    expect(jsmql("$.status === null")).toEqual({ $eq: ["$status", null] });
   });
-  it("!==", () => {
+  it("!= null (loose: excludes both null AND missing)", () => {
+    expect(jsmql("$.status != null")).toEqual({
+      $not: [{ $in: [{ $type: "$status" }, ["null", "missing"]] }],
+    });
+  });
+  it("!== null (strict: missing fields still pass)", () => {
     expect(jsmql("$.status !== null")).toEqual({ $ne: ["$status", null] });
+  });
+  it("rejects `==` against non-null with an actionable error", () => {
+    expect(() => jsmql("$.status == 'active'")).toThrow(/'=='.*only allowed against null.*'==='/);
+  });
+  it("rejects `!=` against non-null with an actionable error", () => {
+    expect(() => jsmql("$.status != 'active'")).toThrow(/'!='.*only allowed against null/);
+  });
+  it("rejects `==` against a number literal", () => {
+    expect(() => jsmql("$.x == 5")).toThrow(/'=='.*only allowed against null/);
+  });
+  it("accepts `null` on either side of `==`", () => {
+    expect(jsmql("null == $.status")).toEqual({
+      $in: [{ $type: "$status" }, ["null", "missing"]],
+    });
   });
   it(">", () => {
     expect(jsmql("$.age > 18")).toEqual({ $gt: ["$age", 18] });
@@ -795,7 +816,7 @@ describe("operator precedence", () => {
 
 describe("mixed $operator() and infix", () => {
   it("infix inside $operator args", () => {
-    expect(jsmql("$and($.age > 18, $.status == 'active')")).toEqual({
+    expect(jsmql("$and($.age > 18, $.status === 'active')")).toEqual({
       $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
     });
   });
@@ -808,7 +829,7 @@ describe("mixed $operator() and infix", () => {
 
 describe("$.in field ref still works", () => {
   it("field named 'in'", () => {
-    expect(jsmql("$.in == 'test'")).toEqual({ $eq: ["$in", "test"] });
+    expect(jsmql("$.in === 'test'")).toEqual({ $eq: ["$in", "test"] });
   });
   it("nested field with 'in' segment", () => {
     expect(jsmql("$size($.in)")).toEqual({ $size: "$in" });
@@ -1013,7 +1034,7 @@ describe("array methods (with lambda)", () => {
     });
   });
   it("lambda accessing nested field on element (x.status → $$x.status)", () => {
-    expect(jsmql('$.orders.filter(o => o.status == "active")')).toEqual({
+    expect(jsmql('$.orders.filter(o => o.status === "active")')).toEqual({
       $filter: { input: "$orders", as: "o", cond: { $eq: ["$$o.status", "active"] } },
     });
   });
@@ -1129,7 +1150,7 @@ describe("typeof", () => {
     expect(jsmql("typeof $.x")).toEqual({ $type: "$x" });
   });
   it("typeof in comparison", () => {
-    expect(jsmql('typeof $.x == "string"')).toEqual({ $eq: [{ $type: "$x" }, "string"] });
+    expect(jsmql('typeof $.x === "string"')).toEqual({ $eq: [{ $type: "$x" }, "string"] });
   });
 });
 
@@ -1290,8 +1311,8 @@ describe("bitwise infix operators", () => {
       },
     });
   });
-  it("== binds tighter than & (so a == b & c → (a == b) & c)", () => {
-    expect(jsmql("$.a == $.b & $.c")).toEqual({
+  it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
+    expect(jsmql("$.a === $.b & $.c")).toEqual({
       $bitAnd: [{ $eq: ["$a", "$b"] }, "$c"],
     });
   });
@@ -1746,13 +1767,13 @@ describe("1-arg substr", () => {
 });
 
 describe("comparison precedence: relational higher than equality", () => {
-  it("a < b == true parses as (a < b) == true", () => {
-    expect(jsmql("$.a < $.b == true")).toEqual({
+  it("a < b === true parses as (a < b) === true", () => {
+    expect(jsmql("$.a < $.b === true")).toEqual({
       $eq: [{ $lt: ["$a", "$b"] }, true],
     });
   });
-  it("a > 0 == b > 0 parses as (a > 0) == (b > 0)", () => {
-    expect(jsmql("$.a > 0 == $.b > 0")).toEqual({
+  it("a > 0 === b > 0 parses as (a > 0) === (b > 0)", () => {
+    expect(jsmql("$.a > 0 === $.b > 0")).toEqual({
       $eq: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }],
     });
   });
@@ -1760,7 +1781,7 @@ describe("comparison precedence: relational higher than equality", () => {
     expect(jsmql("$.x < 5")).toEqual({ $lt: ["$x", 5] });
   });
   it("simple equality still works", () => {
-    expect(jsmql("$.x == 5")).toEqual({ $eq: ["$x", 5] });
+    expect(jsmql("$.x === 5")).toEqual({ $eq: ["$x", 5] });
   });
 });
 
@@ -2394,7 +2415,7 @@ describe("function overload", () => {
   });
 
   it("produces identical MQL to the equivalent string", () => {
-    expect(jsmql(($) => $.status == "active")).toEqual(jsmql('$.status == "active"'));
+    expect(jsmql(($) => $.status === "active")).toEqual(jsmql('$.status === "active"'));
   });
 
   it("the wrapper parameter is not bound inside the body — references resolve via $", () => {
@@ -2456,7 +2477,7 @@ describe("function overload", () => {
   });
 
   it("inline arrow in a hot loop produces consistent MQL across calls (cache correctness)", () => {
-    const make = () => jsmql(($) => $.status == "active");
+    const make = () => jsmql(($) => $.status === "active");
     const a = make();
     const b = make();
     expect(a).toEqual(b);

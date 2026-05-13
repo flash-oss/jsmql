@@ -5,7 +5,7 @@ Write MongoDB aggregation expressions in JavaScript. jsmql is a JS-subset langua
 ```js
 import { jsmql } from "jsmql";
 
-jsmql(($) => $.age > 18 && $.status == "active")
+jsmql(($) => $.age > 18 && $.status === "active")
 // → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
 
 jsmql(($) => $.name.trim().toLowerCase())
@@ -48,7 +48,7 @@ db.products.aggregate([{ $match: { $expr: jsmql(($) => $.price >= 100) } }]);
 
 // Embed JS values with the template-tag form
 const minAge = 21;
-const filter = jsmql`$.age >= ${minAge} && $.active == true`;
+const filter = jsmql`$.age >= ${minAge} && $.active === true`;
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$active", true] }] }
 
 // Check syntax without throwing
@@ -63,7 +63,7 @@ jsmql accepts a JS-like expression syntax that covers the full range of JavaScri
 ```js
 // Arithmetic, comparison, logical
 $.price * 1.1 > $.msrp
-$.age >= 18 && $.status == "active"
+$.age >= 18 && $.status === "active"
 $.nickname ?? $.firstName ?? "Anonymous"
 
 // Template literals and optional chaining
@@ -87,7 +87,7 @@ Math.min(...$.scores)              // spread args
 Math.hypot($.dx, $.dy)             // Euclidean distance
 Math.log10($.amplitude) * 20       /* signal in dB */
 Math.PI * $.radius ** 2            // Math.PI / Math.E constants
-typeof $.field == "string" ? $.field.trim() : String($.field)
+typeof $.field === "string" ? $.field.trim() : String($.field)
 Array.isArray($.tags) && $.tags.length > 0
 
 // Dates
@@ -285,7 +285,7 @@ A wrong-shape input (e.g. `jsmql(42)`, `jsmql({})`) throws a `TypeError` naming 
 
 ### `validate(input): { valid: boolean, errors: object[] }`
 
-Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` validate`$.x == ${val}` `` works the same as `validate("$.x == 1")`. `validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
+Same as `jsmql()` but returns errors in a structured result instead of throwing. Useful for linters and form validation. Accepts the same three call shapes (string, arrow function, template tag) — `` validate`$.x === ${val}` `` works the same as `validate("$.x === 1")`. `validate()` never throws — even on stack overflow, wrong-typed input, or unexpected internal errors, you get a structured result describing the failure.
 
 Each error has `{ message: string, pos: number, code: "SYNTAX_ERROR" | "CODEGEN_ERROR" }`. `pos` is the character offset in the source (or `0` if not applicable).
 

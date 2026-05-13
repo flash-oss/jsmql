@@ -33,14 +33,19 @@ The caller in `src/pipeline.ts:generateStageBody` emits:
 
 | AST shape | Translation |
 |---|---|
-| `BinaryExpr(===\|==, FieldRef f, Literal l)` (and order-flipped) | `{ [f.path]: <value> }` |
-| `BinaryExpr(!==\|!=, FieldRef f, Literal l)` (and order-flipped) | `{ [f.path]: { $ne: <value> } }` |
+| `BinaryExpr(===, FieldRef f, Literal l)` (and order-flipped) — non-null literal | `{ [f.path]: <value> }` |
+| `BinaryExpr(!==, FieldRef f, Literal l)` (and order-flipped) — non-null literal | `{ [f.path]: { $ne: <value> } }` |
+| `BinaryExpr(===, FieldRef f, NullLiteral)` (and order-flipped) | `{ [f.path]: { $type: "null" } }` — strict, excludes missing |
+| `BinaryExpr(!==, FieldRef f, NullLiteral)` (and order-flipped) | `{ [f.path]: { $not: { $type: "null" } } }` — strict, missing passes |
+| `BinaryExpr(==, FieldRef f, NullLiteral)` (and order-flipped) | `{ [f.path]: null }` — loose, matches null OR missing |
+| `BinaryExpr(!=, FieldRef f, NullLiteral)` (and order-flipped) | `{ [f.path]: { $ne: null } }` — loose, excludes both |
+| `BinaryExpr(==\|!=, …, non-null …)` | **not translated** — codegen rejects with a "use ===" error when the body ultimately falls back to `$expr` |
 | `BinaryExpr(>\|>=\|<\|<=, FieldRef f, Num/Str literal)` (and order-flipped, with operator flipped accordingly) | `{ [f.path]: { $gt: <value> } }` (etc.) |
 | `BinaryExpr(&&, A, B)` | recurse; merge query docs (object-merge if disjoint; `$and` array if keys collide); concat residuals into a synthetic `A && B` residual |
 | `BinaryExpr(\|\|, A, B)` | recurse; both branches must fully translate (no residual, non-empty query); emit `{ $or: [<A>, <B>] }`. Otherwise the whole `\|\|` becomes a residual. |
 | Everything else | residual (caller wraps in `$expr`) |
 
-**Loose vs strict equality** (`==`/`===` and `!=`/`!==`) translate identically — both compile to `$eq` / `$ne` at the aggregation level today, so there's no semantic distinction at the MQL output.
+**Strict vs loose equality split.** `===`/`!==` are JS-strict — `$type: "null"` checks for null, `$eq`/`$ne` for everything else. `==`/`!=` are restricted to comparisons against `null` (loose null check, matches null OR missing); any other use is a codegen error pointing the user at `===`. Both paths produce semantically consistent MQL whether the body translates to the query language or falls back to `$expr` — codegen mirrors the same null-handling rules. See `docs/LANGUAGE.md` for the user-facing table.
 
 **Field path reconstruction**: `asFieldPath()` walks `FieldRef → MemberAccess → MemberAccess` chains and produces the dotted path (`$.user.role` → `"user.role"`). Anything that interrupts the chain (index access, method call, lambda param) returns null and disqualifies translation.
 
@@ -111,7 +116,7 @@ These are intentional trade-offs — the query-language behavior matches what mo
 
 3. **Field-to-field comparison.** `{ a: "$b" }` is a literal-string match against `"$b"`, NOT a field comparison. We avoid this entirely by refusing to translate `BinaryExpr` where both sides resolve as field paths — those stay in `$expr`.
 
-4. **`=== null`.** `{ field: null }` matches docs where `field` is null OR missing. `$expr: $eq[..., null]` matches only explicit null. The query-language shape is overwhelmingly what users mean by "where the field has no value"; the escape hatch is documented.
+4. **Null and missing.** `===`/`!==` are JS-strict — missing fields are not null. `==`/`!=` (null-only) are loose — missing fields are treated as null. The two shapes compile to distinct MQL (`$type: "null"` vs bare `null`) on both code paths so the translated and residual fall-back paths agree on semantics. Users who want aggregation's "$eq with null is strict" behaviour use `===`; users who want query-language's "field: null matches missing" behaviour use `==`.
 
 ## Escape hatch
 
