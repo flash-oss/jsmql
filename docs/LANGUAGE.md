@@ -1156,7 +1156,7 @@ jsmql(`[
   $sort({ score: -1 })
 ]`)
 // → [
-//     { $match: { $expr: "$active" } },
+//     { $match: { $expr: "$active" } },   // bare field ref isn't a comparison; stays $expr
 //     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
 //     { $sort: { score: -1 } }
 //   ]
@@ -1230,23 +1230,55 @@ Two things to know:
 - **`;` is a hard stage boundary.** Adjacent mutations across `;` do **not** coalesce — `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` if you want a single coalesced stage.
 - **A trailing `;` is enough.** `$.a = 1;` returns `[{ $set: { a: 1 } }]`; `$.a = 1` (no `;`) returns `{ $set: { a: 1 } }`. Pick the form that matches what you want from MongoDB — a stage object or a pipeline array.
 
-### `$match` and `$expr`
+### `$match` indexes by default
 
-In real MongoDB, `$match`'s body can be either a *query document* or an *aggregation expression* — the latter must be wrapped in `$expr`. jsmql does the wrapping for you whenever the body is anything other than a plain object literal:
+In real MongoDB, `$match`'s body can be either a *query document* (`{ field: value }`) or an *aggregation expression* (`$expr: { ... }`). The two look interchangeable, but they aren't: **`$expr` disables index usage**. A naïve translation of `$.email === "alice"` into an `$expr` wrapper turns every match into a collection scan.
+
+jsmql translates the index-safe subset of expressions — field-vs-literal comparisons combined with `&&` and `||` — into the query-document form so indexes still work. Anything outside that subset (computed values, method calls, field-to-field comparisons) stays in `$expr`. When part of the predicate is translatable and part isn't, you get both: the indexable part as a query doc, the rest in `$expr` on the same `$match`.
 
 ```js
-jsmql("[{ $match: $.age > 18 }]");
-// → [{ $match: { $expr: { $gt: ["$age", 18] } } }]   ← auto-wrapped
+// Simple equality → indexable query doc
+jsmql("[{ $match: $.email === \"alice@example.com\" }]");
+// → [{ $match: { email: "alice@example.com" } }]
 
+// Ordered comparison → indexable
+jsmql("[{ $match: $.age > 18 }]");
+// → [{ $match: { age: { $gt: 18 } } }]
+
+// && of two translatable clauses → merged into one query doc
+jsmql(`[{ $match: $.status === "active" && $.age > 18 }]`);
+// → [{ $match: { status: "active", age: { $gt: 18 } } }]
+
+// || of translatable branches → $or
+jsmql(`[{ $match: $.role === "admin" || $.role === "owner" }]`);
+// → [{ $match: { $or: [{ role: "admin" }, { role: "owner" }] } }]
+
+// Partial: status indexed via query doc; computed comparison stays in $expr
+jsmql(`[{ $match: $.status === "active" && $.score > $.threshold }]`);
+// → [{ $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } }]
+
+// Untranslatable shape → falls back to $expr entirely
+jsmql("[{ $match: $.name.toLowerCase() === \"alice\" }]");
+// → [{ $match: { $expr: { $eq: [{ $toLower: "$name" }, "alice"] } } }]
+
+// Object-literal body is passed through unchanged (also the escape hatch)
 jsmql("[{ $match: { age: { $gt: 18 } } }]");
-// → [{ $match: { age: { $gt: 18 } } }]               ← raw query doc, untouched
+// → [{ $match: { age: { $gt: 18 } } }]
 ```
 
-Use the object-literal form when porting an existing query document; use any expression when you want aggregation operators inside `$match`.
+**Known semantic divergences.** Query-language equality differs from aggregation `$eq` in four ways: array fields (query mode matches array elements), `$ne` with missing fields, field-to-field comparison (not done; stays in `$expr`), and `=== null` (matches missing fields too). For most code these match what users mean. When you need the strict aggregation semantics, opt out with the explicit `$expr` form:
+
+```js
+// Force strict aggregation $eq — matches only explicit null, not missing fields
+jsmql("[{ $match: { $expr: $.deletedAt === null } }]");
+// → [{ $match: { $expr: { $eq: ["$deletedAt", null] } } }]
+```
+
+The full rule table and divergence reference live in [docs/specs/match-query-translation.md](specs/match-query-translation.md).
 
 ### Sub-pipelines
 
-`$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. jsmql recognises these positions and recurses, so `$match`'s `$expr` rule and the strict typo check apply uniformly:
+`$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. jsmql recognises these positions and recurses, so the `$match` translation rule and the strict typo check apply uniformly:
 
 ```js
 jsmql(`[{
@@ -1254,7 +1286,7 @@ jsmql(`[{
     from: "orders",
     let: { uid: $._id },
     pipeline: [
-      { $match: $.userId === $$uid },     // gets $expr-wrapped
+      { $match: $.userId === $$uid },     // field-to-let-var — stays in $expr
       { $project: { total: 1 } }
     ],
     as: "userOrders"
@@ -1314,7 +1346,7 @@ jsmql(($, { $match }) => {
   $.status = "complete";
 });
 // → [
-//     { $match: { $expr: { $and: […] } } },
+//     { $match: { status: "pending", paidAt: { $ne: null } } },
 //     { $set: { lineTotal: …, invoiceCount: { $add: ["$invoiceCount", 1] } } },
 //     { $unset: ["tempToken", "_processingState"] },
 //     { $set: { status: "complete" } }
@@ -1626,12 +1658,12 @@ db.users.find({ $expr: jsmql`$.age > 18` });
 db.users.find({ $expr: jsmql(($) => $.age > 18) });
 ```
 
-Inside an aggregation pipeline, you can use `$match` directly — jsmql wraps the body in `$expr` for you (see [Pipelines](#pipelines)):
+Inside an aggregation pipeline, you can use `$match` directly — jsmql translates index-safe predicates to query-document form so MongoDB still uses indexes, and falls back to `$expr` only for parts that can't be expressed as a query (see [Pipelines](#pipelines)):
 
 ```js
-// Template-tag form
+// Translatable comparison → indexable query doc
 jsmql`[{ $match: $.age > 18 }]`;
-// → [{ $match: { $expr: { $gt: ["$age", 18] } } }]
+// → [{ $match: { age: { $gt: 18 } } }]
 
 // Function form
 jsmql(($) => [{ $match: $.age > 18 }]);

@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-13 — `$match` emits index-friendly query docs by default
+
+A naïve `$match($.email === "alice")` used to compile to `{ $match: { $expr: { $eq: ["$email", "alice"] } } }`. The wrapping was correct MQL — and a silent performance cliff. MongoDB's planner won't use indexes inside `$expr`, so what looks like a one-field lookup becomes a collection scan. Users who hadn't read the MongoDB internals couldn't tell from the jsmql expression that anything was wrong.
+
+The new behaviour: when the `$match` body is a translatable predicate — field-vs-literal comparisons (`===`/`==`/`!==`/`!=`/`>`/`>=`/`<`/`<=`) combined with `&&` and `||` — it lowers to the query-document form (`{ email: "alice" }`, `{ age: { $gt: 18 } }`, `{ $or: [...] }`). Indexes work; the developer didn't have to know. When part of the predicate is translatable and part isn't, the translator extracts what it can and emits both: `{ status: "active", $expr: <residual> }`. The planner uses the `status` index, then evaluates the residual on the narrowed set. The fully-untranslatable path still wraps in `$expr` — methods, ternaries, field-to-field comparisons, computed values.
+
+Implementation in [src/match-translation.ts](../src/match-translation.ts); wired into the existing `$match` lowering in [src/pipeline.ts](../src/pipeline.ts). The query-language semantics differ from aggregation `$eq` in four ways (array-element matching, `$ne` and missing fields, field-to-field comparison, `=== null` matching missing) — these are documented and accepted as the right defaults; users who need strict aggregation `$eq` opt out via the existing object-literal body path (`$match({ $expr: <expr> })`). Full translation rules and rationale: [docs/specs/match-query-translation.md](specs/match-query-translation.md).
+
+Breaking output-shape change, locked in by tests in [test/pipeline.test.ts](../test/pipeline.test.ts), [test/realistic.test.ts](../test/realistic.test.ts), and the new [test/match-translation.test.ts](../test/match-translation.test.ts). Pre-1.0; the public API contract still cycles freely until the package commits to a 1.0.
+
+---
+
 ## 2026-05-11 — Playground examples auto-synced from `test/realistic.test.ts`
 
 The playground's `<select>` examples were hand-curated from `test/realistic.test.ts` when the page was first added, but the test file kept growing and the playground drifted to a stale subset of 13 of the now-41 realistic cases. `scripts/sync-playground.mjs` closes the loop: it walks every top-level `describe` in `test/realistic.test.ts` via the TypeScript compiler API, extracts the first query inside each describe (string literal, template literal, tagged-template `mql`, or arrow-body — `mql` template interpolations are resolved against `const` declarations in the same `it()`), and rewrites two delimited regions in [playground.html](../playground.html) (`<!-- BEGIN/END GENERATED OPTIONS -->` and `<!-- BEGIN/END GENERATED EXAMPLES -->`). The `validate(): realistic error cases` block is skipped since those queries don't compile and have no MQL output to show.

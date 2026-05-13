@@ -12,7 +12,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("single trailing `;` after a stage call wraps as a one-stage pipeline", () => {
-    expect(jsmql("$match($.a == 0);")).toEqual([{ $match: { $expr: { $eq: ["$a", 0] } } }]);
+    expect(jsmql("$match($.a == 0);")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("single trailing `;` after a stage-object wraps as a one-stage pipeline", () => {
@@ -35,10 +35,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("stage call followed by mutation", () => {
-    expect(jsmql("$match($.a == 0); $.b = 1")).toEqual([
-      { $match: { $expr: { $eq: ["$a", 0] } } },
-      { $set: { b: 1 } },
-    ]);
+    expect(jsmql("$match($.a == 0); $.b = 1")).toEqual([{ $match: { a: 0 } }, { $set: { b: 1 } }]);
   });
 
   it("two stage calls produce two stages", () => {

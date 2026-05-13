@@ -13,10 +13,20 @@
 // not look like a stage, the array is left to the existing expression-mode
 // codegen (so `jsmql("[1, 2, 3]")` still compiles as a literal array).
 //
-// $match has a single special-case body lowering: an object-literal body is
-// treated as a raw MongoDB query document and passed through; any other
-// expression is wrapped in $expr so the user can write `{ $match: $.age > 18 }`
-// and get `{ $match: { $expr: { $gt: ["$age", 18] } } }`.
+// $match has a special-case body lowering with two layers:
+//   1. An object-literal body is treated as a raw MongoDB query document and
+//      passed through verbatim. This is the explicit escape hatch for users
+//      who want strict aggregation `$eq` semantics (`$match({ $expr: ... })`).
+//   2. An expression body goes through `translateMatchBody` (see
+//      `match-translation.ts`), which emits an index-friendly query document
+//      for the translatable subset (field-vs-literal comparisons combined
+//      with `&&`/`||`). Untranslatable sub-expressions are returned as a
+//      residual and wrapped in `$expr`, yielding e.g.
+//      `{ $match: { status: "active", $expr: <residual> } }` — indexes still
+//      apply to the `status` predicate.
+// See `docs/specs/match-query-translation.md` for the translation rules and
+// the four documented semantic divergences between query-language equality
+// and aggregation `$eq`.
 
 import type { Expr, ArrayElement, Mutation, Pipeline } from "./ast.ts";
 import {
@@ -27,6 +37,7 @@ import {
 } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
+import { translateMatchBody } from "./match-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -171,12 +182,18 @@ function stageFromElement(el: ArrayElement, index: number): Record<string, unkno
 }
 
 function generateStageBody(stageName: string, body: Expr): unknown {
-  // $match: ObjectLiteral body → raw query document; otherwise wrap in $expr.
+  // $match: ObjectLiteral body → raw query document (also the `$expr` escape
+  // hatch). Expression body → query-language translation with $expr fallback
+  // for residual sub-expressions.
   if (stageName === "$match") {
     if (body.type === "ObjectLiteral") {
       return generateBodyObject(body, stageName);
     }
-    return { $expr: generate(body) };
+    const t = translateMatchBody(body);
+    const queryEmpty = Object.keys(t.query).length === 0;
+    if (queryEmpty) return { $expr: generate(body) };
+    if (t.residual === null) return t.query;
+    return { ...t.query, $expr: generate(t.residual) };
   }
 
   // Other stages: if the body is an object literal, walk its entries so we
