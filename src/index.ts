@@ -196,11 +196,33 @@ function jsmqlDispatch(
  * bindings compose uniformly across expression mode, pipeline mode, and
  * sub-pipelines (`$lookup`, `$unionWith`, `$facet`), and avoids `$$name`
  * collisions with lambda parameters.
+ *
+ * The input may also be a **string** containing the arrow source text — e.g.
+ * `jsmql.compile("({ minAge }, $) => $.age > minAge")`. This is useful when
+ * the query is stored externally (config, file, database) and the caller
+ * still wants the parse-once-bind-many semantics. The destructure pattern is
+ * the only parameter-declaration mechanism for both call shapes; placeholder
+ * syntaxes like `${name}` are deliberately not supported (they would break
+ * the strict-JS-subset rule and collide with real template literals).
  */
 function compileFunction<P extends Record<string, unknown>>(
   fn: JsmqlCompileFn<P>,
+): (params: P) => JsmqlOutput;
+function compileFunction(src: string): (params: Record<string, unknown>) => JsmqlOutput;
+function compileFunction<P extends Record<string, unknown>>(
+  input: JsmqlCompileFn<P> | string,
 ): (params: P) => JsmqlOutput {
-  const src = Function.prototype.toString.call(fn).trim();
+  let src: string;
+  if (typeof input === "function") {
+    src = Function.prototype.toString.call(input).trim();
+  } else if (typeof input === "string") {
+    src = input.trim();
+  } else {
+    const ty = input === null ? "null" : typeof input;
+    throw new TypeError(
+      `jsmql.compile() expects an arrow function or a string containing one — got ${ty}.`,
+    );
+  }
   let parsed: FunctionInputResult;
   try {
     parsed = new Parser(src).parseFunctionInput();

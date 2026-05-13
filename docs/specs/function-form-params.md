@@ -6,6 +6,12 @@ How `jsmql.compile(fn)` lowers a parameterised arrow function to a reusable MQL 
 
 `jsmql.compile` exists so a query whose values are dynamic — minimum age, region filter, allowed-status list — can be parsed once and re-bound on every call. It is the function-form counterpart to template-tag interpolation, with the same value-inlining semantics but a typed surface: bindings are named in the arrow's destructure pattern, and TypeScript can flow types from the params object straight through to each identifier in the body.
 
+## Accepted input
+
+`jsmql.compile()` accepts either an arrow function or a **string** containing the arrow source text. The function form goes through `Function.prototype.toString.call` to obtain the source; the string form is passed through unchanged. Both paths converge on the same `Parser.parseFunctionInput()` call, so every rule below applies identically. A string without an arrow shape surfaces the same `FunctionInputError` the function-form path would have raised (`"jsmql expects an arrow function \`($) => …\` as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
+
+Placeholder syntaxes inside the string (`${name}`, `$1`, etc.) are **not** supported — the destructure pattern remains the single parameter-declaration mechanism. Adding inline placeholders would violate the strict-JS-subset invariant (`${id}` is not valid JS outside a template literal) and silently collide with real template literals: a user writing `` jsmql.compile(`… ${id} …`) `` with backticks would have `id` resolved by JS before jsmql ever saw the string.
+
 ## Arrow signature
 
 ```
@@ -103,7 +109,7 @@ jsmql.validate(input)     // MOVED: was top-level export
 
 There is intentionally no `jsmql.validate.compile`. The structured-result surface stays scoped to the one-shot `jsmql.validate(input)` call — compile-form errors come back as plain throws on the returned callable, which the caller handles directly. Adding a second total-error surface would duplicate the contract without a real use case until one emerges.
 
-`compileFunction` extracts the arrow source via `Function.prototype.toString.call`, parses once via `parseFunctionInput`, and returns a closure that:
+`compileFunction` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — then parses once via `parseFunctionInput`, and returns a closure that:
 
 1. Loops over each `ParamBinding`, looking up `b.key` on the params object. Missing keys throw `UnknownIdentifierError` whose message names both `b.key` and `b.name` (when aliased) so the user can find either side.
 2. Validates each present value via `validateInterpolatable` (factored out of `stringifyInterpolation` so the template-tag and compile paths share the same JSON-safety guarantee). Failures throw `JsmqlInterpolationError` with the binding key.

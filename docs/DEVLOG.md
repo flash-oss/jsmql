@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — `jsmql.compile()` accepts a string source
+
+`jsmql.compile()` now accepts a string containing the arrow source in addition to a real arrow function — `jsmql.compile("({ minAge }, $) => $.age > minAge")` is equivalent to passing the function value. This brings `compile()` in line with `jsmql()` and `jsmql.validate()`, both of which already polymorph over string / arrow / template tag. The motivating use case is queries stored externally (config files, database rows, admin tooling): callers who only have the text can still benefit from the parse-once-bind-many semantics that make `compile()` more than a wrapper around `jsmql()`.
+
+The implementation is small: [src/index.ts](../src/index.ts) gains an overload on `compileFunction` and a `typeof input === "string"` branch that uses the string directly as `src`. Everything downstream — `parseFunctionInput`, the bindings map, the closure shape — is unchanged. A string without an arrow shape inherits the existing `FunctionInputError` ("jsmql expects an arrow function `($) => …`"); a value that is neither a function nor a string throws `TypeError` from the entry point.
+
+We explicitly **did not** add a `${name}`-placeholder syntax inside compile strings, even though it would superficially look like template-tag syntax that users already know. Two reasons. First, the strict-JS-subset rule (root [CLAUDE.md](../CLAUDE.md)) requires that every expression jsmql accepts be valid JS — `${id}` outside a template literal isn't, so the string contents would no longer "copy-paste into a JS file and parse." Second, plain-string `${name}` placeholders are a footgun next to real template literals: a user who writes `` jsmql.compile(`… ${id} …`) `` with backticks (easy, especially for multi-line queries) gets JS-time interpolation, not deferred binding — silently breaking the `compile()` contract. Keeping the destructure as the single parameter-declaration mechanism preserves the invariant in both directions: anything `jsmql.compile()` accepts is valid JS, and the only way values reach the MQL output is through the params object at call time. The tagged-template form of `compile()` was rejected on the same reasoning — interpolation happens at tag-evaluation time, which is the wrong time for a "compile once, bind many" surface.
+
+Test coverage in [test/codegen.test.ts](../test/codegen.test.ts) under the new `describe("string input")` block; spec updates in [docs/specs/function-form-params.md](specs/function-form-params.md) and the user-facing reference in [docs/LANGUAGE.md](LANGUAGE.md#string-input).
+
+---
+
 ## 2026-05-13 — `$match` emits index-friendly query docs by default
 
 A naïve `$match($.email === "alice")` used to compile to `{ $match: { $expr: { $eq: ["$email", "alice"] } } }`. The wrapping was correct MQL — and a silent performance cliff. MongoDB's planner won't use indexes inside `$expr`, so what looks like a one-field lookup becomes a collection scan. Users who hadn't read the MongoDB internals couldn't tell from the jsmql expression that anything was wrong.

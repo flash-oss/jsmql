@@ -1514,6 +1514,21 @@ eligibleUsersQuery({ minAge: 65, region: "US" });
 // → same shape, with new values
 ```
 
+### String input
+
+The first argument may also be a **string** containing the same arrow source — useful when the query text is stored elsewhere (config, file, database) and you want the same parse-once-bind-many semantics:
+
+```js
+const eligibleUsersQuery = jsmql.compile(
+  "({ minAge, region }, $) => $.age >= minAge && $.region === region",
+);
+
+eligibleUsersQuery({ minAge: 21, region: "AU" });
+// → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$region", "AU"] }] }
+```
+
+The destructure is still the only way to declare parameters; placeholder syntaxes like `${name}` inside the string are deliberately **not** supported — they would break jsmql's strict-JS-subset rule and collide with real template literals. If the query string isn't arrow-shaped, you get the same `FunctionInputError` the function form would have raised.
+
 ### The arrow signature
 
 The compile-form arrow takes up to three parameters, all optional, in this order:

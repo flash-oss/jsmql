@@ -2974,4 +2974,43 @@ describe("jsmql.compile()", () => {
       expect(q({ a: 1, unused: 99 } as unknown as { a: number })).toEqual({ $gt: ["$x", 1] });
     });
   });
+
+  describe("string input", () => {
+    it("string containing an arrow compiles like the function form", () => {
+      const q = jsmql.compile("({ minAge }, $) => $.age > minAge");
+      expect(q({ minAge: 21 })).toEqual({ $gt: ["$age", 21] });
+    });
+
+    it("aliased destructure works in the string form too", () => {
+      const q = jsmql.compile("({ minAge: floor }, $) => $.age >= floor");
+      expect(q({ minAge: 18 })).toEqual({ $gte: ["$age", 18] });
+    });
+
+    it("string form returns a reusable closure", () => {
+      const q = jsmql.compile("({ n }, $) => $.age > n");
+      expect(q({ n: 18 })).toEqual({ $gt: ["$age", 18] });
+      expect(q({ n: 65 })).toEqual({ $gt: ["$age", 65] });
+    });
+
+    it("string input drives a pipeline end-to-end", () => {
+      const q = jsmql.compile(
+        "({ id, count }, $, { $match, $limit }) => [$match($._id === id), $limit(count)]",
+      );
+      expect(q({ id: 42, count: 10 })).toEqual([{ $match: { _id: 42 } }, { $limit: 10 }]);
+    });
+
+    it("missing param at call time names the binding (same path as fn form)", () => {
+      const q = jsmql.compile("({ foo }, $) => $.x > foo");
+      expect(() => q({})).toThrow(/Unknown identifier 'foo'/);
+    });
+
+    it("non-arrow string is rejected with the same FunctionInputError message", () => {
+      expect(() => jsmql.compile("$.age > 18")).toThrow(/expects an arrow function/);
+    });
+
+    it("wrong-type input is rejected with a TypeError naming the contract", () => {
+      expect(() => jsmql.compile(42 as never)).toThrow(TypeError);
+      expect(() => jsmql.compile(42 as never)).toThrow(/arrow function or a string containing one/);
+    });
+  });
 });
