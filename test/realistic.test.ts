@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { jsmql, validate } from "../src/index.ts";
+import { jsmql } from "../src/index.ts";
 
 // ── E-commerce ────────────────────────────────────────────────────────────────
 
@@ -1163,30 +1163,72 @@ describe("e-commerce: invoice finalisation pipeline (implicit `;` form)", () => 
   });
 });
 
-// ── validate() ────────────────────────────────────────────────────────────────
+// ── jsmql.compile(): parameterised, reusable queries ───────────────────────────────
 
-describe("validate(): realistic error cases", () => {
+describe("e-commerce: reusable eligible-users query via jsmql.compile", () => {
+  // A query that runs many times a day with different filters: today's eligible
+  // customers in a specific region above a minimum age. Compile once, bind per
+  // request. The output is index-friendly: the $match emits MongoDB
+  // query-language form so existing indexes on `age` and `region` keep
+  // working, even though the values are dynamic.
+  it("compiles once and binds different params per call", () => {
+    const eligibleUsersQuery = jsmql.compile(
+      (
+        { minAge, region }: { minAge: number; region: string },
+        $,
+        {
+          $match,
+          $project,
+        }: {
+          $match: (...a: unknown[]) => unknown;
+          $project: (...a: unknown[]) => unknown;
+        },
+      ) => [
+        $match($.age >= minAge && $.region === region && $.status === "active"),
+        $project({ id: $._id, name: $.name, email: $.email }),
+      ],
+    );
+
+    expect(eligibleUsersQuery({ minAge: 21, region: "AU" })).toEqual([
+      { $match: { age: { $gte: 21 }, region: "AU", status: "active" } },
+      { $project: { id: "$_id", name: "$name", email: "$email" } },
+    ]);
+
+    // Reuse with a different binding set — no re-parse, just a fresh codegen
+    // walk that inlines the new values as literals.
+    expect(eligibleUsersQuery({ minAge: 65, region: "US" })).toEqual([
+      { $match: { age: { $gte: 65 }, region: "US", status: "active" } },
+      { $project: { id: "$_id", name: "$name", email: "$email" } },
+    ]);
+  });
+});
+
+// ── jsmql.validate() ────────────────────────────────────────────────────────────────
+
+describe("jsmql.validate(): realistic error cases", () => {
   it("rejects bare field name without $. prefix", () => {
     // A common mistake: forgetting the $. prefix
-    const result = validate("age > 18");
+    const result = jsmql.validate("age > 18");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/Did you mean/);
   });
 
   it("rejects unterminated expression", () => {
-    const result = validate("$.score >= 90 &&");
+    const result = jsmql.validate("$.score >= 90 &&");
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
   });
 
   it("rejects scalar on right-hand side of in", () => {
-    const result = validate('$.status in "active"');
+    const result = jsmql.validate('$.status in "active"');
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/Right-hand side of 'in'/);
   });
 
   it("accepts a realistic valid expression", () => {
-    const result = validate('$.age >= 18 && $.age <= 65 && $.status in ["active", "pending"]');
+    const result = jsmql.validate(
+      '$.age >= 18 && $.age <= 65 && $.status in ["active", "pending"]',
+    );
     expect(result.valid).toBe(true);
   });
 });

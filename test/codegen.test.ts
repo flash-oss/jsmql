@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate } from "../src/index.ts";
+import { jsmql } from "../src/index.ts";
 
 // Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
@@ -428,34 +428,36 @@ describe("jsmql() input-shape guard", () => {
     expect(() => (jsmql as (x: unknown) => unknown)({})).toThrow(/got object/);
   });
 
-  it("validate() routes a wrong-typed input to a structured SYNTAX_ERROR (never throws)", () => {
-    const r = (validate as (x: unknown) => { valid: boolean; errors: { code: string }[] })(42);
+  it("jsmql.validate() routes a wrong-typed input to a structured SYNTAX_ERROR (never throws)", () => {
+    const r = (jsmql.validate as (x: unknown) => { valid: boolean; errors: { code: string }[] })(
+      42,
+    );
     expect(r.valid).toBe(false);
     expect(r.errors[0]?.code).toBe("SYNTAX_ERROR");
   });
 });
 
-describe("validate()", () => {
+describe("jsmql.validate()", () => {
   it("returns valid for correct expression", () => {
-    const result = validate("$eq($.age, 18)");
+    const result = jsmql.validate("$eq($.age, 18)");
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
 
   it("returns error for unknown identifier", () => {
-    const result = validate("$eq(age, 18)");
+    const result = jsmql.validate("$eq(age, 18)");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/Did you mean/);
   });
 
   it("returns error for unclosed paren", () => {
-    const result = validate("$eq($.age, 18");
+    const result = jsmql.validate("$eq($.age, 18");
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
   });
 
   it("returns error for trailing junk", () => {
-    const result = validate("$eq($.age, 18) garbage");
+    const result = jsmql.validate("$eq($.age, 18) garbage");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/Unexpected token/);
   });
@@ -2459,17 +2461,17 @@ describe("function overload", () => {
     expect(() => jsmql(($) => $.age > minAge)).toThrow(/jsmql`` template tag/);
   });
 
-  it("validate() reports the augmented hint for closure refs", () => {
+  it("jsmql.validate() reports the augmented hint for closure refs", () => {
     const minAge = 21;
-    const r = validate(($) => $.age > minAge);
+    const r = jsmql.validate(($) => $.age > minAge);
     expect(r.valid).toBe(false);
     expect(r.errors[0]?.code).toBe("CODEGEN_ERROR");
     expect(r.errors[0]?.message).toMatch(/Unknown identifier 'minAge'/);
     expect(r.errors[0]?.message).toMatch(/jsmql`` template tag/);
   });
 
-  it("validate() reports SYNTAX_ERROR for an unsupported function shape", () => {
-    const r = validate(($) => {
+  it("jsmql.validate() reports SYNTAX_ERROR for an unsupported function shape", () => {
+    const r = jsmql.validate(($) => {
       return $.age > 18;
     });
     expect(r.valid).toBe(false);
@@ -2658,6 +2660,318 @@ describe("window operators ($setWindowFields-only)", () => {
   it("$integral positional", () => {
     expect(jsmql('$integral($.value, "hour")')).toEqual({
       $integral: { input: "$value", unit: "hour" },
+    });
+  });
+});
+
+describe("jsmql.compile()", () => {
+  describe("basic binding", () => {
+    it("scalar binding inlines as a literal", () => {
+      const q = jsmql.compile(({ minAge }: { minAge: number }, $) => $.age > minAge);
+      expect(q({ minAge: 21 })).toEqual({ $gt: ["$age", 21] });
+    });
+
+    it("string binding inlines as a literal string", () => {
+      const q = jsmql.compile(({ region }: { region: string }, $) => $.region === region);
+      expect(q({ region: "AU" })).toEqual({ $eq: ["$region", "AU"] });
+    });
+
+    it("array binding inlines into $in", () => {
+      const q = jsmql.compile(({ allowed }: { allowed: string[] }, $) => $.grade in allowed);
+      expect(q({ allowed: ["A", "B"] })).toEqual({
+        $in: ["$grade", ["A", "B"]],
+      });
+    });
+
+    it("plain-object binding inlines as a nested object literal value", () => {
+      // Whole-object bindings appear as MQL literal objects. Field access on
+      // them (e.g. `thresholds.min`) goes through MQL's `$getField`, not a
+      // compile-time fold — the user can always destructure further at the
+      // call site if they want fields hoisted as separate bindings.
+      const q = jsmql.compile(({ defaults }: { defaults: { name: string } }) => defaults);
+      expect(q({ defaults: { name: "default" } })).toEqual({ name: "default" });
+    });
+
+    it("the same compiled query is reusable with different params", () => {
+      const q = jsmql.compile(({ n }: { n: number }, $) => $.age > n);
+      expect(q({ n: 18 })).toEqual({ $gt: ["$age", 18] });
+      expect(q({ n: 65 })).toEqual({ $gt: ["$age", 65] });
+    });
+
+    it("aliased destructure key binds the alias name", () => {
+      const q = jsmql.compile(({ minAge: floor }: { minAge: number }, $) => $.age >= floor);
+      expect(q({ minAge: 18 })).toEqual({ $gte: ["$age", 18] });
+    });
+  });
+
+  describe("signature slot disambiguation", () => {
+    it("params-only slot (no $)", () => {
+      const q = jsmql.compile(({ flag }: { flag: boolean }) => flag);
+      expect(q({ flag: true })).toEqual(true);
+    });
+
+    it("(params, $) two-slot form", () => {
+      const q = jsmql.compile(({ n }: { n: number }, $) => $.age > n);
+      expect(q({ n: 18 })).toEqual({ $gt: ["$age", 18] });
+    });
+
+    it("(params, $, ops) three-slot form — ops hint is types-only", () => {
+      const q = jsmql.compile(
+        (
+          { minScore }: { minScore: number },
+          $,
+          { $match }: { $match: (...args: unknown[]) => unknown },
+        ) => [$match($.score >= minScore)],
+      );
+      expect(q({ minScore: 75 })).toEqual([{ $match: { score: { $gte: 75 } } }]);
+    });
+
+    it("existing one-arg `($) => …` form still works unchanged via jsmql()", () => {
+      expect(jsmql(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    });
+
+    it("existing two-arg `($, { $dateDiff }) => …` form still works unchanged via jsmql()", () => {
+      expect(jsmql(($) => $.x === "ok")).toEqual({ $eq: ["$x", "ok"] });
+    });
+  });
+
+  describe("scope and shadowing", () => {
+    it("lambda parameter shadows a binding of the same name", () => {
+      const q = jsmql.compile(({ x }: { x: number }, $) => $.items.map((x) => x * 2));
+      expect(q({ x: 999 })).toEqual({
+        $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
+      });
+    });
+
+    it("binding visible inside a $match expression body alongside other refs", () => {
+      const q = jsmql.compile(
+        ({ minAge }: { minAge: number }, $) => $.age >= minAge && $.country === "US",
+      );
+      expect(q({ minAge: 21 })).toEqual({
+        $and: [{ $gte: ["$age", 21] }, { $eq: ["$country", "US"] }],
+      });
+    });
+  });
+
+  describe("$match index-friendly translation (a75eb35)", () => {
+    it("scalar binding against a field becomes a query-language $match", () => {
+      const q = jsmql.compile(
+        (
+          { minAge }: { minAge: number },
+          $,
+          { $match }: { $match: (...a: unknown[]) => unknown },
+        ) => [$match($.age >= minAge)],
+      );
+      expect(q({ minAge: 21 })).toEqual([{ $match: { age: { $gte: 21 } } }]);
+    });
+
+    it("string binding equals a field becomes a query-language $match", () => {
+      const q = jsmql.compile(
+        (
+          { region }: { region: string },
+          $,
+          { $match }: { $match: (...a: unknown[]) => unknown },
+        ) => [$match($.region === region)],
+      );
+      expect(q({ region: "AU" })).toEqual([{ $match: { region: "AU" } }]);
+    });
+  });
+
+  describe("pipeline integration", () => {
+    it("bindings work in pipeline arrays end-to-end", () => {
+      const q = jsmql.compile(
+        (
+          { min, limit }: { min: number; limit: number },
+          $,
+          {
+            $match,
+            $project,
+            $limit,
+          }: {
+            $match: (...a: unknown[]) => unknown;
+            $project: (...a: unknown[]) => unknown;
+            $limit: (...a: unknown[]) => unknown;
+          },
+        ) => [$match($.score >= min), $project({ name: $.name, score: $.score }), $limit(limit)],
+      );
+      expect(q({ min: 75, limit: 10 })).toEqual([
+        { $match: { score: { $gte: 75 } } },
+        { $project: { name: "$name", score: "$score" } },
+        { $limit: 10 },
+      ]);
+    });
+  });
+
+  describe("bindings cross sub-pipeline boundaries", () => {
+    it("a binding is visible inside $lookup.pipeline", () => {
+      const q = jsmql.compile(
+        (
+          { region }: { region: string },
+          $,
+          {
+            $lookup,
+            $match,
+          }: {
+            $lookup: (...a: unknown[]) => unknown;
+            $match: (...a: unknown[]) => unknown;
+          },
+        ) => [
+          $lookup({
+            from: "addresses",
+            localField: "_id",
+            foreignField: "userId",
+            as: "addrs",
+            pipeline: [$match($.country === region)],
+          }),
+        ],
+      );
+      expect(q({ region: "AU" })).toEqual([
+        {
+          $lookup: {
+            from: "addresses",
+            localField: "_id",
+            foreignField: "userId",
+            as: "addrs",
+            pipeline: [{ $match: { country: "AU" } }],
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("error: missing binding at call time", () => {
+    it("throws UnknownIdentifierError naming the missing key", () => {
+      const q = jsmql.compile(({ foo }: { foo: number }, $) => $.x > foo);
+      let err: unknown;
+      try {
+        q({} as { foo: number });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(Error);
+      const msg = (err as Error).message;
+      expect(msg).toMatch(/Unknown identifier 'foo'/);
+    });
+
+    it("aliased binding names both the params-object key and the body name", () => {
+      // `({ minAge: floor })` looks up `minAge` on the params object and binds
+      // it to `floor` in the body. A missing `minAge` key names both so the
+      // user can find either side of the rename.
+      const q = jsmql.compile(({ minAge: floor }: { minAge: number }, $) => $.age >= floor);
+      let err: unknown;
+      try {
+        q({} as { minAge: number });
+      } catch (e) {
+        err = e;
+      }
+      expect((err as Error).message).toMatch(/minAge/);
+      expect((err as Error).message).toMatch(/floor/);
+    });
+  });
+
+  describe("error: defaults in destructure are rejected", () => {
+    it("literal default rejected with the explanatory message", () => {
+      expect(() =>
+        jsmql.compile(({ minAge = 18 }: { minAge?: number }, $) => $.age > minAge),
+      ).toThrow(/does not support default values/);
+    });
+
+    it("expression default rejected with the explanatory message", () => {
+      expect(() =>
+        jsmql.compile(({ now = Date.now() }: { now?: number }, $) => $.createdAt > now),
+      ).toThrow(/does not support default values/);
+    });
+
+    it("rejection message points at the call-site `??` fallback", () => {
+      try {
+        jsmql.compile(({ x = 1 }: { x?: number }, $) => $.y > x);
+      } catch (err) {
+        expect((err as Error).message).toMatch(/JS's `\?\?` at the call site/);
+      }
+    });
+
+    it("rejection message points at the template-tag form", () => {
+      try {
+        jsmql.compile(({ x = 1 }: { x?: number }, $) => $.y > x);
+      } catch (err) {
+        expect((err as Error).message).toMatch(/template-tag form/);
+      }
+    });
+  });
+
+  describe("error: malformed destructure patterns", () => {
+    it("nested destructure is rejected", () => {
+      // Equivalent source: ({ a: { b } }, $) => $.x > b
+      const src = "({ a: { b } }, $) => $.x > b";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
+        /does not support nested destructure/,
+      );
+    });
+
+    it("rest pattern is rejected", () => {
+      const src = "({ ...rest }, $) => $.x > rest.a";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
+        /does not support rest patterns/,
+      );
+    });
+
+    it("array destructure is rejected", () => {
+      const src = "([a, b], $) => $.x > a";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
+        /must be an object destructure pattern/,
+      );
+    });
+  });
+
+  describe("error: slot ordering and counts", () => {
+    it("more than three parameters is rejected", () => {
+      const src = "({ a }, $, { $match }, extra) => $.x > a";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
+        /at most three parameters/,
+      );
+    });
+
+    it("(doc, params) — params after doc — is rejected", () => {
+      const src = "($, { a }) => $.x > a";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
+        /Reorder to `\(params, \$, opsHint\)`/,
+      );
+    });
+
+    it("mixed `$`/non-`$` keys in one destructure is rejected", () => {
+      const src = "({ $match, minAge }, $) => $.age > minAge";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
+        /separate from the params destructure/,
+      );
+    });
+  });
+
+  describe("error: unsafe param values at call time", () => {
+    it("NaN is rejected at bind time", () => {
+      const q = jsmql.compile(({ n }: { n: number }, $) => $.x > n);
+      expect(() => q({ n: NaN })).toThrow(/NaN/);
+    });
+
+    it("Infinity is rejected at bind time", () => {
+      const q = jsmql.compile(({ n }: { n: number }, $) => $.x > n);
+      expect(() => q({ n: Infinity })).toThrow(/Infinity/);
+    });
+
+    it("function value is rejected at bind time", () => {
+      const q = jsmql.compile(({ x }: { x: unknown }, $) => $.y === x);
+      expect(() => q({ x: () => 1 })).toThrow(/has no JSON representation/);
+    });
+
+    it("BigInt value is rejected at bind time", () => {
+      const q = jsmql.compile(({ x }: { x: unknown }, $) => $.y === x);
+      expect(() => q({ x: BigInt(1) })).toThrow(/could not be serialised/);
+    });
+  });
+
+  describe("extra params keys are allowed silently", () => {
+    it("extra keys not referenced in the body are ignored", () => {
+      const q = jsmql.compile(({ a }: { a: number }, $) => $.x > a);
+      expect(q({ a: 1, unused: 99 } as unknown as { a: number })).toEqual({ $gt: ["$x", 1] });
     });
   });
 });

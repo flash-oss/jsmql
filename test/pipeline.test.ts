@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jsmql, validate } from "../src/index.ts";
+import { jsmql } from "../src/index.ts";
 
 describe("pipeline detection", () => {
   it("compiles a single-stage pipeline as an array", () => {
@@ -222,8 +222,8 @@ describe("pipeline — error cases", () => {
     );
   });
 
-  it("validate() surfaces pipeline errors as CODEGEN_ERROR", () => {
-    const r = validate("[{ $macth: $.age > 18 }]");
+  it("jsmql.validate() surfaces pipeline errors as CODEGEN_ERROR", () => {
+    const r = jsmql.validate("[{ $macth: $.age > 18 }]");
     expect(r.valid).toBe(false);
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
     expect(r.errors[0].message).toMatch(/\$match/);

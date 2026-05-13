@@ -32,6 +32,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/match-query-translation.md` | The `$match` expression-body → query-language translator: full translation table, partial-extraction algorithm, the four documented divergences from aggregation `$eq`, and the `$match({ $expr: ... })` escape hatch. |
 | `specs/mutations.md` | Assignment (`=`, `+=`, `-=`, `*=`, `/=`) and `delete` statements: AST, target validation, coalescing into `$set`/`$unset` stages, pipeline integration. |
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`): AST, parser/codegen wiring, namespace storage under `__jsmql`, scope-reshaping stage rules, sub-pipeline isolation. |
+| `specs/function-form-params.md` | Function-form parameter bindings (`jsmql.compile(fn)`): the three-slot arrow signature, parse-time slot classification, the `bindings` tier on `GenerateCtx`, the inline-literal output shape, and the binding/let name-collision rule. |
 
 Future work areas — not yet implemented and not yet specified — include query-predicate operators inside `$match` / `find()` (e.g. `$elemMatch`, `$exists`, `$jsonSchema`), projection operators (`$`, `$elemMatch`, `$slice`, `$meta`), the stage-spec integration for `$group` / `$setWindowFields` accumulator field bindings, and update-document operators (`$inc`, `$push`, `$rename`, …). Add a spec file when the work begins.
 

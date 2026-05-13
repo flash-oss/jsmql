@@ -164,13 +164,13 @@ export function isPipelineAst(ast: Expr): boolean {
  * inherit; reshape-clearing stages drop the scope; a trailing `$unset` is
  * appended once if any let was declared.
  */
-export function generatePipeline(ast: Expr): unknown[] {
+export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): unknown[] {
   if (ast.type !== "ArrayLiteral") {
     throw new CodegenError("generatePipeline expects an ArrayLiteral AST");
   }
   const out: unknown[] = [];
   let mutationBuffer: Mutation[] = [];
-  let ctx: GenerateCtx = EMPTY_CTX;
+  let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
 
   const flushMutations = () => {
@@ -217,9 +217,12 @@ export function generatePipeline(ast: Expr): unknown[] {
  * `let` declarations contribute one `$set` stage each and extend the let
  * scope visible to subsequent statements.
  */
-export function generateImplicitPipeline(p: Pipeline): unknown[] {
+export function generateImplicitPipeline(
+  p: Pipeline,
+  startCtx: GenerateCtx = EMPTY_CTX,
+): unknown[] {
   const out: unknown[] = [];
-  let ctx: GenerateCtx = EMPTY_CTX;
+  let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
 
   p.stmts.forEach((stmt, i) => {
@@ -255,6 +258,14 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
         `or rebind after a reshape stage (\`$group\`, \`$replaceRoot\`, …).`,
     );
   }
+  if (ctx.bindings?.has(decl.name)) {
+    throw new CodegenError(
+      `\`let ${decl.name}\` shadows a function-form parameter binding of the same name. ` +
+        `Rename one — parameter bindings are compile-time constants supplied at call time, ` +
+        `\`let\` bindings are per-document values derived from a stage expression; ` +
+        `mixing them under one name would be ambiguous.`,
+    );
+  }
   const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
   const value = generateWithCtx(decl.value, ctx);
   return {
@@ -283,7 +294,7 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
     if (body.type === "ObjectLiteral") {
       return generateBodyObject(body, stageName, ctx);
     }
-    const t = translateMatchBody(body);
+    const t = translateMatchBody(body, { bindings: ctx.bindings });
     const queryEmpty = Object.keys(t.query).length === 0;
     if (queryEmpty) return { $expr: generateWithCtx(body, ctx) };
     if (t.residual === null) return t.query;
@@ -325,8 +336,9 @@ function generateBodyObject(
     const key = entry.key.name;
     const isPipelineSlot = allValuesArePipelines || pipelineSlot.has(key);
     if (isPipelineSlot && isPipelineAst(entry.value)) {
-      // Sub-pipelines run in a fresh scope. Outer lets do not cross.
-      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx());
+      // Sub-pipelines run in a fresh scope. Outer lets do not cross; function-
+      // form parameter bindings do (they're compile-time constants).
+      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx));
     } else {
       out[key] = generateWithCtx(entry.value, ctx);
     }
