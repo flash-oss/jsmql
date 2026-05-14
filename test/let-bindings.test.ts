@@ -245,7 +245,6 @@ describe("let bindings — jsmql.validate() integration", () => {
   it("a duplicate-let error surfaces as CODEGEN_ERROR through jsmql.validate()", () => {
     const result = jsmql.validate("let x = 1; let x = 2; $project({ x })");
     expect(result.valid).toBe(false);
-    if (result.valid) return; // narrowing guard
     expect(result.errors[0].code).toBe("CODEGEN_ERROR");
     expect(result.errors[0].message).toMatch(/already declared earlier in this pipeline/);
   });
@@ -253,7 +252,6 @@ describe("let bindings — jsmql.validate() integration", () => {
   it("a post-$group let-read error surfaces as CODEGEN_ERROR through jsmql.validate()", () => {
     const result = jsmql.validate("let total = $.price; $group({ _id: $.cat }); $match(total > 0)");
     expect(result.valid).toBe(false);
-    if (result.valid) return;
     expect(result.errors[0].code).toBe("CODEGEN_ERROR");
     expect(result.errors[0].message).toMatch(/can't be read after `\$group`/);
   });

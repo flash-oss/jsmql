@@ -2,6 +2,11 @@
   "name": "jsmql",
   "version": "0.1.0",
   "description": "Write MongoDB aggregation expressions in JavaScript. JS-subset language that compiles to MQL JSON.",
+  "homepage": "https://jsmql.js.org",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:flash-oss/jsmql.git"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
