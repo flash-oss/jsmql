@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — `playground.html` becomes a self-sufficient single-file artifact
+
+[playground.html](../playground.html) used to need two sibling assets at runtime — `./dist/index.js` (the tsc output) and `./playground-examples.json` (the example manifest written by `sync-playground.mjs`). That made it impossible to ship on its own: you couldn't email it, drop it on a static host, or just double-click it from disk, because Chrome blocks `fetch()` from `file://` URLs and the dist import obviously can't resolve without the rest of the build.
+
+Now the file is fully self-contained. [scripts/sync-playground.mjs](../scripts/sync-playground.mjs) was extended to also bundle [src/index.ts](../src/index.ts) via esbuild as an IIFE — `format: "iife"`, `globalName: "JSMQL"`, `minify: true`, `target: "es2022"`, `platform: "browser"` — and inject the result into a managed region in `playground.html` between `<!-- jsmql-bundle:start -->` / `<!-- jsmql-bundle:end -->` comments. The examples manifest is no longer a sibling JSON; it lives inside a second managed region as a `<script type="application/json" id="examples-data">` JSON island. The module script then reads `const { jsmql } = globalThis.JSMQL;` and parses the JSON island synchronously instead of fetching. The only external dependency remaining is the CodeMirror CDN — explicitly kept out of the bundle, the user wanted the syntax highlighter to stay external.
+
+The script is now also wired into `prebuild`, so `npm run build` keeps the playground in sync with both the test file and the library source. `playground-examples.json` was deleted (its data lives inside the HTML now). The output file is ~130 kB and the script is idempotent — running `npm run sync:playground` a second time exits 0 without writing if nothing changed. Verified end-to-end against a local static server: example selection populates, prettify works, and the syntax-error marker still highlights the offending position with no fetches to `./dist/` or `./playground-examples.json` in the network log.
+
+Adds `esbuild` to `devDependencies`. The one DX trade-off worth noting: edits to `src/*.ts` outside Claude Code now need a manual `npm run sync:playground` (or `npm run build`) to re-embed the bundle — the existing PostToolUse hook only fires on `test/realistic.test.ts` edits. A src-watching hook is a possible follow-up.
+
+---
+
 ## 2026-05-14 — Error-message sweep: friendlier wording, "Did you mean?" everywhere, lexer stops leaking enum names
 
 A pass over every `throw` site in `src/` to tighten messages that had drifted or were just unhelpful. DX is the project's #1 priority and error text is the user's tightest feedback loop, so the bar is high. Changes are wording + a few small structural fixes; no behaviour change beyond the inevitable shift in what `err.message` contains.

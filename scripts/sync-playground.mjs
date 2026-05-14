@@ -1,32 +1,38 @@
 #!/usr/bin/env node
 /**
- * Sync `playground-examples.json` from `test/realistic.test.ts`.
+ * Sync `playground.html` so it is self-sufficient — distributable as a single
+ * file with no sibling assets except the CodeMirror CDN.
  *
- * Walks every top-level `describe(title, () => { it(...) })` block, extracts
- * the first `jsmql(...)` call or `` jsmql`...` `` tagged template inside its
- * first `it(...)`, and writes the result to `playground-examples.json` next
- * to `playground.html`. The playground page fetches this manifest at load
- * time and uses it to populate the `<select>` and render the chosen
- * example — keeping the realistic.test.ts queries as the single source of
- * truth and removing the inline `<script data-ex>` duplicates that this
- * script used to write into `playground.html`.
+ * Two regions inside `playground.html` are regenerated in place:
+ *
+ *   1. The jsmql library, bundled from `src/index.ts` via esbuild as an IIFE
+ *      that exposes `globalThis.JSMQL`. Lives between the
+ *      `<!-- jsmql-bundle:start … -->` / `<!-- jsmql-bundle:end -->` markers.
+ *
+ *   2. The realistic-examples manifest, extracted by walking every top-level
+ *      `describe(title, () => { it(...) })` block in `test/realistic.test.ts`
+ *      and pulling the first `jsmql(...)` call or `` jsmql`...` `` tagged
+ *      template inside its first `it(...)`. Embedded as a JSON-script tag
+ *      between the `<!-- jsmql-examples:start … -->` / `<!-- jsmql-examples:end -->`
+ *      markers.
  *
  * Skips the `validate(): realistic error cases` block (queries don't compile)
  * and warns on `describe`s where no string-form query can be extracted.
  *
  * Hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script
- * whenever Claude Code edits `test/realistic.test.ts`, so the manifest is
- * already staged when the next commit happens. Run manually as
+ * whenever Claude Code edits `test/realistic.test.ts`, so the embedded
+ * examples stay current within a single commit. Also runs as `prebuild`, so
+ * `npm run build` always produces a synced `playground.html`. Outside Claude
+ * Code, run manually after editing src/ or the test file:
  *
  *   npm run sync:playground
  *
- * after editing the test file outside Claude Code.
- *
- * Idempotent: if the new manifest is byte-identical to what's on disk, the
+ * Idempotent: if the rewritten HTML is byte-identical to what's on disk, the
  * script exits 0 without writing or staging.
  */
 
 import ts from "typescript";
+import { build } from "esbuild";
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -34,7 +40,13 @@ import path from "node:path";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
-const MANIFEST = path.join(ROOT, "playground-examples.json");
+const ENTRY = path.join(ROOT, "src/index.ts");
+const HTML = path.join(ROOT, "playground.html");
+
+const BUNDLE_START = "<!-- jsmql-bundle:start";
+const BUNDLE_END = "<!-- jsmql-bundle:end -->";
+const EXAMPLES_START = "<!-- jsmql-examples:start";
+const EXAMPLES_END = "<!-- jsmql-examples:end -->";
 
 function fail(msg) {
   console.error(`sync-playground: ${msg}`);
@@ -171,93 +183,158 @@ function dedent(text) {
   return lines.map((l) => l.slice(min)).join("\n");
 }
 
-const src = readFileSync(TEST_FILE, "utf8");
-const sf = ts.createSourceFile(TEST_FILE, src, ts.ScriptTarget.Latest, true);
+function extractExamples() {
+  const src = readFileSync(TEST_FILE, "utf8");
+  const sf = ts.createSourceFile(TEST_FILE, src, ts.ScriptTarget.Latest, true);
 
-const examples = [];
-const usedSlugs = new Set();
-const skipped = [];
+  const examples = [];
+  const usedSlugs = new Set();
+  const skipped = [];
 
-for (const stmt of sf.statements) {
-  if (!ts.isExpressionStatement(stmt)) continue;
-  const expr = stmt.expression;
-  if (!ts.isCallExpression(expr)) continue;
-  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "describe") continue;
+  for (const stmt of sf.statements) {
+    if (!ts.isExpressionStatement(stmt)) continue;
+    const expr = stmt.expression;
+    if (!ts.isCallExpression(expr)) continue;
+    if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "describe") continue;
 
-  const titleArg = expr.arguments[0];
-  if (!titleArg) continue;
-  let title;
-  if (ts.isStringLiteral(titleArg) || ts.isNoSubstitutionTemplateLiteral(titleArg)) {
-    title = titleArg.text;
-  } else continue;
-  if (title.startsWith("validate():")) continue;
+    const titleArg = expr.arguments[0];
+    if (!titleArg) continue;
+    let title;
+    if (ts.isStringLiteral(titleArg) || ts.isNoSubstitutionTemplateLiteral(titleArg)) {
+      title = titleArg.text;
+    } else continue;
+    if (title.startsWith("validate():")) continue;
 
-  const body = expr.arguments[1];
-  if (!body || !ts.isArrowFunction(body) || !ts.isBlock(body.body)) {
-    skipped.push({ title, why: "describe body is not a block arrow" });
-    continue;
-  }
-
-  let firstIt = null;
-  for (const s of body.body.statements) {
-    if (
-      ts.isExpressionStatement(s) &&
-      ts.isCallExpression(s.expression) &&
-      ts.isIdentifier(s.expression.expression) &&
-      s.expression.expression.text === "it"
-    ) {
-      firstIt = s.expression;
-      break;
+    const body = expr.arguments[1];
+    if (!body || !ts.isArrowFunction(body) || !ts.isBlock(body.body)) {
+      skipped.push({ title, why: "describe body is not a block arrow" });
+      continue;
     }
-  }
-  if (!firstIt) {
-    skipped.push({ title, why: "no it() found" });
-    continue;
-  }
-  const itBodyArg = firstIt.arguments[1];
-  if (!itBodyArg || !ts.isArrowFunction(itBodyArg) || !ts.isBlock(itBodyArg.body)) {
-    skipped.push({ title, why: "it() body is not a block arrow" });
-    continue;
+
+    let firstIt = null;
+    for (const s of body.body.statements) {
+      if (
+        ts.isExpressionStatement(s) &&
+        ts.isCallExpression(s.expression) &&
+        ts.isIdentifier(s.expression.expression) &&
+        s.expression.expression.text === "it"
+      ) {
+        firstIt = s.expression;
+        break;
+      }
+    }
+    if (!firstIt) {
+      skipped.push({ title, why: "no it() found" });
+      continue;
+    }
+    const itBodyArg = firstIt.arguments[1];
+    if (!itBodyArg || !ts.isArrowFunction(itBodyArg) || !ts.isBlock(itBodyArg.body)) {
+      skipped.push({ title, why: "it() body is not a block arrow" });
+      continue;
+    }
+
+    let query = extractQuery(itBodyArg.body);
+    if (query == null) {
+      skipped.push({ title, why: "couldn't extract a string-form query" });
+      continue;
+    }
+    query = dedent(query);
+    if (query.includes("</script")) {
+      skipped.push({ title, why: "query contains </script — would break the playground" });
+      continue;
+    }
+
+    const slug = makeSlug(title, usedSlugs);
+    examples.push({ slug, title, query });
   }
 
-  let query = extractQuery(itBodyArg.body);
-  if (query == null) {
-    skipped.push({ title, why: "couldn't extract a string-form query" });
-    continue;
-  }
-  query = dedent(query);
-  if (query.includes("</script")) {
-    skipped.push({ title, why: "query contains </script — would break the playground" });
-    continue;
-  }
-
-  const slug = makeSlug(title, usedSlugs);
-  examples.push({ slug, title, query });
+  if (examples.length === 0) fail("no examples extracted from test/realistic.test.ts");
+  return { examples, skipped };
 }
 
-if (examples.length === 0) fail("no examples extracted from test/realistic.test.ts");
+async function bundleJsmql() {
+  const result = await build({
+    entryPoints: [ENTRY],
+    bundle: true,
+    format: "iife",
+    globalName: "JSMQL",
+    target: "es2022",
+    platform: "browser",
+    minify: true,
+    legalComments: "none",
+    write: false,
+  });
+  const out = result.outputFiles?.[0];
+  if (!out) fail("esbuild produced no output");
+  return out.text.trimEnd();
+}
 
+function replaceRegion(html, startMarker, endMarker, replacement) {
+  const startIdx = html.indexOf(startMarker);
+  if (startIdx === -1) fail(`could not find marker ${startMarker} in playground.html`);
+  const lineStart = html.lastIndexOf("\n", startIdx) + 1;
+  const endIdx = html.indexOf(endMarker, startIdx);
+  if (endIdx === -1) fail(`could not find marker ${endMarker} in playground.html`);
+  const lineEnd = html.indexOf("\n", endIdx);
+  if (lineEnd === -1) fail(`marker ${endMarker} must be followed by a newline`);
+  return html.slice(0, lineStart) + replacement + html.slice(lineEnd + 1);
+}
+
+function buildBundleRegion(bundleSrc) {
+  // The IIFE bundle is dropped into a classic <script>; minified payload is
+  // safe to embed verbatim (no `</script` substring — guarded by the check
+  // below for paranoia).
+  if (bundleSrc.includes("</script")) {
+    fail("bundle contains a literal </script sequence — refusing to embed");
+  }
+  return [
+    "    <!-- jsmql-bundle:start (generated by scripts/sync-playground.mjs — do not edit) -->",
+    "    <script>",
+    "      " + bundleSrc,
+    "    </script>",
+    "    <!-- jsmql-bundle:end -->",
+    "",
+  ].join("\n");
+}
+
+function buildExamplesRegion(examples) {
+  // Embed as a JSON island so the browser parses it lazily and we don't have
+  // to worry about escaping JS string contents. JSON.stringify produces no
+  // </script sequence on its own, but a query could in principle contain one
+  // — extractExamples() already drops those.
+  const json = JSON.stringify(examples);
+  return [
+    "    <!-- jsmql-examples:start (generated by scripts/sync-playground.mjs — do not edit) -->",
+    `    <script type="application/json" id="examples-data">${json}</script>`,
+    "    <!-- jsmql-examples:end -->",
+    "",
+  ].join("\n");
+}
+
+const { examples, skipped } = extractExamples();
 if (skipped.length) {
   for (const s of skipped) console.error(`  skipped: ${s.title} — ${s.why}`);
 }
 
-// Pretty-printed JSON with one example per line block so a `git diff` on the
-// manifest is readable when a test gets renamed or its query changes.
-const manifest = JSON.stringify(examples, null, 2) + "\n";
+const bundleSrc = await bundleJsmql();
+
+let html = readFileSync(HTML, "utf8");
+html = replaceRegion(html, BUNDLE_START, BUNDLE_END, buildBundleRegion(bundleSrc));
+html = replaceRegion(html, EXAMPLES_START, EXAMPLES_END, buildExamplesRegion(examples));
 
 let existing = null;
 try {
-  existing = readFileSync(MANIFEST, "utf8");
+  existing = readFileSync(HTML, "utf8");
 } catch {
   // First run — `existing` stays null.
 }
 
-if (existing === manifest) {
+if (existing === html) {
   console.log(`sync-playground: ${examples.length} examples already in sync (no change)`);
   process.exit(0);
 }
 
-writeFileSync(MANIFEST, manifest);
+writeFileSync(HTML, html);
 
 const inGitRepo =
   spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
@@ -265,11 +342,13 @@ const inGitRepo =
     stdio: "ignore",
   }).status === 0;
 if (inGitRepo) {
-  const add = spawnSync("git", ["add", path.relative(ROOT, MANIFEST)], {
+  const add = spawnSync("git", ["add", path.relative(ROOT, HTML)], {
     cwd: ROOT,
     stdio: "inherit",
   });
-  if (add.status !== 0) fail("git add playground-examples.json failed");
+  if (add.status !== 0) fail("git add playground.html failed");
 }
 
-console.log(`sync-playground: synced ${examples.length} examples → playground-examples.json`);
+console.log(
+  `sync-playground: embedded ${examples.length} examples and ${(bundleSrc.length / 1024).toFixed(1)} kB of jsmql bundle → playground.html`,
+);

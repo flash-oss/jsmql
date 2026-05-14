@@ -16,7 +16,7 @@ See [`docs/specs/ops-generation.md`](../docs/specs/ops-generation.md) for the ge
 
 ### `sync-playground.mjs`
 
-Regenerates `playground.html` examples from `test/realistic.test.ts`. Hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits the test file, staging the updated playground for the next commit. Outside Claude Code, run `npm run sync:playground`.
+Regenerates the two managed regions inside `playground.html`: a minified esbuild IIFE bundle of `src/index.ts` (exposed as `globalThis.JSMQL`) and a JSON island of realistic examples extracted from `test/realistic.test.ts`. Output is the same self-sufficient file users can ship on its own — the only external dependency is the CodeMirror CDN. Runs as `prebuild`, so `npm run build` always produces a synced playground. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits the test file, staging the updated playground for the next commit. Outside Claude Code, run `npm run sync:playground` after editing src/ or the test file. Idempotent — exits 0 without writing if the file is already in sync.
 
 ### `merge-devlog.mjs`
 

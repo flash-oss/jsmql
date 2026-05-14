@@ -27,7 +27,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "prebuild": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs",
+    "prebuild": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs && node scripts/sync-playground.mjs",
     "pretest": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -39,6 +39,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.7.0",
+    "esbuild": "^0.28.0",
     "js-yaml": "^4.1.0",
     "oxfmt": "^0.47.0",
     "typescript": "^6.0.0",
