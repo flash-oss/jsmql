@@ -2461,14 +2461,14 @@ describe("function overload", () => {
 
   it("rejects a `function` declaration", () => {
     expect(() =>
-      jsmql(function () {
+      jsmql(function ($) {
         return $.age > 18;
       }),
     ).toThrow(/arrow function/);
   });
 
   it("rejects an async arrow", () => {
-    expect(() => jsmql(async () => $.age > 18)).toThrow(/async/);
+    expect(() => jsmql(async ($) => $.age > 18)).toThrow(/async/);
   });
 
   it("appends a jsmql`` hint when an outer-scope identifier is referenced", () => {
