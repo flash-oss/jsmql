@@ -2424,7 +2424,7 @@ describe("flex-shape operators", () => {
 
 describe("function overload", () => {
   it("accepts a no-param arrow", () => {
-    expect(jsmql(() => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
   });
 
   it("accepts a $-param arrow (recommended idiom)", () => {
