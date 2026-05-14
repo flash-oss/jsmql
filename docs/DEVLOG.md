@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — Drop the implicit LRU cache from one-shot `jsmql(fn)`
+
+The 256-entry `fnBodyCache` in [src/index.ts](../src/index.ts) is gone. The function-input branch of `jsmqlDispatch` now extracts the body, parses, and lowers without consulting or populating a cache. `cacheGet`, `cacheSet`, the cap constant, and the surrounding rationale comment were all deleted along with the `describe("function-body cache is bounded", …)` block in [test/security.test.ts](../test/security.test.ts) that asserted LRU eviction correctness over 300 distinct bodies.
+
+The trigger was user feedback that one-shot queries — those parsed once at process startup and never re-executed — occupy cache slots indefinitely (well, until 256 newer entries push them out). A literal `Map` → `WeakMap` swap was the proposed fix but isn't possible: `WeakMap` requires *object* keys and the current key is the body string (a primitive), and `WeakMap` exposes neither `.size` nor iteration, so the cap can't be preserved on top of it. The two alternatives — keying on the `Function` object (which loses inline-hot-loop dedup, since each iteration creates a fresh function instance) or running a hybrid Map + WeakMap — both kept the implicit-cache footgun without much to show for it.
+
+`jsmql.compile(fn)` is the right answer for repeated execution: it parses once, returns a closure that captures the AST, and walks that AST with fresh `params` substitutions on every call. The migration is one line — `const q = jsmql.compile(fn); q(params)` instead of `jsmql(fn)` — and the caller's intent is now explicit at the call site rather than buried in an implicit LRU. The string-input and template-tag paths were never cached and stay that way.
+
+Files: [src/index.ts](../src/index.ts) (delete cache helpers + simplify function-input branch); [test/security.test.ts](../test/security.test.ts) (remove LRU-eviction smoke test); [test/codegen.test.ts](../test/codegen.test.ts) (rename "(cache correctness)" test — the consistency-across-calls property still holds, it just no longer depends on caching); [README.md](../README.md) (point users to `jsmql.compile(fn)` for repeated execution); [docs/specs/architecture.md](specs/architecture.md), [docs/specs/function-form-params.md](specs/function-form-params.md) (spec updates to match).
+
+---
+
 ## 2026-05-14 — Playground pipeline examples dedent past the lone-opener `[`
 
 The three pipeline examples that came in through `jsmql\`[\n  $match(...)\n  ...\n]\`` tagged templates — `top-orders-report-by-department`, `count-orders-by-status-per-shop-accumulator-replacement`, `invoice-finalisation-pipeline-mutations-match` — were rendering in the playground with the raw test-file indent (6-space body, 4-space closer) instead of the canonical 2-space pipeline shape. Root cause: the `dedent()` helper in [scripts/sync-playground.mjs](../scripts/sync-playground.mjs) computes the global minimum indent across all non-empty lines, but a template that starts with `[` directly after the backtick puts that opener on line 1 at column 0, dragging the minimum to zero and short-circuiting the strip. The simple-expression cases sidestep this because they either fit on one line or start with `\n` (so the first content line is itself indented).

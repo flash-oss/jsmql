@@ -2493,7 +2493,7 @@ describe("function overload", () => {
     expect(r.errors[0]?.code).toBe("SYNTAX_ERROR");
   });
 
-  it("inline arrow in a hot loop produces consistent MQL across calls (cache correctness)", () => {
+  it("inline arrow in a hot loop produces consistent MQL across calls", () => {
     const make = () => jsmql(($) => $.status === "active");
     const a = make();
     const b = make();

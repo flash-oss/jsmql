@@ -109,19 +109,3 @@ describe("jsmql.validate() error contract", () => {
     expect(() => jsmql.validate(src)).not.toThrow();
   });
 });
-
-describe("function-body cache is bounded", () => {
-  it("compiles 300 distinct arrow bodies correctly (smoke-tests LRU eviction)", () => {
-    // eval is used to produce arrow functions with distinct body text, which
-    // is the only path that hits the function-body cache. With the LRU cap at
-    // 256, this loop forces ~44 evictions; the assertion is that all 300
-    // compilations still produce the correct output, i.e. neither the cache
-    // helpers nor the eviction path corrupt anything.
-    for (let i = 0; i < 300; i++) {
-      // eslint-disable-next-line no-eval
-      const fn = eval(`($) => $.field${i} > ${i}`) as ($: unknown) => unknown;
-      const result = jsmql(fn) as { $gt: [string, number] };
-      expect(result).toEqual({ $gt: [`$field${i}`, i] });
-    }
-  });
-});

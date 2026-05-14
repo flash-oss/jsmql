@@ -14,7 +14,8 @@ Input dispatcher (src/index.ts)
         into the parser path.
       - Function: calls Function.prototype.toString(), rejects non-arrow /
         async / generator shapes, strips the parameter list at the first
-        `=>`, parses, and caches the result LRU keyed on the body string.
+        `=>`, and parses. Re-parses on every call — use `jsmql.compile(fn)`
+        for parse-once-bind-many.
       - String: parses directly.
       - Anything else: throws TypeError naming the three accepted shapes.
     │
@@ -99,7 +100,8 @@ jsmql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
 // The template-tag form interpolates values via JSON.stringify (with validation —
 // see JsmqlInterpolationError below) and feeds the result into the same parser
 // path as the string form. Function input has its body extracted (toString +
-// arrow-list strip) and cached LRU. Throws LexError | ParseError | CodegenError
+// arrow-list strip) and is re-parsed on each call — see `jsmql.compile(fn)` for
+// the parse-once-bind-many path. Throws LexError | ParseError | CodegenError
 // | FunctionInputError | JsmqlInterpolationError | TypeError.
 
 jsmql.compile<P>(fn: (params: P, $?, ops?) => unknown): (params: P) => JsmqlOutput
@@ -119,11 +121,11 @@ jsmql.validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationR
 
 The three entries are attached to `jsmql` via `Object.assign` (the strippable-TS rule in [src/CLAUDE.md](../../src/CLAUDE.md) forbids `namespace` declarations). The pre-1.0 import surface moved from `{ jsmql, validate } from "jsmql"` to `{ jsmql } from "jsmql"` with `validate` reachable as `jsmql.validate`.
 
-### Function-input cache
+### No implicit cache for `jsmql(fn)`
 
-Cache key: the **extracted body string**, not the function reference. Inline arrows like `jsmql(($) => …)` evaluate to a fresh function object on every call (JS does not intern function literals), so a `WeakMap<Function, object>` would never hit. The body string is stable across every evaluation of the same source location, which gives cache hits in hot loops, in hoisted module-top-level constants, and across identical bodies declared at different call sites.
+The one-shot `jsmql(fn)` path re-parses the extracted body on every call. An earlier implementation kept a 256-entry LRU keyed on the body string, but it had two problems: one-shot queries (parsed once at process startup, never re-executed) occupied slots until eviction, and a `WeakMap` swap that would let the GC reclaim them isn't possible — `WeakMap` requires object keys (strings are primitives) and exposes neither `.size` nor iteration, so the cap can't be preserved.
 
-The cache is a **bounded LRU** (cap `FN_BODY_CACHE_CAP = 256`, eviction by `Map` insertion order). Today function bodies cannot be string-interpolated, so the natural set of distinct bodies is bounded by source-code size, but the cap is defence-in-depth against a future change that lets dynamic strings reach this map (e.g. accepting `new Function(...)` as input). The string-input path is intentionally **not** cached, because raw strings are often built via dynamic concatenation and would defeat any cache.
+Callers that want parse-once-bind-many use `jsmql.compile(fn)` — see [function-form-params.md](function-form-params.md). The string-input and template-tag paths are also uncached, for the same reason: any cache that catches repeated calls would have to retain dynamically-built strings indefinitely.
 
 ## Error types
 

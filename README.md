@@ -269,7 +269,7 @@ jsmql(($, { $dateDiff }) =>
 );
 ```
 
-Behind the scenes, jsmql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error. Compiled bodies are cached, so inline arrows in hot loops only compile once.
+Behind the scenes, jsmql calls `Function.prototype.toString()` on the function, strips the parameter list at the first `=>`, and parses the body just like a string. Block bodies (`($) => { return …; }`), `function` declarations, and `async` arrows are rejected with a clear error. For queries that run repeatedly, use [`jsmql.compile(fn)`](docs/LANGUAGE.md) — it parses the arrow once and returns a callable you invoke with a fresh params object on every call.
 
 **2. String** (when the source comes from elsewhere):
 
