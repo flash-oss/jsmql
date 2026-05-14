@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — DX rule: `.validate()` errors must always carry a meaningful `.pos`
+
+Added a new sub-bullet under "#1 priority: developer experience" → "Errors stay consistent and helpful across the surface" in [CLAUDE.md](../CLAUDE.md). The rule states that every `ValidationError` returned by `validate()` must have a real source offset in `.pos`, not the `0` placeholder. Tooling consumers (editor integrations, the playground) rely on `.pos` to underline the offending region, and the public `ValidationError` shape already declares `.pos: number` as required — returning `0` silently breaks that contract while still type-checking.
+
+An audit of every throw site reachable from `validate()` found that only `LexError` and `ParseError` set `.pos` to a real byte offset. `CodegenError`, `UnknownIdentifierError`, `FunctionInputError`, `JsmqlInterpolationError`, and the catch-all in [src/index.ts](../src/index.ts) all fall back to `.pos = 0`. Root cause: AST node types in [src/ast.ts](../src/ast.ts) carry no position field — the parser discards token offsets when it builds nodes, so codegen has nothing to forward even when it knows which node is at fault. No test currently asserts `.pos > 0`, so the gap is invisible to CI.
+
+The rule is recorded as a forward-looking principle; the implementation gap (threading positions through the AST + codegen + adapter throws + adding test coverage) is a separate task to be planned and landed next.
+
+---
+
 ## 2026-05-14 — Drop the implicit LRU cache from one-shot `jsmql(fn)`
 
 The 256-entry `fnBodyCache` in [src/index.ts](../src/index.ts) is gone. The function-input branch of `jsmqlDispatch` now extracts the body, parses, and lowers without consulting or populating a cache. `cacheGet`, `cacheSet`, the cap constant, and the surrounding rationale comment were all deleted along with the `describe("function-body cache is bounded", …)` block in [test/security.test.ts](../test/security.test.ts) that asserted LRU eviction correctness over 300 distinct bodies.
