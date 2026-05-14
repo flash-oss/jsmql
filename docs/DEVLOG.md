@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — Thread `.pos` through codegen and adapter errors so `.validate()` honours its contract
+
+Every AST node in [src/ast.ts](../src/ast.ts) now carries a required `pos: number` field, populated by the parser at every construction site from the leading token of each construct (literal token for literals, opening delimiter for collections, operator for binary/unary/ternary, `let`/`delete`/`$`/`$.` keyword for statements and refs). `CodegenError`, `UnknownIdentifierError`, and `FunctionInputError` all gained `readonly pos: number` fields and a constructor parameter, and every throw site forwards the appropriate node or token offset. `errorToValidationResult` in [src/index.ts](../src/index.ts) now passes `err.pos` through for codegen and function-input errors instead of the previous `0` placeholder, closing the gap the [CLAUDE.md](../CLAUDE.md) DX rule called out in the prior commit.
+
+`JsmqlInterpolationError` stays at `.pos = 0` for the documented reason: the template-tag form's source text lives across the `strings` and `values` arrays, and there is no single byte offset to report. Callers needing to locate a failing interpolation read `.slot` (1-based index) or `.key` (parameter name) on the underlying error class. `RangeError` / `TypeError` / generic catch-all also stay at `0` — they come from outside our control.
+
+[test/error-pos.test.ts](../test/error-pos.test.ts) is new — focused assertions that `.pos` lands on the right region for every error class (lexer, parser, codegen, function-input, interpolation). The four cases in `test/realistic.test.ts`'s `describe("jsmql.validate(): realistic error cases", …)` block grew `.pos` range assertions so the contract is exercised at the integration level too. Specs in [docs/specs/architecture.md](specs/architecture.md), [docs/specs/let-bindings.md](specs/let-bindings.md), [docs/specs/mutations.md](specs/mutations.md), and [docs/specs/function-form-params.md](specs/function-form-params.md) were updated to describe the new invariant.
+
+Out of scope for this change (intentional, called out in the plan): sub-node positions on individual `KeyValueEntry` / `SpreadElement` / array-element members beyond what the AST already carries, and a synthesised offset for interpolation errors. The parent-node `pos` already covers ~60 of the ~70 codegen throw sites; sub-node precision is a follow-up if a real user hits it.
+
+---
+
 ## 2026-05-14 — DX rule: `.validate()` errors must always carry a meaningful `.pos`
 
 Added a new sub-bullet under "#1 priority: developer experience" → "Errors stay consistent and helpful across the surface" in [CLAUDE.md](../CLAUDE.md). The rule states that every `ValidationError` returned by `validate()` must have a real source offset in `.pos`, not the `0` placeholder. Tooling consumers (editor integrations, the playground) rely on `.pos` to underline the offending region, and the public `ValidationError` shape already declares `.pos: number` as required — returning `0` silently breaks that contract while still type-checking.

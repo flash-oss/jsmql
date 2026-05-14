@@ -1,6 +1,7 @@
 export type SpreadElement = {
   type: "SpreadElement";
   argument: Expr;
+  pos: number;
 };
 
 export type StaticKey = { kind: "static"; name: string };
@@ -11,6 +12,7 @@ export type KeyValueEntry = {
   type: "KeyValueEntry";
   key: ObjectKey;
   value: Expr;
+  pos: number;
 };
 
 export type ObjectEntry = KeyValueEntry | SpreadElement;
@@ -32,12 +34,14 @@ export type AssignExpr = {
   type: "AssignExpr";
   target: Expr;
   value: Expr;
+  pos: number;
 };
 
 /** Statement form: `delete $.path`. Only legal at top level or as a pipeline element. */
 export type DeleteStmt = {
   type: "DeleteStmt";
   target: Expr;
+  pos: number;
 };
 
 export type Mutation = AssignExpr | DeleteStmt;
@@ -53,6 +57,7 @@ export type LetDecl = {
   type: "LetDecl";
   name: string;
   value: Expr;
+  pos: number;
 };
 
 /**
@@ -66,6 +71,7 @@ export type LetDecl = {
 export type MutationProgram = {
   type: "MutationProgram";
   mutations: Mutation[];
+  pos: number;
 };
 
 /**
@@ -86,6 +92,7 @@ export type PipelineStmt = MutationProgram | Expr | LetDecl;
 export type Pipeline = {
   type: "Pipeline";
   stmts: PipelineStmt[];
+  pos: number;
 };
 
 /** What `Parser.parse()` returns: an expression, a mutation program, or a `;`-separated pipeline. */
@@ -123,37 +130,38 @@ export type Expr =
       /** positional = args are expressions; object = single ObjectLiteral arg */
       style: "positional" | "object";
       args: CallArg[];
+      pos: number;
     }
-  | { type: "FieldRef"; path: string }
-  | { type: "NumberLiteral"; value: number }
-  | { type: "BigIntLiteral"; value: string }
-  | { type: "StringLiteral"; value: string }
-  | { type: "BooleanLiteral"; value: boolean }
-  | { type: "NullLiteral" }
-  | { type: "ArrayLiteral"; elements: ArrayElement[] }
-  | { type: "ObjectLiteral"; entries: ObjectEntry[] }
-  | { type: "TemplateLiteral"; quasis: string[]; expressions: Expr[] }
-  | { type: "BinaryExpr"; op: BinaryOp; left: Expr; right: Expr }
-  | { type: "UnaryExpr"; op: UnaryOp; operand: Expr }
-  | { type: "TernaryExpr"; condition: Expr; consequent: Expr; alternate: Expr }
-  | { type: "IndexAccess"; object: Expr; index: Expr }
-  | { type: "RegexLiteral"; pattern: string; flags: string }
-  | { type: "ParamRef"; name: string }
-  | { type: "MemberAccess"; object: Expr; member: string }
-  | { type: "MethodCall"; object: Expr; method: string; args: CallArg[] }
-  | { type: "CallExpression"; callee: Expr; args: CallArg[] }
-  | { type: "Lambda"; params: string[]; body: Expr }
-  | { type: "TypeofExpr"; operand: Expr }
-  | { type: "NewDate"; arg: Expr | null }
-  | { type: "NewSet"; arg: Expr | null }
-  | { type: "TypeCast"; cast: TypeCastOp; arg: Expr }
-  | { type: "TypeCastRef"; cast: BareCastOp }
-  | { type: "MathCall"; method: MathMethod; args: CallArg[] }
-  | { type: "MathConst"; name: MathConstant }
-  | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[] }
-  | { type: "ArrayFrom"; input: Expr; mapFn: Expr | null }
-  | { type: "NumberStatic"; method: NumberStaticMethod; arg: Expr }
-  | { type: "DateNow" };
+  | { type: "FieldRef"; path: string; pos: number }
+  | { type: "NumberLiteral"; value: number; pos: number }
+  | { type: "BigIntLiteral"; value: string; pos: number }
+  | { type: "StringLiteral"; value: string; pos: number }
+  | { type: "BooleanLiteral"; value: boolean; pos: number }
+  | { type: "NullLiteral"; pos: number }
+  | { type: "ArrayLiteral"; elements: ArrayElement[]; pos: number }
+  | { type: "ObjectLiteral"; entries: ObjectEntry[]; pos: number }
+  | { type: "TemplateLiteral"; quasis: string[]; expressions: Expr[]; pos: number }
+  | { type: "BinaryExpr"; op: BinaryOp; left: Expr; right: Expr; pos: number }
+  | { type: "UnaryExpr"; op: UnaryOp; operand: Expr; pos: number }
+  | { type: "TernaryExpr"; condition: Expr; consequent: Expr; alternate: Expr; pos: number }
+  | { type: "IndexAccess"; object: Expr; index: Expr; pos: number }
+  | { type: "RegexLiteral"; pattern: string; flags: string; pos: number }
+  | { type: "ParamRef"; name: string; pos: number }
+  | { type: "MemberAccess"; object: Expr; member: string; pos: number }
+  | { type: "MethodCall"; object: Expr; method: string; args: CallArg[]; pos: number }
+  | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
+  | { type: "Lambda"; params: string[]; body: Expr; pos: number }
+  | { type: "TypeofExpr"; operand: Expr; pos: number }
+  | { type: "NewDate"; arg: Expr | null; pos: number }
+  | { type: "NewSet"; arg: Expr | null; pos: number }
+  | { type: "TypeCast"; cast: TypeCastOp; arg: Expr; pos: number }
+  | { type: "TypeCastRef"; cast: BareCastOp; pos: number }
+  | { type: "MathCall"; method: MathMethod; args: CallArg[]; pos: number }
+  | { type: "MathConst"; name: MathConstant; pos: number }
+  | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[]; pos: number }
+  | { type: "ArrayFrom"; input: Expr; mapFn: Expr | null; pos: number }
+  | { type: "NumberStatic"; method: NumberStaticMethod; arg: Expr; pos: number }
+  | { type: "DateNow"; pos: number };
 
 export type TypeCastOp = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat";
 /** Type-cast names usable as bare callbacks (e.g. `arr.filter(Boolean)`).

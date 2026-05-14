@@ -1231,21 +1231,30 @@ describe('e-commerce: reusable eligible-users query via `import "jsmql/ops"`', (
 describe("jsmql.validate(): realistic error cases", () => {
   it("rejects bare field name without $. prefix", () => {
     // A common mistake: forgetting the $. prefix
-    const result = jsmql.validate("age > 18");
+    const src = "age > 18";
+    const result = jsmql.validate(src);
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/Did you mean/);
+    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+    expect(result.errors[0].pos).toBeLessThan(src.length);
   });
 
   it("rejects unterminated expression", () => {
-    const result = jsmql.validate("$.score >= 90 &&");
+    const src = "$.score >= 90 &&";
+    const result = jsmql.validate(src);
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+    expect(result.errors[0].pos).toBeLessThanOrEqual(src.length);
   });
 
   it("rejects scalar on right-hand side of in", () => {
-    const result = jsmql.validate('$.status in "active"');
+    const src = '$.status in "active"';
+    const result = jsmql.validate(src);
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch(/Right-hand side of 'in'/);
+    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+    expect(result.errors[0].pos).toBeLessThan(src.length);
   });
 
   it("accepts a realistic valid expression", () => {

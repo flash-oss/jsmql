@@ -42,9 +42,11 @@ export class ParseError extends Error {
  * own grammar; `validate()` maps both to `SYNTAX_ERROR`.
  */
 export class FunctionInputError extends Error {
-  constructor(message: string) {
+  readonly pos: number;
+  constructor(message: string, pos: number = 0) {
     super(message);
     this.name = "FunctionInputError";
+    this.pos = pos;
   }
 }
 
@@ -179,10 +181,10 @@ export class Parser {
 
     if (!sawSemi) {
       const only = stmts[0];
-      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name);
+      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
       return only;
     }
-    return { type: "Pipeline", stmts };
+    return { type: "Pipeline", stmts, pos: stmts[0].pos };
   }
 
   /**
@@ -204,16 +206,19 @@ export class Parser {
     if (first.type === TokenType.Ident && first.value === "async") {
       throw new FunctionInputError(
         "jsmql does not support async functions. Use a synchronous arrow: `($) => …`",
+        first.pos,
       );
     }
     if (first.type === TokenType.Ident && first.value === "function") {
       throw new FunctionInputError(
         "jsmql expects an arrow function, got a `function` declaration. Use: `($) => …`",
+        first.pos,
       );
     }
     if (first.type !== TokenType.LParen) {
       throw new FunctionInputError(
         "jsmql expects an arrow function `($) => …` as the function-form input.",
+        first.pos,
       );
     }
     const bindings = this.parseParameterList();
@@ -222,6 +227,7 @@ export class Parser {
     if (arrowTok.type !== TokenType.Arrow) {
       throw new FunctionInputError(
         "jsmql could not find an arrow operator (`=>`) in the function source. Use: `($) => …`",
+        arrowTok.pos,
       );
     }
     this.lexer.next(); // consume `=>`
@@ -256,7 +262,10 @@ export class Parser {
   private parseParameterList(): ParamBinding[] {
     this.lexer.next(); // consume opening `(`
 
-    type Slot = { kind: "doc" } | { kind: "ops" } | { kind: "params"; bindings: ParamBinding[] };
+    type Slot =
+      | { kind: "doc"; pos: number }
+      | { kind: "ops"; pos: number }
+      | { kind: "params"; bindings: ParamBinding[]; pos: number };
     const slots: Slot[] = [];
 
     if (this.lexer.peek().type !== TokenType.RParen) {
@@ -270,15 +279,17 @@ export class Parser {
         if (sep.type === TokenType.RParen) break;
         throw new FunctionInputError(
           `jsmql could not parse the function parameter list — expected ',' or ')' at position ${sep.pos}, got '${sep.value}'.`,
+          sep.pos,
         );
       }
     }
-    this.lexer.next(); // consume `)`
+    const closeParen = this.lexer.next(); // consume `)`
 
     if (slots.length > 3) {
       throw new FunctionInputError(
         `jsmql's compile-form arrow takes at most three parameters in the order \`(params, $, opsHint)\`. ` +
           `Got ${slots.length} parameters. Reorder to \`(params, $, opsHint)\` and drop any extras.`,
+        closeParen.pos,
       );
     }
 
@@ -293,12 +304,14 @@ export class Parser {
         if (sawParams) {
           throw new FunctionInputError(
             "jsmql params destructure may only appear once. Combine the bindings into a single parameter: `({ a, b }, …) => …`.",
+            slot.pos,
           );
         }
         if (sawDoc || sawOps) {
           throw new FunctionInputError(
             "jsmql expects the params destructure to appear before the `$` doc-context parameter and the ops-hint destructure. " +
               "Reorder to `(params, $, opsHint)`.",
+            slot.pos,
           );
         }
         sawParams = true;
@@ -307,12 +320,14 @@ export class Parser {
         if (sawDoc) {
           throw new FunctionInputError(
             "jsmql's compile-form arrow takes at most one document-context parameter (`$`).",
+            slot.pos,
           );
         }
         if (sawOps) {
           throw new FunctionInputError(
             "jsmql expects the `$` doc-context parameter to appear before the ops-hint destructure. " +
               "Reorder to `(params, $, opsHint)`.",
+            slot.pos,
           );
         }
         sawDoc = true;
@@ -320,6 +335,7 @@ export class Parser {
         if (sawOps) {
           throw new FunctionInputError(
             "jsmql's compile-form arrow takes at most one ops-hint destructure (e.g. `{ $match }`).",
+            slot.pos,
           );
         }
         sawOps = true;
@@ -333,29 +349,31 @@ export class Parser {
    * `parseParameterList`; advances the lexer past the slot.
    */
   private parseParameterSlot():
-    | { kind: "doc" }
-    | { kind: "ops" }
-    | { kind: "params"; bindings: ParamBinding[] } {
+    | { kind: "doc"; pos: number }
+    | { kind: "ops"; pos: number }
+    | { kind: "params"; bindings: ParamBinding[]; pos: number } {
     const head = this.lexer.peek();
     if (head.type === TokenType.LBracket) {
       throw new FunctionInputError(
         "jsmql params must be an object destructure pattern: `{ a, b }`. " +
           "Array destructure is not accepted — params are always named, never positional.",
+        head.pos,
       );
     }
     if (head.type === TokenType.Ident) {
       // Plain-identifier slot — discard the name.
       this.lexer.next();
-      return { kind: "doc" };
+      return { kind: "doc", pos: head.pos };
     }
     if (head.type === TokenType.Dollar) {
       // Plain `$` identifier in the doc slot.
       this.lexer.next();
-      return { kind: "doc" };
+      return { kind: "doc", pos: head.pos };
     }
     if (head.type !== TokenType.LBrace) {
       throw new FunctionInputError(
         `jsmql expects each parameter to be an identifier or an object destructure pattern. Got '${head.value}' at position ${head.pos}.`,
+        head.pos,
       );
     }
     return this.parseDestructureSlot();
@@ -367,15 +385,17 @@ export class Parser {
    * Rejects defaults, nested destructure, rest, and mixed `$`/non-`$` keys
    * with the user-facing error messages from `docs/LANGUAGE.md`.
    */
-  private parseDestructureSlot(): { kind: "ops" } | { kind: "params"; bindings: ParamBinding[] } {
-    this.lexer.next(); // consume `{`
+  private parseDestructureSlot():
+    | { kind: "ops"; pos: number }
+    | { kind: "params"; bindings: ParamBinding[]; pos: number } {
+    const openBrace = this.lexer.next(); // consume `{`
     const opsKeys: string[] = [];
     const paramBindings: ParamBinding[] = [];
 
     if (this.lexer.peek().type === TokenType.RBrace) {
       // Empty destructure — treat as ops-hint (no-op).
       this.lexer.next();
-      return { kind: "ops" };
+      return { kind: "ops", pos: openBrace.pos };
     }
 
     while (true) {
@@ -385,6 +405,7 @@ export class Parser {
           "jsmql does not support rest patterns in params: `{ ...rest }`. " +
             "The set of bindings must be statically known at compile time so the generated MQL can reference each by name. " +
             "List each binding explicitly: `{ a, b, c }`.",
+          key.pos,
         );
       }
       // Either `$name` (Dollar followed by Ident) for ops-hint keys, or
@@ -397,6 +418,7 @@ export class Parser {
         if (ident.type !== TokenType.Ident) {
           throw new FunctionInputError(
             `jsmql expected an identifier after '$' in the destructure key at position ${ident.pos}.`,
+            ident.pos,
           );
         }
         this.lexer.next();
@@ -409,6 +431,7 @@ export class Parser {
       } else {
         throw new FunctionInputError(
           `jsmql expected an identifier in the destructure pattern at position ${key.pos}, got '${key.value}'.`,
+          key.pos,
         );
       }
 
@@ -424,11 +447,13 @@ export class Parser {
           throw new FunctionInputError(
             "jsmql does not support nested destructure in params: `{ <name>: { … } }`. " +
               "Params is a flat key→value map at the MQL level. Use a single level of destructure and reference nested fields explicitly at the call site, e.g. `q({ b: source.a.b })`.",
+            alias.pos,
           );
         }
         if (alias.type !== TokenType.Ident) {
           throw new FunctionInputError(
             `jsmql expected an alias identifier after ':' in the destructure pattern at position ${alias.pos}, got '${alias.value}'.`,
+            alias.pos,
           );
         }
         this.lexer.next();
@@ -437,12 +462,14 @@ export class Parser {
 
       // Optional default: `{ key = expr }` — always rejected.
       if (this.lexer.peek().type === TokenType.Eq) {
+        const defaultTok = this.lexer.peek();
         throw new FunctionInputError(
           "jsmql does not support default values in the params destructure: `{ <name> = <expr> }`.\n\n" +
             "jsmql compiles your function to MQL at parse time. It reads the function's source text but cannot evaluate the default expression — for `= config.minAge` or `= Date.now()` there is no runtime to ask, since jsmql never actually calls your arrow. Restricting defaults to literals (`= 18`) would make the rule silently inconsistent with the rest of the destructure, where any value is fine at call time.\n\n" +
             "Instead:\n" +
             "  - For a runtime fallback, use JS's `??` at the call site: `q({ minAge: input ?? 18 })`.\n" +
             "  - For a value that's always the same and never overridden, the template-tag form already inlines hardcoded values: `` jsmql`$.age > ${18}` ``.",
+          defaultTok.pos,
         );
       }
 
@@ -459,6 +486,7 @@ export class Parser {
       if (sep.type === TokenType.RBrace) break;
       throw new FunctionInputError(
         `jsmql could not parse the destructure pattern — expected ',' or '}' at position ${sep.pos}, got '${sep.value}'.`,
+        sep.pos,
       );
     }
     this.lexer.next(); // consume `}`
@@ -467,10 +495,12 @@ export class Parser {
       throw new FunctionInputError(
         "jsmql expects the operator-hint destructure (e.g. `{ $match, $project }`) to be separate from the params destructure (e.g. `{ minAge }`). " +
           "Split into two parameters: `(params, $, opsHint) => …`.",
+        openBrace.pos,
       );
     }
-    if (paramBindings.length > 0) return { kind: "params", bindings: paramBindings };
-    return { kind: "ops" };
+    if (paramBindings.length > 0)
+      return { kind: "params", bindings: paramBindings, pos: openBrace.pos };
+    return { kind: "ops", pos: openBrace.pos };
   }
 
   /**
@@ -486,11 +516,12 @@ export class Parser {
    * identifier" message.
    */
   private parseBlockBody(): Program {
-    this.lexer.next(); // consume `{`
+    const openBrace = this.lexer.next(); // consume `{`
 
     if (this.lexer.peek().type === TokenType.RBrace) {
       throw new FunctionInputError(
         "jsmql expects at least one statement inside a block-body arrow.",
+        openBrace.pos,
       );
     }
 
@@ -521,10 +552,10 @@ export class Parser {
 
     if (!sawSemi) {
       const only = stmts[0];
-      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name);
+      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
       return only;
     }
-    return { type: "Pipeline", stmts };
+    return { type: "Pipeline", stmts, pos: stmts[0].pos };
   }
 
   /**
@@ -543,7 +574,7 @@ export class Parser {
     if (eof.type !== TokenType.EOF) {
       throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
     }
-    if (stmt.type === "LetDecl") this.throwLetOutsidePipeline(stmt.name);
+    if (stmt.type === "LetDecl") this.throwLetOutsidePipeline(stmt.name, stmt.pos);
     return stmt;
   }
 
@@ -553,13 +584,13 @@ export class Parser {
    * `let` only makes sense as a pipeline statement — there's no enclosing
    * scope for the binding to live in otherwise.
    */
-  private throwLetOutsidePipeline(name: string): never {
+  private throwLetOutsidePipeline(name: string, pos: number): never {
     throw new ParseError(
       `\`let ${name} = …\` is only valid inside a pipeline. ` +
         `Add at least one more statement separated by \`;\` to flip into pipeline mode ` +
         `(e.g. \`let ${name} = …; { $project: … }\`). ` +
         `The bracketed pipeline form \`[ let ${name} = …, … ]\` works too.`,
-      0,
+      pos,
     );
   }
 
@@ -577,6 +608,7 @@ export class Parser {
         "jsmql block-body arrows are a sequence of jsmql statements, not JavaScript control flow. " +
           "Remove `return` — write the body as `;`-separated jsmql statements, or switch to an " +
           "expression-body arrow `($) => EXPR`.",
+        tok.pos,
       );
     }
   }
@@ -631,7 +663,7 @@ export class Parser {
     if ((expr as unknown as { type: string }).type === "AssignExpr") {
       const mutations: Mutation[] = [expr as unknown as AssignExpr];
       this.parseMutationProgramRest(mutations);
-      return { type: "MutationProgram", mutations };
+      return { type: "MutationProgram", mutations, pos: mutations[0].pos };
     }
 
     return expr;
@@ -647,7 +679,7 @@ export class Parser {
    * pipeline-level view and lives in codegen.
    */
   private parseLetDecl(): LetDecl {
-    this.lexer.next(); // consume `let`
+    const letTok = this.lexer.next(); // consume `let`
     const ident = this.lexer.peek();
     if (ident.type !== TokenType.Ident) {
       throw new ParseError(
@@ -666,7 +698,7 @@ export class Parser {
     }
     this.lexer.next(); // consume `=`
     const value = this.parseExpression();
-    return { type: "LetDecl", name: ident.value, value };
+    return { type: "LetDecl", name: ident.value, value, pos: letTok.pos };
   }
 
   // ── Mutation program ─────────────────────────────────────────────────────
@@ -676,7 +708,7 @@ export class Parser {
     const mutations: Mutation[] = [];
     mutations.push(...this.parseMutation());
     this.parseMutationProgramRest(mutations);
-    return { type: "MutationProgram", mutations };
+    return { type: "MutationProgram", mutations, pos: mutations[0].pos };
   }
 
   /** Entry when the first target was already parsed as an expression. */
@@ -684,7 +716,7 @@ export class Parser {
     const mutations: Mutation[] = [];
     mutations.push(...this.parseAssignmentChainFrom(firstTarget));
     this.parseMutationProgramRest(mutations);
-    return { type: "MutationProgram", mutations };
+    return { type: "MutationProgram", mutations, pos: mutations[0].pos };
   }
 
   /**
@@ -700,7 +732,7 @@ export class Parser {
     this.lexer.next(); // consume the operator
     const mutations: Mutation[] = [this.makeIncDecMutation(firstTarget, op)];
     this.parseMutationProgramRest(mutations);
-    return { type: "MutationProgram", mutations };
+    return { type: "MutationProgram", mutations, pos: mutations[0].pos };
   }
 
   /**
@@ -742,10 +774,10 @@ export class Parser {
   }
 
   private parseDeleteStmt(): DeleteStmt {
-    this.lexer.next(); // consume `delete`
+    const delTok = this.lexer.next(); // consume `delete`
     const target = this.parsePostfix();
     this.validateMutationTarget(target);
-    return { type: "DeleteStmt", target };
+    return { type: "DeleteStmt", target, pos: delTok.pos };
   }
 
   /**
@@ -769,10 +801,10 @@ export class Parser {
         this.validateMutationTarget(subTarget);
         const sub = this.parseAssignmentChainFrom(subTarget);
         const deepestValue = sub[sub.length - 1].value;
-        return [{ type: "AssignExpr", target, value: deepestValue }, ...sub];
+        return [{ type: "AssignExpr", target, value: deepestValue, pos: target.pos }, ...sub];
       }
       const value = this.parseExpression();
-      return [{ type: "AssignExpr", target, value }];
+      return [{ type: "AssignExpr", target, value, pos: target.pos }];
     }
 
     // Compound op (+=, -=, *=, /=). Reject chained.
@@ -789,8 +821,9 @@ export class Parser {
       op: compoundBinaryOp(op),
       left: target,
       right: rhs,
+      pos: target.pos,
     };
-    return [{ type: "AssignExpr", target, value: desugared }];
+    return [{ type: "AssignExpr", target, value: desugared, pos: target.pos }];
   }
 
   /**
@@ -868,9 +901,10 @@ export class Parser {
       type: "BinaryExpr",
       op: op === "++" ? "+" : "-",
       left: target,
-      right: { type: "NumberLiteral", value: 1 },
+      right: { type: "NumberLiteral", value: 1, pos: target.pos },
+      pos: target.pos,
     };
-    return { type: "AssignExpr", target, value };
+    return { type: "AssignExpr", target, value, pos: target.pos };
   }
 
   /**
@@ -958,7 +992,7 @@ export class Parser {
     }
     this.lexer.next(); // consume :
     const alternate = this.parseTernary(); // right-associative
-    return { type: "TernaryExpr", condition, consequent, alternate };
+    return { type: "TernaryExpr", condition, consequent, alternate, pos: condition.pos };
   }
 
   /** nullish:  or ("??" or)*  — left-associative, flattened later */
@@ -967,7 +1001,7 @@ export class Parser {
     while (this.lexer.peek().type === TokenType.QuestQuest) {
       this.lexer.next();
       const right = this.parseOr();
-      left = { type: "BinaryExpr", op: "??", left, right };
+      left = { type: "BinaryExpr", op: "??", left, right, pos: left.pos };
     }
     return left;
   }
@@ -978,7 +1012,7 @@ export class Parser {
     while (this.lexer.peek().type === TokenType.PipePipe) {
       this.lexer.next();
       const right = this.parseAnd();
-      left = { type: "BinaryExpr", op: "||", left, right };
+      left = { type: "BinaryExpr", op: "||", left, right, pos: left.pos };
     }
     return left;
   }
@@ -989,7 +1023,7 @@ export class Parser {
     while (this.lexer.peek().type === TokenType.AmpAmp) {
       this.lexer.next();
       const right = this.parseBitOr();
-      left = { type: "BinaryExpr", op: "&&", left, right };
+      left = { type: "BinaryExpr", op: "&&", left, right, pos: left.pos };
     }
     return left;
   }
@@ -1000,7 +1034,7 @@ export class Parser {
     while (this.lexer.peek().type === TokenType.Pipe) {
       this.lexer.next();
       const right = this.parseBitXor();
-      left = { type: "BinaryExpr", op: "|", left, right };
+      left = { type: "BinaryExpr", op: "|", left, right, pos: left.pos };
     }
     return left;
   }
@@ -1011,7 +1045,7 @@ export class Parser {
     while (this.lexer.peek().type === TokenType.Caret) {
       this.lexer.next();
       const right = this.parseBitAnd();
-      left = { type: "BinaryExpr", op: "^", left, right };
+      left = { type: "BinaryExpr", op: "^", left, right, pos: left.pos };
     }
     return left;
   }
@@ -1022,7 +1056,7 @@ export class Parser {
     while (this.lexer.peek().type === TokenType.Amp) {
       this.lexer.next();
       const right = this.parseComparison();
-      left = { type: "BinaryExpr", op: "&", left, right };
+      left = { type: "BinaryExpr", op: "&", left, right, pos: left.pos };
     }
     return left;
   }
@@ -1037,7 +1071,7 @@ export class Parser {
     if (!op) return left;
     this.lexer.next();
     const right = this.parseRelational();
-    return { type: "BinaryExpr", op, left, right };
+    return { type: "BinaryExpr", op, left, right, pos: left.pos };
   }
 
   private peekEqualityOp(): BinaryOp | null {
@@ -1065,7 +1099,7 @@ export class Parser {
     if (!op) return left;
     this.lexer.next();
     const right = this.parseAdditive();
-    return { type: "BinaryExpr", op, left, right };
+    return { type: "BinaryExpr", op, left, right, pos: left.pos };
   }
 
   private peekRelationalOp(): BinaryOp | null {
@@ -1094,7 +1128,7 @@ export class Parser {
     ) {
       const op: BinaryOp = this.lexer.next().type === TokenType.Plus ? "+" : "-";
       const right = this.parseMultiplicative();
-      left = { type: "BinaryExpr", op, left, right };
+      left = { type: "BinaryExpr", op, left, right, pos: left.pos };
     }
     return left;
   }
@@ -1111,7 +1145,7 @@ export class Parser {
       if (!op) break;
       this.lexer.next();
       const right = this.parsePower();
-      left = { type: "BinaryExpr", op, left, right };
+      left = { type: "BinaryExpr", op, left, right, pos: left.pos };
     }
     return left;
   }
@@ -1122,7 +1156,7 @@ export class Parser {
     if (this.lexer.peek().type !== TokenType.StarStar) return left;
     this.lexer.next();
     const right = this.parsePower(); // right-associative
-    return { type: "BinaryExpr", op: "**", left, right };
+    return { type: "BinaryExpr", op: "**", left, right, pos: left.pos };
   }
 
   /** unary:  typeof | ("!"|"-"|"~") unary  |  postfix  */
@@ -1131,22 +1165,22 @@ export class Parser {
     if (t.type === TokenType.Typeof) {
       this.lexer.next();
       const operand = this.parseUnary();
-      return { type: "TypeofExpr", operand };
+      return { type: "TypeofExpr", operand, pos: t.pos };
     }
     if (t.type === TokenType.Bang) {
       this.lexer.next();
       const operand = this.parseUnary();
-      return { type: "UnaryExpr", op: "!", operand };
+      return { type: "UnaryExpr", op: "!", operand, pos: t.pos };
     }
     if (t.type === TokenType.Minus) {
       this.lexer.next();
       const operand = this.parseUnary();
-      return { type: "UnaryExpr", op: "-", operand };
+      return { type: "UnaryExpr", op: "-", operand, pos: t.pos };
     }
     if (t.type === TokenType.Tilde) {
       this.lexer.next();
       const operand = this.parseUnary();
-      return { type: "UnaryExpr", op: "~", operand };
+      return { type: "UnaryExpr", op: "~", operand, pos: t.pos };
     }
     return this.parsePostfix();
   }
@@ -1166,7 +1200,7 @@ export class Parser {
         // Direct call expression: e.g. ((x) => body)(arg) — only meaningful when the
         // callee is a lambda (IIFE). Codegen emits $let; non-lambda callees error there.
         const args = this.parseMethodCallArgs();
-        left = { type: "CallExpression", callee: left, args };
+        left = { type: "CallExpression", callee: left, args, pos: left.pos };
         continue;
       }
       if (t === TokenType.LBracket) {
@@ -1180,7 +1214,7 @@ export class Parser {
           );
         }
         this.lexer.next(); // consume ]
-        left = { type: "IndexAccess", object: left, index };
+        left = { type: "IndexAccess", object: left, index, pos: left.pos };
       } else if (t === TokenType.Dot || t === TokenType.QuestDot) {
         this.lexer.next(); // consume . or ?.
         // ?.[...] form — optional bracket access
@@ -1195,7 +1229,7 @@ export class Parser {
             );
           }
           this.lexer.next();
-          left = { type: "IndexAccess", object: left, index };
+          left = { type: "IndexAccess", object: left, index, pos: left.pos };
           continue;
         }
         const member = this.lexer.peek();
@@ -1209,10 +1243,10 @@ export class Parser {
         if (this.lexer.peek().type === TokenType.LParen) {
           // Method call: left.member(args)
           const args = this.parseMethodCallArgs();
-          left = { type: "MethodCall", object: left, method: member.value, args };
+          left = { type: "MethodCall", object: left, method: member.value, args, pos: left.pos };
         } else {
           // Property access: left.member
-          left = { type: "MemberAccess", object: left, member: member.value };
+          left = { type: "MemberAccess", object: left, member: member.value, pos: left.pos };
         }
       } else {
         break;
@@ -1245,9 +1279,9 @@ export class Parser {
    */
   private parseCallArg(): CallArg {
     if (this.lexer.peek().type === TokenType.Spread) {
-      this.lexer.next();
+      const spreadTok = this.lexer.next();
       const argument = this.parseExpression();
-      const spread: SpreadElement = { type: "SpreadElement", argument };
+      const spread: SpreadElement = { type: "SpreadElement", argument, pos: spreadTok.pos };
       return spread;
     }
     return this.parseArgOrLambda();
@@ -1285,26 +1319,26 @@ export class Parser {
         return this.parseNumber();
       case TokenType.BigInt:
         this.lexer.next();
-        return { type: "BigIntLiteral", value: t.value };
+        return { type: "BigIntLiteral", value: t.value, pos: t.pos };
       case TokenType.String:
         this.lexer.next();
-        return { type: "StringLiteral", value: t.value };
+        return { type: "StringLiteral", value: t.value, pos: t.pos };
       case TokenType.True:
         this.lexer.next();
-        return { type: "BooleanLiteral", value: true };
+        return { type: "BooleanLiteral", value: true, pos: t.pos };
       case TokenType.False:
         this.lexer.next();
-        return { type: "BooleanLiteral", value: false };
+        return { type: "BooleanLiteral", value: false, pos: t.pos };
       case TokenType.Null:
         this.lexer.next();
-        return { type: "NullLiteral" };
+        return { type: "NullLiteral", pos: t.pos };
       case TokenType.LBracket:
         return this.parseArrayLiteral();
       case TokenType.LBrace:
         return this.parseObjectLiteral();
       case TokenType.RegexLiteral:
         this.lexer.next();
-        return { type: "RegexLiteral", pattern: t.value, flags: t.flags ?? "" };
+        return { type: "RegexLiteral", pattern: t.value, flags: t.flags ?? "", pos: t.pos };
       case TokenType.TemplateStart:
         return this.parseTemplateLiteral();
       case TokenType.New:
@@ -1329,14 +1363,14 @@ export class Parser {
           if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
           if (BARE_CAST_NAMES.has(name as BareCastOp)) {
             this.lexer.next();
-            return { type: "TypeCastRef", cast: name as BareCastOp };
+            return { type: "TypeCastRef", cast: name as BareCastOp, pos: t.pos };
           }
           // parseInt / parseFloat without `(` falls through to parseTypeCast(),
           // which throws the existing "Expected LParen" error.
           return this.parseTypeCast();
         }
         this.lexer.next();
-        return { type: "ParamRef", name };
+        return { type: "ParamRef", name, pos: t.pos };
       }
       default:
         if (t.type === TokenType.EOF) {
@@ -1418,7 +1452,7 @@ export class Parser {
     // Zero-arg call
     if (peek.type === TokenType.RParen) {
       this.lexer.next();
-      return { type: "OperatorCall", name, style: "positional", args: [] };
+      return { type: "OperatorCall", name, style: "positional", args: [], pos: dollar.pos };
     }
 
     // Object-style: single `{...}` arg with no trailing comma
@@ -1427,7 +1461,7 @@ export class Parser {
       const after = this.lexer.peek();
       if (after.type === TokenType.RParen) {
         this.lexer.next();
-        return { type: "OperatorCall", name, style: "object", args: [obj] };
+        return { type: "OperatorCall", name, style: "object", args: [obj], pos: dollar.pos };
       }
       // First positional arg happens to be an object — collect remaining args
       const args: CallArg[] = [obj];
@@ -1436,7 +1470,7 @@ export class Parser {
         args.push(this.parseCallArg());
       }
       this.lexer.expect(TokenType.RParen);
-      return { type: "OperatorCall", name, style: "positional", args };
+      return { type: "OperatorCall", name, style: "positional", args, pos: dollar.pos };
     }
 
     // Positional args (may include lambdas and spreads)
@@ -1446,7 +1480,7 @@ export class Parser {
       args.push(this.parseCallArg());
     }
     this.lexer.expect(TokenType.RParen);
-    return { type: "OperatorCall", name, style: "positional", args };
+    return { type: "OperatorCall", name, style: "positional", args, pos: dollar.pos };
   }
 
   /** $.field — stops at first segment; postfix handles further dots */
@@ -1460,7 +1494,7 @@ export class Parser {
       );
     }
     this.lexer.next();
-    return { type: "FieldRef", path: first.value };
+    return { type: "FieldRef", path: first.value, pos: dollarDot.pos };
   }
 
   /**
@@ -1507,12 +1541,12 @@ export class Parser {
     const paramTok = this.lexer.next(); // consume Ident
     this.lexer.next(); // consume =>
     const body = this.parseExpression();
-    return { type: "Lambda", params: [paramTok.value], body };
+    return { type: "Lambda", params: [paramTok.value], body, pos: paramTok.pos };
   }
 
   /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
   private parseLambdaParen(): Expr {
-    this.lexer.next(); // consume (
+    const lparen = this.lexer.next(); // consume (
     const params: string[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
       params.push(this.lexer.expect(TokenType.Ident).value);
@@ -1524,7 +1558,7 @@ export class Parser {
     this.lexer.expect(TokenType.RParen);
     this.lexer.expect(TokenType.Arrow);
     const body = this.parseExpression();
-    return { type: "Lambda", params, body };
+    return { type: "Lambda", params, body, pos: lparen.pos };
   }
 
   /** "new Date()" / "new Date(expr)" or "new Set()" / "new Set(expr)" */
@@ -1545,11 +1579,15 @@ export class Parser {
     this.lexer.expect(TokenType.LParen);
     if (this.lexer.peek().type === TokenType.RParen) {
       this.lexer.next();
-      return cls === "Date" ? { type: "NewDate", arg: null } : { type: "NewSet", arg: null };
+      return cls === "Date"
+        ? { type: "NewDate", arg: null, pos: newTok.pos }
+        : { type: "NewSet", arg: null, pos: newTok.pos };
     }
     const arg = this.parseExpression();
     this.lexer.expect(TokenType.RParen);
-    return cls === "Date" ? { type: "NewDate", arg } : { type: "NewSet", arg };
+    return cls === "Date"
+      ? { type: "NewDate", arg, pos: newTok.pos }
+      : { type: "NewSet", arg, pos: newTok.pos };
   }
 
   /** "Date.now()" — recognised as a primary; other Date.* members are not supported */
@@ -1568,7 +1606,7 @@ export class Parser {
     this.lexer.next(); // consume 'now'
     this.lexer.expect(TokenType.LParen);
     this.lexer.expect(TokenType.RParen);
-    return { type: "DateNow" };
+    return { type: "DateNow", pos: dateTok.pos };
   }
 
   /** "Array.isArray(x)" or "Array.from(input)" or "Array.from(input, mapFn)" */
@@ -1584,7 +1622,13 @@ export class Parser {
       this.lexer.expect(TokenType.LParen);
       const arg = this.parseExpression();
       this.lexer.expect(TokenType.RParen);
-      return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg] };
+      return {
+        type: "OperatorCall",
+        name: "$isArray",
+        style: "positional",
+        args: [arg],
+        pos: arrayTok.pos,
+      };
     }
     if (methodTok.value === "from") {
       this.lexer.next();
@@ -1597,7 +1641,7 @@ export class Parser {
         mapFn = arg;
       }
       this.lexer.expect(TokenType.RParen);
-      return { type: "ArrayFrom", input, mapFn };
+      return { type: "ArrayFrom", input, mapFn, pos: arrayTok.pos };
     }
     const arraySuggestion = closestNameTo(methodTok.value, ["isArray", "from"]);
     const arrayHint = arraySuggestion ? ` Did you mean 'Array.${arraySuggestion}'?` : "";
@@ -1630,7 +1674,7 @@ export class Parser {
     this.lexer.expect(TokenType.LParen);
     const arg = this.parseExpression();
     this.lexer.expect(TokenType.RParen);
-    return { type: "NumberStatic", method, arg };
+    return { type: "NumberStatic", method, arg, pos: numberTok.pos };
   }
 
   /** "Math.method(args)" or "Math.PI" / "Math.E" constants */
@@ -1643,7 +1687,7 @@ export class Parser {
     }
     if (MATH_CONSTANTS.has(ident.value)) {
       this.lexer.next(); // consume constant name
-      return { type: "MathConst", name: ident.value as MathConstant };
+      return { type: "MathConst", name: ident.value as MathConstant, pos: mathTok.pos };
     }
     if (!MATH_METHODS.has(ident.value)) {
       const suggestion = closestNameTo(ident.value, [...MATH_METHODS, ...MATH_CONSTANTS]);
@@ -1665,7 +1709,7 @@ export class Parser {
       }
     }
     this.lexer.expect(TokenType.RParen);
-    return { type: "MathCall", method, args };
+    return { type: "MathCall", method, args, pos: mathTok.pos };
   }
 
   /** "Object.method(args)" */
@@ -1693,7 +1737,7 @@ export class Parser {
       }
     }
     this.lexer.expect(TokenType.RParen);
-    return { type: "ObjectCall", method, args };
+    return { type: "ObjectCall", method, args, pos: objectTok.pos };
   }
 
   /** "Number(x)" | "String(x)" | "Boolean(x)" | "parseInt(x)" | "parseFloat(x)" */
@@ -1709,7 +1753,7 @@ export class Parser {
       );
     }
     this.lexer.expect(TokenType.RParen);
-    return { type: "TypeCast", cast, arg };
+    return { type: "TypeCast", cast, arg, pos: castTok.pos };
   }
 
   private parseNumber(): Expr {
@@ -1718,12 +1762,12 @@ export class Parser {
     if (isNaN(value)) {
       throw new ParseError(`Invalid number '${t.value}' at position ${t.pos}`, t.pos);
     }
-    return { type: "NumberLiteral", value };
+    return { type: "NumberLiteral", value, pos: t.pos };
   }
 
   /** Parse a template literal: `chunk0${expr0}chunk1${expr1}chunk2` */
   private parseTemplateLiteral(): Expr {
-    this.lexer.expect(TokenType.TemplateStart);
+    const startTok = this.lexer.expect(TokenType.TemplateStart);
     const quasis: string[] = [];
     const expressions: Expr[] = [];
 
@@ -1750,11 +1794,11 @@ export class Parser {
       );
     }
 
-    return { type: "TemplateLiteral", quasis, expressions };
+    return { type: "TemplateLiteral", quasis, expressions, pos: startTok.pos };
   }
 
   private parseArrayLiteral(): Expr {
-    this.lexer.expect(TokenType.LBracket);
+    const openBracket = this.lexer.expect(TokenType.LBracket);
     const elements: ArrayElement[] = [];
 
     while (this.lexer.peek().type !== TokenType.RBracket) {
@@ -1762,9 +1806,13 @@ export class Parser {
         throw new ParseError("Unterminated array literal", this.lexer.peek().pos);
       }
       if (this.lexer.peek().type === TokenType.Spread) {
-        this.lexer.next();
+        const spreadTok = this.lexer.next();
         const arg = this.parseExpression();
-        const spread: SpreadElement = { type: "SpreadElement", argument: arg };
+        const spread: SpreadElement = {
+          type: "SpreadElement",
+          argument: arg,
+          pos: spreadTok.pos,
+        };
         elements.push(spread);
       } else if (this.lexer.peek().type === TokenType.Delete) {
         // `delete $.x` as a pipeline element. Codegen rejects it if the array
@@ -1802,11 +1850,11 @@ export class Parser {
     }
 
     this.lexer.expect(TokenType.RBracket);
-    return { type: "ArrayLiteral", elements };
+    return { type: "ArrayLiteral", elements, pos: openBracket.pos };
   }
 
   private parseObjectLiteral(): Expr {
-    this.lexer.expect(TokenType.LBrace);
+    const openBrace = this.lexer.expect(TokenType.LBrace);
     const entries: ObjectEntry[] = [];
 
     while (this.lexer.peek().type !== TokenType.RBrace) {
@@ -1814,9 +1862,13 @@ export class Parser {
         throw new ParseError("Unterminated object literal", this.lexer.peek().pos);
       }
       if (this.lexer.peek().type === TokenType.Spread) {
-        this.lexer.next();
+        const spreadTok = this.lexer.next();
         const arg = this.parseExpression();
-        const spread: SpreadElement = { type: "SpreadElement", argument: arg };
+        const spread: SpreadElement = {
+          type: "SpreadElement",
+          argument: arg,
+          pos: spreadTok.pos,
+        };
         entries.push(spread);
       } else {
         entries.push(this.parseObjectEntry());
@@ -1829,7 +1881,7 @@ export class Parser {
     }
 
     this.lexer.expect(TokenType.RBrace);
-    return { type: "ObjectLiteral", entries };
+    return { type: "ObjectLiteral", entries, pos: openBrace.pos };
   }
 
   /**
@@ -1849,7 +1901,7 @@ export class Parser {
       this.lexer.expect(TokenType.Colon);
       const value = this.parseExpression();
       const key: ObjectKey = { kind: "computed", expr: keyExpr };
-      return { type: "KeyValueEntry", key, value };
+      return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
 
     // `$ident:` form. In JS, `$match` is a valid identifier; the lexer splits
@@ -1867,7 +1919,7 @@ export class Parser {
       this.lexer.expect(TokenType.Colon);
       const value = this.parseExpression();
       const key: ObjectKey = { kind: "static", name: `$${ident.value}` };
-      return { type: "KeyValueEntry", key, value };
+      return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
 
     // `let` is a jsmql keyword but is also a legitimate MongoDB object-key name
@@ -1880,7 +1932,7 @@ export class Parser {
       this.lexer.expect(TokenType.Colon);
       const value = this.parseExpression();
       const key: ObjectKey = { kind: "static", name: "let" };
-      return { type: "KeyValueEntry", key, value };
+      return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
 
     if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
@@ -1895,13 +1947,13 @@ export class Parser {
       (next.type === TokenType.Comma || next.type === TokenType.RBrace)
     ) {
       const key: ObjectKey = { kind: "static", name: tok.value };
-      const value: Expr = { type: "ParamRef", name: tok.value };
-      return { type: "KeyValueEntry", key, value };
+      const value: Expr = { type: "ParamRef", name: tok.value, pos: tok.pos };
+      return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
     this.lexer.expect(TokenType.Colon);
     const value = this.parseExpression();
     const key: ObjectKey = { kind: "static", name: tok.value };
-    return { type: "KeyValueEntry", key, value };
+    return { type: "KeyValueEntry", key, value, pos: tok.pos };
   }
 }
 

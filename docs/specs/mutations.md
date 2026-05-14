@@ -137,6 +137,8 @@ There are two pipeline forms, with one important behavioural difference:
 | Mutation in a value array       | codegen      | "Assignment is a statement, not a value, and is only valid at the top level or as a pipeline-array element" |
 | Empty mutation program          | codegen      | "Mutation program must contain at least one assignment or delete" (defensive — parser shouldn't produce this) |
 
+`AssignExpr.pos` / `DeleteStmt.pos` are populated from the target's source offset (for `=`/`+=`/`-=`/`*=`/`/=`/`++`/`--`) or from the `delete` keyword (for `delete $.x`). Codegen forwards that offset into every mutation-related error it raises, so the offending statement in a `;`-separated pipeline can be located precisely.
+
 ## Related
 
 - [Let bindings](let-bindings.md) — `let x = ...` is sugar over mutations: it

@@ -123,6 +123,8 @@ There is intentionally no `jsmql.validate.compile`. The structured-result surfac
 
 `augmentForFunctionInput` appends two pointers to any `UnknownIdentifierError` raised through the function-form path: the `jsmql.compile(fn)({ x: … })` form for compile-time bindings, and the `` jsmql`… ${x} …` `` form for one-shot template-tag interpolation. The original "Unknown identifier 'X'" message is preserved verbatim.
 
+`FunctionInputError` carries a `.pos` field set at every throw site to the offset of the offending token in the stringified arrow source (e.g. the `async` keyword for async rejection, the spread token for `{ ...rest }`, the offending separator for malformed param lists). `errorToValidationResult` forwards that offset into `ValidationError.pos` so callers using `.validate()` on a stored arrow string can underline the failing region in the source.
+
 ## Validation rules summary
 
 | When | Failure mode | Error class |

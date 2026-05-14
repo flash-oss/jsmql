@@ -38,6 +38,11 @@ Expr (src/ast.ts)
     Union type — see the `Expr` union in src/ast.ts.
     Spread/key-value are auxiliary types used inside
     array/object nodes and call argument lists.
+    Every node carries `pos: number` — the byte offset of
+    the leading token of that construct, threaded through
+    by the parser. Codegen forwards `.pos` into every
+    error it raises so .validate() callers can locate the
+    offending region in the source.
     │
     ▼
 compile() (src/index.ts)
@@ -129,16 +134,16 @@ Callers that want parse-once-bind-many use `jsmql.compile(fn)` — see [function
 
 ## Error types
 
-All errors are classes with a `.message` string. Positional errors also have `.pos: number` (byte offset in the source string).
+All errors are classes with a `.message` string and a `.pos: number` carrying the source offset where the error was detected. Codegen-layer errors get a real offset because every AST node carries `pos` (populated by the parser from the leading token of each construct); helpers thread it down to throw sites.
 
 | Class | Module | Has pos | Notes |
 |---|---|---|---|
-| `LexError` | `lexer.ts` | yes | |
-| `ParseError` | `parser.ts` | yes | |
-| `CodegenError` | `codegen.ts` | no | Includes pipeline-detection errors raised by `pipeline.ts`. |
-| `UnknownIdentifierError` | `codegen.ts` | no | Subclass of `CodegenError`. Carries `.identifier` so the function-input path can append a `` jsmql`…` `` template-tag hint to the message. |
-| `FunctionInputError` | `index.ts` | no | Function source isn't a supported shape (block body, async, `function` keyword, missing `=>`). |
-| `JsmqlInterpolationError` | `index.ts` | no | Raised by the template-tag form of `jsmql` (and `validate`) when an interpolated value cannot be safely embedded as a JSON literal (function/Symbol/`undefined`, NaN/±Infinity, BigInt, circular refs). Carries `.slot: number` pointing to the offending interpolation slot. |
+| `LexError` | `lexer.ts` | yes | Byte offset of the failing character. |
+| `ParseError` | `parser.ts` | yes | Byte offset of the offending token. |
+| `CodegenError` | `codegen.ts` | yes | Forwarded from the AST node that triggered the error (parser populates `pos` at every construction site). Includes pipeline-detection errors raised by `pipeline.ts`. |
+| `UnknownIdentifierError` | `codegen.ts` | yes | Subclass of `CodegenError`. Carries `.identifier` so the function-input path can append a `` jsmql`…` `` template-tag hint to the message. |
+| `FunctionInputError` | `index.ts` | yes | Function source isn't a supported shape (block body, async, `function` keyword, missing `=>`). Position is into the stringified arrow source. |
+| `JsmqlInterpolationError` | `index.ts` | no | Raised by the template-tag form of `jsmql` (and `validate`) when an interpolated value cannot be safely embedded as a JSON literal (function/Symbol/`undefined`, NaN/±Infinity, BigInt, circular refs). Carries `.slot: number` pointing to the offending interpolation slot (and optionally `.key` for the `jsmql.compile()` path); no source offset because the template's text is split across the `strings`/`values` arrays. |
 | `TypeError` | `index.ts` | no | Raised by `jsmql()`'s top-level guard when the first argument isn't a string, function, or `TemplateStringsArray` (e.g. `jsmql(42)`, `jsmql({})`). |
 
 `validate()` maps errors as follows:
@@ -146,7 +151,8 @@ All errors are classes with a `.message` string. Positional errors also have `.p
 | Source | Code | `pos` |
 |---|---|---|
 | `LexError`, `ParseError` | `SYNTAX_ERROR` | original `.pos` |
-| `CodegenError` and subclasses | `CODEGEN_ERROR` | `0` |
-| `FunctionInputError`, `JsmqlInterpolationError` | `SYNTAX_ERROR` | `0` |
+| `CodegenError` and subclasses | `CODEGEN_ERROR` | `err.pos` (AST-node offset) |
+| `FunctionInputError` | `SYNTAX_ERROR` | `err.pos` (offset in stringified arrow source) |
+| `JsmqlInterpolationError` | `SYNTAX_ERROR` | `0` (use `.slot` / `.key` on the underlying error to locate the bad interpolation) |
 | `RangeError`, `TypeError` | `SYNTAX_ERROR` | `0` (`RangeError` is defensive — should be unreachable now that the parser/codegen depth caps trip first; `TypeError` comes from the top-level input-shape guard) |
 | anything else | `CODEGEN_ERROR` | `0` (wrapped as `internal error: …` to keep `validate()` total) |

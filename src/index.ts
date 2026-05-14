@@ -340,10 +340,21 @@ function errorToValidationResult(err: unknown): ValidationResult {
   if (err instanceof CodegenError) {
     return {
       valid: false,
-      errors: [{ message: err.message, pos: 0, code: "CODEGEN_ERROR" }],
+      errors: [{ message: err.message, pos: err.pos, code: "CODEGEN_ERROR" }],
     };
   }
-  if (err instanceof FunctionInputError || err instanceof JsmqlInterpolationError) {
+  if (err instanceof FunctionInputError) {
+    return {
+      valid: false,
+      errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }],
+    };
+  }
+  // JsmqlInterpolationError carries `.slot` (1-based interpolation index) and
+  // optionally `.key` (param name) instead of a source offset — there is no
+  // single byte offset in the template-tag form because the template's text
+  // lives across the `strings`/`values` arrays. Callers needing to locate the
+  // failing interpolation should read `.slot` / `.key` on the error directly.
+  if (err instanceof JsmqlInterpolationError) {
     return {
       valid: false,
       errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],

@@ -257,6 +257,7 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
       `\`let ${decl.name}\` is already declared earlier in this pipeline. ` +
         `Re-declaration in the same scope is not allowed — pick a different name, ` +
         `or rebind after a reshape stage (\`$group\`, \`$replaceRoot\`, …).`,
+      decl.pos,
     );
   }
   if (ctx.bindings?.has(decl.name)) {
@@ -265,6 +266,7 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
         `Rename one — parameter bindings are compile-time constants supplied at call time, ` +
         `\`let\` bindings are per-document values derived from a stage expression; ` +
         `mixing them under one name would be ambiguous.`,
+      decl.pos,
     );
   }
   const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
@@ -279,7 +281,10 @@ type StageLowering = { stage: Record<string, unknown>; ctx: GenerateCtx };
 
 function lowerStageElement(el: ArrayElement, index: number, ctx: GenerateCtx): StageLowering {
   const stage = asStageShape(el);
-  if (!stage) throw new CodegenError(formatNotAStageError(el, index));
+  if (!stage) {
+    const pos = (el as { pos?: number }).pos ?? 0;
+    throw new CodegenError(formatNotAStageError(el, index), pos);
+  }
   const body = generateStageBody(stage.name, stage.body, ctx);
   const nextCtx = RESHAPE_CLEARING_STAGES.has(stage.name) ? clearCtxLets(ctx, stage.name) : ctx;
   return { stage: { [stage.name]: body }, ctx: nextCtx };
@@ -329,10 +334,10 @@ function generateBodyObject(
   const out: Record<string, unknown> = {};
   for (const entry of body.entries) {
     if (entry.type !== "KeyValueEntry") {
-      throw new CodegenError(`Spread entries are not allowed in ${stageName} body`);
+      throw new CodegenError(`Spread entries are not allowed in ${stageName} body`, entry.pos);
     }
     if (entry.key.kind !== "static") {
-      throw new CodegenError(`Computed keys are not allowed in ${stageName} body`);
+      throw new CodegenError(`Computed keys are not allowed in ${stageName} body`, entry.pos);
     }
     const key = entry.key.name;
     const isPipelineSlot = allValuesArePipelines || pipelineSlot.has(key);

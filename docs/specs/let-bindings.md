@@ -62,6 +62,11 @@ Three production-level changes in [src/parser.ts](../../src/parser.ts):
 `parseLetDecl()` consumes `let <Ident> = <Expression>`. Missing identifier or
 missing `=` produces a position-marked `ParseError`. Re-declaration is **not**
 caught at the parser — it needs a pipeline-level view and lives in codegen.
+The constructed `LetDecl` node records the `let` keyword's source offset in its
+`pos` field; codegen forwards that offset into every `CodegenError` it raises
+about the binding (re-declaration, binding/parameter name collision, dropped-let
+read after a reshape stage), so `.validate()` callers see the original `let`
+keyword in `errors[0].pos`.
 
 ## Codegen
 

@@ -39,10 +39,12 @@ New AST node types add a case in the `_generate(expr, ctx)` switch. The public e
 
 ## Error classes
 
-| Class          | Where thrown | Has `.pos`                      |
-| -------------- | ------------ | ------------------------------- |
-| `LexError`     | `lexer.ts`   | yes                             |
-| `ParseError`   | `parser.ts`  | yes                             |
-| `CodegenError` | `codegen.ts` | no (structural, not positional) |
+| Class          | Where thrown | Has `.pos`                                                              |
+| -------------- | ------------ | ----------------------------------------------------------------------- |
+| `LexError`     | `lexer.ts`   | yes (offending character)                                               |
+| `ParseError`   | `parser.ts`  | yes (offending token)                                                   |
+| `CodegenError` | `codegen.ts` | yes (forwarded from the AST node that triggered the error — every node carries `pos` populated by the parser) |
+| `FunctionInputError` | `parser.ts` | yes (offset in the stringified arrow source)                       |
+| `JsmqlInterpolationError` | `index.ts` | no (use `.slot` / `.key` — the template-tag source is split across the `strings`/`values` arrays) |
 
-`src/index.ts` catches all three and maps them to `ValidationError` objects for `validate()`.
+`src/index.ts` catches all these and maps them to `ValidationError` objects for `validate()`. See [docs/specs/architecture.md](../docs/specs/architecture.md#error-types) for the full mapping table.

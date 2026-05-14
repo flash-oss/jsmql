@@ -104,7 +104,7 @@ function isEmpty(q: Record<string, unknown>): boolean {
 function combineResidualsAnd(a: Expr | null, b: Expr | null): Expr | null {
   if (a === null) return b;
   if (b === null) return a;
-  return { type: "BinaryExpr", op: "&&", left: a, right: b };
+  return { type: "BinaryExpr", op: "&&", left: a, right: b, pos: a.pos };
 }
 
 function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> | null {
