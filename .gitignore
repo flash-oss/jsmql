@@ -1,4 +1,7 @@
 node_modules/
 dist/
 vendor/mql-specifications/
+.idea/
+.claude/worktrees/
+.DS_Store
 .npmrc
