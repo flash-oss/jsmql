@@ -88,39 +88,6 @@ type JsmqlCompileFn<P> = (params: P, $: any, ops: JsmqlOps) => unknown;
 // objects, so existing call sites keep type-checking.
 export type JsmqlOutput = object | object[];
 
-// Compiled-body cache for the function-input path. Keyed on the extracted body
-// string, so inline arrows in hot loops (which create a new function object on
-// every call) still hit. Today there is no way to inject dynamic content into
-// a function body — `Function.prototype.toString()` returns the literal source
-// text — so growth is naturally bounded by the number of distinct arrow
-// expressions in the host program. The LRU cap is a defence-in-depth against
-// future changes that could let dynamic strings reach this map (e.g. a
-// `new Function(...)` accepted as input). Map preserves insertion order, so
-// delete-then-set on hit refreshes recency without an extra data structure.
-//
-// `jsmql.compile(fn)` does NOT use this cache: it returns a closure that
-// captures the parsed AST and bindings, which is a stronger form of caching
-// scoped to the user's variable. Keeping the LRU only for the one-shot
-// `jsmql(fn)` path avoids double-caching.
-const FN_BODY_CACHE_CAP = 256;
-const fnBodyCache = new Map<string, JsmqlOutput>();
-
-function cacheGet(body: string): JsmqlOutput | undefined {
-  const hit = fnBodyCache.get(body);
-  if (hit === undefined) return undefined;
-  fnBodyCache.delete(body);
-  fnBodyCache.set(body, hit);
-  return hit;
-}
-
-function cacheSet(body: string, compiled: JsmqlOutput): void {
-  if (fnBodyCache.size >= FN_BODY_CACHE_CAP) {
-    const oldest = fnBodyCache.keys().next().value;
-    if (oldest !== undefined) fnBodyCache.delete(oldest);
-  }
-  fnBodyCache.set(body, compiled);
-}
-
 // `jsmql` has three call shapes — string, arrow function, and template tag —
 // dispatched on the first argument. The template-tag form is detected by the
 // standard "frozen `TemplateStringsArray`" discriminator: an Array whose `raw`
@@ -150,9 +117,6 @@ function jsmqlDispatch(
   }
   if (typeof input === "function") {
     const src = Function.prototype.toString.call(input).trim();
-    const cached = cacheGet(src);
-    if (cached !== undefined) return cached;
-    let compiled: JsmqlOutput;
     try {
       const { program, bindings } = new Parser(src).parseFunctionInput();
       if (bindings.length > 0) {
@@ -162,12 +126,10 @@ function jsmqlDispatch(
             "or remove the destructure pattern from the arrow's first slot.",
         );
       }
-      compiled = lower(program);
+      return lower(program);
     } catch (err) {
       throw augmentForFunctionInput(err);
     }
-    cacheSet(src, compiled);
-    return compiled;
   }
   if (typeof input === "string") {
     return lower(new Parser(input).parse());

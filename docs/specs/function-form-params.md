@@ -115,7 +115,7 @@ There is intentionally no `jsmql.validate.compile`. The structured-result surfac
 2. Validates each present value via `validateInterpolatable` (factored out of `stringifyInterpolation` so the template-tag and compile paths share the same JSON-safety guarantee). Failures throw `JsmqlInterpolationError` with the binding key.
 3. Builds a `ctx.bindings` map keyed by the *body* identifier name (`b.name`) and lowers the AST through `lowerWithCtx`.
 
-`fnBodyCache` (the LRU for one-shot `jsmql(fn)`) is intentionally bypassed by `compile` — each compiled callable already captures the parsed AST in its closure, which is a stronger form of caching scoped to the user's variable.
+`jsmql.compile(fn)` is the parse-once-bind-many surface: each compiled callable captures the parsed AST in its closure, so repeated calls only walk the AST with fresh bindings. The one-shot `jsmql(fn)` form, by contrast, re-parses on every call — there is no implicit cache (see [architecture.md](architecture.md#no-implicit-cache-for-jsmqlfn)).
 
 ### Error mapping
 
