@@ -1,3 +1,4 @@
 node_modules/
 dist/
 vendor/mql-specifications/
+.npmrc
