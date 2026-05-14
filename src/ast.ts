@@ -144,11 +144,18 @@ export type Expr =
   | { type: "BinaryExpr"; op: BinaryOp; left: Expr; right: Expr; pos: number }
   | { type: "UnaryExpr"; op: UnaryOp; operand: Expr; pos: number }
   | { type: "TernaryExpr"; condition: Expr; consequent: Expr; alternate: Expr; pos: number }
-  | { type: "IndexAccess"; object: Expr; index: Expr; pos: number }
+  | { type: "IndexAccess"; object: Expr; index: Expr; pos: number; optional?: boolean }
   | { type: "RegexLiteral"; pattern: string; flags: string; pos: number }
   | { type: "ParamRef"; name: string; pos: number }
-  | { type: "MemberAccess"; object: Expr; member: string; pos: number }
-  | { type: "MethodCall"; object: Expr; method: string; args: CallArg[]; pos: number }
+  | { type: "MemberAccess"; object: Expr; member: string; pos: number; optional?: boolean }
+  | {
+      type: "MethodCall";
+      object: Expr;
+      method: string;
+      args: CallArg[];
+      pos: number;
+      optional?: boolean;
+    }
   | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
   | { type: "Lambda"; params: string[]; body: Expr; pos: number }
   | { type: "TypeofExpr"; operand: Expr; pos: number }

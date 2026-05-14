@@ -284,14 +284,44 @@ If you want compact output, pin the type by chaining a type-fixing method (`.map
 
 ### Optional Chaining
 
-`?.` is accepted everywhere `.` is. MongoDB already returns `null`/missing when a dotted path traverses a missing field, so `?.` is purely for JS readability — the compiled MQL is identical to the non-optional form:
+`?.` is accepted everywhere `.` is. It's a real safety annotation — when an
+optional chain feeds a null-unsafe MongoDB operator, jsmql wraps the chain's
+result with `$ifNull(v, neutral)` so a missing field produces an empty value
+matching the consumer instead of `null` (which would either crash the operator
+or poison every downstream caller).
 
-```js
-$.user?.address?.city                // → "$user.address.city"
-$.items?.[0]                         // → same as $.items[0] above (runtime $cond)
-$.items.reverse()?.[0]               // → known array → { $arrayElemAt: [{ $reverseArray: "$items" }, 0] }
-$.name?.trim()                       // → { $trim: { input: "$name" } }
-```
+| Consumer category | Wrapped with | Example |
+|---|---|---|
+| Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
+| Array spread | `[]` | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
+| Array method receiver (`.map`, `.filter`, `.reduce`, `.find`, `.some`, `.every`, `.flat`, `.flatMap`, `.at`, `.slice`, `.reverse`, `.toSorted`, `.join`, `.findLast`, `.findLastIndex`) | `[]` | `$.user?.posts.map(p => p.id)` → `{ $map: { input: { $ifNull: ["$user.posts", []] }, ... } }` |
+| String method receiver (`.trim`, `.toUpperCase`, `.toLowerCase`, `.split`, `.substr`, `.charAt`, `.startsWith`, `.endsWith`, `.replace`, `.replaceAll`, `.padStart`, `.padEnd`, `.repeat`, `.match`, `.matchAll`, `.search`) | `""` | `$.user?.name.trim()` → `{ $trim: { input: { $ifNull: ["$user.name", ""] } } }` |
+| String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
+| Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
+| `.length` of optional | `""` (string) / `[]` (array or unknown — array branch produces 0) | `$.user?.tags.length` → runtime `$cond` over `$ifNull("$user.tags", [])` |
+| Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
+| Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
+| `Object.keys` / `.values` / `.entries` argument | `{}` | `Object.keys($.user?.profile)` → `$objectToArray: { $ifNull: ["$user.profile", {}] }` |
+| `Object.fromEntries` argument | `[]` | `Object.fromEntries($.user?.pairs)` → `$arrayToObject: { $ifNull: ["$user.pairs", []] }` |
+| `new Set(...)` argument | `[]` | `new Set($.user?.tags).union(new Set($.global))` → set ops on `$ifNull(..., [])` |
+
+`?.` is **deliberately not** wrapped where the consumer is already null-safe.
+These cases produce the same MQL whether you use `.` or `?.`:
+
+| Consumer | Why no wrap |
+|---|---|
+| Object spread (`{...x?.y}`) | `$mergeObjects` silently ignores null operands and returns `{}` when all operands are null. |
+| Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`, `===`, `!==`) | `$eq` / `$ne` / `$lt` / `$gt` accept null cleanly. |
+| Loose-equality null check (`$.x?.y == null`) | The `==`/`!=` form already lowers to a `$type` check that catches "null" and "missing". |
+| `$cond` / `&&` / `\|\|` condition | Null is falsy; the chain naturally short-circuits to the alternate branch. |
+| `$in` first argument (`arr.includes($.x?.y)`) | Searching for null in an array is a defined, non-erroring operation. |
+| Numeric arithmetic operand (`$.a + $.b?.c` in numeric mode, `-`, `*`, `/`, `%`, `**`) | MQL's `$add` etc. return null on null operand — matches JS's `1 + undefined === NaN` closely. Forcing a `0` fallback would silently produce different numbers than JS, which is worse DX than honest null. |
+
+**Scope of the wrap.** `?.` only wraps the chain it appears in. `?.` buried
+inside a lambda body, a method argument, an `IndexAccess.index`, or a binary
+operand belongs to a *different* chain — it does **not** trigger an outer wrap.
+For example, `$.items.map(x => x?.tags)` wraps inside the lambda body, but the
+outer `.map`'s receiver (`$.items`) is not optional and is not wrapped.
 
 ### Syntax
 

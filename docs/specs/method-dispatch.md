@@ -183,9 +183,58 @@ A template literal is always string-producing — it counts in the string-contex
 
 ## Optional chaining
 
-`?.` produces the same AST nodes as `.`. There is no separate "optional" marker — the codegen for member/method access is unchanged. This is correct because MongoDB's dotted-path semantics already null-pass through missing fields.
+`?.` produces the same AST node shapes as `.`, but the parser sets
+`optional: true` on the `MemberAccess` / `IndexAccess` / `MethodCall` node it
+consumes. Codegen consults that flag (and walks the chain to check earlier
+links) to wrap the chain's result with `$ifNull(v, neutral)` at every
+null-unsafe consumer site, where `neutral` is the empty value matching the
+consumer:
 
-`?.[expr]` produces the same `IndexAccess` node as `[expr]`, so the receiver-type dispatch (below) applies to both.
+- `[]` for array consumers
+- `""` for string consumers
+- `{}` for object consumers
+
+Helpers (see `src/codegen.ts`):
+
+- `chainHasOptional(expr)` walks `MemberAccess.object` / `IndexAccess.object`
+  links looking for any `optional: true` flag. It **does not** descend through
+  `MethodCall` — once a method has been called the value is whatever the
+  method returned, not the original optional chain. The walker also does not
+  enter lambda bodies, binary operands, method arguments, or
+  `IndexAccess.index`.
+- `wrapIfNull(value, fallback)` returns `{ $ifNull: [value, fallback] }`.
+- `neutralForMethod(method, object)` picks the right fallback for the method's
+  underlying operator: `""` for known string methods, `[]` for known array
+  methods, and for the "either" methods (`indexOf`, `includes`, `concat`) `""`
+  when the receiver is `isStringProducing` else `[]` (which works for both
+  the static array form and the runtime `$cond` dispatch, since `$isArray([])`
+  routes to the array branch).
+
+Consumer sites that apply the wrap:
+
+| Site | `src/codegen.ts` location | Fallback |
+|---|---|---|
+| Array spread | `generateArrayLiteral` | `[]` |
+| Method receiver (array / string / either) | `generateMethodCall`, before the switch | `[]` / `""` / type-dependent |
+| `.length` on optional | `_generate` `MemberAccess` branch | `""` (string) / `[]` (array or unknown) |
+| `$getField` for non-foldable `MemberAccess` | same branch | `{}` |
+| `IndexAccess` (`obj[k]`, `obj?.[k]`) | `_generate` `IndexAccess` branch | `[]` |
+| String `+` operands lowered to `$concat` | `generateAdd` | `""` |
+| Template literal interpolation (`$concat`) | `generateTemplateLiteral` | `""` (before `$toString`) |
+| `Object.keys` / `.values` / `.entries` arg | `generateObjectCall` | `{}` |
+| `Object.fromEntries` arg | same | `[]` |
+| `new Set(...)` arg (receiver or method arg) | `generateSetMethodCall` | `[]` |
+
+Sites that deliberately do **not** wrap (already null-safe):
+
+- Object spread — `$mergeObjects` ignores null operands.
+- Comparisons (`$eq` / `$ne` / `$lt` / `$gt` / `$lte` / `$gte`) — accept null cleanly.
+- `&&` / `||` / `$cond` condition — null is falsy.
+- `$in` first arg — searching for null in an array is a defined operation.
+- Numeric arithmetic — `$add` / `$subtract` / `$multiply` / `$divide` / `$mod` / `$pow` return null on null operand, matching JS's `NaN` behaviour better than a `0` fallback would.
+
+`?.[expr]` produces an `IndexAccess` node with `optional: true`, so the
+receiver-type dispatch (below) applies with the wrap already in place.
 
 ## Type-aware dispatch for `IndexAccess` (`obj[k]` and `obj?.[k]`)
 

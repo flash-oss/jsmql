@@ -442,11 +442,17 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       };
 
     case "IndexAccess": {
-      // `obj[idx]` and `obj?.[idx]` produce the same AST. Type-aware dispatch:
+      // `obj[idx]` and `obj?.[idx]` produce the same AST shape; only the
+      // `optional` flag distinguishes them. Type-aware dispatch:
       //   known array → $arrayElemAt (numeric/expression index)
       //   unknown    → runtime $cond between $arrayElemAt (array) and $getField (object)
-      const obj = _generate(expr.object, ctx);
+      // When the receiver chain is optional, wrap the receiver with $ifNull so a
+      // missing path produces `[]` (array branch) or `{}` (object branch) rather
+      // than poisoning the dispatch with a null receiver.
+      const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
+      const optional = expr.optional || chainHasOptional(expr.object);
+      const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
       if (isArrayProducing(expr.object)) {
         return { $arrayElemAt: [obj, idx] };
       }
@@ -509,21 +515,39 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "MemberAccess": {
       if (expr.member === "length") {
-        const obj = _generate(expr.object, ctx);
-        if (isStringProducing(expr.object)) return { $strLenCP: obj };
-        if (isArrayProducing(expr.object)) return { $size: obj };
-        // Type unknown at compile time — dispatch at runtime
+        const rawObj = _generate(expr.object, ctx);
+        const optional = expr.optional || chainHasOptional(expr.object);
+        if (isStringProducing(expr.object)) {
+          return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
+        }
+        if (isArrayProducing(expr.object)) {
+          return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
+        }
+        // Type unknown at compile time — dispatch at runtime. When the chain is
+        // optional, wrap the receiver with $ifNull(rawObj, []) so `$isArray`
+        // succeeds, the array branch runs, and `$size([])` returns 0 (matching
+        // JS short-circuit: `undefined?.length` is undefined; we surface 0).
+        const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
         return { $cond: [{ $isArray: obj }, { $size: obj }, { $strLenCP: obj }] };
       }
       const path = asFieldPath(expr, ctx);
       if (path !== null) return path;
       // Receiver isn't a foldable field path (e.g. result of $.items[0], a method call,
       // or a ternary). Use $getField, which works on any expression result.
-      return { $getField: { field: expr.member, input: _generate(expr.object, ctx) } };
+      const rawObj = _generate(expr.object, ctx);
+      const obj = expr.optional || chainHasOptional(expr.object) ? wrapIfNull(rawObj, {}) : rawObj;
+      return { $getField: { field: expr.member, input: obj } };
     }
 
     case "MethodCall":
-      return generateMethodCall(expr.object, expr.method, expr.args, ctx, expr.pos);
+      return generateMethodCall(
+        expr.object,
+        expr.method,
+        expr.args,
+        ctx,
+        expr.pos,
+        !!expr.optional,
+      );
 
     case "CallExpression":
       return generateCallExpression(expr.callee, expr.args, ctx, expr.pos);
@@ -578,6 +602,106 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "ObjectCall":
       return generateObjectCall(expr.method, expr.args, ctx, expr.pos);
   }
+}
+
+// ── Optional-chaining safety wraps ────────────────────────────────────────────
+//
+// `?.` in jsmql preserves an `optional: true` flag on the AST node the parser
+// produced from it. Codegen consults `chainHasOptional` at every null-unsafe
+// consumer site (array spread, array/string method receivers, string `$concat`
+// operands, template-literal interpolations, `.length`, `Object.keys`/etc.) and
+// wraps the value with `$ifNull(v, neutral)`, where `neutral` is the empty
+// value matching the consumer slot:
+//   - `[]` for array consumers
+//   - `""` for string consumers
+//   - `{}` for object consumers
+//
+// The walker descends only through `MemberAccess` and `IndexAccess` links — it
+// stops at `MethodCall` because once a method has been called the value is
+// whatever the method returned, not the optional chain that produced its
+// receiver. (The method call site itself already wrapped its receiver if its
+// own chain was optional, so the result is guaranteed safe.) The walker also
+// does not descend into lambda bodies, binary operands, method arguments, or
+// `IndexAccess.index` — `?.` buried in those positions belongs to a different
+// chain. The current node's own `.optional` flag is consulted separately at
+// each consumer site (see `expr.optional ||` checks in `_generate`).
+
+function chainHasOptional(expr: Expr): boolean {
+  let node: Expr = expr;
+  while (node.type === "MemberAccess" || node.type === "IndexAccess") {
+    if (node.optional) return true;
+    node = node.object;
+  }
+  return false;
+}
+
+function wrapIfNull(value: unknown, fallback: unknown): unknown {
+  return { $ifNull: [value, fallback] };
+}
+
+// Method-name → "neutral input for the operator this method lowers to".
+// Used to pick the `$ifNull` fallback when a `?.` chain feeds the method's
+// receiver. Date / Set / Regex methods are intentionally absent: their
+// underlying operators (`$year`, set ops, regex ops) handle null cleanly and
+// don't poison downstream callers.
+const OPTIONAL_STRING_METHODS: ReadonlySet<string> = new Set([
+  "trim",
+  "trimStart",
+  "trimLeft",
+  "trimEnd",
+  "trimRight",
+  "toLowerCase",
+  "toUpperCase",
+  "substr",
+  "charAt",
+  "split",
+  "startsWith",
+  "endsWith",
+  "replace",
+  "replaceAll",
+  "match",
+  "matchAll",
+  "search",
+  "padStart",
+  "padEnd",
+  "repeat",
+]);
+
+const OPTIONAL_ARRAY_METHODS: ReadonlySet<string> = new Set([
+  "at",
+  "slice",
+  "reverse",
+  "toReversed",
+  "toSorted",
+  "findLast",
+  "findLastIndex",
+  "join",
+  "flat",
+  "flatMap",
+  "map",
+  "filter",
+  "find",
+  "some",
+  "every",
+  "reduce",
+]);
+
+// `indexOf` / `includes` / `concat` dispatch on receiver type at codegen time
+// (or at runtime via `$cond` when the type is unknown). For these we pick the
+// fallback that matches the chosen branch: `""` when the receiver is provably
+// string-producing, `[]` otherwise — `[]` is also safe for the runtime-dispatch
+// path because `$isArray([])` is true, sending it down the array branch which
+// returns the same sensible empty-array result the JS short-circuit would.
+const OPTIONAL_EITHER_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "concat"]);
+
+function neutralForMethod(method: string, object: Expr): unknown | undefined {
+  if (OPTIONAL_STRING_METHODS.has(method)) return "";
+  if (OPTIONAL_ARRAY_METHODS.has(method)) return [];
+  if (OPTIONAL_EITHER_METHODS.has(method)) {
+    if (isStringProducing(object)) return "";
+    return [];
+  }
+  return undefined;
 }
 
 // ── Field path reconstruction ─────────────────────────────────────────────────
@@ -865,8 +989,21 @@ function generateAdd(left: Expr, right: Expr, ctx: GenerateCtx): unknown {
   exprs.push(right);
 
   const isString = exprs.some((e) => isStringProducing(e));
-  const generated = exprs.map((e) => _generate(e, ctx));
-  return isString ? { $concat: generated } : { $add: generated };
+  if (isString) {
+    // `$concat` returns null on any null operand, poisoning the whole string.
+    // Wrap optional-chain operands with $ifNull(v, "") so `?.` operands match
+    // JS-like fallback semantics for string concatenation.
+    return {
+      $concat: exprs.map((e) => {
+        const gen = _generate(e, ctx);
+        return chainHasOptional(e) ? wrapIfNull(gen, "") : gen;
+      }),
+    };
+  }
+  // Numeric `$add` already returns null on null operand, matching JS's
+  // `1 + undefined === NaN` closely enough — leave optional operands alone
+  // so the result is honestly null rather than silently coerced to 0.
+  return { $add: exprs.map((e) => _generate(e, ctx)) };
 }
 
 function collectExprChain(op: BinaryOp, expr: Expr, out: Expr[]): void {
@@ -959,7 +1096,12 @@ function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx, pos: n
   for (const el of elements) {
     if (el.type === "SpreadElement") {
       flushBuffer();
-      operands.push(_generate(el.argument, ctx));
+      // `[..., ...x?.y, ...]` — if the spread argument's chain is optional,
+      // wrap with `$ifNull(v, [])` so a missing field produces an empty array
+      // rather than `null` (which poisons `$concatArrays` and crashes any
+      // downstream operator expecting an array).
+      const argVal = _generate(el.argument, ctx);
+      operands.push(chainHasOptional(el.argument) ? wrapIfNull(argVal, []) : argVal);
     } else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
       // Already rejected above; unreachable.
       continue;
@@ -1262,8 +1404,15 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
   const parts: unknown[] = [];
   for (let i = 0; i < expressions.length; i++) {
     if (quasis[i] !== "") parts.push(quasis[i]);
-    const gen = _generate(expressions[i], ctx);
-    parts.push(isStringProducing(expressions[i]) ? gen : { $toString: gen });
+    const expr = expressions[i];
+    const gen = _generate(expr, ctx);
+    // Template literals lower to `$concat`, which is null-poisoning. When the
+    // interpolation's chain has `?.`, wrap with `$ifNull(v, "")` before
+    // `$toString` so a missing field produces `""` rather than `null` (which
+    // would collapse the whole template). JS would produce `"undefined"` here;
+    // `""` is the saner empty for templates.
+    const wrappedGen = chainHasOptional(expr) ? wrapIfNull(gen, "") : gen;
+    parts.push(isStringProducing(expr) ? wrappedGen : { $toString: wrappedGen });
   }
   const tail = quasis[expressions.length];
   if (tail !== "") parts.push(tail);
@@ -1278,6 +1427,7 @@ function generateMethodCall(
   args: CallArg[],
   ctx: GenerateCtx,
   callPos: number,
+  optional: boolean = false,
 ): unknown {
   // ── Set receiver: new Set(arr).intersection / union / difference / ... ─────
   if (object.type === "NewSet") {
@@ -1288,7 +1438,14 @@ function generateMethodCall(
     return generateRegexMethodCall(object, method, args, ctx);
   }
 
-  const genObj = _generate(object, ctx);
+  // When `?.` appears on this method call itself or anywhere in the receiver's
+  // postfix chain, wrap the receiver with `$ifNull(v, neutral)` so the called
+  // operator receives an empty value of the right type instead of null
+  // (which would either error or poison downstream callers).
+  const rawObj = _generate(object, ctx);
+  const wrapReceiver = optional || chainHasOptional(object);
+  const neutral = wrapReceiver ? neutralForMethod(method, object) : undefined;
+  const genObj = neutral !== undefined ? wrapIfNull(rawObj, neutral) : rawObj;
 
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
@@ -2124,6 +2281,12 @@ function generateObjectCall(
   ctx: GenerateCtx,
   pos: number,
 ): unknown {
+  // Helper: wrap argument with $ifNull(v, neutral) when the chain has `?.`
+  // (`$objectToArray(null)` and `$arrayToObject(null)` both error).
+  const genWith = (arg: Expr, neutral: unknown): unknown => {
+    const gen = _generate(arg, ctx);
+    return chainHasOptional(arg) ? wrapIfNull(gen, neutral) : gen;
+  };
   switch (method) {
     case "keys": {
       const exprArgs = exprArgsOnly(args, "Object.keys");
@@ -2131,7 +2294,7 @@ function generateObjectCall(
         throw new CodegenError(`Object.keys() requires exactly 1 argument`, pos);
       return {
         $map: {
-          input: { $objectToArray: _generate(exprArgs[0], ctx) },
+          input: { $objectToArray: genWith(exprArgs[0], {}) },
           as: "kv",
           in: "$$kv.k",
         },
@@ -2143,7 +2306,7 @@ function generateObjectCall(
         throw new CodegenError(`Object.values() requires exactly 1 argument`, pos);
       return {
         $map: {
-          input: { $objectToArray: _generate(exprArgs[0], ctx) },
+          input: { $objectToArray: genWith(exprArgs[0], {}) },
           as: "kv",
           in: "$$kv.v",
         },
@@ -2153,13 +2316,13 @@ function generateObjectCall(
       const exprArgs = exprArgsOnly(args, "Object.entries");
       if (exprArgs.length !== 1)
         throw new CodegenError(`Object.entries() requires exactly 1 argument`, pos);
-      return { $objectToArray: _generate(exprArgs[0], ctx) };
+      return { $objectToArray: genWith(exprArgs[0], {}) };
     }
     case "fromEntries": {
       const exprArgs = exprArgsOnly(args, "Object.fromEntries");
       if (exprArgs.length !== 1)
         throw new CodegenError(`Object.fromEntries() requires exactly 1 argument`, pos);
-      return { $arrayToObject: _generate(exprArgs[0], ctx) };
+      return { $arrayToObject: genWith(exprArgs[0], []) };
     }
     case "assign": {
       if (args.length < 1)
@@ -2356,7 +2519,15 @@ function generateSetMethodCall(
   ctx: GenerateCtx,
 ): unknown {
   const pos = receiver.pos;
-  const lhs = receiver.arg ? _generate(receiver.arg, ctx) : [];
+  // `new Set(x?.y)` — if x is missing, treat the set as empty (JS semantics
+  // for `new Set(undefined)` is the empty set). Wrap the inner argument with
+  // $ifNull(v, []) when the chain is optional so `$setIntersection` and friends
+  // see an empty array instead of null.
+  const genSetInner = (inner: Expr): unknown => {
+    const gen = _generate(inner, ctx);
+    return chainHasOptional(inner) ? wrapIfNull(gen, []) : gen;
+  };
+  const lhs = receiver.arg ? genSetInner(receiver.arg) : [];
   const exprArgs = exprArgsOnly(args, `Set.${method}`);
   const requireSetArg = (): unknown => {
     if (exprArgs.length !== 1) {
@@ -2369,7 +2540,7 @@ function generateSetMethodCall(
         arg.pos,
       );
     }
-    return arg.arg ? _generate(arg.arg, ctx) : [];
+    return arg.arg ? genSetInner(arg.arg) : [];
   };
   switch (method) {
     case "intersection":

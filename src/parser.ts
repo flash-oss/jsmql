@@ -1188,9 +1188,13 @@ export class Parser {
   /**
    * postfix:  primary ( "[" expression "]" | "." member | "?." member | "?.[" expression "]" )*
    *
-   * Optional chaining (`?.`) is treated identically to `.` and `[]` for codegen purposes:
-   * MongoDB returns missing/null when traversing through missing fields, so JS-style
-   * null-safe access already works for free on field paths.
+   * Optional chaining (`?.`) produces the same AST node shape as the non-optional
+   * counterpart, but with `optional: true`. The codegen consults this flag at every
+   * null-unsafe consumer site (array spread, array/string method receivers, string
+   * `$concat`, template-literal interpolations, `.length`, `Object.keys`/etc.) to
+   * wrap the chain's result with `$ifNull(v, neutral)`, where `neutral` is `[]`
+   * / `""` / `{}` depending on the consumer. See `chainHasOptional` /
+   * `wrapIfNull` in src/codegen.ts and docs/specs/method-dispatch.md.
    */
   private parsePostfix(): Expr {
     let left = this.parsePrimary();
@@ -1216,9 +1220,10 @@ export class Parser {
         this.lexer.next(); // consume ]
         left = { type: "IndexAccess", object: left, index, pos: left.pos };
       } else if (t === TokenType.Dot || t === TokenType.QuestDot) {
+        const isOptional = t === TokenType.QuestDot;
         this.lexer.next(); // consume . or ?.
         // ?.[...] form — optional bracket access
-        if (t === TokenType.QuestDot && this.lexer.peek().type === TokenType.LBracket) {
+        if (isOptional && this.lexer.peek().type === TokenType.LBracket) {
           this.lexer.next(); // consume [
           const index = this.parseExpression();
           const close = this.lexer.peek();
@@ -1229,7 +1234,7 @@ export class Parser {
             );
           }
           this.lexer.next();
-          left = { type: "IndexAccess", object: left, index, pos: left.pos };
+          left = { type: "IndexAccess", object: left, index, pos: left.pos, optional: true };
           continue;
         }
         const member = this.lexer.peek();
@@ -1243,10 +1248,23 @@ export class Parser {
         if (this.lexer.peek().type === TokenType.LParen) {
           // Method call: left.member(args)
           const args = this.parseMethodCallArgs();
-          left = { type: "MethodCall", object: left, method: member.value, args, pos: left.pos };
+          left = {
+            type: "MethodCall",
+            object: left,
+            method: member.value,
+            args,
+            pos: left.pos,
+            ...(isOptional && { optional: true }),
+          };
         } else {
           // Property access: left.member
-          left = { type: "MemberAccess", object: left, member: member.value, pos: left.pos };
+          left = {
+            type: "MemberAccess",
+            object: left,
+            member: member.value,
+            pos: left.pos,
+            ...(isOptional && { optional: true }),
+          };
         }
       } else {
         break;

@@ -930,6 +930,49 @@ describe("annotated insurance underwriting rule (// and /* */ comments)", () => 
   });
 });
 
+describe("chat moderation: optional chaining inside array spread", () => {
+  it("uses ?. so a missing nested array doesn't poison the moderator check", () => {
+    // Real chat-room ACL check: is the current user a moderator? Authority can
+    // come from (a) the workspace-level moderators list, (b) the room's own
+    // moderators list (room may not exist for DMs), or (c) the hard-coded root
+    // user. Without `?.`, `[...$.room.mods]` against a missing `$.room` would
+    // collapse `$concatArrays` to null and crash the surrounding `$in`. `?.`
+    // wraps the spread argument so the missing-room branch produces `[]`.
+    const result = jsmql(`[...$.moderators, ...$.room?.mods, "root"].includes($.userId)`);
+
+    expect(result).toEqual({
+      $in: [
+        "$userId",
+        {
+          $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]],
+        },
+      ],
+    });
+  });
+});
+
+describe("user display name: optional chaining inside string concat", () => {
+  it("falls back to empty string for missing nested fields in a template", () => {
+    // Display label for a user row: prefer "First Last", but some accounts have
+    // only one of the two names set, and some legacy rows don't have a `name`
+    // sub-document at all. With `?.`, missing fields contribute `""` to the
+    // `$concat` instead of poisoning it to `null`.
+    const result = jsmql("`${$.name?.first} ${$.name?.last}`.trim()");
+
+    expect(result).toEqual({
+      $trim: {
+        input: {
+          $concat: [
+            { $toString: { $ifNull: ["$name.first", ""] } },
+            " ",
+            { $toString: { $ifNull: ["$name.last", ""] } },
+          ],
+        },
+      },
+    });
+  });
+});
+
 // ── Pipelines ─────────────────────────────────────────────────────────────────
 
 describe("pipeline: top-orders report by department", () => {

@@ -1999,31 +1999,200 @@ describe("Array.isArray", () => {
 });
 
 describe("optional chaining (?.)", () => {
+  // Bare access — MongoDB's dotted-path semantics already null-pass through missing
+  // fields, so `?.` on a bare read is sugar with no codegen difference.
   it("simple optional member access", () => {
     expect(jsmql("$.a?.b")).toEqual("$a.b");
   });
   it("chained optional access", () => {
     expect(jsmql("$.a?.b?.c")).toEqual("$a.b.c");
   });
-  it("optional method call", () => {
-    expect(jsmql("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
+
+  // Array spread — the originally-reported bug. `$concatArrays` returns null on
+  // null input, poisoning every downstream consumer. `?.` now wraps the spread
+  // operand with `$ifNull(v, [])` so missing fields produce an empty array.
+  it("array spread of optional wraps with $ifNull, []", () => {
+    expect(jsmql("[...$.a?.b, 'x']")).toEqual({
+      $concatArrays: [{ $ifNull: ["$a.b", []] }, ["x"]],
+    });
   });
-  it("optional method call on a chain", () => {
-    expect(jsmql("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
+  it("array spread alone of optional", () => {
+    expect(jsmql("[...$.a?.b]")).toEqual({ $ifNull: ["$a.b", []] });
   });
-  it("optional bracket access on bare field → runtime $cond", () => {
-    // ?.[ ] desugars to the same node as [ ]; receiver type unknown → dispatch at runtime.
-    expect(jsmql("$.scoresByLevel?.[$.level]")).toEqual({
-      $cond: [
-        { $isArray: "$scoresByLevel" },
-        { $arrayElemAt: ["$scoresByLevel", "$level"] },
-        { $getField: { field: "$level", input: "$scoresByLevel" } },
+  it("user's reported spread-inside-includes case", () => {
+    expect(jsmql("[...$.moderators, ...$.room?.mods, 'root'].includes($.userId)")).toEqual({
+      $in: [
+        "$userId",
+        {
+          $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]],
+        },
       ],
     });
   });
-  it("optional bracket access on known array stays compact", () => {
+  it("non-optional spread is unchanged", () => {
+    expect(jsmql("[...$.a, 'x']")).toEqual({ $concatArrays: ["$a", ["x"]] });
+  });
+
+  // Array-method receivers — `$concatArrays` / `$in` / `$size` / `$arrayElemAt`
+  // either error or null-poison on null input. Wrap the receiver with [].
+  it(".map on optional receiver wraps with []", () => {
+    expect(jsmql("$.user?.posts.map(p => p.id)")).toEqual({
+      $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" },
+    });
+  });
+  it(".at on optional receiver wraps with []", () => {
+    expect(jsmql("$.user?.posts.at(0)")).toEqual({
+      $arrayElemAt: [{ $ifNull: ["$user.posts", []] }, 0],
+    });
+  });
+  it(".reverse on optional receiver wraps with []", () => {
+    expect(jsmql("$.user?.posts.reverse()")).toEqual({
+      $reverseArray: { $ifNull: ["$user.posts", []] },
+    });
+  });
+  it(".slice on optional receiver wraps with []", () => {
+    expect(jsmql("$.user?.posts.slice(0, 5)")).toEqual({
+      $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5],
+    });
+  });
+
+  // `.includes` / `.indexOf` / `.concat` dispatch on receiver type. Chain
+  // walking stops at `MethodCall` boundaries — once `.reverse()` ran (and its
+  // own wrap took effect), the result is guaranteed not-null, so `.includes`
+  // doesn't add a redundant outer wrap.
+  it(".includes after .reverse() of optional propagates the inner wrap, no outer wrap", () => {
+    expect(jsmql("$.user?.posts.reverse().includes('hello')")).toEqual({
+      $in: ["hello", { $reverseArray: { $ifNull: ["$user.posts", []] } }],
+    });
+  });
+  it("`?.method()` (call itself is optional) wraps the receiver", () => {
+    // `$.tags?.includes(y)` — MethodCall.optional=true. Wrap with [] since
+    // includes-on-unknown dispatches via $cond; [] sends it to the array branch.
+    expect(jsmql("$.tags?.includes('vip')")).toEqual({
+      $cond: [
+        { $isArray: { $ifNull: ["$tags", []] } },
+        { $in: ["vip", { $ifNull: ["$tags", []] }] },
+        { $gte: [{ $indexOfCP: [{ $ifNull: ["$tags", []] }, "vip"] }, 0] },
+      ],
+    });
+  });
+
+  // String-method receivers — `$trim` / `$toUpper` / etc. return null on null
+  // (sometimes error). Wrap the receiver with "" so a missing field produces
+  // an empty string, matching JS's "would-throw on undefined.method, but ?.
+  // short-circuits gracefully" intent.
+  it('.trim on optional receiver wraps with ""', () => {
+    expect(jsmql("$.name?.trim()")).toEqual({
+      $trim: { input: { $ifNull: ["$name", ""] } },
+    });
+  });
+  it('.trim on chained optional receiver wraps with ""', () => {
+    expect(jsmql("$.user?.name?.trim()")).toEqual({
+      $trim: { input: { $ifNull: ["$user.name", ""] } },
+    });
+  });
+  it('.toUpperCase on optional receiver wraps with ""', () => {
+    expect(jsmql("$.user?.name.toUpperCase()")).toEqual({
+      $toUpper: { $ifNull: ["$user.name", ""] },
+    });
+  });
+  it('.split on optional receiver wraps with ""', () => {
+    expect(jsmql("$.user?.csv.split(',')")).toEqual({
+      $split: [{ $ifNull: ["$user.csv", ""] }, ","],
+    });
+  });
+
+  // `.length` is a MemberAccess, not a MethodCall — handled in its own codegen branch.
+  it(".length on optional unknown-type receiver wraps with []", () => {
+    // unknown receiver dispatches to runtime $cond between $size and $strLenCP;
+    // wrap with [] so $isArray succeeds and $size([]) returns 0.
+    expect(jsmql("$.user?.tags.length")).toEqual({
+      $cond: [
+        { $isArray: { $ifNull: ["$user.tags", []] } },
+        { $size: { $ifNull: ["$user.tags", []] } },
+        { $strLenCP: { $ifNull: ["$user.tags", []] } },
+      ],
+    });
+  });
+
+  // String concatenation via `+` lowers to `$concat`, which is null-poisoning.
+  it('string + with optional operand wraps with ""', () => {
+    expect(jsmql("$.firstName + ' ' + $.user?.lastName")).toEqual({
+      $concat: ["$firstName", " ", { $ifNull: ["$user.lastName", ""] }],
+    });
+  });
+
+  // Template literal interpolations also lower to $concat. Non-string-producing
+  // interpolations still get $toString (so a numeric `$user.age` becomes "42"),
+  // but the $ifNull wrap runs *before* $toString so a missing field produces "".
+  it('template literal with optional interpolation wraps with ""', () => {
+    expect(jsmql("`hello ${$.user?.name}`")).toEqual({
+      $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }],
+    });
+  });
+
+  // Object.keys / values / entries / fromEntries — `$objectToArray(null)` errors.
+  it("Object.keys on optional wraps argument with {}", () => {
+    expect(jsmql("Object.keys($.user?.profile)")).toEqual({
+      $map: {
+        input: { $objectToArray: { $ifNull: ["$user.profile", {}] } },
+        as: "kv",
+        in: "$$kv.k",
+      },
+    });
+  });
+  it("Object.entries on optional wraps argument with {}", () => {
+    expect(jsmql("Object.entries($.user?.profile)")).toEqual({
+      $objectToArray: { $ifNull: ["$user.profile", {}] },
+    });
+  });
+
+  // Bracket access — `obj?.[idx]` wraps with [] for the runtime $cond dispatch.
+  it("optional bracket access on bare field wraps with []", () => {
+    expect(jsmql("$.scoresByLevel?.[$.level]")).toEqual({
+      $cond: [
+        { $isArray: { $ifNull: ["$scoresByLevel", []] } },
+        { $arrayElemAt: [{ $ifNull: ["$scoresByLevel", []] }, "$level"] },
+        { $getField: { field: "$level", input: { $ifNull: ["$scoresByLevel", []] } } },
+      ],
+    });
+  });
+  it("optional bracket access on known array wraps with []", () => {
+    // `.reverse()` is known array-producing, so the bracket access uses the
+    // compact $arrayElemAt form. The `?.` adds the wrap on the receiver.
     expect(jsmql("$.items.reverse()?.[0]")).toEqual({
-      $arrayElemAt: [{ $reverseArray: "$items" }, 0],
+      $arrayElemAt: [{ $ifNull: [{ $reverseArray: "$items" }, []] }, 0],
+    });
+  });
+
+  // ── Deliberately NOT wrapped ─────────────────────────────────────────────
+  // The following consumers are already null-safe, so wrapping would be busywork.
+  it("object spread of optional is NOT wrapped ($mergeObjects ignores null)", () => {
+    expect(jsmql("({...$.user?.profile, name: 'x'})")).toEqual({
+      $mergeObjects: ["$user.profile", { name: "x" }],
+    });
+  });
+  it("comparison against optional is NOT wrapped", () => {
+    expect(jsmql("$.user?.role === 'admin'")).toEqual({
+      $eq: ["$user.role", "admin"],
+    });
+  });
+  it("`==` null check against optional is NOT wrapped", () => {
+    expect(jsmql("$.user?.role == null")).toEqual({
+      $in: [{ $type: "$user.role" }, ["null", "missing"]],
+    });
+  });
+  it("numeric arithmetic against optional is NOT wrapped (honest null > 0)", () => {
+    expect(jsmql("$.base + $.user?.bonus")).toEqual({
+      $add: ["$base", "$user.bonus"],
+    });
+  });
+
+  // `?.` buried inside a lambda body belongs to the lambda's chain, not the
+  // outer `.map()` chain — so the outer .map receiver does NOT get wrapped.
+  it("?. inside a lambda body does NOT wrap the outer chain", () => {
+    expect(jsmql("$.items.map(x => x?.tags)")).toEqual({
+      $map: { input: "$items", as: "x", in: "$$x.tags" },
     });
   });
 });
