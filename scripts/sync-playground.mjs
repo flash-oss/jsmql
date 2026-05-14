@@ -173,11 +173,29 @@ function dedent(text) {
   const trimmed = text.replace(/^\n/, "").replace(/\s+$/, "");
   if (trimmed === "") return "";
   const lines = trimmed.split("\n");
-  let min = Infinity;
-  for (const l of lines) {
-    if (l.trim() === "") continue;
-    const m = l.match(/^( *)/);
-    if (m) min = Math.min(min, m[1].length);
+  const measure = (range) => {
+    let min = Infinity;
+    for (const l of range) {
+      if (l.trim() === "") continue;
+      const m = l.match(/^( *)/);
+      if (m) min = Math.min(min, m[1].length);
+    }
+    return min;
+  };
+  const min = measure(lines);
+  // Pipeline-style templates like `jsmql\`[\n  $match(...)\n]\`` start with
+  // a lone `[` (or `{`, `(`) at column 0, which drags the global minimum
+  // down to zero and prevents `dedent` from stripping the body's
+  // test-file indent. When that happens, treat the first line as the
+  // outer anchor and dedent the body lines against their own minimum so
+  // the playground shows a canonical 2-space pipeline shape instead of
+  // the raw 6-space test-file indent.
+  if ((!Number.isFinite(min) || min === 0) && /^[\[({][ \t]*$/.test(lines[0])) {
+    const body = lines.slice(1);
+    const bodyMin = measure(body);
+    if (Number.isFinite(bodyMin) && bodyMin > 0) {
+      return [lines[0], ...body.map((l) => l.slice(bodyMin))].join("\n");
+    }
   }
   if (!Number.isFinite(min) || min === 0) return lines.join("\n");
   return lines.map((l) => l.slice(min)).join("\n");
