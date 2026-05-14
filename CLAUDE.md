@@ -17,6 +17,12 @@ The public API is two exports from `src/index.ts`:
 Every decision should be evaluated through the lens of DX for the people **using** jsmql (not building it). There is no point shipping a feature if it is confusing or hard to use correctly. Concretely:
 
 - **Error messages must be actionable.** Every error should tell the user what went wrong and, where possible, what to write instead. Vague errors like "syntax error" are not acceptable.
+- **Errors stay consistent and helpful across the surface.** When you add a new throw site, match the patterns the existing ones already use — don't invent a one-off phrasing for one error category that's worded differently from its siblings. Concretely:
+  - Whenever you reject a name from a closed set (a method, a stage, a static call, an operator), run it through `closestNameTo` from [src/levenshtein.ts](src/levenshtein.ts) and suggest the nearest match with `Did you mean '…'?`. Don't dump the whole list into the message — the suggestion is the value-add, the full list is doc material.
+  - Arg-count errors name the missing/extra parameter (`.charAt(index)`, `.slice(start[, end])`, …). A bare `requires 1 argument` is not enough; the user shouldn't have to context-switch to MDN to find out what that argument is supposed to be.
+  - Position-bearing errors (lexer, parser) say `at position N` in the message *and* set `.pos` for tooling. Both, not one or the other — humans read messages, tools read `.pos`.
+  - The lexer's friendly token names come from `TOKEN_DISPLAY` in [src/lexer.ts](src/lexer.ts). Never let an internal `TokenType` enum value leak into a user-facing string (no `Expected LParen` — say `Expected '('`).
+  - Invariant violations the parser is supposed to uphold use `internalError(detail)` from [src/codegen.ts](src/codegen.ts), which prefixes the message with `jsmql internal error (please report …)`. Don't use raw `throw new CodegenError("Internal: …")` — the helper exists so unreachable-in-valid-programs errors are trivially greppable and visibly distinct from user errors.
 - **Surprise should be minimised.** Behaviour that would surprise a JavaScript developer — even if technically valid — should be flagged in the docs.
 - **Proactively suggest DX improvements.** If you notice a rough edge while working in this codebase, flag it as a suggestion even if it is out of scope for the current task.
 

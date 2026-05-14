@@ -54,6 +54,7 @@ import {
   clearCtxLets,
   ctxHasLets,
   freshSubPipelineCtx,
+  internalError,
   type GenerateCtx,
 } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
@@ -166,7 +167,7 @@ export function isPipelineAst(ast: Expr): boolean {
  */
 export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): unknown[] {
   if (ast.type !== "ArrayLiteral") {
-    throw new CodegenError("generatePipeline expects an ArrayLiteral AST");
+    internalError("generatePipeline expects an ArrayLiteral AST");
   }
   const out: unknown[] = [];
   let mutationBuffer: Mutation[] = [];
@@ -354,7 +355,7 @@ function generateBodyObject(
  */
 function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
   if (ast.type !== "ArrayLiteral") {
-    throw new CodegenError("generatePipelineWithCtx expects an ArrayLiteral AST");
+    internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
   }
   const out: unknown[] = [];
   let mutationBuffer: Mutation[] = [];

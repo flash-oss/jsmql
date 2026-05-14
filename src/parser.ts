@@ -1,4 +1,5 @@
 import { Lexer, TokenType, type Token } from "./lexer.ts";
+import { closestNameTo } from "./levenshtein.ts";
 import type {
   Expr,
   BinaryOp,
@@ -555,8 +556,9 @@ export class Parser {
   private throwLetOutsidePipeline(name: string): never {
     throw new ParseError(
       `\`let ${name} = …\` is only valid inside a pipeline. ` +
-        `Add a trailing \`;\` to flip into pipeline mode (e.g. \`let ${name} = …; { $project: … }\`), ` +
-        `or use the bracketed form \`[ let ${name} = …, { $project: … } ]\`.`,
+        `Add at least one more statement separated by \`;\` to flip into pipeline mode ` +
+        `(e.g. \`let ${name} = …; { $project: … }\`). ` +
+        `The bracketed pipeline form \`[ let ${name} = …, … ]\` works too.`,
       0,
     );
   }
@@ -912,7 +914,7 @@ export class Parser {
       );
     }
     throw new ParseError(
-      `Mutation target must be a field path like '$.x' or '$.x.y' (at position ${pos})`,
+      `Cannot assign to ${describeMutationTarget(target)} at position ${pos} — only field paths like '$.x' or '$.x.y' are assignable.`,
       pos,
     );
   }
@@ -1557,7 +1559,9 @@ export class Parser {
     const methodTok = this.lexer.peek();
     if (methodTok.type !== TokenType.Ident || methodTok.value !== "now") {
       throw new ParseError(
-        `Unknown Date method '${methodTok.value}' at position ${methodTok.pos}. Supported: Date.now()`,
+        `Unknown Date method '${methodTok.value}' at position ${methodTok.pos}. ` +
+          `Only Date.now() is supported as a JS-style call; for other date operations ` +
+          `use the $date* operators directly (e.g. $dateAdd, $dateDiff, $dateTrunc, $dateToString).`,
         dateTok.pos,
       );
     }
@@ -1595,8 +1599,10 @@ export class Parser {
       this.lexer.expect(TokenType.RParen);
       return { type: "ArrayFrom", input, mapFn };
     }
+    const arraySuggestion = closestNameTo(methodTok.value, ["isArray", "from"]);
+    const arrayHint = arraySuggestion ? ` Did you mean 'Array.${arraySuggestion}'?` : "";
     throw new ParseError(
-      `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}. Supported: Array.isArray(), Array.from()`,
+      `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}.${arrayHint} Supported: Array.isArray(), Array.from().`,
       arrayTok.pos,
     );
   }
@@ -1612,8 +1618,10 @@ export class Parser {
         methodTok.value !== "isNaN" &&
         methodTok.value !== "isFinite")
     ) {
+      const numberSuggestion = closestNameTo(methodTok.value, ["isInteger", "isNaN", "isFinite"]);
+      const numberHint = numberSuggestion ? ` Did you mean 'Number.${numberSuggestion}'?` : "";
       throw new ParseError(
-        `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}. Supported: Number.isInteger, Number.isNaN, Number.isFinite`,
+        `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}.${numberHint} Supported: Number.isInteger, Number.isNaN, Number.isFinite.`,
         numberTok.pos,
       );
     }
@@ -1638,8 +1646,10 @@ export class Parser {
       return { type: "MathConst", name: ident.value as MathConstant };
     }
     if (!MATH_METHODS.has(ident.value)) {
+      const suggestion = closestNameTo(ident.value, [...MATH_METHODS, ...MATH_CONSTANTS]);
+      const hint = suggestion ? ` Did you mean 'Math.${suggestion}'?` : "";
       throw new ParseError(
-        `Unknown Math member '${ident.value}' at position ${ident.pos}. Supported methods: ${[...MATH_METHODS].join(", ")}. Constants: PI, E.`,
+        `Unknown Math member '${ident.value}' at position ${ident.pos}.${hint} See docs/LANGUAGE.md for the full list of supported Math methods and constants.`,
         mathTok.pos,
       );
     }
@@ -1664,8 +1674,10 @@ export class Parser {
     this.lexer.expect(TokenType.Dot);
     const methodTok = this.lexer.peek();
     if (methodTok.type !== TokenType.Ident || !OBJECT_METHODS.has(methodTok.value)) {
+      const objectSuggestion = closestNameTo(methodTok.value, [...OBJECT_METHODS]);
+      const objectHint = objectSuggestion ? ` Did you mean 'Object.${objectSuggestion}'?` : "";
       throw new ParseError(
-        `Unknown Object method '${methodTok.value}' at position ${methodTok.pos}. Supported: ${[...OBJECT_METHODS].join(", ")}`,
+        `Unknown Object method '${methodTok.value}' at position ${methodTok.pos}.${objectHint} Supported: ${[...OBJECT_METHODS].join(", ")}.`,
         objectTok.pos,
       );
     }
@@ -1890,5 +1902,70 @@ export class Parser {
     const value = this.parseExpression();
     const key: ObjectKey = { kind: "static", name: tok.value };
     return { type: "KeyValueEntry", key, value };
+  }
+}
+
+/**
+ * Human-friendly noun phrase for an Expr that the user tried to use as a
+ * mutation target. Used by `validateMutationTarget` to name *what* the user
+ * wrote (a method call, a comparison, a literal, …) rather than just
+ * complaining the target wasn't a field path.
+ */
+function describeMutationTarget(target: Expr): string {
+  switch (target.type) {
+    case "MethodCall":
+      return `a method-call result ('.${target.method}()')`;
+    case "CallExpression":
+      return "a call result";
+    case "BinaryExpr":
+      return `a '${target.op}' expression`;
+    case "UnaryExpr":
+      return `a unary '${target.op}' expression`;
+    case "TernaryExpr":
+      return "a ternary expression";
+    case "TypeCast":
+      return `a '${target.cast}()' cast`;
+    case "TypeCastRef":
+      return `a bare '${target.cast}' reference`;
+    case "MemberAccess":
+      return "a member access whose root is not a field path";
+    case "Lambda":
+      return "a lambda expression";
+    case "ArrayLiteral":
+      return "an array literal";
+    case "ObjectLiteral":
+      return "an object literal";
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+      return "a literal value";
+    case "TemplateLiteral":
+      return "a template literal";
+    case "OperatorCall":
+      return `the result of ${target.name}(…)`;
+    case "MathCall":
+      return `the result of Math.${target.method}(…)`;
+    case "MathConst":
+      return `the Math.${target.name} constant`;
+    case "ObjectCall":
+      return `the result of Object.${target.method}(…)`;
+    case "NewDate":
+      return "a 'new Date(…)' expression";
+    case "NewSet":
+      return "a 'new Set(…)' expression";
+    case "DateNow":
+      return "the result of Date.now()";
+    case "ArrayFrom":
+      return "an Array.from(…) result";
+    case "NumberStatic":
+      return `the result of Number.${target.method}(…)`;
+    case "TypeofExpr":
+      return "a typeof expression";
+    case "RegexLiteral":
+      return "a regex literal";
+    default:
+      return "this expression";
   }
 }

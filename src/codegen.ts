@@ -23,6 +23,19 @@ export class CodegenError extends Error {
   }
 }
 
+/**
+ * Throw a `CodegenError` flagged as a jsmql bug. Use for invariants the
+ * parser is supposed to uphold — if a user ever sees one of these messages,
+ * something has slipped past the parser's validation and we want them to
+ * report it. Keeps the wording consistent across every internal-only throw
+ * site so they're trivially greppable.
+ */
+export function internalError(detail: string): never {
+  throw new CodegenError(
+    `jsmql internal error (please report to the jsmql maintainers): ${detail}`,
+  );
+}
+
 export class UnknownIdentifierError extends CodegenError {
   identifier: string;
   constructor(identifier: string) {
@@ -1264,7 +1277,7 @@ function generateMethodCall(
     case "charAt": {
       const exprArgs = exprArgsOnly(args, "charAt");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.charAt() requires exactly 1 argument`);
+        throw new CodegenError(`.charAt(index) requires exactly 1 argument`);
       }
       return { $substrCP: [genObj, _generate(exprArgs[0], ctx), 1] };
     }
@@ -1278,14 +1291,14 @@ function generateMethodCall(
     case "startsWith": {
       const exprArgs = exprArgsOnly(args, "startsWith");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.startsWith() requires exactly 1 argument`);
+        throw new CodegenError(`.startsWith(searchString) requires exactly 1 argument`);
       }
       return { $eq: [{ $indexOfCP: [genObj, _generate(exprArgs[0], ctx)] }, 0] };
     }
     case "endsWith": {
       const exprArgs = exprArgsOnly(args, "endsWith");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.endsWith() requires exactly 1 argument`);
+        throw new CodegenError(`.endsWith(searchString) requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
       // Compares the last N codepoints of the input with the needle, where N is the needle's length.
@@ -1305,7 +1318,7 @@ function generateMethodCall(
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.indexOf() requires exactly 1 argument`);
+        throw new CodegenError(`.indexOf(searchValue) requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
@@ -1353,7 +1366,7 @@ function generateMethodCall(
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.includes() requires exactly 1 argument`);
+        throw new CodegenError(`.includes(searchValue) requires exactly 1 argument`);
       }
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
@@ -1375,7 +1388,7 @@ function generateMethodCall(
     case "match": {
       const exprArgs = exprArgsOnly(args, "match");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.match() requires exactly 1 argument`);
+        throw new CodegenError(`.match(regex) requires exactly 1 argument`);
       }
       const pattern = exprArgs[0];
       if (pattern.type === "RegexLiteral") {
@@ -1468,7 +1481,7 @@ function generateMethodCall(
     case "at": {
       const exprArgs = exprArgsOnly(args, "at");
       if (exprArgs.length !== 1) {
-        throw new CodegenError(`.at() requires exactly 1 argument`);
+        throw new CodegenError(`.at(index) requires exactly 1 argument`);
       }
       return { $arrayElemAt: [genObj, _generate(exprArgs[0], ctx)] };
     }
@@ -1480,7 +1493,7 @@ function generateMethodCall(
       if (exprArgs.length === 2) {
         return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
       }
-      throw new CodegenError(`.slice() requires 1 or 2 arguments`);
+      throw new CodegenError(`.slice(start[, end]) requires 1 or 2 arguments`);
     }
     case "reverse":
     case "toReversed": {
@@ -2209,8 +2222,16 @@ function generateNumberStatic(
       // NaN is the only IEEE 754 value where x !== x.
       return { $ne: [val, val] };
     case "isFinite":
+      // jsmql has no JS-syntax surface for ±Infinity or NaN literals, so we
+      // cannot emit the obvious `{ $and: [{ $ne: [$x, Infinity] }, ...] }`.
+      // Lifting this needs a literal-Infinity/literal-NaN escape hatch — track
+      // separately. Until then, give users a concrete workaround in the error.
       throw new CodegenError(
-        `Number.isFinite() is not supported — MQL has no Infinity literal. Use a domain-specific bound check (e.g. $.x > -1e300 && $.x < 1e300) or $convert with onError to detect non-finite values.`,
+        `Number.isFinite($.x) is not yet supported in jsmql — there is no syntax for Infinity/NaN literals to compare against. ` +
+          `Workarounds: ` +
+          `(1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, ` +
+          `(2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, ` +
+          `(3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it.`,
       );
   }
 }
@@ -2259,10 +2280,14 @@ function generateSetMethodCall(
       throw new CodegenError(
         `Set.${method}() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed`,
       );
-    default:
+    default: {
+      const setMethods = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"];
+      const setSuggestion = closestNameTo(method, setMethods);
+      const setHint = setSuggestion ? ` Did you mean '.${setSuggestion}()'?` : "";
       throw new CodegenError(
-        `Unknown Set method '.${method}()'. Supported: intersection, union, difference, isSubsetOf, isSupersetOf`,
+        `Unknown Set method '.${method}()'.${setHint} Supported: ${setMethods.join(", ")}.`,
       );
+    }
   }
 }
 
@@ -2285,8 +2310,10 @@ function generateRegexMethodCall(
   const input = _generate(exprArgs[0], ctx);
   const opName = method === "test" ? "$regexMatch" : method === "exec" ? "$regexFind" : null;
   if (!opName) {
+    const regexSuggestion = closestNameTo(method, ["test", "exec"]);
+    const regexHint = regexSuggestion ? ` Did you mean '.${regexSuggestion}()'?` : "";
     throw new CodegenError(
-      `Unknown regex method '.${method}()'. Supported: regex.test(str), regex.exec(str)`,
+      `Unknown regex method '.${method}()'.${regexHint} Supported: regex.test(str), regex.exec(str).`,
     );
   }
   const obj: Record<string, unknown> = { input, regex: regex.pattern };
@@ -2382,17 +2409,17 @@ function groupMutations(muts: Mutation[]): Mutation[][] {
 
 function generateMutationGroup(group: Mutation[], ctx: GenerateCtx): object {
   if (group.length === 0) {
-    throw new CodegenError("Internal: empty mutation group");
+    internalError("empty mutation group");
   }
   if (group[0].type === "AssignExpr") {
     const fields: Record<string, unknown> = {};
     for (const m of group) {
       if (m.type !== "AssignExpr") {
-        throw new CodegenError("Internal: mixed-kind mutation group");
+        internalError("mixed-kind mutation group");
       }
       const path = mutationWritePath(m);
       if (Object.prototype.hasOwnProperty.call(fields, path)) {
-        throw new CodegenError(`Internal: field '${path}' written twice in same group`);
+        internalError(`field '${path}' written twice in same group`);
       }
       fields[path] = _generate(m.value, ctx);
     }
@@ -2402,7 +2429,7 @@ function generateMutationGroup(group: Mutation[], ctx: GenerateCtx): object {
   const paths: string[] = [];
   for (const m of group) {
     if (m.type !== "DeleteStmt") {
-      throw new CodegenError("Internal: mixed-kind mutation group");
+      internalError("mixed-kind mutation group");
     }
     paths.push(mutationWritePath(m));
   }
@@ -2421,9 +2448,7 @@ function targetToPath(target: Expr): string {
   if (target.type === "MemberAccess") {
     return `${targetToPath(target.object)}.${target.member}`;
   }
-  throw new CodegenError(
-    "Internal: mutation target is not a field path (parser should have rejected)",
-  );
+  internalError("mutation target is not a field path (parser should have rejected)");
 }
 
 /**

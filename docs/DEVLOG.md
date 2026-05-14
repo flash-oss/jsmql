@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — Error-message sweep: friendlier wording, "Did you mean?" everywhere, lexer stops leaking enum names
+
+A pass over every `throw` site in `src/` to tighten messages that had drifted or were just unhelpful. DX is the project's #1 priority and error text is the user's tightest feedback loop, so the bar is high. Changes are wording + a few small structural fixes; no behaviour change beyond the inevitable shift in what `err.message` contains.
+
+The biggest single fix is in [src/lexer.ts](../src/lexer.ts): `Lexer.expect()` used to interpolate the internal `TokenType` enum name into the message, so a user-facing error read `Expected LParen but got Ident ('foo') at position 12`. The new `TOKEN_DISPLAY` map produces `Expected '(' but got an identifier 'foo' at position 12`, and the `formatActualToken` helper drops the redundant `('${value}')` suffix for punctuation where the display already *is* the lexeme. The change ripples through every `lexer.expect(...)` call, which is roughly thirty parser productions; the two tests in [test/codegen.test.ts](../test/codegen.test.ts) that had accidentally locked the old wording in (`/Expected LParen/`) were updated.
+
+The other systematic fix is consistency around "Did you mean?" suggestions. Pipeline-stage lowering and instance-method dispatch already used `closestNameTo` from [src/levenshtein.ts](../src/levenshtein.ts); the five static-method gates (Math, Date, Array.X, Number.X, Object.X) and the Set / regex method dispatchers in codegen now do too. The Math member error used to dump all 26 supported method names into the message; the new version shows only the closest match plus a doc pointer. Smaller polish: every method-arg-count error in [src/codegen.ts](../src/codegen.ts) now names the missing parameter (`charAt(index)`, `startsWith(searchString)`, `at(index)`, `slice(start[, end])`, …) so the user can self-correct without leaving the error. The `validateMutationTarget` fallback in [src/parser.ts](../src/parser.ts) now names the *kind* of expression the user wrote (`Cannot assign to a method-call result ('.trim()') at position 11 — only field paths …`) via a new `describeMutationTarget` helper.
+
+Internal-invariant throws — the seven `Internal: …` / `generatePipeline expects an ArrayLiteral AST` sites that should be unreachable in valid programs — are now routed through a single `internalError(detail)` helper in [src/codegen.ts](../src/codegen.ts) that produces `jsmql internal error (please report to the jsmql maintainers): <detail>`. Easier to grep, and the prefix tells anyone who sees it that this is a bug rather than something they wrote wrong.
+
+One drift candidate worth flagging: `Number.isFinite()` rejection. The old message said "MQL has no Infinity literal" and pointed at `$convert`. Tightened to spell out three concrete workarounds. Lifting the restriction needs a JS-syntax surface for `Infinity` / `NaN` literals so we can emit comparisons in MQL — that's its own design problem, tracked separately.
+
+---
+
 ## 2026-05-14 — Playground "Prettify" uses fit-or-break layout
 
 The Prettify checkbox in [playground.html](../playground.html) used to be a flat `JSON.stringify(out, null, 2)`. That expanded every nested array and object onto its own line, so trivial MQL like `{ "$gte": ["$cart.total", 50] }` ballooned to seven lines and the output panel was mostly whitespace and brackets. The compact form (`indent: 0`) had the opposite problem — one long unreadable line.

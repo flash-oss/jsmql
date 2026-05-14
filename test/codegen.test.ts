@@ -1113,10 +1113,10 @@ describe("bare type-cast callbacks", () => {
     expect(() => jsmql("$.xs.reduce(Boolean, 0)")).toThrow(/exactly 2 parameters/);
   });
   it("parseInt is intentionally not supported bare (avoids the JS index-as-radix footgun)", () => {
-    expect(() => jsmql("$.xs.filter(parseInt)")).toThrow(/Expected LParen/);
+    expect(() => jsmql("$.xs.filter(parseInt)")).toThrow(/Expected '\('/);
   });
   it("parseFloat is intentionally not supported bare", () => {
-    expect(() => jsmql("$.xs.filter(parseFloat)")).toThrow(/Expected LParen/);
+    expect(() => jsmql("$.xs.filter(parseFloat)")).toThrow(/Expected '\('/);
   });
 });
 
@@ -1513,7 +1513,7 @@ describe("Number static predicates", () => {
     expect(jsmql("Number.isNaN($.x)")).toEqual({ $ne: ["$x", "$x"] });
   });
   it("Number.isFinite(x) throws helpful error", () => {
-    expect(() => jsmql("Number.isFinite($.x)")).toThrow(/no Infinity literal/);
+    expect(() => jsmql("Number.isFinite($.x)")).toThrow(/no syntax for Infinity/);
   });
 });
 
@@ -1747,8 +1747,23 @@ describe("error cases", () => {
     expect(() => jsmql("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
     expect(() => jsmql("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
   });
+  it("near-miss Math member gets a 'Did you mean' suggestion", () => {
+    expect(() => jsmql("Math.flor($.x)")).toThrow(/Did you mean 'Math\.floor'/);
+  });
+  it("near-miss Number static method gets a 'Did you mean' suggestion", () => {
+    expect(() => jsmql("Number.isItneger($.x)")).toThrow(/Did you mean 'Number\.isInteger'/);
+  });
+  it("near-miss Object method gets a 'Did you mean' suggestion", () => {
+    expect(() => jsmql("Object.keyz($.o)")).toThrow(/Did you mean 'Object\.keys'/);
+  });
   it("lambda in non-method context throws", () => {
     expect(() => jsmql("$abs(x => x)")).toThrow(/Lambda expression/);
+  });
+  it("assigning to a method-call result is rejected with a precise message", () => {
+    expect(() => jsmql("$.s.trim() = 1")).toThrow(/method-call result/);
+  });
+  it("assigning to a literal is rejected with a precise message", () => {
+    expect(() => jsmql("42 = 1")).toThrow(/literal value/);
   });
 });
 

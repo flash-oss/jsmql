@@ -94,6 +94,101 @@ export const TokenType = {
 } as const;
 export type TokenType = (typeof TokenType)[keyof typeof TokenType];
 
+/**
+ * Human-friendly display string for each token type, used in lexer/parser error
+ * messages so users see `'('` instead of the internal `LParen` enum name. For
+ * punctuation we quote the literal character(s); for value-bearing tokens
+ * (identifiers, numbers, strings, …) we use a descriptive word so the message
+ * still reads naturally when paired with `got 'foo'`. Keep in sync with the
+ * `TokenType` declaration above.
+ */
+export const TOKEN_DISPLAY: Record<TokenType, string> = {
+  LParen: "'('",
+  RParen: "')'",
+  LBracket: "'['",
+  RBracket: "']'",
+  LBrace: "'{'",
+  RBrace: "'}'",
+  Comma: "','",
+  Semi: "';'",
+  Colon: "':'",
+  Dot: "'.'",
+  QuestDot: "'?.'",
+  DollarDot: "'$.'",
+  Dollar: "'$'",
+  Spread: "'...'",
+  Plus: "'+'",
+  Minus: "'-'",
+  Star: "'*'",
+  StarStar: "'**'",
+  Slash: "'/'",
+  Percent: "'%'",
+  PlusPlus: "'++'",
+  MinusMinus: "'--'",
+  Eq: "'='",
+  PlusEq: "'+='",
+  MinusEq: "'-='",
+  StarEq: "'*='",
+  SlashEq: "'/='",
+  EqEq: "'=='",
+  EqEqEq: "'==='",
+  BangEq: "'!='",
+  BangEqEq: "'!=='",
+  Gt: "'>'",
+  GtEq: "'>='",
+  Lt: "'<'",
+  LtEq: "'<='",
+  AmpAmp: "'&&'",
+  PipePipe: "'||'",
+  Bang: "'!'",
+  Amp: "'&'",
+  Pipe: "'|'",
+  Caret: "'^'",
+  Tilde: "'~'",
+  QuestQuest: "'??'",
+  Quest: "'?'",
+  Arrow: "'=>'",
+  Number: "a number",
+  BigInt: "a BigInt literal",
+  String: "a string",
+  True: "'true'",
+  False: "'false'",
+  Null: "'null'",
+  RegexLiteral: "a regex literal",
+  TemplateStart: "a template literal",
+  TemplateChars: "template-literal text",
+  TemplateExprStart: "'${'",
+  TemplateEnd: "'`'",
+  In: "'in'",
+  New: "'new'",
+  Typeof: "'typeof'",
+  Delete: "'delete'",
+  Let: "'let'",
+  Ident: "an identifier",
+  EOF: "end of input",
+};
+
+/**
+ * Format a token for the "but got X" half of an error message. For value-bearing
+ * tokens (identifiers, numbers, strings) the actual lexeme is more useful than
+ * the category name, so we render it as e.g. `an identifier 'foo'` or
+ * `a number '42'`. For punctuation the display already *is* the lexeme, so the
+ * `('${value}')` suffix would be redundant.
+ */
+export function formatActualToken(t: Token): string {
+  const display = TOKEN_DISPLAY[t.type];
+  if (
+    t.type === TokenType.Ident ||
+    t.type === TokenType.Number ||
+    t.type === TokenType.BigInt ||
+    t.type === TokenType.String ||
+    t.type === TokenType.RegexLiteral
+  ) {
+    return `${display} '${t.value}'`;
+  }
+  return display;
+}
+
 export type Token = {
   type: TokenType;
   value: string;
@@ -168,7 +263,7 @@ export class Lexer {
     const t = this.next();
     if (t.type !== type) {
       throw new LexError(
-        `Expected ${type} but got ${t.type} ('${t.value}') at position ${t.pos}`,
+        `Expected ${TOKEN_DISPLAY[type]} but got ${formatActualToken(t)} at position ${t.pos}`,
         t.pos,
       );
     }
