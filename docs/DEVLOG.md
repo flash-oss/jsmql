@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — Playground "Prettify" uses fit-or-break layout
+
+The Prettify checkbox in [playground.html](../playground.html) used to be a flat `JSON.stringify(out, null, 2)`. That expanded every nested array and object onto its own line, so trivial MQL like `{ "$gte": ["$cart.total", 50] }` ballooned to seven lines and the output panel was mostly whitespace and brackets. The compact form (`indent: 0`) had the opposite problem — one long unreadable line.
+
+Replaced with a small `pretty()` function: build the compact single-line form (`{ "k": v, ... }` with spaces inside braces, `[a, b]` without spaces inside brackets), and only break the node if its compact form wouldn't fit before column 80 at its actual starting column. Recursion descends into children with their real starting column (`indent + 2 + len('"key": ')` for object values), so the 80-col budget is respected exactly rather than approximated. The unprettified branch is now a plain `JSON.stringify(out)` — no indent argument at all — since the only reason to set indent before was the prettify path.
+
+UI-only change, no behaviour change in the library. Verified by hand against the playground examples: short comparisons stay on one line, long pipelines wrap, and the cart/premium example now renders as the four-line target shape from the request that prompted the change.
+
+---
+
 ## 2026-05-14 — `jsmql.compile()` accepts a string source
 
 `jsmql.compile()` now accepts a string containing the arrow source in addition to a real arrow function — `jsmql.compile("({ minAge }, $) => $.age > minAge")` is equivalent to passing the function value. This brings `compile()` in line with `jsmql()` and `jsmql.validate()`, both of which already polymorph over string / arrow / template tag. The motivating use case is queries stored externally (config files, database rows, admin tooling): callers who only have the text can still benefit from the parse-once-bind-many semantics that make `compile()` more than a wrapper around `jsmql()`.

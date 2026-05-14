@@ -320,6 +320,43 @@
         errorMarker = inputCm.markText(from, to, { className: "cm-error-marker" });
       }
 
+      // Fit-or-break JSON pretty-printer: keep nodes on one line up to 80
+      // cols, only expanding when the compact form would overflow.
+      function pretty(root) {
+        const compact = (x) =>
+          Array.isArray(x)
+            ? "[" + x.map(compact).join(", ") + "]"
+            : x && typeof x === "object"
+              ? Object.keys(x).length
+                ? "{ " +
+                  Object.keys(x)
+                    .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
+                    .join(", ") +
+                  " }"
+                : "{}"
+              : JSON.stringify(x);
+        const go = (v, i, c) => {
+          const s = compact(v);
+          if (c + s.length <= 80) return s;
+          const pad = " ".repeat(i + 2);
+          const close = "\n" + " ".repeat(i);
+          if (Array.isArray(v))
+            return "[\n" + v.map((x) => pad + go(x, i + 2, i + 2)).join(",\n") + close + "]";
+          return (
+            "{\n" +
+            Object.keys(v)
+              .map((k) => {
+                const p = JSON.stringify(k) + ": ";
+                return pad + p + go(v[k], i + 2, i + 2 + p.length);
+              })
+              .join(",\n") +
+            close +
+            "}"
+          );
+        };
+        return go(root, 0, 0);
+      }
+
       function render() {
         const src = inputCm.getValue();
         if (src.trim() === "") {
@@ -332,9 +369,9 @@
         const result = jsmql.validate(src);
         if (result.valid) {
           clearErrorMarker();
-          const indent = prettify.checked ? 2 : 0;
+          const out = jsmql(src);
           outputCm.setOption("mode", { name: "javascript", json: true });
-          outputCm.setValue(JSON.stringify(jsmql(src), null, indent));
+          outputCm.setValue(prettify.checked ? pretty(out) : JSON.stringify(out));
           outputPanel.classList.remove("error");
         } else {
           const e = result.errors[0];
