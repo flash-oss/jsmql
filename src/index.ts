@@ -212,20 +212,53 @@ function compileFunction<P extends Record<string, unknown>>(
 }
 
 /**
- * Parse-and-validate any input shape `jsmql()` accepts. Same overload set as
- * `jsmql()` itself. Returns a `ValidationResult` with structured errors
- * instead of throwing, so callers can drive editor tooling, form validation,
- * and similar use cases.
+ * Parse-and-validate any input shape `jsmql()` or `jsmql.compile()` accepts.
+ * Returns a `ValidationResult` with structured errors instead of throwing,
+ * so callers can drive editor tooling, form validation, and similar use cases.
+ *
+ * The overload set is the union of `jsmql.compile`'s and `jsmql()`'s — the
+ * compile-form arrow comes first so IDEs contextually type `({ minAge }, $)`
+ * against `(params: P, $: any, ops: JsmqlOps)` rather than the one-shot
+ * `($: any, ops: JsmqlOps)` shape (which would mis-type the second slot as
+ * `JsmqlOps`).
  */
+function validateInput<P extends Record<string, unknown>>(fn: JsmqlCompileFn<P>): ValidationResult;
 function validateInput(input: JsmqlInput): ValidationResult;
 function validateInput(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult;
 function validateInput(
-  input: JsmqlInput | TemplateStringsArray,
+  // The implementation signature must be assignable from every overload, so it
+  // widens to include the compile-form arrow shape (`JsmqlCompileFn<any>`)
+  // alongside `JsmqlInput` and the template-tag array. The compile-form arrow
+  // doesn't fit `JsmqlInput`'s `JsmqlFn = ($: any, ops: JsmqlOps) => unknown`
+  // shape because its first slot is the params destructure, not `$`.
+  input: JsmqlInput | TemplateStringsArray | JsmqlCompileFn<any>,
   ...values: unknown[]
 ): ValidationResult {
   try {
     if (isTemplateStringsArray(input)) {
       jsmql(input, ...values);
+    } else if (typeof input === "function") {
+      // Inline the function-input path here (instead of delegating to
+      // `jsmql(input)`) so compile-form arrows — those carrying a params
+      // destructure — are accepted for validation. `jsmqlDispatch` rejects
+      // them outright in the one-shot path; validate is the structured-result
+      // surface for both shapes, so it parses the arrow and binds null
+      // placeholders for each declared binding so codegen resolves them as
+      // ParamRefs (the values don't affect validation, only their resolution).
+      const src = Function.prototype.toString.call(input).trim();
+      try {
+        const { program, bindings } = new Parser(src).parseFunctionInput();
+        const resolved = new Map<string, unknown>();
+        for (const b of bindings) resolved.set(b.name, null);
+        const ctx = withBindings(EMPTY_CTX, resolved);
+        lowerWithCtx(program, ctx);
+      } catch (err) {
+        // Mirror `jsmqlDispatch`'s function-input branch: any error from the
+        // arrow path (parse OR codegen) goes through `augmentForFunctionInput`
+        // so unknown-identifier errors get the closure-ref / param-binding
+        // template-tag hint appended.
+        throw augmentForFunctionInput(err);
+      }
     } else {
       jsmql(input);
     }

@@ -107,7 +107,7 @@ jsmql.compile(fn)         // NEW: parameterised, reusable
 jsmql.validate(input)     // MOVED: was top-level export
 ```
 
-There is intentionally no `jsmql.validate.compile`. The structured-result surface stays scoped to the one-shot `jsmql.validate(input)` call — compile-form errors come back as plain throws on the returned callable, which the caller handles directly. Adding a second total-error surface would duplicate the contract without a real use case until one emerges.
+`jsmql.validate` accepts every shape `jsmql.compile` accepts (in addition to the one-shot string / function / template-tag shapes from `jsmql()`), so editor tooling can pre-flight a parameterised arrow before passing it to `jsmql.compile`. Inside `validateInput`, when the input is a function the parser is invoked directly (instead of delegating to `jsmqlDispatch`, which rejects compile-form arrows in the one-shot path), and each `ParamBinding` is resolved to a `null` placeholder before `lowerWithCtx` runs — values don't affect syntactic validity, only that bound names resolve as `ParamRef` rather than unknown identifiers. There is intentionally no `jsmql.validate.compile` sub-namespace: the compile *invocation* path (`jsmql.compile(fn)(params)`) remains throw-style, since per-call binding errors carry the caller's runtime values and belong in normal error handling, not the structured-result surface.
 
 `compileFunction` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — then parses once via `parseFunctionInput`, and returns a closure that:
 
@@ -119,7 +119,7 @@ There is intentionally no `jsmql.validate.compile`. The structured-result surfac
 
 ### Error mapping
 
-`errorToValidationResult` keeps the per-error-class branch table in one place behind `jsmql.validate()`. The compile-form path doesn't go through it — `jsmql.compile(fn)(params)` is throw-style, by design.
+`errorToValidationResult` keeps the per-error-class branch table in one place behind `jsmql.validate()`. The compile-form arrow *is* routed through it (validate accepts the same input shape as `jsmql.compile`), but the compile *invocation* path is not — `jsmql.compile(fn)(params)` stays throw-style, by design.
 
 `augmentForFunctionInput` appends two pointers to any `UnknownIdentifierError` raised through the function-form path: the `jsmql.compile(fn)({ x: … })` form for compile-time bindings, and the `` jsmql`… ${x} …` `` form for one-shot template-tag interpolation. The original "Unknown identifier 'X'" message is preserved verbatim.
 

@@ -116,12 +116,19 @@ jsmql.compile<P>(fn: (params: P, $?, ops?) => unknown): (params: P) => JsmqlOutp
 // the template-tag form — values appear as JSON literals, never wrapped in
 // $let. See specs/function-form-params.md.
 
+jsmql.validate<P>(fn: (params: P, $?, ops?) => unknown): ValidationResult
 jsmql.validate(input: JsmqlInput): ValidationResult
 jsmql.validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult
-// Same three call shapes as jsmql(), same pipeline — but catches all errors and
-// returns { valid, errors[] } instead. Total — never throws (see error-mapping
-// table below). The compile-form path stays throw-style; there is intentionally
-// no `jsmql.validate.compile`.
+// Accepts every input shape jsmql() or jsmql.compile() accepts. Same parsing
+// pipeline — but catches all errors and returns { valid, errors[] } instead.
+// Total — never throws (see error-mapping table below). The compile-form
+// arrow overload is listed first so IDEs contextually type `({ params }, $)`
+// against `(params: P, $: any, ops: JsmqlOps)` rather than the one-shot
+// `($: any, ops: JsmqlOps)` shape (which would mis-type the second slot as
+// JsmqlOps). For validation, parameter bindings resolve to null placeholders —
+// values don't affect syntactic validity. The compile *invocation* path
+// (`jsmql.compile(fn)(params)`) remains throw-style; there is intentionally
+// no `jsmql.validate.compile` sub-namespace.
 ```
 
 The three entries are attached to `jsmql` via `Object.assign` (the strippable-TS rule in [src/CLAUDE.md](../../src/CLAUDE.md) forbids `namespace` declarations). The pre-1.0 import surface moved from `{ jsmql, validate } from "jsmql"` to `{ jsmql } from "jsmql"` with `validate` reachable as `jsmql.validate`.

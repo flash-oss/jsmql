@@ -1263,4 +1263,14 @@ describe("jsmql.validate(): realistic error cases", () => {
     );
     expect(result.valid).toBe(true);
   });
+
+  it("accepts an arrow function", () => {
+    const result = jsmql.validate(({ age }, $) => {
+      age = $dateDiff({ startDate: $.dob, endDate: new Date(), unit: "year" });
+      $match(age > age);
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].code).toBe("SYNTAX_ERROR");
+    expect(result.errors[0].message).toMatch(/\$\.age/);
+  });
 });

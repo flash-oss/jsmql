@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-14 — `jsmql.validate` accepts compile-form arrows (same shape as `jsmql.compile`)
+
+`jsmql.validate` now accepts the parameterised arrow shape that `jsmql.compile` accepts — `({ minAge }, $) => …` and friends — in addition to the one-shot string / function / template-tag inputs it has always taken. Motivation: when the user writes `jsmql.validate(({ age }, $) => …)`, TypeScript was contextually typing the second parameter as `JsmqlOps` (because the existing `JsmqlInput` overload's `JsmqlFn` is `($: any, ops: JsmqlOps) => unknown`), which made `$.dob` fail in the IDE even though the runtime accepted the expression. The new overload `validate<P>(fn: JsmqlCompileFn<P>)` is listed first in source order so TS picks `(params: P, $: any, ops: JsmqlOps)` for any two-or-three-parameter arrow, leaving `$: any` and `$.dob` typing cleanly.
+
+Runtime change at the same time: `validateInput` no longer routes function inputs through `jsmqlDispatch` (which rejected compile-form arrows with an unhelpful "use `jsmql.compile`" message). It now parses the arrow directly via `parseFunctionInput`, resolves each `ParamBinding` to a `null` placeholder before `lowerWithCtx` runs, and surfaces any errors through the existing `errorToValidationResult` mapping. Values don't affect syntactic validity — only that bound names resolve as `ParamRef` rather than unknown identifiers. The compile *invocation* path (`jsmql.compile(fn)(params)`) stays throw-style, since per-call binding errors carry the caller's runtime values and belong in normal error handling.
+
+Files: [src/index.ts](../src/index.ts) (new overload, inline function-input branch in `validateInput`); [docs/specs/architecture.md](specs/architecture.md), [docs/specs/function-form-params.md](specs/function-form-params.md) (signature listing + rationale). The existing "accepts an arrow function" case in [test/realistic.test.ts](../test/realistic.test.ts) is the regression test — it already failed in the IDE under the old types even though its assertions passed at runtime.
+
+---
+
 ## 2026-05-14 — Thread `.pos` through codegen and adapter errors so `.validate()` honours its contract
 
 Every AST node in [src/ast.ts](../src/ast.ts) now carries a required `pos: number` field, populated by the parser at every construction site from the leading token of each construct (literal token for literals, opening delimiter for collections, operator for binary/unary/ternary, `let`/`delete`/`$`/`$.` keyword for statements and refs). `CodegenError`, `UnknownIdentifierError`, and `FunctionInputError` all gained `readonly pos: number` fields and a constructor parameter, and every throw site forwards the appropriate node or token offset. `errorToValidationResult` in [src/index.ts](../src/index.ts) now passes `err.pos` through for codegen and function-input errors instead of the previous `0` placeholder, closing the gap the [CLAUDE.md](../CLAUDE.md) DX rule called out in the prior commit.
