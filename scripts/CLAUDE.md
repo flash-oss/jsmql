@@ -6,7 +6,7 @@ Node scripts that run outside the published library. Each is invoked by an npm s
 
 ### `generate-ops.mjs`
 
-Generates [`src/ops.ts`](../src/ops.ts) — the ambient-global types shipped at the `jsmql/ops` subpath — from [`src/operators.ts`](../src/operators.ts), [`src/stages.ts`](../src/stages.ts), and the vendored MongoDB MQL spec in [`vendor/mql-specifications/`](../vendor/fetch-mql-specs.mjs).
+Generates [`src/ops.ts`](../src/ops.ts) — the ambient-global types shipped at the `@koresar/jsmql/ops` subpath — from [`src/operators.ts`](../src/operators.ts), [`src/stages.ts`](../src/stages.ts), and the vendored MongoDB MQL spec in [`vendor/mql-specifications/`](../vendor/fetch-mql-specs.mjs).
 
 Runs as `prebuild` and `pretest`, so the committed `src/ops.ts` is always rebuilt before any tsc or vitest invocation. Also exposed as `npm run generate:ops` for ad-hoc regeneration after editing the registries.
 

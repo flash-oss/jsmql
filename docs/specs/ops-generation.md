@@ -1,12 +1,12 @@
-# `jsmql/ops` — spec-generated ambient types
+# `@koresar/jsmql/ops` — spec-generated ambient types
 
 ## Purpose
 
-How `src/ops.ts` is generated from the canonical jsmql registries and the vendored MongoDB MQL spec, exposed as the `jsmql/ops` subpath. The companion user-facing reference is [`docs/LANGUAGE.md` § Operator autocomplete](../LANGUAGE.md#operator-autocomplete-jsmqlops).
+How `src/ops.ts` is generated from the canonical jsmql registries and the vendored MongoDB MQL spec, exposed as the `@koresar/jsmql/ops` subpath. The companion user-facing reference is [`docs/LANGUAGE.md` § Operator autocomplete](../LANGUAGE.md#operator-autocomplete-koresarjsmqlops).
 
-The module is **pure-types** at the source: `declare global { … } export {};`. There are no exported runtime values. Users import it with `import "jsmql/ops"` (the side-effect form — TS does not allow `import type "…"` on a side-effect-only import), which costs one empty-module load and brings every stage and operator into ambient global scope. The runtime path is unchanged — the parser already accepts bare `$stage(…)` / `$op(…)` calls via [`STAGES`](../../src/stages.ts) and [`OPERATORS`](../../src/operators.ts); this module exists solely so TypeScript stops underlining the names and the IDE has something to autocomplete.
+The module is **pure-types** at the source: `declare global { … } export {};`. There are no exported runtime values. Users import it with `import "@koresar/jsmql/ops"` (the side-effect form — TS does not allow `import type "…"` on a side-effect-only import), which costs one empty-module load and brings every stage and operator into ambient global scope. The runtime path is unchanged — the parser already accepts bare `$stage(…)` / `$op(…)` calls via [`STAGES`](../../src/stages.ts) and [`OPERATORS`](../../src/operators.ts); this module exists solely so TypeScript stops underlining the names and the IDE has something to autocomplete.
 
-Users who want zero runtime impact can instead add `"jsmql/ops"` to their tsconfig's `compilerOptions.types` array; the ambient declarations propagate without any `import` statement.
+Users who want zero runtime impact can instead add `"@koresar/jsmql/ops"` to their tsconfig's `compilerOptions.types` array; the ambient declarations propagate without any `import` statement.
 
 ## Generator
 
@@ -99,7 +99,7 @@ After writing the file, the generator invokes `node_modules/.bin/oxfmt` to norma
 }
 ```
 
-The `default` field points at the (essentially empty) `dist/ops.js` so an accidental non-type `import "jsmql/ops"` resolves at runtime — it's a no-op but doesn't error.
+The `default` field points at the (essentially empty) `dist/ops.js` so an accidental non-type `import "@koresar/jsmql/ops"` resolves at runtime — it's a no-op but doesn't error.
 
 ## Test coverage
 
@@ -107,7 +107,7 @@ The `default` field points at the (essentially empty) `dist/ops.js` so an accide
 
 [`test/smoke.test.ts`](../../test/smoke.test.ts) — existence-and-content check on `dist/ops.{js,d.ts}` in the `smoke:dist` flow.
 
-[`test/realistic.test.ts`](../../test/realistic.test.ts) — `e-commerce: reusable eligible-users query via \`import type 'jsmql/ops'\`` shows the runtime end-to-end without an ops-hint destructure. Linked from `README.md`, so it doubles as a copy-paste reference for new users.
+[`test/realistic.test.ts`](../../test/realistic.test.ts) — the `Compile form: ambient ops via \`import "@koresar/jsmql/ops"\`` describe shows the runtime end-to-end without an ops-hint destructure. Linked from `README.md`, so it doubles as a copy-paste reference for new users.
 
 ## When to regenerate
 

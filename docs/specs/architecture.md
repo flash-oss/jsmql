@@ -131,7 +131,7 @@ jsmql.validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationR
 // no `jsmql.validate.compile` sub-namespace.
 ```
 
-The three entries are attached to `jsmql` via `Object.assign` (the strippable-TS rule in [src/CLAUDE.md](../../src/CLAUDE.md) forbids `namespace` declarations). The pre-1.0 import surface moved from `{ jsmql, validate } from "jsmql"` to `{ jsmql } from "jsmql"` with `validate` reachable as `jsmql.validate`.
+The three entries are attached to `jsmql` via `Object.assign` (the strippable-TS rule in [src/CLAUDE.md](../../src/CLAUDE.md) forbids `namespace` declarations). The pre-1.0 import surface moved from `{ jsmql, validate } from "@koresar/jsmql"` to `{ jsmql } from "@koresar/jsmql"` with `validate` reachable as `jsmql.validate`.
 
 ### No implicit cache for `jsmql(fn)`
 

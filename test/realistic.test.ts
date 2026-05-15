@@ -22,9 +22,9 @@ import { jsmql, type JsmqlOps } from "../src/index.ts";
 // Side-effect import — pulls in the `declare global` block in src/ops.ts so
 // the IDE recognises `$match`, `$project`, `$dateDiff`, … as typed
 // identifiers inside the test bodies below. In a user's project this is
-// `import "jsmql/ops";`. The compiled module is `export {};` — bundlers
-// tree-shake it. See the "Compile form" describes below for end-to-end
-// usage.
+// `import "@koresar/jsmql/ops";`. The compiled module is `export {};` —
+// bundlers tree-shake it. See the "Compile form" describes below for
+// end-to-end usage.
 import "../src/ops.ts";
 
 // ── Pipelines ────────────────────────────────────────────────────────────────
@@ -1238,10 +1238,10 @@ describe("Compile form: reusable eligible-users query via jsmql.compile", () => 
   });
 });
 
-describe('Compile form: ambient ops via `import "jsmql/ops"`', () => {
+describe('Compile form: ambient ops via `import "@koresar/jsmql/ops"`', () => {
   // Same pipeline as the previous block, but with no per-callsite ops-hint
-  // destructure. The user adds a single `import "jsmql/ops";` line at the
-  // top of the file and `$match`, `$project`, etc. become ambient globals
+  // destructure. The user adds a single `import "@koresar/jsmql/ops";` line at
+  // the top of the file and `$match`, `$project`, etc. become ambient globals
   // visible across the project — IDE autocomplete and typo-check work
   // without manually listing names. Runtime is identical: the parser strips
   // the function body and recognises bare `$stage(...)` calls via STAGES.

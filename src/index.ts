@@ -13,8 +13,8 @@ import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pip
 import { LexError } from "./lexer.ts";
 import type { Program } from "./ast.ts";
 
-// Re-exported so users can `import { FunctionInputError } from "jsmql"` even
-// though the class itself lives in parser.ts (where it is thrown).
+// Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
+// even though the class itself lives in parser.ts (where it is thrown).
 export { FunctionInputError };
 
 export type ValidationError = {

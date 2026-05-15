@@ -110,7 +110,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **182 operators, full coverage** — every aggregation expression and accumulator from the official MongoDB MQL spec, including Bitwise and Window categories. Unknown operators pass through, so new MongoDB releases work day one.
 - **Plain MQL passes through.** Drop hand-written MQL JSON inline — `{ $gt: ["$age", 18] }`, a whole stage, a whole pipeline — and jsmql compiles it to itself. Mix the two freely, migrate one expression at a time, or paste verbatim from the MongoDB docs.
 - **Three call shapes** — arrow `jsmql(($) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
-- **`jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.
+- **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
 - **`$match` indexes by default** — index-safe predicates translate to query-document form; only the untranslatable parts fall back to `$expr`.
 - **Strict TS, strippable source** — runs as-is on Node 24+, Deno, and Bun (no flags, no transpile).
@@ -118,7 +118,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 ## Try it & learn more
 
 - **[Live playground](https://flash-oss.github.io/jsmql/playground.html)** — write jsmql, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
-- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, mutation rules, `$match` query translation, `jsmql.compile` parameter semantics, the `jsmql/ops` import, error catalogue, server-side-JS migration guide.
+- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, mutation rules, `$match` query translation, `jsmql.compile` parameter semantics, the `@koresar/jsmql/ops` import, error catalogue, server-side-JS migration guide.
 - **[docs/DEVLOG.md](docs/DEVLOG.md)** — the running record of language decisions and the reasoning behind them.
 
 ## License

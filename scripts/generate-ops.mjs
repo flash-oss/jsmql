@@ -6,7 +6,7 @@
  * accumulator,stage}/`).
  *
  * The generated file is a `declare global` ambient module: when imported as
- * `import type "jsmql/ops"`, it surfaces every stage and operator as a global
+ * `import type "@koresar/jsmql/ops"`, it surfaces every stage and operator as a global
  * function with a precise signature, JSDoc description, version, and link to
  * the MongoDB docs. The runtime path is unchanged — the jsmql parser already
  * recognises bare `$stage(...)` and `$op(...)` calls via the registries; this
@@ -334,13 +334,13 @@ export function generateOpsSource() {
     "//",
     "// User-facing import shape:",
     "//",
-    '//   import "jsmql/ops";',
+    '//   import "@koresar/jsmql/ops";',
     "//",
     "// Surfaces every jsmql stage and operator as an ambient global with a",
     "// precise signature, JSDoc description, and link to the MongoDB docs.",
     "// The compiled module exports nothing at runtime (`export {};`), so the",
     "// import resolves to an empty module — bundlers tree-shake it away. For",
-    '// fully zero-runtime use, add `"jsmql/ops"` to tsconfig',
+    '// fully zero-runtime use, add `"@koresar/jsmql/ops"` to tsconfig',
     "// compilerOptions.types instead.",
     "//",
     "// Why globals: named imports of these names break under every common",

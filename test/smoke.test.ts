@@ -72,7 +72,7 @@ describe("smoke: built dist", () => {
   it.skipIf(!existsSync(distPath))(
     "dist/ops.{js,d.ts} are emitted with stage and operator declarations",
     () => {
-      // `jsmql/ops` is a pure-types module — the runtime ops.js is essentially
+      // `@koresar/jsmql/ops` is a pure-types module — the runtime ops.js is essentially
       // empty (`export {};`), but it must exist so accidental non-type imports
       // resolve. The .d.ts is the artifact users actually consume.
       if (!existsSync(opsJs)) {

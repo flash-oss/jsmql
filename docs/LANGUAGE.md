@@ -9,7 +9,7 @@
 jsmql is a JavaScript-subset language that compiles to MongoDB aggregation expression JSON — like SQL but for MongoDB, using JS syntax you already know.
 
 ```js
-const { jsmql } = require("jsmql");
+const { jsmql } = require("@koresar/jsmql");
 
 // JS operators
 jsmql("$.age > 18 && $.status === 'active'");
@@ -1471,7 +1471,7 @@ All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, 
 In addition to a string, `jsmql()` and `jsmql.validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
 
 ```js
-const { jsmql } = require("jsmql");
+const { jsmql } = require("@koresar/jsmql");
 
 jsmql(($) => $.age > 18);
 // → { $gt: ["$age", 18] }
@@ -1546,7 +1546,7 @@ The second parameter is types-only — the destructured names are typed as calla
 For queries that run repeatedly with different values — a typical "list users in region X above age Y" handler — use `jsmql.compile(fn)`. It parses the arrow once and returns a callable that you invoke with a fresh **params object** on every call. Each call walks the cached AST and substitutes the bound values inline as MQL literals; no re-parsing happens.
 
 ```js
-const { jsmql } = require("jsmql");
+const { jsmql } = require("@koresar/jsmql");
 
 const eligibleUsersQuery = jsmql.compile(
   ({ minAge, region }, $, { $match, $project }) => [
@@ -1629,15 +1629,15 @@ If a binding referenced in the body is missing from the params object, the call 
 
 `jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` exists for the one-shot input shapes (string, arrow, template tag); the parameterised path stays throw-only.
 
-### Operator autocomplete (`jsmql/ops`)
+### Operator autocomplete (`@koresar/jsmql/ops`)
 
 Listing every stage and operator in the ops-hint destructure gets tedious. A real-world pipeline mentions five to ten stages plus a handful of escape-hatch expression ops; spelling them out at every call site is bookkeeping the user shouldn't have to do.
 
-The `jsmql/ops` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, drop the ops-hint destructure entirely, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
+The `@koresar/jsmql/ops` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, drop the ops-hint destructure entirely, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
 
 ```ts
-import "jsmql/ops"; // ← side-effect import; loads only `declare global` types
-import { jsmql } from "jsmql";
+import "@koresar/jsmql/ops"; // ← side-effect import; loads only `declare global` types
+import { jsmql } from "@koresar/jsmql";
 
 const eligibleUsersQuery = jsmql.compile(
   ({ minAge, region }: { minAge: number; region: string }, $) => [
@@ -1653,7 +1653,7 @@ const eligibleUsersQuery = jsmql.compile(
 Object-form operators get full key autocomplete from the spec:
 
 ```ts
-import "jsmql/ops";
+import "@koresar/jsmql/ops";
 
 const recent = jsmql(
   ($) => $dateAdd({ startDate: $.purchaseDate, unit: "day", amount: 3 }),
@@ -1664,12 +1664,12 @@ const recent = jsmql(
 
 How it works:
 
-- The compiled module (`dist/ops.js`) is `export {};` — **no exported values, no runtime cost** beyond a single empty module load. Bundlers tree-shake it to nothing in practice. For fully zero-runtime use, add `"jsmql/ops"` to your tsconfig `compilerOptions.types` instead of importing.
+- The compiled module (`dist/ops.js`) is `export {};` — **no exported values, no runtime cost** beyond a single empty module load. Bundlers tree-shake it to nothing in practice. For fully zero-runtime use, add `"@koresar/jsmql/ops"` to your tsconfig `compilerOptions.types` instead of importing.
 - The types are **generated at build time from the official MongoDB MQL spec** ([`mongodb/mql-specifications`](https://github.com/mongodb/mql-specifications)), so they always match the operator the server documents — required vs optional args, function-overload shapes (e.g. `$and(x)` vs `$and(x, y, z)`), full descriptions, version metadata, and links.
 - The declarations are **global** (via TypeScript's `declare global`): once any file in your project imports the module, the names are visible everywhere. **This is intentional** — every alternative (named imports, namespace imports) gets rewritten by bundlers into `(0, _ops.$match)(…)` form, which the jsmql parser can't recognise. Globals are the only shape that survives every transform. The names all start with `$`, so realistic collisions with user identifiers are nil — `$` as an identifier prefix is the MongoDB convention and isn't used elsewhere in the TS ecosystem.
 - The runtime path is unchanged. The jsmql parser already recognises bare `$stage(…)` and `$op(…)` calls regardless of TypeScript's view; this import only quiets TypeScript and gives your IDE something to autocomplete.
 
-The ops-hint destructure (`(…, $, { $match, $project })`) remains supported — `jsmql/ops` is the preferred alternative when you don't want to maintain per-callsite lists, but existing code keeps working.
+The ops-hint destructure (`(…, $, { $match, $project })`) remains supported — `@koresar/jsmql/ops` is the preferred alternative when you don't want to maintain per-callsite lists, but existing code keeps working.
 
 ---
 
@@ -1678,7 +1678,7 @@ The ops-hint destructure (`(…, $, { $match, $project })`) remains supported �
 For expressions with embedded literal values, call `jsmql` as a template tag:
 
 ```js
-const { jsmql } = require("jsmql");
+const { jsmql } = require("@koresar/jsmql");
 
 const minAge = 21;
 const expr = jsmql`$.age > ${minAge}`;
@@ -1713,7 +1713,7 @@ jsmql`$.${field} > ${25}`  // syntax error
 Use `jsmql.validate()` to check syntax without generating output:
 
 ```js
-const { jsmql } = require("jsmql");
+const { jsmql } = require("@koresar/jsmql");
 
 jsmql.validate("$.age > 18");
 // → { valid: true, errors: [] }

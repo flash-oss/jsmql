@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-15 — Package renamed to `@koresar/jsmql` on npm
+
+The bare `jsmql` name was unavailable on npm — already taken — so the package now ships as the scoped `@koresar/jsmql` (with the `@koresar/jsmql/ops` subpath for ambient operator types). The "hopefully temporary" qualifier in commit 953520d's message reflects that we may still claim the unscoped name later if it becomes available; until then, every user-facing example, install instruction, and import snippet uses the scoped specifier.
+
+Updated every doc, comment, and test description that suggested `require("jsmql")` / `import { jsmql } from "jsmql"` / `import "jsmql/ops"`: [README.md](../README.md), [docs/LANGUAGE.md](LANGUAGE.md) (Quick Start, Function Form, `jsmql.compile`, Template-Tag, Validation sections + the Operator-autocomplete heading and tsconfig note), [docs/specs/ops-generation.md](specs/ops-generation.md), [docs/specs/operator-registry.md](specs/operator-registry.md), [docs/specs/function-form-params.md](specs/function-form-params.md), [docs/specs/architecture.md](specs/architecture.md), the four CLAUDE.md files (root, `src/`, `docs/`, `scripts/`), [test/realistic.test.ts](../test/realistic.test.ts) (top-of-file comment + the `Compile form: ambient ops via …` describe), [test/smoke.test.ts](../test/smoke.test.ts), [src/index.ts](../src/index.ts) (`FunctionInputError` re-export comment), and the generator [scripts/generate-ops.mjs](../scripts/generate-ops.mjs) (header comments and the `// User-facing import shape` block embedded in the generated `src/ops.ts`). Earlier DEVLOG entries that reference the bare name are left as-is — they describe state at write time. The runtime contract (input shapes, output shapes, error types) is unchanged; this is a documentation-and-published-name change only.
+
+Verification: `npm run generate:ops` refreshes `src/ops.ts` (which carries the user-facing `import "@koresar/jsmql/ops"` comment block), the drift check in `test/operator-spec-coverage.test.ts` stays green, and `npm test` passes. `package.json` already shipped as `@koresar/jsmql` in commit 953520d; this entry brings the in-repo documentation in line with the published name.
+
+---
+
 ## 2026-05-15 — `.reduce()` accumulator type narrowing trims the dead `$isArray` cond
 
 `acc[k]` inside `reduce((acc, x) => ({ … }), {})` (and the array-symmetric `reduce(…, [])`) now compiles to a bare `$getField` / `$arrayElemAt` instead of the 3-branch `$cond` on `$isArray` that the bracket-access codegen used to emit for every non-structurally-known receiver. The codegen ctx gains a `bindingTypes` field ([src/codegen.ts:80](../src/codegen.ts)); reduce-codegen ([src/codegen.ts:1936-1991](../src/codegen.ts)) pins `params[0]` to `"object"` or `"array"` when **both** `initialValue` and the lambda body are statically the same compound type. The IndexAccess case ([src/codegen.ts:444-484](../src/codegen.ts)) reads it to short-circuit the dispatch, and flips the optional-chain `$ifNull` fallback to `{}` on the known-object branch so a null receiver doesn't feed `$getField` an array.
