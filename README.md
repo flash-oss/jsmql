@@ -55,16 +55,16 @@ import { jsmql } from "jsmql";
 // Arrow form — your formatter handles long expressions
 jsmql(($) => $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
 
-// Optional chaining is a real safety annotation, not a syntactic hint:
-[...$.mods, ...$.room?.mods, "root"].includes($.userId)
-// compiles with $ifNull wrappers exactly where a null would crash a downstream operator.
-
 // Pipelines — write stages as a sequence, separated by `;`
 jsmql(($) => {
   $match($.age >= 18 && $.region === "AU");      // → query doc, indexes still work
   $group({ _id: $.shopId, total: { $sum: $.amount } });
   $sort({ total: -1 });
 });
+
+// Optional chaining is a real safety annotation, not a syntactic hint:
+jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
+// compiles with $ifNull wrappers exactly where a null would crash a downstream operator.
 
 // Template-tag — interpolate runtime literals from outer scope
 const ids = [1, 2, 3];
@@ -73,6 +73,7 @@ jsmql`$.status === "open" && $.id in ${ids}`
 // jsmql.compile — parse once, bind many. Output stays index-friendly.
 const eligible = jsmql.compile(({ minAge, region }, $) => {
   $match($.age >= minAge && $.region === region);
+  $project({ age: 1, email: 1, address: 1 });
 });
 eligible({ minAge: 21, region: "AU" });
 // → [{ $match: { age: { $gte: 21 }, region: "AU" } }]
