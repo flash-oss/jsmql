@@ -3,7 +3,7 @@
 **Write MongoDB aggregation queries in JavaScript.** A strict JS subset that compiles to MQL JSON — like SQL but for MongoDB, using the syntax you already know.
 
 ```js
-import { jsmql } from "jsmql";
+import { jsmql } from "@koresar/jsmql";
 
 const age = 18;
 let mqlJson = jsmql`$.age > ${age} && $.status === "active"`
@@ -36,21 +36,21 @@ mqlJson = jsmql(({$}) => {
 // ]
 ```
 
-**MongoDB 8.0 deprecated `$function`, `$accumulator`, and `$where`.** jsmql is the replacement: native MQL, no `--noscripting` issues, index-friendly, IDE-aware, testable as plain JS.
+**MongoDB 8.0 deprecated server-side JavaScript via `$function`, `$accumulator`, and `$where`.** The JSMQL is the replacement: native MQL, no `--noscripting` issues, index-friendly, IDE-aware, testable as plain JS.
 
 ## Install
 
 ```sh
-npm install jsmql
+npm install @koresar/jsmql
 ```
 
-Pure ESM, zero dependencies. Works with **Node 22+**, Deno, and Bun — no build step.
+ESM + CJS, runs in browsers, zero dependencies. Works with **Node 14+**, Deno, and Bun.
 
 ## Tour
 
 ```js
-import "jsmql/ops";          // ambient $-prefixed globals — autocomplete for 182 ops & every stage
-import { jsmql } from "jsmql";
+import "@koresar/jsmql/ops";          // ambient $-prefixed globals — autocomplete for 182 MQL ops & every stage
+import { jsmql } from "@koresar/jsmql";
 
 // Arrow form — your formatter handles long expressions
 jsmql(($) => $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
@@ -96,12 +96,13 @@ The **[live playground](https://flash-oss.github.io/jsmql/playground.html)** is 
 
 ## Why the arrow form
 
-The arrow function is **never executed** — jsmql calls `Function.prototype.toString()` on it, strips the parameter list, and parses the body. That single trick gives you:
+The arrow function is **never executed** — jsmql() calls `Function.prototype.toString()` on it, strips the parameter list, and parses the body. That single trick gives you:
 
 - **Formatting for free.** Prettier, oxfmt, and every other JS formatter indent and line-break your query like any other JavaScript. No jsmql plugin, no custom config.
 - **Linting for free.** ESLint, Biome, and your editor's TypeScript service see real JS — they flag typos, unused identifiers, and shape mismatches at write time.
-- **Code completion.** With `import "jsmql/ops"`, your IDE autocompletes every stage and operator name, suggests the argument keys from the official MongoDB MQL spec, and surfaces the operator's description on hover.
+- **Code completion.** With `import "@koresar/jsmql/ops"`, your IDE autocompletes every stage and operator name, suggests the argument keys from the official MongoDB MQL spec, and surfaces the operator's description on hover.
 - **AI coding works out of the box.** Copilot, Cursor, and Claude already know JavaScript — they autocomplete jsmql idiomatically because jsmql *is* JavaScript. There is no new vocabulary for them to learn.
+- **Pre-compilation.** jsmql.compile() parses once, executes many times.
 
 ## Highlights
 
