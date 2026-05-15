@@ -182,6 +182,223 @@ describe("e-commerce: cart subtotal", () => {
   });
 });
 
+// ── Pipelines ─────────────────────────────────────────────────────────────────
+
+describe("pipeline: top-orders report by department", () => {
+  // Sales analytics: pick recent shipped orders, attach the buyer document
+  // from the users collection, group by department, compute average order
+  // size, then keep the top three departments by revenue. Stages are written
+  // in the canonical `;`-separated form — one statement per stage — and
+  // bodies use plain JS expressions: comparison operators, field refs,
+  // arithmetic. The `$match` body is a translatable conjunction of field-
+  // vs-literal comparisons, so it emits an index-friendly query document
+  // instead of `$expr`.
+  it("authors a realistic multi-stage pipeline using JS-expression bodies", () => {
+    const result1 = jsmql`
+      $match($.status === "shipped" && $.placedAt >= "2026-01-01");
+      $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
+      $unwind($.buyer);
+      $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
+      $set({ avgOrder: $.revenue / $.orders });
+      $sort({ revenue: -1 });
+      $limit(3);
+    `;
+    const result2 = jsmql(($, { $match, $lookup, $unwind, $group, $sum, $set, $sort, $limit }) => {
+      $match($.status === "shipped" && $.placedAt >= "2026-01-01");
+      $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
+      $unwind($.buyer);
+      $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
+      $set({ avgOrder: $.revenue / $.orders });
+      $sort({ revenue: -1 });
+      $limit(3);
+    });
+
+    expect(result1).toEqual(result2);
+    expect(result1).toEqual([
+      { $match: { status: "shipped", placedAt: { $gte: "2026-01-01" } } },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
+      { $unwind: "$buyer" },
+      { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
+      { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
+      { $sort: { revenue: -1 } },
+      { $limit: 3 },
+    ]);
+  });
+});
+
+describe("pipeline: order pricing with let bindings + commentary", () => {
+  // Realistic order-pricing computation: derive sub-total, tax-inclusive total,
+  // and shipping-inclusive total step by step, with each derived value
+  // explained by an inline comment. `let` bindings keep the helpers visibly
+  // distinct from real document fields and the compiler auto-emits the cleanup
+  // $unset at the end of the pipeline.
+  it("compiles let-chained derivations into $set/$set/$set + $project + $unset", () => {
+    const result = jsmql`
+      let subtotal = $.price * $.qty;       // sub-total before tax/shipping
+      let withTax  = subtotal * 1.2;        // with tax
+      let withShip = withTax + $.shipping;  // with tax and shipping
+      $project({ sku: 1, subtotal, withTax, final: withShip });
+    `;
+    expect(result).toEqual([
+      { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.withTax": { $multiply: ["$__jsmql.subtotal", 1.2] } } },
+      { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
+      {
+        $project: {
+          sku: 1,
+          subtotal: "$__jsmql.subtotal",
+          withTax: "$__jsmql.withTax",
+          final: "$__jsmql.withShip",
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
+describe("pipeline: count orders by status per shop ($accumulator replacement)", () => {
+  // Realistic analytics output: for each shop, a count of orders by status —
+  // { pending: 12, paid: 87, refunded: 3 }. The dynamic-keyed object (one
+  // key per distinct status value) is the case that pushes people toward
+  // $accumulator and server-side JavaScript, since no built-in accumulator
+  // builds an object whose keys come from data.
+  //
+  // jsmql replaces the $accumulator pattern natively: $push the statuses
+  // into an array during $group, then $reduce them into an object using
+  // object spread and a computed key. The codegen lowers `{ ...acc, [s]: x }`
+  // to $mergeObjects + $arrayToObject. Bracket access on a lambda parameter
+  // (`acc[s]`) compiles to a runtime $cond between $arrayElemAt and
+  // $getField — jsmql can't statically infer that `acc` is an object, so it
+  // dispatches at evaluation time. The dead $arrayElemAt branch never runs
+  // for this particular reducer, but the codegen stays type-agnostic.
+  it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
+    const result1 = jsmql`
+      $group({ _id: $.shopId, statuses: $push($.status) });
+      $project({
+        counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
+      });
+    `;
+    const result2 = jsmql(($, { $group, $project, $push }) => {
+      $group({ _id: $.shopId, statuses: $push($.status) });
+      $project({
+        counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {}),
+      });
+    });
+
+    expect(result1).toEqual(result2);
+    expect(result1).toEqual([
+      { $group: { _id: "$shopId", statuses: { $push: "$status" } } },
+      {
+        $project: {
+          counts: {
+            $reduce: {
+              input: "$statuses",
+              initialValue: {},
+              in: {
+                $mergeObjects: [
+                  "$$value",
+                  {
+                    $arrayToObject: [
+                      [
+                        "$$this",
+                        {
+                          $add: [
+                            {
+                              $ifNull: [
+                                {
+                                  $cond: [
+                                    { $isArray: "$$value" },
+                                    { $arrayElemAt: ["$$value", "$$this"] },
+                                    { $getField: { field: "$$this", input: "$$value" } },
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            1,
+                          ],
+                        },
+                      ],
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
+describe("e-commerce: invoice finalisation pipeline", () => {
+  // Read pipeline that selects pending paid invoices, derives a line total and
+  // bumps a counter, drops transient processing state, then stamps the final
+  // status. Written in the canonical `;`-separated form. Demonstrates mutations
+  // interleaved with traditional pipeline stages — the $match boundary flushes
+  // any pending mutation buffer, and the run after $match coalesces by kind
+  // / read-after-write rules into three stages. Inside one `;`-separated chunk,
+  // `,` groups mutations into a single $set; across `;`, mutations stay in
+  // separate stages. Exercised in both string and block-body-arrow forms.
+  // The function form's parens around the assignment expressions are added by
+  // the formatter and are accepted transparently by the parser — see
+  // docs/specs/mutations.md.
+  it("compiles match → mutate → mutate → mutate to a four-stage pipeline", () => {
+    const result1 = jsmql(`
+      $match($.status === 'pending' && $.paidAt != null);
+      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
+      delete $.tempToken, delete $._processingState;
+      $.status = 'complete'
+    `);
+    const result2 = jsmql(($, { $match }) => {
+      $match($.status === "pending" && $.paidAt != null);
+      (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
+      (delete $.tempToken, delete $._processingState);
+      $.status = "complete";
+    });
+    expect(result1).toEqual(result2);
+
+    expect(result1).toEqual([
+      { $match: { status: "pending", paidAt: { $ne: null } } },
+      {
+        $set: {
+          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
+          invoiceCount: { $add: ["$invoiceCount", 1] },
+        },
+      },
+      { $unset: ["tempToken", "_processingState"] },
+      { $set: { status: "complete" } },
+    ]);
+  });
+});
+
+describe("e-commerce: invoice finalisation pipeline (alternative bracketed array form)", () => {
+  // Same pipeline as the canonical describe above, written as a bracketed
+  // `[ … ]` literal. The two forms compile to the same MQL except for the
+  // coalescing rule: adjacent mutation elements inside the array coalesce by
+  // kind / read-after-write, while `;` is a hard stage boundary. The bracketed
+  // form is offered for cases where you need the pipeline as an array literal
+  // value or are pasting verbatim from MongoDB Compass; for new pipelines,
+  // prefer the canonical `;` form above.
+  it("bracketed [...] form compiles to the same pipeline as the canonical form", () => {
+    const bracketed = jsmql(`[
+      $match($.status === 'pending' && $.paidAt != null),
+      $.lineTotal = $.qty * $.unitPrice,
+      $.invoiceCount += 1,
+      delete $.tempToken,
+      delete $._processingState,
+      $.status = 'complete'
+    ]`);
+    const canonical = jsmql(`
+      $match($.status === 'pending' && $.paidAt != null);
+      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
+      delete $.tempToken, delete $._processingState;
+      $.status = 'complete'
+    `);
+    expect(bracketed).toEqual(canonical);
+  });
+});
+
 // ── User analytics ────────────────────────────────────────────────────────────
 
 describe("user analytics: email domain extraction", () => {
@@ -970,223 +1187,6 @@ describe("user display name: optional chaining inside string concat", () => {
         },
       },
     });
-  });
-});
-
-// ── Pipelines ─────────────────────────────────────────────────────────────────
-
-describe("pipeline: top-orders report by department", () => {
-  // Sales analytics: pick recent shipped orders, attach the buyer document
-  // from the users collection, group by department, compute average order
-  // size, then keep the top three departments by revenue. Stages are written
-  // in the canonical `;`-separated form — one statement per stage — and
-  // bodies use plain JS expressions: comparison operators, field refs,
-  // arithmetic. The `$match` body is a translatable conjunction of field-
-  // vs-literal comparisons, so it emits an index-friendly query document
-  // instead of `$expr`.
-  it("authors a realistic multi-stage pipeline using JS-expression bodies", () => {
-    const result1 = jsmql`
-      $match($.status === "shipped" && $.placedAt >= "2026-01-01");
-      $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
-      $unwind($.buyer);
-      $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
-      $set({ avgOrder: $.revenue / $.orders });
-      $sort({ revenue: -1 });
-      $limit(3);
-    `;
-    const result2 = jsmql(($, { $match, $lookup, $unwind, $group, $sum, $set, $sort, $limit }) => {
-      $match($.status === "shipped" && $.placedAt >= "2026-01-01");
-      $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
-      $unwind($.buyer);
-      $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
-      $set({ avgOrder: $.revenue / $.orders });
-      $sort({ revenue: -1 });
-      $limit(3);
-    });
-
-    expect(result1).toEqual(result2);
-    expect(result1).toEqual([
-      { $match: { status: "shipped", placedAt: { $gte: "2026-01-01" } } },
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
-      { $unwind: "$buyer" },
-      { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
-      { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
-      { $sort: { revenue: -1 } },
-      { $limit: 3 },
-    ]);
-  });
-});
-
-describe("pipeline: order pricing with let bindings + commentary", () => {
-  // Realistic order-pricing computation: derive sub-total, tax-inclusive total,
-  // and shipping-inclusive total step by step, with each derived value
-  // explained by an inline comment. `let` bindings keep the helpers visibly
-  // distinct from real document fields and the compiler auto-emits the cleanup
-  // $unset at the end of the pipeline.
-  it("compiles let-chained derivations into $set/$set/$set + $project + $unset", () => {
-    const result = jsmql`
-      let subtotal = $.price * $.qty;       // sub-total before tax/shipping
-      let withTax  = subtotal * 1.2;        // with tax
-      let withShip = withTax + $.shipping;  // with tax and shipping
-      $project({ sku: 1, subtotal, withTax, final: withShip });
-    `;
-    expect(result).toEqual([
-      { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.withTax": { $multiply: ["$__jsmql.subtotal", 1.2] } } },
-      { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
-      {
-        $project: {
-          sku: 1,
-          subtotal: "$__jsmql.subtotal",
-          withTax: "$__jsmql.withTax",
-          final: "$__jsmql.withShip",
-        },
-      },
-      { $unset: "__jsmql" },
-    ]);
-  });
-});
-
-describe("pipeline: count orders by status per shop ($accumulator replacement)", () => {
-  // Realistic analytics output: for each shop, a count of orders by status —
-  // { pending: 12, paid: 87, refunded: 3 }. The dynamic-keyed object (one
-  // key per distinct status value) is the case that pushes people toward
-  // $accumulator and server-side JavaScript, since no built-in accumulator
-  // builds an object whose keys come from data.
-  //
-  // jsmql replaces the $accumulator pattern natively: $push the statuses
-  // into an array during $group, then $reduce them into an object using
-  // object spread and a computed key. The codegen lowers `{ ...acc, [s]: x }`
-  // to $mergeObjects + $arrayToObject. Bracket access on a lambda parameter
-  // (`acc[s]`) compiles to a runtime $cond between $arrayElemAt and
-  // $getField — jsmql can't statically infer that `acc` is an object, so it
-  // dispatches at evaluation time. The dead $arrayElemAt branch never runs
-  // for this particular reducer, but the codegen stays type-agnostic.
-  it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
-    const result1 = jsmql`
-      $group({ _id: $.shopId, statuses: $push($.status) });
-      $project({
-        counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
-      });
-    `;
-    const result2 = jsmql(($, { $group, $project, $push }) => {
-      $group({ _id: $.shopId, statuses: $push($.status) });
-      $project({
-        counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {}),
-      });
-    });
-
-    expect(result1).toEqual(result2);
-    expect(result1).toEqual([
-      { $group: { _id: "$shopId", statuses: { $push: "$status" } } },
-      {
-        $project: {
-          counts: {
-            $reduce: {
-              input: "$statuses",
-              initialValue: {},
-              in: {
-                $mergeObjects: [
-                  "$$value",
-                  {
-                    $arrayToObject: [
-                      [
-                        "$$this",
-                        {
-                          $add: [
-                            {
-                              $ifNull: [
-                                {
-                                  $cond: [
-                                    { $isArray: "$$value" },
-                                    { $arrayElemAt: ["$$value", "$$this"] },
-                                    { $getField: { field: "$$this", input: "$$value" } },
-                                  ],
-                                },
-                                0,
-                              ],
-                            },
-                            1,
-                          ],
-                        },
-                      ],
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-    ]);
-  });
-});
-
-describe("e-commerce: invoice finalisation pipeline", () => {
-  // Read pipeline that selects pending paid invoices, derives a line total and
-  // bumps a counter, drops transient processing state, then stamps the final
-  // status. Written in the canonical `;`-separated form. Demonstrates mutations
-  // interleaved with traditional pipeline stages — the $match boundary flushes
-  // any pending mutation buffer, and the run after $match coalesces by kind
-  // / read-after-write rules into three stages. Inside one `;`-separated chunk,
-  // `,` groups mutations into a single $set; across `;`, mutations stay in
-  // separate stages. Exercised in both string and block-body-arrow forms.
-  // The function form's parens around the assignment expressions are added by
-  // the formatter and are accepted transparently by the parser — see
-  // docs/specs/mutations.md.
-  it("compiles match → mutate → mutate → mutate to a four-stage pipeline", () => {
-    const result1 = jsmql(`
-      $match($.status === 'pending' && $.paidAt != null);
-      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
-      delete $.tempToken, delete $._processingState;
-      $.status = 'complete'
-    `);
-    const result2 = jsmql(($, { $match }) => {
-      $match($.status === "pending" && $.paidAt != null);
-      (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
-      (delete $.tempToken, delete $._processingState);
-      $.status = "complete";
-    });
-    expect(result1).toEqual(result2);
-
-    expect(result1).toEqual([
-      { $match: { status: "pending", paidAt: { $ne: null } } },
-      {
-        $set: {
-          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
-          invoiceCount: { $add: ["$invoiceCount", 1] },
-        },
-      },
-      { $unset: ["tempToken", "_processingState"] },
-      { $set: { status: "complete" } },
-    ]);
-  });
-});
-
-describe("e-commerce: invoice finalisation pipeline (alternative bracketed array form)", () => {
-  // Same pipeline as the canonical describe above, written as a bracketed
-  // `[ … ]` literal. The two forms compile to the same MQL except for the
-  // coalescing rule: adjacent mutation elements inside the array coalesce by
-  // kind / read-after-write, while `;` is a hard stage boundary. The bracketed
-  // form is offered for cases where you need the pipeline as an array literal
-  // value or are pasting verbatim from MongoDB Compass; for new pipelines,
-  // prefer the canonical `;` form above.
-  it("bracketed [...] form compiles to the same pipeline as the canonical form", () => {
-    const bracketed = jsmql(`[
-      $match($.status === 'pending' && $.paidAt != null),
-      $.lineTotal = $.qty * $.unitPrice,
-      $.invoiceCount += 1,
-      delete $.tempToken,
-      delete $._processingState,
-      $.status = 'complete'
-    ]`);
-    const canonical = jsmql(`
-      $match($.status === 'pending' && $.paidAt != null);
-      $.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;
-      delete $.tempToken, delete $._processingState;
-      $.status = 'complete'
-    `);
-    expect(bracketed).toEqual(canonical);
   });
 });
 
