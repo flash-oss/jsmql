@@ -1064,18 +1064,16 @@ describe("pipeline: count orders by status per shop ($accumulator replacement)",
   // for this particular reducer, but the codegen stays type-agnostic.
   it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
     const result1 = jsmql`[
-      { $group: { _id: $.shopId, statuses: $push($.status) } },
-      { $project: {
-          counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
-      } }
+      $group({ _id: $.shopId, statuses: $push($.status) }),
+      $project({
+        counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})
+      })
     ]`;
-    const result2 = jsmql(($, { $push }) => [
-      { $group: { _id: $.shopId, statuses: $push($.status) } },
-      {
-        $project: {
-          counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {}),
-        },
-      },
+    const result2 = jsmql(($, { $group, $project, $push }) => [
+      $group({ _id: $.shopId, statuses: $push($.status) }),
+      $project({
+        counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {}),
+      }),
     ]);
 
     expect(result1).toEqual(result2);
