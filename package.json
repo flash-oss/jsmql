@@ -60,5 +60,14 @@
     "oxfmt": "^0.47.0",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"
-  }
+  },
+  "keywords": [
+    "database",
+    "mongodb",
+    "mongo",
+    "query language",
+    "MQL",
+    "pipeline",
+    "aggregation"
+  ]
 }
