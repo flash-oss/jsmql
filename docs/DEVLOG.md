@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-15 — Sync CLAUDE.md to the actual public-API shape
+
+Root [CLAUDE.md](../CLAUDE.md) used to describe the public API as "two exports from `src/index.ts`: `jsmql(input)`, `validate(input)`". That hadn't been accurate for a while — `validate` is a property on `jsmql` ([src/index.ts:281-284](../src/index.ts)), not a top-level named export, and `jsmql.compile()` (the parameterised, pre-compile path) wasn't mentioned at all despite being a first-class feature with its own [spec](specs/function-form-params.md) and [LANGUAGE.md section](LANGUAGE.md#parameterised-queries-jsmqlcompile). The framing leaked into the file-map, the semver note, and into `docs/CLAUDE.md`'s LANGUAGE.md guidance.
+
+Replaced the "two exports" paragraph with the actual shape: `jsmql` is a callable that carries `.compile` and `.validate` as properties, built via `Object.assign` because the strippable-TS rule forbids `namespace`. The shape rationale is now also surfaced in [src/CLAUDE.md](../src/CLAUDE.md) so future-Claude (and future-anyone) extends the surface the same way next time. Added an explicit scope line: jsmql targets aggregation expressions and pipeline stages, not `db.collection.find()` filter documents — preventing the article-style framing from creeping in. The corresponding line in [docs/CLAUDE.md](CLAUDE.md) was updated to name `jsmql.compile()` and `jsmql.validate()` instead of a free-standing `validate()`.
+
+Docs-only change. No code under `src/` touched, no tests changed.
+
+---
+
 ## 2026-05-15 — Widen the dist support floor to Node 14
 
 `package.json` `"engines"` drops from `>=24` to `>=14`, and [tsconfig.json](../tsconfig.json) gains `"target": "es2020"` so the emitted JS pins to a syntax level v14 actually supports. The previous `"engines"` floor was tied to the source-tree invariant (`src/` runs as-is on Node 24+ via native type-stripping), but that constraint never applied to the dist — `dist/index.js` is plain JS and runs anywhere the syntax does. With no `target` set, `tsc` was preserving modern syntax verbatim, which left `?.` and `??` in the dist and shut out anything below v14 unnecessarily.
