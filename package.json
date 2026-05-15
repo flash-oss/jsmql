@@ -35,10 +35,8 @@
   },
   "files": [
     "src/**.ts",
-    "test/realistic.test.ts",
     "dist",
-    "README.md",
-    "docs/LANGUAGE.md"
+    "README.md"
   ],
   "engines": {
     "node": ">=14"
