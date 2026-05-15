@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-15 — Widen the dist support floor to Node 14
+
+`package.json` `"engines"` drops from `>=24` to `>=14`, and [tsconfig.json](../tsconfig.json) gains `"target": "es2020"` so the emitted JS pins to a syntax level v14 actually supports. The previous `"engines"` floor was tied to the source-tree invariant (`src/` runs as-is on Node 24+ via native type-stripping), but that constraint never applied to the dist — `dist/index.js` is plain JS and runs anywhere the syntax does. With no `target` set, `tsc` was preserving modern syntax verbatim, which left `?.` and `??` in the dist and shut out anything below v14 unnecessarily.
+
+A sweep across the user's installed Node versions confirmed the floor: v12.18.3 fails on `??` (and on `?.` before that), v14.21.2 through v24.15.0 all pass the smoke script (string / arrow / template-tag forms plus `validate()`). v12 reaches end-of-life territory and v14 is the lowest LTS anyone realistically still runs, so that's where the new floor sits. The strippable-TS invariant is unchanged — `src/` still requires Node 24+ for native type-stripping, that's a source-running-as-script concern that's orthogonal to the dist.
+
+No code under `src/` changed and no tests changed; the existing dist-import smoke in [test/smoke.test.ts](../test/smoke.test.ts) is the in-repo regression test. The full suite (899 tests across 12 files) is green on the rebuilt dist.
+
+---
+
 ## 2026-05-15 — `;`-separated pipelines are the canonical surface form
 
 The user-facing docs and realistic-test examples now position the `;`-separated pipeline form as canonical, with the bracketed `[…]` form demoted to an alternative for verbatim MQL copy-paste and "I need an actual array literal" cases. The runtime accepts both forms unchanged — this is an editorial reshuffle, not a language change.

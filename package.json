@@ -28,7 +28,7 @@
     "docs/LANGUAGE.md"
   ],
   "engines": {
-    "node": ">=24"
+    "node": ">=14"
   },
   "scripts": {
     "build": "tsc",
