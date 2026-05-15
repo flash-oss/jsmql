@@ -1,6 +1,6 @@
 {
   "name": "@koresar/jsmql",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Write MongoDB aggregation expressions in JavaScript. JS-subset language that compiles to MQL JSON.",
   "homepage": "https://jsmql.js.org",
   "repository": {
