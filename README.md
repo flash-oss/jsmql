@@ -76,7 +76,7 @@ const eligible = jsmql.compile(({ minAge, region }, $) => {
   $project({ age: 1, email: 1, address: 1 });
 });
 eligible({ minAge: 21, region: "AU" });
-// → [{ $match: { age: { $gte: 21 }, region: "AU" } }]
+// → [{"$match":{"age":{"$gte":21},"region":"AU"}},{"$project":{"age":1,"email":1,"address":1}}]
 
 // Mutations — JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
 jsmql(($) => {
