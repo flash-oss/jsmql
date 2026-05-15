@@ -331,6 +331,9 @@ describe("object spread", () => {
   });
 
   it("works inside .reduce — the README $accumulator replacement", () => {
+    // The accumulator is narrowed to "object" by reduce-codegen (initialValue
+    // is `{}` and the body returns an `ObjectLiteral`), so `acc[s]` emits
+    // `$getField` directly instead of the runtime `$cond` on `$isArray`.
     expect(
       jsmql("$.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})"),
     ).toEqual({
@@ -347,16 +350,7 @@ describe("object spread", () => {
                   {
                     $add: [
                       {
-                        $ifNull: [
-                          {
-                            $cond: [
-                              { $isArray: "$$value" },
-                              { $arrayElemAt: ["$$value", "$$this"] },
-                              { $getField: { field: "$$this", input: "$$value" } },
-                            ],
-                          },
-                          0,
-                        ],
+                        $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0],
                       },
                       1,
                     ],
@@ -1046,6 +1040,175 @@ describe("array methods (with lambda)", () => {
         input: "$orders",
         initialValue: 0,
         in: { $add: ["$$value", "$$this.price"] },
+      },
+    });
+  });
+});
+
+describe("reduce accumulator type narrowing", () => {
+  // The reduce codegen narrows the accumulator parameter to "object" or
+  // "array" when initialValue and the lambda body are statically the same
+  // compound type. The IndexAccess codegen then skips the runtime $cond on
+  // $isArray and emits the type-specific operator directly. Both sides must
+  // agree because $$value after iteration i ≥ 1 is the body's return from
+  // iteration i-1, not the initialValue.
+  it("object accumulator: acc[k] emits $getField directly", () => {
+    expect(jsmql("$.xs.reduce((a, k) => ({ ...a, [k]: 1 }), {})")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: {},
+        in: {
+          $mergeObjects: ["$$value", { $arrayToObject: [["$$this", 1]] }],
+        },
+      },
+    });
+    // Read the accumulator with bracket access in the body — confirms the
+    // narrowing reaches IndexAccess and emits $getField, not $cond.
+    expect(jsmql("$.xs.reduce((a, k) => ({ ...a, [k]: a[k] }), {})")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: {},
+        in: {
+          $mergeObjects: [
+            "$$value",
+            {
+              $arrayToObject: [["$$this", { $getField: { field: "$$this", input: "$$value" } }]],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("array accumulator: acc[i] emits $arrayElemAt directly", () => {
+    expect(jsmql("$.xs.reduce((a, x) => [...a, a[0]], [])")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: [],
+        in: { $concatArrays: ["$$value", [{ $arrayElemAt: ["$$value", 0] }]] },
+      },
+    });
+  });
+
+  it("body diverges from initialValue: keeps runtime $cond", () => {
+    expect(jsmql("$.xs.reduce((a, x) => x.foo, {})")).toEqual({
+      $reduce: { input: "$xs", initialValue: {}, in: "$$this.foo" },
+    });
+    // When the body returns a member-access on the element, the accumulator
+    // is not narrowed, so a bracket access on it still emits the cond.
+    expect(jsmql("$.xs.reduce((a, x) => a[0], {})")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: {},
+        in: {
+          $cond: [
+            { $isArray: "$$value" },
+            { $arrayElemAt: ["$$value", 0] },
+            { $getField: { field: 0, input: "$$value" } },
+          ],
+        },
+      },
+    });
+  });
+
+  it("non-literal initialValue: keeps runtime $cond", () => {
+    expect(jsmql("$.xs.reduce((a, k) => ({ ...a, k: a[0] }), $.seed)")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: "$seed",
+        in: {
+          $mergeObjects: [
+            "$$value",
+            {
+              k: {
+                $cond: [
+                  { $isArray: "$$value" },
+                  { $arrayElemAt: ["$$value", 0] },
+                  { $getField: { field: 0, input: "$$value" } },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("only the accumulator param is narrowed, not the element param", () => {
+    // `x[0]` should keep the cond — `x` is the element binding and could be
+    // anything; only `a` is narrowed to object.
+    expect(jsmql("$.xs.reduce((a, x) => ({ ...a, k: x[0] }), {})")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: {},
+        in: {
+          $mergeObjects: [
+            "$$value",
+            {
+              k: {
+                $cond: [
+                  { $isArray: "$$this" },
+                  { $arrayElemAt: ["$$this", 0] },
+                  { $getField: { field: 0, input: "$$this" } },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("nested reduce shadows the outer accumulator type", () => {
+    // Outer `acc` is object-typed; inner reduce reuses the name `acc` with
+    // initialValue `[]` and an array-producing body, so the inner `acc[0]`
+    // must emit $arrayElemAt — not the outer's $getField.
+    expect(
+      jsmql(
+        "$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})",
+      ),
+    ).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: {},
+        in: {
+          $mergeObjects: [
+            "$$value",
+            {
+              k: {
+                $reduce: {
+                  input: "$$this.ys",
+                  initialValue: [],
+                  in: {
+                    $concatArrays: ["$$value", [{ $arrayElemAt: ["$$value", 0] }]],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("optional-chain default flips to {} for known-object accumulator", () => {
+    // `a?.[k]` on a known-object binding wraps with `$ifNull(_, {})` rather
+    // than `$ifNull(_, [])` — feeding `$getField` an array on null receivers
+    // would be a type error in MongoDB.
+    expect(jsmql("$.xs.reduce((a, k) => ({ ...a, [k]: a?.[k] }), {})")).toEqual({
+      $reduce: {
+        input: "$xs",
+        initialValue: {},
+        in: {
+          $mergeObjects: [
+            "$$value",
+            {
+              $arrayToObject: [
+                ["$$this", { $getField: { field: "$$this", input: { $ifNull: ["$$value", {}] } } }],
+              ],
+            },
+          ],
+        },
       },
     });
   });

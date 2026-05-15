@@ -81,11 +81,12 @@ describe("Pipelines: count orders by status per shop ($accumulator replacement)"
   // jsmql replaces the $accumulator pattern natively: $push the statuses
   // into an array during $group, then $reduce them into an object using
   // object spread and a computed key. The codegen lowers `{ ...acc, [s]: x }`
-  // to $mergeObjects + $arrayToObject. Bracket access on a lambda parameter
-  // (`acc[s]`) compiles to a runtime $cond between $arrayElemAt and
-  // $getField — jsmql can't statically infer that `acc` is an object, so it
-  // dispatches at evaluation time. The dead $arrayElemAt branch never runs
-  // for this particular reducer, but the codegen stays type-agnostic.
+  // to $mergeObjects + $arrayToObject. The reduce here has `initialValue: {}`
+  // and a body that returns an `ObjectLiteral`, so codegen narrows `acc` to
+  // object and bracket access on it (`acc[s]`) emits `$getField` directly.
+  // Reduce bodies whose type diverges from the initialValue (e.g. a body that
+  // returns `x.foo` instead of an object) keep the runtime `$cond` on
+  // `$isArray` because the accumulator type is not invariant across iterations.
   it("builds a dynamic-keyed histogram via object spread + computed key in $reduce", () => {
     const result1 = jsmql`
       $group({ _id: $.shopId, statuses: $push($.status) });
@@ -119,16 +120,7 @@ describe("Pipelines: count orders by status per shop ($accumulator replacement)"
                         {
                           $add: [
                             {
-                              $ifNull: [
-                                {
-                                  $cond: [
-                                    { $isArray: "$$value" },
-                                    { $arrayElemAt: ["$$value", "$$this"] },
-                                    { $getField: { field: "$$this", input: "$$value" } },
-                                  ],
-                                },
-                                0,
-                              ],
+                              $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0],
                             },
                             1,
                           ],

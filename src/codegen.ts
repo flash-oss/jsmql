@@ -77,6 +77,16 @@ export type GenerateCtx = {
    * they cross sub-pipeline boundaries; `freshSubPipelineCtx` preserves them.
    */
   bindings?: ReadonlyMap<string, unknown>;
+  /**
+   * Static type of selected in-scope lambda bindings. Currently populated only
+   * by the `.reduce()` codegen when both `initialValue` and the lambda body
+   * are statically the same compound type — see the reduce case below. Read by
+   * the `IndexAccess` codegen to skip the runtime `$cond` on `$isArray` when
+   * the receiver is a `ParamRef` whose name is in this map. Keyed by the
+   * user-facing param name (pre-`reduceRemap`), so the lookup happens on the
+   * raw AST `ParamRef.name` before any MQL variable-name remap.
+   */
+  bindingTypes?: ReadonlyMap<string, "object" | "array">;
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -88,6 +98,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     pipelineLets: ctx.pipelineLets,
     droppedLets: ctx.droppedLets,
     bindings: ctx.bindings,
+    bindingTypes: ctx.bindingTypes,
   };
 }
 
@@ -219,6 +230,10 @@ function isArrayProducing(expr: Expr): boolean {
     default:
       return false;
   }
+}
+
+function isObjectProducing(expr: Expr): boolean {
+  return expr.type === "ObjectLiteral";
 }
 
 function isStringProducing(expr: Expr): boolean {
@@ -444,18 +459,31 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "IndexAccess": {
       // `obj[idx]` and `obj?.[idx]` produce the same AST shape; only the
       // `optional` flag distinguishes them. Type-aware dispatch:
-      //   known array → $arrayElemAt (numeric/expression index)
-      //   unknown    → runtime $cond between $arrayElemAt (array) and $getField (object)
-      // When the receiver chain is optional, wrap the receiver with $ifNull so a
-      // missing path produces `[]` (array branch) or `{}` (object branch) rather
-      // than poisoning the dispatch with a null receiver.
+      //   known array (structural OR binding-typed)  → $arrayElemAt
+      //   known object (binding-typed only)          → $getField
+      //   unknown                                    → runtime $cond between the two
+      // Binding-typed = the receiver is a `ParamRef` whose name lives in
+      // `ctx.bindingTypes` (populated today by `.reduce()` when initialValue
+      // and body agree on a compound type). The optional-chain `$ifNull`
+      // fallback matches the consumer: `[]` for array, `{}` for object so a
+      // missing path doesn't poison `$getField` with an array.
       const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
-      const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-      if (isArrayProducing(expr.object)) {
+      const known: "object" | "array" | undefined = isArrayProducing(expr.object)
+        ? "array"
+        : expr.object.type === "ParamRef"
+          ? ctx.bindingTypes?.get(expr.object.name)
+          : undefined;
+      if (known === "array") {
+        const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
         return { $arrayElemAt: [obj, idx] };
       }
+      if (known === "object") {
+        const obj = optional ? wrapIfNull(rawObj, {}) : rawObj;
+        return { $getField: { field: idx, input: obj } };
+      }
+      const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
       return {
         $cond: [
           { $isArray: obj },
@@ -1929,6 +1957,22 @@ function generateMethodCall(
           callPos,
         );
       }
+      // Narrow the accumulator's type when initialValue and body agree on a
+      // compound type. `$$value` after iteration i ≥ 1 is the body's return
+      // from iteration i-1, not the initialValue — so narrowing on the initial
+      // alone would be unsound (`reduce((a,x)=>x.foo, {})` keeps the cond
+      // because `a` becomes `x.foo` after the first step). When both agree the
+      // type is invariant across iterations; the IndexAccess case reads this
+      // to skip the runtime $isArray dispatch.
+      const accType: "object" | "array" | undefined =
+        isObjectProducing(exprArgs[1]) && isObjectProducing(lambda.body)
+          ? "object"
+          : isArrayProducing(exprArgs[1]) && isArrayProducing(lambda.body)
+            ? "array"
+            : undefined;
+      const nextBindingTypes = new Map(ctx.bindingTypes ?? []);
+      if (accType) nextBindingTypes.set(lambda.params[0], accType);
+      else nextBindingTypes.delete(lambda.params[0]);
       const reduceCtx: GenerateCtx = {
         lambdaParams: new Set([...ctx.lambdaParams, ...lambda.params]),
         reduceRemap: new Map([
@@ -1937,6 +1981,7 @@ function generateMethodCall(
         ]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
+        bindingTypes: nextBindingTypes,
       };
       return {
         $reduce: {
@@ -2353,6 +2398,7 @@ function generateObjectCall(
         reduceRemap: new Map([[lambda.params[0], "this"]]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
+        bindingTypes: ctx.bindingTypes,
       };
       const keyBody = _generate(lambda.body, keyCtx);
       const keyExpr = isStringProducing(lambda.body) ? keyBody : { $toString: keyBody };

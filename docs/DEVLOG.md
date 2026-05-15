@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-15 — `.reduce()` accumulator type narrowing trims the dead `$isArray` cond
+
+`acc[k]` inside `reduce((acc, x) => ({ … }), {})` (and the array-symmetric `reduce(…, [])`) now compiles to a bare `$getField` / `$arrayElemAt` instead of the 3-branch `$cond` on `$isArray` that the bracket-access codegen used to emit for every non-structurally-known receiver. The codegen ctx gains a `bindingTypes` field ([src/codegen.ts:80](../src/codegen.ts)); reduce-codegen ([src/codegen.ts:1936-1991](../src/codegen.ts)) pins `params[0]` to `"object"` or `"array"` when **both** `initialValue` and the lambda body are statically the same compound type. The IndexAccess case ([src/codegen.ts:444-484](../src/codegen.ts)) reads it to short-circuit the dispatch, and flips the optional-chain `$ifNull` fallback to `{}` on the known-object branch so a null receiver doesn't feed `$getField` an array.
+
+The both-sides-must-agree rule exists because `$$value` after iteration `i ≥ 1` is the body's return from `i-1`, not the initialValue — narrowing on the initial alone is unsound the moment the body returns a different shape (`reduce((a,x) => x.foo, {})` legitimately keeps the cond). When both agree, the type is invariant across iterations. Nested reduces that reuse the accumulator name explicitly shadow the outer narrowing (the inner's `bindingTypes` entry overwrites or deletes the outer's), so `outer-object → inner-array` doesn't miscompile inner `acc[0]` as `$getField`. `isObjectProducing` is the minimum-viable `expr.type === "ObjectLiteral"` check; broadening it to `$mergeObjects` / `$arrayToObject` operator calls is left for when a real case shows up.
+
+This cleans up the README's headline histogram example ([test/realistic.test.ts:75-148](../test/realistic.test.ts)) — the 3-branch `$cond` block disappears from the demo MQL panel in the playground. The new `describe("reduce accumulator type narrowing", …)` block in [test/codegen.test.ts](../test/codegen.test.ts) covers positive object + array cases, three negatives (body diverges, non-literal initial, element param not narrowed), the nested-reduce shadow, and the optional-chain fallback flip. [docs/specs/method-dispatch.md](specs/method-dispatch.md) documents the new field and the three-way IndexAccess dispatch.
+
+---
+
 ## 2026-05-15 — Sync CLAUDE.md to the actual public-API shape
 
 Root [CLAUDE.md](../CLAUDE.md) used to describe the public API as "two exports from `src/index.ts`: `jsmql(input)`, `validate(input)`". That hadn't been accurate for a while — `validate` is a property on `jsmql` ([src/index.ts:281-284](../src/index.ts)), not a top-level named export, and `jsmql.compile()` (the parameterised, pre-compile path) wasn't mentioned at all despite being a first-class feature with its own [spec](specs/function-form-params.md) and [LANGUAGE.md section](LANGUAGE.md#parameterised-queries-jsmqlcompile). The framing leaked into the file-map, the semver note, and into `docs/CLAUDE.md`'s LANGUAGE.md guidance.

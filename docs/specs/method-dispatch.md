@@ -107,12 +107,15 @@ All codegen functions accept a `GenerateCtx`:
 type GenerateCtx = {
   lambdaParams: ReadonlySet<string>;
   reduceRemap?: ReadonlyMap<string, string>;
+  bindingTypes?: ReadonlyMap<string, "object" | "array">;
 };
 ```
 
 When a lambda is processed, its parameters are added to `lambdaParams` via `extendCtx(ctx, params)`. Inside the lambda body:
 - `ParamRef("x")` → `"$$x"` (if `x ∈ lambdaParams`)
 - `MemberAccess(ParamRef("x"), "status")` → `"$$x.status"` via `asFieldPath()`
+
+`bindingTypes` holds the static type of selected in-scope lambda bindings (currently only `.reduce()` accumulators, see below). It is keyed by the user-facing param name (pre-`reduceRemap`) and read by the `IndexAccess` codegen to skip the runtime `$cond` on `$isArray` when the receiver's type is known. `extendCtx` and every manual ctx-literal in `codegen.ts` forward the field; `freshSubPipelineCtx` deliberately does **not** (lambda-scoped narrowing must not cross into a sub-pipeline that runs against a different document).
 
 ## `reduce` parameter remapping
 
@@ -125,6 +128,18 @@ MongoDB's `$reduce` uses fixed variable names `$$value` (accumulator) and `$$thi
 ```
 
 The remap is applied in both `_generate(ParamRef, ctx)` and `asFieldPath(ParamRef, ctx)` — so `o.price` in a reduce body generates `"$$this.price"` when `o` is the element parameter.
+
+### Accumulator type narrowing
+
+Alongside the remap, reduce-codegen also pins the accumulator parameter's static type in `ctx.bindingTypes` when both the `initialValue` and the lambda body are statically the same compound type:
+
+- `isObjectProducing(initialValue) && isObjectProducing(body)` → `params[0]` tagged `"object"`
+- `isArrayProducing(initialValue) && isArrayProducing(body)` → `params[0]` tagged `"array"`
+- otherwise → no narrowing; any prior `bindingTypes` entry for the same name is **explicitly deleted** so a nested reduce that reuses the name shadows the outer narrowing rather than inheriting it stale.
+
+Both sides must agree because `$$value` after iteration `i ≥ 1` is the body's return from iteration `i-1`, not the `initialValue` — narrowing on the initial alone is unsound the moment the body returns a different shape. `isObjectProducing(expr)` is `expr.type === "ObjectLiteral"` (covers `{}`, `{ ...acc, [k]: v }`, and every other object-literal shape); `isArrayProducing(expr)` is the same predicate the IndexAccess case already uses.
+
+The IndexAccess case below consumes this to skip the runtime dispatch for `acc[k]` inside the body.
 
 ## `$let` with lambda — special intercept
 
@@ -238,12 +253,15 @@ receiver-type dispatch (below) applies with the wrap already in place.
 
 ## Type-aware dispatch for `IndexAccess` (`obj[k]` and `obj?.[k]`)
 
-JS bracket access serves two purposes that compile to different MQL operators: array indexing (`$arrayElemAt`) and object dynamic-key lookup (`$getField`). Codegen consults `isArrayProducing(expr.object)`:
+JS bracket access serves two purposes that compile to different MQL operators: array indexing (`$arrayElemAt`) and object dynamic-key lookup (`$getField`). Codegen consults `isArrayProducing(expr.object)` first, then `ctx.bindingTypes` when the receiver is a `ParamRef`:
 
-- **Known array** receiver → `{ $arrayElemAt: [obj, idx] }`.
-- **Unknown** receiver (bare `FieldRef`, ternary, etc.) → runtime `$cond` on `$isArray` between `$arrayElemAt` (array branch) and `$getField` (object branch). Both branches reuse the same `obj` expression; for paths this is free, and `$cond` is short-circuit so only the chosen branch executes.
+- **Structurally known array** receiver (`isArrayProducing` true) → `{ $arrayElemAt: [obj, idx] }`. Optional-chain fallback: `[]`.
+- **Binding-typed `ParamRef`** whose name is in `ctx.bindingTypes`:
+  - `"array"` → same as the structural array case; fallback `[]`.
+  - `"object"` → `{ $getField: { field: idx, input: obj } }` directly; **optional-chain fallback is `{}`** (feeding `$getField` an array on null receivers would be a type error in MongoDB).
+- **Unknown** receiver (bare `FieldRef`, ternary, etc.) → runtime `$cond` on `$isArray` between `$arrayElemAt` (array branch) and `$getField` (object branch). Both branches reuse the same `obj` expression; for paths this is free, and `$cond` is short-circuit so only the chosen branch executes. Optional-chain fallback: `[]` (the array branch handles empties cleanly).
 
-There is no string-literal/number-literal shortcut on the index — the receiver type alone drives the decision. If a user wants compact output for `$.field[0]`, they can use `.at(0)` (always emits `$arrayElemAt`) or pin the receiver type with `.map(x => x)` / `.slice(0)` / `.reverse()`.
+The structural array check runs before the binding-type lookup so concrete evidence beats binding metadata. There is no string-literal/number-literal shortcut on the index — the receiver type alone drives the decision. If a user wants compact output for `$.field[0]`, they can use `.at(0)` (always emits `$arrayElemAt`) or pin the receiver type with `.map(x => x)` / `.slice(0)` / `.reverse()`. Inside a `.reduce()` body, the accumulator parameter is narrowed automatically when initialValue and body agree on a compound type — see the reduce parameter-remapping section above.
 
 ## Set-receiver methods (ES2025)
 
