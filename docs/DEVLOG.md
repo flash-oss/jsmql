@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-15 — Dual ESM + CJS distribution, Node 14+ as the floor
+
+The package now ships a CommonJS build alongside the existing ESM one so `require('@koresar/jsmql')` works on Node 14+ CJS consumers without forcing them onto ESM. `package.json#exports` gained `import` / `require` conditions for both `.` and `./ops`; `main` is repointed at `dist/cjs/index.cjs` so older resolvers (or any tool that still ignores `exports`) get a working entry point. `module` is added for bundlers that key off it. Engines stays at `>=14` — that has been our claimed floor, but until now `"type": "module"` made a CJS-only Node app fail at `require()`.
+
+The CJS bundles are produced by [scripts/build-cjs.mjs](../scripts/build-cjs.mjs): esbuild bundles each entry into a single `.cjs` file targeting `node14`, copies the matching `.d.ts` to `.d.cts` for `moduleResolution: nodenext` consumers, and writes a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. Bundling — rather than per-file CJS emit — avoids the dual-package hazard where ESM and CJS would each carry their own copy of the parser/codegen and diverge on singleton state. The script runs as the second half of `npm run build` (after `tsc`).
+
+A third smoke case in [test/smoke.test.ts](../test/smoke.test.ts) spawns `node --input-type=commonjs -e 'require("./dist/cjs/index.cjs")'` and exercises all three call shapes (string, arrow, template tag) plus `.validate()`. It's `skipIf(!exists(dist/cjs/index.cjs))` so local `npm test` stays fast, and active in `npm run smoke:dist` after a build. No source under `src/` changed; this is a packaging-and-publish-shape change only.
+
+---
+
 ## 2026-05-15 — Package renamed to `@koresar/jsmql` on npm
 
 The bare `jsmql` name was unavailable on npm — already taken — so the package now ships as the scoped `@koresar/jsmql` (with the `@koresar/jsmql/ops` subpath for ambient operator types). The "hopefully temporary" qualifier in commit 953520d's message reflects that we may still claim the unscoped name later if it becomes available; until then, every user-facing example, install instruction, and import snippet uses the scoped specifier.

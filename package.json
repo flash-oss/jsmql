@@ -8,16 +8,29 @@
     "url": "git@github.com:flash-oss/jsmql.git"
   },
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/cjs/index.cjs",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.cts",
+        "default": "./dist/cjs/index.cjs"
+      }
     },
     "./ops": {
-      "types": "./dist/ops.d.ts",
-      "default": "./dist/ops.js"
+      "import": {
+        "types": "./dist/ops.d.ts",
+        "default": "./dist/ops.js"
+      },
+      "require": {
+        "types": "./dist/cjs/ops.d.cts",
+        "default": "./dist/cjs/ops.cjs"
+      }
     }
   },
   "files": [
@@ -31,7 +44,7 @@
     "node": ">=14"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-cjs.mjs",
     "prebuild": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs && node scripts/sync-playground.mjs",
     "pretest": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs",
     "test": "vitest run",

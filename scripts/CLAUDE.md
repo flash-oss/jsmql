@@ -18,6 +18,10 @@ See [`docs/specs/ops-generation.md`](../docs/specs/ops-generation.md) for the ge
 
 Regenerates the two managed regions inside `playground.html`: a minified esbuild IIFE bundle of `src/index.ts` (exposed as `globalThis.JSMQL`) and a JSON island of realistic examples extracted from `test/realistic.test.ts`. Output is the same self-sufficient file users can ship on its own — the only external dependency is the CodeMirror CDN. Runs as `prebuild`, so `npm run build` always produces a synced playground. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits the test file, staging the updated playground for the next commit. Outside Claude Code, run `npm run sync:playground` after editing src/ or the test file. Idempotent — exits 0 without writing if the file is already in sync.
 
+### `build-cjs.mjs`
+
+Bundles `src/index.ts` and `src/ops.ts` into `dist/cjs/{index,ops}.cjs` via esbuild, targeting `node14`, so the package's `require` condition resolves to a working CommonJS module. Also copies the ESM `.d.ts` files to sibling `.d.cts` files for `moduleResolution: nodenext` consumers, and drops a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. Runs as the second half of `npm run build` (after `tsc`). The CJS bundle is covered by the `dist/cjs/index.cjs loads via require()` case in [`test/smoke.test.ts`](../test/smoke.test.ts).
+
 ### `merge-devlog.mjs`
 
 Auto-resolves `git merge` conflicts on `docs/DEVLOG.md`. Splits both sides on `---`, dedupes by date+title heading, sorts newest-first, and stages the result. Run when `git merge` reports a conflict on the devlog; falls back to a manual conflict only when a past entry was edited differently on both sides.

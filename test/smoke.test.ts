@@ -1,5 +1,5 @@
 /**
- * Smoke tests run as part of the unit-test suite to lock down two invariants
+ * Smoke tests run as part of the unit-test suite to lock down invariants
  * that vitest's own test runtime cannot catch:
  *
  *   1. The `src/` tree stays in TypeScript's strippable subset, so the source
@@ -15,6 +15,12 @@
  *      output, so a broken `tsconfig` or `exports` field can ship despite a
  *      green `npm test`. Skipped when `dist/` is absent (the default during
  *      local development); active in CI / `npm run smoke:dist` after a build.
+ *
+ *   3. The built `dist/cjs/index.cjs` loads via `require()` and produces the
+ *      same MQL across all three call shapes. This is the `require` half of
+ *      the dual ESM/CJS package — Node 14+ CJS consumers depend on it, and
+ *      the bundling step in `scripts/build-cjs.mjs` is easy to break without
+ *      tsc noticing. Same skip rule as the ESM case.
  */
 
 import { describe, it, expect } from "vitest";
@@ -59,6 +65,41 @@ describe("smoke: built dist", () => {
         }
       `;
       const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  const cjsPath = resolve(ROOT, "dist/cjs/index.cjs");
+
+  it.skipIf(!existsSync(cjsPath))(
+    "dist/cjs/index.cjs loads via require() and produces correct MQL",
+    () => {
+      // Mirrors the ESM case above but exercises the CommonJS bundle that
+      // ships under the `require` condition of `package.json#exports`.
+      // Run on `node14` target — keeping the script syntax-conservative
+      // (no template literals besides the wrapping one, no optional
+      // chaining) so the same script could be executed on the lowest
+      // engine we support if needed.
+      const script = `
+        const { jsmql } = require(${JSON.stringify(cjsPath)});
+        const out = jsmql("$.age > 18");
+        if (JSON.stringify(out) !== '{"$gt":["$age",18]}') {
+          throw new Error("jsmql(string) output mismatch: " + JSON.stringify(out));
+        }
+        if (!jsmql.validate("$.age > 18").valid) throw new Error("jsmql.validate() failed");
+        const tag = jsmql\`$.x > \${5}\`;
+        if (JSON.stringify(tag) !== '{"$gt":["$x",5]}') {
+          throw new Error("jsmql template-tag mismatch: " + JSON.stringify(tag));
+        }
+        const fn = jsmql(($) => $.age > 18);
+        if (JSON.stringify(fn) !== '{"$gt":["$age",18]}') {
+          throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
+        }
+      `;
+      const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
         cwd: ROOT,
         encoding: "utf8",
       });

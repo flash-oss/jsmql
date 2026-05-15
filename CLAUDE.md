@@ -78,6 +78,7 @@ test/
   smoke.test.ts      Strippable-TS and built-dist invariants (spawn-based)
 scripts/
   generate-ops.mjs              Generates src/ops.ts from OPERATORS + STAGES + vendor MQL spec; runs on prebuild / pretest
+  build-cjs.mjs                 Bundles dist/cjs/{index,ops}.cjs via esbuild (Node 14 target) for the `require` condition; runs after `tsc` in `npm run build`
   merge-devlog.mjs              Auto-resolve a docs/DEVLOG.md merge conflict
   sync-playground.mjs           Bundle src/index.ts with esbuild and embed it + the realistic examples into playground.html
   hook-post-edit-realistic.sh   PostToolUse dispatcher that runs sync-playground when Claude edits realistic.test.ts
