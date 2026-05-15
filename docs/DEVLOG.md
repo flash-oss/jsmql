@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-15 — `;`-separated pipelines are the canonical surface form
+
+The user-facing docs and realistic-test examples now position the `;`-separated pipeline form as canonical, with the bracketed `[…]` form demoted to an alternative for verbatim MQL copy-paste and "I need an actual array literal" cases. The runtime accepts both forms unchanged — this is an editorial reshuffle, not a language change.
+
+[docs/LANGUAGE.md](LANGUAGE.md)'s `## Pipelines` section was rewritten: the canonical-form heading is now "Canonical form: `;` between stages", with a block-body-arrow example up front and the string template-literal form right after it. The `[…]` form lives under "Alternative: bracketed array literal" with both stage-call and stage-object variants, framed as "for porting MQL you've copied verbatim". The "Detection and typos" subsection now describes how both forms enter pipeline mode. [docs/specs/aggregation-stages.md](specs/aggregation-stages.md) was updated to mirror the new ordering and to name the `;`-separated form as canonical in the spec text itself.
+
+[test/realistic.test.ts](../test/realistic.test.ts) lost its array-shaped jsmql input: the `pipeline: top-orders report by department` and `pipeline: count orders by status per shop` describes were converted from bracketed templates to `;`-separated templates plus block-body-arrow function-form equivalents. The invoice-finalisation pair was reordered and renamed — the canonical describe is now `e-commerce: invoice finalisation pipeline` (`;` form), with `e-commerce: invoice finalisation pipeline (alternative bracketed array form)` immediately after as the equivalence demonstration. The three array→`;` and three `;`→array equivalence assertions across the test file stay green, so we still prove behavioural identity between the forms. Test count drops by one — the block-body arrow case that previously lived as a separate `it` got merged into the canonical describe's main test because they now demonstrate the same thing.
+
+The playground re-syncs from these test changes via the existing PostToolUse hook, so the example list users see at [playground.html](../playground.html) now showcases the `;` form for those three pipelines too. The bundled examples include one explicit array-form holdout (the new "alternative bracketed array form" describe) so users can still discover the form when they need it.
+
+Out of scope (intentional): no code under `src/` changed, and `test/pipeline.test.ts` still exercises both forms — the parser, codegen, and `isPipelineAst` detection logic continue to treat the two surface forms as peers. The change is purely about what we recommend and what the realistic examples demonstrate, not what the language accepts.
+
+---
+
 ## 2026-05-15 — `?.` is now a real safety annotation, not a comforting lie
 
 Optional chaining used to be sugar — both `$.a.b` and `$.a?.b` produced the same `MemberAccess` AST node and the same compiled MQL. The docs justified this with "MongoDB's dotted-path semantics already null-pass through missing fields", which is true at the field-read site but false at every downstream operator that null-poisons or hard-errors on null input. A user reported the textbook case: `[...$.moderators, ...$.room?.mods, "root"].includes($.userId)` compiles to a `$concatArrays` that returns null when `$.room` is missing, which then crashes the wrapping `$in` with *"requires an array as a second argument"*. The `?.` looked safe but produced a query that crashed on exactly the input shape it claimed to guard against.

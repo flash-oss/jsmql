@@ -1126,7 +1126,7 @@ jsmql("$.a = 1, $.b = 2")
 // → { $set: { a: 1, b: 2 } }
 ```
 
-A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#pipelines) for the implicit `;`-separated pipeline form.
+A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#pipelines) for the canonical `;`-separated pipeline form.
 
 ### Targets
 
@@ -1227,41 +1227,28 @@ The `delete` keyword is statement-only — unlike JavaScript, it does not return
 
 ## Pipelines
 
-`jsmql()` also compiles **whole aggregation pipelines** — arrays of stage objects like `[{ $match: ... }, { $sort: ... }, { $limit: ... }]`. The same function detects pipeline mode from the input and returns an `object[]` instead of a single `object`. No new exports, no separate API.
+`jsmql()` also compiles **whole aggregation pipelines**. The same function detects pipeline mode from the input and returns an `object[]` instead of a single `object`. No new exports, no separate API.
 
-### Two equivalent forms
+### Canonical form: `;` between stages
 
-```js
-// Stage-call form: terser, reads like JavaScript end-to-end. Recommended
-// when you're authoring a new pipeline.
-jsmql(`[
-  $match($.age > 18),
-  $project({ name: 1, total: $.price * $.qty }),
-  $group({ _id: $.dept, total: $sum($.salary) }),
-  $sort({ total: -1 }),
-  $limit(10)
-]`);
-
-// Stage-object form: matches the shape MongoDB emits in Compass and the
-// docs. Useful when porting an existing pipeline you've copied verbatim.
-jsmql(`[
-  { $match: $.age > 18 },
-  { $project: { name: 1, total: $.price * $.qty } },
-  { $group: { _id: $.dept, total: $sum($.salary) } },
-  { $sort: { total: -1 } },
-  { $limit: 10 }
-]`);
-```
-
-The two forms compile to the same MQL pipeline and may be mixed in one array. Each stage body is a regular jsmql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
-
-### Implicit pipelines: `;` between statements
-
-For short pipelines, you can drop the `[…]` and separate stages with `;` directly. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode and returns an array. Inside one `;`-separated chunk, `,` keeps its in-stage role for mutations:
+Write each stage as a top-level statement separated by `;`. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode. Inside one `;`-separated chunk, `,` keeps its in-stage role for mutations:
 
 ```js
-// Three stages, no brackets needed
-jsmql("$match($.active); $.score += 1; $sort({ score: -1 })");
+// Stages read like a script — one statement per stage.
+jsmql(($) => {
+  $match($.age > 18);
+  $project({ name: 1, total: $.price * $.qty });
+  $group({ _id: $.dept, total: $sum($.salary) });
+  $sort({ total: -1 });
+  $limit(10);
+});
+
+// String form, same shape.
+jsmql(`
+  $match($.active);
+  $.score += 1;
+  $sort({ score: -1 })
+`);
 // → [
 //     { $match: { $expr: "$active" } },
 //     { $set: { score: { $add: ["$score", 1] } } },
@@ -1280,6 +1267,35 @@ Two things to know:
 
 - **`;` is a hard stage boundary.** Adjacent mutations across `;` do **not** coalesce — `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` if you want a single coalesced stage.
 - **A trailing `;` is enough.** `$.a = 1;` returns `[{ $set: { a: 1 } }]`; `$.a = 1` (no `;`) returns `{ $set: { a: 1 } }`. Pick the form that matches what you want from MongoDB — a stage object or a pipeline array.
+
+Each stage body is a regular jsmql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
+
+### Alternative: bracketed array literal
+
+When you want jsmql to *evaluate to* a pipeline array (rather than statements that build one), wrap the same stage calls in a `[…]` literal. Stages can be written as call expressions or as MongoDB-shaped stage objects — both compile identically and may be mixed in one array.
+
+```js
+// Stage-call form inside an array literal — same stages, expression-style.
+jsmql(`[
+  $match($.age > 18),
+  $project({ name: 1, total: $.price * $.qty }),
+  $group({ _id: $.dept, total: $sum($.salary) }),
+  $sort({ total: -1 }),
+  $limit(10)
+]`);
+
+// Stage-object form — matches the shape MongoDB emits in Compass and the
+// docs. Use this when porting an existing pipeline you've copied verbatim.
+jsmql(`[
+  { $match: $.age > 18 },
+  { $project: { name: 1, total: $.price * $.qty } },
+  { $group: { _id: $.dept, total: $sum($.salary) } },
+  { $sort: { total: -1 } },
+  { $limit: 10 }
+]`);
+```
+
+Use the bracketed form when you're pasting MQL from MongoDB Compass or the docs (the stage-object shape lets you copy verbatim), or when a build step needs the literal array as a value. For new pipelines, prefer the `;`-separated form above — it reads as JavaScript end-to-end and stays consistent with the mutation, `let`-binding, and block-body-arrow forms.
 
 ### `$match` indexes by default
 
@@ -1429,7 +1445,12 @@ jsmql(`[{
 
 ### Detection and typos
 
-A top-level array enters pipeline mode when its first element looks like a stage attempt — a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage; mistakes surface immediately:
+Pipeline mode kicks in two ways:
+
+- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a recognised stage call, a mutation, or a `let` binding.
+- **Bracketed form.** A top-level array enters pipeline mode when its first element looks like a stage attempt — a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage.
+
+Either way, mistakes surface immediately with a Levenshtein-based suggestion:
 
 ```js
 jsmql("[{ $macth: $.age > 18 }]");
@@ -1469,7 +1490,7 @@ jsmql(($) =>
 
 ### Block-body arrows for pipelines
 
-A block-body arrow `($) => { stmt; stmt; }` is the function-form mirror of the implicit `;`-separated pipeline string form. The body is a sequence of jsmql statements separated by `;`, with `,` keeping its in-stage role:
+A block-body arrow `($) => { stmt; stmt; }` is the function-form mirror of the canonical `;`-separated pipeline string form. The body is a sequence of jsmql statements separated by `;`, with `,` keeping its in-stage role:
 
 ```js
 jsmql(($, { $match }) => {

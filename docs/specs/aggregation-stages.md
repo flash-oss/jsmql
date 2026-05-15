@@ -13,10 +13,10 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 
 ## Two pipeline forms
 
-jsmql accepts two surface forms that both compile through `src/pipeline.ts`:
+jsmql accepts two surface forms that both compile through `src/pipeline.ts`. The **`;`-separated form is canonical** for user-facing material — it's what [LANGUAGE.md](../LANGUAGE.md#canonical-form-;-between-stages) recommends, what the README's tour uses, and what the realistic-test pipelines author. The bracketed form is the alternative for "evaluates to an array literal" cases and verbatim MQL copy-paste.
 
-1. **Bracketed `[…]`** — the long-standing form. `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent mutation elements **coalesce** through `generateMutationGroups`.
-2. **Implicit `;`-separated** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent mutation statements **never** coalesce across `;`.
+1. **`;`-separated (canonical)** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent mutation statements **never** coalesce across `;`.
+2. **Bracketed `[…]`** — `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent mutation elements **coalesce** through `generateMutationGroups`.
 
 The two forms agree on stage shapes, the `$match` body translation rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups mutations), `;` is a hard stage boundary.
 
@@ -88,7 +88,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 - The template-tag form of `jsmql` composes naturally.
 - Function-input form (`jsmql(($) => [ ... ])`).
 
-A realistic, multi-stage example also lives in [test/realistic.test.ts](../../test/realistic.test.ts) under "pipeline: top-orders report by department".
+A realistic, multi-stage example using the canonical `;`-separated form lives in [test/realistic.test.ts](../../test/realistic.test.ts) under "pipeline: top-orders report by department".
 
 ## Related
 
