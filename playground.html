@@ -19,11 +19,21 @@
     <style>
       :root {
         --fg: #1a1a1a;
-        --muted: #666;
+        --muted: #6b6b6b;
+        --subtle: #94a3b8;
         --bg: #fafafa;
         --panel: #fff;
-        --border: #e2e2e2;
+        --sidebar-bg: #f6f7f9;
+        --border: #e3e6ea;
+        --border-strong: #d4d9e0;
         --accent: #2a6df4;
+        --accent-soft: rgba(42, 109, 244, 0.1);
+        --accent-soft-strong: rgba(42, 109, 244, 0.16);
+        --expr: #2a6df4;
+        --expr-soft: rgba(42, 109, 244, 0.1);
+        --pipe: #b45309;
+        --pipe-soft: rgba(217, 119, 6, 0.12);
+        --pipe-strong: rgba(217, 119, 6, 0.22);
         --error: #c0392b;
         --error-bg: #fdf3f2;
         --mono:
@@ -54,8 +64,8 @@
         background: var(--panel);
         font-size: 13px;
         display: flex;
-        align-items: baseline;
-        gap: 12px;
+        align-items: center;
+        gap: 14px;
       }
 
       header strong {
@@ -75,12 +85,307 @@
         text-decoration: underline;
       }
 
+      header .spacer {
+        flex: 1;
+      }
+
+      header .header-action {
+        font-family: inherit;
+        font-size: 12px;
+        color: var(--fg);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 4px 10px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      header .header-action:hover {
+        border-color: var(--border-strong);
+        background: var(--bg);
+      }
+
+      header .header-action .kbd {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        padding: 0 4px;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        background: var(--bg);
+      }
+
       main {
         flex: 1;
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 300px 1fr 1fr;
         min-height: 0;
         background: var(--panel);
+      }
+
+      main.sidebar-collapsed {
+        grid-template-columns: 0 1fr 1fr;
+      }
+
+      main.sidebar-collapsed #sidebar {
+        display: none;
+      }
+
+      #sidebar {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+        background: var(--sidebar-bg);
+        border-right: 1px solid var(--border);
+      }
+
+      .sidebar-top {
+        padding: 12px 12px 10px;
+        border-bottom: 1px solid var(--border);
+        background: var(--sidebar-bg);
+      }
+
+      .sidebar-title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .sidebar-title-row .title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--muted);
+      }
+
+      .sidebar-title-row .count {
+        font-size: 11px;
+        color: var(--subtle);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .search-wrap {
+        position: relative;
+      }
+
+      .search-wrap::before {
+        content: "";
+        position: absolute;
+        left: 9px;
+        top: 50%;
+        width: 12px;
+        height: 12px;
+        margin-top: -6px;
+        background: no-repeat center / contain
+          url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236b6b6b' stroke-width='1.6'><circle cx='7' cy='7' r='5'/><path d='m11 11 3 3'/></svg>");
+        opacity: 0.8;
+        pointer-events: none;
+      }
+
+      #search {
+        width: 100%;
+        font-family: inherit;
+        font-size: 13px;
+        padding: 7px 30px 7px 28px;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--fg);
+        -webkit-appearance: none;
+        appearance: none;
+      }
+
+      #search::-webkit-search-cancel-button {
+        -webkit-appearance: none;
+      }
+
+      #search:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .search-kbd {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        padding: 1px 5px;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        background: var(--bg);
+        pointer-events: none;
+      }
+
+      #search:focus + .search-kbd {
+        display: none;
+      }
+
+      .legend {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 10px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .legend .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .legend .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+
+      .legend .dot.expression {
+        background: var(--expr);
+      }
+
+      .legend .dot.pipeline {
+        background: var(--pipe);
+      }
+
+      #example-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 6px 0 12px;
+        scrollbar-gutter: stable;
+      }
+
+      .cat-group {
+        padding: 4px 0;
+      }
+
+      .cat-group[hidden] {
+        display: none;
+      }
+
+      .cat-heading {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--subtle);
+        padding: 10px 14px 4px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .cat-heading .cat-count {
+        color: var(--subtle);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .example-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 6px 12px 6px 28px;
+        font: inherit;
+        font-size: 13px;
+        text-align: left;
+        background: transparent;
+        border: 0;
+        border-left: 3px solid transparent;
+        color: var(--fg);
+        cursor: pointer;
+        position: relative;
+        line-height: 1.35;
+      }
+
+      .example-item[hidden] {
+        display: none;
+      }
+
+      .example-item::before {
+        content: "";
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--expr);
+        opacity: 0.85;
+      }
+
+      .example-item.pipeline::before {
+        background: var(--pipe);
+      }
+
+      .example-item:hover {
+        background: var(--accent-soft);
+      }
+
+      .example-item.active {
+        background: var(--accent-soft-strong);
+        border-left-color: var(--accent);
+        font-weight: 600;
+      }
+
+      .example-item.pipeline.active {
+        border-left-color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      .example-item.pipeline.active::before {
+        background: var(--pipe);
+      }
+
+      .ex-title {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ex-kind {
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        flex-shrink: 0;
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .ex-kind.pipeline {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      #no-matches {
+        padding: 24px 16px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+        line-height: 1.5;
+      }
+
+      #no-matches[hidden] {
+        display: none;
       }
 
       .panel {
@@ -94,8 +399,13 @@
         border-left: 1px solid var(--border);
       }
 
+      .panel.input-panel.pipeline .label {
+        background: linear-gradient(180deg, var(--pipe-soft), var(--bg));
+        border-bottom-color: var(--pipe-strong);
+      }
+
       .label {
-        padding: 6px 12px;
+        padding: 8px 12px;
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
@@ -106,6 +416,55 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+        min-height: 36px;
+      }
+
+      .label .label-main {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .label .label-tag {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+
+      .label .current-title {
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: normal;
+        color: var(--fg);
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .kind-pill {
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        flex-shrink: 0;
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .kind-pill.pipeline {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      .kind-pill[hidden] {
+        display: none;
       }
 
       .label label {
@@ -120,19 +479,6 @@
 
       .label input[type="checkbox"] {
         margin: 0;
-      }
-
-      .label select {
-        font-family: inherit;
-        font-size: 11px;
-        text-transform: none;
-        letter-spacing: normal;
-        color: var(--fg);
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 3px;
-        padding: 2px 4px;
-        max-width: 320px;
       }
 
       .label button {
@@ -204,22 +550,65 @@
         background: rgba(192, 57, 43, 0.18);
         border-bottom: 2px solid var(--error);
       }
+
+      @media (max-width: 880px) {
+        main {
+          grid-template-columns: 220px 1fr 1fr;
+        }
+      }
     </style>
   </head>
   <body>
     <header>
       <strong>jsmql playground</strong>
-      <span class="tag">type an expression on the left, see the compiled MQL on the right</span>
+      <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
       <a href="docs/LANGUAGE.md">syntax reference</a>
+      <span class="spacer"></span>
+      <button
+        type="button"
+        class="header-action"
+        id="toggle-sidebar"
+        title="Toggle examples sidebar"
+      >
+        <span id="toggle-sidebar-label">Hide examples</span>
+        <span class="kbd">⌘B</span>
+      </button>
     </header>
-    <main>
-      <section class="panel">
+    <main id="main">
+      <aside id="sidebar" aria-label="Examples">
+        <div class="sidebar-top">
+          <div class="sidebar-title-row">
+            <span class="title">Examples</span>
+            <span class="count" id="example-count"></span>
+          </div>
+          <div class="search-wrap">
+            <input
+              id="search"
+              type="search"
+              placeholder="Search examples…"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              aria-label="Search examples"
+            />
+            <span class="search-kbd">⌘K</span>
+          </div>
+          <div class="legend" aria-hidden="true">
+            <span class="legend-item"><span class="dot expression"></span>expression</span>
+            <span class="legend-item"><span class="dot pipeline"></span>pipeline</span>
+          </div>
+        </div>
+        <nav id="example-list" aria-label="Example navigation"></nav>
+        <div id="no-matches" hidden>No examples match your search.</div>
+      </aside>
+      <section class="panel input-panel" id="input-panel">
         <div class="label">
-          <span>jsmql input</span>
-          <label
-            >Examples
-            <select id="example" disabled></select>
-          </label>
+          <span class="label-main">
+            <span class="label-tag">jsmql input</span>
+            <span class="current-title" id="current-title"></span>
+            <span class="kind-pill" id="current-kind" hidden></span>
+          </span>
         </div>
         <textarea
           id="input"
@@ -254,7 +643,7 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
     <!-- jsmql-bundle:end -->
 
     <!-- jsmql-examples:start (generated by scripts/sync-playground.mjs — do not edit) -->
-    <script type="application/json" id="examples-data">[{"slug":"order-eligibility-for-free-shipping","title":"e-commerce: order eligibility for free shipping","query":"$.cart.total >= 50 &&\n$.customer.status in [\"premium\", \"gold\", \"platinum\"] &&\n$.cart.items.length < 20 &&\n$.customer.region.trim().toLowerCase() === \"us\""},{"slug":"tiered-loyalty-discount-price","title":"e-commerce: tiered loyalty discount price","query":"$round(\n  $.price * (\n    $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :\n    $.loyalty.years >= 2 ? 0.92 : 1\n  ),\n  2\n)"},{"slug":"seasonal-discount-with-eligibility-check","title":"e-commerce: seasonal discount with eligibility check","query":"$.quantity > 1 && $.price >= 10 && $.category in [\"sale\", \"clearance\"]\n  ? $.price * 0.8\n  : $.price"},{"slug":"discount-breakdown-via-iife-let","title":"e-commerce: discount breakdown via IIFE → $let","query":"((discount) => ({\n  finalPrice: $.price - discount,\n  savings: discount,\n  savingsPercent: Math.round((discount / $.price) * 100),\n}))($.price * (1 - $.loyalty.multiplier))"},{"slug":"cart-subtotal","title":"e-commerce: cart subtotal","query":"$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)"},{"slug":"email-domain-extraction","title":"user analytics: email domain extraction","query":"$.email.split(\"@\").at(1).toLowerCase()"},{"slug":"score-normalisation","title":"user analytics: score normalisation","query":"($.score - $.minScore) / ($.maxScore - $.minScore) * 100"},{"slug":"age-decade-bucket","title":"user analytics: age decade bucket","query":"Math.floor($.age / 10) * 10"},{"slug":"days-since-last-login","title":"user analytics: days since last login","query":"Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)"},{"slug":"url-slug","title":"content pipeline: URL slug","query":"String($.articleId) + \"-\" + $.title.toLowerCase().trim().replaceAll(\" \", \"-\")"},{"slug":"full-display-name-skipping-missing-parts","title":"content pipeline: full display name (skipping missing parts)","query":"[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")"},{"slug":"lowercase-display-name","title":"content pipeline: lowercase display name","query":"$toLower($.firstName + \" \" + $.lastName)"},{"slug":"formatted-date-label","title":"reporting: formatted date label","query":"$dateToString({ date: $.publishedAt, format: \"%Y-%m-%d\" }) ??\n$dateToString({ date: $.createdAt, format: \"%Y-%m-%d\" }) ??\n\"unknown\""},{"slug":"days-since-document-was-created","title":"reporting: days since document was created","query":"$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: \"day\" })"},{"slug":"stock-status-label","title":"inventory: stock status label","query":"$.stock >= $.reorderPoint ? \"ok\" : $.stock > 0 ? \"low\" : \"out-of-stock\""},{"slug":"reorder-alert","title":"inventory: reorder alert","query":"!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel"},{"slug":"invoice-line-total-with-compound-tax","title":"financial: invoice line total with compound tax","query":"$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)"},{"slug":"full-name-with-null-fallback","title":"user display: full name with null fallback","query":"$.firstName ?? $.aliases.at(0) ?? \"anonymous\""},{"slug":"full-address-formatter","title":"location: full address formatter","query":"[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")"},{"slug":"csv-field-word-count","title":"data quality: CSV field word count","query":"$.tags.split(\",\").length"},{"slug":"normalise-string-vs-number-field","title":"data quality: normalise string vs number field","query":"typeof $.value === \"string\" ? $.value.trim() : String($.value)"},{"slug":"admin-permission-check","title":"access control: admin permission check","query":"$.active && $.role.toLowerCase().includes(\"admin\") && $.name.trim().length > 0"},{"slug":"parameterised-threshold-query","title":"jsmql template-tag form: parameterised threshold query","query":"$.score >= 75 &&\n$.grade in [\"A\", \"B\"] &&\n$.submitted === true"},{"slug":"invoice-line-greeting-template-literal-optional-chain-startswith","title":"invoice line greeting (template literal + optional chain + .startsWith)","query":"`Hi ${$.customer?.firstName ?? 'there'} — your ${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`"},{"slug":"analytics-flatmap-math-max-gettime","title":"analytics — flatMap + Math.max + .getTime","query":"$.sessions\n  .flatMap(s => s.events)\n  .map(e => e.ts.getTime())\n  .reduce((acc, t) => Math.max(acc, t), 0)"},{"slug":"shopping-cart-total-with-numeric-separators-reduce","title":"shopping cart total with numeric separators + .reduce","query":"Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))"},{"slug":"pivot-table-row-computed-keys-object-fromentries","title":"pivot table row (computed keys + Object.fromEntries)","query":"Object.fromEntries($.metrics.map(m => [m.name, m.value]))"},{"slug":"flex-shape-accumulators-in-realistic-pipelines","title":"flex-shape accumulators in realistic pipelines","query":"$round($sum($.lineTotal), 2)"},{"slug":"file-upload-validation-includes-on-array-literal-endswith-numeric-separator","title":"file upload validation (.includes on array literal + .endsWith + numeric separator)","query":"[\".jpg\", \".png\", \".pdf\", \".docx\"].includes($.file.ext.toLowerCase()) &&\n$.file.name.endsWith($.file.ext) &&\n$.file.size <= 25_000_000"},{"slug":"score-range-with-spread-array-isarray-guard","title":"score range with spread + Array.isArray guard","query":"Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0"},{"slug":"moderator-membership-check-with-array-spread","title":"moderator membership check with array spread","query":"[...$.moderators, ...$.room.mods, \"root\"].includes($.userId)"},{"slug":"days-since-event-date-now-gettime-numeric-separator","title":"days since event (Date.now + .getTime + numeric separator)","query":"Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)"},{"slug":"audit-log-line-template-literal-toisostring-charat-touppercase","title":"audit log line (template literal + .toISOString + .charAt + .toUpperCase)","query":"`${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`"},{"slug":"tag-aggregation-flat-join","title":"tag aggregation (.flat + .join)","query":"$.posts.map(p => p.tags).flat().join(\", \")"},{"slug":"scientific-projection-math-hypot-math-log2-log10-math-sign-math-cbrt-math-pi-e","title":"scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)","query":"{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}"},{"slug":"dynamic-pivot-row-computed-key-in-literal-shorthand-property","title":"dynamic pivot row (computed key in literal + shorthand property)","query":"$.products.map(p => ({ [p.category]: p.price, p }))"},{"slug":"annotated-insurance-underwriting-rule-and-comments","title":"annotated insurance underwriting rule (// and /* */ comments)","query":"// age window: 25 to 70 inclusive\n$.driver.age >= 25 && $.driver.age <= 70 &&\n\n/* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */\n$.policy.kmPerYear <= 30_000 &&\n\n// hard-list occupations that bump the applicant to the high-risk tier\n!($.driver.occupation in [\"stunt-double\", \"test-pilot\", \"demolition-engineer\"])"},{"slug":"optional-chaining-inside-array-spread","title":"chat moderation: optional chaining inside array spread","query":"[...$.moderators, ...$.room?.mods, \"root\"].includes($.userId)"},{"slug":"optional-chaining-inside-string-concat","title":"user display name: optional chaining inside string concat","query":"`${$.name?.first} ${$.name?.last}`.trim()"},{"slug":"top-orders-report-by-department","title":"pipeline: top-orders report by department","query":"[\n  $match($.status === \"shipped\" && $.placedAt >= \"2026-01-01\"),\n  $lookup({ from: \"users\", localField: \"userId\", foreignField: \"_id\", as: \"buyer\" }),\n  $unwind($.buyer),\n  $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) }),\n  $set({ avgOrder: $.revenue / $.orders }),\n  $sort({ revenue: -1 }),\n  $limit(3)\n]"},{"slug":"order-pricing-with-let-bindings-commentary","title":"pipeline: order pricing with let bindings + commentary","query":"let subtotal = $.price * $.qty;       // sub-total before tax/shipping\nlet withTax  = subtotal * 1.2;        // with tax\nlet withShip = withTax + $.shipping;  // with tax and shipping\n$project({ sku: 1, subtotal, withTax, final: withShip });"},{"slug":"count-orders-by-status-per-shop-accumulator-replacement","title":"pipeline: count orders by status per shop ($accumulator replacement)","query":"[\n  { $group: { _id: $.shopId, statuses: $push($.status) } },\n  { $project: {\n      counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})\n  } }\n]"},{"slug":"invoice-finalisation-pipeline-mutations-match","title":"e-commerce: invoice finalisation pipeline (mutations + $match)","query":"[\n  $match($.status === 'pending' && $.paidAt != null),\n  $.lineTotal = $.qty * $.unitPrice,\n  $.invoiceCount += 1,\n  delete $.tempToken,\n  delete $._processingState,\n  $.status = 'complete'\n]"},{"slug":"invoice-finalisation-pipeline-implicit-form","title":"e-commerce: invoice finalisation pipeline (implicit `;` form)","query":"$match($.status === 'pending' && $.paidAt != null);\n$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;\ndelete $.tempToken, delete $._processingState;\n$.status = 'complete'"}]</script>
+    <script type="application/json" id="examples-data">[{"slug":"order-eligibility-for-free-shipping","title":"e-commerce: order eligibility for free shipping","displayTitle":"order eligibility for free shipping","category":"e-commerce","kind":"expression","query":"$.cart.total >= 50 &&\n$.customer.status in [\"premium\", \"gold\", \"platinum\"] &&\n$.cart.items.length < 20 &&\n$.customer.region.trim().toLowerCase() === \"us\""},{"slug":"tiered-loyalty-discount-price","title":"e-commerce: tiered loyalty discount price","displayTitle":"tiered loyalty discount price","category":"e-commerce","kind":"expression","query":"$round(\n  $.price * (\n    $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :\n    $.loyalty.years >= 2 ? 0.92 : 1\n  ),\n  2\n)"},{"slug":"seasonal-discount-with-eligibility-check","title":"e-commerce: seasonal discount with eligibility check","displayTitle":"seasonal discount with eligibility check","category":"e-commerce","kind":"expression","query":"$.quantity > 1 && $.price >= 10 && $.category in [\"sale\", \"clearance\"]\n  ? $.price * 0.8\n  : $.price"},{"slug":"discount-breakdown-via-iife-let","title":"e-commerce: discount breakdown via IIFE → $let","displayTitle":"discount breakdown via IIFE → $let","category":"e-commerce","kind":"expression","query":"((discount) => ({\n  finalPrice: $.price - discount,\n  savings: discount,\n  savingsPercent: Math.round((discount / $.price) * 100),\n}))($.price * (1 - $.loyalty.multiplier))"},{"slug":"cart-subtotal","title":"e-commerce: cart subtotal","displayTitle":"cart subtotal","category":"e-commerce","kind":"expression","query":"$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)"},{"slug":"email-domain-extraction","title":"user analytics: email domain extraction","displayTitle":"email domain extraction","category":"user analytics","kind":"expression","query":"$.email.split(\"@\").at(1).toLowerCase()"},{"slug":"score-normalisation","title":"user analytics: score normalisation","displayTitle":"score normalisation","category":"user analytics","kind":"expression","query":"($.score - $.minScore) / ($.maxScore - $.minScore) * 100"},{"slug":"age-decade-bucket","title":"user analytics: age decade bucket","displayTitle":"age decade bucket","category":"user analytics","kind":"expression","query":"Math.floor($.age / 10) * 10"},{"slug":"days-since-last-login","title":"user analytics: days since last login","displayTitle":"days since last login","category":"user analytics","kind":"expression","query":"Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)"},{"slug":"url-slug","title":"content pipeline: URL slug","displayTitle":"URL slug","category":"content pipeline","kind":"expression","query":"String($.articleId) + \"-\" + $.title.toLowerCase().trim().replaceAll(\" \", \"-\")"},{"slug":"full-display-name-skipping-missing-parts","title":"content pipeline: full display name (skipping missing parts)","displayTitle":"full display name (skipping missing parts)","category":"content pipeline","kind":"expression","query":"[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")"},{"slug":"lowercase-display-name","title":"content pipeline: lowercase display name","displayTitle":"lowercase display name","category":"content pipeline","kind":"expression","query":"$toLower($.firstName + \" \" + $.lastName)"},{"slug":"formatted-date-label","title":"reporting: formatted date label","displayTitle":"formatted date label","category":"reporting","kind":"expression","query":"$dateToString({ date: $.publishedAt, format: \"%Y-%m-%d\" }) ??\n$dateToString({ date: $.createdAt, format: \"%Y-%m-%d\" }) ??\n\"unknown\""},{"slug":"days-since-document-was-created","title":"reporting: days since document was created","displayTitle":"days since document was created","category":"reporting","kind":"expression","query":"$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: \"day\" })"},{"slug":"stock-status-label","title":"inventory: stock status label","displayTitle":"stock status label","category":"inventory","kind":"expression","query":"$.stock >= $.reorderPoint ? \"ok\" : $.stock > 0 ? \"low\" : \"out-of-stock\""},{"slug":"reorder-alert","title":"inventory: reorder alert","displayTitle":"reorder alert","category":"inventory","kind":"expression","query":"!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel"},{"slug":"invoice-line-total-with-compound-tax","title":"financial: invoice line total with compound tax","displayTitle":"invoice line total with compound tax","category":"financial","kind":"expression","query":"$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)"},{"slug":"full-name-with-null-fallback","title":"user display: full name with null fallback","displayTitle":"full name with null fallback","category":"user display","kind":"expression","query":"$.firstName ?? $.aliases.at(0) ?? \"anonymous\""},{"slug":"full-address-formatter","title":"location: full address formatter","displayTitle":"full address formatter","category":"location","kind":"expression","query":"[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")"},{"slug":"csv-field-word-count","title":"data quality: CSV field word count","displayTitle":"CSV field word count","category":"data quality","kind":"expression","query":"$.tags.split(\",\").length"},{"slug":"normalise-string-vs-number-field","title":"data quality: normalise string vs number field","displayTitle":"normalise string vs number field","category":"data quality","kind":"expression","query":"typeof $.value === \"string\" ? $.value.trim() : String($.value)"},{"slug":"admin-permission-check","title":"access control: admin permission check","displayTitle":"admin permission check","category":"access control","kind":"expression","query":"$.active && $.role.toLowerCase().includes(\"admin\") && $.name.trim().length > 0"},{"slug":"parameterised-threshold-query","title":"jsmql template-tag form: parameterised threshold query","displayTitle":"parameterised threshold query","category":"jsmql template-tag form","kind":"expression","query":"$.score >= 75 &&\n$.grade in [\"A\", \"B\"] &&\n$.submitted === true"},{"slug":"invoice-line-greeting-template-literal-optional-chain-startswith","title":"invoice line greeting (template literal + optional chain + .startsWith)","displayTitle":"invoice line greeting (template literal + optional chain + .startsWith)","category":"language features","kind":"expression","query":"`Hi ${$.customer?.firstName ?? 'there'} — your ${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`"},{"slug":"analytics-flatmap-math-max-gettime","title":"analytics — flatMap + Math.max + .getTime","displayTitle":"analytics — flatMap + Math.max + .getTime","category":"language features","kind":"expression","query":"$.sessions\n  .flatMap(s => s.events)\n  .map(e => e.ts.getTime())\n  .reduce((acc, t) => Math.max(acc, t), 0)"},{"slug":"shopping-cart-total-with-numeric-separators-reduce","title":"shopping cart total with numeric separators + .reduce","displayTitle":"shopping cart total with numeric separators + .reduce","category":"language features","kind":"expression","query":"Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))"},{"slug":"pivot-table-row-computed-keys-object-fromentries","title":"pivot table row (computed keys + Object.fromEntries)","displayTitle":"pivot table row (computed keys + Object.fromEntries)","category":"language features","kind":"expression","query":"Object.fromEntries($.metrics.map(m => [m.name, m.value]))"},{"slug":"flex-shape-accumulators-in-realistic-pipelines","title":"flex-shape accumulators in realistic pipelines","displayTitle":"flex-shape accumulators in realistic pipelines","category":"language features","kind":"expression","query":"$round($sum($.lineTotal), 2)"},{"slug":"file-upload-validation-includes-on-array-literal-endswith-numeric-separator","title":"file upload validation (.includes on array literal + .endsWith + numeric separator)","displayTitle":"file upload validation (.includes on array literal + .endsWith + numeric separator)","category":"language features","kind":"expression","query":"[\".jpg\", \".png\", \".pdf\", \".docx\"].includes($.file.ext.toLowerCase()) &&\n$.file.name.endsWith($.file.ext) &&\n$.file.size <= 25_000_000"},{"slug":"score-range-with-spread-array-isarray-guard","title":"score range with spread + Array.isArray guard","displayTitle":"score range with spread + Array.isArray guard","category":"language features","kind":"expression","query":"Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0"},{"slug":"moderator-membership-check-with-array-spread","title":"moderator membership check with array spread","displayTitle":"moderator membership check with array spread","category":"language features","kind":"expression","query":"[...$.moderators, ...$.room.mods, \"root\"].includes($.userId)"},{"slug":"days-since-event-date-now-gettime-numeric-separator","title":"days since event (Date.now + .getTime + numeric separator)","displayTitle":"days since event (Date.now + .getTime + numeric separator)","category":"language features","kind":"expression","query":"Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)"},{"slug":"audit-log-line-template-literal-toisostring-charat-touppercase","title":"audit log line (template literal + .toISOString + .charAt + .toUpperCase)","displayTitle":"audit log line (template literal + .toISOString + .charAt + .toUpperCase)","category":"language features","kind":"expression","query":"`${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`"},{"slug":"tag-aggregation-flat-join","title":"tag aggregation (.flat + .join)","displayTitle":"tag aggregation (.flat + .join)","category":"language features","kind":"expression","query":"$.posts.map(p => p.tags).flat().join(\", \")"},{"slug":"scientific-projection-math-hypot-math-log2-log10-math-sign-math-cbrt-math-pi-e","title":"scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)","displayTitle":"scientific projection (Math.hypot + Math.log2/log10 + Math.sign + Math.cbrt + Math.PI/E)","category":"language features","kind":"expression","query":"{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}"},{"slug":"dynamic-pivot-row-computed-key-in-literal-shorthand-property","title":"dynamic pivot row (computed key in literal + shorthand property)","displayTitle":"dynamic pivot row (computed key in literal + shorthand property)","category":"language features","kind":"expression","query":"$.products.map(p => ({ [p.category]: p.price, p }))"},{"slug":"annotated-insurance-underwriting-rule-and-comments","title":"annotated insurance underwriting rule (// and /* */ comments)","displayTitle":"annotated insurance underwriting rule (// and /* */ comments)","category":"language features","kind":"expression","query":"// age window: 25 to 70 inclusive\n$.driver.age >= 25 && $.driver.age <= 70 &&\n\n/* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */\n$.policy.kmPerYear <= 30_000 &&\n\n// hard-list occupations that bump the applicant to the high-risk tier\n!($.driver.occupation in [\"stunt-double\", \"test-pilot\", \"demolition-engineer\"])"},{"slug":"optional-chaining-inside-array-spread","title":"chat moderation: optional chaining inside array spread","displayTitle":"optional chaining inside array spread","category":"chat moderation","kind":"expression","query":"[...$.moderators, ...$.room?.mods, \"root\"].includes($.userId)"},{"slug":"optional-chaining-inside-string-concat","title":"user display name: optional chaining inside string concat","displayTitle":"optional chaining inside string concat","category":"user display name","kind":"expression","query":"`${$.name?.first} ${$.name?.last}`.trim()"},{"slug":"top-orders-report-by-department","title":"pipeline: top-orders report by department","displayTitle":"top-orders report by department","category":"pipeline","kind":"pipeline","query":"[\n  $match($.status === \"shipped\" && $.placedAt >= \"2026-01-01\"),\n  $lookup({ from: \"users\", localField: \"userId\", foreignField: \"_id\", as: \"buyer\" }),\n  $unwind($.buyer),\n  $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) }),\n  $set({ avgOrder: $.revenue / $.orders }),\n  $sort({ revenue: -1 }),\n  $limit(3)\n]"},{"slug":"order-pricing-with-let-bindings-commentary","title":"pipeline: order pricing with let bindings + commentary","displayTitle":"order pricing with let bindings + commentary","category":"pipeline","kind":"pipeline","query":"let subtotal = $.price * $.qty;       // sub-total before tax/shipping\nlet withTax  = subtotal * 1.2;        // with tax\nlet withShip = withTax + $.shipping;  // with tax and shipping\n$project({ sku: 1, subtotal, withTax, final: withShip });"},{"slug":"count-orders-by-status-per-shop-accumulator-replacement","title":"pipeline: count orders by status per shop ($accumulator replacement)","displayTitle":"count orders by status per shop ($accumulator replacement)","category":"pipeline","kind":"pipeline","query":"[\n  { $group: { _id: $.shopId, statuses: $push($.status) } },\n  { $project: {\n      counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})\n  } }\n]"},{"slug":"invoice-finalisation-pipeline-mutations-match","title":"e-commerce: invoice finalisation pipeline (mutations + $match)","displayTitle":"invoice finalisation pipeline (mutations + $match)","category":"e-commerce","kind":"pipeline","query":"[\n  $match($.status === 'pending' && $.paidAt != null),\n  $.lineTotal = $.qty * $.unitPrice,\n  $.invoiceCount += 1,\n  delete $.tempToken,\n  delete $._processingState,\n  $.status = 'complete'\n]"},{"slug":"invoice-finalisation-pipeline-implicit-form","title":"e-commerce: invoice finalisation pipeline (implicit `;` form)","displayTitle":"invoice finalisation pipeline (implicit `;` form)","category":"e-commerce","kind":"pipeline","query":"$match($.status === 'pending' && $.paidAt != null);\n$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;\ndelete $.tempToken, delete $._processingState;\n$.status = 'complete'"}]</script>
     <!-- jsmql-examples:end -->
 
     <script type="module">
@@ -263,9 +652,18 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       const inputEl = document.getElementById("input");
       const outputEl = document.getElementById("output");
       const outputPanel = document.getElementById("output-panel");
+      const inputPanel = document.getElementById("input-panel");
       const prettify = document.getElementById("prettify");
-      const example = document.getElementById("example");
       const copyBtn = document.getElementById("copy");
+      const searchEl = document.getElementById("search");
+      const listEl = document.getElementById("example-list");
+      const noMatchesEl = document.getElementById("no-matches");
+      const toggleSidebarBtn = document.getElementById("toggle-sidebar");
+      const toggleSidebarLabel = document.getElementById("toggle-sidebar-label");
+      const mainEl = document.getElementById("main");
+      const currentTitleEl = document.getElementById("current-title");
+      const currentKindEl = document.getElementById("current-kind");
+      const countEl = document.getElementById("example-count");
 
       const inputCm = CodeMirror.fromTextArea(inputEl, {
         mode: { name: "javascript" },
@@ -285,28 +683,240 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
 
       // Example queries live in test/realistic.test.ts. `scripts/sync-
       // playground.mjs` extracts the first jsmql(...) call from each top-
-      // level describe and embeds the result in the #examples-data JSON
-      // block above, so this file is self-sufficient with no fetches.
-      const examples = new Map(); // slug → { title, query }
+      // level describe and embeds the result — together with derived
+      // category and kind metadata — in the #examples-data JSON block
+      // above, so this file is self-sufficient with no fetches.
+      const examples = new Map(); // slug → entry
+      const itemEls = new Map(); // slug → button element
+      let orderedSlugs = []; // render order
+      let visibleSlugs = []; // current filtered order (for ↑/↓ nav)
+      let activeSlug = null;
 
-      function loadExample(key) {
-        const e = examples.get(key);
-        return e ? e.query : "";
+      // Preferred category order — categories present in the data are
+      // rendered in this sequence, then any unknown category falls in
+      // alphabetically at the end. Mirrors the loose narrative arc of
+      // realistic.test.ts (business scenarios → language showcase →
+      // multi-stage pipelines).
+      const CATEGORY_ORDER = [
+        "e-commerce",
+        "user analytics",
+        "content pipeline",
+        "reporting",
+        "inventory",
+        "financial",
+        "user display",
+        "user display name",
+        "location",
+        "data quality",
+        "access control",
+        "chat moderation",
+        "jsmql template-tag form",
+        "language features",
+        "pipeline",
+      ];
+
+      function compareCategories(a, b) {
+        const ai = CATEGORY_ORDER.indexOf(a);
+        const bi = CATEGORY_ORDER.indexOf(b);
+        if (ai === -1 && bi === -1) return a.localeCompare(b);
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
       }
 
       function populateExamples() {
         const list = JSON.parse(document.getElementById("examples-data").textContent);
-        const frag = document.createDocumentFragment();
-        for (const { slug, title, query } of list) {
-          examples.set(slug, { title, query });
-          const opt = document.createElement("option");
-          opt.value = slug;
-          opt.textContent = title;
-          frag.appendChild(opt);
+        const groups = new Map();
+        for (const ex of list) {
+          examples.set(ex.slug, ex);
+          if (!groups.has(ex.category)) groups.set(ex.category, []);
+          groups.get(ex.category).push(ex);
         }
-        example.replaceChildren(frag);
-        example.disabled = false;
+        const cats = [...groups.keys()].sort(compareCategories);
+
+        const frag = document.createDocumentFragment();
+        for (const cat of cats) {
+          const section = document.createElement("section");
+          section.className = "cat-group";
+          section.dataset.category = cat;
+
+          const heading = document.createElement("div");
+          heading.className = "cat-heading";
+          const catName = document.createElement("span");
+          catName.className = "cat-name";
+          catName.textContent = cat;
+          const catCount = document.createElement("span");
+          catCount.className = "cat-count";
+          catCount.textContent = groups.get(cat).length;
+          heading.append(catName, catCount);
+          section.appendChild(heading);
+
+          for (const ex of groups.get(cat)) {
+            const item = document.createElement("button");
+            item.type = "button";
+            item.className = "example-item " + ex.kind;
+            item.dataset.slug = ex.slug;
+
+            const titleEl = document.createElement("span");
+            titleEl.className = "ex-title";
+            titleEl.textContent = ex.displayTitle;
+
+            const kindEl = document.createElement("span");
+            kindEl.className = "ex-kind " + ex.kind;
+            kindEl.textContent = ex.kind === "pipeline" ? "PIPE" : "EXPR";
+
+            item.append(titleEl, kindEl);
+            item.addEventListener("click", () => {
+              selectExample(ex.slug);
+              inputCm.focus();
+            });
+            section.appendChild(item);
+            itemEls.set(ex.slug, item);
+            orderedSlugs.push(ex.slug);
+          }
+          frag.appendChild(section);
+        }
+        listEl.replaceChildren(frag);
+
+        const pipelines = list.filter((e) => e.kind === "pipeline").length;
+        const expressions = list.length - pipelines;
+        countEl.textContent = `${list.length} (${expressions} expr · ${pipelines} pipe)`;
       }
+
+      function selectExample(slug, { scroll = true } = {}) {
+        const ex = examples.get(slug);
+        if (!ex) return;
+        activeSlug = slug;
+        loadingFromList = true;
+        inputCm.setValue(ex.query);
+        loadingFromList = false;
+
+        currentTitleEl.textContent = ex.displayTitle;
+        currentKindEl.hidden = false;
+        currentKindEl.className = "kind-pill " + ex.kind;
+        currentKindEl.textContent = ex.kind === "pipeline" ? "PIPELINE" : "EXPRESSION";
+        inputPanel.classList.toggle("pipeline", ex.kind === "pipeline");
+
+        for (const [s, el] of itemEls) {
+          el.classList.toggle("active", s === slug);
+        }
+        if (scroll) {
+          const active = itemEls.get(slug);
+          if (active) active.scrollIntoView({ block: "nearest" });
+        }
+      }
+
+      // When the user freely edits the input, we no longer match a stored
+      // example. Clear the active highlight so the sidebar reflects state.
+      let loadingFromList = false;
+      function clearActiveOnUserEdit() {
+        if (loadingFromList || activeSlug == null) return;
+        const ex = examples.get(activeSlug);
+        if (!ex || inputCm.getValue() === ex.query) return;
+        activeSlug = null;
+        for (const el of itemEls.values()) el.classList.remove("active");
+        currentTitleEl.textContent = "";
+        currentKindEl.hidden = true;
+        inputPanel.classList.remove("pipeline");
+      }
+
+      function filterList(rawQuery) {
+        const q = rawQuery.trim().toLowerCase();
+        visibleSlugs = [];
+        let anyVisible = false;
+        for (const groupEl of listEl.querySelectorAll(".cat-group")) {
+          let groupHasMatch = false;
+          for (const item of groupEl.querySelectorAll(".example-item")) {
+            const slug = item.dataset.slug;
+            const ex = examples.get(slug);
+            const haystack =
+              ex.displayTitle.toLowerCase() +
+              " " +
+              ex.category.toLowerCase() +
+              " " +
+              ex.kind +
+              " " +
+              ex.query.toLowerCase();
+            const match = q === "" || haystack.includes(q);
+            item.hidden = !match;
+            if (match) {
+              visibleSlugs.push(slug);
+              groupHasMatch = true;
+            }
+          }
+          groupEl.hidden = !groupHasMatch;
+          if (groupHasMatch) anyVisible = true;
+        }
+        noMatchesEl.hidden = anyVisible;
+      }
+
+      function stepSelection(dir) {
+        if (visibleSlugs.length === 0) return;
+        const idx = activeSlug ? visibleSlugs.indexOf(activeSlug) : -1;
+        let next;
+        if (idx === -1) {
+          next = dir > 0 ? 0 : visibleSlugs.length - 1;
+        } else {
+          next = (idx + dir + visibleSlugs.length) % visibleSlugs.length;
+        }
+        selectExample(visibleSlugs[next]);
+      }
+
+      searchEl.addEventListener("input", () => filterList(searchEl.value));
+      searchEl.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          stepSelection(1);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          stepSelection(-1);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          if (!activeSlug && visibleSlugs.length > 0) {
+            selectExample(visibleSlugs[0]);
+          }
+          inputCm.focus();
+        } else if (e.key === "Escape") {
+          if (searchEl.value !== "") {
+            searchEl.value = "";
+            filterList("");
+          } else {
+            inputCm.focus();
+          }
+        }
+      });
+
+      // ⌘K / Ctrl+K focuses the example search from anywhere.
+      // ⌘B / Ctrl+B toggles the sidebar.
+      window.addEventListener("keydown", (e) => {
+        const mod = e.metaKey || e.ctrlKey;
+        if (!mod) return;
+        const key = e.key.toLowerCase();
+        if (key === "k") {
+          e.preventDefault();
+          // ⌘K means "go find an example" — auto-reveal the sidebar if it
+          // was collapsed, otherwise focusing a `display: none` input is
+          // a silent no-op.
+          if (mainEl.classList.contains("sidebar-collapsed")) toggleSidebar();
+          searchEl.focus();
+          searchEl.select();
+        } else if (key === "b") {
+          e.preventDefault();
+          toggleSidebar();
+        }
+      });
+
+      function toggleSidebar() {
+        const collapsed = mainEl.classList.toggle("sidebar-collapsed");
+        toggleSidebarLabel.textContent = collapsed ? "Show examples" : "Hide examples";
+        // CodeMirror caches the gutter width when first laid out; force a
+        // refresh after the grid columns change so the editors re-measure.
+        requestAnimationFrame(() => {
+          inputCm.refresh();
+          outputCm.refresh();
+        });
+      }
+      toggleSidebarBtn.addEventListener("click", toggleSidebar);
 
       let errorMarker = null;
       function clearErrorMarker() {
@@ -367,6 +977,7 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       }
 
       function render() {
+        clearActiveOnUserEdit();
         const src = inputCm.getValue();
         if (src.trim() === "") {
           clearErrorMarker();
@@ -396,9 +1007,6 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
 
       inputCm.on("change", render);
       prettify.addEventListener("change", render);
-      example.addEventListener("change", () => {
-        inputCm.setValue(loadExample(example.value));
-      });
 
       let copyResetTimer = null;
       copyBtn.addEventListener("click", async () => {
@@ -417,7 +1025,8 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       });
 
       populateExamples();
-      inputCm.setValue(loadExample(example.value));
+      filterList("");
+      if (orderedSlugs.length > 0) selectExample(orderedSlugs[0], { scroll: false });
     </script>
   </body>
 </html>

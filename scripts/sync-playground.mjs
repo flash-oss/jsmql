@@ -35,13 +35,49 @@ import ts from "typescript";
 import { build } from "esbuild";
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
 const ENTRY = path.join(ROOT, "src/index.ts");
 const HTML = path.join(ROOT, "playground.html");
+
+// Stage names from the registry — used by `detectKind()` to distinguish
+// pipelines (contain at least one $stage call or `{ $stage: … }` key) from
+// plain expressions. Imported live so the heuristic never drifts from the
+// language definition. Runs natively on Node 24+ (strippable TS).
+const { STAGES } = await import(pathToFileURL(path.join(ROOT, "src/stages.ts")).href);
+const STAGE_NAMES = Object.keys(STAGES);
+const STAGE_REGEX = new RegExp(`\\$(?:${STAGE_NAMES.map((n) => n.slice(1)).join("|")})\\s*[(:]`);
+
+function stripStringsAndComments(src) {
+  // Approximate but good enough for the small extracted-query corpus: kill
+  // line/block comments and string/template bodies so a stray "$match(" in a
+  // string literal doesn't trick us into calling something a pipeline.
+  return src
+    .replace(/\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/`(?:[^`\\$]|\\.|\$\{[^{}]*\})*`/g, "``");
+}
+
+function detectKind(query) {
+  return STAGE_REGEX.test(stripStringsAndComments(query)) ? "pipeline" : "expression";
+}
+
+function deriveCategory(title) {
+  // Describe titles in test/realistic.test.ts follow either `category: rest`
+  // (business-domain scenarios) or a bare descriptor (the "Modern JS
+  // features" cluster). Treat the prefix as a category only when it looks
+  // like one: short, no parens/commas, words+spaces+hyphens only.
+  const m = title.match(/^([^:]{1,32}):\s+(.+)$/);
+  if (m && /^[a-z][a-z0-9\- ]+$/i.test(m[1])) {
+    return { category: m[1], displayTitle: m[2] };
+  }
+  return { category: "language features", displayTitle: title };
+}
 
 const BUNDLE_START = "<!-- jsmql-bundle:start";
 const BUNDLE_END = "<!-- jsmql-bundle:end -->";
@@ -263,7 +299,9 @@ function extractExamples() {
     }
 
     const slug = makeSlug(title, usedSlugs);
-    examples.push({ slug, title, query });
+    const { category, displayTitle } = deriveCategory(title);
+    const kind = detectKind(query);
+    examples.push({ slug, title, displayTitle, category, kind, query });
   }
 
   if (examples.length === 0) fail("no examples extracted from test/realistic.test.ts");
