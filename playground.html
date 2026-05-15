@@ -705,47 +705,19 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       let visibleSlugs = []; // current filtered order (for ↑/↓ nav)
       let activeSlug = null;
 
-      // Preferred category order — categories present in the data are
-      // rendered in this sequence, then any unknown category falls in
-      // alphabetically at the end. Mirrors the loose narrative arc of
-      // realistic.test.ts (business scenarios → language showcase →
-      // multi-stage pipelines).
-      const CATEGORY_ORDER = [
-        "e-commerce",
-        "user analytics",
-        "content pipeline",
-        "reporting",
-        "inventory",
-        "financial",
-        "user display",
-        "user display name",
-        "location",
-        "data quality",
-        "access control",
-        "chat moderation",
-        "jsmql template-tag form",
-        "language features",
-        "pipeline",
-      ];
-
-      function compareCategories(a, b) {
-        const ai = CATEGORY_ORDER.indexOf(a);
-        const bi = CATEGORY_ORDER.indexOf(b);
-        if (ai === -1 && bi === -1) return a.localeCompare(b);
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
-        return ai - bi;
-      }
-
       function populateExamples() {
         const list = JSON.parse(document.getElementById("examples-data").textContent);
         const groups = new Map();
+        // Categories appear in the sidebar in the order their first example
+        // shows up in `examples-data`, which is `test/realistic.test.ts`'s
+        // describe-order verbatim. Reorganise the test file and the sidebar
+        // follows — no playground-side allow-list to keep in sync.
         for (const ex of list) {
           examples.set(ex.slug, ex);
           if (!groups.has(ex.category)) groups.set(ex.category, []);
           groups.get(ex.category).push(ex);
         }
-        const cats = [...groups.keys()].sort(compareCategories);
+        const cats = [...groups.keys()];
 
         const frag = document.createDocumentFragment();
         for (const cat of cats) {
