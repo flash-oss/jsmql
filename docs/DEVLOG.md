@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-16 — LANGUAGE.md sync: five stale claims fixed
+
+Audit pass over [docs/LANGUAGE.md](LANGUAGE.md) against the current implementation surfaced five claims that no longer matched what the compiler emits or rejects. All five are doc-only fixes; no source under `src/` changed.
+
+1. **FAQ vs. type-aware dispatch contradiction.** The FAQ at the bottom of the file claimed `.includes()` / `.indexOf()` / `.concat()` on a bare `$.field` "defaults to string semantics," contradicting the canonical Array Methods section a few hundred lines above (which describes the runtime `$cond` on `$isArray`). The implementation matches the canonical section — see [src/codegen.ts:1597-1617](../src/codegen.ts). FAQ rewritten to describe the runtime dispatch and point at the type-hint workarounds.
+2. **`$literal` "argument not evaluated" claim.** jsmql evaluates `$literal`'s argument like every other operator (`$literal($.a + $.b)` → `{ $literal: { $add: ["$a", "$b"] } }`). What's special about `$literal` is that *MongoDB* doesn't re-evaluate its contents at query time. Heading and prose rewritten to make the distinction.
+3. **Unknown-method error format.** Docs claimed the error appends `String methods: trim, trimStart, …`; the actual message ends after the method name, with an optional `Did you mean '.trim()'?` when [closestNameTo](../src/levenshtein.ts) finds a near match ([src/codegen.ts:2021-2023](../src/codegen.ts)). Example updated to reflect the real format and to also show the suggestion case.
+4. **`in` RHS error wording.** Doc copy was missing `object literal` from the accepted shapes — added by the `in` against object-literal RHS work and never backported here ([src/codegen.ts:951](../src/codegen.ts)).
+5. **`$$NOW` in a mutation example.** A pipeline example used `$.lastSeenAt = $$NOW` in source position, but jsmql has no JS-syntax surface for `$$NOW` — the lexer rejects `$$` at the start of an identifier. The example now uses `new Date()` (which lowers to `{ $toDate: "$$NOW" }` via [src/codegen.ts:593](../src/codegen.ts)), with the expected output updated to match.
+
+---
+
 ## 2026-05-15 — Dual ESM + CJS distribution, Node 14+ as the floor
 
 The package now ships a CommonJS build alongside the existing ESM one so `require('@koresar/jsmql')` works on Node 14+ CJS consumers without forcing them onto ESM. `package.json#exports` gained `import` / `require` conditions for both `.` and `./ops`; `main` is repointed at `dist/cjs/index.cjs` so older resolvers (or any tool that still ignores `exports`) get a working entry point. `module` is added for bundlers that key off it. Engines stays at `>=14` — that has been our claimed floor, but until now `"type": "module"` made a CJS-only Node app fail at `require()`.

@@ -1011,13 +1011,13 @@ $bitXor($.a, $.b)                  // { $bitXor: ["$a", "$b"] }
 $bitNot($.flags)                   // { $bitNot: "$flags" }
 ```
 
-### `$literal` — bypass expression evaluation
+### `$literal` — bypass MongoDB's runtime expression evaluation
 
-⚠️ **Watch out:** `$literal` is the only operator whose argument is **not** evaluated as an expression. Use it when you want to keep a value the pipeline would otherwise interpret as a field reference (anything starting with `$`):
+Use `$literal` to keep a value MongoDB would otherwise interpret as a field reference at query time (any string starting with `$`). jsmql compiles the argument like any other expression; what makes `$literal` special is that MongoDB's pipeline does **not** re-evaluate its content as an expression at runtime:
 
 ```js
 $literal("$foo")                   // { $literal: "$foo" }   — the literal string "$foo"
-                                   //   (without $literal, "$foo" would mean field foo)
+                                   //   (without $literal, "$foo" would mean field foo at runtime)
 $literal(42)                       // { $literal: 42 }       — equivalent to bare 42
 ```
 
@@ -1203,12 +1203,12 @@ Mutations can appear as pipeline elements alongside ordinary stages. The same co
 jsmql(`[
   $match($.active),
   $.score += 1,
-  $.lastSeenAt = $$NOW,
+  $.lastSeenAt = new Date(),
   $sort({ score: -1 })
 ]`)
 // → [
 //     { $match: { $expr: "$active" } },   // bare field ref isn't a comparison; stays $expr
-//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
+//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
 //     { $sort: { score: -1 } }
 //   ]
 ```
@@ -1751,10 +1751,13 @@ jsmql("$.age >>");
 // ParseError: Unexpected token '>' at position 7
 
 jsmql('$.status in "active"');
-// CodegenError: Right-hand side of 'in' must be an array literal or field reference, not a scalar value
+// CodegenError: Right-hand side of 'in' must be an array literal, object literal, or field reference, not a scalar value
 
 jsmql("$.name.frobulate()");
-// CodegenError: Unknown method '.frobulate()'. String methods: trim, trimStart, ...
+// CodegenError: Unknown method '.frobulate()'.
+
+jsmql("$.name.trinm()");
+// CodegenError: Unknown method '.trinm()'. Did you mean '.trim()'?
 ```
 
 ---
@@ -2134,8 +2137,8 @@ null        = "null"
 **Q: How do I get an array's length?**
 A: Use `.length`: `$.items.length` works for both arrays and strings (jsmql dispatches by receiver type). The `$size()` escape hatch is also available if you want to force the array form: `$size($.items)`.
 
-**Q: Why doesn't `$.field.includes(x)` use `$in` for arrays?**
-A: A bare field reference's type is unknown at compile time, so jsmql defaults to string semantics for `.includes()`/`.indexOf()`/`.concat()`. When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — jsmql emits the array form. To force array semantics, use `$in($.items, x)` or rebuild the chain so the type is known (e.g. `$.items.map(x => x).includes(target)`).
+**Q: How does `$.field.includes(x)` know whether to use `$in` or string-substring matching?**
+A: When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — jsmql emits the array form (`$in` / `$indexOfArray` / `$concatArrays`). When it is demonstrably a string — `.toLowerCase()`, `String(x)`, template literal, etc. — it emits the string form. For a bare field reference whose type can't be known at compile time, jsmql emits a runtime `$cond` on `$isArray` that picks the right form at query time. If you want compact output, hint by chaining a type-fixing method first (e.g. `$.items.slice().includes(target)` for array, `$.tags.toLowerCase().includes("x")` for string), or call the operator directly: `$in($.items, x)`.
 
 **Q: Does `?.` actually short-circuit?**
 A: For field paths, MongoDB already returns `null`/missing when traversing through missing fields, so `$.a?.b?.c` and `$.a.b.c` produce the same MQL — `?.` is purely a JS-readability sugar.
