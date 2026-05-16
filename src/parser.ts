@@ -1376,7 +1376,7 @@ export class Parser {
         if (name === "Math") return this.parseMathReference();
         if (name === "Object") return this.parseObjectCall();
         if (name === "Date" && this.lexer.lookahead(1).type === TokenType.Dot) {
-          return this.parseDateNow();
+          return this.parseDateStatic();
         }
         if (name === "Array" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseArrayStaticCall();
@@ -1605,33 +1605,73 @@ export class Parser {
     if (this.lexer.peek().type === TokenType.RParen) {
       this.lexer.next();
       return cls === "Date"
-        ? { type: "NewDate", arg: null, pos: newTok.pos }
+        ? { type: "NewDate", args: [], pos: newTok.pos }
         : { type: "NewSet", arg: null, pos: newTok.pos };
     }
-    const arg = this.parseExpression();
+    const args: Expr[] = [this.parseExpression()];
+    while (this.lexer.peek().type === TokenType.Comma) {
+      this.lexer.next();
+      args.push(this.parseExpression());
+    }
     this.lexer.expect(TokenType.RParen);
-    return cls === "Date"
-      ? { type: "NewDate", arg, pos: newTok.pos }
-      : { type: "NewSet", arg, pos: newTok.pos };
+    if (cls === "Set") {
+      if (args.length > 1) {
+        throw new ParseError(
+          `'new Set(...)' takes 0 or 1 arguments, got ${args.length} at position ${newTok.pos}`,
+          newTok.pos,
+        );
+      }
+      return { type: "NewSet", arg: args[0], pos: newTok.pos };
+    }
+    if (args.length > 7) {
+      throw new ParseError(
+        `'new Date(year, month, day, hour, minute, second, ms)' takes at most 7 arguments, got ${args.length} at position ${newTok.pos}`,
+        newTok.pos,
+      );
+    }
+    return { type: "NewDate", args, pos: newTok.pos };
   }
 
-  /** "Date.now()" — recognised as a primary; other Date.* members are not supported */
-  private parseDateNow(): Expr {
+  /** "Date.now()" or "Date.UTC(year, month, day, …)" — other Date.* members are not supported */
+  private parseDateStatic(): Expr {
     const dateTok = this.lexer.next(); // consume 'Date'
     this.lexer.expect(TokenType.Dot);
     const methodTok = this.lexer.peek();
-    if (methodTok.type !== TokenType.Ident || methodTok.value !== "now") {
-      throw new ParseError(
-        `Unknown Date method '${methodTok.value}' at position ${methodTok.pos}. ` +
-          `Only Date.now() is supported as a JS-style call; for other date operations ` +
-          `use the $date* operators directly (e.g. $dateAdd, $dateDiff, $dateTrunc, $dateToString).`,
-        dateTok.pos,
-      );
+    if (methodTok.type !== TokenType.Ident) {
+      throw new ParseError(`Expected Date method name at position ${methodTok.pos}`, methodTok.pos);
     }
-    this.lexer.next(); // consume 'now'
-    this.lexer.expect(TokenType.LParen);
-    this.lexer.expect(TokenType.RParen);
-    return { type: "DateNow", pos: dateTok.pos };
+    if (methodTok.value === "now") {
+      this.lexer.next(); // consume 'now'
+      this.lexer.expect(TokenType.LParen);
+      this.lexer.expect(TokenType.RParen);
+      return { type: "DateNow", pos: dateTok.pos };
+    }
+    if (methodTok.value === "UTC") {
+      this.lexer.next(); // consume 'UTC'
+      this.lexer.expect(TokenType.LParen);
+      const args: Expr[] = [];
+      if (this.lexer.peek().type !== TokenType.RParen) {
+        args.push(this.parseExpression());
+        while (this.lexer.peek().type === TokenType.Comma) {
+          this.lexer.next();
+          args.push(this.parseExpression());
+        }
+      }
+      this.lexer.expect(TokenType.RParen);
+      if (args.length < 1 || args.length > 7) {
+        throw new ParseError(
+          `Date.UTC(year[, month, day, hour, minute, second, ms]) takes 1 to 7 arguments, got ${args.length} at position ${dateTok.pos}`,
+          dateTok.pos,
+        );
+      }
+      return { type: "DateUTC", args, pos: dateTok.pos };
+    }
+    throw new ParseError(
+      `Unknown Date method '${methodTok.value}' at position ${methodTok.pos}. ` +
+        `Only Date.now() and Date.UTC(…) are supported as JS-style calls; for other date operations ` +
+        `use the $date* operators directly (e.g. $dateAdd, $dateDiff, $dateTrunc, $dateToString).`,
+      dateTok.pos,
+    );
   }
 
   /** "Array.isArray(x)" or "Array.from(input)" or "Array.from(input, mapFn)" */
@@ -2034,6 +2074,8 @@ function describeMutationTarget(target: Expr): string {
       return "a 'new Set(…)' expression";
     case "DateNow":
       return "the result of Date.now()";
+    case "DateUTC":
+      return "the result of Date.UTC(…)";
     case "ArrayFrom":
       return "an Array.from(…) result";
     case "NumberStatic":

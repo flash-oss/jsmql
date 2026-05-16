@@ -186,6 +186,7 @@ const STRING_RETURNING_METHODS = new Set([
   "toLowerCase",
   "toUpperCase",
   "substr",
+  "substring",
   "replace",
   "replaceAll",
   "charAt",
@@ -219,10 +220,11 @@ const ARRAY_RETURNING_METHODS = new Set([
   "split",
   "map",
   "filter",
-  "slice",
   "reverse",
   "toReversed",
   "toSorted",
+  "toSpliced",
+  "with",
   "flat",
   "flatMap",
 ]);
@@ -234,6 +236,8 @@ function isArrayProducing(expr: Expr): boolean {
     case "OperatorCall":
       return ARRAY_OUTPUT_OPS.has(expr.name);
     case "MethodCall":
+      // `.slice` preserves receiver type — array→array, string→string.
+      if (expr.method === "slice") return isArrayProducing(expr.object);
       return ARRAY_RETURNING_METHODS.has(expr.method);
     case "ObjectCall":
       return expr.method === "entries" || expr.method === "keys" || expr.method === "values";
@@ -255,6 +259,8 @@ function isStringProducing(expr: Expr): boolean {
     case "OperatorCall":
       return STRING_OUTPUT_OPS.has(expr.name);
     case "MethodCall":
+      // `.slice` preserves receiver type — array→array, string→string.
+      if (expr.method === "slice") return isStringProducing(expr.object);
       return STRING_RETURNING_METHODS.has(expr.method);
     case "TypeCast":
       return expr.cast === "String";
@@ -386,6 +392,96 @@ function gensymInScope(ctx: GenerateCtx, base: string): string {
     const name = `${base}${i}`;
     if (!ctx.lambdaParams.has(name)) return name;
   }
+}
+
+/**
+ * Clamp a string-index AST node to non-negative, matching JS `.substring`
+ * semantics where negative arguments are treated as 0. Folds at compile time
+ * when the node is a literal number (or unary-minus of one); otherwise wraps
+ * the generated value in `$max:[0, …]` so the runtime sees a non-negative
+ * index.
+ */
+function clampNonNegativeIndex(node: Expr, ctx: GenerateCtx): unknown {
+  if (node.type === "NumberLiteral") return Math.max(0, node.value);
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
+    return Math.max(0, -node.operand.value);
+  }
+  return { $max: [0, _generate(node, ctx)] };
+}
+
+/** Clamp a derived length value to non-negative, folding when known. */
+function clampNonNegativeLength(value: unknown): unknown {
+  if (typeof value === "number") return Math.max(0, value);
+  return { $max: [0, value] };
+}
+
+/** Subtract `b` from `a`, folding when both operands are numeric literals. */
+function foldedSubtract(a: unknown, b: unknown): unknown {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return { $subtract: [a, b] };
+}
+
+/**
+ * Normalise a JS-style `.slice` index against a string length. JS treats
+ * negative indices as `len + idx`; MQL `$substrCP` rejects negatives. Folds
+ * literal negatives into `$strLenCP - n` at compile time; non-literals expand
+ * to a `$cond` that picks the form at runtime.
+ *
+ * `genObj` is reused for `$strLenCP` rather than re-generating from the
+ * source AST, so callers should pass the same generated value they use in
+ * the surrounding `$substrCP` call.
+ */
+function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unknown {
+  if (node.type === "NumberLiteral") {
+    if (node.value >= 0) return node.value;
+    return foldedSubtract({ $strLenCP: genObj }, -node.value);
+  }
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
+    return foldedSubtract({ $strLenCP: genObj }, node.operand.value);
+  }
+  const gen = _generate(node, ctx);
+  return {
+    $cond: [{ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen],
+  };
+}
+
+/** Lower `.slice` on a known-array (or fallback) receiver to MQL `$slice`. */
+function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
+  if (exprArgs.length === 0) return genObj;
+  if (exprArgs.length === 1) return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
+  return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+}
+
+/** Lower `.slice` on a known-string receiver to MQL `$substrCP`. */
+function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
+  if (exprArgs.length === 0) return genObj;
+  const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
+  if (exprArgs.length === 1) {
+    // For 1-arg `.slice(-n)` on a string, the length is exactly `n` (JS
+    // returns the last n characters). Fold that case so the output isn't
+    // a noisy `strLen - (strLen - n)`.
+    const negativeLiteral = negativeLiteralValue(exprArgs[0]);
+    if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
+    return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+  }
+  const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
+  return {
+    $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))],
+  };
+}
+
+/** Return the absolute value of a negative numeric literal AST node, else null. */
+function negativeLiteralValue(node: Expr): number | null {
+  if (node.type === "NumberLiteral" && node.value < 0) return -node.value;
+  if (
+    node.type === "UnaryExpr" &&
+    node.op === "-" &&
+    node.operand.type === "NumberLiteral" &&
+    node.operand.value > 0
+  ) {
+    return node.operand.value;
+  }
+  return null;
 }
 
 /**
@@ -646,7 +742,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return { $type: _generate(expr.operand, ctx) };
 
     case "NewDate":
-      return { $toDate: expr.arg ? _generate(expr.arg, ctx) : "$$NOW" };
+      return generateNewDate(expr.args, ctx);
 
     case "NewSet":
       // `new Set(arr)` is a tag for the value — used as a receiver in set-method calls
@@ -663,6 +759,9 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "DateNow":
       // Date.now() returns ms since epoch — match JS semantics
       return { $toLong: "$$NOW" };
+
+    case "DateUTC":
+      return generateDateUTC(expr.args, ctx);
 
     case "TypeCast":
       return generateTypeCast(expr.cast, expr.arg, ctx, expr.pos);
@@ -737,6 +836,7 @@ const OPTIONAL_STRING_METHODS: ReadonlySet<string> = new Set([
   "toLowerCase",
   "toUpperCase",
   "substr",
+  "substring",
   "charAt",
   "split",
   "startsWith",
@@ -753,7 +853,6 @@ const OPTIONAL_STRING_METHODS: ReadonlySet<string> = new Set([
 
 const OPTIONAL_ARRAY_METHODS: ReadonlySet<string> = new Set([
   "at",
-  "slice",
   "reverse",
   "toReversed",
   "toSorted",
@@ -776,7 +875,12 @@ const OPTIONAL_ARRAY_METHODS: ReadonlySet<string> = new Set([
 // string-producing, `[]` otherwise — `[]` is also safe for the runtime-dispatch
 // path because `$isArray([])` is true, sending it down the array branch which
 // returns the same sensible empty-array result the JS short-circuit would.
-const OPTIONAL_EITHER_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "concat"]);
+const OPTIONAL_EITHER_METHODS: ReadonlySet<string> = new Set([
+  "indexOf",
+  "includes",
+  "concat",
+  "slice",
+]);
 
 function neutralForMethod(method: string, object: Expr): unknown | undefined {
   if (OPTIONAL_STRING_METHODS.has(method)) return "";
@@ -1566,6 +1670,29 @@ function generateMethodCall(
       }
       throw new CodegenError(`.substr() requires 1 or 2 arguments (start[, count])`, callPos);
     }
+    case "substring": {
+      const exprArgs = exprArgsOnly(args, "substring");
+      if (exprArgs.length === 0) return genObj;
+      if (exprArgs.length > 2) {
+        throw new CodegenError(
+          `.substring() requires 0, 1, or 2 arguments (start[, end])`,
+          callPos,
+        );
+      }
+      // JS .substring(s, e) takes end-exclusive; MQL $substrCP takes a length.
+      // JS clamps negative indices to 0 (and would also swap if start > end —
+      // we model the clamping but not the swap; see docs/specs/string-methods.md).
+      const start = clampNonNegativeIndex(exprArgs[0], ctx);
+      if (exprArgs.length === 1) {
+        return {
+          $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)],
+        };
+      }
+      const end = clampNonNegativeIndex(exprArgs[1], ctx);
+      return {
+        $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))],
+      };
+    }
     case "charAt": {
       const exprArgs = exprArgsOnly(args, "charAt");
       if (exprArgs.length !== 1) {
@@ -1627,6 +1754,40 @@ function generateMethodCall(
           { $indexOfArray: [genObj, needle] },
           { $indexOfCP: [genObj, needle] },
         ],
+      };
+    }
+    case "lastIndexOf": {
+      const exprArgs = exprArgsOnly(args, "lastIndexOf");
+      if (exprArgs.length !== 1) {
+        throw new CodegenError(`.lastIndexOf(searchValue) requires exactly 1 argument`, callPos);
+      }
+      if (isStringProducing(object)) {
+        throw new CodegenError(
+          `.lastIndexOf() on strings isn't supported — MongoDB's \$indexOfCP is forward-only. Use \$op($indexOfCP, str, needle) for first-match indexing.`,
+          callPos,
+        );
+      }
+      const needle = _generate(exprArgs[0], ctx);
+      // Find the first match in the reversed array, then map back to the original index.
+      // Wrap with $let so genObj is evaluated once.
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj },
+          in: {
+            $let: {
+              vars: {
+                jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] },
+              },
+              in: {
+                $cond: [
+                  { $eq: ["$$jsmqlRevIdx", -1] },
+                  -1,
+                  { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
+                ],
+              },
+            },
+          },
+        },
       };
     }
     case "replace": {
@@ -1789,13 +1950,21 @@ function generateMethodCall(
     }
     case "slice": {
       const exprArgs = exprArgsOnly(args, "slice");
-      if (exprArgs.length === 1) {
-        return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
+      if (exprArgs.length > 2) {
+        throw new CodegenError(`.slice() requires 0, 1, or 2 arguments (start[, end])`, callPos);
       }
-      if (exprArgs.length === 2) {
-        return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
-      }
-      throw new CodegenError(`.slice(start[, end]) requires 1 or 2 arguments`, callPos);
+      // Receiver-type dispatch: known array → $slice (native negative-index support);
+      // known string → $substrCP (with compile-time/runtime normalisation of negatives);
+      // unknown → runtime $cond on $isArray so a bare $.field works for either type.
+      if (isStringProducing(object)) return sliceString(genObj, exprArgs, ctx);
+      if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
+      return {
+        $cond: [
+          { $isArray: genObj },
+          sliceArray(genObj, exprArgs, ctx),
+          sliceString(genObj, exprArgs, ctx),
+        ],
+      };
     }
     case "reverse":
     case "toReversed": {
@@ -1813,29 +1982,144 @@ function generateMethodCall(
       }
       return { $sortArray: { input: genObj, sortBy: 1 } };
     }
-    case "findLast": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+    case "toSpliced": {
+      const exprArgs = exprArgsOnly(args, "toSpliced");
+      if (exprArgs.length < 1) {
+        throw new CodegenError(
+          `.toSpliced() requires at least 1 argument (start[, deleteCount, ...items])`,
+          callPos,
+        );
+      }
+      const startArg = exprArgs[0];
+      if (isNegativeLiteral(startArg)) {
+        throw new CodegenError(
+          `.toSpliced() with a negative start index isn't supported — MongoDB \$slice's position arg is non-negative.`,
+          startArg.pos,
+        );
+      }
+      const start = _generate(startArg, ctx);
+      // deleteCount omitted ⇒ remove to end. Match JS exactly.
+      const hasDeleteCount = exprArgs.length >= 2;
+      const deleteCountArg = hasDeleteCount ? exprArgs[1] : null;
+      if (deleteCountArg && isNegativeLiteral(deleteCountArg)) {
+        throw new CodegenError(
+          `.toSpliced() with a negative deleteCount isn't supported — MongoDB \$slice's length arg is non-negative.`,
+          deleteCountArg.pos,
+        );
+      }
+      const items = exprArgs.slice(2).map((a) => _generate(a, ctx));
+      // Bind arr/start/end once: $let so size & arithmetic are computed a single time.
+      // tailStart = start + deleteCount, or just start if deleteCount omitted (no removal, pure insert).
+      // tailLen = $size - tailStart, clamped non-negative.
+      const tailStart = hasDeleteCount
+        ? { $add: ["$$jsmqlStart", _generate(deleteCountArg!, ctx)] }
+        : "$$jsmqlStart";
       return {
-        $arrayElemAt: [
-          {
-            $filter: {
-              input: genObj,
-              as: lambda.params[0],
-              cond: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
+        $let: {
+          vars: { jsmqlArr: genObj, jsmqlStart: start },
+          in: {
+            $let: {
+              vars: { jsmqlTailStart: tailStart },
+              in: {
+                $concatArrays: [
+                  { $slice: ["$$jsmqlArr", 0, "$$jsmqlStart"] },
+                  items,
+                  {
+                    $slice: [
+                      "$$jsmqlArr",
+                      "$$jsmqlTailStart",
+                      {
+                        $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }],
+                      },
+                    ],
+                  },
+                ],
+              },
             },
           },
-          -1,
+        },
+      };
+    }
+    case "with": {
+      const exprArgs = exprArgsOnly(args, "with");
+      if (exprArgs.length !== 2) {
+        throw new CodegenError(`.with() requires exactly 2 arguments (index, value)`, callPos);
+      }
+      const idxArg = exprArgs[0];
+      if (isNegativeLiteral(idxArg)) {
+        throw new CodegenError(
+          `.with() with a negative index isn't supported — MongoDB \$slice's position arg is non-negative.`,
+          idxArg.pos,
+        );
+      }
+      const idx = _generate(idxArg, ctx);
+      const value = _generate(exprArgs[1], ctx);
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj, jsmqlIdx: idx, jsmqlVal: value },
+          in: {
+            $concatArrays: [
+              { $slice: ["$$jsmqlArr", 0, "$$jsmqlIdx"] },
+              ["$$jsmqlVal"],
+              {
+                $slice: [
+                  "$$jsmqlArr",
+                  { $add: ["$$jsmqlIdx", 1] },
+                  {
+                    $max: [
+                      0,
+                      {
+                        $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+    }
+    case "findLast": {
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "findLast");
+      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      if (lambda.params.length <= 1) {
+        return {
+          $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1],
+        };
+      }
+      return {
+        $arrayElemAt: [
+          { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] },
+          1,
         ],
       };
     }
+    case "findIndex":
     case "findLastIndex": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLastIndex"), "findLastIndex", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, method), method, callPos);
+      if (lambda.params.length >= 3) {
+        throw new CodegenError(
+          `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
+          lambda.pos,
+        );
+      }
       const bodyCtx = extendCtx(ctx, lambda.params);
-      const param = lambda.params[0];
-      // Reduce over [(index, element), ...] pairs, keeping the largest index where
-      // the predicate matches. $let rebinds the user-named param to $$this[1] so the
-      // predicate body's $$<param> references resolve correctly.
+      // Reduce over [(index, element), ...] pairs. $let rebinds the user-named
+      // params to the pair components so the predicate body's $$<param>
+      // references resolve correctly. For findIndex we want the *first* match —
+      // guard the update with `$$value == -1` so later matches don't overwrite.
+      // For findLastIndex any match overwrites, so the final value is the last.
+      const vars: Record<string, unknown> = {
+        [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] },
+      };
+      if (lambda.params[1]) {
+        vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
+      }
+      const predicate = jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx));
+      const cond =
+        method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
           input: {
@@ -1844,13 +2128,9 @@ function generateMethodCall(
           initialValue: -1,
           in: {
             $let: {
-              vars: { [param]: { $arrayElemAt: ["$$this", 1] } },
+              vars,
               in: {
-                $cond: [
-                  jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
-                  { $arrayElemAt: ["$$this", 0] },
-                  "$$value",
-                ],
+                $cond: [cond, { $arrayElemAt: ["$$this", 0] }, "$$value"],
               },
             },
           },
@@ -1902,6 +2182,33 @@ function generateMethodCall(
         },
       };
     }
+    case "toString": {
+      if (args.length !== 0) {
+        throw new CodegenError(`.toString() takes no arguments`, callPos);
+      }
+      // JS Array.prototype.toString is `.join(",")`. For known string receivers
+      // this is a no-op. For other scalars MongoDB's $toString covers it
+      // (numbers, dates → ISO string, booleans, ObjectId, etc.).
+      if (isArrayProducing(object)) {
+        return {
+          $reduce: {
+            input: genObj,
+            initialValue: "",
+            in: {
+              $cond: [
+                { $eq: ["$$value", ""] },
+                { $toString: "$$this" },
+                { $concat: ["$$value", ",", { $toString: "$$this" }] },
+              ],
+            },
+          },
+        };
+      }
+      if (isStringProducing(object)) {
+        return genObj;
+      }
+      return { $toString: genObj };
+    }
     case "flat": {
       const exprArgs = exprArgsOnly(args, "flat");
       if (exprArgs.length > 1) {
@@ -1928,14 +2235,14 @@ function generateMethodCall(
     }
     case "flatMap": {
       const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap");
       return {
         $reduce: {
           input: {
             $map: {
-              input: genObj,
-              as: lambda.params[0],
-              in: _generate(lambda.body, bodyCtx),
+              input: iter.input,
+              as: iter.asName,
+              in: iter.wrap(_generate(lambda.body, iter.bodyCtx)),
             },
           },
           initialValue: [],
@@ -1947,80 +2254,87 @@ function generateMethodCall(
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
       const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const iter = arrayIterInput(lambda, genObj, ctx, "map");
       return {
         $map: {
-          input: genObj,
-          as: lambda.params[0],
-          in: _generate(lambda.body, bodyCtx),
+          input: iter.input,
+          as: iter.asName,
+          in: iter.wrap(_generate(lambda.body, iter.bodyCtx)),
         },
       };
     }
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const iter = arrayIterInput(lambda, genObj, ctx, "filter");
+      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      if (lambda.params.length <= 1) {
+        return { $filter: { input: iter.input, as: iter.asName, cond } };
+      }
+      // 2-param: filter the (index, element) pairs, then project back to elements.
       return {
-        $filter: {
-          input: genObj,
-          as: lambda.params[0],
-          cond: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
+        $map: {
+          input: { $filter: { input: iter.input, as: iter.asName, cond } },
+          as: "jsmqlPair",
+          in: { $arrayElemAt: ["$$jsmqlPair", 1] },
         },
       };
     }
     case "find": {
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const iter = arrayIterInput(lambda, genObj, ctx, "find");
+      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      if (lambda.params.length <= 1) {
+        return {
+          $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0],
+        };
+      }
+      // 2-param: find first matching pair, then extract its element.
       return {
         $arrayElemAt: [
-          {
-            $filter: {
-              input: genObj,
-              as: lambda.params[0],
-              cond: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
-            },
-          },
-          0,
+          { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] },
+          1,
         ],
       };
     }
     case "some": {
       const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const iter = arrayIterInput(lambda, genObj, ctx, "some");
       return {
         $anyElementTrue: {
           $map: {
-            input: genObj,
-            as: lambda.params[0],
-            in: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
+            input: iter.input,
+            as: iter.asName,
+            in: iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx))),
           },
         },
       };
     }
     case "every": {
       const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos);
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const iter = arrayIterInput(lambda, genObj, ctx, "every");
       return {
         $allElementsTrue: {
           $map: {
-            input: genObj,
-            as: lambda.params[0],
-            in: jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx)),
+            input: iter.input,
+            as: iter.asName,
+            in: iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx))),
           },
         },
       };
     }
-    case "reduce": {
-      const exprArgs = exprArgsOnly(args, "reduce");
+    case "reduce":
+    case "reduceRight": {
+      const exprArgs = exprArgsOnly(args, method);
       if (exprArgs.length !== 2) {
         throw new CodegenError(
-          `.reduce() requires exactly 2 arguments (lambda, initialValue)`,
+          `.${method}() requires exactly 2 arguments (lambda, initialValue)`,
           callPos,
         );
       }
-      const lambda = requireLambda(exprArgs, "reduce", callPos);
-      if (lambda.params.length !== 2) {
+      const lambda = requireLambda(exprArgs, method, callPos);
+      if (lambda.params.length < 2 || lambda.params.length > 3) {
         throw new CodegenError(
-          `.reduce() lambda must have exactly 2 parameters (accumulator, element)`,
+          `.${method}() lambda must have 2 or 3 parameters (accumulator, element[, index])`,
           callPos,
         );
       }
@@ -2040,21 +2354,49 @@ function generateMethodCall(
       const nextBindingTypes = new Map(ctx.bindingTypes ?? []);
       if (accType) nextBindingTypes.set(lambda.params[0], accType);
       else nextBindingTypes.delete(lambda.params[0]);
+      const has3 = lambda.params.length === 3;
+      // 2-param: acc → value, element → this (status quo).
+      // 3-param: acc → value still, but element + index come from $$this being
+      // an (index, element) pair — body wraps in $let to expose both names.
       const reduceCtx: GenerateCtx = {
         lambdaParams: new Set([...ctx.lambdaParams, ...lambda.params]),
-        reduceRemap: new Map([
-          [lambda.params[0], "value"],
-          [lambda.params[1], "this"],
-        ]),
+        reduceRemap: has3
+          ? new Map([[lambda.params[0], "value"]])
+          : new Map([
+              [lambda.params[0], "value"],
+              [lambda.params[1], "this"],
+            ]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
         bindingTypes: nextBindingTypes,
       };
+      const baseBody = _generate(lambda.body, reduceCtx);
+      const inExpr = has3
+        ? {
+            $let: {
+              vars: {
+                [lambda.params[1]]: { $arrayElemAt: ["$$this", 1] },
+                [lambda.params[2]]: { $arrayElemAt: ["$$this", 0] },
+              },
+              in: baseBody,
+            },
+          }
+        : baseBody;
+      // reduceRight: reverse the input (or the zipped pairs) so iteration runs
+      // right-to-left. The zip happens BEFORE the reverse so each pair's index
+      // still reflects the original array position (matching JS).
+      let input: unknown = genObj;
+      if (has3) {
+        input = { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } };
+      }
+      if (method === "reduceRight") {
+        input = { $reverseArray: input };
+      }
       return {
         $reduce: {
-          input: genObj,
+          input,
           initialValue: _generate(exprArgs[1], ctx),
-          in: _generate(lambda.body, reduceCtx),
+          in: inExpr,
         },
       };
     }
@@ -2084,12 +2426,150 @@ function generateMethodCall(
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
 
+    // ── DX shims: mutating Array methods ────────────────────────────────────
+    // These all mutate the receiver in JavaScript. jsmql expressions are
+    // immutable, so we surface a tailored "use the immutable equivalent"
+    // message rather than letting the user discover the problem at runtime.
+    case "sort":
+      throw new CodegenError(
+        `.sort() mutates the array in JavaScript; jsmql expressions are immutable. Use '.toSorted()' instead.`,
+        callPos,
+      );
+    case "splice":
+      throw new CodegenError(
+        `.splice() mutates the array in JavaScript; jsmql expressions are immutable. Use '.toSpliced(start, deleteCount, ...items)' instead.`,
+        callPos,
+      );
+    case "push":
+      throw new CodegenError(
+        `.push() mutates the array in JavaScript; jsmql expressions are immutable. Use '.concat(x)' or spread '[...arr, x]' instead.`,
+        callPos,
+      );
+    case "pop":
+      throw new CodegenError(
+        `.pop() mutates the array in JavaScript; jsmql expressions are immutable. Use '.at(-1)' to read the last element, or '.slice(0, -1)' for everything-but-last.`,
+        callPos,
+      );
+    case "shift":
+      throw new CodegenError(
+        `.shift() mutates the array in JavaScript; jsmql expressions are immutable. Use '.at(0)' to read the first element, or '.slice(1)' for everything-but-first.`,
+        callPos,
+      );
+    case "unshift":
+      throw new CodegenError(
+        `.unshift() mutates the array in JavaScript; jsmql expressions are immutable. Use '.concat()' with the new items first, or spread '[...newItems, ...arr]' instead.`,
+        callPos,
+      );
+    case "fill":
+      throw new CodegenError(
+        `.fill() mutates the array in JavaScript; jsmql expressions are immutable. No direct immutable replacement — build the array from a $range or pass a pre-filled array as a parameter.`,
+        callPos,
+      );
+    case "copyWithin":
+      throw new CodegenError(
+        `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. No direct immutable replacement — compose '.slice()' calls with '$concatArrays' instead.`,
+        callPos,
+      );
+
+    // ── DX shims: iterator / void / locale methods ──────────────────────────
+    // None of these have a sensible lowering to an MQL expression. Throw a
+    // pointed error explaining why, with a workaround when one exists.
+    case "forEach":
+      throw new CodegenError(
+        `.forEach() returns undefined in JavaScript; jsmql expressions must produce a value. Use '.map(...)' to transform, or move side-effecting work outside the query.`,
+        callPos,
+      );
+    case "entries":
+      throw new CodegenError(
+        `.entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array.`,
+        callPos,
+      );
+    case "keys":
+      throw new CodegenError(
+        `.keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.`,
+        callPos,
+      );
+    case "values":
+      throw new CodegenError(
+        `.values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.`,
+        callPos,
+      );
+    case "toLocaleString":
+      throw new CodegenError(
+        `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
+        callPos,
+      );
+
     default: {
       const suggestion = closestNameTo(method, KNOWN_METHODS);
       const hint = suggestion ? ` Did you mean '.${suggestion}()'?` : "";
       throw new CodegenError(`Unknown method '.${method}()'.${hint}`, callPos);
     }
   }
+}
+
+/** True for `-N` literal expressions in either AST shape (`NumberLiteral(-N)` or
+ *  `UnaryExpr(-, NumberLiteral(N))`). Used by `.toSpliced` / `.with` to reject
+ *  negative literals at compile time — MongoDB's `$slice` position/length args
+ *  are non-negative and a runtime check would surprise users with confusing MQL. */
+function isNegativeLiteral(e: Expr): boolean {
+  if (e.type === "NumberLiteral") return e.value < 0;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") {
+    return e.operand.value > 0;
+  }
+  return false;
+}
+
+/**
+ * Lower a callback's input shape so the body can reference `(element, index)` —
+ * the JS callback signature for `.map`, `.filter`, `.find`, `.findLast`,
+ * `.some`, `.every`, `.flatMap` (matching MDN).
+ *
+ * - 1-param `x => …`: status quo. `as` is the user's name; the body's `$$x` is
+ *   bound directly by `$map` / `$filter`.
+ * - 2-param `(x, i) => …`: iterate over `$zip([$range(0..size), arr])` so each
+ *   element is paired with its index. `as` becomes a synthetic `jsmqlPair`; a
+ *   `$let` wrapper rebinds the user's names to the pair components. Picking a
+ *   synthetic name (rather than reusing one of the user's params) keeps the
+ *   shape uniform and avoids per-method collision checks.
+ * - ≥3 params: rejected. The third `array` argument from JS would mean leaking
+ *   the receiver into every iteration, which has no real use case.
+ */
+function arrayIterInput(
+  lambda: { params: string[]; body: Expr; pos: number },
+  genObj: unknown,
+  ctx: GenerateCtx,
+  method: string,
+): { input: unknown; asName: string; bodyCtx: GenerateCtx; wrap: (body: unknown) => unknown } {
+  const params = lambda.params;
+  if (params.length >= 3) {
+    throw new CodegenError(
+      `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
+      lambda.pos,
+    );
+  }
+  if (params.length <= 1) {
+    return {
+      input: genObj,
+      asName: params[0] ?? "v",
+      bodyCtx: extendCtx(ctx, params),
+      wrap: (body) => body,
+    };
+  }
+  return {
+    input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+    asName: "jsmqlPair",
+    bodyCtx: extendCtx(ctx, params),
+    wrap: (body) => ({
+      $let: {
+        vars: {
+          [params[0]]: { $arrayElemAt: ["$$jsmqlPair", 1] },
+          [params[1]]: { $arrayElemAt: ["$$jsmqlPair", 0] },
+        },
+        in: body,
+      },
+    }),
+  };
 }
 
 // Every method name with a dedicated case in generateMethodCall, used to power
@@ -2126,6 +2606,8 @@ const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "reverse",
   "toReversed",
   "toSorted",
+  "toSpliced",
+  "with",
   "concat",
   "join",
   "flat",
@@ -2133,11 +2615,30 @@ const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "map",
   "filter",
   "find",
+  "findIndex",
   "findLast",
   "findLastIndex",
+  "lastIndexOf",
   "some",
   "every",
   "reduce",
+  "reduceRight",
+  "toString",
+  // Mutators (shimmed with tailored errors that point at immutable variants)
+  "sort",
+  "splice",
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "fill",
+  "copyWithin",
+  // Iterator / void / locale (shimmed with tailored errors)
+  "forEach",
+  "entries",
+  "keys",
+  "values",
+  "toLocaleString",
   // Date
   "getFullYear",
   "getMonth",
@@ -2515,6 +3016,71 @@ function generateObjectCall(
  * (element) parameter is bound to null via $let, matching JS's `Array.from({length}, ...)`
  * semantics where the element is always undefined.
  */
+/**
+ * Lower `new Date(args…)`:
+ *   - 0 args (`new Date()`)               → `{ $toDate: "$$NOW" }`
+ *   - 1 arg  (`new Date(ts)` / `(string)`) → `{ $toDate: <arg> }`
+ *   - 2..7 args                            → `{ $dateFromParts: { year, month: +1, … } }`
+ *
+ * JS month indices are 0-based; MQL `$dateFromParts.month` is 1-based, so an
+ * `$add: [month, 1]` is inserted (folded at compile time for literal months).
+ *
+ * Divergence: JS multi-arg `new Date(y, m, d, …)` interprets the parts in
+ * **local time** (whatever the runtime considers local); jsmql interprets
+ * them as **UTC** (MQL's `$dateFromParts` default), since "local time" on a
+ * MongoDB server is rarely what a query author wants. Use `Date.UTC(...)`
+ * (or build the Date in client code and pass it via the template-tag form)
+ * if the JS-local semantics matter.
+ */
+function generateNewDate(args: Expr[], ctx: GenerateCtx): unknown {
+  if (args.length === 0) return { $toDate: "$$NOW" };
+  if (args.length === 1) {
+    // Peephole: `new Date(Date.UTC(y, m, d, …))` is the canonical UTC-date
+    // constant idiom. Skip the `$toLong → $toDate` round-trip and emit the
+    // raw `$dateFromParts` (still UTC-anchored, just as a Date instead of ms).
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      return generateDateFromParts(arg.args, ctx, "UTC");
+    }
+    return { $toDate: _generate(arg, ctx) };
+  }
+  return generateDateFromParts(args, ctx, /*timezone*/ null);
+}
+
+/**
+ * Lower `Date.UTC(y, m, d, …)`. JS returns **ms since epoch as a number**, not
+ * a Date — so we wrap `$dateFromParts` (with `timezone: "UTC"`) in `$toLong`
+ * to produce the same numeric value. The `new Date(Date.UTC(…))` form gets a
+ * peephole in `generateNewDate` that skips the wrap.
+ */
+function generateDateUTC(args: Expr[], ctx: GenerateCtx): unknown {
+  return { $toLong: generateDateFromParts(args, ctx, "UTC") };
+}
+
+/**
+ * Build a `$dateFromParts` document from a positional argument list. Used by
+ * both `new Date(y, m, d, …)` (no timezone) and `Date.UTC(y, m, d, …)`
+ * (timezone: "UTC"). Folds the JS-to-MQL month offset (+1) when the month
+ * argument is a number literal.
+ */
+function generateDateFromParts(args: Expr[], ctx: GenerateCtx, timezone: string | null): unknown {
+  const parts: Record<string, unknown> = { year: _generate(args[0], ctx) };
+  if (args.length >= 2) {
+    const monthAst = args[1];
+    if (monthAst.type === "NumberLiteral") {
+      parts.month = monthAst.value + 1;
+    } else {
+      parts.month = { $add: [_generate(monthAst, ctx), 1] };
+    }
+  }
+  const slots = ["day", "hour", "minute", "second", "millisecond"];
+  for (let i = 2; i < args.length && i - 2 < slots.length; i++) {
+    parts[slots[i - 2]] = _generate(args[i], ctx);
+  }
+  if (timezone !== null) parts.timezone = timezone;
+  return { $dateFromParts: parts };
+}
+
 function generateArrayFrom(
   input: Expr,
   mapFn: Expr | null,
@@ -2939,6 +3505,8 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
       collectReadsInto(expr.operand, out);
       return;
     case "NewDate":
+      for (const a of expr.args) collectReadsInto(a, out);
+      return;
     case "NewSet":
       if (expr.arg) collectReadsInto(expr.arg, out);
       return;
@@ -2958,6 +3526,9 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
       return;
     case "OperatorCall":
       collectArgsInto(expr.args, out);
+      return;
+    case "DateUTC":
+      for (const a of expr.args) collectReadsInto(a, out);
       return;
   }
 }

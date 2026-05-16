@@ -58,31 +58,65 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.reverse()` | `{ $reverseArray: expr }` |
 | `.toReversed()` | `{ $reverseArray: expr }` (alias for `.reverse()`, ES2023) |
 | `.toSorted()` | `{ $sortArray: { input: expr, sortBy: 1 } }` (ES2023, ascending only — comparator rejected) |
+| `.toSpliced(start, [deleteCount, ...items])` | `$let` over receiver + start + tail-start, then `$concatArrays` of `[$slice(arr, 0, start), [items...], $slice(arr, tailStart, max(0, size - tailStart))]`. Omitted `deleteCount` ⇒ remove to end. ES2023. Negative-literal `start`/`deleteCount` rejected at compile time. |
+| `.with(index, value)` | `$let` over receiver + index + value, then `$concatArrays` of `[$slice(arr, 0, idx), [value], $slice(arr, idx+1, max(0, size - (idx+1)))]`. ES2023. Negative-literal `index` rejected at compile time. |
 | `.includes(x)` *(known array receiver)* | `{ $in: [x, expr] }` |
 | `.indexOf(x)` *(known array receiver)* | `{ $indexOfArray: [expr, x] }` |
+| `.lastIndexOf(x)` *(array only)* | `$let` over receiver + `$indexOfArray($reverseArray(arr), x)`, mapped back to original index (or `-1`). String receivers throw — MongoDB `$indexOfCP` is forward-only. |
 | `.concat(...args)` *(known array receiver)* | `{ $concatArrays: [expr, ...args] }` |
 | `.concat(...args)` *(known string receiver)* | `{ $concat: [expr, ...args] }` |
 | `.includes/.indexOf/.concat` *(unknown receiver)* | runtime `$cond` on `$isArray` between the array and string forms (see below) |
 | `.join(sep?)` | `$reduce` over the array, prepending `sep` for non-first elements |
+| `.toString()` *(known array)* | same `$reduce` as `.join(",")`. Known string receiver: no-op. Unknown: `{ $toString: expr }`. |
 | `.flat()` / `.flat(1)` | `$reduce` with `$concatArrays` |
 
 ### Array methods (with lambda)
 
-| Method | MQL output |
+| Method | MQL output (1-param `x => …`) |
 |---|---|
 | `.map(x => body)` | `{ $map: { input, as: "x", in: body } }` |
 | `.filter(x => cond)` | `{ $filter: { input, as: "x", cond } }` |
 | `.find(x => cond)` | `{ $arrayElemAt: [{ $filter: {...} }, 0] }` |
+| `.findIndex(x => cond)` | `$reduce` over `$zip` of `($range, expr)` with `initialValue: -1`; updates `$$value` only while it's still `-1`, so the result is the first match (or `-1`) |
 | `.findLast(x => cond)` | `{ $arrayElemAt: [{ $filter: {...} }, -1] }` (ES2023) |
-| `.findLastIndex(x => cond)` | `$reduce` over `$zip` of `($range, expr)`, last index where cond is true (or -1) |
+| `.findLastIndex(x => cond)` | `$reduce` over `$zip` of `($range, expr)`, last index where cond is true (or `-1`) |
 | `.some(x => body)` | `{ $anyElementTrue: { $map: {...} } }` |
 | `.every(x => body)` | `{ $allElementsTrue: { $map: {...} } }` |
 | `.flatMap(x => body)` | `$reduce` over `$map` (concatenating each element's mapped array) |
 | `.reduce((acc, x) => body, init)` | `{ $reduce: { input, initialValue: init, in: body } }` |
+| `.reduceRight((acc, x) => body, init)` | same as `.reduce`, but `input: { $reverseArray: expr }` |
 
-**Bare type-cast callbacks.** All single-param lambda callbacks above also accept a bare `Boolean` / `Number` / `String` reference (`TypeCastRef` AST node) in place of a `Lambda`. `requireLambda()` in `codegen.ts` desugars `TypeCastRef { cast }` to a synthetic `Lambda { params: ["v"], body: TypeCast(cast, ParamRef("v")) }` before the per-method handler runs — so all eight handlers above support `.filter(Boolean)` etc. with no per-method changes. `.reduce()` rejects this through its existing 2-param check (synthetic lambda has 1 param). `parseInt`/`parseFloat` are deliberately not bare-callable; see [grammar.md](grammar.md#type-cast-call-vs-bare-reference).
+**Bare type-cast callbacks.** All single-param lambda callbacks above also accept a bare `Boolean` / `Number` / `String` reference (`TypeCastRef` AST node) in place of a `Lambda`. `requireLambda()` in `codegen.ts` desugars `TypeCastRef { cast }` to a synthetic `Lambda { params: ["v"], body: TypeCast(cast, ParamRef("v")) }` before the per-method handler runs — so all eight handlers above support `.filter(Boolean)` etc. with no per-method changes. `.reduce()` / `.reduceRight()` reject this through their existing 2-or-3 param check (synthetic lambda has 1 param). `parseInt`/`parseFloat` are deliberately not bare-callable; see [grammar.md](grammar.md#type-cast-call-vs-bare-reference).
 
-**Predicate bodies use JS truthy/falsy semantics.** The `cond` (or inner `$map` body for `.some`/`.every`) on `.filter`, `.find`, `.findLast`, `.findLastIndex`, `.some`, and `.every` is wrapped via `jsBoolIfNeeded` so that `arr.filter(x => x.name)` keeps items where `x.name` is truthy under JS rules (drops `null`, `""`, `0`, missing). When the body is already provably bool (`x => x > 0`, `x => Boolean(x)`, etc.) the wrap is elided and the cheap form ships through. See [grammar.md](grammar.md#js-truthyfalsy-semantics-for---boolean-predicate-methods) for the full ruleset and the helpers in `src/codegen.ts`.
+**Predicate bodies use JS truthy/falsy semantics.** The `cond` (or inner `$map` body for `.some`/`.every`) on `.filter`, `.find`, `.findIndex`, `.findLast`, `.findLastIndex`, `.some`, and `.every` is wrapped via `jsBoolIfNeeded` so that `arr.filter(x => x.name)` keeps items where `x.name` is truthy under JS rules (drops `null`, `""`, `0`, missing). When the body is already provably bool (`x => x > 0`, `x => Boolean(x)`, etc.) the wrap is elided and the cheap form ships through. See [grammar.md](grammar.md#js-truthyfalsy-semantics-for---boolean-predicate-methods) for the full ruleset and the helpers in `src/codegen.ts`.
+
+### Callback parameters: `(element, index)`
+
+JS array-method callbacks receive `(element, index, array)`. jsmql supports the first two parameters; the third `array` parameter is rejected at compile time (binding the receiver into every iteration has no real use case and a costly MQL shape).
+
+The 1-param path is the status quo: `as` is the user's parameter name, and the body's `$$<name>` is bound directly by `$map`/`$filter`. The 2-param path is shared across `.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every`, `.flatMap` via the `arrayIterInput()` helper in `codegen.ts`:
+
+- `input` becomes `{ $zip: { inputs: [{ $range: [0, { $size: expr }] }, expr] } }` (an array of `[index, element]` pairs).
+- `as` becomes a synthetic name `jsmqlPair` so it never collides with a user-named param.
+- The body is wrapped in `{ $let: { vars: { [elemName]: $arrayElemAt($$jsmqlPair, 1), [idxName]: $arrayElemAt($$jsmqlPair, 0) }, in: <body> } }` so the user's names resolve correctly via the standard `lambdaParams` path.
+
+Per-method shape under 2 params:
+
+| Method | 2-param shape |
+|---|---|
+| `.map` | `$map` over `$zip`, body wrapped. Cardinality unchanged. |
+| `.some` / `.every` | `$anyElementTrue` / `$allElementsTrue` of `$map` over the zip. |
+| `.filter` | `$map($filter($zip, wrapped cond), pair => $arrayElemAt(pair, 1))` — filter pairs, then project back to elements. |
+| `.find` / `.findLast` | `$arrayElemAt: [$arrayElemAt: [$filter(zip, wrapped cond), 0 \| -1], 1]` — outer extracts the element from the matching pair. |
+| `.flatMap` | `$reduce` over `$map($zip, wrapped body)` concatenating each per-pair output. |
+
+`.findIndex` / `.findLastIndex` always emit the zipped `$reduce` regardless of param count. When `params[1]` is present, the `$let.vars` inside also binds `params[1]` to `$arrayElemAt($$this, 0)` (the index).
+
+`.reduce` / `.reduceRight` accept 2 or 3 params: `(acc, x[, i])`. With 3 params, `input` becomes the zipped `$range × expr` (for `.reduceRight`, `$reverseArray` wraps the zip so indices reflect the original array). The accumulator still rides through `reduceRemap` (`acc` → `$$value`); the element and index come from a `$let` wrap that rebinds `params[1]` to `$arrayElemAt($$this, 1)` and `params[2]` to `$arrayElemAt($$this, 0)`.
+
+### Mutator / iterator / locale methods — DX shims
+
+jsmql expressions are immutable, so the in-place mutators (`.sort()`, `.splice()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.fill()`, `.copyWithin()`) and the iterator / void / locale methods (`.entries()`, `.forEach()`, `.keys()`, `.values()`, `.toLocaleString()`) cannot be lowered. Rather than letting them fall through to the generic "Unknown method, did you mean…" handler, the dispatcher has an explicit case for each that throws a tailored error pointing at the right replacement (e.g. `.sort() mutates …; jsmql expressions are immutable. Use '.toSorted()' instead.`). All shimmed method names appear in `KNOWN_METHODS` so a typo on a different receiver still gets a "did you mean?" suggestion toward them when relevant.
 
 ### Date methods
 

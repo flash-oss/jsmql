@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-17 — Array methods: fill the MDN list, bind `(element, index)`, shim mutators
+
+A single pass over MDN's `Array.prototype.*` list to close the gap between "JS you already know" and what jsmql actually accepts. Three buckets:
+
+**Six new method lowerings** ([src/codegen.ts](../src/codegen.ts:1915)). `.findIndex(p)` — the missing twin of `findLastIndex`, lowered to the same `$reduce`+`$zip` shape but with a `$$value == -1` guard so only the first match wins. `.lastIndexOf(x)` — `$let { revIdx: $indexOfArray($reverseArray(arr), x) }` then normalises back to the original index (or `-1`); strings rejected because MongoDB's `$indexOfCP` is forward-only. `.reduceRight(fn, init)` — `.reduce` with the input wrapped in `$reverseArray`. `.toSpliced(start[, dc, ...items])` and `.with(index, value)` — both build a 3-piece `$concatArrays` of `$slice` / literal / `$slice` inside a `$let` so the receiver and indices are evaluated once; negative literals are rejected at compile time because `$slice`'s position/length args are non-negative. `.toString()` — joins arrays with `","`, no-ops on strings, falls back to `$toString` on unknown receivers.
+
+**`(element, index)` callback support across all 9 lambda-takers.** Prior to this pass, `requireLambda` didn't enforce arity, so `$.items.find((x, i) => x > i)` parsed and codegened but produced `$$i`-as-undefined-variable errors at query time. A new `arrayIterInput()` helper ([src/codegen.ts](../src/codegen.ts:2236)) returns the right input shape per param count: 1-param keeps the status quo (`as` = user name); 2-param zips the input with `$range(0, $size)` under a synthetic `as: "jsmqlPair"` and `$let`-wraps the body so the user's names resolve via the standard `lambdaParams` path; 3+ throws a tailored error. `.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every`, `.flatMap` all run through it; `.findIndex` and `.findLastIndex` extend their existing `$let.vars` to optionally bind the second param; `.reduce` and `.reduceRight` accept `(acc, x, i)` with the input zipped and the body `$let`-wrapped around the existing `reduceRemap`-for-`acc`. The third `array` arg from MDN's signature is deliberately not supported — the receiver is already in scope at the call site, so re-binding it into every iteration would double cost for no expressive gain.
+
+**13 DX shims** ([src/codegen.ts](../src/codegen.ts:2247)). The in-place mutators (`.sort`, `.splice`, `.push`, `.pop`, `.shift`, `.unshift`, `.fill`, `.copyWithin`) used to surface a generic "Unknown method, did you mean…" error; now each throws a tailored "mutates in JS; expressions are immutable. Use '.toSorted()' / '.toSpliced(start, deleteCount, ...items)' / `[...arr, x]` / `.at(-1)` / etc. instead." Iterator-returning (`.entries`, `.keys`, `.values`), void-returning (`.forEach`), and locale-dependent (`.toLocaleString`) methods get the same treatment with workaround hints (e.g. `.entries()` points at `.map((v, i) => [i, v])`). All shimmed names live in `KNOWN_METHODS` so typo suggestions still surface them when relevant.
+
+37 new test cases in [test/codegen.test.ts](../test/codegen.test.ts) cover each new method, each shim, the 2-param happy path for every lambda-taker, and the 3-param rejection. One new realistic case in [test/realistic.test.ts](../test/realistic.test.ts) exercises `.with()` and indexed `.map((p, i) => …)` together. Tally: jsmql now implements 24 of MDN's 38 instance methods (everything that has a sensible MQL lowering) and produces actionable errors for the other 14.
+
+Specs updated: [docs/specs/method-dispatch.md](specs/method-dispatch.md) (new rows, callback-parameters subsection, mutator-shim subsection). User-facing docs updated: [docs/LANGUAGE.md](LANGUAGE.md) (new methods in Simple/Lambda Methods, "Callback parameters" subsection, mutator-error table, optional-chaining neutral-value table).
+
+---
+
 ## 2026-05-16 — Auto-`$literal` wrap for `"$..."` string values
 
 User-supplied string literals (and `jsmql.compile()` bindings, and template-tag interpolations) whose value starts with `$` are now auto-wrapped in `{ $literal: value }` so MongoDB does not read them as field references at query time. The wrap fires on any `"$..."` shape in a *value* position — top-level, array element, object value, operator argument, method argument. Object **keys** are deliberately unaffected (MongoDB doesn't auto-evaluate keys, so `{ "$foo": 1 }` is how you intentionally name a field `$foo`).

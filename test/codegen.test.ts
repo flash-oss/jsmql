@@ -977,11 +977,30 @@ describe("array methods (no lambda)", () => {
   it("at(-1)", () => {
     expect(jsmql("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
   });
-  it("slice(start)", () => {
-    expect(jsmql("$.items.slice(2)")).toEqual({ $slice: ["$items", 2] });
+  it("slice(start) on bare $.field → runtime $cond on $isArray", () => {
+    expect(jsmql("$.items.slice(2)")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $slice: ["$items", 2] },
+        {
+          $substrCP: ["$items", 2, { $subtract: [{ $strLenCP: "$items" }, 2] }],
+        },
+      ],
+    });
   });
-  it("slice(start, count)", () => {
-    expect(jsmql("$.items.slice(0, 3)")).toEqual({ $slice: ["$items", 0, 3] });
+  it("slice(start, end) on bare $.field → runtime $cond on $isArray", () => {
+    expect(jsmql("$.items.slice(0, 3)")).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $slice: ["$items", 0, 3] },
+        { $substrCP: ["$items", 0, 3] },
+      ],
+    });
+  });
+  it("slice(start, end) on known array → $slice", () => {
+    expect(jsmql("[1,2,3,4,5].slice(1, 3)")).toEqual({
+      $slice: [[1, 2, 3, 4, 5], 1, 3],
+    });
   });
   it("reverse()", () => {
     expect(jsmql("$.items.reverse()")).toEqual({ $reverseArray: "$items" });
@@ -1272,8 +1291,8 @@ describe("bare type-cast callbacks", () => {
   it("Boolean as a value (outside callback) errors with the call form suggested", () => {
     expect(() => jsmql("Boolean + 5")).toThrow(/used as a value.*Boolean\(value\)/);
   });
-  it("reduce(Boolean, 0) hits the existing 2-param error", () => {
-    expect(() => jsmql("$.xs.reduce(Boolean, 0)")).toThrow(/exactly 2 parameters/);
+  it("reduce(Boolean, 0) hits the existing param-count error", () => {
+    expect(() => jsmql("$.xs.reduce(Boolean, 0)")).toThrow(/2 or 3 parameters/);
   });
   it("parseInt is intentionally not supported bare (avoids the JS index-as-radix footgun)", () => {
     expect(() => jsmql("$.xs.filter(parseInt)")).toThrow(/Expected '\('/);
@@ -1328,6 +1347,67 @@ describe("new Date()", () => {
   });
   it("with string literal", () => {
     expect(jsmql('new Date("2024-01-01")')).toEqual({ $toDate: "2024-01-01" });
+  });
+  it("new Date(y, m) folds month + 1", () => {
+    expect(jsmql("new Date(2024, 0)")).toEqual({
+      $dateFromParts: { year: 2024, month: 1 },
+    });
+  });
+  it("new Date(y, m, d) sets day", () => {
+    expect(jsmql("new Date(2024, 0, 15)")).toEqual({
+      $dateFromParts: { year: 2024, month: 1, day: 15 },
+    });
+  });
+  it("new Date(y, m, d, h, mi, s, ms) fills all parts", () => {
+    expect(jsmql("new Date(2024, 11, 31, 23, 59, 58, 999)")).toEqual({
+      $dateFromParts: {
+        year: 2024,
+        month: 12,
+        day: 31,
+        hour: 23,
+        minute: 59,
+        second: 58,
+        millisecond: 999,
+      },
+    });
+  });
+  it("non-literal month gets $add: [m, 1]", () => {
+    expect(jsmql("new Date($.y, $.m, 1)")).toEqual({
+      $dateFromParts: {
+        year: "$y",
+        month: { $add: ["$m", 1] },
+        day: 1,
+      },
+    });
+  });
+  it("rejects more than 7 args", () => {
+    expect(() => jsmql("new Date(1, 2, 3, 4, 5, 6, 7, 8)")).toThrow(/at most 7 arguments/);
+  });
+});
+
+describe("Date.UTC()", () => {
+  it("Date.UTC(y, m, d) → $toLong of $dateFromParts with UTC timezone", () => {
+    expect(jsmql("Date.UTC(2024, 0, 15)")).toEqual({
+      $toLong: {
+        $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" },
+      },
+    });
+  });
+  it("Date.UTC(y) — year-only form", () => {
+    expect(jsmql("Date.UTC(1970)")).toEqual({
+      $toLong: { $dateFromParts: { year: 1970, timezone: "UTC" } },
+    });
+  });
+  it("new Date(Date.UTC(...)) peephole: skips $toLong round-trip", () => {
+    expect(jsmql("new Date(Date.UTC(2024, 0, 15))")).toEqual({
+      $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" },
+    });
+  });
+  it("Date.UTC requires at least 1 arg", () => {
+    expect(() => jsmql("Date.UTC()")).toThrow(/Date\.UTC.*takes 1 to 7 arguments/);
+  });
+  it("Date.UTC rejects more than 7 args", () => {
+    expect(() => jsmql("Date.UTC(1,2,3,4,5,6,7,8)")).toThrow(/takes 1 to 7 arguments/);
   });
 });
 
@@ -1575,6 +1655,383 @@ describe("immutable array methods", () => {
         },
       },
     });
+  });
+});
+
+describe("array method additions", () => {
+  it(".findIndex(p) returns the first matching index (zipped reduce with -1 guard)", () => {
+    expect(jsmql("$.items.findIndex(x => x.active)")).toEqual({
+      $reduce: {
+        input: {
+          $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] },
+        },
+        initialValue: -1,
+        in: {
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$this", 1] } },
+            in: {
+              $cond: [
+                { $and: [{ $eq: ["$$value", -1] }, truthy("$$x.active")] },
+                { $arrayElemAt: ["$$this", 0] },
+                "$$value",
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".lastIndexOf(x) reverses, finds, normalises back to original index", () => {
+    expect(jsmql("$.items.lastIndexOf(42)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$items" },
+        in: {
+          $let: {
+            vars: {
+              jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] },
+            },
+            in: {
+              $cond: [
+                { $eq: ["$$jsmqlRevIdx", -1] },
+                -1,
+                { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".lastIndexOf on a known string receiver throws", () => {
+    expect(() => jsmql('$.s.toLowerCase().lastIndexOf("x")')).toThrow(/forward-only/);
+  });
+  it(".reduceRight(fn, init) reverses the input array", () => {
+    expect(jsmql("$.xs.reduceRight((acc, x) => acc + x, 0)")).toEqual({
+      $reduce: {
+        input: { $reverseArray: "$xs" },
+        initialValue: 0,
+        in: { $add: ["$$value", "$$this"] },
+      },
+    });
+  });
+  it(".toSpliced(s, dc, ...items) builds a 3-piece $concatArrays", () => {
+    expect(jsmql('$.xs.toSpliced(1, 2, "a", "b")')).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$xs", jsmqlStart: 1 },
+        in: {
+          $let: {
+            vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 2] } },
+            in: {
+              $concatArrays: [
+                { $slice: ["$$jsmqlArr", 0, "$$jsmqlStart"] },
+                ["a", "b"],
+                {
+                  $slice: [
+                    "$$jsmqlArr",
+                    "$$jsmqlTailStart",
+                    {
+                      $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".toSpliced(s) with no deleteCount removes to end", () => {
+    expect(jsmql("$.xs.toSpliced(2)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$xs", jsmqlStart: 2 },
+        in: {
+          $let: {
+            vars: { jsmqlTailStart: "$$jsmqlStart" },
+            in: {
+              $concatArrays: [
+                { $slice: ["$$jsmqlArr", 0, "$$jsmqlStart"] },
+                [],
+                {
+                  $slice: [
+                    "$$jsmqlArr",
+                    "$$jsmqlTailStart",
+                    {
+                      $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".toSpliced with negative start literal throws", () => {
+    expect(() => jsmql("$.xs.toSpliced(-1, 1)")).toThrow(/negative start/);
+  });
+  it(".with(i, v) replaces an element by index", () => {
+    expect(jsmql("$.xs.with(1, 99)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$xs", jsmqlIdx: 1, jsmqlVal: 99 },
+        in: {
+          $concatArrays: [
+            { $slice: ["$$jsmqlArr", 0, "$$jsmqlIdx"] },
+            ["$$jsmqlVal"],
+            {
+              $slice: [
+                "$$jsmqlArr",
+                { $add: ["$$jsmqlIdx", 1] },
+                {
+                  $max: [
+                    0,
+                    {
+                      $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+  it(".with with a negative index literal throws", () => {
+    expect(() => jsmql("$.xs.with(-1, 9)")).toThrow(/negative index/);
+  });
+  it(".with arity is enforced (exactly 2)", () => {
+    expect(() => jsmql("$.xs.with(0)")).toThrow(/exactly 2 arguments/);
+  });
+  it(".toString() on a known array lowers to join-with-comma", () => {
+    expect(jsmql("$.xs.map(x => x + 1).toString()")).toEqual({
+      $reduce: {
+        input: { $map: { input: "$xs", as: "x", in: { $add: ["$$x", 1] } } },
+        initialValue: "",
+        in: {
+          $cond: [
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", ",", { $toString: "$$this" }] },
+          ],
+        },
+      },
+    });
+  });
+  it(".toString() on a known string is a no-op", () => {
+    expect(jsmql("$.name.toLowerCase().toString()")).toEqual({ $toLower: "$name" });
+  });
+  it(".toString() on unknown type lowers to $toString", () => {
+    expect(jsmql("$.n.toString()")).toEqual({ $toString: "$n" });
+  });
+});
+
+describe("array callbacks support (element, index)", () => {
+  it(".map((x, i) => …) zips over $range and wraps in $let", () => {
+    expect(jsmql("$.xs.map((x, i) => x + i)")).toEqual({
+      $map: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        as: "jsmqlPair",
+        in: {
+          $let: {
+            vars: {
+              x: { $arrayElemAt: ["$$jsmqlPair", 1] },
+              i: { $arrayElemAt: ["$$jsmqlPair", 0] },
+            },
+            in: { $add: ["$$x", "$$i"] },
+          },
+        },
+      },
+    });
+  });
+  it(".filter((x, i) => cond) filters pairs and projects back to elements", () => {
+    expect(jsmql("$.xs.filter((x, i) => i > 0)")).toEqual({
+      $map: {
+        input: {
+          $filter: {
+            input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+            as: "jsmqlPair",
+            cond: {
+              $let: {
+                vars: {
+                  x: { $arrayElemAt: ["$$jsmqlPair", 1] },
+                  i: { $arrayElemAt: ["$$jsmqlPair", 0] },
+                },
+                in: { $gt: ["$$i", 0] },
+              },
+            },
+          },
+        },
+        as: "jsmqlPair",
+        in: { $arrayElemAt: ["$$jsmqlPair", 1] },
+      },
+    });
+  });
+  it(".find((x, i) => cond) wraps with double $arrayElemAt", () => {
+    expect(jsmql("$.xs.find((x, i) => i === 2)")).toEqual({
+      $arrayElemAt: [
+        {
+          $arrayElemAt: [
+            {
+              $filter: {
+                input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+                as: "jsmqlPair",
+                cond: {
+                  $let: {
+                    vars: {
+                      x: { $arrayElemAt: ["$$jsmqlPair", 1] },
+                      i: { $arrayElemAt: ["$$jsmqlPair", 0] },
+                    },
+                    in: { $eq: ["$$i", 2] },
+                  },
+                },
+              },
+            },
+            0,
+          ],
+        },
+        1,
+      ],
+    });
+  });
+  it(".some((x, i) => cond) wraps the body in $let", () => {
+    expect(jsmql("$.xs.some((x, i) => i > 5)")).toEqual({
+      $anyElementTrue: {
+        $map: {
+          input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+          as: "jsmqlPair",
+          in: {
+            $let: {
+              vars: {
+                x: { $arrayElemAt: ["$$jsmqlPair", 1] },
+                i: { $arrayElemAt: ["$$jsmqlPair", 0] },
+              },
+              in: { $gt: ["$$i", 5] },
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".findIndex((x, i) => …) binds both params in $let.vars", () => {
+    expect(jsmql("$.xs.findIndex((x, i) => x === i)")).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        initialValue: -1,
+        in: {
+          $let: {
+            vars: {
+              x: { $arrayElemAt: ["$$this", 1] },
+              i: { $arrayElemAt: ["$$this", 0] },
+            },
+            in: {
+              $cond: [
+                { $and: [{ $eq: ["$$value", -1] }, { $eq: ["$$x", "$$i"] }] },
+                { $arrayElemAt: ["$$this", 0] },
+                "$$value",
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".reduce((acc, x, i) => …, init) zips input and rebinds in $let", () => {
+    expect(jsmql("$.xs.reduce((acc, x, i) => acc + x * i, 0)")).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        initialValue: 0,
+        in: {
+          $let: {
+            vars: {
+              x: { $arrayElemAt: ["$$this", 1] },
+              i: { $arrayElemAt: ["$$this", 0] },
+            },
+            in: { $add: ["$$value", { $multiply: ["$$x", "$$i"] }] },
+          },
+        },
+      },
+    });
+  });
+  it(".reduceRight((acc, x, i) => …, init) reverses the zipped pairs", () => {
+    expect(jsmql("$.xs.reduceRight((acc, x, i) => acc + i, 0)")).toEqual({
+      $reduce: {
+        input: {
+          $reverseArray: {
+            $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] },
+          },
+        },
+        initialValue: 0,
+        in: {
+          $let: {
+            vars: {
+              x: { $arrayElemAt: ["$$this", 1] },
+              i: { $arrayElemAt: ["$$this", 0] },
+            },
+            in: { $add: ["$$value", "$$i"] },
+          },
+        },
+      },
+    });
+  });
+  it(".map with 3 params throws", () => {
+    expect(() => jsmql("$.xs.map((x, i, arr) => x)")).toThrow(/at most 2 parameters/);
+  });
+  it(".filter with 3 params throws", () => {
+    expect(() => jsmql("$.xs.filter((x, i, arr) => true)")).toThrow(/at most 2 parameters/);
+  });
+  it(".findIndex with 3 params throws", () => {
+    expect(() => jsmql("$.xs.findIndex((x, i, arr) => true)")).toThrow(/at most 2 parameters/);
+  });
+  it(".reduce with 4 params throws", () => {
+    expect(() => jsmql("$.xs.reduce((acc, x, i, arr) => acc, 0)")).toThrow(/2 or 3 parameters/);
+  });
+});
+
+describe("mutator DX shims", () => {
+  it(".sort() points at .toSorted()", () => {
+    expect(() => jsmql("$.xs.sort()")).toThrow(/\.toSorted\(\)/);
+    expect(() => jsmql("$.xs.sort()")).toThrow(/immutable/);
+  });
+  it(".splice() points at .toSpliced()", () => {
+    expect(() => jsmql("$.xs.splice(1, 2)")).toThrow(/\.toSpliced/);
+  });
+  it(".push() points at .concat() / spread", () => {
+    expect(() => jsmql("$.xs.push(1)")).toThrow(/\.concat\(x\)|spread/);
+  });
+  it(".pop() points at .at(-1) / .slice(0, -1)", () => {
+    expect(() => jsmql("$.xs.pop()")).toThrow(/\.at\(-1\)/);
+  });
+  it(".shift() points at .at(0) / .slice(1)", () => {
+    expect(() => jsmql("$.xs.shift()")).toThrow(/\.at\(0\)/);
+  });
+  it(".unshift() points at .concat() / spread", () => {
+    expect(() => jsmql("$.xs.unshift(1)")).toThrow(/\.concat\(\)|newItems/);
+  });
+  it(".fill() throws with a workaround hint", () => {
+    expect(() => jsmql("$.xs.fill(0)")).toThrow(/immutable/);
+  });
+  it(".copyWithin() throws with a workaround hint", () => {
+    expect(() => jsmql("$.xs.copyWithin(0, 1)")).toThrow(/immutable/);
+  });
+});
+
+describe("iterator / void / locale DX shims", () => {
+  it(".forEach() explains the no-return-value problem", () => {
+    expect(() => jsmql("$.xs.forEach(x => x)")).toThrow(/undefined/);
+  });
+  it(".entries() suggests .map((v, i) => [i, v])", () => {
+    expect(() => jsmql("$.xs.entries()")).toThrow(/\[index, value\]|\[i, v\]/);
+  });
+  it(".keys() suggests $range/$size", () => {
+    expect(() => jsmql("$.xs.keys()")).toThrow(/\$range|\$size/);
+  });
+  it(".values() explains the array is already the value sequence", () => {
+    expect(() => jsmql("$.xs.values()")).toThrow(/value sequence|iterator/);
+  });
+  it(".toLocaleString() explains the locale problem", () => {
+    expect(() => jsmql("$.xs.toLocaleString()")).toThrow(/locale/);
   });
 });
 
@@ -1946,6 +2403,93 @@ describe("1-arg substr", () => {
   });
 });
 
+describe(".slice on strings", () => {
+  it("string literal receiver → $substrCP", () => {
+    expect(jsmql('"hello".slice(1, 3)')).toEqual({
+      $substrCP: ["hello", 1, 2],
+    });
+  });
+  it("string-typed receiver (toLowerCase result) → $substrCP", () => {
+    expect(jsmql("$.name.toLowerCase().slice(0, 3)")).toEqual({
+      $substrCP: [{ $toLower: "$name" }, 0, 3],
+    });
+  });
+  it("1-arg form on string → from start to end", () => {
+    expect(jsmql('"hello".slice(2)')).toEqual({
+      $substrCP: ["hello", 2, { $subtract: [{ $strLenCP: "hello" }, 2] }],
+    });
+  });
+  it("negative-literal start on string → folded to strLen - n", () => {
+    expect(jsmql('"hello".slice(-3)')).toEqual({
+      $substrCP: ["hello", { $subtract: [{ $strLenCP: "hello" }, 3] }, 3],
+    });
+  });
+  it("negative end on string → strLen - n", () => {
+    expect(jsmql('"hello".slice(1, -1)')).toEqual({
+      $substrCP: [
+        "hello",
+        1,
+        { $max: [0, { $subtract: [{ $subtract: [{ $strLenCP: "hello" }, 1] }, 1] }] },
+      ],
+    });
+  });
+  it("non-literal index on string → runtime $cond normalises sign", () => {
+    expect(jsmql("String($.s).slice($.i)")).toEqual({
+      $substrCP: [
+        { $toString: "$s" },
+        {
+          $cond: [{ $lt: ["$i", 0] }, { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, "$i"],
+        },
+        {
+          $subtract: [
+            { $strLenCP: { $toString: "$s" } },
+            {
+              $cond: [
+                { $lt: ["$i", 0] },
+                { $add: ["$i", { $strLenCP: { $toString: "$s" } }] },
+                "$i",
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  it("slice() with no args is identity on string", () => {
+    expect(jsmql('"hello".slice()')).toEqual("hello");
+  });
+});
+
+describe(".substring", () => {
+  it("substring(start, end) folds end - start as a length", () => {
+    expect(jsmql("$.name.substring(2, 7)")).toEqual({
+      $substrCP: ["$name", 2, 5],
+    });
+  });
+  it("substring(start) slices to end of string", () => {
+    expect(jsmql("$.email.substring(1)")).toEqual({
+      $substrCP: ["$email", 1, { $subtract: [{ $strLenCP: "$email" }, 1] }],
+    });
+  });
+  it("substring() with no args is identity", () => {
+    expect(jsmql("$.name.substring()")).toEqual("$name");
+  });
+  it("substring with non-literal start clamps to 0 via $max", () => {
+    expect(jsmql("$.s.substring($.i, 10)")).toEqual({
+      $substrCP: [
+        "$s",
+        { $max: [0, "$i"] },
+        { $max: [0, { $subtract: [10, { $max: [0, "$i"] }] }] },
+      ],
+    });
+  });
+  it("substring with negative literal clamps at compile time", () => {
+    expect(jsmql("$.name.substring(-3, 4)")).toEqual({
+      $substrCP: ["$name", 0, 4],
+    });
+  });
+});
+
 describe("comparison precedence: relational higher than equality", () => {
   it("a < b === true parses as (a < b) === true", () => {
     expect(jsmql("$.a < $.b === true")).toEqual({
@@ -2213,9 +2757,13 @@ describe("optional chaining (?.)", () => {
       $reverseArray: { $ifNull: ["$user.posts", []] },
     });
   });
-  it(".slice on optional receiver wraps with []", () => {
+  it(".slice on optional receiver wraps with [] then runtime-dispatches", () => {
     expect(jsmql("$.user?.posts.slice(0, 5)")).toEqual({
-      $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5],
+      $cond: [
+        { $isArray: { $ifNull: ["$user.posts", []] } },
+        { $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
+        { $substrCP: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
+      ],
     });
   });
 

@@ -793,6 +793,62 @@ describe("Array methods: tag aggregation via .map.flat.join", () => {
   });
 });
 
+describe("Array methods: immutable replace and indexed map via .with / (x, i)", () => {
+  it("replaces a roster entry by index and projects (name, position) pairs", () => {
+    // A roster sub-document carries a fixed-position lineup. When a player
+    // is swapped out we need an immutable replacement at the same slot, and
+    // we want to project (name, slot) pairs for the UI. .with() and the new
+    // (element, index) callback shape cover both cleanly.
+    const result = jsmql(`{
+      lineup: $.roster.with($.swap.slot, $.swap.in),
+      labelled: $.roster.map((p, i) => ({ slot: i, name: p.name })),
+    }`);
+
+    expect(result).toEqual({
+      lineup: {
+        $let: {
+          vars: { jsmqlArr: "$roster", jsmqlIdx: "$swap.slot", jsmqlVal: "$swap.in" },
+          in: {
+            $concatArrays: [
+              { $slice: ["$$jsmqlArr", 0, "$$jsmqlIdx"] },
+              ["$$jsmqlVal"],
+              {
+                $slice: [
+                  "$$jsmqlArr",
+                  { $add: ["$$jsmqlIdx", 1] },
+                  {
+                    $max: [
+                      0,
+                      {
+                        $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      labelled: {
+        $map: {
+          input: { $zip: { inputs: [{ $range: [0, { $size: "$roster" }] }, "$roster"] } },
+          as: "jsmqlPair",
+          in: {
+            $let: {
+              vars: {
+                p: { $arrayElemAt: ["$$jsmqlPair", 1] },
+                i: { $arrayElemAt: ["$$jsmqlPair", 0] },
+              },
+              in: { slot: "$$i", name: "$$p.name" },
+            },
+          },
+        },
+      },
+    });
+  });
+});
+
 describe("Array methods: file upload validation with [literal].includes + .endsWith", () => {
   it("checks extension whitelist, name match, and size cap", () => {
     // Reject upload unless the lowercased extension is in the allowlist,

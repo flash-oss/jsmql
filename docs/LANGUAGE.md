@@ -294,8 +294,9 @@ or poison every downstream caller).
 |---|---|---|
 | Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
 | Array spread | `[]` | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Array method receiver (`.map`, `.filter`, `.reduce`, `.find`, `.some`, `.every`, `.flat`, `.flatMap`, `.at`, `.slice`, `.reverse`, `.toSorted`, `.join`, `.findLast`, `.findLastIndex`) | `[]` | `$.user?.posts.map(p => p.id)` → `{ $map: { input: { $ifNull: ["$user.posts", []] }, ... } }` |
-| String method receiver (`.trim`, `.toUpperCase`, `.toLowerCase`, `.split`, `.substr`, `.charAt`, `.startsWith`, `.endsWith`, `.replace`, `.replaceAll`, `.padStart`, `.padEnd`, `.repeat`, `.match`, `.matchAll`, `.search`) | `""` | `$.user?.name.trim()` → `{ $trim: { input: { $ifNull: ["$user.name", ""] } } }` |
+| Array method receiver (`.map`, `.filter`, `.reduce`, `.reduceRight`, `.find`, `.findIndex`, `.some`, `.every`, `.flat`, `.flatMap`, `.at`, `.reverse`, `.toSorted`, `.toSpliced`, `.with`, `.join`, `.findLast`, `.findLastIndex`, `.lastIndexOf`, `.toString`) | `[]` | `$.user?.posts.map(p => p.id)` → `{ $map: { input: { $ifNull: ["$user.posts", []] }, ... } }` |
+| Either-method receiver (`.slice`, `.indexOf`, `.includes`, `.concat` — `.slice` since type depends on receiver) | `""` (string-typed) / `[]` otherwise | `$.user?.tags.slice(0, 3)` → runtime `$cond` over `$ifNull("$user.tags", [])` |
+| String method receiver (`.trim`, `.toUpperCase`, `.toLowerCase`, `.split`, `.substr`, `.substring`, `.charAt`, `.startsWith`, `.endsWith`, `.replace`, `.replaceAll`, `.padStart`, `.padEnd`, `.repeat`, `.match`, `.matchAll`, `.search`) | `""` | `$.user?.name.trim()` → `{ $trim: { input: { $ifNull: ["$user.name", ""] } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
 | `.length` of optional | `""` (string) / `[]` (array or unknown — array branch produces 0) | `$.user?.tags.length` → runtime `$cond` over `$ifNull("$user.tags", [])` |
@@ -435,7 +436,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and predicate-method bodies (`.filter`, `.find`, `.findLast`, `.findLastIndex`, `.some`, `.every`) all use **JavaScript** truthy/falsy semantics, not MongoDB's. The values treated as falsy are:
+`&&`, `||`, `!`, `?:`, `Boolean(x)`, and predicate-method bodies (`.filter`, `.find`, `.findIndex`, `.findLast`, `.findLastIndex`, `.some`, `.every`) all use **JavaScript** truthy/falsy semantics, not MongoDB's. The values treated as falsy are:
 
 | Value | Falsy? |
 |---|---|
@@ -486,6 +487,10 @@ $.name.toLowerCase()               // { $toLower: "$name" }
 $.name.toUpperCase()               // { $toUpper: "$name" }
 $.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
+$.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
+$.name.substring(1)                // { $substrCP: ["$name", 1, { $subtract: [{ $strLenCP: "$name" }, 1] }] }
+"hello".slice(1, 3)                // { $substrCP: ["hello", 1, 2] }   — `.slice` on a string-typed receiver
+"hello".slice(-3)                  // { $substrCP: ["hello", { $subtract: [{ $strLenCP: "hello" }, 3] }, 3] }  — negative counts from end
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
@@ -530,18 +535,25 @@ Call methods on any expression that produces an array.
 ```js
 $.items.at(0)              // { $arrayElemAt: ["$items", 0] }
 $.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
-$.items.slice(2)           // { $slice: ["$items", 2] }
-$.items.slice(1, 3)        // { $slice: ["$items", 1, 3] }
+[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 0, 2] }      (known array → $slice)
+$.items.slice(1, 3)        // runtime $cond on $isArray — array → $slice, string → $substrCP
+                           // (type-aware, like .indexOf / .includes / .concat)
 $.items.reverse()          // { $reverseArray: "$items" }
 $.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, identical to .reverse())
 $.scores.toSorted()        // { $sortArray: { input: "$scores", sortBy: 1 } } (ascending)
+$.items.with(0, 99)        // immutable index-set — replace element at index, returns new array (ES2023)
+$.items.toSpliced(1, 2)    // immutable splice — remove 2 items starting at 1 (ES2023)
+$.items.toSpliced(1, 0, "x", "y")
+                           // immutable insert — insert items without removing
 Array.from({length: 5})    // { $range: [0, 5] }
 Array.from({length: 3}, (_, i) => i * 2)
                            // { $map: { input: { $range: [0, 3] }, as: "i", in: <body> } }
 [1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
+$.items.lastIndexOf($.x)   // last index of $.x, or -1 (array-only — strings rejected)
 $.tags.join(", ")          // builds a comma-separated string via $reduce/$concat
+$.items.toString()         // same as .join(",") for arrays; no-op for strings; $toString otherwise
 $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
@@ -582,6 +594,10 @@ $.items.filter(x => x > 0)
 $.items.find(x => x.status === "active")
 // → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: { $eq: ["$$x.status", "active"] } } }, 0] }
 
+// findIndex — index of first matching element, or -1
+$.items.findIndex(x => x.active)
+// → $reduce over [(idx, el), ...] pairs, keeping the first index where the predicate matches
+
 // findLast — last matching element (ES2023)
 $.items.findLast(x => x.active)
 // → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: "$$x.active" } }, -1] }
@@ -598,12 +614,48 @@ $.scores.some(x => x >= 90)
 $.scores.every(x => x >= 60)
 // → { $allElementsTrue: { $map: { input: "$scores", as: "x", in: { $gte: ["$$x", 60] } } } }
 
-// reduce — fold to a single value (two-param lambda required)
+// reduce — fold to a single value (2- or 3-param lambda required)
 $.numbers.reduce((acc, x) => acc + x, 0)
 // → { $reduce: { input: "$numbers", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
+
+// reduceRight — fold right-to-left
+$.numbers.reduceRight((acc, x) => acc + x, 0)
+// → same as .reduce but input is wrapped in { $reverseArray: ... }
 ```
 
-**Note:** In `reduce`, the accumulator and element are mapped to MongoDB's `$$value` and `$$this` variables.
+**Note:** In `reduce` and `reduceRight`, the accumulator name is mapped to MongoDB's `$$value`. With a 2-param callback the element rides through `$$this`; with a 3-param callback `(acc, x, i)` the input is zipped with `$range` and both `x` and `i` are bound through a `$let` wrapper.
+
+### Callback parameters `(element, index)`
+
+JavaScript array-method callbacks receive `(element, index, array)`. jsmql supports the first two — `(x)` and `(x, i)` — across `.map`, `.filter`, `.find`, `.findIndex`, `.findLast`, `.findLastIndex`, `.some`, `.every`, `.flatMap`, and `.reduce` / `.reduceRight` (which take a leading `acc`). The third `array` parameter is **rejected at compile time** — the receiver is already in scope at the call site, so re-binding it into every iteration adds no expressive power but doubles the iteration cost.
+
+```js
+// Index-aware map: pair each element with its position
+$.tags.map((tag, i) => ({ rank: i, tag }))
+// → $map over $zip([$range(0, $size), $tags]) with a $let that binds tag/i
+
+// Index-aware filter: drop the first item only
+$.items.filter((_, i) => i > 0)
+
+// Index-aware reduce: weight by position
+$.scores.reduce((acc, x, i) => acc + x * i, 0)
+```
+
+### Mutator methods raise an actionable error
+
+JavaScript's in-place mutators have no place in immutable MongoDB expressions. Calling them surfaces a tailored error that points at the right immutable replacement:
+
+| You wrote | Error message says |
+|---|---|
+| `.sort()` | Use `.toSorted()` instead. |
+| `.splice()` | Use `.toSpliced(start, deleteCount, ...items)` instead. |
+| `.push()` | Use `.concat(x)` or spread `[...arr, x]` instead. |
+| `.pop()` | Use `.at(-1)` to read, or `.slice(0, -1)` for everything-but-last. |
+| `.shift()` | Use `.at(0)` to read, or `.slice(1)` for everything-but-first. |
+| `.unshift()` | Use `.concat()` with the new items first, or spread `[...newItems, ...arr]`. |
+| `.fill()`, `.copyWithin()` | No direct immutable replacement — compose with `$range`, `.slice()`, and `$concatArrays`. |
+
+`.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors explaining why they're not expressible (iterator protocol / void return / locale-dependence) and what to use instead.
 
 ### Bare type-cast callbacks
 
@@ -830,8 +882,15 @@ Valid target types: `"double"`, `"string"`, `"objectId"`, `"bool"`, `"date"`, `"
 new Date()                         // { $toDate: "$$NOW" }  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
 new Date("2024-01-01")             // { $toDate: "2024-01-01" }
+new Date(2024, 0, 15)              // { $dateFromParts: { year: 2024, month: 1, day: 15 } }
+new Date(2024, 11, 31, 23, 59, 58, 999)
+                                   // full year/month/day/hour/minute/second/ms form
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
+Date.UTC(2024, 0, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } } }
+new Date(Date.UTC(2024, 0, 15))    // { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } }   — peephole skips the toLong/toDate round-trip
 ```
+
+**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly. JS month indices stay 0-based on the input side — jsmql folds the `+1` adjustment for you.
 
 ### Date Getter Methods
 

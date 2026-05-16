@@ -111,12 +111,81 @@ function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> |
   if (expr.type !== "BinaryExpr") return null;
   const op = expr.op;
   if (isEqualityOp(op)) {
+    // Peephole: `typeof $.field === "<alias>"` → `{ field: { $type: "<alias>" } }`.
+    // Tried before the generic equality path so the field-path-and-literal
+    // orientation logic doesn't see the `typeof` wrapper.
+    if (op === "===" || op === "!==") {
+      const typed = translateTypeofPredicate(expr.left, expr.right, op);
+      if (typed !== null) return typed;
+    }
     return translateEquality(expr.left, expr.right, op, ctx);
   }
   if (isOrderedOp(op)) {
     return translateOrderedCompare(expr.left, expr.right, op, ctx);
   }
   return null;
+}
+
+/**
+ * BSON type aliases accepted by MongoDB's `$type` query operator. Restricting
+ * the peephole to this set avoids emitting a query that MongoDB would reject
+ * at parse time. "number" is included because MQL accepts it as a synonym for
+ * the int/long/double/decimal group in the query-doc form (even though the
+ * aggregation `$type` expression never *returns* "number").
+ */
+const BSON_TYPE_ALIASES: ReadonlySet<string> = new Set([
+  "double",
+  "string",
+  "object",
+  "array",
+  "binData",
+  "undefined",
+  "objectId",
+  "bool",
+  "date",
+  "null",
+  "regex",
+  "dbPointer",
+  "javascript",
+  "symbol",
+  "javascriptWithScope",
+  "int",
+  "timestamp",
+  "long",
+  "decimal",
+  "minKey",
+  "maxKey",
+  "number",
+]);
+
+function translateTypeofPredicate(
+  left: Expr,
+  right: Expr,
+  op: "===" | "!==",
+): Record<string, unknown> | null {
+  const oriented = orientTypeofAndString(left, right);
+  if (oriented === null) return null;
+  const { field, alias } = oriented;
+  if (!BSON_TYPE_ALIASES.has(alias)) return null;
+  if (op === "===") return { [field]: { $type: alias } };
+  return { [field]: { $not: { $type: alias } } };
+}
+
+function orientTypeofAndString(left: Expr, right: Expr): { field: string; alias: string } | null {
+  const lt = asTypeofFieldPath(left);
+  if (lt !== null && right.type === "StringLiteral") {
+    return { field: lt, alias: right.value };
+  }
+  const rt = asTypeofFieldPath(right);
+  if (rt !== null && left.type === "StringLiteral") {
+    return { field: rt, alias: left.value };
+  }
+  return null;
+}
+
+function asTypeofFieldPath(expr: Expr): string | null {
+  if (expr.type !== "TypeofExpr") return null;
+  return asFieldPath(expr.operand);
 }
 
 function translateEquality(

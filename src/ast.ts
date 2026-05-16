@@ -159,7 +159,7 @@ export type Expr =
   | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
   | { type: "Lambda"; params: string[]; body: Expr; pos: number }
   | { type: "TypeofExpr"; operand: Expr; pos: number }
-  | { type: "NewDate"; arg: Expr | null; pos: number }
+  | { type: "NewDate"; args: Expr[]; pos: number }
   | { type: "NewSet"; arg: Expr | null; pos: number }
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr; pos: number }
   | { type: "TypeCastRef"; cast: BareCastOp; pos: number }
@@ -168,7 +168,8 @@ export type Expr =
   | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[]; pos: number }
   | { type: "ArrayFrom"; input: Expr; mapFn: Expr | null; pos: number }
   | { type: "NumberStatic"; method: NumberStaticMethod; arg: Expr; pos: number }
-  | { type: "DateNow"; pos: number };
+  | { type: "DateNow"; pos: number }
+  | { type: "DateUTC"; args: Expr[]; pos: number };
 
 export type TypeCastOp = "Number" | "String" | "Boolean" | "parseInt" | "parseFloat";
 /** Type-cast names usable as bare callbacks (e.g. `arr.filter(Boolean)`).

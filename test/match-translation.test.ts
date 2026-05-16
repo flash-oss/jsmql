@@ -212,6 +212,52 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 });
 
+describe("$match translation — typeof → $type", () => {
+  it('translates `typeof $.x === "string"` to query-doc $type', () => {
+    expect(jsmql('[$match(typeof $.email === "string")]')).toEqual([
+      { $match: { email: { $type: "string" } } },
+    ]);
+  });
+  it("accepts the literal on either side", () => {
+    expect(jsmql('[$match("int" === typeof $.count)]')).toEqual([
+      { $match: { count: { $type: "int" } } },
+    ]);
+  });
+  it("translates `!==` via $not", () => {
+    expect(jsmql('[$match(typeof $.x !== "null")]')).toEqual([
+      { $match: { x: { $not: { $type: "null" } } } },
+    ]);
+  });
+  it("works on nested field paths", () => {
+    expect(jsmql('[$match(typeof $.user.role === "string")]')).toEqual([
+      { $match: { "user.role": { $type: "string" } } },
+    ]);
+  });
+  it("combines with other translated clauses via $and-merge", () => {
+    expect(jsmql('[$match(typeof $.age === "int" && $.age > 18)]')).toEqual([
+      {
+        $match: {
+          $and: [{ age: { $type: "int" } }, { age: { $gt: 18 } }],
+        },
+      },
+    ]);
+  });
+  it("falls through to $expr for unknown type aliases", () => {
+    expect(jsmql('[$match(typeof $.fn === "function")]')).toEqual([
+      { $match: { $expr: { $eq: [{ $type: "$fn" }, "function"] } } },
+    ]);
+  });
+  it("falls through to $expr when the operand is not a static field path", () => {
+    expect(jsmql('[$match(typeof $.name.toLowerCase() === "string")]')).toEqual([
+      {
+        $match: {
+          $expr: { $eq: [{ $type: { $toLower: "$name" } }, "string"] },
+        },
+      },
+    ]);
+  });
+});
+
 describe("$match translation — escape hatch", () => {
   it("object-literal body with $expr passes through unchanged", () => {
     // The existing object-literal passthrough is the explicit opt-out for
