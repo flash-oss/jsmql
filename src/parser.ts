@@ -763,6 +763,13 @@ export class Parser {
       return [this.parsePrefixIncDec()];
     }
     const target = this.parsePostfix();
+    // `parsePostfix` may have already returned a fully-formed mutation when the
+    // input was wrapped in parens — `($.a = 1)` / `($.a++)`. Prettier and oxfmt
+    // emit this shape when a top-level assignment chains with `,`. Surface it
+    // as-is so a chain like `($.a = 1), ($.b = 2)` round-trips.
+    if ((target as unknown as { type: string }).type === "AssignExpr") {
+      return [target as unknown as AssignExpr];
+    }
     this.validateMutationTarget(target);
     // Postfix increment/decrement: `$.x++` / `$.x--`.
     const postfix = this.peekIncDecOp();

@@ -385,6 +385,39 @@ describe("mutations: parenthesized form (formatter-friendly)", () => {
       { $set: { a: 1, b: 2 } },
     ]);
   });
+
+  it("comma-chained parenthesized assignments coalesce into one $set", () => {
+    // Formatter output: prettier and oxfmt wrap each assignment in parens and
+    // join the chain with `,` when it appears as a statement at the top of a
+    // block-body arrow. The two halves must combine into one $set, just like
+    // the bare-form `$.a = 1, $.b = 2`.
+    expect(jsmql("($.a = 1), ($.b = 2)")).toEqual({ $set: { a: 1, b: 2 } });
+  });
+
+  it("comma-chained parenthesized assignments in a block-body arrow", () => {
+    expect(
+      jsmql(($, { $match }) => {
+        $match($.status === "pending");
+        (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
+        $.status = "complete";
+      }),
+    ).toEqual([
+      { $match: { status: "pending" } },
+      {
+        $set: {
+          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
+          invoiceCount: { $add: ["$invoiceCount", 1] },
+        },
+      },
+      { $set: { status: "complete" } },
+    ]);
+  });
+
+  it("comma-chained parens mixing assignment and postfix inc/dec", () => {
+    expect(jsmql("($.a = 1), ($.cnt++)")).toEqual({
+      $set: { a: 1, cnt: { $add: ["$cnt", 1] } },
+    });
+  });
 });
 
 describe("mutations: validation errors", () => {

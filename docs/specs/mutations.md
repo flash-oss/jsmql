@@ -48,7 +48,7 @@ Top-level dispatch (`Parser.parse()`) is a `;`-separated statement loop, not a s
 3. Expect EOF.
 4. If no `;` was seen, return the single statement (`Expr` or `MutationProgram`). Otherwise return a `Pipeline` whose `stmts` are the collected statements.
 
-`parseMutationProgramRest` only consumes `,` separators — `;` is a top-level boundary, never a mutation-chain separator.
+`parseMutationProgramRest` only consumes `,` separators — `;` is a top-level boundary, never a mutation-chain separator. Each tail mutation goes through `parseMutation()`, which calls `parsePostfix()` to read the next target. `parsePostfix()` may return a fully-formed `AssignExpr` if the user wrapped the assignment in parens (`($.a = 1)`) — formatters (prettier, oxfmt) emit this shape when an assignment chains with `,`. `parseMutation` short-circuits on that case and returns the `AssignExpr` directly, so `($.a = 1), ($.b = 2)` coalesces into one `$set` stage just like the bare `$.a = 1, $.b = 2` form.
 
 Inside `parseArrayLiteral`, the same per-element heuristic applies: a leading `Delete`/`++`/`--` token, or an expression followed by an assignment operator, becomes a mutation element. This is what enables `[$match(...), $.a = 1, delete $.tmp, $sort(...)]`. Inside the bracketed form, `,` is the only separator (JS syntax).
 
