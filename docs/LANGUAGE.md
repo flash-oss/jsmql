@@ -326,9 +326,9 @@ outer `.map`'s receiver (`$.items`) is not optional and is not wrapped.
 ### Syntax
 
 - Must start with `$.`
-- Followed by a valid identifier (letter or underscore)
-- May include dots for nested access
-- May include numeric indices for arrays
+- Followed by a valid JavaScript identifier (letter or underscore; digits allowed after the first character)
+- May include dots for nested object access (`$.a.b.c`)
+- For array elements, use bracket access — `$.items[0]`, not `$.items.0` (the dotted-digit form is invalid JS and is rejected by the lexer)
 
 ### Invalid field references
 
@@ -1013,12 +1013,25 @@ $bitNot($.flags)                   // { $bitNot: "$flags" }
 
 ### `$literal` — bypass MongoDB's runtime expression evaluation
 
-Use `$literal` to keep a value MongoDB would otherwise interpret as a field reference at query time (any string starting with `$`). jsmql compiles the argument like any other expression; what makes `$literal` special is that MongoDB's pipeline does **not** re-evaluate its content as an expression at runtime:
+Most of the time you don't need to call `$literal` yourself — jsmql wraps `"$..."`-shaped string **values** in `$literal` automatically:
 
 ```js
-$literal("$foo")                   // { $literal: "$foo" }   — the literal string "$foo"
-                                   //   (without $literal, "$foo" would mean field foo at runtime)
+"$foo"                             // { $literal: "$foo" }   — automatic
+[1, "$foo", "bar"]                 // [1, { $literal: "$foo" }, "bar"]
+({ x: "$foo" })                    // { x: { $literal: "$foo" } }
+$concat("$first", " ", "$last")    // { $concat: [{ $literal: "$first" }, " ", { $literal: "$last" }] }
+```
+
+The same protection applies to values interpolated via the template-tag form and to bindings supplied to `jsmql.compile()` — a `"$..."` string cannot accidentally become a field reference on its way through user input. Real field references (`$.foo`) are unaffected: they come from the dedicated `$.` syntax, not from string literals.
+
+`$literal` is **not** applied to object **keys** — MongoDB doesn't auto-evaluate keys at query time, so `{ "$foo": 1 }` stays as `{ "$foo": 1 }` (which is how you'd intentionally name a field `$foo`).
+
+You can still call `$literal` explicitly; the auto-wrap detects that the subtree is already inside a `$literal` envelope and won't double-wrap:
+
+```js
+$literal("$foo")                   // { $literal: "$foo" }
 $literal(42)                       // { $literal: 42 }       — equivalent to bare 42
+$literal({ x: "$foo" })            // { $literal: { x: "$foo" } }   — inner $-string not double-wrapped
 ```
 
 ### `$meta` — per-document aggregation metadata

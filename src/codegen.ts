@@ -87,6 +87,15 @@ export type GenerateCtx = {
    * raw AST `ParamRef.name` before any MQL variable-name remap.
    */
   bindingTypes?: ReadonlyMap<string, "object" | "array">;
+  /**
+   * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
+   * literals. Set by the `$literal(...)` operator codegen on the recursive
+   * call for its argument — the whole subtree is already inside a `$literal`
+   * envelope, so MongoDB will not interpret nested strings as field refs and
+   * a second wrap would produce a literal of a literal. Propagated through
+   * `extendCtx` so it survives lambda bodies and other ctx-modifying paths.
+   */
+  insideLiteral?: boolean;
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -99,6 +108,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     droppedLets: ctx.droppedLets,
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
+    insideLiteral: ctx.insideLiteral,
   };
 }
 
@@ -378,6 +388,52 @@ function gensymInScope(ctx: GenerateCtx, base: string): string {
   }
 }
 
+/**
+ * Emit a string literal in a value position, auto-wrapping in `$literal` when
+ * the value would be misread by MongoDB as a field reference / system variable.
+ *
+ * In MongoDB aggregation expression context, any string value that starts with
+ * `$` is interpreted at query time — `"$foo"` reads field `foo`, `"$$NOW"` is
+ * the system variable. A user who writes the string literal `"$foo"` in jsmql
+ * source means the literal four-character string, not field access (they'd
+ * write `$.foo` for that). Wrap in `$literal` so the runtime keeps it intact.
+ *
+ * Suppressed when `ctx.insideLiteral` is set — we're already inside a
+ * `$literal(...)` envelope, MongoDB will not re-evaluate this subtree, and a
+ * second wrap would produce a literal-of-a-literal.
+ */
+function literalSafeString(value: string, ctx: GenerateCtx): unknown {
+  if (ctx.insideLiteral) return value;
+  if (value.length > 0 && value.charCodeAt(0) === 36 /* $ */) {
+    return { $literal: value };
+  }
+  return value;
+}
+
+/**
+ * Apply the same `$literal` safety net to a `jsmql.compile`/template-tag bound
+ * value as we do to user-written string literals: any `"$..."`-shaped string,
+ * at any nesting depth, gets wrapped so MongoDB doesn't read it as a field ref
+ * at runtime. Plain objects and arrays recurse; primitives pass through.
+ *
+ * `validateInterpolatable` has already rejected functions, symbols, BigInt,
+ * non-finite numbers, and circular references, so this walker only needs to
+ * handle JSON-shaped data.
+ */
+function safeBoundValue(value: unknown, ctx: GenerateCtx): unknown {
+  if (ctx.insideLiteral) return value;
+  if (typeof value === "string") return literalSafeString(value, ctx);
+  if (Array.isArray(value)) return value.map((v) => safeBoundValue(v, ctx));
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = safeBoundValue(v, ctx);
+    }
+    return out;
+  }
+  return value;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function generate(expr: Expr): unknown {
@@ -421,7 +477,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "BigIntLiteral":
       return { $toLong: expr.value };
     case "StringLiteral":
-      return expr.value;
+      return literalSafeString(expr.value, ctx);
     case "BooleanLiteral":
       return expr.value;
     case "NullLiteral":
@@ -527,7 +583,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         return `$${letPath}`;
       }
       if (ctx.bindings?.has(expr.name)) {
-        return ctx.bindings.get(expr.name);
+        return safeBoundValue(ctx.bindings.get(expr.name), ctx);
       }
       const droppedBy = ctx.droppedLets?.get(expr.name);
       if (droppedBy !== undefined) {
@@ -1250,6 +1306,17 @@ function generateOperatorCall(
   ctx: GenerateCtx,
   pos: number,
 ): Record<string, unknown> {
+  // Special case: $literal(value) — the argument is wrapped verbatim and
+  // MongoDB does not re-evaluate it at query time. Recurse with the
+  // `insideLiteral` flag so nested `"$..."` strings don't get a second
+  // `$literal` wrap (that would emit a literal-of-a-literal object). Sits
+  // ahead of the `style === "object"` branch because the parser tags
+  // `$literal({...})` as object-style, but we still want the suppress flag.
+  if (name === "$literal" && args.length === 1 && args[0].type !== "SpreadElement") {
+    const inner = _generate(args[0] as Expr, { ...ctx, insideLiteral: true });
+    return { $literal: inner };
+  }
+
   if (style === "object") {
     const objArg = args[0];
     if (!objArg || objArg.type !== "ObjectLiteral") {

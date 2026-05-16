@@ -85,6 +85,21 @@ $mergeObjects({ a: 1 })   →  { $mergeObjects: { a: 1 } }
 
 Current flex operators — see entries with `shape: FLEX` in `src/operators.ts`.
 
+## `$literal` and the auto-wrap policy
+
+`$literal` is the one operator with a fast-path branch in `generateOperatorCall` ([src/codegen.ts](../../src/codegen.ts)). Two things make it special:
+
+1. **Direct codegen.** `$literal(arg)` always emits `{ $literal: <generated arg> }` regardless of registry shape. The fast path sits *ahead* of the `style === "object"` branch because the parser tags `$literal({ x: 1 })` as object-style, but we still want to treat the inner object as `$literal`'s argument rather than as named-key wire format.
+2. **`insideLiteral` ctx flag.** The fast path recurses with `{ ...ctx, insideLiteral: true }`. This suppresses the auto-`$literal` safety net described below for the whole subtree, so `$literal({ x: "$foo" })` produces `{ $literal: { x: "$foo" } }` — a literal of a literal would otherwise emit `{ $literal: { x: { $literal: "$foo" } } }`.
+
+The flag is propagated through `extendCtx`, so it survives lambda bodies and other ctx-modifying paths inside `$literal`. `freshSubPipelineCtx` deliberately drops it — a sub-pipeline starts at a fresh scope, no outer `$literal` envelope.
+
+### Auto-`$literal` for `"$..."`-shaped string values
+
+The codegen emits any `StringLiteral` in a value position via `literalSafeString` ([src/codegen.ts](../../src/codegen.ts)): a string starting with `$` is wrapped in `{ $literal: value }` so MongoDB doesn't read it as a field reference at runtime. Plain strings pass through unchanged. The same `safeBoundValue` helper applies the policy recursively to `jsmql.compile()` parameter bindings (so a `"$foo"` value supplied at call time gets the same protection) — template-tag interpolation already routes through the parser and produces `StringLiteral` nodes, picking up the wrap automatically.
+
+Object **keys** are deliberately *not* wrapped. Keys are part of the JSON wire format, never evaluated by MongoDB as expressions, so `{ "$foo": 1 }` stays verbatim — that's how the user names a field `$foo`. The auto-wrap only fires on `StringLiteral` nodes generated through `_generate`, and key paths go through `entry.key.name` rather than `_generate(entry.key.value, ctx)`.
+
 ## Unknown operators
 
 If an operator name is not found in the registry, the codegen falls through using these heuristics:

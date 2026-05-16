@@ -2880,6 +2880,80 @@ describe("misc / hash / timestamp / sigmoid / type / literal operators", () => {
   });
 });
 
+describe("auto-$literal wrap for `$`-prefixed string values", () => {
+  // MongoDB reads any value-position string that starts with `$` as a field
+  // reference (or system variable) at query time. Users who write `"$foo"` as
+  // a literal in jsmql source mean the four-character string, not field
+  // access (they'd write `$.foo` for that). jsmql wraps these in `$literal`
+  // automatically so the runtime sees the intended string.
+
+  it("bare $-prefixed string literal at the top level", () => {
+    expect(jsmql('"$foo"')).toEqual({ $literal: "$foo" });
+  });
+
+  it("$$-prefixed system-variable-shaped literal also wraps", () => {
+    expect(jsmql('"$$NOW"')).toEqual({ $literal: "$$NOW" });
+  });
+
+  it("plain strings (no leading $) are unaffected", () => {
+    expect(jsmql('"hello"')).toEqual("hello");
+    expect(jsmql('""')).toEqual("");
+  });
+
+  it("$-string inside an array literal", () => {
+    expect(jsmql('[1, "$foo", "bar"]')).toEqual([1, { $literal: "$foo" }, "bar"]);
+  });
+
+  it("$-string as an object value (key form unchanged)", () => {
+    expect(jsmql('({ x: "$foo", y: "bar" })')).toEqual({ x: { $literal: "$foo" }, y: "bar" });
+  });
+
+  it("$-string as an object KEY does not wrap", () => {
+    // The user's key is the JSON key directly — MongoDB doesn't auto-evaluate
+    // keys, only values. Leave it alone.
+    expect(jsmql('({ "$foo": 1 })')).toEqual({ $foo: 1 });
+  });
+
+  it("$-string as an operator argument", () => {
+    expect(jsmql('$concat("$first", " ", "$last")')).toEqual({
+      $concat: [{ $literal: "$first" }, " ", { $literal: "$last" }],
+    });
+  });
+
+  it("real field refs (`$.foo`) are NOT wrapped — they aren't string literals", () => {
+    expect(jsmql("$concat($.first, $.last)")).toEqual({ $concat: ["$first", "$last"] });
+  });
+
+  it("inside $literal(...) the inner $-string is NOT double-wrapped", () => {
+    expect(jsmql('$literal("$foo")')).toEqual({ $literal: "$foo" });
+  });
+
+  it("$literal of a nested object suppresses the wrap on inner $-strings", () => {
+    expect(jsmql('$literal({ x: "$foo" })')).toEqual({ $literal: { x: "$foo" } });
+  });
+
+  it("$literal of a nested array suppresses the wrap on inner $-strings", () => {
+    expect(jsmql('$literal(["$a", "$b"])')).toEqual({ $literal: ["$a", "$b"] });
+  });
+
+  it("template-tag interpolation of a $-prefixed value wraps", () => {
+    const tainted = "$dangerous";
+    expect(jsmql`$.x === ${tainted}`).toEqual({ $eq: ["$x", { $literal: "$dangerous" }] });
+  });
+
+  it("compile-form binding of a $-prefixed string wraps at substitution time", () => {
+    const q = jsmql.compile(({ name }: { name: string }, $) => $.x === name);
+    expect(q({ name: "$dangerous" })).toEqual({ $eq: ["$x", { $literal: "$dangerous" }] });
+  });
+
+  it("compile-form binding deeply wraps $-strings inside arrays and objects", () => {
+    const q = jsmql.compile(({ allowed }: { allowed: string[] }, $) => $.grade in allowed);
+    expect(q({ allowed: ["$a", "$b", "safe"] })).toEqual({
+      $in: ["$grade", [{ $literal: "$a" }, { $literal: "$b" }, "safe"]],
+    });
+  });
+});
+
 describe("$hash and $hexHash (object shape)", () => {
   it("$hash positional", () => {
     expect(jsmql('$hash($.password, "sha256")')).toEqual({

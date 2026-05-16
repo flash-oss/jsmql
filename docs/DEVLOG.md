@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-16 — Auto-`$literal` wrap for `"$..."` string values
+
+User-supplied string literals (and `jsmql.compile()` bindings, and template-tag interpolations) whose value starts with `$` are now auto-wrapped in `{ $literal: value }` so MongoDB does not read them as field references at query time. The wrap fires on any `"$..."` shape in a *value* position — top-level, array element, object value, operator argument, method argument. Object **keys** are deliberately unaffected (MongoDB doesn't auto-evaluate keys, so `{ "$foo": 1 }` is how you intentionally name a field `$foo`).
+
+Why this matters for DX: the existing behaviour quietly produced `{ $eq: ["$x", "$dangerous"] }` for `jsmql.compile(({ name }, $) => $.x === name)({ name: "$dangerous" })`. At query time MongoDB would compare `$x` against the value of field `dangerous` — a silent footgun if `name` ever came from user input. The wrap closes the gap so any `"$..."` string reaches the server as a literal.
+
+Implementation: a new `insideLiteral?: boolean` field on `GenerateCtx` ([src/codegen.ts](../src/codegen.ts)). The `$literal(...)` operator codegen recurses on its argument with that flag set, suppressing the wrap inside the envelope so a literal-of-a-literal doesn't emit. `literalSafeString` is the single point where string literals are emitted; `safeBoundValue` walks `jsmql.compile()` param values recursively, applying the same policy to nested arrays and objects. `extendCtx` propagates the flag through lambda bodies; `freshSubPipelineCtx` drops it (a sub-pipeline starts fresh).
+
+`$literal(...)` keeps working when called explicitly — the operator's fast-path codegen sits ahead of the `style === "object"` branch in `generateOperatorCall` so `$literal({ x: 1 })` is treated as a value to wrap, not as object-style named-key wire format. 14 new test cases in `test/codegen.test.ts` cover the auto-wrap shapes, the suppression inside `$literal`, the key vs. value distinction, the template-tag path, and the `jsmql.compile()` binding path with nested arrays and objects. Spec updated in [docs/specs/operator-registry.md](specs/operator-registry.md).
+
+---
+
+## 2026-05-16 — Parser: accept comma-chained parenthesized assignments
+
+Prettier and oxfmt rewrite a top-level assignment chain like `$.a = 1, $.b = 2` to `($.a = 1), ($.b = 2)` when each assignment could otherwise be read as a destructuring assignment. The parser already accepted a single parenthesized assignment (`($.x = 5)`), but the comma-chained form failed with `Cannot assign to this expression …` because `parseMutationProgramRest` called `parseMutation()`, which called `parsePostfix()`, which returned a parenthesized `AssignExpr`, and then `validateMutationTarget` rejected the `AssignExpr` as a non-field-path target.
+
+`parseMutation()` ([src/parser.ts](../src/parser.ts)) now short-circuits: if `parsePostfix()` returns something whose `type` is already `"AssignExpr"`, it's surfaced as a complete mutation rather than running through `validateMutationTarget` + `parseAssignmentChainFrom`. The paren-form `parseGrouped` path already builds the `AssignExpr` correctly — it just had no consumer at the comma-tail position. Three new cases in `test/mutations.test.ts` cover the bare statement form, the function-body form (exactly the example LANGUAGE.md was claiming worked), and the mixed paren-assignment + paren-postfix-inc/dec form. The spec update lives in [docs/specs/mutations.md](specs/mutations.md).
+
+---
+
 ## 2026-05-16 — LANGUAGE.md sync: five stale claims fixed
 
 Audit pass over [docs/LANGUAGE.md](LANGUAGE.md) against the current implementation surfaced five claims that no longer matched what the compiler emits or rejects. All five are doc-only fixes; no source under `src/` changed.
