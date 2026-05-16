@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-17 — Doc fix: spread examples in Valid Constructs use field refs
+
+The "Valid Constructs" bullet for spread in [docs/LANGUAGE.md](LANGUAGE.md) showed `[...arr]` and `{ ...obj }` — bareword identifiers that don't resolve in string-form jsmql and would have produced an `UnknownIdentifierError` if a reader copy-pasted them. Replaced with `[...$.arr]` and `{ ...$.obj }` so the examples actually compile, matching the field-ref shape used everywhere else in the bullet list and in the deeper Arrays/Objects subsections (lines 181-182, 194-195).
+
+---
+
 ## 2026-05-17 — Array methods: fill the MDN list, bind `(element, index)`, shim mutators
 
 A single pass over MDN's `Array.prototype.*` list to close the gap between "JS you already know" and what jsmql actually accepts. Three buckets:

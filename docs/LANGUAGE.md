@@ -65,7 +65,7 @@ An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 
 - Literals: numbers (with numeric separators `1_000_000`), strings, booleans, `null`, arrays, objects
 - Template literals: `` `hello, ${$.name}!` ``
-- Spread: `[...arr]`, `{ ...obj }`, `Math.max(...$.scores)`
+- Spread: `[...$.arr]`, `{ ...$.obj }`, `Math.max(...$.scores)`
 - Field references: `$.fieldName`, `$.nested.path`
 - Optional chaining: `$.a?.b`, `$.a?.[0]`, `$.name?.trim()`
 - Bracket access: `$.items[0]`, `$.arr[$.idx]`
