@@ -772,6 +772,26 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         countEl.textContent = `${list.length} (${expressions} expr · ${pipelines} pipe)`;
       }
 
+      function writeHash(slug) {
+        if (slug) {
+          if (location.hash === "#" + slug) return;
+          history.replaceState(null, "", "#" + slug);
+        } else {
+          if (!location.hash) return;
+          history.replaceState(null, "", location.pathname + location.search);
+        }
+      }
+
+      function slugFromHash() {
+        const raw = location.hash.slice(1);
+        if (!raw) return null;
+        try {
+          return decodeURIComponent(raw);
+        } catch {
+          return raw;
+        }
+      }
+
       function selectExample(slug, { scroll = true } = {}) {
         const ex = examples.get(slug);
         if (!ex) return;
@@ -793,6 +813,7 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
           const active = itemEls.get(slug);
           if (active) active.scrollIntoView({ block: "nearest" });
         }
+        writeHash(slug);
       }
 
       // When the user freely edits the input, we no longer match a stored
@@ -807,6 +828,7 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         currentTitleEl.textContent = "";
         currentKindEl.hidden = true;
         inputPanel.classList.remove("pipeline");
+        writeHash(null);
       }
 
       function filterList(rawQuery) {
@@ -1002,7 +1024,18 @@ If '${t.identifier}' is a value from outer scope, use the jsmql\`\` template tag
 
       populateExamples();
       filterList("");
-      if (orderedSlugs.length > 0) selectExample(orderedSlugs[0], { scroll: false });
+      window.addEventListener("hashchange", () => {
+        const slug = slugFromHash();
+        if (slug && examples.has(slug) && slug !== activeSlug) {
+          selectExample(slug, { scroll: true });
+        }
+      });
+      if (orderedSlugs.length > 0) {
+        const initialSlug = slugFromHash();
+        const startSlug =
+          initialSlug && examples.has(initialSlug) ? initialSlug : orderedSlugs[0];
+        selectExample(startSlug, { scroll: initialSlug != null });
+      }
     </script>
   </body>
 </html>

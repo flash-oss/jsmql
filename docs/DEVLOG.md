@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-18 — Playground: deep-linkable examples via URL hash
+
+Selecting an example in [playground.html](../playground.html) now writes `#<slug>` to the address bar, and loading the page with a hash auto-selects that example. Slugs are the same kebab-case identifiers `scripts/sync-playground.mjs` already generates from each example's title — no schema change to the JSON island. A `hashchange` listener honours manual address-bar edits and back/forward; unknown slugs silently fall back to the first example. When the user freely edits the editor and the active highlight clears, the hash is cleared too so the URL never lies. History writes go through `history.replaceState` so stepping through the sidebar with arrow keys doesn't pollute browser history.
+
+All changes are confined to the inline script in `playground.html` — outside the regenerated bundle/examples regions — so `sync-playground.mjs` won't overwrite them.
+
+---
+
 ## 2026-05-17 — Doc fix: spread examples in Valid Constructs use field refs
 
 The "Valid Constructs" bullet for spread in [docs/LANGUAGE.md](LANGUAGE.md) showed `[...arr]` and `{ ...obj }` — bareword identifiers that don't resolve in string-form jsmql and would have produced an `UnknownIdentifierError` if a reader copy-pasted them. Replaced with `[...$.arr]` and `{ ...$.obj }` so the examples actually compile, matching the field-ref shape used everywhere else in the bullet list and in the deeper Arrays/Objects subsections (lines 181-182, 194-195).
