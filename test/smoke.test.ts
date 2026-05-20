@@ -3,12 +3,13 @@
  * that vitest's own test runtime cannot catch:
  *
  *   1. The `src/` tree stays in TypeScript's strippable subset, so the source
- *      runs as-is on Node 24+ via native type-stripping (no flag, no
- *      transpiler) — required for Deno/Bun parity. Vitest transforms TS
- *      through Vite's loader, which happily compiles `enum`, `namespace`,
- *      parameter properties, decorators, etc. — exactly the constructs the
- *      strippable subset bans. The only honest test is to invoke the real
- *      Node stripper.
+ *      runs as-is on Node 22.18+ / 24.3+ via native type-stripping (no flag,
+ *      no transpiler — type stripping was unflagged in Node 22.18.0 LTS and
+ *      in 24.3.0, and marked stable in 25.2.0) — required for Deno/Bun
+ *      parity. Vitest transforms TS through Vite's loader, which happily
+ *      compiles `enum`, `namespace`, parameter properties, decorators, etc.
+ *      — exactly the constructs the strippable subset bans. The only honest
+ *      test is to invoke the real Node stripper.
  *
  *   2. The built `dist/index.js` actually loads as ESM and produces correct
  *      MQL. Vitest tests resolve `src/index.ts` directly, never the built

@@ -32,7 +32,7 @@ PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-p
 
 ## Conventions
 
-- Scripts are `.mjs` (ESM) and may import directly from `src/*.ts` files; Node 24+'s native type-stripping handles the TS syntax without a flag.
+- Scripts are `.mjs` (ESM) and may import directly from `src/*.ts` files; Node 22.18+ / 24.3+'s native type-stripping handles the TS syntax without a flag (unflagged in 22.18.0 LTS and 24.3.0; stable in 25.2.0).
 - Each script's first paragraph (in a top-of-file comment) explains its purpose, when it runs, and how to invoke it manually.
 - Scripts never use `npx` — always `node_modules/.bin/<tool>` or an npm script (the rationale lives in the root `CLAUDE.md`).
 - A script that emits files into `src/` (like `generate-ops.mjs`) must produce **byte-stable output** for the drift test to compare cleanly. Sort inputs by name, avoid timestamps, and feed the result through `oxfmt` so the formatter doesn't introduce churn.

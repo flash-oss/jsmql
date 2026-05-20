@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-21 — Widen the strippable-TS floor: Node 22.18+ / 24.3+ run `src/` natively, no flag
+
+The "Node 24+ for native type-stripping (no flag)" claim sprinkled across the docs was conservative. Type stripping was unflagged in **Node 22.18.0** (LTS, August 2025) and in **Node 24.3.0** — and marked stable in 25.2.0 (November 2025). So a user on the current Node 22 LTS line can run `node src/index.ts` directly without any flag, not just users on the 24 line. Doc-only change to widen the documented floor; no source or test code changes.
+
+The change also caught one stale instruction I'd just added in the 2026-05-21 "Maintain README.md" rule — the example command read `node --experimental-strip-types src/index.ts`, which is wrong on every Node version where the new "no flag" claim holds. The new wording suggests writing a small probe script and running it with `node tmp/probe.mjs` instead, which is closer to how I actually verified README examples in practice.
+
+Files updated (all docs, no source):
+
+- Root [CLAUDE.md](../CLAUDE.md) — the "Maintain README.md" rule's example command and the strippable-subset bullet in "Things the user did not explicitly ask for but matter".
+- [README.md](../README.md) — the Highlights bullet for the strippable-source claim.
+- [src/CLAUDE.md](../src/CLAUDE.md) — the strippable-subset invariant bullet.
+- [scripts/CLAUDE.md](../scripts/CLAUDE.md) — the `Conventions` bullet about `.mjs` scripts importing from `src/*.ts`.
+- [test/smoke.test.ts](../test/smoke.test.ts) — the file-header comment describing the strippable-TS smoke test.
+
+No DEVLOG entries were edited — historical entries describing "Node 24+ native type-stripping" remain accurate as a description of the state at write time (the convention from the file header: never delete or rewrite past entries; add follow-ups). Verified by running `node src/index.ts` on the user's Node 25.2.1; smoke test stays green.
+
+`package.json#engines` is unchanged (`>=14`) — that's the **dist** consumer floor (the transpiled `dist/cjs/index.cjs` runs on Node 14+), which is independent of the source-running invariant this entry covers.
+
+---
+
 ## 2026-05-21 — Bare stage call auto-wraps as a one-stage Pipeline (no `;` required)
 
 `jsmql("$match($.age > 18)")` now returns `[{ $match: { age: { $gt: 18 } } }]` instead of throwing `CodegenError("$match is a Pipeline stage, … add a trailing ;")`. Same auto-wrap applies to every registered stage (`$project`, `$sort`, `$limit`, `$group`, …) and to the Compass copy-paste form `{ $match: ... }`. The `;`-suffixed form keeps working and produces identical output. `jsmql.expr()` is **not** changed — passing a stage call to it stays a misuse case, since `jsmql.expr`'s contract is "raw aggregation expression" and stages are not aggregation expressions.

@@ -126,7 +126,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Three output shapes** — `jsmql()` for Filter/Pipeline, `jsmql.compile(fn)` for parameterised parse-once-bind-many, `jsmql.expr()` for raw aggregation expressions that drop into a stage body or `db.coll.updateOne(filter, update)`. The same three call shapes apply to all three.
 - **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
-- **Strict TS, strippable source** — runs as-is on Node 24+, Deno, and Bun (no flags, no transpile).
+- **Strict TS, strippable source** — runs as-is on Node 22.18+ / 24.3+, Deno, and Bun (no flags, no transpile).
 
 ## Try it & learn more
 
