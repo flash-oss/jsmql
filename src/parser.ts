@@ -17,8 +17,8 @@ import type {
   AssignExpr,
   DeleteStmt,
   LetDecl,
-  Mutation,
-  MutationProgram,
+  UpdateOp,
+  UpdateFilter,
   Pipeline,
   PipelineStmt,
   Program,
@@ -70,10 +70,7 @@ export type ParamBinding = { key: string; name: string };
  * bare identifiers in the body as parameter references rather than unknown
  * idents.
  */
-export type FunctionInputResult = {
-  program: Program;
-  bindings: ParamBinding[];
-};
+export type FunctionInputResult = { program: Program; bindings: ParamBinding[] };
 
 const MATH_METHODS = new Set<string>([
   "abs",
@@ -110,14 +107,7 @@ const MATH_METHODS = new Set<string>([
 
 const MATH_CONSTANTS = new Set<string>(["PI", "E"]);
 
-const OBJECT_METHODS = new Set<string>([
-  "keys",
-  "values",
-  "entries",
-  "assign",
-  "fromEntries",
-  "groupBy",
-]);
+const OBJECT_METHODS = new Set<string>(["keys", "values", "entries", "assign", "fromEntries", "groupBy"]);
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 // Subset of TYPE_CAST_NAMES that are also valid as bare callbacks:
@@ -159,12 +149,12 @@ export class Parser {
   parse(): Program {
     // Top-level grammar:
     //   program := stmt (";" stmt)* ";"?
-    // where each `stmt` is either an expression or a mutation chain (one or
-    // more comma-separated mutations). Any presence of `;` — including a
+    // where each `stmt` is either an expression or a update op chain (one or
+    // more comma-separated update ops). Any presence of `;` — including a
     // single trailing one — flips the input to pipeline mode (`Pipeline`),
     // and each `;`-separated chunk becomes its own stage(s) in the lowerer
     // with no cross-coalescing. Without any `;`, behaviour is unchanged:
-    // the single statement is returned as `Expr` or `MutationProgram`.
+    // the single statement is returned as `Expr` or `UpdateFilter`.
     const stmts: PipelineStmt[] = [this.collectStatement()];
     let sawSemi = false;
     while (this.lexer.peek().type === TokenType.Semi) {
@@ -193,7 +183,7 @@ export class Parser {
    * function expression. We consume the parameter list and `=>`, then dispatch
    * to either a block-body parser (`{ stmt; stmt; }`, the function-form mirror
    * of the implicit `;`-separated pipeline) or an expression-body parser (a
-   * single jsmql expression / mutation, with one optional trailing `;` allowed
+   * single jsmql expression / update op, with one optional trailing `;` allowed
    * as a formatter artifact — single-statement bodies do NOT flip into pipeline
    * mode here).
    *
@@ -216,10 +206,7 @@ export class Parser {
       );
     }
     if (first.type !== TokenType.LParen) {
-      throw new FunctionInputError(
-        "jsmql expects an arrow function `($) => …` as the function-form input.",
-        first.pos,
-      );
+      throw new FunctionInputError("jsmql expects an arrow function `($) => …` as the function-form input.", first.pos);
     }
     const bindings = this.parseParameterList();
 
@@ -232,10 +219,7 @@ export class Parser {
     }
     this.lexer.next(); // consume `=>`
 
-    const program =
-      this.lexer.peek().type === TokenType.LBrace
-        ? this.parseBlockBody()
-        : this.parseExpressionBody();
+    const program = this.lexer.peek().type === TokenType.LBrace ? this.parseBlockBody() : this.parseExpressionBody();
     return { program, bindings };
   }
 
@@ -498,8 +482,7 @@ export class Parser {
         openBrace.pos,
       );
     }
-    if (paramBindings.length > 0)
-      return { kind: "params", bindings: paramBindings, pos: openBrace.pos };
+    if (paramBindings.length > 0) return { kind: "params", bindings: paramBindings, pos: openBrace.pos };
     return { kind: "ops", pos: openBrace.pos };
   }
 
@@ -507,7 +490,7 @@ export class Parser {
    * Parse the body of a block-body arrow: `{ stmt (; stmt)* ;? }`. This is
    * structurally the same as the top-level `;`-separated pipeline form
    * (see `parse()`), terminated by `}` instead of EOF. A single-statement
-   * block body without `;` returns the underlying `Expr`/`MutationProgram`
+   * block body without `;` returns the underlying `Expr`/`UpdateFilter`
    * unchanged; any `;` (including a trailing one) wraps as a `Pipeline`.
    *
    * `return` is rejected up front with a precise `FunctionInputError` so the
@@ -519,10 +502,7 @@ export class Parser {
     const openBrace = this.lexer.next(); // consume `{`
 
     if (this.lexer.peek().type === TokenType.RBrace) {
-      throw new FunctionInputError(
-        "jsmql expects at least one statement inside a block-body arrow.",
-        openBrace.pos,
-      );
+      throw new FunctionInputError("jsmql expects at least one statement inside a block-body arrow.", openBrace.pos);
     }
 
     this.rejectReturn();
@@ -538,10 +518,7 @@ export class Parser {
 
     const closeTok = this.lexer.peek();
     if (closeTok.type !== TokenType.RBrace) {
-      throw new ParseError(
-        `Expected '}' to close the block body at position ${closeTok.pos}`,
-        closeTok.pos,
-      );
+      throw new ParseError(`Expected '}' to close the block body at position ${closeTok.pos}`, closeTok.pos);
     }
     this.lexer.next();
 
@@ -614,8 +591,8 @@ export class Parser {
   }
 
   /**
-   * Parse one top-level statement: either an expression or a mutation chain
-   * (one or more comma-separated mutations sharing a stage). Stops at the
+   * Parse one top-level statement: either an expression or a update op chain
+   * (one or more comma-separated update ops sharing a stage). Stops at the
    * first `;` or EOF; the caller (`parse()`) handles the `;` boundary.
    */
   private collectStatement(): PipelineStmt {
@@ -628,42 +605,38 @@ export class Parser {
       return this.parseLetDecl();
     }
 
-    // Tokens that can ONLY start a mutation program: `delete`, `++`, `--`.
+    // Tokens that can ONLY start a update op program: `delete`, `++`, `--`.
     // Their presence at the start of a statement unambiguously commits us
-    // to mutation parsing. Other mutation forms (=, +=, x++, …) reveal
+    // to update op parsing. Other update op forms (=, +=, x++, …) reveal
     // themselves only after a target expression has been parsed — below.
-    if (
-      first.type === TokenType.Delete ||
-      first.type === TokenType.PlusPlus ||
-      first.type === TokenType.MinusMinus
-    ) {
-      return this.parseMutationProgram();
+    if (first.type === TokenType.Delete || first.type === TokenType.PlusPlus || first.type === TokenType.MinusMinus) {
+      return this.parseUpdateFilter();
     }
 
     // Speculative: parse a single expression first.
     const expr = this.parseExpression();
 
     // If an assignment operator follows, the expression we just parsed was
-    // actually a mutation target — treat the rest of the statement as a
-    // mutation chain.
+    // actually a update op target — treat the rest of the statement as a
+    // update op chain.
     if (this.peekAssignOp() !== null) {
-      this.validateMutationTarget(expr);
-      return this.parseMutationProgramFrom(expr);
+      this.validateUpdateTarget(expr);
+      return this.parseUpdateFilterFrom(expr);
     }
 
     // Postfix `x++` / `x--`.
     if (this.peekIncDecOp() !== null) {
-      this.validateMutationTarget(expr);
-      return this.parseMutationProgramFromPostfix(expr);
+      this.validateUpdateTarget(expr);
+      return this.parseUpdateFilterFromPostfix(expr);
     }
 
     // `parseExpression` may have surfaced an `AssignExpr` from a parenthesized
-    // top-level assignment (`($.a = 5)`). Wrap it in a MutationProgram so
-    // codegen routes through the mutation path.
+    // top-level assignment (`($.a = 5)`). Wrap it in a UpdateFilter so
+    // codegen routes through the update op path.
     if ((expr as unknown as { type: string }).type === "AssignExpr") {
-      const mutations: Mutation[] = [expr as unknown as AssignExpr];
-      this.parseMutationProgramRest(mutations);
-      return { type: "MutationProgram", mutations, pos: mutations[0].pos };
+      const ops: UpdateOp[] = [expr as unknown as AssignExpr];
+      this.parseUpdateFilterRest(ops);
+      return { type: "UpdateFilter", ops, pos: ops[0].pos };
     }
 
     return expr;
@@ -701,60 +674,60 @@ export class Parser {
     return { type: "LetDecl", name: ident.value, value, pos: letTok.pos };
   }
 
-  // ── Mutation program ─────────────────────────────────────────────────────
+  // ── UpdateOp program ─────────────────────────────────────────────────────
 
-  /** Entry when the input starts with a mutation token (`delete`). */
-  private parseMutationProgram(): MutationProgram {
-    const mutations: Mutation[] = [];
-    mutations.push(...this.parseMutation());
-    this.parseMutationProgramRest(mutations);
-    return { type: "MutationProgram", mutations, pos: mutations[0].pos };
+  /** Entry when the input starts with a update op token (`delete`). */
+  private parseUpdateFilter(): UpdateFilter {
+    const ops: UpdateOp[] = [];
+    ops.push(...this.parseUpdateOp());
+    this.parseUpdateFilterRest(ops);
+    return { type: "UpdateFilter", ops, pos: ops[0].pos };
   }
 
   /** Entry when the first target was already parsed as an expression. */
-  private parseMutationProgramFrom(firstTarget: Expr): MutationProgram {
-    const mutations: Mutation[] = [];
-    mutations.push(...this.parseAssignmentChainFrom(firstTarget));
-    this.parseMutationProgramRest(mutations);
-    return { type: "MutationProgram", mutations, pos: mutations[0].pos };
+  private parseUpdateFilterFrom(firstTarget: Expr): UpdateFilter {
+    const ops: UpdateOp[] = [];
+    ops.push(...this.parseAssignmentChainFrom(firstTarget));
+    this.parseUpdateFilterRest(ops);
+    return { type: "UpdateFilter", ops, pos: ops[0].pos };
   }
 
   /**
    * Entry when the first target was parsed and is followed by `++` or `--`
    * (postfix inc/dec). Validation must already have happened.
    */
-  private parseMutationProgramFromPostfix(firstTarget: Expr): MutationProgram {
+  private parseUpdateFilterFromPostfix(firstTarget: Expr): UpdateFilter {
     const op = this.peekIncDecOp();
     if (op === null) {
       const tok = this.lexer.peek();
       throw new ParseError(`Expected '++' or '--' at position ${tok.pos}`, tok.pos);
     }
     this.lexer.next(); // consume the operator
-    const mutations: Mutation[] = [this.makeIncDecMutation(firstTarget, op)];
-    this.parseMutationProgramRest(mutations);
-    return { type: "MutationProgram", mutations, pos: mutations[0].pos };
+    const ops: UpdateOp[] = [this.makeIncDecUpdateOp(firstTarget, op)];
+    this.parseUpdateFilterRest(ops);
+    return { type: "UpdateFilter", ops, pos: ops[0].pos };
   }
 
   /**
-   * After the first mutation is parsed, consume any `,`-separated tail.
+   * After the first update op is parsed, consume any `,`-separated tail.
    * Stops at the first non-`,` token (typically `;` or EOF) and leaves
    * the cursor there for the caller to handle.
    */
-  private parseMutationProgramRest(mutations: Mutation[]): void {
-    while (this.peekMutationSeparator()) {
+  private parseUpdateFilterRest(ops: UpdateOp[]): void {
+    while (this.peekUpdateOpSeparator()) {
       this.lexer.next(); // consume `,`
       const next = this.lexer.peek().type;
       if (next === TokenType.EOF || next === TokenType.Semi) break; // trailing separator
-      mutations.push(...this.parseMutation());
+      ops.push(...this.parseUpdateOp());
     }
   }
 
   /**
-   * Parse a single mutation. Returns an array because a chained assignment
+   * Parse a single update op. Returns an array because a chained assignment
    * (`$.a = $.b = expr`) flattens to multiple `AssignExpr` nodes here, all
    * sharing the deepest RHS.
    */
-  private parseMutation(): Mutation[] {
+  private parseUpdateOp(): UpdateOp[] {
     if (this.lexer.peek().type === TokenType.Delete) {
       return [this.parseDeleteStmt()];
     }
@@ -763,19 +736,19 @@ export class Parser {
       return [this.parsePrefixIncDec()];
     }
     const target = this.parsePostfix();
-    // `parsePostfix` may have already returned a fully-formed mutation when the
+    // `parsePostfix` may have already returned a fully-formed update op when the
     // input was wrapped in parens — `($.a = 1)` / `($.a++)`. Prettier and oxfmt
     // emit this shape when a top-level assignment chains with `,`. Surface it
     // as-is so a chain like `($.a = 1), ($.b = 2)` round-trips.
     if ((target as unknown as { type: string }).type === "AssignExpr") {
       return [target as unknown as AssignExpr];
     }
-    this.validateMutationTarget(target);
+    this.validateUpdateTarget(target);
     // Postfix increment/decrement: `$.x++` / `$.x--`.
     const postfix = this.peekIncDecOp();
     if (postfix !== null) {
       this.lexer.next();
-      return [this.makeIncDecMutation(target, postfix)];
+      return [this.makeIncDecUpdateOp(target, postfix)];
     }
     return this.parseAssignmentChainFrom(target);
   }
@@ -783,7 +756,7 @@ export class Parser {
   private parseDeleteStmt(): DeleteStmt {
     const delTok = this.lexer.next(); // consume `delete`
     const target = this.parsePostfix();
-    this.validateMutationTarget(target);
+    this.validateUpdateTarget(target);
     return { type: "DeleteStmt", target, pos: delTok.pos };
   }
 
@@ -805,7 +778,7 @@ export class Parser {
       // is bounded (DollarDot, Ident segments, dots) so this is cheap.
       if (this.peekIsAssignmentChainStart()) {
         const subTarget = this.parsePostfix();
-        this.validateMutationTarget(subTarget);
+        this.validateUpdateTarget(subTarget);
         const sub = this.parseAssignmentChainFrom(subTarget);
         const deepestValue = sub[sub.length - 1].value;
         return [{ type: "AssignExpr", target, value: deepestValue, pos: target.pos }, ...sub];
@@ -823,13 +796,7 @@ export class Parser {
       );
     }
     const rhs = this.parseExpression();
-    const desugared: Expr = {
-      type: "BinaryExpr",
-      op: compoundBinaryOp(op),
-      left: target,
-      right: rhs,
-      pos: target.pos,
-    };
+    const desugared: Expr = { type: "BinaryExpr", op: compoundBinaryOp(op), left: target, right: rhs, pos: target.pos };
     return [{ type: "AssignExpr", target, value: desugared, pos: target.pos }];
   }
 
@@ -864,13 +831,13 @@ export class Parser {
     );
   }
 
-  private peekMutationSeparator(): boolean {
+  private peekUpdateOpSeparator(): boolean {
     return this.lexer.peek().type === TokenType.Comma;
   }
 
   /**
    * Returns "++" or "--" if the next token is an inc/dec operator, else null.
-   * Used at both prefix (start of mutation) and postfix (after a target)
+   * Used at both prefix (start of update op) and postfix (after a target)
    * positions; the caller decides which.
    */
   private peekIncDecOp(): "++" | "--" | null {
@@ -898,12 +865,12 @@ export class Parser {
     }
     this.lexer.next(); // consume `++` or `--`
     const target = this.parsePostfix();
-    this.validateMutationTarget(target);
-    return this.makeIncDecMutation(target, op);
+    this.validateUpdateTarget(target);
+    return this.makeIncDecUpdateOp(target, op);
   }
 
   /** Build the desugared AssignExpr for `target++` / `target--` / `++target` / `--target`. */
-  private makeIncDecMutation(target: Expr, op: "++" | "--"): AssignExpr {
+  private makeIncDecUpdateOp(target: Expr, op: "++" | "--"): AssignExpr {
     const value: Expr = {
       type: "BinaryExpr",
       op: op === "++" ? "+" : "-",
@@ -934,28 +901,28 @@ export class Parser {
   }
 
   /**
-   * Mutation targets are restricted to field paths: a `FieldRef` (`$.x`) or
+   * UpdateOp targets are restricted to field paths: a `FieldRef` (`$.x`) or
    * a chain of `MemberAccess` nodes rooted at one (`$.x.y.z`). Anything else
    * — index access, function calls, parameter refs, parenthesized expressions
    * containing operators — is rejected with a precise error.
    */
-  private validateMutationTarget(target: Expr): void {
+  private validateUpdateTarget(target: Expr): void {
     if (this.isFieldPathTarget(target)) return;
     const pos = this.lexer.peek().pos;
     if (target.type === "ParamRef") {
       throw new ParseError(
-        `Mutation target must be a field path like '$.${target.name}', not a bare identifier (at position ${pos})`,
+        `UpdateOp target must be a field path like '$.${target.name}', not a bare identifier (at position ${pos})`,
         pos,
       );
     }
     if (target.type === "IndexAccess") {
       throw new ParseError(
-        `Mutation target must be a static field path; computed/index access ('[…]') is not supported (at position ${pos})`,
+        `UpdateOp target must be a static field path; computed/index access ('[…]') is not supported (at position ${pos})`,
         pos,
       );
     }
     throw new ParseError(
-      `Cannot assign to ${describeMutationTarget(target)} at position ${pos} — only field paths like '$.x' or '$.x.y' are assignable.`,
+      `Cannot assign to ${describeUpdateTarget(target)} at position ${pos} — only field paths like '$.x' or '$.x.y' are assignable.`,
       pos,
     );
   }
@@ -972,10 +939,7 @@ export class Parser {
     if (++this.depth > MAX_RECURSION_DEPTH) {
       this.depth--;
       const pos = this.lexer.peek().pos;
-      throw new ParseError(
-        `Expression nests too deeply (max ${MAX_RECURSION_DEPTH} levels) at position ${pos}`,
-        pos,
-      );
+      throw new ParseError(`Expression nests too deeply (max ${MAX_RECURSION_DEPTH} levels) at position ${pos}`, pos);
     }
     try {
       return this.parseTernary();
@@ -992,10 +956,7 @@ export class Parser {
     const consequent = this.parseExpression(); // full expr for consequent
     const colon = this.lexer.peek();
     if (colon.type !== TokenType.Colon) {
-      throw new ParseError(
-        `Expected ':' in ternary expression at position ${colon.pos}`,
-        colon.pos,
-      );
+      throw new ParseError(`Expected ':' in ternary expression at position ${colon.pos}`, colon.pos);
     }
     this.lexer.next(); // consume :
     const alternate = this.parseTernary(); // right-associative
@@ -1129,10 +1090,7 @@ export class Parser {
   /** additive:  multiplicative ((+|-) multiplicative)*  */
   private parseAdditive(): Expr {
     let left = this.parseMultiplicative();
-    while (
-      this.lexer.peek().type === TokenType.Plus ||
-      this.lexer.peek().type === TokenType.Minus
-    ) {
+    while (this.lexer.peek().type === TokenType.Plus || this.lexer.peek().type === TokenType.Minus) {
       const op: BinaryOp = this.lexer.next().type === TokenType.Plus ? "+" : "-";
       const right = this.parseMultiplicative();
       left = { type: "BinaryExpr", op, left, right, pos: left.pos };
@@ -1219,10 +1177,7 @@ export class Parser {
         const index = this.parseExpression();
         const close = this.lexer.peek();
         if (close.type !== TokenType.RBracket) {
-          throw new ParseError(
-            `Expected ']' after index expression at position ${close.pos}`,
-            close.pos,
-          );
+          throw new ParseError(`Expected ']' after index expression at position ${close.pos}`, close.pos);
         }
         this.lexer.next(); // consume ]
         left = { type: "IndexAccess", object: left, index, pos: left.pos };
@@ -1235,10 +1190,7 @@ export class Parser {
           const index = this.parseExpression();
           const close = this.lexer.peek();
           if (close.type !== TokenType.RBracket) {
-            throw new ParseError(
-              `Expected ']' after index expression at position ${close.pos}`,
-              close.pos,
-            );
+            throw new ParseError(`Expected ']' after index expression at position ${close.pos}`, close.pos);
           }
           this.lexer.next();
           left = { type: "IndexAccess", object: left, index, pos: left.pos, optional: true };
@@ -1246,10 +1198,7 @@ export class Parser {
         }
         const member = this.lexer.peek();
         if (!this.isIdentOrKeyword(member)) {
-          throw new ParseError(
-            `Expected property name after '.' at position ${member.pos}`,
-            member.pos,
-          );
+          throw new ParseError(`Expected property name after '.' at position ${member.pos}`, member.pos);
         }
         this.lexer.next(); // consume member name
         if (this.lexer.peek().type === TokenType.LParen) {
@@ -1318,10 +1267,7 @@ export class Parser {
    */
   private parseArgOrLambda(): Expr {
     // x => expr  (unparenthesized single param)
-    if (
-      this.lexer.peek().type === TokenType.Ident &&
-      this.lexer.lookahead(1).type === TokenType.Arrow
-    ) {
+    if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
       return this.parseLambdaUnparen();
     }
     // (x) => expr  or  (x, y) => expr  or  () => expr
@@ -1411,10 +1357,7 @@ export class Parser {
   private parseGrouped(): Expr {
     this.lexer.expect(TokenType.LParen);
     let expr: Expr;
-    if (
-      this.lexer.peek().type === TokenType.Ident &&
-      this.lexer.lookahead(1).type === TokenType.Arrow
-    ) {
+    if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
       expr = this.parseLambdaUnparen();
     } else if (this.peekIncDecOp() !== null) {
       // Prefix `(++$.x)` / `(--$.x)` — parens around prefix inc/dec. Same
@@ -1432,7 +1375,7 @@ export class Parser {
       // route it appropriately. Plain expression contexts (e.g. `1 + (a=2)`)
       // bubble it up to codegen which throws a precise error.
       if (this.peekAssignOp() !== null) {
-        this.validateMutationTarget(expr);
+        this.validateUpdateTarget(expr);
         const chain = this.parseAssignmentChainFrom(expr);
         if (chain.length !== 1) {
           const tok = this.lexer.peek();
@@ -1446,8 +1389,8 @@ export class Parser {
         // Postfix `($.x++)` / `($.x--)` — parens around postfix inc/dec.
         const op = this.peekIncDecOp()!;
         this.lexer.next();
-        this.validateMutationTarget(expr);
-        expr = this.makeIncDecMutation(expr, op) as unknown as Expr;
+        this.validateUpdateTarget(expr);
+        expr = this.makeIncDecUpdateOp(expr, op) as unknown as Expr;
       }
     }
     const close = this.lexer.peek();
@@ -1462,10 +1405,7 @@ export class Parser {
     const dollar = this.lexer.next(); // consume $
     const nameTok = this.lexer.peek();
     if (!this.isIdentOrKeyword(nameTok)) {
-      throw new ParseError(
-        `Expected operator name after '$' at position ${dollar.pos}`,
-        dollar.pos,
-      );
+      throw new ParseError(`Expected operator name after '$' at position ${dollar.pos}`, dollar.pos);
     }
     this.lexer.next();
     const name = `$${nameTok.value}`;
@@ -1513,10 +1453,7 @@ export class Parser {
     const dollarDot = this.lexer.next(); // consume $.
     const first = this.lexer.peek();
     if (!this.isIdentOrKeyword(first)) {
-      throw new ParseError(
-        `Expected field name after '$.' at position ${dollarDot.pos}`,
-        dollarDot.pos,
-      );
+      throw new ParseError(`Expected field name after '$.' at position ${dollarDot.pos}`, dollarDot.pos);
     }
     this.lexer.next();
     return { type: "FieldRef", path: first.value, pos: dollarDot.pos };
@@ -1687,13 +1624,7 @@ export class Parser {
       this.lexer.expect(TokenType.LParen);
       const arg = this.parseExpression();
       this.lexer.expect(TokenType.RParen);
-      return {
-        type: "OperatorCall",
-        name: "$isArray",
-        style: "positional",
-        args: [arg],
-        pos: arrayTok.pos,
-      };
+      return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg], pos: arrayTok.pos };
     }
     if (methodTok.value === "from") {
       this.lexer.next();
@@ -1723,9 +1654,7 @@ export class Parser {
     const methodTok = this.lexer.peek();
     if (
       methodTok.type !== TokenType.Ident ||
-      (methodTok.value !== "isInteger" &&
-        methodTok.value !== "isNaN" &&
-        methodTok.value !== "isFinite")
+      (methodTok.value !== "isInteger" && methodTok.value !== "isNaN" && methodTok.value !== "isFinite")
     ) {
       const numberSuggestion = closestNameTo(methodTok.value, ["isInteger", "isNaN", "isFinite"]);
       const numberHint = numberSuggestion ? ` Did you mean 'Number.${numberSuggestion}'?` : "";
@@ -1812,10 +1741,7 @@ export class Parser {
     this.lexer.expect(TokenType.LParen);
     const arg = this.parseExpression();
     if (this.lexer.peek().type === TokenType.Comma) {
-      throw new ParseError(
-        `Type cast '${cast}()' takes exactly 1 argument at position ${castTok.pos}`,
-        castTok.pos,
-      );
+      throw new ParseError(`Type cast '${cast}()' takes exactly 1 argument at position ${castTok.pos}`, castTok.pos);
     }
     this.lexer.expect(TokenType.RParen);
     return { type: "TypeCast", cast, arg, pos: castTok.pos };
@@ -1853,10 +1779,7 @@ export class Parser {
         expressions.push(expr);
         continue;
       }
-      throw new ParseError(
-        `Unexpected token in template literal at position ${next.pos}`,
-        next.pos,
-      );
+      throw new ParseError(`Unexpected token in template literal at position ${next.pos}`, next.pos);
     }
 
     return { type: "TemplateLiteral", quasis, expressions, pos: startTok.pos };
@@ -1873,11 +1796,7 @@ export class Parser {
       if (this.lexer.peek().type === TokenType.Spread) {
         const spreadTok = this.lexer.next();
         const arg = this.parseExpression();
-        const spread: SpreadElement = {
-          type: "SpreadElement",
-          argument: arg,
-          pos: spreadTok.pos,
-        };
+        const spread: SpreadElement = { type: "SpreadElement", argument: arg, pos: spreadTok.pos };
         elements.push(spread);
       } else if (this.lexer.peek().type === TokenType.Delete) {
         // `delete $.x` as a pipeline element. Codegen rejects it if the array
@@ -1893,16 +1812,16 @@ export class Parser {
       } else {
         // Could be a regular expression OR an assignment OR a postfix `x++`
         // used as a pipeline element. Parse the expression first; if a bare
-        // assignment operator or `++`/`--` follows, treat as a mutation.
+        // assignment operator or `++`/`--` follows, treat as a update op.
         const expr = this.parseExpression();
         if (this.peekAssignOp() !== null) {
-          this.validateMutationTarget(expr);
+          this.validateUpdateTarget(expr);
           for (const m of this.parseAssignmentChainFrom(expr)) elements.push(m);
         } else if (this.peekIncDecOp() !== null) {
           const op = this.peekIncDecOp()!;
           this.lexer.next();
-          this.validateMutationTarget(expr);
-          elements.push(this.makeIncDecMutation(expr, op));
+          this.validateUpdateTarget(expr);
+          elements.push(this.makeIncDecUpdateOp(expr, op));
         } else {
           elements.push(expr);
         }
@@ -1929,11 +1848,7 @@ export class Parser {
       if (this.lexer.peek().type === TokenType.Spread) {
         const spreadTok = this.lexer.next();
         const arg = this.parseExpression();
-        const spread: SpreadElement = {
-          type: "SpreadElement",
-          argument: arg,
-          pos: spreadTok.pos,
-        };
+        const spread: SpreadElement = { type: "SpreadElement", argument: arg, pos: spreadTok.pos };
         entries.push(spread);
       } else {
         entries.push(this.parseObjectEntry());
@@ -2007,10 +1922,7 @@ export class Parser {
     const next = this.lexer.peek();
     // Shorthand: `{ x }` — only valid for plain identifiers; it desugars to `{ x: x }`,
     // where the value is a ParamRef. (Codegen will reject if `x` is not a lambda param.)
-    if (
-      tok.type === TokenType.Ident &&
-      (next.type === TokenType.Comma || next.type === TokenType.RBrace)
-    ) {
+    if (tok.type === TokenType.Ident && (next.type === TokenType.Comma || next.type === TokenType.RBrace)) {
       const key: ObjectKey = { kind: "static", name: tok.value };
       const value: Expr = { type: "ParamRef", name: tok.value, pos: tok.pos };
       return { type: "KeyValueEntry", key, value, pos: tok.pos };
@@ -2024,11 +1936,11 @@ export class Parser {
 
 /**
  * Human-friendly noun phrase for an Expr that the user tried to use as a
- * mutation target. Used by `validateMutationTarget` to name *what* the user
+ * update op target. Used by `validateUpdateTarget` to name *what* the user
  * wrote (a method call, a comparison, a literal, …) rather than just
  * complaining the target wasn't a field path.
  */
-function describeMutationTarget(target: Expr): string {
+function describeUpdateTarget(target: Expr): string {
   switch (target.type) {
     case "MethodCall":
       return `a method-call result ('.${target.method}()')`;

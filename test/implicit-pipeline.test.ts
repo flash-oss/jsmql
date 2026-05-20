@@ -3,7 +3,7 @@ import { jsmql } from "../src/index.ts";
 
 // `;` at top level is the implicit pipeline-stage separator. Each `;`-separated
 // chunk becomes its own stage(s) with no cross-coalescing — in contrast to the
-// explicit `[…]` form, where adjacent mutation elements coalesce. `,` remains
+// explicit `[…]` form, where adjacent update op elements coalesce. `,` remains
 // the in-stage separator and keeps its existing coalescing behaviour.
 
 describe("implicit pipeline — `;` triggers pipeline mode", () => {
@@ -27,14 +27,11 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
     expect(jsmql("delete $.a; delete $.b")).toEqual([{ $unset: "a" }, { $unset: "b" }]);
   });
 
-  it("comma-grouped mutations inside one `;` chunk still coalesce", () => {
-    expect(jsmql("$.a = 1, $.b = 2; $match($.x)")).toEqual([
-      { $set: { a: 1, b: 2 } },
-      { $match: { $expr: "$x" } },
-    ]);
+  it("comma-grouped update ops inside one `;` chunk still coalesce", () => {
+    expect(jsmql("$.a = 1, $.b = 2; $match($.x)")).toEqual([{ $set: { a: 1, b: 2 } }, { $match: { $expr: "$x" } }]);
   });
 
-  it("stage call followed by mutation", () => {
+  it("stage call followed by update op", () => {
     expect(jsmql("$match($.a === 0); $.b = 1")).toEqual([{ $match: { a: 0 } }, { $set: { b: 1 } }]);
   });
 
@@ -65,13 +62,10 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("kind change across `;` (delete then assign) gives two stages", () => {
-    expect(jsmql("delete $.tmp; $.status = 'done'")).toEqual([
-      { $unset: "tmp" },
-      { $set: { status: "done" } },
-    ]);
+    expect(jsmql("delete $.tmp; $.status = 'done'")).toEqual([{ $unset: "tmp" }, { $set: { status: "done" } }]);
   });
 
-  it("$match-led pipeline ending in mutations", () => {
+  it("$match-led pipeline ending in update ops", () => {
     expect(jsmql("$match($.active); $.score += 1; $.touched = true")).toEqual([
       { $match: { $expr: "$active" } },
       { $set: { score: { $add: ["$score", 1] } } },
@@ -89,10 +83,19 @@ describe("implicit pipeline — single-statement inputs unchanged", () => {
     expect(jsmql("delete $.tmp")).toEqual({ $unset: "tmp" });
   });
 
-  it("bare stage call without `;` stays expression-mode (no $expr wrap on $match body)", () => {
-    // No `;` means expression mode, so `$match(…)` is just a generic operator
-    // call — the $match-body $expr-wrap rule only fires inside pipeline mode.
-    expect(jsmql("$match($.a === 0)")).toEqual({ $match: { $eq: ["$a", 0] } });
+  it("bare stage call without `;` throws with a `;` suggestion", () => {
+    // Filter dispatch detects that `$match(...)` at the top level is Pipeline
+    // intent without the `;` flag. Rather than silently wrap it in `$expr`
+    // (which would produce a useless `{ $expr: { $match: ... } }` Filter), the
+    // guard throws a precise error suggesting the missing semicolon.
+    expect(() => jsmql("$match($.a === 0)")).toThrow(/`\$match` is a Pipeline stage/);
+    expect(() => jsmql("$match($.a === 0)")).toThrow(/Add a trailing `;`/);
+  });
+
+  it("bare stage-object literal without `;` throws with the same suggestion", () => {
+    // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
+    // detect as Pipeline intent.
+    expect(() => jsmql("{ $match: $.a === 0 }")).toThrow(/`\$match` is a Pipeline stage/);
   });
 
   it("comma-grouped chain without `;` stays a single coalesced $set object", () => {
@@ -126,12 +129,7 @@ describe("implicit pipeline — block-body arrow input", () => {
     });
     expect(result).toEqual([
       { $match: { $expr: "$active" } },
-      {
-        $set: {
-          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
-          invoiceCount: { $add: ["$invoiceCount", 1] },
-        },
-      },
+      { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $set: { status: "complete" } },
     ]);
   });

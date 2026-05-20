@@ -34,11 +34,7 @@ export const OPERATOR_CATEGORIES = [
 ] as const;
 export type OperatorCategory = (typeof OPERATOR_CATEGORIES)[number];
 
-export type OperatorDef = {
-  shape: OperatorShape;
-  category: OperatorCategory;
-  description: string;
-};
+export type OperatorDef = { shape: OperatorShape; category: OperatorCategory; description: string };
 
 const SINGLE: SingleShape = { kind: "single" };
 const ARRAY: ArrayShape = { kind: "array" };
@@ -64,20 +60,11 @@ function obj(category: OperatorCategory, description: string, ...keys: string[])
 export const OPERATORS: Record<string, OperatorDef> = {
   // ── Arithmetic ─────────────────────────────────────────────────────────────
   $abs: single("arithmetic", "Returns the absolute value of a number."),
-  $add: array(
-    "arithmetic",
-    "Adds numbers to return the sum, or adds numbers and a date to return a new date.",
-  ),
-  $ceil: single(
-    "arithmetic",
-    "Returns the smallest integer greater than or equal to the specified number.",
-  ),
+  $add: array("arithmetic", "Adds numbers to return the sum, or adds numbers and a date to return a new date."),
+  $ceil: single("arithmetic", "Returns the smallest integer greater than or equal to the specified number."),
   $divide: array("arithmetic", "Returns the result of dividing the first number by the second."),
   $exp: single("arithmetic", "Raises e to the specified exponent."),
-  $floor: single(
-    "arithmetic",
-    "Returns the largest integer less than or equal to the specified number.",
-  ),
+  $floor: single("arithmetic", "Returns the largest integer less than or equal to the specified number."),
   $ln: single("arithmetic", "Calculates the natural log of a number."),
   $log: array("arithmetic", "Calculates the log of a number in the specified base."),
   $log10: single("arithmetic", "Calculates the log base 10 of a number."),
@@ -90,28 +77,13 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "Returns the sigmoid of a value, defined as 1 / (1 + e^(-x)). The result is between 0 and 1.",
   ),
   $sqrt: single("arithmetic", "Calculates the square root."),
-  $subtract: array(
-    "arithmetic",
-    "Returns the result of subtracting the second value from the first.",
-  ),
-  $trunc: flex(
-    "arithmetic",
-    "Truncates a number to a whole integer or to a specified decimal place.",
-  ),
+  $subtract: array("arithmetic", "Returns the result of subtracting the second value from the first."),
+  $trunc: flex("arithmetic", "Truncates a number to a whole integer or to a specified decimal place."),
 
   // ── Bitwise ────────────────────────────────────────────────────────────────
-  $bitAnd: array(
-    "bitwise",
-    "Returns the result of a bitwise AND operation on an array of int or long values.",
-  ),
-  $bitNot: single(
-    "bitwise",
-    "Returns the result of a bitwise NOT operation on a single int or long value.",
-  ),
-  $bitOr: array(
-    "bitwise",
-    "Returns the result of a bitwise OR operation on an array of int or long values.",
-  ),
+  $bitAnd: array("bitwise", "Returns the result of a bitwise AND operation on an array of int or long values."),
+  $bitNot: single("bitwise", "Returns the result of a bitwise NOT operation on a single int or long value."),
+  $bitOr: array("bitwise", "Returns the result of a bitwise OR operation on an array of int or long values."),
   $bitXor: array(
     "bitwise",
     "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values.",
@@ -138,27 +110,18 @@ export const OPERATORS: Record<string, OperatorDef> = {
   $radiansToDegrees: single("trigonometry", "Converts a value from radians to degrees."),
 
   // ── Comparison ─────────────────────────────────────────────────────────────
-  $cmp: array(
-    "comparison",
-    "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less.",
-  ),
+  $cmp: array("comparison", "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less."),
   $eq: array("comparison", "Returns true if the values are equivalent."),
   $ne: array("comparison", "Returns true if the values are not equivalent."),
   $gt: array("comparison", "Returns true if the first value is greater than the second."),
-  $gte: array(
-    "comparison",
-    "Returns true if the first value is greater than or equal to the second.",
-  ),
+  $gte: array("comparison", "Returns true if the first value is greater than or equal to the second."),
   $lt: array("comparison", "Returns true if the first value is less than the second."),
   $lte: array("comparison", "Returns true if the first value is less than or equal to the second."),
 
   // ── Boolean ────────────────────────────────────────────────────────────────
   $and: array("boolean", "Returns true only when all its expressions evaluate to true."),
   $or: array("boolean", "Returns true when any of its expressions evaluates to true."),
-  $not: single(
-    "boolean",
-    "Returns the boolean value that is the opposite of its argument expression.",
-  ),
+  $not: single("boolean", "Returns the boolean value that is the opposite of its argument expression."),
 
   // ── Conditional ────────────────────────────────────────────────────────────
   $cond: obj(
@@ -195,12 +158,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "input",
     "chars",
   ),
-  $rtrim: obj(
-    "string",
-    "Removes whitespace or the specified characters from the end of a string.",
-    "input",
-    "chars",
-  ),
+  $rtrim: obj("string", "Removes whitespace or the specified characters from the end of a string.", "input", "chars"),
   $trim: obj(
     "string",
     "Removes whitespace or the specified characters from the beginning and end of a string.",
@@ -242,22 +200,13 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "find",
     "replacement",
   ),
-  $split: array(
-    "string",
-    "Splits a string into substrings based on a delimiter and returns an array of substrings.",
-  ),
+  $split: array("string", "Splits a string into substrings based on a delimiter and returns an array of substrings."),
   $strLenBytes: single("string", "Returns the number of UTF-8 encoded bytes in a string."),
   $strLenCP: single("string", "Returns the number of UTF-8 code points in a string."),
   $strcasecmp: array("string", "Performs case-insensitive string comparison."),
   $substr: array("string", "Deprecated. Use $substrBytes or $substrCP."),
-  $substrBytes: array(
-    "string",
-    "Returns the substring of a string starting at the specified UTF-8 byte index.",
-  ),
-  $substrCP: array(
-    "string",
-    "Returns the substring of a string starting at the specified UTF-8 code point index.",
-  ),
+  $substrBytes: array("string", "Returns the substring of a string starting at the specified UTF-8 byte index."),
+  $substrCP: array("string", "Returns the substring of a string starting at the specified UTF-8 code point index."),
   $toLower: single("string", "Converts a string to lowercase."),
   $toUpper: single("string", "Converts a string to uppercase."),
 
@@ -301,29 +250,13 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "cond",
     "limit",
   ),
-  $first: single(
-    "array",
-    "Returns the result of an expression for the first document in an array.",
-  ),
-  $firstN: obj(
-    "array",
-    "Returns a specified number of elements from the beginning of an array.",
-    "input",
-    "n",
-  ),
+  $first: single("array", "Returns the result of an expression for the first document in an array."),
+  $firstN: obj("array", "Returns a specified number of elements from the beginning of an array.", "input", "n"),
   $in: array("array", "Returns a boolean indicating whether a specified value is in an array."),
-  $indexOfArray: array(
-    "array",
-    "Searches an array for a value and returns the index of the first occurrence, or -1.",
-  ),
+  $indexOfArray: array("array", "Searches an array for a value and returns the index of the first occurrence, or -1."),
   $isArray: single("array", "Determines if the operand is an array."),
   $last: single("array", "Returns the result of an expression for the last document in an array."),
-  $lastN: obj(
-    "array",
-    "Returns a specified number of elements from the end of an array.",
-    "input",
-    "n",
-  ),
+  $lastN: obj("array", "Returns a specified number of elements from the end of an array.", "input", "n"),
   $map: obj(
     "array",
     "Applies a subexpression to each element of an array and returns the array of resulting values.",
@@ -333,14 +266,8 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
   $maxN: obj("array", "Returns the n largest values in an array.", "input", "n"),
   $minN: obj("array", "Returns the n smallest values in an array.", "input", "n"),
-  $objectToArray: single(
-    "array",
-    "Converts a document to an array of documents representing key-value pairs.",
-  ),
-  $range: array(
-    "array",
-    "Outputs an array containing a sequence of integers according to user-defined inputs.",
-  ),
+  $objectToArray: single("array", "Converts a document to an array of documents representing key-value pairs."),
+  $range: array("array", "Outputs an array containing a sequence of integers according to user-defined inputs."),
   $reduce: obj(
     "array",
     "Applies an expression to each element in an array and combines them into a single value.",
@@ -363,19 +290,10 @@ export const OPERATORS: Record<string, OperatorDef> = {
   // ── Set ────────────────────────────────────────────────────────────────────
   $allElementsTrue: single("set", "Returns true if no element of a set evaluates to false."),
   $anyElementTrue: single("set", "Returns true if any elements of a set evaluate to true."),
-  $setDifference: array(
-    "set",
-    "Returns a set with elements that appear in the first set but not in the second set.",
-  ),
+  $setDifference: array("set", "Returns a set with elements that appear in the first set but not in the second set."),
   $setEquals: array("set", "Returns true if the input sets have the same distinct elements."),
-  $setIntersection: array(
-    "set",
-    "Returns a set with elements that appear in all of the input sets.",
-  ),
-  $setIsSubset: array(
-    "set",
-    "Returns true if all elements of the first set appear in the second set.",
-  ),
+  $setIntersection: array("set", "Returns a set with elements that appear in all of the input sets."),
+  $setIsSubset: array("set", "Returns true if all elements of the first set appear in the second set."),
   $setUnion: array("set", "Returns a set with elements that appear in any of the input sets."),
 
   // ── Object ─────────────────────────────────────────────────────────────────
@@ -386,13 +304,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "input",
   ),
   $mergeObjects: flex("object", "Combines multiple documents into a single document."),
-  $setField: obj(
-    "object",
-    "Adds, updates, or removes a specified field in a document.",
-    "field",
-    "input",
-    "value",
-  ),
+  $setField: obj("object", "Adds, updates, or removes a specified field in a document.", "field", "input", "value"),
   $unsetField: obj(
     "object",
     "Removes a specified field from a document. Alias for $setField using $$REMOVE.",
@@ -401,14 +313,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Date ───────────────────────────────────────────────────────────────────
-  $dateAdd: obj(
-    "date",
-    "Adds a number of time units to a date object.",
-    "startDate",
-    "unit",
-    "amount",
-    "timezone",
-  ),
+  $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
   $dateDiff: obj(
     "date",
     "Returns the difference between two dates.",
@@ -454,35 +359,11 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "timezone",
     "iso8601",
   ),
-  $dateToString: obj(
-    "date",
-    "Returns the date as a formatted string.",
-    "date",
-    "format",
-    "timezone",
-    "onNull",
-  ),
-  $dateTrunc: obj(
-    "date",
-    "Truncates a date.",
-    "date",
-    "unit",
-    "binSize",
-    "timezone",
-    "startOfWeek",
-  ),
-  $dayOfMonth: single(
-    "date",
-    "Returns the day of the month for a date as a number between 1 and 31.",
-  ),
-  $dayOfWeek: single(
-    "date",
-    "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday).",
-  ),
-  $dayOfYear: single(
-    "date",
-    "Returns the day of the year for a date as a number between 1 and 366.",
-  ),
+  $dateToString: obj("date", "Returns the date as a formatted string.", "date", "format", "timezone", "onNull"),
+  $dateTrunc: obj("date", "Truncates a date.", "date", "unit", "binSize", "timezone", "startOfWeek"),
+  $dayOfMonth: single("date", "Returns the day of the month for a date as a number between 1 and 31."),
+  $dayOfWeek: single("date", "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday)."),
+  $dayOfYear: single("date", "Returns the day of the year for a date as a number between 1 and 366."),
   $hour: single("date", "Returns the hour for a date as a number between 0 and 23."),
   $isoDayOfWeek: single(
     "date",
@@ -492,14 +373,8 @@ export const OPERATORS: Record<string, OperatorDef> = {
   $isoWeekYear: single("date", "Returns the year number in ISO 8601 format."),
   $millisecond: single("date", "Returns the milliseconds of a date as a number between 0 and 999."),
   $minute: single("date", "Returns the minute for a date as a number between 0 and 59."),
-  $month: single(
-    "date",
-    "Returns the month for a date as a number between 1 (January) and 12 (December).",
-  ),
-  $second: single(
-    "date",
-    "Returns the seconds for a date as a number between 0 and 60 (leap seconds).",
-  ),
+  $month: single("date", "Returns the month for a date as a number between 1 (January) and 12 (December)."),
+  $second: single("date", "Returns the seconds for a date as a number between 0 and 60 (leap seconds)."),
   $toDate: single("date", "Converts a value to a Date."),
   $week: single("date", "Returns the week number for a date as a number between 0 and 53."),
   $year: single("date", "Returns the year for a date as a number."),
@@ -509,18 +384,8 @@ export const OPERATORS: Record<string, OperatorDef> = {
   $tsSecond: single("timestamp", "Returns the seconds from a timestamp as a long."),
 
   // ── Type ───────────────────────────────────────────────────────────────────
-  $convert: obj(
-    "type",
-    "Converts a value to a specified type.",
-    "input",
-    "to",
-    "onError",
-    "onNull",
-  ),
-  $isNumber: single(
-    "type",
-    "Returns true if the expression resolves to an integer, decimal, double, or long.",
-  ),
+  $convert: obj("type", "Converts a value to a specified type.", "input", "to", "onError", "onNull"),
+  $isNumber: single("type", "Returns true if the expression resolves to an integer, decimal, double, or long."),
   $toArray: single("type", "Converts a value to an array."),
   $toBool: single("type", "Converts a value to a boolean."),
   $toDecimal: single("type", "Converts a value to a Decimal128."),
@@ -568,10 +433,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Data Size ──────────────────────────────────────────────────────────────
-  $binarySize: single(
-    "data-size",
-    "Returns the size of a string or binary data value's content in bytes.",
-  ),
+  $binarySize: single("data-size", "Returns the size of a string or binary data value's content in bytes."),
   $bsonSize: single("data-size", "Returns the size in bytes of a document when encoded as BSON."),
 
   // ── Text ───────────────────────────────────────────────────────────────────
@@ -595,10 +457,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "algorithm",
   ),
   $rand: none("miscellaneous", "Returns a random float between 0 and 1."),
-  $sampleRate: single(
-    "miscellaneous",
-    "Randomly selects documents at a given rate. Used inside $match.",
-  ),
+  $sampleRate: single("miscellaneous", "Randomly selects documents at a given rate. Used inside $match."),
   $toHashedIndexKey: single(
     "miscellaneous",
     "Computes the hash of the input expression using MongoDB's hashed-index hash function.",
@@ -624,10 +483,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "method",
   ),
   $push: single("array", "Returns an array of values that result from applying an expression."),
-  $stdDevPop: flex(
-    "arithmetic",
-    "Calculates the population standard deviation of the input values.",
-  ),
+  $stdDevPop: flex("arithmetic", "Calculates the population standard deviation of the input values."),
   $stdDevSamp: flex("arithmetic", "Calculates the sample standard deviation of the input values."),
   $sum: flex("arithmetic", "Returns a sum of numerical values, ignoring non-numeric values."),
   $bottom: obj(
@@ -664,12 +520,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "window",
     "Returns the document position (rank) within the partition. There are no gaps; ties receive the same rank.",
   ),
-  $derivative: obj(
-    "window",
-    "Returns the average rate of change within the specified window.",
-    "input",
-    "unit",
-  ),
+  $derivative: obj("window", "Returns the average rate of change within the specified window.", "input", "unit"),
   $documentNumber: none(
     "window",
     "Returns the position of a document in the $setWindowFields partition. Ties produce different adjacent numbers.",
@@ -690,10 +541,7 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "window",
     "Last observation carried forward — sets null/missing fields in a window to the last non-null value.",
   ),
-  $rank: none(
-    "window",
-    "Returns the document position (rank) within the $setWindowFields partition.",
-  ),
+  $rank: none("window", "Returns the document position (rank) within the $setWindowFields partition."),
   $shift: obj(
     "window",
     "Returns the value from an expression applied to a document in a specified position relative to the current document.",

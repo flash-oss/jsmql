@@ -53,12 +53,7 @@ const REGISTRY_ONLY = new Set([
 ]);
 
 type SpecArg = { name: string; optional?: boolean; variadic?: string };
-type SpecOp = {
-  name: string;
-  description?: string;
-  encode?: string;
-  arguments?: SpecArg[];
-};
+type SpecOp = { name: string; description?: string; encode?: string; arguments?: SpecArg[] };
 
 function loadSpec(): Map<string, SpecOp> {
   const out = new Map<string, SpecOp>();
@@ -146,15 +141,10 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     const raw = generateOpsSource();
     const root = resolve(import.meta.dirname, "..");
     const oxfmt = resolve(root, "node_modules/.bin/oxfmt");
-    const formatted = execSync(`${JSON.stringify(oxfmt)} --stdin-filepath=ops.ts`, {
-      input: raw,
-      encoding: "utf8",
-    });
+    const formatted = execSync(`${JSON.stringify(oxfmt)} --stdin-filepath=ops.ts`, { input: raw, encoding: "utf8" });
     const actual = readFileSync(resolve(root, "src/ops.ts"), "utf8");
     if (actual !== formatted) {
-      throw new Error(
-        "src/ops.ts is out of date relative to its generator. Run `npm run generate:ops` to refresh.",
-      );
+      throw new Error("src/ops.ts is out of date relative to its generator. Run `npm run generate:ops` to refresh.");
     }
   });
 

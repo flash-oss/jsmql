@@ -48,13 +48,9 @@ if (existsSync(target)) {
 mkdirSync(dirname(target), { recursive: true });
 
 try {
-  execSync(`git clone --quiet --no-checkout --filter=blob:none ${REPO_URL} "${target}"`, {
-    stdio: "inherit",
-  });
+  execSync(`git clone --quiet --no-checkout --filter=blob:none ${REPO_URL} "${target}"`, { stdio: "inherit" });
   execSync(`git -C "${target}" sparse-checkout init --cone`, { stdio: "inherit" });
-  execSync(`git -C "${target}" sparse-checkout set ${SPARSE_PATHS.join(" ")}`, {
-    stdio: "inherit",
-  });
+  execSync(`git -C "${target}" sparse-checkout set ${SPARSE_PATHS.join(" ")}`, { stdio: "inherit" });
   execSync(`git -C "${target}" checkout --quiet ${PINNED_SHA}`, { stdio: "inherit" });
   writeFileSync(sentinel, `${PINNED_SHA}\n`);
 } catch (err) {

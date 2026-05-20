@@ -27,10 +27,7 @@ const OUT_DIR = path.join(ROOT, "dist/cjs");
 mkdirSync(OUT_DIR, { recursive: true });
 
 await build({
-  entryPoints: {
-    index: path.join(ROOT, "src/index.ts"),
-    ops: path.join(ROOT, "src/ops.ts"),
-  },
+  entryPoints: { index: path.join(ROOT, "src/index.ts"), ops: path.join(ROOT, "src/ops.ts") },
   outdir: OUT_DIR,
   bundle: true,
   format: "cjs",
@@ -53,7 +50,4 @@ for (const name of ["index", "ops"]) {
 // `package.json` with `"type": "commonjs"` inside `dist/cjs/` forces Node to
 // treat the `.cjs` files (and any `.js` sourcemaps esbuild references) as
 // CommonJS regardless of the parent package's `"type": "module"` setting.
-writeFileSync(
-  path.join(OUT_DIR, "package.json"),
-  JSON.stringify({ type: "commonjs" }, null, 2) + "\n",
-);
+writeFileSync(path.join(OUT_DIR, "package.json"), JSON.stringify({ type: "commonjs" }, null, 2) + "\n");

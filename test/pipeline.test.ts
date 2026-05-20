@@ -7,17 +7,20 @@ describe("pipeline detection", () => {
   });
 
   it("non-stage array still compiles as expression-mode array literal", () => {
-    expect(jsmql("[1, 2, 3]")).toEqual([1, 2, 3]);
+    // `jsmql.expr()` reveals the expression-mode lowering directly; calling `jsmql()`
+    // here would route through the top-level Filter dispatch, which wraps
+    // any non-predicate expression in `$expr`.
+    expect(jsmql.expr("[1, 2, 3]")).toEqual([1, 2, 3]);
   });
 
   it("array of mixed scalars and unrelated objects stays expression-mode", () => {
     // First element isn't a stage shape, so the whole array is treated as a
     // value array. We get whatever the codegen would normally produce.
-    expect(jsmql("[1, { $limit: 10 }]")).toEqual([1, { $limit: 10 }]);
+    expect(jsmql.expr("[1, { $limit: 10 }]")).toEqual([1, { $limit: 10 }]);
   });
 
   it("empty array is not a pipeline", () => {
-    expect(jsmql("[]")).toEqual([]);
+    expect(jsmql.expr("[]")).toEqual([]);
   });
 });
 
@@ -46,10 +49,7 @@ describe("pipeline — stage-object form", () => {
   });
 
   it("$sort and $limit", () => {
-    expect(jsmql("[{ $sort: { total: -1 } }, { $limit: 10 }]")).toEqual([
-      { $sort: { total: -1 } },
-      { $limit: 10 },
-    ]);
+    expect(jsmql("[{ $sort: { total: -1 } }, { $limit: 10 }]")).toEqual([{ $sort: { total: -1 } }, { $limit: 10 }]);
   });
 
   it("$skip with a numeric scalar body", () => {
@@ -74,9 +74,7 @@ describe("pipeline — stage-object form", () => {
   });
 
   it("$replaceRoot and $replaceWith", () => {
-    expect(jsmql("[{ $replaceRoot: { newRoot: $.user } }]")).toEqual([
-      { $replaceRoot: { newRoot: "$user" } },
-    ]);
+    expect(jsmql("[{ $replaceRoot: { newRoot: $.user } }]")).toEqual([{ $replaceRoot: { newRoot: "$user" } }]);
     expect(jsmql("[{ $replaceWith: $.user }]")).toEqual([{ $replaceWith: "$user" }]);
   });
 });
@@ -179,26 +177,12 @@ describe("pipeline — sub-pipelines", () => {
           topThree: [{ $sort: { score: -1 } }, { $limit: 3 }]
         }
       }]`),
-    ).toEqual([
-      {
-        $facet: {
-          byCount: [{ $count: "n" }],
-          topThree: [{ $sort: { score: -1 } }, { $limit: 3 }],
-        },
-      },
-    ]);
+    ).toEqual([{ $facet: { byCount: [{ $count: "n" }], topThree: [{ $sort: { score: -1 } }, { $limit: 3 }] } }]);
   });
 
   it("$unionWith recurses into pipeline:", () => {
-    expect(
-      jsmql(`[{ $unionWith: { coll: "archive", pipeline: [{ $match: $.year < 2020 }] } }]`),
-    ).toEqual([
-      {
-        $unionWith: {
-          coll: "archive",
-          pipeline: [{ $match: { year: { $lt: 2020 } } }],
-        },
-      },
+    expect(jsmql(`[{ $unionWith: { coll: "archive", pipeline: [{ $match: $.year < 2020 }] } }]`)).toEqual([
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { year: { $lt: 2020 } } }] } },
     ]);
   });
 });
@@ -217,9 +201,7 @@ describe("pipeline — error cases", () => {
   });
 
   it("multi-key object cannot be a stage element", () => {
-    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(
-      /single-key stage object/,
-    );
+    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(/single-key stage object/);
   });
 
   it("jsmql.validate() surfaces pipeline errors as CODEGEN_ERROR", () => {
@@ -243,8 +225,10 @@ describe("pipeline — jsmql template-tag form", () => {
 
 describe("pipeline — function input", () => {
   it("compiles an arrow returning a pipeline", () => {
-    expect(
-      jsmql(($) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }]),
-    ).toEqual([{ $match: { active: true } }, { $sort: { created: -1 } }, { $limit: 10 }]);
+    expect(jsmql(($) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }])).toEqual([
+      { $match: { active: true } },
+      { $sort: { created: -1 } },
+      { $limit: 10 },
+    ]);
   });
 });

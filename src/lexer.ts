@@ -28,7 +28,7 @@ export const TokenType = {
   Slash: "Slash", // /
   Percent: "Percent", // %
 
-  // Increment / decrement (mutation statements; not value expressions)
+  // Increment / decrement (update op statements; not value expressions)
   PlusPlus: "PlusPlus", // ++
   MinusMinus: "MinusMinus", // --
 
@@ -250,22 +250,13 @@ export class Lexer {
   }
 
   lookahead(offset: number): Token {
-    return (
-      this.tokens[this.tokenIdx + offset] ?? {
-        type: TokenType.EOF,
-        value: "",
-        pos: this.src.length,
-      }
-    );
+    return this.tokens[this.tokenIdx + offset] ?? { type: TokenType.EOF, value: "", pos: this.src.length };
   }
 
   expect(type: TokenType): Token {
     const t = this.next();
     if (t.type !== type) {
-      throw new LexError(
-        `Expected ${TOKEN_DISPLAY[type]} but got ${formatActualToken(t)} at position ${t.pos}`,
-        t.pos,
-      );
+      throw new LexError(`Expected ${TOKEN_DISPLAY[type]} but got ${formatActualToken(t)} at position ${t.pos}`, t.pos);
     }
     return t;
   }
@@ -669,10 +660,7 @@ export class Lexer {
       if (ch === "_") {
         const next = src[i + 1];
         if (next === undefined || !this.isDigit(next)) {
-          throw new LexError(
-            `Numeric separator '_' must be between two digits (at position ${i})`,
-            start,
-          );
+          throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
         }
         i++; // consume _
         continue;

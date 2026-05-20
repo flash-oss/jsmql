@@ -2,7 +2,7 @@
 
 **Status:** implemented.
 
-This spec covers the translation that `$match` applies to expression-form bodies so MongoDB indexes still work. The user-facing surface lives in [LANGUAGE.md](../LANGUAGE.md); the broader pipeline machinery lives in [aggregation-stages.md](aggregation-stages.md). This file is the implementation contract for [src/match-translation.ts](../../src/match-translation.ts).
+This spec covers the translation that `$match` applies to expression-form bodies so MongoDB indexes still work. The same translation also drives the top-level [Filter dispatch](filter-mode.md): a no-semicolon `jsmql(...)` input lowers as a Filter (the document `db.coll.find(filter)` takes) using the rules below — there is one translation engine, two callers. The user-facing surface lives in [LANGUAGE.md](../LANGUAGE.md); the broader Pipeline machinery lives in [aggregation-stages.md](aggregation-stages.md). This file is the implementation contract for [src/match-translation.ts](../../src/match-translation.ts).
 
 ## Why
 

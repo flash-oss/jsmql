@@ -28,9 +28,9 @@ Three cases, each spawning a real `node` process:
 
 Do not add per-feature spot-checks here — those belong in `codegen.test.ts` or `realistic.test.ts`. Smoke covers only the runtime/packaging invariants.
 
-### `mutations.test.ts`, `pipeline.test.ts`, `security.test.ts`, `operator-spec-coverage.test.ts`
+### `update-filter.test.ts`, `pipeline.test.ts`, `security.test.ts`, `operator-spec-coverage.test.ts`
 
-Topic-scoped suites: pipeline-stage handling, mutation desugaring, template-tag interpolation safety, and drift protection between `src/operators.ts` and the vendored MongoDB spec. Add to the matching file when extending those areas; create a new topic file only when an area outgrows `codegen.test.ts`.
+Topic-scoped suites: pipeline-stage handling, update-filter desugaring (the `$set`/`$unset` shape MongoDB's `db.coll.updateOne(filter, update)` takes), template-tag interpolation safety, and drift protection between `src/operators.ts` and the vendored MongoDB spec. Add to the matching file when extending those areas; create a new topic file only when an area outgrows `codegen.test.ts`.
 
 ## Running tests
 

@@ -15,10 +15,10 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 
 jsmql accepts two surface forms that both compile through `src/pipeline.ts`. The **`;`-separated form is canonical** for user-facing material — it's what [LANGUAGE.md](../LANGUAGE.md#canonical-form-;-between-stages) recommends, what the README's tour uses, and what the realistic-test pipelines author. The bracketed form is the alternative for "evaluates to an array literal" cases and verbatim MQL copy-paste.
 
-1. **`;`-separated (canonical)** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent mutation statements **never** coalesce across `;`.
-2. **Bracketed `[…]`** — `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent mutation elements **coalesce** through `generateMutationGroups`.
+1. **`;`-separated (canonical)** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent update op statements **never** coalesce across `;`.
+2. **Bracketed `[…]`** — `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent update op elements **coalesce** through `generateUpdateOpGroups`.
 
-The two forms agree on stage shapes, the `$match` body translation rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups mutations), `;` is a hard stage boundary.
+The two forms agree on stage shapes, the `$match` body translation rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups update ops), `;` is a hard stage boundary.
 
 ## Detection (bracketed form)
 
@@ -28,13 +28,13 @@ The two forms agree on stage shapes, the `$match` body translation rule, and sub
 2. The *first* element must be a **stage candidate**:
    - `ObjectLiteral` whose first entry is a static `$<name>:` key (correct or misspelled), or
    - `OperatorCall` of any name (any `$<name>(...)` form), or
-   - `AssignExpr` or `DeleteStmt` — bare mutation elements compile to `$set`/`$unset` stages via the coalescer in [docs/specs/mutations.md](mutations.md).
+   - `AssignExpr` or `DeleteStmt` — bare update op elements compile to `$set`/`$unset` stages via the coalescer in [docs/specs/update-filter.md](update-filter.md).
 
 Once pipeline mode is active, every element is validated against the strict shape:
 
 - Stage-object form: `ObjectLiteral` with exactly one static `$<name>:` entry where `<name>` is a registered stage in `STAGES`.
 - Stage-call form: `OperatorCall` with `name` registered in `STAGES` and exactly one positional or object-style argument.
-- Mutation form: any `AssignExpr` or `DeleteStmt` element. Adjacent mutation elements coalesce through `generateMutationGroups` (see `mutations.md`).
+- Update op form: any `AssignExpr` or `DeleteStmt` element. Adjacent update op elements coalesce through `generateUpdateOpGroups` (see `update-filter.md`).
 
 A failure at any element throws a `CodegenError` pinpointing the offending index. The error message includes a Levenshtein-based "Did you mean `$<closest>`?" suggestion when the unknown name is within edit distance 2 of a registered stage.
 
@@ -43,6 +43,8 @@ When detection trigger 1 + 2 do not fire, the array is left to the existing expr
 ## Detection (implicit form)
 
 When `Parser.parse()` sees any `;` token at the top level, it returns a `Pipeline` node directly — there is no `isPipelineAst`-style heuristic on the resulting elements. Each statement contributes to the pipeline regardless of whether its first form looks like a stage; non-stage expressions are reported with the usual stage-suggestion error during lowering.
+
+The presence of `;` is also the top-level dispatch signal: any `;` flips `jsmql()` into Pipeline mode, and no `;` routes the input to the [Filter dispatch](filter-mode.md) instead. So a bare predicate like `$.age > 18;` is **rejected** with an actionable `$match(...)` suggestion — Pipeline statements must be stage calls (or update ops / `let` bindings). The error helper `looksLikePredicate` in [src/pipeline.ts](../../src/pipeline.ts) detects comparison / logical / unary-`!` shapes and steers the wording to "wrap as `$match(...)`" so the user doesn't have to look it up.
 
 ## Lowering
 
@@ -53,7 +55,7 @@ When `Parser.parse()` sees any `;` token at the top level, it returns a `Pipelin
 
 For other stages, the body is generated with the existing `generate()` infrastructure, so accumulators (`$sum`, `$avg`, …), expression operators, field refs, and method chains all compose naturally inside stage bodies.
 
-`generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `MutationProgram` chunk goes through `generateMutationProgram` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` translation rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so mutations on either side of a `;` never combine.
+`generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` translation rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so update ops on either side of a `;` never combine.
 
 ## Sub-pipeline recursion
 
@@ -92,7 +94,7 @@ A realistic, multi-stage example using the canonical `;`-separated form lives in
 
 ## Related
 
-- [Mutations](mutations.md) — how `$.x = ...` / `delete $.x` lower to `$set` / `$unset` stages and coalesce.
+- [Update filters](update-filter.md) — how `$.x = ...` / `delete $.x` lower to `$set` / `$unset` stages and coalesce.
 - [Let bindings](let-bindings.md) — pipeline-scoped local variables (`let x = ...`) that materialise under a single namespace field and auto-clean up.
 
 ## Out of scope (future work)

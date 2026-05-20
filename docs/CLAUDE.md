@@ -28,14 +28,15 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | How operator shapes work, how to add/modify entries |
 | `specs/method-dispatch.md` | Method call dispatch, lambda scoping, `asFieldPath()`, `$reduce` remap, regex lexing, template literals, optional chaining, computed keys, spread args |
-| `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body translation rule. |
-| `specs/match-query-translation.md` | The `$match` expression-body → query-language translator: full translation table, partial-extraction algorithm, the four documented divergences from aggregation `$eq`, and the `$match({ $expr: ... })` escape hatch. |
-| `specs/mutations.md` | Assignment (`=`, `+=`, `-=`, `*=`, `/=`) and `delete` statements: AST, target validation, coalescing into `$set`/`$unset` stages, pipeline integration. |
+| `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body translation rule. Naming: the driver and our docs both use **Pipeline** for an aggregation stage array. |
+| `specs/filter-mode.md` | The no-semicolon top-level dispatch: how a bare expression lowers to a Filter (the document `db.coll.find(filter)` takes), the `generateFilter` helper, and the shared `translateMatchBody` engine. Naming: **Filter** matches the Node.js MongoDB driver's `Filter<TSchema>` type. |
+| `specs/match-query-translation.md` | The `$match` expression-body → query-language translator (also used by `filter-mode`): full translation table, partial-extraction algorithm, the four documented divergences from aggregation `$eq`, and the `$match({ $expr: ... })` escape hatch. |
+| `specs/update-filter.md` | Assignment (`=`, `+=`, `-=`, `*=`, `/=`) and `delete` statements: AST, target validation, coalescing into `$set`/`$unset` stages, pipeline integration. |
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`): AST, parser/codegen wiring, namespace storage under `__jsmql`, scope-reshaping stage rules, sub-pipeline isolation. |
 | `specs/function-form-params.md` | Function-form parameter bindings (`jsmql.compile(fn)`): the three-slot arrow signature, parse-time slot classification, the `bindings` tier on `GenerateCtx`, the inline-literal output shape, and the binding/let name-collision rule. |
 | `specs/ops-generation.md` | The `@koresar/jsmql/ops` subpath: how `src/ops.ts` is generated at build time from `OPERATORS` + `STAGES` + the vendored MQL spec, the type-mapping rules, and the drift test. |
 
-Future work areas — not yet implemented and not yet specified — include query-predicate operators inside `$match` / `find()` (e.g. `$elemMatch`, `$exists`, `$jsonSchema`), projection operators (`$`, `$elemMatch`, `$slice`, `$meta`), the stage-spec integration for `$group` / `$setWindowFields` accumulator field bindings, and update-document operators (`$inc`, `$push`, `$rename`, …). Add a spec file when the work begins.
+Future work areas — not yet implemented and not yet specified — include query-predicate operators inside `$match` / Filter (e.g. `$elemMatch`, `$exists`, `$jsonSchema`) — the [Filter dispatch](specs/filter-mode.md) shipped without expanding the query-translatable subset, so anything not already supported by `translateMatchBody` still goes through `$expr` — plus projection operators (`$`, `$elemMatch`, `$slice`, `$meta`), the stage-spec integration for `$group` / `$setWindowFields` accumulator field bindings, and update-document operators (`$inc`, `$push`, `$rename`, …). Add a spec file when the work begins.
 
 ### When to update specs
 

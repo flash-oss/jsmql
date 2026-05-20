@@ -100,12 +100,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/collStats/
    */
-  function $collStats(args: {
-    latencyStats?: any;
-    storageStats?: any;
-    count?: any;
-    queryExecStats?: any;
-  }): any;
+  function $collStats(args: { latencyStats?: any; storageStats?: any; count?: any; queryExecStats?: any }): any;
   /**
    * Returns a count of the number of documents at this stage of the aggregation pipeline.
    * Distinct from the $count aggregation accumulator.
@@ -871,16 +866,7 @@ declare global {
     /** The beginning date, in UTC, for the addition operation. The startDate can be any expression that resolves to a Date, a Timestamp, or an ObjectID. */
     startDate: any;
     /** The unit used to measure the amount of time added to the startDate. */
-    unit:
-      | "year"
-      | "quarter"
-      | "month"
-      | "week"
-      | "day"
-      | "hour"
-      | "minute"
-      | "second"
-      | "millisecond";
+    unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     amount: any;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
     timezone?: any;
@@ -897,16 +883,7 @@ declare global {
     /** The end of the time period. The endDate can be any expression that resolves to a Date, a Timestamp, or an ObjectID. */
     endDate: any;
     /** The time measurement unit between the startDate and endDate */
-    unit:
-      | "year"
-      | "quarter"
-      | "month"
-      | "week"
-      | "day"
-      | "hour"
-      | "minute"
-      | "second"
-      | "millisecond";
+    unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     /** Used when the unit is equal to week. Defaults to Sunday. The startOfWeek parameter is an expression that resolves to a case insensitive string */
     startOfWeek?: any;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
@@ -964,16 +941,7 @@ declare global {
     /** The beginning date, in UTC, for the addition operation. The startDate can be any expression that resolves to a Date, a Timestamp, or an ObjectID. */
     startDate: any;
     /** The unit used to measure the amount of time added to the startDate. */
-    unit:
-      | "year"
-      | "quarter"
-      | "month"
-      | "week"
-      | "day"
-      | "hour"
-      | "minute"
-      | "second"
-      | "millisecond";
+    unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     amount: any;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
     timezone?: any;
@@ -1018,16 +986,7 @@ declare global {
     /** The date to truncate, specified in UTC. The date can be any expression that resolves to a Date, a Timestamp, or an ObjectID. */
     date: any;
     /** The unit of time, specified as an expression that must resolve to one of these strings: year, quarter, week, month, day, hour, minute, second. Together, binSize and unit specify the time period used in the $dateTrunc calculation. */
-    unit:
-      | "year"
-      | "quarter"
-      | "month"
-      | "week"
-      | "day"
-      | "hour"
-      | "minute"
-      | "second"
-      | "millisecond";
+    unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     /** The numeric time value, specified as an expression that must resolve to a positive non-zero number. Defaults to 1. Together, binSize and unit specify the time period used in the $dateTrunc calculation. */
     binSize?: any;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
@@ -1079,16 +1038,7 @@ declare global {
   function $derivative(args: {
     input: any;
     /** A string that specifies the time unit. Use one of these strings: "week", "day","hour", "minute", "second", "millisecond". If the sortBy field is not a date, you must omit a unit. If you specify a unit, you must specify a date in the sortBy field. */
-    unit?:
-      | "year"
-      | "quarter"
-      | "month"
-      | "week"
-      | "day"
-      | "hour"
-      | "minute"
-      | "second"
-      | "millisecond";
+    unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
   }): any;
   /**
    * Returns the result of dividing the first number by the second. Accepts two argument expressions.
@@ -1304,16 +1254,7 @@ declare global {
   function $integral(args: {
     input: any;
     /** A string that specifies the time unit. Use one of these strings: "week", "day","hour", "minute", "second", "millisecond". If the sortBy field is not a date, you must omit a unit. If you specify a unit, you must specify a date in the sortBy field. */
-    unit?:
-      | "year"
-      | "quarter"
-      | "month"
-      | "week"
-      | "day"
-      | "hour"
-      | "minute"
-      | "second"
-      | "millisecond";
+    unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
   }): any;
   /**
    * Determines if the operand is an array. Returns a boolean.

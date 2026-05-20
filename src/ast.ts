@@ -1,19 +1,10 @@
-export type SpreadElement = {
-  type: "SpreadElement";
-  argument: Expr;
-  pos: number;
-};
+export type SpreadElement = { type: "SpreadElement"; argument: Expr; pos: number };
 
 export type StaticKey = { kind: "static"; name: string };
 export type ComputedKey = { kind: "computed"; expr: Expr };
 export type ObjectKey = StaticKey | ComputedKey;
 
-export type KeyValueEntry = {
-  type: "KeyValueEntry";
-  key: ObjectKey;
-  value: Expr;
-  pos: number;
-};
+export type KeyValueEntry = { type: "KeyValueEntry"; key: ObjectKey; value: Expr; pos: number };
 
 export type ObjectEntry = KeyValueEntry | SpreadElement;
 // AssignExpr, DeleteStmt, and LetDecl are valid as ArrayElements ONLY when the
@@ -30,21 +21,12 @@ export type CallArg = Expr | SpreadElement;
  * `target` is restricted to a field-path expression (FieldRef or chained
  * MemberAccess rooted at a FieldRef); the parser enforces this at construction.
  */
-export type AssignExpr = {
-  type: "AssignExpr";
-  target: Expr;
-  value: Expr;
-  pos: number;
-};
+export type AssignExpr = { type: "AssignExpr"; target: Expr; value: Expr; pos: number };
 
 /** Statement form: `delete $.path`. Only legal at top level or as a pipeline element. */
-export type DeleteStmt = {
-  type: "DeleteStmt";
-  target: Expr;
-  pos: number;
-};
+export type DeleteStmt = { type: "DeleteStmt"; target: Expr; pos: number };
 
-export type Mutation = AssignExpr | DeleteStmt;
+export type UpdateOp = AssignExpr | DeleteStmt;
 
 /**
  * Pipeline-scoped local binding: `let <name> = <value>`. Only valid at the top
@@ -53,50 +35,39 @@ export type Mutation = AssignExpr | DeleteStmt;
  * single compiler-owned namespace (`__jsmql.<name>`) and the namespace is
  * `$unset` at the end of the pipeline. See `docs/specs/let-bindings.md`.
  */
-export type LetDecl = {
-  type: "LetDecl";
-  name: string;
-  value: Expr;
-  pos: number;
-};
+export type LetDecl = { type: "LetDecl"; name: string; value: Expr; pos: number };
 
 /**
- * Top-level mutation program: one or more assignments and/or deletes,
- * separated by `,` in source. Distinct from `Expr` because mutations
- * are statements with stage-level effect, not expression values.
+ * Top-level **update filter**: one or more assignments and/or deletes,
+ * separated by `,` in source. Lowers to a MongoDB Update Filter document
+ * (the `{ $set: …, $unset: … }` shape passed as the second argument to
+ * `db.coll.updateOne(filter, update)`). Distinct from `Expr` because the
+ * constituent statements have document-level effect, not expression values.
  *
  * `;` is reserved for the top-level pipeline separator (see `Pipeline`)
- * and is not a mutation-chain separator.
+ * and is not an update-filter separator.
  */
-export type MutationProgram = {
-  type: "MutationProgram";
-  mutations: Mutation[];
-  pos: number;
-};
+export type UpdateFilter = { type: "UpdateFilter"; ops: UpdateOp[]; pos: number };
 
 /**
  * One element of an implicit pipeline (`;`-separated at top level). Each
- * element is lowered in isolation — a `MutationProgram` may itself emit
+ * element is lowered in isolation — an `UpdateFilter` may itself emit
  * multiple stages (read-after-write splits inside a `,`-grouped chain),
  * but adjacent elements never coalesce. `LetDecl` contributes one `$set`
  * stage plus a binding visible to subsequent statements (see
  * `generateImplicitPipeline`).
  */
-export type PipelineStmt = MutationProgram | Expr | LetDecl;
+export type PipelineStmt = UpdateFilter | Expr | LetDecl;
 
 /**
  * Top-level pipeline assembled from `;`-separated statements. Distinct from
  * `ArrayLiteral`-shaped pipelines (`[...]`) because elements come pre-grouped
  * into stages and must NOT cross-coalesce. See `generateImplicitPipeline`.
  */
-export type Pipeline = {
-  type: "Pipeline";
-  stmts: PipelineStmt[];
-  pos: number;
-};
+export type Pipeline = { type: "Pipeline"; stmts: PipelineStmt[]; pos: number };
 
-/** What `Parser.parse()` returns: an expression, a mutation program, or a `;`-separated pipeline. */
-export type Program = Expr | MutationProgram | Pipeline;
+/** What `Parser.parse()` returns: an expression, an update filter, or a `;`-separated pipeline. */
+export type Program = Expr | UpdateFilter | Pipeline;
 
 export type BinaryOp =
   | "+"
@@ -148,14 +119,7 @@ export type Expr =
   | { type: "RegexLiteral"; pattern: string; flags: string; pos: number }
   | { type: "ParamRef"; name: string; pos: number }
   | { type: "MemberAccess"; object: Expr; member: string; pos: number; optional?: boolean }
-  | {
-      type: "MethodCall";
-      object: Expr;
-      method: string;
-      args: CallArg[];
-      pos: number;
-      optional?: boolean;
-    }
+  | { type: "MethodCall"; object: Expr; method: string; args: CallArg[]; pos: number; optional?: boolean }
   | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
   | { type: "Lambda"; params: string[]; body: Expr; pos: number }
   | { type: "TypeofExpr"; operand: Expr; pos: number }

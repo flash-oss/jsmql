@@ -87,10 +87,7 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   for (const [k, e] of theirsMap) {
     if (baseMap.has(k)) continue;
     if (merged.has(k) && merged.get(k) !== e) {
-      return {
-        ok: false,
-        reason: `both sides added different entries with the same heading "${k}"`,
-      };
+      return { ok: false, reason: `both sides added different entries with the same heading "${k}"` };
     }
     merged.set(k, e);
   }
@@ -141,8 +138,7 @@ function main() {
   if (add.status !== 0) process.exit(add.status ?? 1);
 
   process.stdout.write(
-    `merge-devlog: ${TARGET} merged and staged. ` +
-      `Continue with \`git merge --continue\` or \`git commit\`.\n`,
+    `merge-devlog: ${TARGET} merged and staged. ` + `Continue with \`git merge --continue\` or \`git commit\`.\n`,
   );
 }
 

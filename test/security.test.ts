@@ -38,14 +38,18 @@ describe("jsmql template-tag interpolation guards", () => {
 });
 
 describe("jsmql template-tag interpolation cannot inject syntax", () => {
+  // `$eq($.field, ...)` is an OperatorCall, not a comparison BinaryExpr, so
+  // the top-level Filter dispatch wraps it in `$expr`. The security property
+  // the tests assert — that interpolated values round-trip as data, not as
+  // syntax — is unaffected; expectations just unwrap the outer `$expr`.
   it("breakout-attempt strings round-trip as literal values", () => {
     const evil = '"); $where: 1; (';
-    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $eq: ["$field", evil] });
+    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $expr: { $eq: ["$field", evil] } });
   });
 
   it("backticks and template-style payloads stay literal", () => {
     const evil = "`${$.password}`";
-    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $eq: ["$field", evil] });
+    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $expr: { $eq: ["$field", evil] } });
   });
 
   it("an object whose keys look like operators is emitted as data, not invoked", () => {
@@ -53,9 +57,9 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
     // Interpolating the object lands inside a value position, so codegen treats
     // it as a plain object literal — keys become output keys, NOT operator dispatch.
     // (Operator dispatch is triggered by `$name(...)` call syntax in the source.)
-    const result = jsmql`$eq($.field, ${payload})` as { $eq: [string, unknown] };
-    expect(result.$eq[0]).toEqual("$field");
-    expect(result.$eq[1]).toEqual(payload);
+    const result = jsmql`$eq($.field, ${payload})` as { $expr: { $eq: [string, unknown] } };
+    expect(result.$expr.$eq[0]).toEqual("$field");
+    expect(result.$expr.$eq[1]).toEqual(payload);
   });
 });
 

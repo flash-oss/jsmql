@@ -6,7 +6,7 @@ The formal grammar for the expression syntax accepted by the parser.
 
 ```ebnf
 program        = pipeline_program EOF
-               | mutation_program EOF
+               | update_filter EOF
                | expression EOF
 
 pipeline_program
@@ -16,7 +16,7 @@ pipeline_program
                   each `;`-separated chunk becomes its own pipeline stage(s)
                   with no cross-coalescing *)
 
-pipeline_stmt  = mutation_program
+pipeline_stmt  = update_filter
                | let_decl
                | expression           (* must compile to a stage at codegen *)
 
@@ -26,16 +26,15 @@ let_decl       = "let" IDENT "=" expression
                   bracketed `[...]` pipeline element). A top-level `let` in
                   expression mode is a parse error. *)
 
-mutation_program
-               = mutation ("," mutation)* ","?
+update_filter  = update_op ("," update_op)* ","?
                (* parser dispatch:
                   - leading `delete`, `++`, or `--`, OR
                   - leading expression followed by an assignment operator
-                  triggers mutation_program; otherwise expression *)
+                  triggers update_filter; otherwise expression *)
 
-separator      = ","                   (* in-stage mutation separator *)
+separator      = ","                   (* in-update-filter update_op separator *)
 
-mutation       = "delete" target
+update_op      = "delete" target
                | assignment_chain
 
 assignment_chain
@@ -185,17 +184,17 @@ The two top-level separators have distinct roles:
 
 - `;` is the **pipeline-stage separator**. Any `;` at the top level flips
   the input to pipeline mode (array output). Each `;`-separated chunk is
-  lowered in isolation — adjacent mutation statements never coalesce
+  lowered in isolation — adjacent update op statements never coalesce
   across `;`. A single trailing `;` is enough to trigger pipeline mode
   (`$.a = 1;` → `[{ $set: { a: 1 } }]`).
-- `,` is the **in-stage mutation separator**. Comma-grouped mutations
+- `,` is the **in-stage update op separator**. Comma-grouped update ops
   share one stage and coalesce through the existing kind / read-after-write
   rules in `src/codegen.ts`.
 
 Mixed forms compose naturally: in `$.a = 1, $.b = 2; $match(…)`, the `,`
 keeps `a` and `b` in one `$set` stage, and the `;` adds the `$match` as
 the next stage. Inside an explicit `[…]` pipeline, only `,` is valid (JS
-syntax) and adjacent mutation elements coalesce — that is the
+syntax) and adjacent update op elements coalesce — that is the
 documented difference between the two pipeline forms.
 
 Implemented in `Parser.parse()` (top-level `;` loop) and

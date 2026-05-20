@@ -10,9 +10,7 @@ import { jsmql } from "../src/index.ts";
 
 describe("$match translation — equality", () => {
   it("translates `===` against a string literal", () => {
-    expect(jsmql('[$match($.email === "alice@example.com")]')).toEqual([
-      { $match: { email: "alice@example.com" } },
-    ]);
+    expect(jsmql('[$match($.email === "alice@example.com")]')).toEqual([{ $match: { email: "alice@example.com" } }]);
   });
 
   it("translates `===` against a number literal", () => {
@@ -28,15 +26,11 @@ describe("$match translation — equality", () => {
   });
 
   it("translates `!==` to query-language $ne", () => {
-    expect(jsmql('[$match($.status !== "archived")]')).toEqual([
-      { $match: { status: { $ne: "archived" } } },
-    ]);
+    expect(jsmql('[$match($.status !== "archived")]')).toEqual([{ $match: { status: { $ne: "archived" } } }]);
   });
 
   it("rejects `!=` against a non-null literal in `$match`", () => {
-    expect(() => jsmql('[$match($.status != "archived")]')).toThrow(
-      /'!='.*only allowed against null/,
-    );
+    expect(() => jsmql('[$match($.status != "archived")]')).toThrow(/'!='.*only allowed against null/);
   });
 
   it("accepts the field on either side (5 < $.age flips to $.age > 5)", () => {
@@ -44,9 +38,7 @@ describe("$match translation — equality", () => {
   });
 
   it("uses dotted paths for nested field refs", () => {
-    expect(jsmql('[$match($.user.role === "admin")]')).toEqual([
-      { $match: { "user.role": "admin" } },
-    ]);
+    expect(jsmql('[$match($.user.role === "admin")]')).toEqual([{ $match: { "user.role": "admin" } }]);
   });
 });
 
@@ -62,9 +54,7 @@ describe("$match translation — ordered comparisons", () => {
   });
 
   it("translates string ordered comparison (lexicographic dates etc.)", () => {
-    expect(jsmql('[$match($.placedAt >= "2026-01-01")]')).toEqual([
-      { $match: { placedAt: { $gte: "2026-01-01" } } },
-    ]);
+    expect(jsmql('[$match($.placedAt >= "2026-01-01")]')).toEqual([{ $match: { placedAt: { $gte: "2026-01-01" } } }]);
   });
 
   it("flips operator when literal is on the left (`18 < $.age` → `age > 18`)", () => {
@@ -81,15 +71,11 @@ describe("$match translation — null vs missing semantics", () => {
   // which already matches "null OR missing".
 
   it("translates `=== null` to `{ field: { $type: 'null' } }` (strict — excludes missing)", () => {
-    expect(jsmql("[$match($.deletedAt === null)]")).toEqual([
-      { $match: { deletedAt: { $type: "null" } } },
-    ]);
+    expect(jsmql("[$match($.deletedAt === null)]")).toEqual([{ $match: { deletedAt: { $type: "null" } } }]);
   });
 
   it("translates `!== null` to `{ field: { $not: { $type: 'null' } } }` (strict — missing fields pass)", () => {
-    expect(jsmql("[$match($.paidAt !== null)]")).toEqual([
-      { $match: { paidAt: { $not: { $type: "null" } } } },
-    ]);
+    expect(jsmql("[$match($.paidAt !== null)]")).toEqual([{ $match: { paidAt: { $not: { $type: "null" } } } }]);
   });
 
   it("translates `== null` to `{ field: null }` (loose — matches null OR missing)", () => {
@@ -125,15 +111,8 @@ describe("$match translation — boolean combinators", () => {
   });
 
   it("composes nested && / ||", () => {
-    expect(
-      jsmql('[$match(($.role === "admin" || $.role === "owner") && $.active === true)]'),
-    ).toEqual([
-      {
-        $match: {
-          $or: [{ role: "admin" }, { role: "owner" }],
-          active: true,
-        },
-      },
+    expect(jsmql('[$match(($.role === "admin" || $.role === "owner") && $.active === true)]')).toEqual([
+      { $match: { $or: [{ role: "admin" }, { role: "owner" }], active: true } },
     ]);
   });
 });
@@ -144,23 +123,13 @@ describe("$match translation — partial extraction", () => {
   // and wrap the residual in $expr.
   it("keeps index-using clause, wraps residual in $expr", () => {
     expect(jsmql('[$match($.status === "active" && $.score > $.threshold)]')).toEqual([
-      {
-        $match: {
-          status: "active",
-          $expr: { $gt: ["$score", "$threshold"] },
-        },
-      },
+      { $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } },
     ]);
   });
 
   it("combines multiple residuals under a synthetic $and", () => {
     expect(jsmql('[$match($.status === "active" && $.a > $.b && $.c < $.d)]')).toEqual([
-      {
-        $match: {
-          status: "active",
-          $expr: { $and: [{ $gt: ["$a", "$b"] }, { $lt: ["$c", "$d"] }] },
-        },
-      },
+      { $match: { status: "active", $expr: { $and: [{ $gt: ["$a", "$b"] }, { $lt: ["$c", "$d"] }] } } },
     ]);
   });
 
@@ -169,13 +138,7 @@ describe("$match translation — partial extraction", () => {
     // disjunction's index-using guarantee, so if either `||` branch has a
     // residual, the entire expression becomes a residual.
     expect(jsmql('[$match($.status === "active" || $.score > $.threshold)]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $or: [{ $eq: ["$status", "active"] }, { $gt: ["$score", "$threshold"] }],
-          },
-        },
-      },
+      { $match: { $expr: { $or: [{ $eq: ["$status", "active"] }, { $gt: ["$score", "$threshold"] }] } } },
     ]);
   });
 });
@@ -192,41 +155,29 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("operator-call result on either side stays in $expr", () => {
-    expect(jsmql("[$match($size($.tags) > 0)]")).toEqual([
-      { $match: { $expr: { $gt: [{ $size: "$tags" }, 0] } } },
-    ]);
+    expect(jsmql("[$match($size($.tags) > 0)]")).toEqual([{ $match: { $expr: { $gt: [{ $size: "$tags" }, 0] } } }]);
   });
 
   it("Math call result stays in $expr", () => {
-    expect(jsmql("[$match(Math.abs($.delta) > 5)]")).toEqual([
-      { $match: { $expr: { $gt: [{ $abs: "$delta" }, 5] } } },
-    ]);
+    expect(jsmql("[$match(Math.abs($.delta) > 5)]")).toEqual([{ $match: { $expr: { $gt: [{ $abs: "$delta" }, 5] } } }]);
   });
 
   it("array literal as equality target stays in $expr", () => {
     // Translating to `{ tags: [1, 2] }` would silently switch to array-element
     // matching semantics — too surprising. Leave it as $expr.
-    expect(jsmql("[$match($.tags === [1, 2])]")).toEqual([
-      { $match: { $expr: { $eq: ["$tags", [1, 2]] } } },
-    ]);
+    expect(jsmql("[$match($.tags === [1, 2])]")).toEqual([{ $match: { $expr: { $eq: ["$tags", [1, 2]] } } }]);
   });
 });
 
 describe("$match translation — typeof → $type", () => {
   it('translates `typeof $.x === "string"` to query-doc $type', () => {
-    expect(jsmql('[$match(typeof $.email === "string")]')).toEqual([
-      { $match: { email: { $type: "string" } } },
-    ]);
+    expect(jsmql('[$match(typeof $.email === "string")]')).toEqual([{ $match: { email: { $type: "string" } } }]);
   });
   it("accepts the literal on either side", () => {
-    expect(jsmql('[$match("int" === typeof $.count)]')).toEqual([
-      { $match: { count: { $type: "int" } } },
-    ]);
+    expect(jsmql('[$match("int" === typeof $.count)]')).toEqual([{ $match: { count: { $type: "int" } } }]);
   });
   it("translates `!==` via $not", () => {
-    expect(jsmql('[$match(typeof $.x !== "null")]')).toEqual([
-      { $match: { x: { $not: { $type: "null" } } } },
-    ]);
+    expect(jsmql('[$match(typeof $.x !== "null")]')).toEqual([{ $match: { x: { $not: { $type: "null" } } } }]);
   });
   it("works on nested field paths", () => {
     expect(jsmql('[$match(typeof $.user.role === "string")]')).toEqual([
@@ -235,11 +186,7 @@ describe("$match translation — typeof → $type", () => {
   });
   it("combines with other translated clauses via $and-merge", () => {
     expect(jsmql('[$match(typeof $.age === "int" && $.age > 18)]')).toEqual([
-      {
-        $match: {
-          $and: [{ age: { $type: "int" } }, { age: { $gt: 18 } }],
-        },
-      },
+      { $match: { $and: [{ age: { $type: "int" } }, { age: { $gt: 18 } }] } },
     ]);
   });
   it("falls through to $expr for unknown type aliases", () => {
@@ -249,11 +196,7 @@ describe("$match translation — typeof → $type", () => {
   });
   it("falls through to $expr when the operand is not a static field path", () => {
     expect(jsmql('[$match(typeof $.name.toLowerCase() === "string")]')).toEqual([
-      {
-        $match: {
-          $expr: { $eq: [{ $type: { $toLower: "$name" } }, "string"] },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $type: { $toLower: "$name" } }, "string"] } } },
     ]);
   });
 });
@@ -262,19 +205,12 @@ describe("$match translation — escape hatch", () => {
   it("object-literal body with $expr passes through unchanged", () => {
     // The existing object-literal passthrough is the explicit opt-out for
     // strict aggregation `$eq` semantics.
-    expect(jsmql('[$match({ $expr: $.email === "x" })]')).toEqual([
-      { $match: { $expr: { $eq: ["$email", "x"] } } },
-    ]);
+    expect(jsmql('[$match({ $expr: $.email === "x" })]')).toEqual([{ $match: { $expr: { $eq: ["$email", "x"] } } }]);
   });
 
   it("object-literal body with a mix of query and $expr passes through unchanged", () => {
     expect(jsmql('[$match({ status: "active", $expr: $.score > $.threshold })]')).toEqual([
-      {
-        $match: {
-          status: "active",
-          $expr: { $gt: ["$score", "$threshold"] },
-        },
-      },
+      { $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } },
     ]);
   });
 });

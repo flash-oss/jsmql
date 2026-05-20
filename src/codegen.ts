@@ -12,8 +12,8 @@ import type {
   MathConstant,
   ObjectMethod,
   TypeCastOp,
-  Mutation,
-  MutationProgram,
+  UpdateOp,
+  UpdateFilter,
 } from "./ast.ts";
 
 export class CodegenError extends Error {
@@ -33,10 +33,7 @@ export class CodegenError extends Error {
  * site so they're trivially greppable.
  */
 export function internalError(detail: string, pos: number = 0): never {
-  throw new CodegenError(
-    `jsmql internal error (please report to the jsmql maintainers): ${detail}`,
-    pos,
-  );
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
 }
 
 export class UnknownIdentifierError extends CodegenError {
@@ -145,10 +142,7 @@ export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
 }
 
 /** Return a fresh ctx with the given function-form parameter bindings applied. */
-export function withBindings(
-  ctx: GenerateCtx,
-  bindings: ReadonlyMap<string, unknown>,
-): GenerateCtx {
+export function withBindings(ctx: GenerateCtx, bindings: ReadonlyMap<string, unknown>): GenerateCtx {
   return { ...ctx, bindings };
 }
 
@@ -440,9 +434,7 @@ function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unk
     return foldedSubtract({ $strLenCP: genObj }, node.operand.value);
   }
   const gen = _generate(node, ctx);
-  return {
-    $cond: [{ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen],
-  };
+  return { $cond: [{ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen] };
 }
 
 /** Lower `.slice` on a known-array (or fallback) receiver to MQL `$slice`. */
@@ -465,20 +457,13 @@ function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unkno
     return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
   }
   const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
-  return {
-    $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))],
-  };
+  return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
 }
 
 /** Return the absolute value of a negative numeric literal AST node, else null. */
 function negativeLiteralValue(node: Expr): number | null {
   if (node.type === "NumberLiteral" && node.value < 0) return -node.value;
-  if (
-    node.type === "UnaryExpr" &&
-    node.op === "-" &&
-    node.operand.type === "NumberLiteral" &&
-    node.operand.value > 0
-  ) {
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral" && node.operand.value > 0) {
     return node.operand.value;
   }
   return null;
@@ -562,8 +547,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
   }
   if (dynType === "LetDecl") {
     throw new CodegenError(
-      "`let` is a pipeline statement, not a value. " +
-        "It is only valid at the top level of a pipeline.",
+      "`let` is a pipeline statement, not a value. " + "It is only valid at the top level of a pipeline.",
       expr.pos,
     );
   }
@@ -636,13 +620,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         return { $getField: { field: idx, input: obj } };
       }
       const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-      return {
-        $cond: [
-          { $isArray: obj },
-          { $arrayElemAt: [obj, idx] },
-          { $getField: { field: idx, input: obj } },
-        ],
-      };
+      return { $cond: [{ $isArray: obj }, { $arrayElemAt: [obj, idx] }, { $getField: { field: idx, input: obj } }] };
     }
 
     case "RegexLiteral":
@@ -720,14 +698,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     }
 
     case "MethodCall":
-      return generateMethodCall(
-        expr.object,
-        expr.method,
-        expr.args,
-        ctx,
-        expr.pos,
-        !!expr.optional,
-      );
+      return generateMethodCall(expr.object, expr.method, expr.args, ctx, expr.pos, !!expr.optional);
 
     case "CallExpression":
       return generateCallExpression(expr.callee, expr.args, ctx, expr.pos);
@@ -875,12 +846,7 @@ const OPTIONAL_ARRAY_METHODS: ReadonlySet<string> = new Set([
 // string-producing, `[]` otherwise — `[]` is also safe for the runtime-dispatch
 // path because `$isArray([])` is true, sending it down the array branch which
 // returns the same sensible empty-array result the JS short-circuit would.
-const OPTIONAL_EITHER_METHODS: ReadonlySet<string> = new Set([
-  "indexOf",
-  "includes",
-  "concat",
-  "slice",
-]);
+const OPTIONAL_EITHER_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "concat", "slice"]);
 
 function neutralForMethod(method: string, object: Expr): unknown | undefined {
   if (OPTIONAL_STRING_METHODS.has(method)) return "";
@@ -918,13 +884,7 @@ function asFieldPath(expr: Expr, ctx: GenerateCtx): string | null {
 
 // ── Binary expressions ────────────────────────────────────────────────────────
 
-function generateBinaryExpr(
-  op: BinaryOp,
-  left: Expr,
-  right: Expr,
-  ctx: GenerateCtx,
-  pos: number,
-): unknown {
+function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: GenerateCtx, pos: number): unknown {
   switch (op) {
     case "+":
       return generateAdd(left, right, ctx);
@@ -980,13 +940,7 @@ function generateBinaryExpr(
  * "missing", so missing-field docs match the same way they do in MongoDB's
  * query language (`{ field: null }`). `$.x != null` is the negation.
  */
-function generateLooseEquality(
-  op: "==" | "!=",
-  left: Expr,
-  right: Expr,
-  ctx: GenerateCtx,
-  pos: number,
-): unknown {
+function generateLooseEquality(op: "==" | "!=", left: Expr, right: Expr, ctx: GenerateCtx, pos: number): unknown {
   const leftIsNull = left.type === "NullLiteral";
   const rightIsNull = right.type === "NullLiteral";
   if (!leftIsNull && !rightIsNull) {
@@ -1073,12 +1027,7 @@ function foldLogical(op: "&&" | "||", chain: Expr[], ctx: GenerateCtx): unknown 
   };
 }
 
-function condForLogical(
-  op: "&&" | "||",
-  lhs: unknown,
-  rhs: unknown,
-  lhsExpr: Expr | null,
-): unknown {
+function condForLogical(op: "&&" | "||", lhs: unknown, rhs: unknown, lhsExpr: Expr | null): unknown {
   const cond = lhsExpr ? jsBoolIfNeeded(lhsExpr, lhs) : jsBool(lhs);
   return op === "&&" ? { $cond: [cond, rhs, lhs] } : { $cond: [cond, lhs, rhs] };
 }
@@ -1148,19 +1097,11 @@ function keyArrayForObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx): unk
   for (const entry of entries) {
     if (entry.type === "SpreadElement") {
       flush();
-      operands.push({
-        $map: {
-          input: { $objectToArray: _generate(entry.argument, ctx) },
-          as: "kv",
-          in: "$$kv.k",
-        },
-      });
+      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: "kv", in: "$$kv.k" } });
       continue;
     }
     if (currentChunk === null) currentChunk = [];
-    currentChunk.push(
-      entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx),
-    );
+    currentChunk.push(entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx));
   }
   flush();
 
@@ -1205,12 +1146,7 @@ function collectExprChain(op: BinaryOp, expr: Expr, out: Expr[]): void {
 
 // ── Unary expressions ─────────────────────────────────────────────────────────
 
-function generateUnaryExpr(
-  op: "!" | "-" | "~",
-  operand: Expr,
-  ctx: GenerateCtx,
-  _pos: number,
-): unknown {
+function generateUnaryExpr(op: "!" | "-" | "~", operand: Expr, ctx: GenerateCtx, _pos: number): unknown {
   if (op === "!") {
     // !!x → jsBool(x): the canonical "coerce to JS boolean" idiom, identical
     // to what `Boolean(x)` emits. Saves a $not-of-$not.
@@ -1244,9 +1180,9 @@ function generateUnaryExpr(
  * directly — `{ $concatArrays: [a] }` is semantically equivalent and noisier.
  */
 function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx, pos: number): unknown {
-  // Mutations (`$.a = 1`, `delete $.x`) are valid as ArrayElements only when
+  // Update ops (`$.a = 1`, `delete $.x`) are valid as ArrayElements only when
   // the array is a pipeline (handled in pipeline.ts before reaching here).
-  // Reaching here with a mutation means the user wrote a mutation inside a
+  // Reaching here with a update op means the user wrote a update op inside a
   // value array — reject with a precise error pointing at the supported forms.
   for (const el of elements) {
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
@@ -1323,9 +1259,7 @@ function generateObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx, _pos: n
   const hasSpread = entries.some((e) => e.type === "SpreadElement");
 
   if (!hasSpread) {
-    const hasComputed = entries.some(
-      (e) => e.type === "KeyValueEntry" && e.key.kind === "computed",
-    );
+    const hasComputed = entries.some((e) => e.type === "KeyValueEntry" && e.key.kind === "computed");
     if (!hasComputed) {
       return generateStaticObjectEntries(entries, ctx);
     }
@@ -1344,9 +1278,7 @@ function generateObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx, _pos: n
     if (staticBuffer.length === 0) return;
     const hasComputed = staticBuffer.some((e) => e.key.kind === "computed");
     operands.push(
-      hasComputed
-        ? generateComputedKeyObject(staticBuffer, ctx)
-        : generateStaticObjectEntries(staticBuffer, ctx),
+      hasComputed ? generateComputedKeyObject(staticBuffer, ctx) : generateStaticObjectEntries(staticBuffer, ctx),
     );
     staticBuffer = [];
   };
@@ -1378,17 +1310,11 @@ function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): 
  * (e.g. `{ input, find, replacement }` for `$replaceOne`). Computed keys are rejected here —
  * MongoDB operator key names are part of the operator's wire format and can't be runtime values.
  */
-function generateStaticObjectEntries(
-  entries: ObjectEntry[],
-  ctx: GenerateCtx,
-): Record<string, unknown> {
+function generateStaticObjectEntries(entries: ObjectEntry[], ctx: GenerateCtx): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const entry of entries) {
     if (entry.type === "SpreadElement") {
-      throw new CodegenError(
-        "Spread elements in objects are not supported in MQL output",
-        entry.pos,
-      );
+      throw new CodegenError("Spread elements in objects are not supported in MQL output", entry.pos);
     }
     if (entry.key.kind === "computed") {
       throw new CodegenError(
@@ -1424,10 +1350,7 @@ function generateOperatorCall(
   if (style === "object") {
     const objArg = args[0];
     if (!objArg || objArg.type !== "ObjectLiteral") {
-      throw new CodegenError(
-        `Object-style call to ${name} must have exactly one object argument`,
-        pos,
-      );
+      throw new CodegenError(`Object-style call to ${name} must have exactly one object argument`, pos);
     }
     const def = lookupOperator(name);
     // For operators that genuinely expect a named-key object (e.g. $trim, $dateAdd),
@@ -1447,8 +1370,7 @@ function generateOperatorCall(
       throw new CodegenError("$let first argument must be an object literal", varsExpr?.pos ?? pos);
     }
     const lambdaExpr = args[1];
-    if (lambdaExpr.type !== "Lambda")
-      throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
+    if (lambdaExpr.type !== "Lambda") throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
     const vars = generateStaticObjectEntries(varsExpr.entries, ctx);
     const bodyCtx = extendCtx(ctx, lambdaExpr.params);
     return { $let: { vars, in: _generate(lambdaExpr.body, bodyCtx) } };
@@ -1471,10 +1393,7 @@ function generateOperatorCall(
     case "single": {
       assertNoSpread(args, name, pos);
       if (args.length !== 1) {
-        throw new CodegenError(
-          `Operator ${name} expects exactly 1 argument, got ${args.length}`,
-          pos,
-        );
+        throw new CodegenError(`Operator ${name} expects exactly 1 argument, got ${args.length}`, pos);
       }
       return { [name]: _generate(args[0] as Expr, ctx) };
     }
@@ -1524,11 +1443,7 @@ function generateOperatorCall(
   }
 }
 
-function generateUnknownOperator(
-  name: string,
-  args: CallArg[],
-  ctx: GenerateCtx,
-): Record<string, unknown> {
+function generateUnknownOperator(name: string, args: CallArg[], ctx: GenerateCtx): Record<string, unknown> {
   if (args.length === 0) {
     return { [name]: {} };
   }
@@ -1563,9 +1478,7 @@ function generateVariadicArgs(args: CallArg[], ctx: GenerateCtx): unknown {
     const only = args[0] as SpreadElement;
     return _generate(only.argument, ctx);
   }
-  const parts = args.map((a) =>
-    a.type === "SpreadElement" ? _generate(a.argument, ctx) : [_generate(a, ctx)],
-  );
+  const parts = args.map((a) => (a.type === "SpreadElement" ? _generate(a.argument, ctx) : [_generate(a, ctx)]));
   return { $concatArrays: parts };
 }
 
@@ -1674,24 +1587,17 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, "substring");
       if (exprArgs.length === 0) return genObj;
       if (exprArgs.length > 2) {
-        throw new CodegenError(
-          `.substring() requires 0, 1, or 2 arguments (start[, end])`,
-          callPos,
-        );
+        throw new CodegenError(`.substring() requires 0, 1, or 2 arguments (start[, end])`, callPos);
       }
       // JS .substring(s, e) takes end-exclusive; MQL $substrCP takes a length.
       // JS clamps negative indices to 0 (and would also swap if start > end —
       // we model the clamping but not the swap; see docs/specs/string-methods.md).
       const start = clampNonNegativeIndex(exprArgs[0], ctx);
       if (exprArgs.length === 1) {
-        return {
-          $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)],
-        };
+        return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
       }
       const end = clampNonNegativeIndex(exprArgs[1], ctx);
-      return {
-        $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))],
-      };
+      return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
     }
     case "charAt": {
       const exprArgs = exprArgsOnly(args, "charAt");
@@ -1723,13 +1629,7 @@ function generateMethodCall(
       // Compares the last N codepoints of the input with the needle, where N is the needle's length.
       return {
         $eq: [
-          {
-            $substrCP: [
-              genObj,
-              { $subtract: [{ $strLenCP: genObj }, { $strLenCP: needle }] },
-              { $strLenCP: needle },
-            ],
-          },
+          { $substrCP: [genObj, { $subtract: [{ $strLenCP: genObj }, { $strLenCP: needle }] }, { $strLenCP: needle }] },
           needle,
         ],
       };
@@ -1748,13 +1648,7 @@ function generateMethodCall(
       if (isStringProducing(object)) {
         return { $indexOfCP: [genObj, needle] };
       }
-      return {
-        $cond: [
-          { $isArray: genObj },
-          { $indexOfArray: [genObj, needle] },
-          { $indexOfCP: [genObj, needle] },
-        ],
-      };
+      return { $cond: [{ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] }] };
     }
     case "lastIndexOf": {
       const exprArgs = exprArgsOnly(args, "lastIndexOf");
@@ -1775,9 +1669,7 @@ function generateMethodCall(
           vars: { jsmqlArr: genObj },
           in: {
             $let: {
-              vars: {
-                jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] },
-              },
+              vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] } },
               in: {
                 $cond: [
                   { $eq: ["$$jsmqlRevIdx", -1] },
@@ -1793,33 +1685,19 @@ function generateMethodCall(
     case "replace": {
       const exprArgs = exprArgsOnly(args, "replace");
       if (exprArgs.length !== 2) {
-        throw new CodegenError(
-          `.replace() requires exactly 2 arguments (find, replacement)`,
-          callPos,
-        );
+        throw new CodegenError(`.replace() requires exactly 2 arguments (find, replacement)`, callPos);
       }
       return {
-        $replaceOne: {
-          input: genObj,
-          find: _generate(exprArgs[0], ctx),
-          replacement: _generate(exprArgs[1], ctx),
-        },
+        $replaceOne: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) },
       };
     }
     case "replaceAll": {
       const exprArgs = exprArgsOnly(args, "replaceAll");
       if (exprArgs.length !== 2) {
-        throw new CodegenError(
-          `.replaceAll() requires exactly 2 arguments (find, replacement)`,
-          callPos,
-        );
+        throw new CodegenError(`.replaceAll() requires exactly 2 arguments (find, replacement)`, callPos);
       }
       return {
-        $replaceAll: {
-          input: genObj,
-          find: _generate(exprArgs[0], ctx),
-          replacement: _generate(exprArgs[1], ctx),
-        },
+        $replaceAll: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) },
       };
     }
     case "includes": {
@@ -1837,11 +1715,7 @@ function generateMethodCall(
         return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
       }
       return {
-        $cond: [
-          { $isArray: genObj },
-          { $in: [needle, genObj] },
-          { $gte: [{ $indexOfCP: [genObj, needle] }, 0] },
-        ],
+        $cond: [{ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] }],
       };
     }
     case "match": {
@@ -1899,10 +1773,7 @@ function generateMethodCall(
     case "padEnd": {
       const exprArgs = exprArgsOnly(args, method);
       if (exprArgs.length < 1 || exprArgs.length > 2) {
-        throw new CodegenError(
-          `.${method}() takes 1 or 2 arguments (targetLength[, padString])`,
-          callPos,
-        );
+        throw new CodegenError(`.${method}() takes 1 or 2 arguments (targetLength[, padString])`, callPos);
       }
       const target = _generate(exprArgs[0], ctx);
       const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
@@ -1919,9 +1790,7 @@ function generateMethodCall(
       return {
         $let: {
           vars: { s: genObj },
-          in: {
-            $cond: [{ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }],
-          },
+          in: { $cond: [{ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }] },
         },
       };
     }
@@ -1931,13 +1800,7 @@ function generateMethodCall(
         throw new CodegenError(`.repeat() requires exactly 1 argument (count)`, callPos);
       }
       const count = _generate(exprArgs[0], ctx);
-      return {
-        $reduce: {
-          input: { $range: [0, count] },
-          initialValue: "",
-          in: { $concat: ["$$value", genObj] },
-        },
-      };
+      return { $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", genObj] } } };
     }
 
     // ── Array methods (no lambda) ───────────────────────────────────────────
@@ -1958,13 +1821,7 @@ function generateMethodCall(
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
       if (isStringProducing(object)) return sliceString(genObj, exprArgs, ctx);
       if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
-      return {
-        $cond: [
-          { $isArray: genObj },
-          sliceArray(genObj, exprArgs, ctx),
-          sliceString(genObj, exprArgs, ctx),
-        ],
-      };
+      return { $cond: [{ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx)] };
     }
     case "reverse":
     case "toReversed": {
@@ -1985,10 +1842,7 @@ function generateMethodCall(
     case "toSpliced": {
       const exprArgs = exprArgsOnly(args, "toSpliced");
       if (exprArgs.length < 1) {
-        throw new CodegenError(
-          `.toSpliced() requires at least 1 argument (start[, deleteCount, ...items])`,
-          callPos,
-        );
+        throw new CodegenError(`.toSpliced() requires at least 1 argument (start[, deleteCount, ...items])`, callPos);
       }
       const startArg = exprArgs[0];
       if (isNegativeLiteral(startArg)) {
@@ -2011,9 +1865,7 @@ function generateMethodCall(
       // Bind arr/start/end once: $let so size & arithmetic are computed a single time.
       // tailStart = start + deleteCount, or just start if deleteCount omitted (no removal, pure insert).
       // tailLen = $size - tailStart, clamped non-negative.
-      const tailStart = hasDeleteCount
-        ? { $add: ["$$jsmqlStart", _generate(deleteCountArg!, ctx)] }
-        : "$$jsmqlStart";
+      const tailStart = hasDeleteCount ? { $add: ["$$jsmqlStart", _generate(deleteCountArg!, ctx)] } : "$$jsmqlStart";
       return {
         $let: {
           vars: { jsmqlArr: genObj, jsmqlStart: start },
@@ -2028,9 +1880,7 @@ function generateMethodCall(
                     $slice: [
                       "$$jsmqlArr",
                       "$$jsmqlTailStart",
-                      {
-                        $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }],
-                      },
+                      { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }] },
                     ],
                   },
                 ],
@@ -2065,14 +1915,7 @@ function generateMethodCall(
                 $slice: [
                   "$$jsmqlArr",
                   { $add: ["$$jsmqlIdx", 1] },
-                  {
-                    $max: [
-                      0,
-                      {
-                        $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }],
-                      },
-                    ],
-                  },
+                  { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }] },
                 ],
               },
             ],
@@ -2085,16 +1928,9 @@ function generateMethodCall(
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast");
       const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
-        return {
-          $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1],
-        };
+        return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
       }
-      return {
-        $arrayElemAt: [
-          { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] },
-          1,
-        ],
-      };
+      return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] }, 1] };
     }
     case "findIndex":
     case "findLastIndex": {
@@ -2111,29 +1947,17 @@ function generateMethodCall(
       // references resolve correctly. For findIndex we want the *first* match —
       // guard the update with `$$value == -1` so later matches don't overwrite.
       // For findLastIndex any match overwrites, so the final value is the last.
-      const vars: Record<string, unknown> = {
-        [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] },
-      };
+      const vars: Record<string, unknown> = { [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] } };
       if (lambda.params[1]) {
         vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
       }
       const predicate = jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx));
-      const cond =
-        method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
+      const cond = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
-          input: {
-            $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] },
-          },
+          input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
           initialValue: -1,
-          in: {
-            $let: {
-              vars,
-              in: {
-                $cond: [cond, { $arrayElemAt: ["$$this", 0] }, "$$value"],
-              },
-            },
-          },
+          in: { $let: { vars, in: { $cond: [cond, { $arrayElemAt: ["$$this", 0] }, "$$value"] } } },
         },
       };
     }
@@ -2143,22 +1967,14 @@ function generateMethodCall(
       if (args.length === 0) {
         throw new CodegenError(`.concat() requires at least 1 argument`, callPos);
       }
-      const tail = args.map((a) =>
-        a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx),
-      );
+      const tail = args.map((a) => (a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx)));
       if (isArrayProducing(object)) {
         return { $concatArrays: [genObj, ...tail] };
       }
       if (isStringProducing(object)) {
         return { $concat: [genObj, ...tail] };
       }
-      return {
-        $cond: [
-          { $isArray: genObj },
-          { $concatArrays: [genObj, ...tail] },
-          { $concat: [genObj, ...tail] },
-        ],
-      };
+      return { $cond: [{ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] }] };
     }
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
@@ -2225,26 +2041,14 @@ function generateMethodCall(
           );
         }
       }
-      return {
-        $reduce: {
-          input: genObj,
-          initialValue: [],
-          in: { $concatArrays: ["$$value", "$$this"] },
-        },
-      };
+      return { $reduce: { input: genObj, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } };
     }
     case "flatMap": {
       const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
       const iter = arrayIterInput(lambda, genObj, ctx, "flatMap");
       return {
         $reduce: {
-          input: {
-            $map: {
-              input: iter.input,
-              as: iter.asName,
-              in: iter.wrap(_generate(lambda.body, iter.bodyCtx)),
-            },
-          },
+          input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(_generate(lambda.body, iter.bodyCtx)) } },
           initialValue: [],
           in: { $concatArrays: ["$$value", "$$this"] },
         },
@@ -2255,13 +2059,7 @@ function generateMethodCall(
     case "map": {
       const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
       const iter = arrayIterInput(lambda, genObj, ctx, "map");
-      return {
-        $map: {
-          input: iter.input,
-          as: iter.asName,
-          in: iter.wrap(_generate(lambda.body, iter.bodyCtx)),
-        },
-      };
+      return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(_generate(lambda.body, iter.bodyCtx)) } };
     }
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
@@ -2284,17 +2082,10 @@ function generateMethodCall(
       const iter = arrayIterInput(lambda, genObj, ctx, "find");
       const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
-        return {
-          $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0],
-        };
+        return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
       }
       // 2-param: find first matching pair, then extract its element.
-      return {
-        $arrayElemAt: [
-          { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] },
-          1,
-        ],
-      };
+      return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] }, 1] };
     }
     case "some": {
       const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
@@ -2326,10 +2117,7 @@ function generateMethodCall(
     case "reduceRight": {
       const exprArgs = exprArgsOnly(args, method);
       if (exprArgs.length !== 2) {
-        throw new CodegenError(
-          `.${method}() requires exactly 2 arguments (lambda, initialValue)`,
-          callPos,
-        );
+        throw new CodegenError(`.${method}() requires exactly 2 arguments (lambda, initialValue)`, callPos);
       }
       const lambda = requireLambda(exprArgs, method, callPos);
       if (lambda.params.length < 2 || lambda.params.length > 3) {
@@ -2392,13 +2180,7 @@ function generateMethodCall(
       if (method === "reduceRight") {
         input = { $reverseArray: input };
       }
-      return {
-        $reduce: {
-          input,
-          initialValue: _generate(exprArgs[1], ctx),
-          in: inExpr,
-        },
-      };
+      return { $reduce: { input, initialValue: _generate(exprArgs[1], ctx), in: inExpr } };
     }
 
     // ── Date methods ────────────────────────────────────────────────────────
@@ -2549,12 +2331,7 @@ function arrayIterInput(
     );
   }
   if (params.length <= 1) {
-    return {
-      input: genObj,
-      asName: params[0] ?? "v",
-      bodyCtx: extendCtx(ctx, params),
-      wrap: (body) => body,
-    };
+    return { input: genObj, asName: params[0] ?? "v", bodyCtx: extendCtx(ctx, params), wrap: (body) => body };
   }
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
@@ -2562,10 +2339,7 @@ function arrayIterInput(
     bodyCtx: extendCtx(ctx, params),
     wrap: (body) => ({
       $let: {
-        vars: {
-          [params[0]]: { $arrayElemAt: ["$$jsmqlPair", 1] },
-          [params[1]]: { $arrayElemAt: ["$$jsmqlPair", 0] },
-        },
+        vars: { [params[0]]: { $arrayElemAt: ["$$jsmqlPair", 1] }, [params[1]]: { $arrayElemAt: ["$$jsmqlPair", 0] } },
         in: body,
       },
     }),
@@ -2715,12 +2489,7 @@ function requireLambda(
  * Other callees (e.g. a field reference followed by `(...)`) are not callable in MQL —
  * we reject them with an error pointing at the supported forms.
  */
-function generateCallExpression(
-  callee: Expr,
-  args: CallArg[],
-  ctx: GenerateCtx,
-  pos: number,
-): unknown {
+function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx, pos: number): unknown {
   if (callee.type !== "Lambda") {
     throw new CodegenError(
       `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE → $let). For named operators use $opName(...); for methods use receiver.method(...).`,
@@ -2737,10 +2506,7 @@ function generateCallExpression(
   for (let i = 0; i < callee.params.length; i++) {
     const a = args[i];
     if (a.type === "SpreadElement") {
-      throw new CodegenError(
-        `IIFE: spread arguments are not supported (use $op($let, ...) instead)`,
-        a.pos,
-      );
+      throw new CodegenError(`IIFE: spread arguments are not supported (use $op($let, ...) instead)`, a.pos);
     }
     vars[callee.params[i]] = _generate(a, ctx);
   }
@@ -2778,12 +2544,7 @@ function generateMathConst(name: MathConstant): number {
   }
 }
 
-function generateMathCall(
-  method: MathMethod,
-  args: CallArg[],
-  ctx: GenerateCtx,
-  pos: number,
-): unknown {
+function generateMathCall(method: MathMethod, args: CallArg[], ctx: GenerateCtx, pos: number): unknown {
   switch (method) {
     case "abs":
       return { $abs: oneArg(method, args, ctx, pos) };
@@ -2888,12 +2649,7 @@ function oneArg(method: MathMethod, args: CallArg[], ctx: GenerateCtx, pos: numb
 
 // ── Object calls ──────────────────────────────────────────────────────────────
 
-function generateObjectCall(
-  method: ObjectMethod,
-  args: CallArg[],
-  ctx: GenerateCtx,
-  pos: number,
-): unknown {
+function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: GenerateCtx, pos: number): unknown {
   // Helper: wrap argument with $ifNull(v, neutral) when the chain has `?.`
   // (`$objectToArray(null)` and `$arrayToObject(null)` both error).
   const genWith = (arg: Expr, neutral: unknown): unknown => {
@@ -2903,52 +2659,32 @@ function generateObjectCall(
   switch (method) {
     case "keys": {
       const exprArgs = exprArgsOnly(args, "Object.keys");
-      if (exprArgs.length !== 1)
-        throw new CodegenError(`Object.keys() requires exactly 1 argument`, pos);
-      return {
-        $map: {
-          input: { $objectToArray: genWith(exprArgs[0], {}) },
-          as: "kv",
-          in: "$$kv.k",
-        },
-      };
+      if (exprArgs.length !== 1) throw new CodegenError(`Object.keys() requires exactly 1 argument`, pos);
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.k" } };
     }
     case "values": {
       const exprArgs = exprArgsOnly(args, "Object.values");
-      if (exprArgs.length !== 1)
-        throw new CodegenError(`Object.values() requires exactly 1 argument`, pos);
-      return {
-        $map: {
-          input: { $objectToArray: genWith(exprArgs[0], {}) },
-          as: "kv",
-          in: "$$kv.v",
-        },
-      };
+      if (exprArgs.length !== 1) throw new CodegenError(`Object.values() requires exactly 1 argument`, pos);
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.v" } };
     }
     case "entries": {
       const exprArgs = exprArgsOnly(args, "Object.entries");
-      if (exprArgs.length !== 1)
-        throw new CodegenError(`Object.entries() requires exactly 1 argument`, pos);
+      if (exprArgs.length !== 1) throw new CodegenError(`Object.entries() requires exactly 1 argument`, pos);
       return { $objectToArray: genWith(exprArgs[0], {}) };
     }
     case "fromEntries": {
       const exprArgs = exprArgsOnly(args, "Object.fromEntries");
-      if (exprArgs.length !== 1)
-        throw new CodegenError(`Object.fromEntries() requires exactly 1 argument`, pos);
+      if (exprArgs.length !== 1) throw new CodegenError(`Object.fromEntries() requires exactly 1 argument`, pos);
       return { $arrayToObject: genWith(exprArgs[0], []) };
     }
     case "assign": {
-      if (args.length < 1)
-        throw new CodegenError(`Object.assign() requires at least 1 argument`, pos);
+      if (args.length < 1) throw new CodegenError(`Object.assign() requires at least 1 argument`, pos);
       return { $mergeObjects: generateVariadicArgs(args, ctx) };
     }
     case "groupBy": {
       const exprArgs = exprArgsOnly(args, "Object.groupBy");
       if (exprArgs.length !== 2) {
-        throw new CodegenError(
-          `Object.groupBy() requires exactly 2 arguments (items, x => key)`,
-          pos,
-        );
+        throw new CodegenError(`Object.groupBy() requires exactly 2 arguments (items, x => key)`, pos);
       }
       const input = exprArgs[0];
       const lambda = exprArgs[1];
@@ -2987,9 +2723,7 @@ function generateObjectCall(
                           "$$key",
                           {
                             $concatArrays: [
-                              {
-                                $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []],
-                              },
+                              { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
                               ["$$this"],
                             ],
                           },
@@ -3081,12 +2815,7 @@ function generateDateFromParts(args: Expr[], ctx: GenerateCtx, timezone: string 
   return { $dateFromParts: parts };
 }
 
-function generateArrayFrom(
-  input: Expr,
-  mapFn: Expr | null,
-  ctx: GenerateCtx,
-  pos: number,
-): unknown {
+function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, pos: number): unknown {
   if (input.type !== "ObjectLiteral") {
     throw new CodegenError(
       `Array.from() only supports the {length: n} form: Array.from({length: n}, (_, i) => …). For other inputs use $op($range, …) or .map().`,
@@ -3094,31 +2823,18 @@ function generateArrayFrom(
     );
   }
   if (input.entries.length !== 1) {
-    throw new CodegenError(
-      `Array.from({length: n}) — exactly one 'length' entry is required`,
-      input.pos,
-    );
+    throw new CodegenError(`Array.from({length: n}) — exactly one 'length' entry is required`, input.pos);
   }
   const entry = input.entries[0];
-  if (
-    entry.type !== "KeyValueEntry" ||
-    entry.key.kind !== "static" ||
-    entry.key.name !== "length"
-  ) {
-    throw new CodegenError(
-      `Array.from() only supports {length: n}; saw a different object shape`,
-      entry.pos,
-    );
+  if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static" || entry.key.name !== "length") {
+    throw new CodegenError(`Array.from() only supports {length: n}; saw a different object shape`, entry.pos);
   }
   const lengthExpr = _generate(entry.value, ctx);
   if (mapFn === null) {
     return { $range: [0, lengthExpr] };
   }
   if (mapFn.type !== "Lambda") {
-    throw new CodegenError(
-      `Array.from() second argument must be an arrow function (e.g. (_, i) => i * 2)`,
-      mapFn.pos,
-    );
+    throw new CodegenError(`Array.from() second argument must be an arrow function (e.g. (_, i) => i * 2)`, mapFn.pos);
   }
   if (mapFn.params.length !== 2) {
     throw new CodegenError(
@@ -3140,11 +2856,7 @@ function generateArrayFrom(
 
 // ── Number.* static predicates ────────────────────────────────────────────────
 
-function generateNumberStatic(
-  method: "isInteger" | "isNaN" | "isFinite",
-  arg: Expr,
-  ctx: GenerateCtx,
-): unknown {
+function generateNumberStatic(method: "isInteger" | "isNaN" | "isFinite", arg: Expr, ctx: GenerateCtx): unknown {
   const val = _generate(arg, ctx);
   const pos = arg.pos;
   switch (method) {
@@ -3156,13 +2868,7 @@ function generateNumberStatic(
         $cond: [
           { $in: [{ $type: val }, ["int", "long"]] },
           true,
-          {
-            $cond: [
-              { $in: [{ $type: val }, ["double", "decimal"]] },
-              { $eq: [val, { $trunc: val }] },
-              false,
-            ],
-          },
+          { $cond: [{ $in: [{ $type: val }, ["double", "decimal"]] }, { $eq: [val, { $trunc: val }] }, false] },
         ],
       };
     case "isNaN":
@@ -3243,10 +2949,7 @@ function generateSetMethodCall(
       const setMethods = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"];
       const setSuggestion = closestNameTo(method, setMethods);
       const setHint = setSuggestion ? ` Did you mean '.${setSuggestion}()'?` : "";
-      throw new CodegenError(
-        `Unknown Set method '.${method}()'.${setHint} Supported: ${setMethods.join(", ")}.`,
-        pos,
-      );
+      throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${setMethods.join(", ")}.`, pos);
     }
   }
 }
@@ -3283,57 +2986,51 @@ function generateRegexMethodCall(
   return { [opName]: obj };
 }
 
-// ── Mutation codegen ──────────────────────────────────────────────────────────
+// ── UpdateOp codegen ──────────────────────────────────────────────────────────
 
 /**
- * Compile a top-level `MutationProgram` to either a single stage object (if
+ * Compile a top-level `UpdateFilter` to either a single stage object (if
  * everything coalesces into one $set/$unset) or an array of stage objects.
  *
  * The shape mirrors `jsmql()`'s existing top-level convention: one stage →
  * bare object, multiple stages → array.
  */
-export function generateMutationProgram(
-  prog: MutationProgram,
-  ctx: GenerateCtx = EMPTY_CTX,
-): object | object[] {
-  if (prog.mutations.length === 0) {
-    throw new CodegenError(
-      "Mutation program must contain at least one assignment or delete",
-      prog.pos,
-    );
+export function generateUpdateFilter(prog: UpdateFilter, ctx: GenerateCtx = EMPTY_CTX): object | object[] {
+  if (prog.ops.length === 0) {
+    throw new CodegenError("UpdateOp program must contain at least one assignment or delete", prog.pos);
   }
-  const groups = groupMutations(prog.mutations);
-  const stages = groups.map((g) => generateMutationGroup(g, ctx));
+  const groups = groupUpdateOps(prog.ops);
+  const stages = groups.map((g) => generateUpdateOpGroup(g, ctx));
   if (stages.length === 1) return stages[0];
   return stages;
 }
 
 /**
- * Coalescer used by both jsmql() top-level mutations and by pipeline.ts when
- * mutations appear as pipeline elements. Returns one or more stage objects.
+ * Coalescer used by both jsmql() top-level update ops and by pipeline.ts when
+ * update ops appear as pipeline elements. Returns one or more stage objects.
  *
  * Grouping rule (preserves JS sequential semantics):
- *   - Consecutive same-kind (assign/delete) mutations join one group, UNLESS
- *   - A new mutation's write path collides (equals or is a parent/child) with
+ *   - Consecutive same-kind (assign/delete) update ops join one group, UNLESS
+ *   - A new update op's write path collides (equals or is a parent/child) with
  *     any prior write in the group, OR
  *   - For assignments: the new RHS reads any path that was written earlier in
  *     the group. (Delete has no reads.)
  */
-export function generateMutationGroups(muts: Mutation[], ctx: GenerateCtx = EMPTY_CTX): object[] {
-  const groups = groupMutations(muts);
-  return groups.map((g) => generateMutationGroup(g, ctx));
+export function generateUpdateOpGroups(ops: UpdateOp[], ctx: GenerateCtx = EMPTY_CTX): object[] {
+  const groups = groupUpdateOps(ops);
+  return groups.map((g) => generateUpdateOpGroup(g, ctx));
 }
 
-function groupMutations(muts: Mutation[]): Mutation[][] {
-  const groups: Mutation[][] = [];
-  let current: Mutation[] = [];
+function groupUpdateOps(ops: UpdateOp[]): UpdateOp[][] {
+  const groups: UpdateOp[][] = [];
+  let current: UpdateOp[] = [];
   let writes = new Set<string>();
   let kind: "assign" | "delete" | null = null;
 
-  for (const m of muts) {
+  for (const m of ops) {
     const myKind: "assign" | "delete" = m.type === "AssignExpr" ? "assign" : "delete";
-    const writePath = mutationWritePath(m);
-    const reads = m.type === "AssignExpr" ? collectMutationReads(m.value) : null;
+    const writePath = updateOpWritePath(m);
+    const reads = m.type === "AssignExpr" ? collectUpdateOpReads(m.value) : null;
 
     let mustBreak = false;
     if (kind !== null && kind !== myKind) {
@@ -3372,17 +3069,17 @@ function groupMutations(muts: Mutation[]): Mutation[][] {
   return groups;
 }
 
-function generateMutationGroup(group: Mutation[], ctx: GenerateCtx): object {
+function generateUpdateOpGroup(group: UpdateOp[], ctx: GenerateCtx): object {
   if (group.length === 0) {
-    internalError("empty mutation group");
+    internalError("empty update op group");
   }
   if (group[0].type === "AssignExpr") {
     const fields: Record<string, unknown> = {};
     for (const m of group) {
       if (m.type !== "AssignExpr") {
-        internalError("mixed-kind mutation group");
+        internalError("mixed-kind update op group");
       }
-      const path = mutationWritePath(m);
+      const path = updateOpWritePath(m);
       if (Object.prototype.hasOwnProperty.call(fields, path)) {
         internalError(`field '${path}' written twice in same group`);
       }
@@ -3394,17 +3091,17 @@ function generateMutationGroup(group: Mutation[], ctx: GenerateCtx): object {
   const paths: string[] = [];
   for (const m of group) {
     if (m.type !== "DeleteStmt") {
-      internalError("mixed-kind mutation group");
+      internalError("mixed-kind update op group");
     }
-    paths.push(mutationWritePath(m));
+    paths.push(updateOpWritePath(m));
   }
   // MongoDB pipeline `$unset` accepts a single string OR an array of strings.
   // Use the more compact string form for size 1 to match handwritten output.
   return paths.length === 1 ? { $unset: paths[0] } : { $unset: paths };
 }
 
-/** Reconstruct the dotted write path from a mutation target. */
-export function mutationWritePath(m: Mutation): string {
+/** Reconstruct the dotted write path from a update op target. */
+export function updateOpWritePath(m: UpdateOp): string {
   return targetToPath(m.target);
 }
 
@@ -3413,7 +3110,7 @@ function targetToPath(target: Expr): string {
   if (target.type === "MemberAccess") {
     return `${targetToPath(target.object)}.${target.member}`;
   }
-  internalError("mutation target is not a field path (parser should have rejected)");
+  internalError("update op target is not a field path (parser should have rejected)");
 }
 
 /**
@@ -3422,7 +3119,7 @@ function targetToPath(target: Expr): string {
  * params are intentionally not recorded — they reference iteration values,
  * not document fields.
  */
-function collectMutationReads(expr: Expr): Set<string> {
+function collectUpdateOpReads(expr: Expr): Set<string> {
   const out = new Set<string>();
   collectReadsInto(expr, out);
   return out;
@@ -3454,7 +3151,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
       for (const el of expr.elements) {
         if (el.type === "SpreadElement") collectReadsInto(el.argument, out);
         else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
-          // mutations/lets inside expressions are rejected elsewhere; ignore here
+          // update ops/lets inside expressions are rejected elsewhere; ignore here
         } else collectReadsInto(el, out);
       }
       return;
@@ -3552,7 +3249,7 @@ function tryFieldPath(expr: Expr): string | null {
 /**
  * Two paths "collide" when one is the same as, or a strict ancestor of, the
  * other. `a` and `a` collide; `a` and `a.b` collide; `a` and `b` do not.
- * Used by the mutation coalescer to detect conflicts that force a stage
+ * Used by the update op coalescer to detect conflicts that force a stage
  * boundary.
  */
 function pathsCollide(a: string, b: string): boolean {

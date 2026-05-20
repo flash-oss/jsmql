@@ -10,8 +10,8 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 
 ## Why it exists
 
-The construct sits above the existing [mutations](mutations.md) machinery (`$.x = …`)
-and adds three things on top of plain mutations:
+The construct sits above the existing [update ops](update-filter.md) machinery (`$.x = …`)
+and adds three things on top of plain update ops:
 
 1. **Auto-cleanup** — one trailing `{ $unset: "__jsmql" }` stage per pipeline,
    emitted by the compiler whenever at least one `let` was declared.
@@ -32,7 +32,7 @@ One new node type in [src/ast.ts](../../src/ast.ts):
 type LetDecl = { type: "LetDecl"; name: string; value: Expr };
 ```
 
-`PipelineStmt` is widened to `MutationProgram | Expr | LetDecl`; `ArrayElement`
+`PipelineStmt` is widened to `UpdateFilter | Expr | LetDecl`; `ArrayElement`
 is widened to include `LetDecl` (parallel to `AssignExpr` / `DeleteStmt`), so a
 let can appear either as a `;`-separated statement or as an element in a
 bracketed `[…]` pipeline.
@@ -109,9 +109,9 @@ threaded `GenerateCtx`:
 
 - **LetDecl** → emit `{ $set: { "__jsmql.<name>": <gen value with current ctx> } }`,
   extend ctx via `extendCtxLets`. Re-declaration check happens here.
-- **Mutation** (in bracketed form) → buffer for coalescing; flushed through
-  `generateMutationGroups(buf, ctx)` so RHS expressions can read lets.
-- **Mutation chain** (in `;`-separated form) → `generateMutationProgram(stmt, ctx)`.
+- **Update op** (in bracketed form) → buffer for coalescing; flushed through
+  `generateUpdateOpGroups(buf, ctx)` so RHS expressions can read lets.
+- **Update op chain** (in `;`-separated form) → `generateUpdateFilter(stmt, ctx)`.
 - **Stage element** → `stageFromElement(el, i, ctx)`. Stage body is generated
   with the current ctx. If the stage is in `RESHAPE_CLEARING_STAGES`, the ctx
   is updated via `clearCtxLets(ctx, stageName)` *after* lowering — so the body
@@ -178,7 +178,7 @@ appear when at least one `let` is in scope at some point during lowering.
 - **`const` keyword.** Pre-1.0 there is no semantic difference from `let`,
   so adding the keyword is pure surface-area cost.
 - **Multi-binding `let a = …, b = …;`.** Comma-separated bindings inside one
-  `let`. Doesn't compose well with the existing `,`-as-mutation-separator
+  `let`. Doesn't compose well with the existing `,`-as-update op-separator
   rule; punt to a follow-up that picks a clear disambiguation.
 - **Index-pitfall warning.** A `let` before an indexable `$match` blocks the
   match from using the index. The compiler could surface a warning through

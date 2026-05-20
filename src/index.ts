@@ -1,7 +1,7 @@
 import { Parser, ParseError, FunctionInputError, type FunctionInputResult } from "./parser.ts";
 import {
   generate,
-  generateMutationProgram,
+  generateUpdateFilter,
   generateWithCtx,
   CodegenError,
   EMPTY_CTX,
@@ -10,23 +10,18 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
+import { translateMatchBody } from "./match-translation.ts";
+import { lookupStage } from "./stages.ts";
 import { LexError } from "./lexer.ts";
-import type { Program } from "./ast.ts";
+import type { Program, Expr } from "./ast.ts";
 
 // Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
 // even though the class itself lives in parser.ts (where it is thrown).
 export { FunctionInputError };
 
-export type ValidationError = {
-  message: string;
-  pos: number;
-  code: "SYNTAX_ERROR" | "CODEGEN_ERROR";
-};
+export type ValidationError = { message: string; pos: number; code: "SYNTAX_ERROR" | "CODEGEN_ERROR" };
 
-export type ValidationResult = {
-  valid: boolean;
-  errors: ValidationError[];
-};
+export type ValidationResult = { valid: boolean; errors: ValidationError[] };
 
 // Raised by the template-tag invocation of `jsmql` when an interpolated value
 // cannot be safely embedded as a JSON literal. Covers the three cases
@@ -99,11 +94,19 @@ function isTemplateStringsArray(x: unknown): x is TemplateStringsArray {
   return Array.isArray(x) && Array.isArray((x as { raw?: unknown }).raw);
 }
 
-function jsmqlDispatch(input: JsmqlInput): JsmqlOutput;
-function jsmqlDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
-function jsmqlDispatch(
+/**
+ * Single shared dispatcher for every public entry point that accepts the three
+ * call shapes (string, arrow, template tag). The caller supplies its own
+ * `lower` (Filter for `jsmql()`, expression for `jsmql.expr()`) and an
+ * `apiName` for error messages — everything else (parsing, function-input
+ * binding-rejection, function-input error augmentation, type guard) stays in
+ * one place. Less code = better DX inside the codebase too.
+ */
+function dispatchInput(
   input: JsmqlInput | TemplateStringsArray,
-  ...values: unknown[]
+  values: unknown[],
+  apiName: string,
+  lower: (program: Program) => JsmqlOutput,
 ): JsmqlOutput {
   if (isTemplateStringsArray(input)) {
     let src = "";
@@ -117,11 +120,14 @@ function jsmqlDispatch(
   }
   if (typeof input === "function") {
     const src = Function.prototype.toString.call(input).trim();
+    // The try wraps both parsing AND lowering: `augmentForFunctionInput` must
+    // also fire when codegen throws an `UnknownIdentifierError` (closure ref)
+    // mid-lowering, not only when the arrow itself fails to parse.
     try {
       const { program, bindings } = new Parser(src).parseFunctionInput();
       if (bindings.length > 0) {
         throw new FunctionInputError(
-          "jsmql() in its one-shot form does not accept a parameter-bindings destructure. " +
+          `${apiName}() in its one-shot form does not accept a parameter-bindings destructure. ` +
             "Use `jsmql.compile(fn)(params)` to supply values to a parameterised query, " +
             "or remove the destructure pattern from the arrow's first slot.",
         );
@@ -139,9 +145,32 @@ function jsmqlDispatch(
   // the parser with a confusing message. DX priority #1 says vague errors are
   // not acceptable, so name the contract here.
   const ty = input === null ? "null" : typeof input;
-  throw new TypeError(
-    `jsmql() expects a string, an arrow function, or a template literal — got ${ty}.`,
-  );
+  throw new TypeError(`${apiName}() expects a string, an arrow function, or a template literal — got ${ty}.`);
+}
+
+function jsmqlDispatch(input: JsmqlInput): JsmqlOutput;
+function jsmqlDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
+function jsmqlDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
+  return dispatchInput(input, values, "jsmql", lower);
+}
+
+/**
+ * `jsmql.expr(input)` — compile a partial / "unfinished" expression in
+ * aggregation-expression form, the shape used inside Pipeline stage bodies
+ * (`$project`, `$addFields`, `$group`, …) and as the second argument to
+ * `db.coll.updateOne(filter, update)` when the update is a update op.
+ *
+ * Differs from `jsmql()` only in the no-`;` bare-expression branch: instead of
+ * Filter dispatch (`{ $expr: ... }` wrap for non-predicates), the expression
+ * lowers directly to its aggregation-expression form. `;`-separated input is
+ * still a Pipeline, update op chains still produce `$set`/`$unset`, and array-
+ * literal Pipelines still pass through — the three other branches are shared
+ * with `jsmql()` via `lowerProgram`. Same three input shapes as `jsmql()`.
+ */
+function exprDispatch(input: JsmqlInput): JsmqlOutput;
+function exprDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
+function exprDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
+  return dispatchInput(input, values, "jsmql.expr", lowerExpr);
 }
 
 /**
@@ -167,9 +196,7 @@ function jsmqlDispatch(
  * syntaxes like `${name}` are deliberately not supported (they would break
  * the strict-JS-subset rule and collide with real template literals).
  */
-function compileFunction<P extends Record<string, unknown>>(
-  fn: JsmqlCompileFn<P>,
-): (params: P) => JsmqlOutput;
+function compileFunction<P extends Record<string, unknown>>(fn: JsmqlCompileFn<P>): (params: P) => JsmqlOutput;
 function compileFunction(src: string): (params: Record<string, unknown>) => JsmqlOutput;
 function compileFunction<P extends Record<string, unknown>>(
   input: JsmqlCompileFn<P> | string,
@@ -181,9 +208,7 @@ function compileFunction<P extends Record<string, unknown>>(
     src = input.trim();
   } else {
     const ty = input === null ? "null" : typeof input;
-    throw new TypeError(
-      `jsmql.compile() expects an arrow function or a string containing one — got ${ty}.`,
-    );
+    throw new TypeError(`jsmql.compile() expects an arrow function or a string containing one — got ${ty}.`);
   }
   let parsed: FunctionInputResult;
   try {
@@ -198,8 +223,7 @@ function compileFunction<P extends Record<string, unknown>>(
       if (!Object.prototype.hasOwnProperty.call(params, b.key)) {
         // The body refers to `b.name`; the user's missing key is `b.key`. When
         // aliased, mention both so the user can find either.
-        const expected =
-          b.key === b.name ? b.key : `${b.key}' (bound to '${b.name}' in the function body)`;
+        const expected = b.key === b.name ? b.key : `${b.key}' (bound to '${b.name}' in the function body)`;
         throw new UnknownIdentifierError(expected);
       }
       const value = (params as Record<string, unknown>)[b.key];
@@ -268,19 +292,24 @@ function validateInput(
   }
 }
 
-// `jsmql` is exposed as a callable with two attached properties: `jsmql.compile`
-// (parameterised, reusable) and `jsmql.validate` (structured-result form of
-// `jsmql()`). The strippable-TS rule (see src/CLAUDE.md) forbids `namespace`
-// declarations, so we build the shape with `Object.assign` and an explicit
-// intersection type.
+// `jsmql` is exposed as a callable with three attached properties:
+//   - `jsmql.compile`  — parameterised, reusable Filter / Pipeline builder
+//   - `jsmql.validate` — structured-result form of `jsmql()`
+//   - `jsmql.expr`     — compile a partial / "unfinished" aggregation expression
+//                        (the shape that goes inside `$project`, `$addFields`,
+//                        `db.coll.updateOne(filter, update)`, etc.)
+// The strippable-TS rule (see src/CLAUDE.md) forbids `namespace` declarations,
+// so we build the shape with `Object.assign` and an explicit intersection type.
 type Jsmql = typeof jsmqlDispatch & {
   compile: typeof compileFunction;
   validate: typeof validateInput;
+  expr: typeof exprDispatch;
 };
 
 export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {
   compile: compileFunction,
   validate: validateInput,
+  expr: exprDispatch,
 });
 
 // Wrap JSON.stringify with the validation needed to keep the template-tag
@@ -323,11 +352,7 @@ function validateInterpolatable(value: unknown, slot: number, key?: string): voi
     json = JSON.stringify(value);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} could not be serialised: ${reason}`,
-      slot,
-      key,
-    );
+    throw new JsmqlInterpolationError(`jsmql ${where} could not be serialised: ${reason}`, slot, key);
   }
   if (json === undefined) {
     const ty = value === undefined ? "undefined" : typeof value;
@@ -340,21 +365,101 @@ function validateInterpolatable(value: unknown, slot: number, key?: string): voi
 }
 
 /**
- * Lower a parsed `Program` to its MQL output, threading a starting
- * `GenerateCtx`. Centralised so the string-input path (`Parser.parse()`) and
- * the function-input path (`Parser.parseFunctionInput()`) share the same
- * dispatch, and so `jsmql.compile()` can pass in a ctx pre-populated with
- * parameter bindings.
+ * Lower a parsed `Program` to its MQL output. Parametric on a single
+ * `lowerExpr` callback that handles the bare-expression branch; the three
+ * other branches (Pipeline / UpdateFilter / array-literal Pipeline) are
+ * shared between `jsmql()` (Filter) and `jsmql.expr()` (aggregation
+ * expression). Less code = better DX inside the codebase too.
+ *
+ * Dispatch rule (semicolon-driven), using the Node.js MongoDB driver's
+ * official terminology — Filter for `db.coll.find(filter)`, Pipeline for
+ * `db.coll.aggregate(pipeline)`:
+ *   - `;`-separated statements → `Pipeline` AST → Pipeline (stage array).
+ *   - UpdateOp chain (`$.a = 1, $.b = 2`) → update op program (set/unset stages).
+ *   - Top-level array literal of stage shapes → legacy Pipeline form.
+ *   - Single expression (no `;`) → caller-supplied `lowerExpr` decides:
+ *     `jsmql()` lowers to a Filter, `jsmql.expr()` to a raw aggregation
+ *     expression.
  */
-function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+type ExprLowering = (ast: Expr, ctx: GenerateCtx) => object;
+
+function lowerProgram(ast: Program, ctx: GenerateCtx, lowerExpr: ExprLowering): JsmqlOutput {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
-  if (ast.type === "MutationProgram") return generateMutationProgram(ast, ctx);
+  if (ast.type === "UpdateFilter") return generateUpdateFilter(ast, ctx);
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
-  return generateWithCtx(ast, ctx) as object;
+  return lowerExpr(ast, ctx);
+}
+
+/** Filter-mode lowering: `jsmql()` and `jsmql.compile()` both go through this. */
+function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  return lowerProgram(ast, ctx, generateFilter);
+}
+
+/** Expression-mode lowering: `jsmql.expr()` goes through this. */
+function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, c) as object);
+}
+
+/**
+ * Lower a single expression AST to a MongoDB **Filter** (the document passed
+ * as the first argument to `db.coll.find(filter)`).
+ *
+ * Reuses the same translator that `$match` uses inside a Pipeline
+ * (`translateMatchBody`): translatable conjuncts emit indexable `{ field: ... }`
+ * pairs; an untranslatable residual is wrapped in `$expr`, which is a legal
+ * top-level Filter operator. So both predicates (`$.age > 18` →
+ * `{ age: { $gt: 18 } }`) and non-predicate expressions
+ * (`$abs(42)` → `{ $expr: { $abs: 42 } }`) produce a valid Filter document.
+ *
+ * Before lowering, a DX guard rejects bare stage-call inputs (`$match(...)`,
+ * `$project(...)`, …) without a `;` — those are almost certainly Pipeline
+ * intent where the user forgot the semicolon, and silently wrapping them in
+ * `$expr` would produce a useless Filter. The guard throws a precise error
+ * naming the stage and suggesting the missing `;`.
+ */
+function generateFilter(ast: Expr, ctx: GenerateCtx): object {
+  const stageName = detectStageIntent(ast);
+  if (stageName !== null) {
+    throw new CodegenError(
+      `\`${stageName}\` is a Pipeline stage, but the input has no \`;\` so ` +
+        `jsmql would lower it as a Filter — almost certainly not what you want. ` +
+        `Add a trailing \`;\` to make this a Pipeline: \`${stageName}(…);\`.`,
+      ast.pos,
+    );
+  }
+  const t = translateMatchBody(ast, { bindings: ctx.bindings });
+  if (t.residual === null) return t.query;
+  const exprPart = { $expr: generateWithCtx(t.residual, ctx) };
+  if (Object.keys(t.query).length === 0) return exprPart;
+  return { ...t.query, ...exprPart };
+}
+
+/**
+ * Recognise the two shapes a Pipeline stage takes at the top level: a stage
+ * **call** (`$match(...)`, `$project(...)`) and a stage **object** literal
+ * (`{ $match: ... }`, the form MongoDB Compass copy-paste produces). Returns
+ * the stage name when matched, null otherwise. Used by `generateFilter` to
+ * catch the "forgot the `;`" case before the silent `$expr` wrap fires.
+ */
+function detectStageIntent(ast: Expr): string | null {
+  if (ast.type === "OperatorCall" && lookupStage(ast.name) !== undefined) {
+    return ast.name;
+  }
+  if (ast.type === "ObjectLiteral" && ast.entries.length === 1) {
+    const entry = ast.entries[0];
+    if (entry.type === "KeyValueEntry" && entry.key.kind === "static" && lookupStage(entry.key.name) !== undefined) {
+      return entry.key.name;
+    }
+  }
+  return null;
 }
 
 function lower(ast: Program): JsmqlOutput {
   return lowerWithCtx(ast, EMPTY_CTX);
+}
+
+function lowerExpr(ast: Program): JsmqlOutput {
+  return lowerExprWithCtx(ast, EMPTY_CTX);
 }
 
 /**
@@ -365,22 +470,13 @@ function lower(ast: Program): JsmqlOutput {
  */
 function errorToValidationResult(err: unknown): ValidationResult {
   if (err instanceof ParseError || err instanceof LexError) {
-    return {
-      valid: false,
-      errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }],
-    };
+    return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }] };
   }
   if (err instanceof CodegenError) {
-    return {
-      valid: false,
-      errors: [{ message: err.message, pos: err.pos, code: "CODEGEN_ERROR" }],
-    };
+    return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "CODEGEN_ERROR" }] };
   }
   if (err instanceof FunctionInputError) {
-    return {
-      valid: false,
-      errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }],
-    };
+    return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }] };
   }
   // JsmqlInterpolationError carries `.slot` (1-based interpolation index) and
   // optionally `.key` (param name) instead of a source offset — there is no
@@ -388,10 +484,7 @@ function errorToValidationResult(err: unknown): ValidationResult {
   // lives across the `strings`/`values` arrays. Callers needing to locate the
   // failing interpolation should read `.slot` / `.key` on the error directly.
   if (err instanceof JsmqlInterpolationError) {
-    return {
-      valid: false,
-      errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],
-    };
+    return { valid: false, errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }] };
   }
   // RangeError is what V8 throws on stack overflow — caused by input shape,
   // so it belongs in the SYNTAX_ERROR bucket. Should be unreachable in
@@ -400,19 +493,13 @@ function errorToValidationResult(err: unknown): ValidationResult {
   // comes from `jsmql()`'s top-level guard rejecting a wrong-shape input,
   // which is a "your input is wrong" failure from the caller's perspective.
   if (err instanceof RangeError || err instanceof TypeError) {
-    return {
-      valid: false,
-      errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }],
-    };
+    return { valid: false, errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }] };
   }
   // validate() promises never to throw — anything else gets wrapped as a
   // generic CODEGEN_ERROR so the caller can rely on the structured-result
   // contract. The original message is preserved for debugging.
   const message = err instanceof Error ? err.message : String(err);
-  return {
-    valid: false,
-    errors: [{ message: `internal error: ${message}`, pos: 0, code: "CODEGEN_ERROR" }],
-  };
+  return { valid: false, errors: [{ message: `internal error: ${message}`, pos: 0, code: "CODEGEN_ERROR" }] };
 }
 
 function augmentForFunctionInput(err: unknown): unknown {

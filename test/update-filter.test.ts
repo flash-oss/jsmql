@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-describe("mutations: simple assignment (=)", () => {
+describe("update filters: simple assignment (=)", () => {
   it("emits a single $set stage for one assignment", () => {
     expect(jsmql("$.a = 1")).toEqual({ $set: { a: 1 } });
   });
@@ -15,9 +15,7 @@ describe("mutations: simple assignment (=)", () => {
   });
 
   it("works with a complex expression RHS", () => {
-    expect(jsmql("$.total = $.price * $.qty")).toEqual({
-      $set: { total: { $multiply: ["$price", "$qty"] } },
-    });
+    expect(jsmql("$.total = $.price * $.qty")).toEqual({ $set: { total: { $multiply: ["$price", "$qty"] } } });
   });
 
   it("supports nested field paths", () => {
@@ -29,7 +27,7 @@ describe("mutations: simple assignment (=)", () => {
   });
 });
 
-describe("mutations: compound assignment (+=, -=, *=, /=)", () => {
+describe("update filters: compound assignment (+=, -=, *=, /=)", () => {
   it("+= with literal", () => {
     expect(jsmql("$.x += 1")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
   });
@@ -51,40 +49,27 @@ describe("mutations: compound assignment (+=, -=, *=, /=)", () => {
   });
 
   it("+= with string context produces $concat", () => {
-    expect(jsmql("$.greeting += '!'")).toEqual({
-      $set: { greeting: { $concat: ["$greeting", "!"] } },
-    });
+    expect(jsmql("$.greeting += '!'")).toEqual({ $set: { greeting: { $concat: ["$greeting", "!"] } } });
   });
 
   it("compound on nested path", () => {
-    expect(jsmql("$.user.score += 10")).toEqual({
-      $set: { "user.score": { $add: ["$user.score", 10] } },
-    });
+    expect(jsmql("$.user.score += 10")).toEqual({ $set: { "user.score": { $add: ["$user.score", 10] } } });
   });
 
   it("RHS can be a complex expression", () => {
     expect(jsmql("$.total += $.items.reduce((acc, x) => acc + x, 0)")).toEqual({
       $set: {
         total: {
-          $add: [
-            "$total",
-            {
-              $reduce: {
-                input: "$items",
-                initialValue: 0,
-                in: { $add: ["$$value", "$$this"] },
-              },
-            },
-          ],
+          $add: ["$total", { $reduce: { input: "$items", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }],
         },
       },
     });
   });
 });
 
-describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
+describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
   // In MQL pipeline context the prefix/postfix distinction is irrelevant —
-  // there is no "value of expression" for a stage-level mutation, so all four
+  // there is no "value of expression" for a stage-level update op, so all four
   // forms compile to the same `$set: { x: { $add|$subtract: ["$x", 1] } }`.
 
   it("postfix ++ on a top-level field", () => {
@@ -104,31 +89,21 @@ describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
   });
 
   it("postfix ++ on a nested path", () => {
-    expect(jsmql("$.user.score++")).toEqual({
-      $set: { "user.score": { $add: ["$user.score", 1] } },
-    });
+    expect(jsmql("$.user.score++")).toEqual({ $set: { "user.score": { $add: ["$user.score", 1] } } });
   });
 
   it("prefix -- on a nested path", () => {
-    expect(jsmql("--$.cart.itemCount")).toEqual({
-      $set: { "cart.itemCount": { $subtract: ["$cart.itemCount", 1] } },
-    });
+    expect(jsmql("--$.cart.itemCount")).toEqual({ $set: { "cart.itemCount": { $subtract: ["$cart.itemCount", 1] } } });
   });
 
   it("multiple inc/dec coalesce into one $set", () => {
     expect(jsmql("$.a++, $.b--, ++$.c")).toEqual({
-      $set: {
-        a: { $add: ["$a", 1] },
-        b: { $subtract: ["$b", 1] },
-        c: { $add: ["$c", 1] },
-      },
+      $set: { a: { $add: ["$a", 1] }, b: { $subtract: ["$b", 1] }, c: { $add: ["$c", 1] } },
     });
   });
 
   it("inc/dec mixed with assignments coalesce into one $set", () => {
-    expect(jsmql("$.cnt++, $.label = 'done'")).toEqual({
-      $set: { cnt: { $add: ["$cnt", 1] }, label: "done" },
-    });
+    expect(jsmql("$.cnt++, $.label = 'done'")).toEqual({ $set: { cnt: { $add: ["$cnt", 1] }, label: "done" } });
   });
 
   it("inc/dec inside a pipeline", () => {
@@ -150,16 +125,11 @@ describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
   it("parens around inc/dec inside pipeline arrays work", () => {
     expect(jsmql("[$match($.active), ($.views++), (--$.lives)]")).toEqual([
       { $match: { $expr: "$active" } },
-      {
-        $set: {
-          views: { $add: ["$views", 1] },
-          lives: { $subtract: ["$lives", 1] },
-        },
-      },
+      { $set: { views: { $add: ["$views", 1] }, lives: { $subtract: ["$lives", 1] } } },
     ]);
   });
 
-  it("read-after-write splits when a later mutation references an inc'd field", () => {
+  it("read-after-write splits when a later update op references an inc'd field", () => {
     expect(jsmql("$.cnt++; $.lastCnt = $.cnt")).toEqual([
       { $set: { cnt: { $add: ["$cnt", 1] } } },
       { $set: { lastCnt: "$cnt" } },
@@ -194,11 +164,13 @@ describe("mutations: increment/decrement (++x, x++, --x, x--)", () => {
     // Without space, `5--3` lexes as `5 -- 3` (MinusMinus token) and would be
     // rejected as an inc/dec on a non-field-path target. With whitespace, the
     // two minuses lex as separate Minus tokens and the unary minus path runs.
-    expect(jsmql("5 - -3")).toEqual({ $subtract: [5, -3] });
+    // `jsmql.expr()` lowers as an aggregation expression so the lex shape is visible
+    // without the Filter `$expr` wrap that `jsmql()` would add.
+    expect(jsmql.expr("5 - -3")).toEqual({ $subtract: [5, -3] });
   });
 });
 
-describe("mutations: sequencing", () => {
+describe("update filters: sequencing", () => {
   it("two independent assignments coalesce into one $set (comma separator)", () => {
     expect(jsmql("$.a = 1, $.b = 2")).toEqual({ $set: { a: 1, b: 2 } });
   });
@@ -216,10 +188,7 @@ describe("mutations: sequencing", () => {
   });
 
   it("three-way with middle dependency", () => {
-    expect(jsmql("$.a = 1, $.b = $.a, $.c = 3")).toEqual([
-      { $set: { a: 1 } },
-      { $set: { b: "$a", c: 3 } },
-    ]);
+    expect(jsmql("$.a = 1, $.b = $.a, $.c = 3")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a", c: 3 } }]);
   });
 
   it("trailing comma allowed", () => {
@@ -227,7 +196,7 @@ describe("mutations: sequencing", () => {
   });
 });
 
-describe("mutations: chained assignment", () => {
+describe("update filters: chained assignment", () => {
   it("two-way chain", () => {
     expect(jsmql("$.a = $.b = 5")).toEqual({ $set: { a: 5, b: 5 } });
   });
@@ -237,13 +206,11 @@ describe("mutations: chained assignment", () => {
   });
 
   it("chain with complex RHS", () => {
-    expect(jsmql("$.x = $.y = $.z + 1")).toEqual({
-      $set: { x: { $add: ["$z", 1] }, y: { $add: ["$z", 1] } },
-    });
+    expect(jsmql("$.x = $.y = $.z + 1")).toEqual({ $set: { x: { $add: ["$z", 1] }, y: { $add: ["$z", 1] } } });
   });
 });
 
-describe("mutations: delete", () => {
+describe("update filters: delete", () => {
   it("single delete emits $unset string form", () => {
     expect(jsmql("delete $.tmp")).toEqual({ $unset: "tmp" });
   });
@@ -257,9 +224,7 @@ describe("mutations: delete", () => {
   });
 
   it("three consecutive deletes coalesce", () => {
-    expect(jsmql("delete $.a, delete $.b, delete $.c")).toEqual({
-      $unset: ["a", "b", "c"],
-    });
+    expect(jsmql("delete $.a, delete $.b, delete $.c")).toEqual({ $unset: ["a", "b", "c"] });
   });
 
   it("delete-then-assign breaks (kind change)", () => {
@@ -279,13 +244,10 @@ describe("mutations: delete", () => {
   });
 });
 
-describe("mutations: realistic mixed (user-supplied)", () => {
+describe("update filters: realistic mixed (user-supplied)", () => {
   it("assignment + compound coalesce: total = price*qty, views += 1", () => {
     expect(jsmql("$.total = $.price * $.qty, $.views += 1")).toEqual({
-      $set: {
-        total: { $multiply: ["$price", "$qty"] },
-        views: { $add: ["$views", 1] },
-      },
+      $set: { total: { $multiply: ["$price", "$qty"] }, views: { $add: ["$views", 1] } },
     });
   });
 
@@ -307,19 +269,14 @@ describe("mutations: realistic mixed (user-supplied)", () => {
           "$.status = 'complete'",
       ),
     ).toEqual([
-      {
-        $set: {
-          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
-          invoiceCount: { $add: ["$invoiceCount", 1] },
-        },
-      },
+      { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $unset: ["tempToken", "_processingState"] },
       { $set: { status: "complete" } },
     ]);
   });
 });
 
-describe("mutations: in pipelines", () => {
+describe("update filters: in pipelines", () => {
   it("pipeline with assignment between stages", () => {
     expect(jsmql("[$match($.active), $.score += 1, $sort({score: -1})]")).toEqual([
       { $match: { $expr: "$active" } },
@@ -328,7 +285,7 @@ describe("mutations: in pipelines", () => {
     ]);
   });
 
-  it("consecutive mutation elements coalesce inside a pipeline", () => {
+  it("consecutive update op elements coalesce inside a pipeline", () => {
     expect(jsmql("[$match($.active), $.a = 1, $.b = 2, $sort({c: 1})]")).toEqual([
       { $match: { $expr: "$active" } },
       { $set: { a: 1, b: 2 } },
@@ -336,7 +293,7 @@ describe("mutations: in pipelines", () => {
     ]);
   });
 
-  it("non-mutation stage between mutations breaks coalescing", () => {
+  it("non-update op stage between update ops breaks coalescing", () => {
     expect(jsmql("[$.a = 1, $sort({a: 1}), $.b = 2]")).toEqual([
       { $set: { a: 1 } },
       { $sort: { a: 1 } },
@@ -352,12 +309,12 @@ describe("mutations: in pipelines", () => {
     ]);
   });
 
-  it("a pipeline whose first element is a mutation is still detected as a pipeline", () => {
+  it("a pipeline whose first element is a update op is still detected as a pipeline", () => {
     expect(jsmql("[$.a = 1, $sort({a: 1})]")).toEqual([{ $set: { a: 1 } }, { $sort: { a: 1 } }]);
   });
 });
 
-describe("mutations: parenthesized form (formatter-friendly)", () => {
+describe("update filters: parenthesized form (formatter-friendly)", () => {
   // Formatters (oxfmt, prettier) wrap assignment expressions in parens when
   // they appear in array element position. The parser unwraps these so the
   // function-input form `jsmql(($) => [($.a = 1)])` produces the same output
@@ -403,24 +360,17 @@ describe("mutations: parenthesized form (formatter-friendly)", () => {
       }),
     ).toEqual([
       { $match: { status: "pending" } },
-      {
-        $set: {
-          lineTotal: { $multiply: ["$qty", "$unitPrice"] },
-          invoiceCount: { $add: ["$invoiceCount", 1] },
-        },
-      },
+      { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $set: { status: "complete" } },
     ]);
   });
 
   it("comma-chained parens mixing assignment and postfix inc/dec", () => {
-    expect(jsmql("($.a = 1), ($.cnt++)")).toEqual({
-      $set: { a: 1, cnt: { $add: ["$cnt", 1] } },
-    });
+    expect(jsmql("($.a = 1), ($.cnt++)")).toEqual({ $set: { a: 1, cnt: { $add: ["$cnt", 1] } } });
   });
 });
 
-describe("mutations: validation errors", () => {
+describe("update filters: validation errors", () => {
   it("rejects bare identifier as target", () => {
     const result = jsmql.validate("x = 5");
     expect(result.valid).toBe(false);
@@ -460,7 +410,7 @@ describe("mutations: validation errors", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("rejects mutation inside parenthesized expression context", () => {
+  it("rejects update op inside parenthesized expression context", () => {
     // ($.a = 1) + 2 — assignment used as a value (codegen-level rejection
     // since parseGrouped now accepts the parens-form syntactically)
     const result = jsmql.validate("($.a = 1) + 2");
@@ -475,41 +425,41 @@ describe("mutations: validation errors", () => {
   });
 });
 
-describe("mutations: lex regression checks", () => {
-  // Make sure adding `=`, `+=`, etc. didn't break existing operators.
+describe("update filters: lex regression checks", () => {
+  // Make sure adding `=`, `+=`, etc. didn't break existing operators. The
+  // expectations are the aggregation-expression shape that the lexer +
+  // expression codegen produce, surfaced via `jsmql.expr()` so the top-level
+  // Filter dispatch doesn't add a wrapping layer the lex test doesn't care
+  // about.
   it("== null still parses (loose null check)", () => {
-    expect(jsmql("$.a == null")).toEqual({
-      $in: [{ $type: "$a" }, ["null", "missing"]],
-    });
+    expect(jsmql.expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });
   });
 
   it("=== still parses as strict equality", () => {
-    expect(jsmql("$.a === 1")).toEqual({ $eq: ["$a", 1] });
+    expect(jsmql.expr("$.a === 1")).toEqual({ $eq: ["$a", 1] });
   });
 
   it("=> still parses as arrow", () => {
-    expect(jsmql("$.list.map(x => x + 1)")).toEqual({
+    expect(jsmql.expr("$.list.map(x => x + 1)")).toEqual({
       $map: { input: "$list", as: "x", in: { $add: ["$$x", 1] } },
     });
   });
 
   it(">= and <= still parse", () => {
-    expect(jsmql("$.a >= 1")).toEqual({ $gte: ["$a", 1] });
-    expect(jsmql("$.a <= 1")).toEqual({ $lte: ["$a", 1] });
+    expect(jsmql.expr("$.a >= 1")).toEqual({ $gte: ["$a", 1] });
+    expect(jsmql.expr("$.a <= 1")).toEqual({ $lte: ["$a", 1] });
   });
 
   it("!= null and !== still parse", () => {
-    expect(jsmql("$.a != null")).toEqual({
-      $not: [{ $in: [{ $type: "$a" }, ["null", "missing"]] }],
-    });
-    expect(jsmql("$.a !== 1")).toEqual({ $ne: ["$a", 1] });
+    expect(jsmql.expr("$.a != null")).toEqual({ $not: [{ $in: [{ $type: "$a" }, ["null", "missing"]] }] });
+    expect(jsmql.expr("$.a !== 1")).toEqual({ $ne: ["$a", 1] });
   });
 
   it("** (power) still parses (not confused with *=)", () => {
-    expect(jsmql("$.a ** 2")).toEqual({ $pow: ["$a", 2] });
+    expect(jsmql.expr("$.a ** 2")).toEqual({ $pow: ["$a", 2] });
   });
 
   it("regex literals still work (not confused with /=)", () => {
-    expect(jsmql("/abc/.test($.s)")).toEqual({ $regexMatch: { input: "$s", regex: "abc" } });
+    expect(jsmql.expr("/abc/.test($.s)")).toEqual({ $regexMatch: { input: "$s", regex: "abc" } });
   });
 });

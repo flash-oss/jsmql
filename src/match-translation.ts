@@ -33,9 +33,7 @@ export type MatchTranslation = {
  * hook the index-friendly path can't see across the binding and would emit
  * `$expr` for every comparison that touches a parameter.
  */
-export type TranslateCtx = {
-  bindings?: ReadonlyMap<string, unknown>;
-};
+export type TranslateCtx = { bindings?: ReadonlyMap<string, unknown> };
 
 export function translateMatchBody(body: Expr, ctx: TranslateCtx = {}): MatchTranslation {
   return translate(body, ctx);
@@ -54,17 +52,10 @@ function translate(expr: Expr, ctx: TranslateCtx): MatchTranslation {
 }
 
 function combineAnd(left: MatchTranslation, right: MatchTranslation): MatchTranslation {
-  return {
-    query: mergeQuery(left.query, right.query),
-    residual: combineResidualsAnd(left.residual, right.residual),
-  };
+  return { query: mergeQuery(left.query, right.query), residual: combineResidualsAnd(left.residual, right.residual) };
 }
 
-function combineOr(
-  left: MatchTranslation,
-  right: MatchTranslation,
-  original: Expr,
-): MatchTranslation {
+function combineOr(left: MatchTranslation, right: MatchTranslation, original: Expr): MatchTranslation {
   // $or can't carry a residual — mixing index-using $or branches with a
   // disjoint $expr would lose the disjunction guarantee. If either branch
   // has anything residual or empty, the whole `||` becomes residual.
@@ -77,24 +68,77 @@ function combineOr(
   return { query: { $or: [left.query, right.query] }, residual: null };
 }
 
-function mergeQuery(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): Record<string, unknown> {
+/**
+ * Merge two query-document fragments so that **only colliding field names**
+ * are pushed into `$and` — non-colliding fields stay at the top level where
+ * MongoDB's planner can use indexes on them directly.
+ *
+ * Worked example: `$.customerId === "cust_42" && $.placedAt >= "2026-01-01"
+ * && $.placedAt < "2026-02-01" && $.status === "shipped"` should produce
+ *
+ *     {
+ *       customerId: "cust_42",
+ *       $and: [
+ *         { placedAt: { $gte: "2026-01-01" } },
+ *         { placedAt: { $lt: "2026-02-01" } },
+ *       ],
+ *       status: "shipped",
+ *     }
+ *
+ * — `customerId` and `status` stay top-level (one occurrence each), the two
+ * `placedAt` predicates fold into `$and`. Without this, the planner can't
+ * use indexes on the non-colliding fields when they're trapped inside `$and`
+ * alongside the collision pair.
+ *
+ * Algorithm: flatten both inputs into an ordered list of `(key, value)`
+ * clauses (expanding any pre-existing `$and` element into its constituent
+ * single-key clauses); count occurrences per key; emit a clause at the top
+ * level when its key occurs once, or push it into a freshly-created `$and`
+ * when its key collides. `$and` is inserted at the position of the FIRST
+ * colliding key so the output's key order follows the source order.
+ */
+function mergeQuery(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
   if (isEmpty(a)) return b;
   if (isEmpty(b)) return a;
-  const collision = Object.keys(b).some((k) => k in a);
-  if (!collision) return { ...a, ...b };
-  // Key collision (e.g. `$.a > 1 && $.a < 5`): fall back to $and. Flatten when
-  // one side is already an $and-only doc so we don't nest $ands unnecessarily.
-  const leftItems = isAndOnly(a) ? (a.$and as unknown[]) : [a];
-  const rightItems = isAndOnly(b) ? (b.$and as unknown[]) : [b];
-  return { $and: [...leftItems, ...rightItems] };
-}
 
-function isAndOnly(q: Record<string, unknown>): boolean {
-  const keys = Object.keys(q);
-  return keys.length === 1 && keys[0] === "$and" && Array.isArray(q.$and);
+  type Clause = { key: string; value: unknown };
+  const clauses: Clause[] = [];
+  const collect = (doc: Record<string, unknown>) => {
+    for (const k of Object.keys(doc)) {
+      if (k === "$and" && Array.isArray(doc[k])) {
+        for (const inner of doc[k] as Record<string, unknown>[]) {
+          for (const ik of Object.keys(inner)) {
+            clauses.push({ key: ik, value: inner[ik] });
+          }
+        }
+      } else {
+        clauses.push({ key: k, value: doc[k] });
+      }
+    }
+  };
+  collect(a);
+  collect(b);
+
+  const counts = new Map<string, number>();
+  for (const c of clauses) counts.set(c.key, (counts.get(c.key) ?? 0) + 1);
+
+  const out: Record<string, unknown> = {};
+  let andClauses: Record<string, unknown>[] | null = null;
+  for (const c of clauses) {
+    if ((counts.get(c.key) ?? 0) > 1) {
+      if (andClauses === null) {
+        andClauses = [];
+        // Inserting `$and` at this position pins it between the surrounding
+        // single-key clauses in source order, so the output reads top-to-
+        // bottom the way the user wrote the original `&&` chain.
+        out.$and = andClauses;
+      }
+      andClauses.push({ [c.key]: c.value });
+    } else {
+      out[c.key] = c.value;
+    }
+  }
+  return out;
 }
 
 function isEmpty(q: Record<string, unknown>): boolean {
@@ -158,11 +202,7 @@ const BSON_TYPE_ALIASES: ReadonlySet<string> = new Set([
   "number",
 ]);
 
-function translateTypeofPredicate(
-  left: Expr,
-  right: Expr,
-  op: "===" | "!==",
-): Record<string, unknown> | null {
+function translateTypeofPredicate(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
   const oriented = orientTypeofAndString(left, right);
   if (oriented === null) return null;
   const { field, alias } = oriented;
@@ -213,11 +253,7 @@ function translateEquality(
   return { [field]: { $ne: value } };
 }
 
-function translateLooseNull(
-  left: Expr,
-  right: Expr,
-  op: "==" | "!=",
-): Record<string, unknown> | null {
+function translateLooseNull(left: Expr, right: Expr, op: "==" | "!="): Record<string, unknown> | null {
   const fieldExpr = left.type === "NullLiteral" ? right : left;
   const field = asFieldPath(fieldExpr);
   if (field === null) return null;
@@ -227,11 +263,7 @@ function translateLooseNull(
   return { [field]: { $ne: null } };
 }
 
-function translateStrictNull(
-  left: Expr,
-  right: Expr,
-  op: "===" | "!==",
-): Record<string, unknown> | null {
+function translateStrictNull(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
   const fieldExpr = left.type === "NullLiteral" ? right : left;
   const field = asFieldPath(fieldExpr);
   if (field === null) return null;
@@ -375,11 +407,7 @@ function paramRefAsLiteral(
     // Equality-side: accept the same primitives the literal-AST path accepts,
     // and refuse arrays/objects (their `==` semantics in MQL query language
     // diverge sharply from JS).
-    const ok =
-      value === null ||
-      typeof value === "number" ||
-      typeof value === "string" ||
-      typeof value === "boolean";
+    const ok = value === null || typeof value === "number" || typeof value === "string" || typeof value === "boolean";
     if (!ok) return null;
   }
   return { value };

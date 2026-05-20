@@ -6,54 +6,134 @@
 
 ## Quick Start
 
-jsmql is a JavaScript-subset language that compiles to MongoDB aggregation expression JSON — like SQL but for MongoDB, using JS syntax you already know.
+jsmql is a JavaScript-subset language that compiles to MongoDB query syntax — like SQL but for MongoDB, using JS syntax you already know. The presence (or absence) of a semicolon picks the output shape, matching the Node.js MongoDB driver's own terminology:
+
+- **No `;`** → a **Filter** (the document `db.coll.find(filter)` takes)
+- **Any `;`** → a **Pipeline** of stages (the array `db.coll.aggregate(pipeline)` takes)
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
 
-// JS operators
+// No semicolons → Filter. Field-vs-literal predicates emit indexable
+// query-doc entries; anything else rides in a top-level `$expr` residual.
 jsmql("$.age > 18 && $.status === 'active'");
-// → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
+// → { age: { $gt: 18 }, status: "active" }
+//   db.users.find({ age: { $gt: 18 }, status: "active" })
 
-// Method chains
-jsmql("$.email.split('@').at(1).toLowerCase()");
-// → { $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } }
+// Method calls aren't expressible in the query language, so the whole thing
+// falls into `$expr` (still a legal Filter operator).
+jsmql("$.email.split('@').at(1).toLowerCase() === 'gmail.com'");
+// → { $expr: { $eq: [ { $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } }, "gmail.com" ] } }
 
-// Lambdas
-jsmql("$.prices.map(p => p * 1.1)");
-// → { $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } } }
+// Any `;` flips to Pipeline mode — even one stage with a trailing `;`.
+jsmql("$match($.age > 18); $sort({ age: 1 });");
+// → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]
+//   db.users.aggregate([...])
 
 // With the template-tag form of jsmql (for embedded values)
 const minAge = 21;
 jsmql`$.age >= ${minAge} && $.status === 'active'`;
-// → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$status", "active"] }] }
+// → { age: { $gte: 21 }, status: "active" }
 ```
+
+The same rule applies to the [function form](#function-form): an **expression-body** arrow (`($) => …`) lowers as a Filter, while a **block-body** arrow (`($) => { …; … }`) lowers as a Pipeline.
 
 ---
 
 ## Table of Contents
 
-1. [Expressions](#expressions)
-2. [Literals](#literals)
-3. [Comments](#comments)
-4. [Field References](#field-references)
-5. [Operators](#operators)
-6. [String Methods](#string-methods)
-7. [Array Methods](#array-methods)
-8. [Lambda Functions](#lambda-functions)
-9. [Math Functions](#math-functions)
-10. [Type Casting](#type-casting)
-11. [Date Operations](#date-operations)
-12. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
-13. [Mutations](#mutations)
-14. [Pipelines](#pipelines)
-15. [Function Form](#function-form)
-16. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
-17. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
-18. [Validation](#validation)
-19. [Error Messages](#error-messages)
-20. [Examples](#examples)
-21. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
+1. [Output dispatch: Filter vs Pipeline](#output-dispatch-filter-vs-pipeline)
+2. [Expressions](#expressions)
+3. [Literals](#literals)
+4. [Comments](#comments)
+5. [Field References](#field-references)
+6. [Operators](#operators)
+7. [String Methods](#string-methods)
+8. [Array Methods](#array-methods)
+9. [Lambda Functions](#lambda-functions)
+10. [Math Functions](#math-functions)
+11. [Type Casting](#type-casting)
+12. [Date Operations](#date-operations)
+13. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
+14. [Update filters](#update ops)
+15. [Pipelines](#pipelines)
+16. [Function Form](#function-form)
+17. [Partial expressions (`jsmql.expr`)](#partial-expressions-jsmqlexpr)
+18. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
+19. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
+20. [Validation](#validation)
+21. [Error Messages](#error-messages)
+22. [Examples](#examples)
+23. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
+
+---
+
+## Output dispatch: Filter vs Pipeline
+
+The presence or absence of a `;` at the top level of the input chooses what shape `jsmql()` returns. Names follow the Node.js MongoDB driver:
+
+| Input has | Output | Used with |
+|---|---|---|
+| **No `;`** | a **Filter** (single document) | `db.coll.find(filter)` |
+| **Any `;`** (even a trailing one) | a **Pipeline** `[…stages…]` | `db.coll.aggregate(pipeline)` |
+
+### No semicolons → Filter
+
+The expression is interpreted as a Filter. Field-vs-literal predicates the MongoDB query language can express directly emit indexable `{ field: { $op: lit } }` pairs; anything else (method calls, computed expressions, non-predicate values) rides in a top-level `$expr` residual — a legal Filter operator. So both predicates and computational expressions produce a valid Filter.
+
+```js
+// Pure query-document — indexable on `age` and `status`
+jsmql("$.age > 18 && $.status === 'active'");
+// → { age: { $gt: 18 }, status: "active" }
+
+// Mixed: indexable conjunct + `$expr` residual for the untranslatable part
+jsmql("$.status === 'active' && $.name.trim() === 'alice'");
+// → { status: "active", $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } }
+
+// Fully untranslatable — the whole thing rides in $expr
+jsmql("$add($.a, $.b)");
+// → { $expr: { $add: ["$a", "$b"] } }
+```
+
+The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/match-query-translation.md](specs/match-query-translation.md) for the full table.
+
+### Any `;` → Pipeline
+
+Each `;`-separated statement is one Pipeline stage. Even a single stage with a trailing `;` returns a one-element array.
+
+```js
+// Single-stage Pipeline
+jsmql("$match($.age > 18);");
+// → [ { $match: { age: { $gt: 18 } } } ]
+
+// Multi-stage Pipeline
+jsmql("$match($.age > 18); $sort({ age: 1 });");
+// → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]
+```
+
+A `;`-separated statement **must** be a stage call (`$match`, `$project`, `$sort`, …), a update op (`$.x = …`), or a `let` binding. A bare expression like `$.age > 18;` is rejected with a `$match(...)` suggestion:
+
+```text
+Element 0 of Pipeline is not a stage call. To filter documents on a
+predicate, wrap it as `$match(...)` — e.g. `$match($.age > 18)`. …
+```
+
+### Function form mirrors the rule
+
+An **expression-body** arrow (`($) => …`) is the function equivalent of a no-`;` string — it lowers as a Filter. A **block-body** arrow (`($) => { …; … }`) is the equivalent of a `;`-separated string — it lowers as a Pipeline.
+
+```js
+jsmql(($) => $.age > 18);
+// → { age: { $gt: 18 } }                            (Filter)
+
+jsmql(($, { $match, $sort }) => {
+  $match($.age > 18);
+  $sort({ age: 1 });
+});
+// → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]   (Pipeline)
+```
+
+The template-tag form (`` jsmql`…` ``) follows the string-form rule: any `;` in the assembled source flips to Pipeline mode.
 
 ---
 
@@ -86,8 +166,8 @@ An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 ### Invalid Constructs
 
 - Control flow: `if`, `for`, `while`, `break`, etc.
-- Statement-level features other than mutations: function definitions, declarations
-- Object/array in-place mutations: `.push()`, `.splice()`
+- Statement-level features other than update ops: function definitions, declarations
+- Object/array in-place update ops: `.push()`, `.splice()`
 - Destructuring: `{ a, b } = obj`
 
 ---
@@ -1174,9 +1254,9 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 
 ---
 
-## Mutations
+## Update filters
 
-Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each mutation compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple mutations coalesce into the smallest correct stage shape.
+Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple update ops coalesce into the smallest correct stage shape.
 
 ```js
 jsmql("$.score = 100")
@@ -1191,7 +1271,7 @@ jsmql("delete $.tmp")
 
 ### Sequencing
 
-Multiple mutations in the **same stage** are separated by `,` (trailing comma allowed):
+Multiple update ops in the **same stage** are separated by `,` (trailing comma allowed):
 
 ```js
 jsmql("$.a = 1, $.b = 2")
@@ -1224,7 +1304,7 @@ jsmql("$.greeting += '!'")
 
 ### Increment / decrement
 
-`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. The prefix/postfix distinction is meaningful in JavaScript (return-then-mutate vs mutate-then-return), but in MongoDB pipeline context there is no "value of expression" for a statement-level mutation, so all four forms compile to the same `$set` stage.
+`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. The prefix/postfix distinction is meaningful in JavaScript (return-then-mutate vs mutate-then-return), but in MongoDB pipeline context there is no "value of expression" for a statement-level update op, so all four forms compile to the same `$set` stage.
 
 ```js
 jsmql("$.cnt++")
@@ -1234,7 +1314,7 @@ jsmql("--$.lives")
 // → { $set: { lives: { $subtract: ["$lives", 1] } } }
 ```
 
-Like other mutations, inc/dec is a statement: invalid as a value (`1 + $.x++` is rejected) and restricted to field-path targets.
+Like other update ops, inc/dec is a statement: invalid as a value (`1 + $.x++` is rejected) and restricted to field-path targets.
 
 ### Chained assignment
 
@@ -1247,10 +1327,10 @@ jsmql("$.x = $.y = 0")
 
 ### Coalescing
 
-Consecutive same-kind mutations (all assignments, or all deletes) are grouped into a single `$set`/`$unset` stage. A new stage starts when:
+Consecutive same-kind update ops (all assignments, or all deletes) are grouped into a single `$set`/`$unset` stage. A new stage starts when:
 
 - The kind changes (assignment ↔ delete)
-- A later mutation writes to a path already written in the current group
+- A later update op writes to a path already written in the current group
 - A later assignment **reads** a path the current group has written — preserves JS sequential semantics
 
 ```js
@@ -1267,9 +1347,9 @@ jsmql("delete $.a, delete $.b, $.status = 'done'")
 // → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
 ```
 
-### Mutations inside pipelines
+### Update filters inside pipelines
 
-Mutations can appear as pipeline elements alongside ordinary stages. The same coalescing rule applies between adjacent mutation elements; non-mutation stages act as boundaries:
+Update filters can appear as pipeline elements alongside ordinary stages. The same coalescing rule applies between adjacent update op elements; non-update op stages act as boundaries:
 
 ```js
 jsmql(`[
@@ -1287,7 +1367,7 @@ jsmql(`[
 
 ### Limits
 
-Mutations are **statements**, not expression values. They are valid only at the top level of a `jsmql()` call or as direct pipeline-array elements. They cannot appear:
+Update filters are **statements**, not expression values. They are valid only at the top level of a `jsmql()` call or as direct pipeline-array elements. They cannot appear:
 
 - Inside an arbitrary expression (`($.a = 1) + 2` — rejected)
 - Inside a lambda body (`$.list.map(x => $.a = x)` — rejected)
@@ -1303,7 +1383,7 @@ The `delete` keyword is statement-only — unlike JavaScript, it does not return
 
 ### Canonical form: `;` between stages
 
-Write each stage as a top-level statement separated by `;`. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode. Inside one `;`-separated chunk, `,` keeps its in-stage role for mutations:
+Write each stage as a top-level statement separated by `;`. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode. Inside one `;`-separated chunk, `,` keeps its in-stage role for update ops:
 
 ```js
 // Stages read like a script — one statement per stage.
@@ -1337,7 +1417,7 @@ jsmql("$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1; $.status = 'done'
 
 Two things to know:
 
-- **`;` is a hard stage boundary.** Adjacent mutations across `;` do **not** coalesce — `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` if you want a single coalesced stage.
+- **`;` is a hard stage boundary.** Adjacent update ops across `;` do **not** coalesce — `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` if you want a single coalesced stage.
 - **A trailing `;` is enough.** `$.a = 1;` returns `[{ $set: { a: 1 } }]`; `$.a = 1` (no `;`) returns `{ $set: { a: 1 } }`. Pick the form that matches what you want from MongoDB — a stage object or a pipeline array.
 
 Each stage body is a regular jsmql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
@@ -1367,7 +1447,7 @@ jsmql(`[
 ]`);
 ```
 
-Use the bracketed form when you're pasting MQL from MongoDB Compass or the docs (the stage-object shape lets you copy verbatim), or when a build step needs the literal array as a value. For new pipelines, prefer the `;`-separated form above — it reads as JavaScript end-to-end and stays consistent with the mutation, `let`-binding, and block-body-arrow forms.
+Use the bracketed form when you're pasting MQL from MongoDB Compass or the docs (the stage-object shape lets you copy verbatim), or when a build step needs the literal array as a value. For new pipelines, prefer the `;`-separated form above — it reads as JavaScript end-to-end and stays consistent with the update op, `let`-binding, and block-body-arrow forms.
 
 ### `$match` indexes by default
 
@@ -1519,7 +1599,7 @@ jsmql(`[{
 
 Pipeline mode kicks in two ways:
 
-- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a recognised stage call, a mutation, or a `let` binding.
+- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a recognised stage call, a update op, or a `let` binding.
 - **Bracketed form.** A top-level array enters pipeline mode when its first element looks like a stage attempt — a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage.
 
 Either way, mistakes surface immediately with a Levenshtein-based suggestion:
@@ -1579,7 +1659,7 @@ jsmql(($, { $match }) => {
 //   ]
 ```
 
-Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage mutation chain, identical to the string form.
+Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage update op chain, identical to the string form.
 
 `return` is **not** part of jsmql — block bodies are statement lists, not JavaScript control flow. Using `return` inside a block-body arrow throws a clear `FunctionInputError` pointing at either the `;`-separated form or an expression-body arrow as alternatives.
 
@@ -1610,6 +1690,38 @@ jsmql(($, { $dateDiff }) =>
 ```
 
 The second parameter is types-only — the destructured names are typed as callables but never evaluated. The runtime strips the parameter list before parsing, so the body is identical to writing the call directly. Any `$`-prefixed name destructured from the second parameter is accepted by the type system; whether it is a real MongoDB operator is checked at compile time by the codegen.
+
+---
+
+## Partial expressions (`jsmql.expr`)
+
+`jsmql()` is opinionated: it returns a Filter or a Pipeline because that's what `db.coll.find(filter)` and `db.coll.aggregate(pipeline)` take. When you need a **raw aggregation expression** — the shape that goes *inside* a Pipeline stage body, or as the update document in `db.coll.updateOne(filter, update)` — call `jsmql.expr(input)` instead.
+
+`jsmql.expr` accepts the same three call shapes as `jsmql()` (string / arrow / template tag) and differs in only one branch: a no-`;` bare expression lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope. `;`-separated input still produces a Pipeline, update op chains still produce `$set`/`$unset`, and array-literal Pipelines still pass through — those three branches are identical to `jsmql()`.
+
+```js
+// Filter — for db.coll.find(filter)
+db.users.find(jsmql("$.age > 18 && $.status === 'active'"));
+// → db.users.find({ age: { $gt: 18 }, status: "active" })
+
+// Pipeline — for db.coll.aggregate(pipeline)
+db.users.aggregate(jsmql(`
+  $match($.age > 18);
+  $project({ name: 1, email: 1 });
+`));
+// → db.users.aggregate([{ $match: { age: { $gt: 18 } } }, { $project: { name: 1, email: 1 } }])
+
+// Raw aggregation expression — for an update doc, or to drop into a stage body
+db.users.updateOne({ _id: 123 }, jsmql.expr("$.name = $.name.toUpperCase()"));
+// → db.users.updateOne({ _id: 123 }, { $set: { name: { $toUpper: "$name" } } })
+
+// Or as part of a manually-written stage body:
+db.users.aggregate([
+  { $addFields: { discount: jsmql.expr("$.price * (1 - $.loyalty.multiplier)") } },
+]);
+```
+
+The rule of thumb: **the function you call should match what's in the slot you're writing into**. `find()` takes a Filter → `jsmql()`. `aggregate()` takes a Pipeline → `jsmql()` (with `;`). A stage body, an update document, or a `$cond`'s `then`-branch takes an aggregation expression → `jsmql.expr()`.
 
 ---
 

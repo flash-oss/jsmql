@@ -46,39 +46,27 @@ export const STAGES: Record<string, StageDef> = {
       "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
     subPipelineFields: [],
   },
-  $collStats: {
-    description: "Returns statistics regarding a collection or view.",
-    subPipelineFields: [],
-  },
+  $collStats: { description: "Returns statistics regarding a collection or view.", subPipelineFields: [] },
   $count: {
-    description:
-      "Returns a count of the number of documents at this stage of the aggregation pipeline.",
+    description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
     subPipelineFields: [],
   },
   $currentOp: {
-    description:
-      "Returns information on active and/or dormant operations for the MongoDB deployment.",
+    description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
     subPipelineFields: [],
   },
   $densify: {
-    description:
-      "Creates new documents in a sequence of documents where certain values in a field are missing.",
+    description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
     subPipelineFields: [],
   },
-  $documents: {
-    description: "Returns literal documents from input values.",
-    subPipelineFields: [],
-  },
+  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [] },
   $facet: {
     description:
       "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
     // Every value in the body object is itself a sub-pipeline.
     subPipelineFields: ["*"],
   },
-  $fill: {
-    description: "Populates null and missing field values within documents.",
-    subPipelineFields: [],
-  },
+  $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
   $geoNear: {
     description:
       "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
@@ -99,13 +87,11 @@ export const STAGES: Record<string, StageDef> = {
     subPipelineFields: [],
   },
   $limit: {
-    description:
-      "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
+    description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
     subPipelineFields: [],
   },
   $listLocalSessions: {
-    description:
-      "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
+    description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
     subPipelineFields: [],
   },
   $listSampledQueries: {
@@ -113,13 +99,11 @@ export const STAGES: Record<string, StageDef> = {
     subPipelineFields: [],
   },
   $listSearchIndexes: {
-    description:
-      "Returns information about existing Atlas Search indexes on a specified collection.",
+    description: "Returns information about existing Atlas Search indexes on a specified collection.",
     subPipelineFields: [],
   },
   $listSessions: {
-    description:
-      "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
+    description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
     subPipelineFields: [],
   },
   $lookup: {
@@ -142,18 +126,14 @@ export const STAGES: Record<string, StageDef> = {
       "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     subPipelineFields: [],
   },
-  $planCacheStats: {
-    description: "Returns plan cache information for a collection.",
-    subPipelineFields: [],
-  },
+  $planCacheStats: { description: "Returns plan cache information for a collection.", subPipelineFields: [] },
   $project: {
     description:
       "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
     subPipelineFields: [],
   },
   $rankFusion: {
-    description:
-      "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    description: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
     subPipelineFields: [],
   },
   $redact: {
@@ -171,13 +151,9 @@ export const STAGES: Record<string, StageDef> = {
       "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     subPipelineFields: [],
   },
-  $sample: {
-    description: "Randomly selects the specified number of documents from its input.",
-    subPipelineFields: [],
-  },
+  $sample: { description: "Randomly selects the specified number of documents from its input.", subPipelineFields: [] },
   $scoreFusion: {
-    description:
-      "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    description: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
     subPipelineFields: [],
   },
   $search: {
@@ -195,8 +171,7 @@ export const STAGES: Record<string, StageDef> = {
     subPipelineFields: [],
   },
   $setWindowFields: {
-    description:
-      "Groups documents into windows and applies one or more operators to the documents in each window.",
+    description: "Groups documents into windows and applies one or more operators to the documents in each window.",
     subPipelineFields: [],
   },
   $shardedDataDistribution: {
@@ -223,10 +198,7 @@ export const STAGES: Record<string, StageDef> = {
       "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     subPipelineFields: ["pipeline"],
   },
-  $unset: {
-    description: "Removes or excludes fields from documents.",
-    subPipelineFields: [],
-  },
+  $unset: { description: "Removes or excludes fields from documents.", subPipelineFields: [] },
   $unwind: {
     description:
       "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",

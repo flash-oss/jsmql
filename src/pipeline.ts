@@ -43,11 +43,11 @@
 // pipeline ctx so a let referenced inside an otherwise-translatable $match body
 // still resolves correctly.
 
-import type { Expr, ArrayElement, Mutation, Pipeline, LetDecl } from "./ast.ts";
+import type { Expr, ArrayElement, UpdateOp, Pipeline, LetDecl } from "./ast.ts";
 import {
   generateWithCtx,
-  generateMutationGroups,
-  generateMutationProgram,
+  generateUpdateOpGroups,
+  generateUpdateFilter,
   CodegenError,
   EMPTY_CTX,
   extendCtxLets,
@@ -64,13 +64,7 @@ import { translateMatchBody } from "./match-translation.ts";
 type StageShape = { name: string; body: Expr };
 
 /** Stages that replace the document and so drop all in-scope `let` bindings. */
-const RESHAPE_CLEARING_STAGES = new Set([
-  "$group",
-  "$bucket",
-  "$bucketAuto",
-  "$replaceRoot",
-  "$replaceWith",
-]);
+const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith"]);
 
 /** Compiler-owned namespace for materialised `let` bindings. */
 const LET_NAMESPACE = "__jsmql";
@@ -89,7 +83,7 @@ const LET_NAMESPACE = "__jsmql";
  */
 function isStageCandidate(el: ArrayElement): boolean {
   if (el.type === "SpreadElement") return false;
-  // Mutations (`$.a = 1`, `delete $.x`) and `let` bindings are pipeline
+  // Update ops (`$.a = 1`, `delete $.x`) and `let` bindings are pipeline
   // statements — they lower to $set / $unset stages. Recognising them here
   // flips the array into pipeline mode even when no `$stage`-shaped element
   // comes first (`[let x = 5, $match(x > 0)]` is a pipeline).
@@ -156,10 +150,10 @@ export function isPipelineAst(ast: Expr): boolean {
  * every element here and throw a precise CodegenError on the first non-stage
  * element so the error message points at the offending position.
  *
- * Consecutive mutation elements (`$.a = 1`, `delete $.x`) coalesce through
+ * Consecutive update op elements (`$.a = 1`, `delete $.x`) coalesce through
  * the same algorithm `jsmql()` uses at the top level — see
- * `generateMutationGroups` in codegen.ts. Non-mutation stages flush the
- * current mutation buffer and emit its compiled $set/$unset stage(s) inline.
+ * `generateUpdateOpGroups` in codegen.ts. Non-update op stages flush the
+ * current update op buffer and emit its compiled $set/$unset stage(s) inline.
  *
  * `let` bindings extend a pipeline-scoped GenerateCtx that downstream stages
  * inherit; reshape-clearing stages drop the scope; a trailing `$unset` is
@@ -170,58 +164,55 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     internalError("generatePipeline expects an ArrayLiteral AST");
   }
   const out: unknown[] = [];
-  let mutationBuffer: Mutation[] = [];
+  let updateBuffer: UpdateOp[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
 
-  const flushMutations = () => {
-    if (mutationBuffer.length === 0) return;
-    for (const stage of generateMutationGroups(mutationBuffer, ctx)) out.push(stage);
-    mutationBuffer = [];
+  const flushUpdateOps = () => {
+    if (updateBuffer.length === 0) return;
+    for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
+    updateBuffer = [];
   };
 
   ast.elements.forEach((el, i) => {
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
-      mutationBuffer.push(el);
+      updateBuffer.push(el);
       return;
     }
     if (el.type === "LetDecl") {
-      flushMutations();
+      flushUpdateOps();
       const stage = lowerLetDecl(el, ctx);
       out.push(stage.set);
       ctx = stage.ctx;
       everHadLet = true;
       return;
     }
-    flushMutations();
+    flushUpdateOps();
     const result = lowerStageElement(el, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
   });
-  flushMutations();
+  flushUpdateOps();
   if (everHadLet) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
 /**
  * Compile a `Pipeline` (a sequence of `;`-separated top-level statements) to
- * an MQL stage array. Each statement is lowered in isolation: a mutation
- * chain (`,`-grouped, possibly RAW-split) goes through `generateMutationProgram`
+ * an MQL stage array. Each statement is lowered in isolation: a update op
+ * chain (`,`-grouped, possibly RAW-split) goes through `generateUpdateFilter`
  * and contributes one or more `$set`/`$unset` stages; an expression must be a
  * stage call/object and contributes exactly one stage.
  *
- * Adjacent mutation statements never coalesce — `;` is a hard boundary, in
+ * Adjacent update op statements never coalesce — `;` is a hard boundary, in
  * contrast to `generatePipeline` (the `[…]` form), where consecutive
- * mutation elements coalesce through `generateMutationGroups`. This is the
+ * update op elements coalesce through `generateUpdateOpGroups`. This is the
  * core difference between the two pipeline forms.
  *
  * `let` declarations contribute one `$set` stage each and extend the let
  * scope visible to subsequent statements.
  */
-export function generateImplicitPipeline(
-  p: Pipeline,
-  startCtx: GenerateCtx = EMPTY_CTX,
-): unknown[] {
+export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EMPTY_CTX): unknown[] {
   const out: unknown[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
@@ -234,8 +225,8 @@ export function generateImplicitPipeline(
       everHadLet = true;
       return;
     }
-    if (stmt.type === "MutationProgram") {
-      const result = generateMutationProgram(stmt, ctx);
+    if (stmt.type === "UpdateFilter") {
+      const result = generateUpdateFilter(stmt, ctx);
       if (Array.isArray(result)) out.push(...result);
       else out.push(result);
       return;
@@ -271,10 +262,7 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
   }
   const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
   const value = generateWithCtx(decl.value, ctx);
-  return {
-    set: { $set: { [fieldPath]: value } },
-    ctx: extendCtxLets(ctx, decl.name, fieldPath),
-  };
+  return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath) };
 }
 
 type StageLowering = { stage: Record<string, unknown>; ctx: GenerateCtx };
@@ -363,35 +351,35 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
     internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
   }
   const out: unknown[] = [];
-  let mutationBuffer: Mutation[] = [];
+  let updateBuffer: UpdateOp[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
 
-  const flushMutations = () => {
-    if (mutationBuffer.length === 0) return;
-    for (const stage of generateMutationGroups(mutationBuffer, ctx)) out.push(stage);
-    mutationBuffer = [];
+  const flushUpdateOps = () => {
+    if (updateBuffer.length === 0) return;
+    for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
+    updateBuffer = [];
   };
 
   ast.elements.forEach((el, i) => {
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
-      mutationBuffer.push(el);
+      updateBuffer.push(el);
       return;
     }
     if (el.type === "LetDecl") {
-      flushMutations();
+      flushUpdateOps();
       const stage = lowerLetDecl(el, ctx);
       out.push(stage.set);
       ctx = stage.ctx;
       everHadLet = true;
       return;
     }
-    flushMutations();
+    flushUpdateOps();
     const result = lowerStageElement(el, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
   });
-  flushMutations();
+  flushUpdateOps();
   if (everHadLet) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
@@ -422,12 +410,50 @@ function formatNotAStageError(el: ArrayElement, index: number): string {
     if (el.type === "OperatorCall" && !lookupStage(el.name)) {
       return formatUnknownStage(el.name, index);
     }
+    // Bare predicate / expression in pipeline position is almost always a user
+    // who wants to filter — point them at `$match(...)` explicitly so they
+    // don't have to look it up. The semicolon-form pipeline (`$.age > 18;`)
+    // hits this path most often.
+    if (looksLikePredicate(el)) {
+      return (
+        `Element ${index} of pipeline is not a stage call. ` +
+        `To filter documents on a predicate, wrap it as \`$match(...)\` — ` +
+        `e.g. \`$match($.age > 18)\`. ` +
+        `Pipeline statements must be stage calls; available stages: ${formatStageList()}.`
+      );
+    }
   }
   return (
     `Element ${index} of pipeline is not a recognised stage. ` +
     `Expected \`{ $stage: ... }\` or \`$stage(...)\` where $stage is one of: ` +
     `${formatStageList()}.`
   );
+}
+
+/**
+ * Heuristic: does this element look like a boolean predicate the user probably
+ * meant to filter on? Comparison and logical binary ops, unary `!`, and the
+ * `in` / `instanceof` shapes all qualify. Used only for friendlier error
+ * messages — no behaviour change.
+ */
+function looksLikePredicate(el: ArrayElement): boolean {
+  if (el.type === "BinaryExpr") {
+    const op = el.op;
+    return (
+      op === "===" ||
+      op === "==" ||
+      op === "!==" ||
+      op === "!=" ||
+      op === "<" ||
+      op === "<=" ||
+      op === ">" ||
+      op === ">=" ||
+      op === "&&" ||
+      op === "||"
+    );
+  }
+  if (el.type === "UnaryExpr" && el.op === "!") return true;
+  return false;
 }
 
 function formatUnknownStage(name: string, index: number): string {

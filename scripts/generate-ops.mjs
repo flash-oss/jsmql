@@ -127,9 +127,7 @@ function jsdocFor(name, spec, registryDef) {
     if (lines.length > 0) lines.push(" *");
     lines.push(` * @minVersion ${spec.minVersion}`);
   }
-  const link =
-    spec?.link ??
-    `https://www.mongodb.com/docs/manual/reference/operator/aggregation/${name.slice(1)}/`;
+  const link = spec?.link ?? `https://www.mongodb.com/docs/manual/reference/operator/aggregation/${name.slice(1)}/`;
   if (!spec?.minVersion && lines.length > 0) lines.push(" *");
   lines.push(` * @see ${link}`);
   return `/**\n${lines.join("\n")}\n */`;
