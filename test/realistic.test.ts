@@ -123,9 +123,14 @@ $.status = 'complete'
 describe("uppercase a user's name via updateOne", { features: ["Update filters"] }, () => {
   it(
     "compiles to the expected MQL",
-    { kind: "expression", usage: "db.users.updateOne({ _id: 123 }, jsmql.expr(...))" },
+    { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
-      expect(jsmql.expr(`$.name = $.name.toUpperCase()`)).toEqual({ $set: { name: { $toUpper: "$name" } } });
+      // `jsmql()` wraps the single-stage update filter as a one-element
+      // aggregation pipeline. MongoDB only evaluates `$toUpper` (and other
+      // aggregation expressions on the RHS) when the second `updateOne` arg
+      // is an array; the bare-doc form would store the literal expression
+      // object instead. See docs/specs/update-filter.md.
+      expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
     },
   );
 });
@@ -133,11 +138,11 @@ describe("uppercase a user's name via updateOne", { features: ["Update filters"]
 describe("stamp login activity (multi-field update)", { features: ["Update filters"] }, () => {
   it(
     "compiles to the expected MQL",
-    { kind: "expression", usage: "db.users.updateOne({ _id: 123 }, jsmql.expr(...))" },
+    { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
-      expect(jsmql.expr(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual({
-        $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: { $toDate: "$$NOW" } },
-      });
+      expect(jsmql(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual([
+        { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+      ]);
     },
   );
 });

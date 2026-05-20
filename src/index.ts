@@ -392,11 +392,32 @@ function lowerProgram(ast: Program, ctx: GenerateCtx, lowerExpr: ExprLowering): 
 
 /** Filter-mode lowering: `jsmql()` and `jsmql.compile()` both go through this. */
 function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
-  return lowerProgram(ast, ctx, generateFilter);
+  const result = lowerProgram(ast, ctx, generateFilter);
+  // Update-filter inputs that compile to a single stage (`{ $set: { …RHS… } }`
+  // or `{ $unset: "x" }`) get wrapped into a one-element pipeline at the
+  // `jsmql()` entry point. Rationale: the second argument to
+  // `db.coll.updateOne(filter, update)` is treated by MongoDB as an
+  // **aggregation pipeline** only when it's an array — the bare-document form
+  // treats every value as a literal, so a computed RHS like `$.name.toUpperCase()`
+  // would silently land in the document as the object `{ $toUpper: "$name" }`
+  // instead of evaluating. Always returning an array from `jsmql()` makes the
+  // call site `db.coll.updateOne({…}, jsmql(…))` work safely regardless of
+  // whether the RHS happens to be a literal or an expression. Callers who
+  // explicitly want the bare update-document shape (e.g. for embedding inside
+  // a hand-written pipeline stage body) use `jsmql.expr()` — `lowerExprWithCtx`
+  // intentionally does not wrap.
+  if (ast.type === "UpdateFilter" && !Array.isArray(result)) {
+    return [result];
+  }
+  return result;
 }
 
 /** Expression-mode lowering: `jsmql.expr()` goes through this. */
 function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  // No array-wrap for update-filter output (see `lowerWithCtx` comment): the
+  // caller asked for a raw building block, the bare `{ $set: … }` shape is
+  // exactly what fits inside a hand-written `$set` / `$addFields` stage or
+  // gets passed to a doc-form update operation that wants literal semantics.
   return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, c) as object);
 }
 

@@ -1256,17 +1256,17 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 
 ## Update filters
 
-Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple update ops coalesce into the smallest correct stage shape.
+Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple update ops coalesce into the smallest correct stage shape. `jsmql()` always returns a pipeline **array** so the output is safe to pass directly to `db.coll.updateOne(filter, update)` — see the `jsmql.expr` note at the end of the section for when you want the bare-document form instead.
 
 ```js
-jsmql("$.score = 100")
-// → { $set: { score: 100 } }
+db.users.updateOne({ _id: 1 }, jsmql("$.score = 100"))
+// → db.users.updateOne({ _id: 1 }, [{ $set: { score: 100 } }])
 
-jsmql("$.cnt += 1")
-// → { $set: { cnt: { $add: ["$cnt", 1] } } }
+db.users.updateOne({ _id: 1 }, jsmql("$.cnt += 1"))
+// → db.users.updateOne({ _id: 1 }, [{ $set: { cnt: { $add: ["$cnt", 1] } } }])
 
-jsmql("delete $.tmp")
-// → { $unset: "tmp" }
+db.users.updateOne({ _id: 1 }, jsmql("delete $.tmp"))
+// → db.users.updateOne({ _id: 1 }, [{ $unset: "tmp" }])
 ```
 
 ### Sequencing
@@ -1275,7 +1275,7 @@ Multiple update ops in the **same stage** are separated by `,` (trailing comma a
 
 ```js
 jsmql("$.a = 1, $.b = 2")
-// → { $set: { a: 1, b: 2 } }
+// → [{ $set: { a: 1, b: 2 } }]
 ```
 
 A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#pipelines) for the canonical `;`-separated pipeline form.
@@ -1296,10 +1296,10 @@ $.user.name = "alice"  // ✓ — nested field path
 
 ```js
 jsmql("$.score *= 2")
-// → { $set: { score: { $multiply: ["$score", 2] } } }
+// → [{ $set: { score: { $multiply: ["$score", 2] } } }]
 
 jsmql("$.greeting += '!'")
-// → { $set: { greeting: { $concat: ["$greeting", "!"] } } }
+// → [{ $set: { greeting: { $concat: ["$greeting", "!"] } } }]
 ```
 
 ### Increment / decrement
@@ -1308,10 +1308,10 @@ jsmql("$.greeting += '!'")
 
 ```js
 jsmql("$.cnt++")
-// → { $set: { cnt: { $add: ["$cnt", 1] } } }
+// → [{ $set: { cnt: { $add: ["$cnt", 1] } } }]
 
 jsmql("--$.lives")
-// → { $set: { lives: { $subtract: ["$lives", 1] } } }
+// → [{ $set: { lives: { $subtract: ["$lives", 1] } } }]
 ```
 
 Like other update ops, inc/dec is a statement: invalid as a value (`1 + $.x++` is rejected) and restricted to field-path targets.
@@ -1322,7 +1322,7 @@ Like other update ops, inc/dec is a statement: invalid as a value (`1 + $.x++` i
 
 ```js
 jsmql("$.x = $.y = 0")
-// → { $set: { x: 0, y: 0 } }
+// → [{ $set: { x: 0, y: 0 } }]
 ```
 
 ### Coalescing
@@ -1334,9 +1334,9 @@ Consecutive same-kind update ops (all assignments, or all deletes) are grouped i
 - A later assignment **reads** a path the current group has written — preserves JS sequential semantics
 
 ```js
-// Independent assignments → one stage
+// Independent assignments → one stage (wrapped as a one-element pipeline)
 jsmql("$.a = 1, $.b = 2")
-// → { $set: { a: 1, b: 2 } }
+// → [{ $set: { a: 1, b: 2 } }]
 
 // Read-after-write → two stages
 jsmql("$.a = 1, $.b = $.a")
@@ -1346,6 +1346,18 @@ jsmql("$.a = 1, $.b = $.a")
 jsmql("delete $.a, delete $.b, $.status = 'done'")
 // → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
 ```
+
+### Bare-document form via `jsmql.expr`
+
+When you need the bare `{ $set: … }` / `{ $unset: … }` document — e.g. to embed inside a hand-written pipeline stage you're composing yourself — use `jsmql.expr()` instead. It produces the unwrapped document; the caller is responsible for the surrounding shape. See [Partial expressions](#partial-expressions-jsmqlexpr) for the full call shape comparison.
+
+```js
+// One stage, bare doc — for slotting into something else
+jsmql.expr("$.score = 100")
+// → { $set: { score: 100 } }
+```
+
+Do **not** pass a single-statement `jsmql.expr()` result to `updateOne()`: MongoDB only evaluates aggregation expressions on the RHS when the second argument is an array. The bare doc form would silently store a literal `{ $toUpper: "$name" }` object instead of evaluating it. Use `jsmql()` at every driver call site.
 
 ### Update filters inside pipelines
 
@@ -1695,9 +1707,14 @@ The second parameter is types-only — the destructured names are typed as calla
 
 ## Partial expressions (`jsmql.expr`)
 
-`jsmql()` is opinionated: it returns a Filter or a Pipeline because that's what `db.coll.find(filter)` and `db.coll.aggregate(pipeline)` take. When you need a **raw aggregation expression** — the shape that goes *inside* a Pipeline stage body, or as the update document in `db.coll.updateOne(filter, update)` — call `jsmql.expr(input)` instead.
+`jsmql()` is opinionated: it returns a Filter (for `db.coll.find(filter)`) or an aggregation Pipeline array (for `db.coll.aggregate(pipeline)` *and* for the pipeline-form of `db.coll.updateOne(filter, update)`). When you need a **raw aggregation expression** — the shape that goes *inside* a hand-written Pipeline stage body, or the bare `{ $set: … }` update document for a doc-form `updateOne` — call `jsmql.expr(input)` instead.
 
-`jsmql.expr` accepts the same three call shapes as `jsmql()` (string / arrow / template tag) and differs in only one branch: a no-`;` bare expression lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope. `;`-separated input still produces a Pipeline, update op chains still produce `$set`/`$unset`, and array-literal Pipelines still pass through — those three branches are identical to `jsmql()`.
+`jsmql.expr` accepts the same three call shapes as `jsmql()` (string / arrow / template tag) and differs in two branches:
+
+- **Bare expression (no `;`)** — `jsmql.expr()` lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope. `jsmql()` would wrap a non-predicate expression in `$expr` to produce a legal Filter.
+- **Update-filter input (single stage)** — `jsmql.expr()` returns the bare `{ $set: … }` / `{ $unset: … }` document. `jsmql()` wraps the same output in a single-element pipeline array (`[{ $set: … }]`) so it can be passed directly to `db.coll.updateOne(filter, update)`, which only evaluates aggregation expressions on the RHS when the second argument is an array.
+
+`;`-separated input always produces a Pipeline and array-literal Pipelines always pass through — those branches are identical between the two entry points.
 
 ```js
 // Filter — for db.coll.find(filter)
@@ -1711,17 +1728,20 @@ db.users.aggregate(jsmql(`
 `));
 // → db.users.aggregate([{ $match: { age: { $gt: 18 } } }, { $project: { name: 1, email: 1 } }])
 
-// Raw aggregation expression — for an update doc, or to drop into a stage body
-db.users.updateOne({ _id: 123 }, jsmql.expr("$.name = $.name.toUpperCase()"));
-// → db.users.updateOne({ _id: 123 }, { $set: { name: { $toUpper: "$name" } } })
+// updateOne — `jsmql()` returns an aggregation pipeline so RHS expressions
+// like `.toUpperCase()` actually evaluate server-side
+db.users.updateOne({ _id: 123 }, jsmql("$.name = $.name.toUpperCase()"));
+// → db.users.updateOne({ _id: 123 }, [{ $set: { name: { $toUpper: "$name" } } }])
 
-// Or as part of a manually-written stage body:
+// Raw aggregation expression — for embedding inside a hand-written stage body
 db.users.aggregate([
   { $addFields: { discount: jsmql.expr("$.price * (1 - $.loyalty.multiplier)") } },
 ]);
 ```
 
-The rule of thumb: **the function you call should match what's in the slot you're writing into**. `find()` takes a Filter → `jsmql()`. `aggregate()` takes a Pipeline → `jsmql()` (with `;`). A stage body, an update document, or a `$cond`'s `then`-branch takes an aggregation expression → `jsmql.expr()`.
+⚠️ **Don't pass `jsmql.expr()` directly to `updateOne()`.** The bare-doc form `{ $set: { name: { $toUpper: "$name" } } }` would silently store the literal expression object instead of evaluating `$toUpper` — MongoDB only treats `updateOne`'s second argument as an aggregation pipeline when it is an array. Use `jsmql()` for the call site; reserve `jsmql.expr()` for the slot inside another structure.
+
+The rule of thumb: **the function you call should match the call site**. `find()`, `aggregate()`, `updateOne()` → `jsmql()`. Inside a hand-written stage body or a `$cond`'s `then`-branch (where you want the raw aggregation expression) → `jsmql.expr()`.
 
 ---
 

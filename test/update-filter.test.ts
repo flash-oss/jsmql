@@ -2,68 +2,77 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
 describe("update filters: simple assignment (=)", () => {
+  // `jsmql()` always returns an aggregation-pipeline array for update-filter
+  // inputs so callers can pass the output directly to
+  // `db.coll.updateOne(filter, update)` and have RHS expressions actually
+  // evaluate. (Bare-doc form treats values as literals; only pipeline form
+  // evaluates aggregation expressions.) `jsmql.expr()` keeps the bare shape
+  // for building blocks — see the `lex regression checks` block below and the
+  // `describe("uppercase a user's name…")` case in realistic.test.ts.
   it("emits a single $set stage for one assignment", () => {
-    expect(jsmql("$.a = 1")).toEqual({ $set: { a: 1 } });
+    expect(jsmql("$.a = 1")).toEqual([{ $set: { a: 1 } }]);
   });
 
   it("works with a string RHS", () => {
-    expect(jsmql("$.status = 'active'")).toEqual({ $set: { status: "active" } });
+    expect(jsmql("$.status = 'active'")).toEqual([{ $set: { status: "active" } }]);
   });
 
   it("works with a field-ref RHS", () => {
-    expect(jsmql("$.copy = $.original")).toEqual({ $set: { copy: "$original" } });
+    expect(jsmql("$.copy = $.original")).toEqual([{ $set: { copy: "$original" } }]);
   });
 
   it("works with a complex expression RHS", () => {
-    expect(jsmql("$.total = $.price * $.qty")).toEqual({ $set: { total: { $multiply: ["$price", "$qty"] } } });
+    expect(jsmql("$.total = $.price * $.qty")).toEqual([{ $set: { total: { $multiply: ["$price", "$qty"] } } }]);
   });
 
   it("supports nested field paths", () => {
-    expect(jsmql("$.user.name = 'alice'")).toEqual({ $set: { "user.name": "alice" } });
+    expect(jsmql("$.user.name = 'alice'")).toEqual([{ $set: { "user.name": "alice" } }]);
   });
 
   it("supports deeply nested field paths", () => {
-    expect(jsmql("$.a.b.c.d = 5")).toEqual({ $set: { "a.b.c.d": 5 } });
+    expect(jsmql("$.a.b.c.d = 5")).toEqual([{ $set: { "a.b.c.d": 5 } }]);
   });
 });
 
 describe("update filters: compound assignment (+=, -=, *=, /=)", () => {
   it("+= with literal", () => {
-    expect(jsmql("$.x += 1")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+    expect(jsmql("$.x += 1")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
   });
 
   it("-= with literal", () => {
-    expect(jsmql("$.x -= 3")).toEqual({ $set: { x: { $subtract: ["$x", 3] } } });
+    expect(jsmql("$.x -= 3")).toEqual([{ $set: { x: { $subtract: ["$x", 3] } } }]);
   });
 
   it("*= with literal", () => {
-    expect(jsmql("$.x *= 2")).toEqual({ $set: { x: { $multiply: ["$x", 2] } } });
+    expect(jsmql("$.x *= 2")).toEqual([{ $set: { x: { $multiply: ["$x", 2] } } }]);
   });
 
   it("/= with literal", () => {
-    expect(jsmql("$.x /= 4")).toEqual({ $set: { x: { $divide: ["$x", 4] } } });
+    expect(jsmql("$.x /= 4")).toEqual([{ $set: { x: { $divide: ["$x", 4] } } }]);
   });
 
   it("+= with field reference", () => {
-    expect(jsmql("$.a += $.b")).toEqual({ $set: { a: { $add: ["$a", "$b"] } } });
+    expect(jsmql("$.a += $.b")).toEqual([{ $set: { a: { $add: ["$a", "$b"] } } }]);
   });
 
   it("+= with string context produces $concat", () => {
-    expect(jsmql("$.greeting += '!'")).toEqual({ $set: { greeting: { $concat: ["$greeting", "!"] } } });
+    expect(jsmql("$.greeting += '!'")).toEqual([{ $set: { greeting: { $concat: ["$greeting", "!"] } } }]);
   });
 
   it("compound on nested path", () => {
-    expect(jsmql("$.user.score += 10")).toEqual({ $set: { "user.score": { $add: ["$user.score", 10] } } });
+    expect(jsmql("$.user.score += 10")).toEqual([{ $set: { "user.score": { $add: ["$user.score", 10] } } }]);
   });
 
   it("RHS can be a complex expression", () => {
-    expect(jsmql("$.total += $.items.reduce((acc, x) => acc + x, 0)")).toEqual({
-      $set: {
-        total: {
-          $add: ["$total", { $reduce: { input: "$items", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }],
+    expect(jsmql("$.total += $.items.reduce((acc, x) => acc + x, 0)")).toEqual([
+      {
+        $set: {
+          total: {
+            $add: ["$total", { $reduce: { input: "$items", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }],
+          },
         },
       },
-    });
+    ]);
   });
 });
 
@@ -73,37 +82,39 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
   // forms compile to the same `$set: { x: { $add|$subtract: ["$x", 1] } }`.
 
   it("postfix ++ on a top-level field", () => {
-    expect(jsmql("$.x++")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+    expect(jsmql("$.x++")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
   });
 
   it("prefix ++ on a top-level field", () => {
-    expect(jsmql("++$.x")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+    expect(jsmql("++$.x")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
   });
 
   it("postfix -- on a top-level field", () => {
-    expect(jsmql("$.x--")).toEqual({ $set: { x: { $subtract: ["$x", 1] } } });
+    expect(jsmql("$.x--")).toEqual([{ $set: { x: { $subtract: ["$x", 1] } } }]);
   });
 
   it("prefix -- on a top-level field", () => {
-    expect(jsmql("--$.x")).toEqual({ $set: { x: { $subtract: ["$x", 1] } } });
+    expect(jsmql("--$.x")).toEqual([{ $set: { x: { $subtract: ["$x", 1] } } }]);
   });
 
   it("postfix ++ on a nested path", () => {
-    expect(jsmql("$.user.score++")).toEqual({ $set: { "user.score": { $add: ["$user.score", 1] } } });
+    expect(jsmql("$.user.score++")).toEqual([{ $set: { "user.score": { $add: ["$user.score", 1] } } }]);
   });
 
   it("prefix -- on a nested path", () => {
-    expect(jsmql("--$.cart.itemCount")).toEqual({ $set: { "cart.itemCount": { $subtract: ["$cart.itemCount", 1] } } });
+    expect(jsmql("--$.cart.itemCount")).toEqual([
+      { $set: { "cart.itemCount": { $subtract: ["$cart.itemCount", 1] } } },
+    ]);
   });
 
   it("multiple inc/dec coalesce into one $set", () => {
-    expect(jsmql("$.a++, $.b--, ++$.c")).toEqual({
-      $set: { a: { $add: ["$a", 1] }, b: { $subtract: ["$b", 1] }, c: { $add: ["$c", 1] } },
-    });
+    expect(jsmql("$.a++, $.b--, ++$.c")).toEqual([
+      { $set: { a: { $add: ["$a", 1] }, b: { $subtract: ["$b", 1] }, c: { $add: ["$c", 1] } } },
+    ]);
   });
 
   it("inc/dec mixed with assignments coalesce into one $set", () => {
-    expect(jsmql("$.cnt++, $.label = 'done'")).toEqual({ $set: { cnt: { $add: ["$cnt", 1] }, label: "done" } });
+    expect(jsmql("$.cnt++, $.label = 'done'")).toEqual([{ $set: { cnt: { $add: ["$cnt", 1] }, label: "done" } }]);
   });
 
   it("inc/dec inside a pipeline", () => {
@@ -115,11 +126,11 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
   });
 
   it("parens around postfix work (formatter-friendly)", () => {
-    expect(jsmql("($.x++)")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+    expect(jsmql("($.x++)")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
   });
 
   it("parens around prefix work", () => {
-    expect(jsmql("(++$.x)")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+    expect(jsmql("(++$.x)")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
   });
 
   it("parens around inc/dec inside pipeline arrays work", () => {
@@ -172,7 +183,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
 
 describe("update filters: sequencing", () => {
   it("two independent assignments coalesce into one $set (comma separator)", () => {
-    expect(jsmql("$.a = 1, $.b = 2")).toEqual({ $set: { a: 1, b: 2 } });
+    expect(jsmql("$.a = 1, $.b = 2")).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
   it("read-after-write splits into two $set stages", () => {
@@ -192,39 +203,39 @@ describe("update filters: sequencing", () => {
   });
 
   it("trailing comma allowed", () => {
-    expect(jsmql("$.a = 1,")).toEqual({ $set: { a: 1 } });
+    expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
   });
 });
 
 describe("update filters: chained assignment", () => {
   it("two-way chain", () => {
-    expect(jsmql("$.a = $.b = 5")).toEqual({ $set: { a: 5, b: 5 } });
+    expect(jsmql("$.a = $.b = 5")).toEqual([{ $set: { a: 5, b: 5 } }]);
   });
 
   it("three-way chain", () => {
-    expect(jsmql("$.a = $.b = $.c = 5")).toEqual({ $set: { a: 5, b: 5, c: 5 } });
+    expect(jsmql("$.a = $.b = $.c = 5")).toEqual([{ $set: { a: 5, b: 5, c: 5 } }]);
   });
 
   it("chain with complex RHS", () => {
-    expect(jsmql("$.x = $.y = $.z + 1")).toEqual({ $set: { x: { $add: ["$z", 1] }, y: { $add: ["$z", 1] } } });
+    expect(jsmql("$.x = $.y = $.z + 1")).toEqual([{ $set: { x: { $add: ["$z", 1] }, y: { $add: ["$z", 1] } } }]);
   });
 });
 
 describe("update filters: delete", () => {
   it("single delete emits $unset string form", () => {
-    expect(jsmql("delete $.tmp")).toEqual({ $unset: "tmp" });
+    expect(jsmql("delete $.tmp")).toEqual([{ $unset: "tmp" }]);
   });
 
   it("nested delete uses dotted path", () => {
-    expect(jsmql("delete $.user.tmp")).toEqual({ $unset: "user.tmp" });
+    expect(jsmql("delete $.user.tmp")).toEqual([{ $unset: "user.tmp" }]);
   });
 
   it("two consecutive deletes coalesce into array form", () => {
-    expect(jsmql("delete $.a, delete $.b")).toEqual({ $unset: ["a", "b"] });
+    expect(jsmql("delete $.a, delete $.b")).toEqual([{ $unset: ["a", "b"] }]);
   });
 
   it("three consecutive deletes coalesce", () => {
-    expect(jsmql("delete $.a, delete $.b, delete $.c")).toEqual({ $unset: ["a", "b", "c"] });
+    expect(jsmql("delete $.a, delete $.b, delete $.c")).toEqual([{ $unset: ["a", "b", "c"] }]);
   });
 
   it("delete-then-assign breaks (kind change)", () => {
@@ -246,9 +257,9 @@ describe("update filters: delete", () => {
 
 describe("update filters: realistic mixed (user-supplied)", () => {
   it("assignment + compound coalesce: total = price*qty, views += 1", () => {
-    expect(jsmql("$.total = $.price * $.qty, $.views += 1")).toEqual({
-      $set: { total: { $multiply: ["$price", "$qty"] }, views: { $add: ["$views", 1] } },
-    });
+    expect(jsmql("$.total = $.price * $.qty, $.views += 1")).toEqual([
+      { $set: { total: { $multiply: ["$price", "$qty"] }, views: { $add: ["$views", 1] } } },
+    ]);
   });
 
   it("two deletes + assignment splits at kind change", () => {
@@ -321,11 +332,11 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
   // as the bare `jsmql("[$.a = 1]")`.
 
   it("parens around an assignment at the top level work", () => {
-    expect(jsmql("($.a = 5)")).toEqual({ $set: { a: 5 } });
+    expect(jsmql("($.a = 5)")).toEqual([{ $set: { a: 5 } }]);
   });
 
   it("parens around a compound assignment work", () => {
-    expect(jsmql("($.x += 1)")).toEqual({ $set: { x: { $add: ["$x", 1] } } });
+    expect(jsmql("($.x += 1)")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
   });
 
   it("parens around assignments as pipeline elements coalesce normally", () => {
@@ -348,7 +359,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
     // join the chain with `,` when it appears as a statement at the top of a
     // block-body arrow. The two halves must combine into one $set, just like
     // the bare-form `$.a = 1, $.b = 2`.
-    expect(jsmql("($.a = 1), ($.b = 2)")).toEqual({ $set: { a: 1, b: 2 } });
+    expect(jsmql("($.a = 1), ($.b = 2)")).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
   it("comma-chained parenthesized assignments in a block-body arrow", () => {
@@ -366,7 +377,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
   });
 
   it("comma-chained parens mixing assignment and postfix inc/dec", () => {
-    expect(jsmql("($.a = 1), ($.cnt++)")).toEqual({ $set: { a: 1, cnt: { $add: ["$cnt", 1] } } });
+    expect(jsmql("($.a = 1), ($.cnt++)")).toEqual([{ $set: { a: 1, cnt: { $add: ["$cnt", 1] } } }]);
   });
 });
 

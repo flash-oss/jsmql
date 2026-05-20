@@ -101,8 +101,17 @@ Downstream:
 
 `src/codegen.ts` exports two update op entry points:
 
-- `generateUpdateFilter(prog)` — top-level entry from `compile()`. Emits a single stage object (one group) or a stage array (2+ groups), matching the existing 1-stage-vs-pipeline output convention.
+- `generateUpdateFilter(prog)` — top-level entry from `lowerProgram` in `src/index.ts`. Emits a single stage object (one group) or a stage array (2+ groups), matching the existing 1-stage-vs-pipeline output convention.
 - `generateUpdateOpGroups(muts)` — used by `pipeline.ts` when update ops appear inline in a pipeline array. Returns an array of stage objects without the unwrap step.
+
+### `jsmql()` vs `jsmql.expr()` wrap
+
+`generateUpdateFilter`'s "single stage object or stage array" output is the **raw** shape. The two top-level entry points then differ on whether they wrap the single-object case:
+
+- **`jsmql()`** (`lowerWithCtx` in `src/index.ts`) — checks `ast.type === "UpdateFilter"` after lowering and, if the result is not already an array, wraps it in a single-element array (`[{ $set: ... }]`). Rationale: the second argument to `db.coll.updateOne(filter, update)` is treated by MongoDB as an aggregation pipeline only when it is an array. The bare-document form treats RHS values as literals, so a computed expression like `$.name.toUpperCase()` would be stored as the literal object `{ $toUpper: "$name" }` instead of evaluating. Always returning a pipeline from `jsmql()` makes the call site safe regardless of whether the RHS is a literal or an expression.
+- **`jsmql.expr()`** (`lowerExprWithCtx`) — passes the raw output through unchanged. The bare-document shape is exactly what fits inside a hand-written pipeline stage body (`{ $addFields: { x: jsmql.expr(…) } }`) or in any context where the caller controls the surrounding structure.
+
+The 2+-group case (multi-stage) is already an array from `generateUpdateFilter`, so both entry points produce identical output. The wrap-or-no-wrap policy only differs for the single-group case.
 
 ### Coalescing
 

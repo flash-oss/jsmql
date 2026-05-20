@@ -74,13 +74,20 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 });
 
-describe("implicit pipeline — single-statement inputs unchanged", () => {
-  it("bare assignment without `;` stays a single $set object", () => {
-    expect(jsmql("$.a = 1")).toEqual({ $set: { a: 1 } });
+describe("implicit pipeline — single-statement update-filter inputs always wrap as pipelines", () => {
+  // `jsmql()` always returns an aggregation-pipeline array for update-filter
+  // inputs — including single-statement ones without a trailing `;` — so the
+  // output is safe to pass directly to `db.coll.updateOne(filter, update)`.
+  // Bare-document form would silently treat RHS expressions as literals; the
+  // pipeline form evaluates them as aggregation expressions. Callers who want
+  // the bare-doc shape (e.g. for embedding in a hand-written stage body) use
+  // `jsmql.expr()` — see test/update-filter.test.ts's `lex regression checks`.
+  it("bare assignment without `;` wraps as a one-stage pipeline", () => {
+    expect(jsmql("$.a = 1")).toEqual([{ $set: { a: 1 } }]);
   });
 
-  it("bare delete without `;` stays a single $unset object", () => {
-    expect(jsmql("delete $.tmp")).toEqual({ $unset: "tmp" });
+  it("bare delete without `;` wraps as a one-stage pipeline", () => {
+    expect(jsmql("delete $.tmp")).toEqual([{ $unset: "tmp" }]);
   });
 
   it("bare stage call without `;` throws with a `;` suggestion", () => {
@@ -98,12 +105,12 @@ describe("implicit pipeline — single-statement inputs unchanged", () => {
     expect(() => jsmql("{ $match: $.a === 0 }")).toThrow(/`\$match` is a Pipeline stage/);
   });
 
-  it("comma-grouped chain without `;` stays a single coalesced $set object", () => {
-    expect(jsmql("$.a = 1, $.b = 2")).toEqual({ $set: { a: 1, b: 2 } });
+  it("comma-grouped chain without `;` coalesces and wraps as a one-stage pipeline", () => {
+    expect(jsmql("$.a = 1, $.b = 2")).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
-  it("trailing `,` (no `;`) stays a single $set object", () => {
-    expect(jsmql("$.a = 1,")).toEqual({ $set: { a: 1 } });
+  it("trailing `,` (no `;`) wraps as a one-stage pipeline", () => {
+    expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
   });
 });
 
@@ -152,9 +159,10 @@ describe("implicit pipeline — block-body arrow input", () => {
 
   it("expression-body arrow with trailing `;` stripped (back-compat)", () => {
     // The arrow source as toString'd ends with `;` — formatter quirk that the
-    // adapter strips so a single-statement expression arrow stays an object.
+    // adapter strips so a single-statement expression arrow lowers as an
+    // UpdateFilter, which `jsmql()` wraps as a one-stage pipeline.
     const fn = ($: any) => ($.a = 1);
-    expect(jsmql(fn)).toEqual({ $set: { a: 1 } });
+    expect(jsmql(fn)).toEqual([{ $set: { a: 1 } }]);
   });
 });
 

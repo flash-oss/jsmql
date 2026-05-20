@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-20 — `jsmql()` always returns a pipeline for update-filter inputs
+
+Single-statement update filters through `jsmql()` now lower to a **one-element pipeline array** (`[{ $set: { …RHS… } }]`) instead of the bare update document (`{ $set: { …RHS… } }`). Multi-statement update filters were already arrays; this change makes the single-statement case match. `jsmql.expr()` is **not** changed — it still produces the bare-doc shape for callers that want a building block to embed elsewhere.
+
+The motivation is a silent footgun at the `db.coll.updateOne(filter, update)` call site. MongoDB only evaluates aggregation expressions on the RHS when the second `updateOne` argument is an **array** (pipeline form). The bare-doc form treats every value as a literal. So `db.users.updateOne({…}, jsmql("$.name = $.name.toUpperCase()"))` produced `db.users.updateOne({…}, { $set: { name: { $toUpper: "$name" } } })` — which compiled cleanly, looked correct in a logging line, and stored the literal object `{ $toUpper: "$name" }` in the `name` field at query time. Pure-literal update filters (`$.status = "done"`) happened to work in both modes, so the trap was invisible until a user wrote a real expression on the RHS. The README, LANGUAGE.md, and the realistic-test `usage` strings were all documenting the broken pattern. The user spotted it via the README example I'd just added.
+
+The fix is a four-line addition to `lowerWithCtx` in [src/index.ts](../src/index.ts) — after the program lowers, if the AST is an `UpdateFilter` and the result is not already an array, wrap it once. `lowerExprWithCtx` (which `jsmql.expr` goes through) is left untouched, with a comment pinning the contrast in place. The split lives at the entry-point boundary, not inside `generateUpdateFilter` itself — the spec ([docs/specs/update-filter.md](specs/update-filter.md)) was updated to spell out which API wraps and which doesn't.
+
+Test impact: 38 assertions in [test/update-filter.test.ts](../test/update-filter.test.ts), 5 in [test/implicit-pipeline.test.ts](../test/implicit-pipeline.test.ts), and 2 in [test/realistic.test.ts](../test/realistic.test.ts) updated to expect the wrapped array form. The implicit-pipeline `describe` that used to assert "single-statement inputs unchanged" was retitled and its comment rewritten — the new contract is "single-statement update-filter inputs always wrap as pipelines". The realistic-test `usage` strings for the two update-filter cases were repointed from `db.users.updateOne({…}, jsmql.expr(…))` to `db.users.updateOne({…}, jsmql(…))`, since that is the correct call shape now.
+
+Doc updates: [README.md](../README.md)'s update-filter Tour comment and the headline `updateOne` example switched from `jsmql.expr(…)` to `jsmql(…)` with the wrapped output. [docs/LANGUAGE.md](LANGUAGE.md)'s § Update filters opens with the new pipeline-array contract, every code block in that section uses the wrapped form, and a new "Bare-document form via `jsmql.expr`" subsection documents the escape hatch with an explicit "do not pass this to `updateOne()`" warning. The § Partial expressions section gained a second differentiator bullet (update-filter input) and a matching ⚠️ warning. Breaking output-shape change to one branch of `jsmql()`; pre-1.0, so acceptable. No grammar or AST change.
+
+---
+
 ## 2026-05-19 — Rename "Mutation" → "Update filter" (match the MongoDB driver)
 
 "Mutation" was a jsmql-only invention. The MongoDB Node.js driver and the official docs call the second argument to `db.coll.updateOne(filter, update)` an **Update Filter** (TypeScript type `UpdateFilter<TSchema>`) — a document of update operators like `{ $set: …, $unset: … }`. We were quietly using our own word for it; now we use theirs.

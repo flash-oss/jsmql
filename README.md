@@ -5,17 +5,13 @@
 ```js
 import { jsmql } from "@koresar/jsmql";
 
+// Filter — for db.coll.find(filter). No `;` at top level.
 const age = 18;
-let mqlJson = jsmql`$.age > ${age} && $.status === "active"`
-// → { $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }] }
+let filter = jsmql`$.age > ${age} && $.status === "active"`
+// → { age: { $gt: 18 }, status: "active" }   ← index-friendly query doc
 
-mqlJson = 
-    jsmql(($) => $.items.map((i) => i.price * i.qty).reduce((a, x) => a + x, 0))
-// → { $reduce: { input: { $map: { input: "$items", as: "i",
-//     in: { $multiply: ["$$i.price", "$$i.qty"] } } },
-//   initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
-
-mqlJson = jsmql(({$}) => {
+// Pipeline — for db.coll.aggregate(pipeline). Any `;` flips to stage mode.
+let pipeline = jsmql(($) => {
     $match($.status === "active");
     let subtotal = $.price * $.qty; // sub-total before tax/shipping
     let withTax  = subtotal * 1.2; // with tax
@@ -34,6 +30,12 @@ mqlJson = jsmql(({$}) => {
 //     },
 //     { "$unset": "__jsmql" }
 // ]
+
+// Raw expression — for inside a stage body, or db.coll.updateOne(filter, update).
+let expr = jsmql.expr(($) => $.items.map((i) => i.price * i.qty).reduce((a, x) => a + x, 0))
+// → { $reduce: { input: { $map: { input: "$items", as: "i",
+//     in: { $multiply: ["$$i.price", "$$i.qty"] } } },
+//   initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
 **MongoDB 8.0 deprecated server-side JavaScript via `$function`, `$accumulator`, and `$where`.** The JSMQL is the replacement: native MQL, no `--noscripting` issues, index-friendly, IDE-aware, testable as plain JS.
@@ -52,10 +54,11 @@ ESM + CJS, runs in browsers, zero dependencies. Works with **Node 14+**, Deno, a
 import "@koresar/jsmql/ops";          // ambient $-prefixed globals — autocomplete for 182 MQL ops & every stage
 import { jsmql } from "@koresar/jsmql";
 
-// Arrow form — your formatter handles long expressions
+// Arrow form — your formatter handles long expressions.
+// No `;` at top level → Filter (the doc db.coll.find(filter) takes).
 jsmql(($) => $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
 
-// Pipelines — write stages as a sequence, separated by `;`
+// Pipelines — any `;` flips to stage mode (the array db.coll.aggregate(pipeline) takes).
 jsmql(($) => {
   $match($.age >= 18 && $.region === "AU");      // → query doc, indexes still work
   $group({ _id: $.shopId, total: { $sum: $.amount } });
@@ -78,15 +81,24 @@ const eligible = jsmql.compile(({ minAge, region }, $) => {
 eligible({ minAge: 21, region: "AU" });
 // → [{"$match":{"age":{"$gte":21},"region":"AU"}},{"$project":{"age":1,"email":1,"address":1}}]
 
-// Mutations — JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
+// Update filters — JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
 jsmql(($) => {
   $.score += 1;
   delete $.tempToken;
   $.status = "done";
 });
 
+// updateOne — `jsmql()` returns an aggregation pipeline so computed RHS evaluates server-side
+db.users.updateOne({ _id: 1 }, jsmql(($) => $.name = $.name.toUpperCase()))
+// → [{ "$set": { "name": { "$toUpper": "$name" } } }]
+
+// Raw expression — for embedding inside a hand-written stage body
+const stage = { $addFields: { discount: jsmql.expr(($) => $.price * (1 - $.loyalty.multiplier)) } }
+// → { $addFields: { discount: { $multiply: ["$price", { $subtract: [1, "$loyalty.multiplier"] }] } } }
+
 // Escape hatch — call any MongoDB operator directly
-jsmql(($) => $dateTrunc({ date: $.createdAt, unit: "week" }))
+jsmql.expr(($) => $dateTrunc({ date: $.createdAt, unit: "week" }))
+// → { "$dateTrunc": { "date": "$createdAt", "unit": "week" } }
 
 // Validate without throwing — every error carries { message, pos, code }
 jsmql.validate(($) => $.age > 18) // → { valid: true, errors: [] }
@@ -109,16 +121,17 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **JS you already know** — operators, ternaries, template literals, optional chaining, spread, computed keys, numeric separators, `Math.*`, `Date`, `typeof`, `instanceof`, comments. If `node --check` accepts it, jsmql does too.
 - **182 operators, full coverage** — every aggregation expression and accumulator from the official MongoDB MQL spec, including Bitwise and Window categories. Unknown operators pass through, so new MongoDB releases work day one.
 - **Plain MQL passes through.** Drop hand-written MQL JSON inline — `{ $gt: ["$age", 18] }`, a whole stage, a whole pipeline — and jsmql compiles it to itself. Mix the two freely, migrate one expression at a time, or paste verbatim from the MongoDB docs.
+- **Filter vs Pipeline by the semicolon** — no `;` → `Filter` (`db.coll.find(filter)`); any `;` → `Pipeline` (`db.coll.aggregate(pipeline)`). Index-safe predicates translate to query-document form; only the untranslatable parts ride in a top-level `$expr`. The naming follows the Node.js MongoDB driver's own `Filter<TSchema>` and `pipeline` parameter.
 - **Three call shapes** — arrow `jsmql(($) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
+- **Three output shapes** — `jsmql()` for Filter/Pipeline, `jsmql.compile(fn)` for parameterised parse-once-bind-many, `jsmql.expr()` for raw aggregation expressions that drop into a stage body or `db.coll.updateOne(filter, update)`. The same three call shapes apply to all three.
 - **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
-- **`$match` indexes by default** — index-safe predicates translate to query-document form; only the untranslatable parts fall back to `$expr`.
 - **Strict TS, strippable source** — runs as-is on Node 24+, Deno, and Bun (no flags, no transpile).
 
 ## Try it & learn more
 
 - **[Live playground](https://flash-oss.github.io/jsmql/playground.html)** — write jsmql, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
-- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, mutation rules, `$match` query translation, `jsmql.compile` parameter semantics, the `@koresar/jsmql/ops` import, error catalogue, server-side-JS migration guide.
+- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the `@koresar/jsmql/ops` import, error catalogue, server-side-JS migration guide.
 - **[docs/DEVLOG.md](docs/DEVLOG.md)** — the running record of language decisions and the reasoning behind them.
 
 ## License
