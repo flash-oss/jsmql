@@ -3509,33 +3509,35 @@ describe("Filter dispatch (no semicolons)", () => {
     });
   });
 
-  describe("stage-call-without-`;` guard", () => {
-    // A bare `$match(...)` / `$project(...)` / etc. at the top level is
-    // Pipeline intent with a missing `;`. Filter dispatch detects the shape
-    // and throws a precise error instead of silently wrapping in `$expr`.
+  describe("bare stage call auto-wraps as a one-stage Pipeline", () => {
+    // A top-level `$match(...)` / `$project(...)` / etc. without a `;` is
+    // Pipeline intent — the user wrote a stage at the top level. `jsmql()`
+    // auto-wraps it into a one-element pipeline so the output is directly
+    // usable with `db.coll.aggregate(...)`, with no `;` discipline required.
 
-    it("`$match(...)` without `;` throws and suggests the missing `;`", () => {
-      expect(() => jsmql("$match($.age > 18)")).toThrow(/`\$match` is a Pipeline stage/);
-      expect(() => jsmql("$match($.age > 18)")).toThrow(/Add a trailing `;`/);
+    it("`$match(...)` without `;` auto-wraps as a Pipeline", () => {
+      expect(jsmql("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
-    it("any registered stage call triggers the same guard", () => {
-      expect(() => jsmql("$project({ name: 1 })")).toThrow(/`\$project` is a Pipeline stage/);
-      expect(() => jsmql("$sort({ age: 1 })")).toThrow(/`\$sort` is a Pipeline stage/);
-      expect(() => jsmql("$limit(10)")).toThrow(/`\$limit` is a Pipeline stage/);
+    it("any registered stage call auto-wraps the same way", () => {
+      expect(jsmql("$project({ name: 1 })")).toEqual([{ $project: { name: 1 } }]);
+      expect(jsmql("$sort({ age: 1 })")).toEqual([{ $sort: { age: 1 } }]);
+      expect(jsmql("$limit(10)")).toEqual([{ $limit: 10 }]);
     });
 
-    it("the stage-object form `{ $match: ... }` triggers the same guard", () => {
-      expect(() => jsmql("{ $match: $.age > 18 }")).toThrow(/`\$match` is a Pipeline stage/);
+    it("the stage-object form `{ $match: ... }` auto-wraps the same way", () => {
+      // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
+      // detect as Pipeline intent.
+      expect(jsmql("{ $match: $.age > 18 }")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
-    it("adding the `;` makes it a Pipeline, no error", () => {
+    it("adding the `;` produces an identical Pipeline output", () => {
       expect(jsmql("$match($.age > 18);")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
     it("non-stage operator calls still go through Filter dispatch unaffected", () => {
-      // `$add` is an expression operator, not a stage — the guard does not
-      // fire, and the expression rides in `$expr`.
+      // `$add` is an expression operator, not a stage — the auto-wrap does
+      // not fire, and the expression rides in `$expr`.
       expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
     });
   });

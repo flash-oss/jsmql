@@ -13,7 +13,7 @@ import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pip
 import { translateMatchBody } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
 import { LexError } from "./lexer.ts";
-import type { Program, Expr } from "./ast.ts";
+import type { Program, Expr, Pipeline } from "./ast.ts";
 
 // Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
 // even though the class itself lives in parser.ts (where it is thrown).
@@ -392,6 +392,33 @@ function lowerProgram(ast: Program, ctx: GenerateCtx, lowerExpr: ExprLowering): 
 
 /** Filter-mode lowering: `jsmql()` and `jsmql.compile()` both go through this. */
 function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  // Top-level bare stage call (`$match(...)`, `$project(...)`, …) or single-key
+  // stage-object literal (`{ $match: ... }` — the shape MongoDB Compass produces
+  // when you copy/paste) is almost always Pipeline intent — the user wrote a
+  // stage at the top level. Auto-wrap as a one-stage pipeline so
+  // `jsmql("$match($.age > 18)")` produces `[{ $match: { age: { $gt: 18 } } }]`
+  // with no `;` discipline required. Without this, the call would either
+  // throw (the old behaviour) or silently produce `{ $expr: { $match: ... } }`
+  // — a syntactically valid Filter that MongoDB can't execute.
+  //
+  // Re-uses the normal `generateImplicitPipeline` path so $match's
+  // index-friendly query-translator runs unchanged, and so a stage that has
+  // sub-pipeline fields (`$lookup`, `$unionWith`, `$facet`) recurses through
+  // the same lowering it would inside a `;`-separated pipeline.
+  //
+  // `jsmql.expr()` doesn't get this wrap: a top-level stage call passed to
+  // `jsmql.expr()` is unusual enough (stages aren't aggregation expressions)
+  // that the user almost certainly meant something else, and silently routing
+  // through Pipeline mode there would mask the mistake.
+  if (
+    ast.type !== "Pipeline" &&
+    ast.type !== "UpdateFilter" &&
+    !isPipelineAst(ast) &&
+    detectStageIntent(ast) !== null
+  ) {
+    const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
   const result = lowerProgram(ast, ctx, generateFilter);
   // Update-filter inputs that compile to a single stage (`{ $set: { …RHS… } }`
   // or `{ $unset: "x" }`) get wrapped into a one-element pipeline at the
@@ -432,22 +459,12 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
  * `{ age: { $gt: 18 } }`) and non-predicate expressions
  * (`$abs(42)` → `{ $expr: { $abs: 42 } }`) produce a valid Filter document.
  *
- * Before lowering, a DX guard rejects bare stage-call inputs (`$match(...)`,
- * `$project(...)`, …) without a `;` — those are almost certainly Pipeline
- * intent where the user forgot the semicolon, and silently wrapping them in
- * `$expr` would produce a useless Filter. The guard throws a precise error
- * naming the stage and suggesting the missing `;`.
+ * Stage-intent shapes (`$match(...)`, `{ $match: ... }`, …) never reach this
+ * function — they are caught in `lowerWithCtx` and routed through
+ * `generateImplicitPipeline` so the user sees an auto-wrapped one-stage
+ * Pipeline instead of a useless `{ $expr: { $match: ... } }` Filter.
  */
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
-  const stageName = detectStageIntent(ast);
-  if (stageName !== null) {
-    throw new CodegenError(
-      `\`${stageName}\` is a Pipeline stage, but the input has no \`;\` so ` +
-        `jsmql would lower it as a Filter — almost certainly not what you want. ` +
-        `Add a trailing \`;\` to make this a Pipeline: \`${stageName}(…);\`.`,
-      ast.pos,
-    );
-  }
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   if (t.residual === null) return t.query;
   const exprPart = { $expr: generateWithCtx(t.residual, ctx) };

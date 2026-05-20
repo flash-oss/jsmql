@@ -70,12 +70,16 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 
 ## Output dispatch: Filter vs Pipeline
 
-The presence or absence of a `;` at the top level of the input chooses what shape `jsmql()` returns. Names follow the Node.js MongoDB driver:
+`jsmql()` picks its output shape from what's at the top level of the input. Names follow the Node.js MongoDB driver:
 
-| Input has | Output | Used with |
+| Input top-level shape | Output | Used with |
 |---|---|---|
-| **No `;`** | a **Filter** (single document) | `db.coll.find(filter)` |
-| **Any `;`** (even a trailing one) | a **Pipeline** `[…stages…]` | `db.coll.aggregate(pipeline)` |
+| **Stage call** (`$match(...)`, `$project(...)`, `{ $match: ... }`, …) | a **Pipeline** `[…stages…]` (one stage) | `db.coll.aggregate(pipeline)` |
+| **Update filter** (`$.x = …`, `delete $.x`) | a **Pipeline** `[{ $set: … }]` / `[{ $unset: … }]` | `db.coll.updateOne(filter, update)` |
+| **`;`-separated statements** (even a single trailing `;`) | a **Pipeline** `[…stages…]` | `db.coll.aggregate(pipeline)` |
+| **Anything else** (predicate, expression) | a **Filter** (single document) | `db.coll.find(filter)` |
+
+The first three rows all produce arrays — `jsmql()` is "would the driver call site need an array here?" → yes, give it an array. The `;` is only required to compose **multiple** stages; a single stage written naturally (with or without `;`) works.
 
 ### No semicolons → Filter
 
@@ -97,21 +101,35 @@ jsmql("$add($.a, $.b)");
 
 The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/match-query-translation.md](specs/match-query-translation.md) for the full table.
 
-### Any `;` → Pipeline
+### Stage call → Pipeline (no `;` required)
 
-Each `;`-separated statement is one Pipeline stage. Even a single stage with a trailing `;` returns a one-element array.
+A top-level stage call or stage-object literal auto-wraps into a one-element Pipeline. No `;` discipline at the call site — the cleanest JS surface produces the cleanest correct MQL.
 
 ```js
-// Single-stage Pipeline
-jsmql("$match($.age > 18);");
+// Single-stage Pipeline, no `;` needed
+jsmql("$match($.age > 18)");
 // → [ { $match: { age: { $gt: 18 } } } ]
 
+// The Compass copy-paste shape works the same way
+jsmql("{ $match: $.age > 18 }");
+// → [ { $match: { age: { $gt: 18 } } } ]
+
+// `;` is still allowed and produces identical output
+jsmql("$match($.age > 18);");
+// → [ { $match: { age: { $gt: 18 } } } ]
+```
+
+### Any `;` → Pipeline (multi-stage)
+
+Each `;`-separated statement is one Pipeline stage. Use `;` to compose multiple stages in one call.
+
+```js
 // Multi-stage Pipeline
 jsmql("$match($.age > 18); $sort({ age: 1 });");
 // → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]
 ```
 
-A `;`-separated statement **must** be a stage call (`$match`, `$project`, `$sort`, …), a update op (`$.x = …`), or a `let` binding. A bare expression like `$.age > 18;` is rejected with a `$match(...)` suggestion:
+A `;`-separated statement **must** be a stage call (`$match`, `$project`, `$sort`, …), an update op (`$.x = …`), or a `let` binding. A bare expression like `$.age > 18;` is rejected with a `$match(...)` suggestion:
 
 ```text
 Element 0 of Pipeline is not a stage call. To filter documents on a
@@ -120,11 +138,14 @@ predicate, wrap it as `$match(...)` — e.g. `$match($.age > 18)`. …
 
 ### Function form mirrors the rule
 
-An **expression-body** arrow (`($) => …`) is the function equivalent of a no-`;` string — it lowers as a Filter. A **block-body** arrow (`($) => { …; … }`) is the equivalent of a `;`-separated string — it lowers as a Pipeline.
+An **expression-body** arrow (`($) => …`) is the function equivalent of a no-`;` string — it lowers as a Filter, unless the body is itself a stage call (then auto-wrap fires). A **block-body** arrow (`($) => { …; … }`) is the equivalent of a `;`-separated string — it lowers as a Pipeline.
 
 ```js
 jsmql(($) => $.age > 18);
 // → { age: { $gt: 18 } }                            (Filter)
+
+jsmql(($) => $match($.age > 18));
+// → [ { $match: { age: { $gt: 18 } } } ]            (Pipeline — stage call auto-wraps)
 
 jsmql(($, { $match, $sort }) => {
   $match($.age > 18);
@@ -133,7 +154,7 @@ jsmql(($, { $match, $sort }) => {
 // → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]   (Pipeline)
 ```
 
-The template-tag form (`` jsmql`…` ``) follows the string-form rule: any `;` in the assembled source flips to Pipeline mode.
+The template-tag form (`` jsmql`…` ``) follows the string-form rule: a stage call or any `;` in the assembled source produces a Pipeline.
 
 ---
 

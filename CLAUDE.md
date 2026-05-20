@@ -94,6 +94,9 @@ Create and keep up to date a `CLAUDE.md` in every directory that contains non-tr
 ### Maintain specs
 Every code change that affects observable behaviour must also update the relevant file in `docs/specs/`. The specs are the implementation-facing companion to the user-facing `docs/LANGUAGE.md`. See `docs/CLAUDE.md` for what each spec covers.
 
+### Maintain README.md
+Every change to library behaviour visible at the call site — new entry point, changed output shape, new operator surface, new error wording, dropped/renamed feature — must update [README.md](README.md) in the same commit. Cross-check the headline example block, the Tour section, and the Highlights bullets; if a feature you touched would no longer match what those three sections claim, fix them. The README is the first thing a new user reads and is part of the public contract, not optional reference material. When in doubt, run a few README examples through `node --experimental-strip-types src/index.ts` (or against the built dist) to confirm the shown output still matches what the library produces.
+
 ### Commit conventions
 Use [Conventional Commits](https://www.conventionalcommits.org/):
 - `feat:` — new behaviour visible to users

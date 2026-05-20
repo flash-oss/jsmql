@@ -41,24 +41,26 @@ Three cases:
 2. **Fully untranslatable** (query is empty) → return `{ $expr: <aggExpr> }`. `$expr` is a legal top-level Filter operator, so the output is a valid Filter for any non-predicate expression too.
 3. **Mixed** (both have content) → emit a query document with the translatable conjuncts plus an `$expr` for the residual. The query-doc conjuncts stay indexable; the residual evaluates in expression form.
 
-## Stage-call-without-`;` guard
+## Stage-call auto-wrap (no `;` required)
 
-Before the translator runs, `generateFilter` checks `detectStageIntent(ast)` for two shapes that are almost always Pipeline-intent-with-missing-`;` rather than a legitimate Filter:
+Before falling into Filter dispatch, `lowerWithCtx` checks `detectStageIntent(ast)` for two shapes that are almost always Pipeline intent rather than a legitimate Filter:
 
 1. A top-level `OperatorCall` whose name is a registered stage (`$match(...)`, `$project(...)`, `$sort(...)`, …).
 2. A top-level single-key `ObjectLiteral` whose key is a registered stage name (`{ $match: ... }` — the form a copy-paste from MongoDB Compass produces).
 
-When matched, `CodegenError` fires with a precise message:
+When matched, `lowerWithCtx` wraps the bare `Expr` into a synthetic `Pipeline` AST node (`{ type: "Pipeline", stmts: [ast], pos: ast.pos }`) and routes it through `generateImplicitPipeline`. So `jsmql("$match($.age > 18)")` produces `[{ $match: { age: { $gt: 18 } } }]` — the same output as the explicit `;` form (`jsmql("$match($.age > 18);")`) — without any `;` discipline at the call site.
 
-```text
-`$match` is a Pipeline stage, but the input has no `;` so jsmql would
-lower it as a Filter — almost certainly not what you want.
-Add a trailing `;` to make this a Pipeline: `$match(…);`.
-```
+| Input | AST after parse | Output |
+|---|---|---|
+| `$match($.age > 18)` (no `;`) | `OperatorCall { $match }` (bare `Expr`) | `[{ $match: { age: { $gt: 18 } } }]` — auto-wrap |
+| `$match($.age > 18);` | `Pipeline { stmts: [OperatorCall] }` | `[{ $match: { age: { $gt: 18 } } }]` — explicit |
+| `{ $match: $.age > 18 }` (no `;`) | `ObjectLiteral` (bare `Expr`) | `[{ $match: { age: { $gt: 18 } } }]` — auto-wrap |
 
-Without this guard, the user's `jsmql("$match($.age > 18)")` would silently produce `{ $expr: { $match: { $eq: ["$age", 18] } } }` — a syntactically valid Filter, but `$match` isn't an aggregation expression, so the document is useless at query time. The guard converts that silent footgun into an actionable error.
+Re-using `generateImplicitPipeline` means stage-specific behaviour (the `$match` index-friendly query-translator; sub-pipeline recursion for `$lookup` / `$unionWith` / `$facet`; the let-binding scope rules) runs identically to the explicit `;` path. Auto-wrap is purely a surface-syntax accommodation — the lowering machinery is unchanged.
 
-The guard runs *before* `translateMatchBody` so the user sees the most relevant error first.
+Without this auto-wrap, the bare expression would silently produce `{ $expr: { $match: { $eq: ["$age", 18] } } }` — a syntactically valid Filter, but `$match` isn't an aggregation expression, so the document is useless at query time. Earlier revisions of this spec threw a `CodegenError("$match is a Pipeline stage, … add a trailing ;")` from `generateFilter` to catch the same footgun, but a throw is a worse DX than a silent right-thing: the user's straightforward expression now compiles to the right MQL instead of failing with an error message they'd then have to act on.
+
+`jsmql.expr()` deliberately does **not** auto-wrap. A stage call passed to `jsmql.expr()` is unusual enough that silently routing through Pipeline mode there would mask a real mistake — `jsmql.expr()`'s contract is "raw aggregation expression," and stages aren't aggregation expressions.
 
 ## Function form
 

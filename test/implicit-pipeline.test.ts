@@ -90,19 +90,18 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
     expect(jsmql("delete $.tmp")).toEqual([{ $unset: "tmp" }]);
   });
 
-  it("bare stage call without `;` throws with a `;` suggestion", () => {
-    // Filter dispatch detects that `$match(...)` at the top level is Pipeline
-    // intent without the `;` flag. Rather than silently wrap it in `$expr`
-    // (which would produce a useless `{ $expr: { $match: ... } }` Filter), the
-    // guard throws a precise error suggesting the missing semicolon.
-    expect(() => jsmql("$match($.a === 0)")).toThrow(/`\$match` is a Pipeline stage/);
-    expect(() => jsmql("$match($.a === 0)")).toThrow(/Add a trailing `;`/);
+  it("bare stage call without `;` auto-wraps as a Pipeline", () => {
+    // A top-level `$match(...)` is Pipeline intent. Rather than throwing or
+    // silently producing `{ $expr: { $match: ... } }` (a useless Filter),
+    // jsmql() auto-wraps the stage as a one-element Pipeline — no `;`
+    // discipline required at the call site.
+    expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });
 
-  it("bare stage-object literal without `;` throws with the same suggestion", () => {
+  it("bare stage-object literal without `;` auto-wraps the same way", () => {
     // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
     // detect as Pipeline intent.
-    expect(() => jsmql("{ $match: $.a === 0 }")).toThrow(/`\$match` is a Pipeline stage/);
+    expect(jsmql("{ $match: $.a === 0 }")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("comma-grouped chain without `;` coalesces and wraps as a one-stage pipeline", () => {

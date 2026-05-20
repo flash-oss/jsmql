@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-21 — Bare stage call auto-wraps as a one-stage Pipeline (no `;` required)
+
+`jsmql("$match($.age > 18)")` now returns `[{ $match: { age: { $gt: 18 } } }]` instead of throwing `CodegenError("$match is a Pipeline stage, … add a trailing ;")`. Same auto-wrap applies to every registered stage (`$project`, `$sort`, `$limit`, `$group`, …) and to the Compass copy-paste form `{ $match: ... }`. The `;`-suffixed form keeps working and produces identical output. `jsmql.expr()` is **not** changed — passing a stage call to it stays a misuse case, since `jsmql.expr`'s contract is "raw aggregation expression" and stages are not aggregation expressions.
+
+Motivation: a user wrote `$match(...)` at the top level and got an error telling them what they did wrong instead of the right MQL. The `;` was bookkeeping the surface didn't need. The original guard (DEVLOG 2026-05-19, "Filter dispatch: reject bare stage calls with a `;` suggestion") existed to prevent the silent footgun where the same input would otherwise produce `{ $expr: { $match: ... } }` — a syntactically valid Filter that MongoDB can't execute. But "throw with a fix-it message" was the second-cleanest option; "just do the right thing" is the cleanest. **More code = bad DX, less code = good DX** (from root [CLAUDE.md](../CLAUDE.md)) — applied to the keystrokes users have to type, not just to the MQL output.
+
+Implementation in [src/index.ts](../src/index.ts): a four-condition check at the top of `lowerWithCtx` (not Pipeline, not UpdateFilter, not array-literal Pipeline, but **is** stage intent) constructs a synthetic `Pipeline` AST node (`{ type: "Pipeline", stmts: [ast], pos: ast.pos }`) and routes it through `generateImplicitPipeline`. So stage-specific behaviour (the `$match` index-friendly query translator; `$lookup` / `$unionWith` / `$facet` sub-pipeline recursion; let-binding scope rules) runs through exactly the same path it would in an explicit `;`-separated pipeline. The throw in `generateFilter` is gone; the function's contract is now "lower a Filter document" rather than "lower a Filter document or throw if Pipeline-intent is detected". `detectStageIntent` stays as a helper.
+
+Test impact: the five existing tests asserting `toThrow(/Pipeline stage/)` — three in `test/codegen.test.ts`'s `stage-call-without-\`;\` guard` describe and two in `test/implicit-pipeline.test.ts` — were rewritten to expect the wrapped Pipeline output. The describes were renamed (`"stage-call-without-\`;\` guard"` → `"bare stage call auto-wraps as a one-stage Pipeline"`) and surrounding comments updated to reflect the new behaviour. All 1025 tests pass.
+
+Doc updates: [docs/LANGUAGE.md](LANGUAGE.md) § Output dispatch was restructured — the rule table now reads "stage call / update filter / `;` / anything else" instead of the binary `;` vs no-`;`. The new "Stage call → Pipeline (no `;` required)" subsection sits between the Filter and multi-stage Pipeline sections. The function-form subsection now shows an expression-body arrow with a stage-call body as the third example. [README.md](../README.md)'s Highlights bullet was rephrased from "Filter vs Pipeline by the semicolon" to "Filter vs Pipeline picked automatically" with the new dispatch table embedded in prose. [docs/specs/filter-mode.md](specs/filter-mode.md) replaced the "Stage-call-without-`;` guard" section with a "Stage-call auto-wrap" section. Also added a new rule to root [CLAUDE.md](../CLAUDE.md) — **Maintain README.md** — so every observable library change must update the README in the same commit.
+
+Pre-1.0 breaking output-shape change for one input shape (`jsmql("$match(...)")` used to throw, now returns an array). No grammar, AST, or runtime semantics change beyond the dispatch routing.
+
+---
+
 ## 2026-05-20 — `jsmql()` always returns a pipeline for update-filter inputs
 
 Single-statement update filters through `jsmql()` now lower to a **one-element pipeline array** (`[{ $set: { …RHS… } }]`) instead of the bare update document (`{ $set: { …RHS… } }`). Multi-statement update filters were already arrays; this change makes the single-statement case match. `jsmql.expr()` is **not** changed — it still produces the bare-doc shape for callers that want a building block to embed elsewhere.
