@@ -54,9 +54,10 @@ ESM + CJS, runs in browsers, zero dependencies. Works with **Node 14+**, Deno, a
 import "@koresar/jsmql/ops";          // ambient $-prefixed globals — autocomplete for 182 MQL ops & every stage
 import { jsmql } from "@koresar/jsmql";
 
-// Arrow form — your formatter handles long expressions.
-// No `;` at top level → Filter (the doc db.coll.find(filter) takes).
-jsmql(($) => $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
+// Arrow form — your prettier/oxfmt handles formatting.
+// No `;` at top level → query Filter (the doc db.coll.find(filter) takes).
+jsmql(($) => $.email === $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
+// → {"$expr":{"$eq":["$email",{"$eq":[{"$substrCP":[{"$toLower":{"$trim":{"input":"$email"}}},{"$subtract":[{"$strLenCP":{"$toLower":{"$trim":{"input":"$email"}}}},{"$strLenCP":"@flash-payments.com"}]},{"$strLenCP":"@flash-payments.com"}]},"@flash-payments.com"]}]}}
 
 // Pipelines — any `;` flips to stage mode (the array db.coll.aggregate(pipeline) takes).
 jsmql(($) => {
@@ -64,14 +65,17 @@ jsmql(($) => {
   $group({ _id: $.shopId, total: { $sum: $.amount } });
   $sort({ total: -1 });
 });
+// → [{ "$match": { "age": { "$gte": 18 }, "region": "AU" } }, { "$group": { "_id": "$shopId", "total": { "$sum": "$amount" } } }, { "$sort": { "total": -1 } }]
 
 // Optional chaining is a real safety annotation, not a syntactic hint:
 jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
+//  { "$expr": { "$in": ["$userId", { "$concatArrays": ["$mods", { "$ifNull": ["$room.mods", []] }, ["root"]] }] } }
 // compiles with $ifNull wrappers exactly where a null would crash a downstream operator.
 
 // Template-tag — interpolate runtime literals from outer scope
 const ids = [1, 2, 3];
 jsmql`$.status === "open" && $.id in ${ids}`
+// → { "status": "open", "$expr": { "$in": ["$id", [1, 2, 3]] } }
 
 // jsmql.compile — parse once, bind many. Output stays index-friendly.
 const eligible = jsmql.compile(({ minAge, region }, $) => {
@@ -81,27 +85,38 @@ const eligible = jsmql.compile(({ minAge, region }, $) => {
 eligible({ minAge: 21, region: "AU" });
 // → [{"$match":{"age":{"$gte":21},"region":"AU"}},{"$project":{"age":1,"email":1,"address":1}}]
 
-// Update filters — JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
+// JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
 jsmql(($) => {
   $.score += 1;
   delete $.tempToken;
   $.status = "done";
 });
+// → [{ "$set": { "score": { "$add": ["$score", 1] } } }, { "$unset": "tempToken" }, { "$set": { "status": "done" } }]
 
-// updateOne — `jsmql()` returns an aggregation pipeline so computed RHS evaluates server-side
-db.users.updateOne({ _id: 1 }, jsmql(($) => $.name = $.name.toUpperCase()))
-// → [{ "$set": { "name": { "$toUpper": "$name" } } }]
+// `jsmql()` returns an UpdateFilter as a pipeline, to avoid common footgun of wiping out the whole collection.
+db.users.updateMany({}, jsmql(($) => $.name = $.name.toUpperCase()))
+// → [{ "$set": { "name": { "$toUpper": "$name" } } }] -> will upper-case all names in the collection
+
+// `jsmql.expr()` returns a partial MQL JSON. Won't protect from the same footgun.
+db.users.updateMany({}, jsmql.expr(($) => $.name = $.name.toUpperCase()))
+// → { "$set": { "name": { "$toUpper": "$name" } } } -> will WIPE OUT all names in the collection
 
 // Raw expression — for embedding inside a hand-written stage body
 const stage = { $addFields: { discount: jsmql.expr(($) => $.price * (1 - $.loyalty.multiplier)) } }
 // → { $addFields: { discount: { $multiply: ["$price", { $subtract: [1, "$loyalty.multiplier"] }] } } }
 
-// Escape hatch — call any MongoDB operator directly
-jsmql.expr(($) => $dateTrunc({ date: $.createdAt, unit: "week" }))
-// → { "$dateTrunc": { "date": "$createdAt", "unit": "week" } }
+// Escape hatch — call any MongoDB operator as a function - $dateTrunc in this case
+jsmql.expr(($) => $set({ createdAtWeek: $dateTrunc({ date: $.createdAt, unit: "week" }) }))
+// → { $set: { "createdAtWeek": { "$dateTrunc": { "date": "$createdAt", "unit": "week" } } } }
+
+jsmql(($) => $.age = 18); // generates a pipeline, to make sure you can use this in updateOne(), updateMany(), etc
+// → [{ "$set": { "age": 18 } }]
+jsmql.expr(($) => $.age = 18); // generates an partial expression, to use within OTHER aggregation or filter expressions
+// → { "$set": { "age": 18 }
 
 // Validate without throwing — every error carries { message, pos, code }
-jsmql.validate(($) => $.age > 18) // → { valid: true, errors: [] }
+jsmql.validate(($) => $.age > 18)
+// → { valid: true, errors: [] }
 ```
 
 The **[live playground](https://flash-oss.github.io/jsmql/playground.html)** is the best place to see dozens of other JSMQL examples.
