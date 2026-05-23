@@ -7,6 +7,7 @@ import {
   EMPTY_CTX,
   UnknownIdentifierError,
   withBindings,
+  isOpaqueBsonValue,
   type GenerateCtx,
 } from "./codegen.ts";
 import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
@@ -106,17 +107,24 @@ function dispatchInput(
   input: JsmqlInput | TemplateStringsArray,
   values: unknown[],
   apiName: string,
-  lower: (program: Program) => JsmqlOutput,
+  lower: (program: Program, ctx: GenerateCtx) => JsmqlOutput,
 ): JsmqlOutput {
   if (isTemplateStringsArray(input)) {
+    // Opaque BSON instances (Date, RegExp, Buffer, ObjectId) can't be embedded
+    // as JSON literals — `JSON.stringify(new Date(...))` yields an ISO string,
+    // `JSON.stringify(/x/)` yields `"{}"`. Route them through a synthesized
+    // ParamRef binding instead, so the value reaches MQL output as-is. Plain
+    // JSON-shaped values still go through `JSON.stringify` (unchanged).
     let src = "";
+    const opaqueBindings = new Map<string, unknown>();
     for (let i = 0; i < input.length; i++) {
       src += input[i];
       if (i < values.length) {
-        src += stringifyInterpolation(values[i], i + 1);
+        src += stringifyInterpolation(values[i], i + 1, opaqueBindings);
       }
     }
-    return lower(new Parser(src).parse());
+    const ctx = opaqueBindings.size > 0 ? withBindings(EMPTY_CTX, opaqueBindings) : EMPTY_CTX;
+    return lower(new Parser(src).parse(), ctx);
   }
   if (typeof input === "function") {
     const src = Function.prototype.toString.call(input).trim();
@@ -132,13 +140,13 @@ function dispatchInput(
             "or remove the destructure pattern from the arrow's first slot.",
         );
       }
-      return lower(program);
+      return lower(program, EMPTY_CTX);
     } catch (err) {
       throw augmentForFunctionInput(err);
     }
   }
   if (typeof input === "string") {
-    return lower(new Parser(input).parse());
+    return lower(new Parser(input).parse(), EMPTY_CTX);
   }
   // Polymorphism widens the runtime input space — without this guard, a
   // wrong-typed call (e.g. `jsmql(42)`, `jsmql({})`) would crash deep inside
@@ -151,7 +159,7 @@ function dispatchInput(
 function jsmqlDispatch(input: JsmqlInput): JsmqlOutput;
 function jsmqlDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
 function jsmqlDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
-  return dispatchInput(input, values, "jsmql", lower);
+  return dispatchInput(input, values, "jsmql", lowerWithCtx);
 }
 
 /**
@@ -170,7 +178,7 @@ function jsmqlDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unkn
 function exprDispatch(input: JsmqlInput): JsmqlOutput;
 function exprDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
 function exprDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
-  return dispatchInput(input, values, "jsmql.expr", lowerExpr);
+  return dispatchInput(input, values, "jsmql.expr", lowerExprWithCtx);
 }
 
 /**
@@ -320,11 +328,109 @@ export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {
 //     bare text "undefined" which the parser then misreads as an identifier.
 //   - silently coerces non-finite numbers to "null", losing the user's intent.
 //   - throws TypeError for BigInt values and circular references.
-function stringifyInterpolation(value: unknown, slot: number): string {
-  validateInterpolatable(value, slot);
-  // After validateInterpolatable, JSON.stringify is guaranteed to produce a
-  // string (no `undefined` return, no throw, no silent NaN→null coercion).
-  return JSON.stringify(value)!;
+//
+// A fourth failure mode is fidelity loss: `JSON.stringify(new Date(...))`
+// returns an ISO string (which BSON compares as a string, not a date),
+// `JSON.stringify(/x/)` returns `"{}"`, etc. For opaque BSON instances —
+// `Date`, `RegExp`, `Uint8Array`/Buffer, duck-typed `ObjectId` — the
+// original JS instance is routed through a synthesized `ParamRef` binding
+// so the MQL output carries it verbatim. Works at the top of an
+// interpolation slot *and* arbitrarily deep inside an interpolated
+// object/array — e.g. `jsmql\`… ${{ since: new Date(...) }}\`` keeps the
+// nested Date as a Date.
+
+// U+E000 is a Unicode Private Use Area code point — Unicode reserves these
+// for private-use sentinels with no defined meaning, JSON.stringify passes
+// them through unescaped, and they essentially never appear in real user
+// data. Used to wrap an injected binding-name string so we can find-and-
+// replace markers after JSON.stringify produces the source fragment.
+const OPAQUE_INTERP_MARKER = "";
+
+function stringifyInterpolation(value: unknown, slot: number, opaqueBindings: Map<string, unknown>): string {
+  if (!containsOpaqueBsonAnywhere(value)) {
+    // Fast path: pure JSON-shaped value. After validateInterpolatable, JSON.stringify
+    // is guaranteed to produce a string (no `undefined` return, no throw, no silent
+    // NaN→null coercion at top level).
+    validateInterpolatable(value, slot);
+    return JSON.stringify(value)!;
+  }
+  // Slow path: at least one opaque BSON instance lives somewhere in the value.
+  // Substitute each instance with a marker string carrying a unique binding
+  // name, JSON-stringify the rewritten tree (so the surrounding JSON-shaped
+  // parts get the same serialization as the fast path), then replace the
+  // markers in the output with bare identifiers — which the parser resolves
+  // as `ParamRef`s and the binding map carries through to codegen.
+  const state = { counter: 0, seen: new WeakSet<object>() };
+  const substituted = substituteOpaqueValues(value, slot, opaqueBindings, state);
+  // `substituted` is a pure-JSON tree (the original BSON instances replaced
+  // with marker strings), so the existing validation still applies — non-
+  // finite top-level numbers, circular references in the surviving structure,
+  // BigInt anywhere, etc. all surface here.
+  validateInterpolatable(substituted, slot);
+  const jsonWithMarkers = JSON.stringify(substituted)!;
+  // Each opaque value appears in the JSON output as `"<M><name><M>"` (JSON-
+  // quoted because the substitute was a string). The lookup against the
+  // bindings map disambiguates against the (theoretical) edge case of a user-
+  // supplied string that happens to look like a marker pair around a known
+  // binding name.
+  const markerPattern = new RegExp(`"${OPAQUE_INTERP_MARKER}([A-Za-z_][A-Za-z0-9_]*)${OPAQUE_INTERP_MARKER}"`, "g");
+  return jsonWithMarkers.replace(markerPattern, (match, name) => (opaqueBindings.has(name) ? name : match));
+}
+
+/**
+ * True iff `value` is — or transitively contains — an opaque BSON instance.
+ * Used to pick between the fast (pure-JSON) and slow (substitute-then-
+ * stringify) interpolation paths. Cycle-safe: re-encountering a previously-
+ * seen object returns `false`, leaving the cycle to be caught later by
+ * JSON.stringify when either path runs.
+ */
+function containsOpaqueBsonAnywhere(value: unknown, seen?: WeakSet<object>): boolean {
+  if (isOpaqueBsonValue(value)) return true;
+  if (value === null || typeof value !== "object") return false;
+  const s = seen ?? new WeakSet<object>();
+  if (s.has(value)) return false;
+  s.add(value);
+  if (Array.isArray(value)) {
+    for (const v of value) if (containsOpaqueBsonAnywhere(v, s)) return true;
+    return false;
+  }
+  for (const v of Object.values(value)) if (containsOpaqueBsonAnywhere(v, s)) return true;
+  return false;
+}
+
+/**
+ * Walk `value`, replacing every opaque BSON instance with a marker string
+ * carrying a freshly-allocated `__jsmql_interp_<slot>_<n>` binding name.
+ * Records the original instance under that name in `bindings`. Plain JSON
+ * values pass through unchanged so the surrounding tree retains the exact
+ * shape JSON.stringify would have produced for the fast path.
+ */
+function substituteOpaqueValues(
+  value: unknown,
+  slot: number,
+  bindings: Map<string, unknown>,
+  state: { counter: number; seen: WeakSet<object> },
+): unknown {
+  if (isOpaqueBsonValue(value)) {
+    state.counter += 1;
+    const name = `__jsmql_interp_${slot}_${state.counter}`;
+    bindings.set(name, value);
+    return `${OPAQUE_INTERP_MARKER}${name}${OPAQUE_INTERP_MARKER}`;
+  }
+  if (value === null || typeof value !== "object") return value;
+  // Cycle: return the value as-is so JSON.stringify surfaces the standard
+  // "Converting circular structure to JSON" error (re-thrown as
+  // `JsmqlInterpolationError` by `validateInterpolatable`).
+  if (state.seen.has(value)) return value;
+  state.seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((v) => substituteOpaqueValues(v, slot, bindings, state));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = substituteOpaqueValues(v, slot, bindings, state);
+  }
+  return out;
 }
 
 /**
@@ -490,14 +596,6 @@ function detectStageIntent(ast: Expr): string | null {
     }
   }
   return null;
-}
-
-function lower(ast: Program): JsmqlOutput {
-  return lowerWithCtx(ast, EMPTY_CTX);
-}
-
-function lowerExpr(ast: Program): JsmqlOutput {
-  return lowerExprWithCtx(ast, EMPTY_CTX);
 }
 
 /**

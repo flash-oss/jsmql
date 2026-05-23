@@ -17,6 +17,7 @@
 // as Expr nodes; the caller re-enters `generate()` on them.
 
 import type { Expr, BinaryOp } from "./ast.ts";
+import { isOpaqueBsonValue } from "./codegen.ts";
 
 export type MatchTranslation = {
   /** The translated query-language fragment. Empty when nothing translated. */
@@ -350,6 +351,12 @@ function flipOrderedOp(op: ">" | ">=" | "<" | "<="): ">" | ">=" | "<" | "<=" {
  *     isn't a thing in jsmql today.
  *   - BigInt literals compile to `{ $toLong: "..." }` in aggregation form,
  *     which the query language doesn't recognise as a value.
+ *
+ * `NewDate` (and `Date.UTC` inside `new Date(...)`) is accepted *when its
+ * arguments are all compile-time literals* — the value is then folded to a
+ * real JS `Date` instance. The aggregation form `{ $toDate: "..." }` is NOT
+ * accepted as a query-doc value, because MongoDB's query language treats it
+ * as a literal subdocument key, not an evaluable expression.
  */
 function anyEqualityLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | null {
   switch (expr.type) {
@@ -363,16 +370,20 @@ function anyEqualityLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } |
       return { value: null };
     case "ParamRef":
       return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ false);
+    case "NewDate":
+      return evaluateStaticDate(expr);
     default:
       return null;
   }
 }
 
 /**
- * Ordered comparisons (`>`, `<`, `>=`, `<=`) only make sense against numbers
- * and strings. Booleans and nulls are almost certainly user bugs in this
- * position — let them fall through to $expr so the (rare) intentional case
- * still works.
+ * Ordered comparisons (`>`, `<`, `>=`, `<=`) only make sense against numbers,
+ * strings, and dates. Booleans and nulls are almost certainly user bugs in
+ * this position — let them fall through to $expr so the (rare) intentional
+ * case still works. `NewDate` with all-literal args folds to a `Date` value,
+ * which BSON compares as a date — index-friendly form for the common
+ * `$.createdAt >= new Date("…")` pattern.
  */
 function anyOrderedLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | null {
   switch (expr.type) {
@@ -382,9 +393,63 @@ function anyOrderedLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | 
       return { value: expr.value };
     case "ParamRef":
       return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ true);
+    case "NewDate":
+      return evaluateStaticDate(expr);
     default:
       return null;
   }
+}
+
+/**
+ * Compile-time-evaluate a `new Date(...)` (or `new Date(Date.UTC(...))`) when
+ * all arguments are themselves number/string literals. Returns the resulting
+ * `Date` so the translator can place it directly as a query-doc value —
+ * MongoDB's driver and shell both accept BSON `Date` instances on the RHS of
+ * `$gte` / `$gt` / `$lt` / `$lte` / equality, which is what makes the index
+ * usable.
+ *
+ * Cases that intentionally fall through to `$expr` (return null):
+ *   - `new Date()` — codegens to `{ $toDate: "$$NOW" }` and must evaluate at
+ *     query time. Folding at compile time would silently freeze the timestamp
+ *     the user expected to be "now-when-this-query-runs".
+ *   - any non-literal argument (field ref, operator call, method call, …) —
+ *     can't be evaluated without runtime data.
+ *   - any combination that produces `Invalid Date` — surface as `$expr` so
+ *     the failure is visible at query time rather than as a silently bogus
+ *     filter that matches nothing.
+ */
+function evaluateStaticDate(expr: Expr & { type: "NewDate" }): { value: Date } | null {
+  const args = expr.args;
+  if (args.length === 0) return null;
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      const utcArgs = staticNumberArgs(arg.args);
+      if (utcArgs === null) return null;
+      const ms = (Date.UTC as (...a: number[]) => number)(...utcArgs);
+      return finalizeDate(new Date(ms));
+    }
+    if (arg.type === "NumberLiteral") return finalizeDate(new Date(arg.value));
+    if (arg.type === "StringLiteral") return finalizeDate(new Date(arg.value));
+    return null;
+  }
+  const numericArgs = staticNumberArgs(args);
+  if (numericArgs === null) return null;
+  return finalizeDate(new Date(...(numericArgs as [number, number, ...number[]])));
+}
+
+function staticNumberArgs(args: Expr[]): number[] | null {
+  const out: number[] = [];
+  for (const a of args) {
+    if (a.type !== "NumberLiteral") return null;
+    out.push(a.value);
+  }
+  return out;
+}
+
+function finalizeDate(d: Date): { value: Date } | null {
+  if (Number.isNaN(d.getTime())) return null;
+  return { value: d };
 }
 
 /**
@@ -402,15 +467,26 @@ function paramRefAsLiteral(
   if (!ctx.bindings?.has(expr.name)) return null;
   const value = ctx.bindings.get(expr.name);
   if (orderedOnly) {
-    if (typeof value !== "number" && typeof value !== "string") return null;
+    // Ordered comparisons accept numbers, strings, and `Date` instances —
+    // `Date` so `jsmql.compile(($) => $.createdAt >= params.cutoff)({ cutoff: new Date(…) })`
+    // emits index-friendly field-form instead of $expr.
+    if (typeof value !== "number" && typeof value !== "string" && !(value instanceof Date)) return null;
   } else {
     // Equality-side: accept the same primitives the literal-AST path accepts,
-    // and refuse arrays/objects (their `==` semantics in MQL query language
-    // diverge sharply from JS).
-    const ok = value === null || typeof value === "number" || typeof value === "string" || typeof value === "boolean";
-    if (!ok) return null;
+    // plus BSON-comparable instance values (Date, RegExp, Buffer / Uint8Array,
+    // and duck-typed ObjectId). Refuses plain arrays/objects — those would
+    // silently switch on query-language array-element matching or be matched
+    // as literal subdocs, both surprising.
+    if (!isQueryDocLiteralValue(value)) return null;
   }
   return { value };
+}
+
+function isQueryDocLiteralValue(value: unknown): boolean {
+  if (value === null) return true;
+  const t = typeof value;
+  if (t === "number" || t === "string" || t === "boolean") return true;
+  return isOpaqueBsonValue(value);
 }
 
 /**

@@ -222,6 +222,18 @@ describe("users with a non-null email", { features: ["Filters"] }, () => {
   });
 });
 
+describe("payments since a cutoff (Date folded into query doc)", { features: ["Filters"] }, () => {
+  // `new Date(<literal>)` is folded to a real JS Date at compile time, so the
+  // `createdAt` index is still usable — the comparison stays at the top level
+  // instead of being trapped inside an `$expr`.
+  it("compiles to the expected MQL", { kind: "filter", usage: "db.payments.find(jsmql(...))" }, () => {
+    expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)).toEqual({
+      method: "postalDelivery",
+      createdAt: { $gte: new Date("2026-01-01") },
+    });
+  });
+});
+
 describe("typeof check for documents with an object profile", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
     expect(jsmql(`typeof $.profile === "object" && $.status === "active"`)).toEqual({

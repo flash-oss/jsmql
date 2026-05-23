@@ -41,6 +41,7 @@ The caller in `src/pipeline.ts:generateStageBody` emits:
 | `BinaryExpr(!=, FieldRef f, NullLiteral)` (and order-flipped) | `{ [f.path]: { $ne: null } }` — loose, excludes both |
 | `BinaryExpr(==\|!=, …, non-null …)` | **not translated** — codegen rejects with a "use ===" error when the body ultimately falls back to `$expr` |
 | `BinaryExpr(>\|>=\|<\|<=, FieldRef f, Num/Str literal)` (and order-flipped, with operator flipped accordingly) | `{ [f.path]: { $gt: <value> } }` (etc.) |
+| `BinaryExpr(=== \| !== \| >\|>=\|<\|<=, FieldRef f, NewDate)` where all `NewDate` (and any nested `DateUTC`) args are number/string literals | `{ [f.path]: { $gte: <Date instance> } }` (etc.) — folded at translate time |
 | `BinaryExpr(&&, A, B)` | recurse; merge query docs (object-merge if disjoint; `$and` array if keys collide); concat residuals into a synthetic `A && B` residual |
 | `BinaryExpr(\|\|, A, B)` | recurse; both branches must fully translate (no residual, non-empty query); emit `{ $or: [<A>, <B>] }`. Otherwise the whole `\|\|` becomes a residual. |
 | Everything else | residual (caller wraps in `$expr`) |
@@ -53,13 +54,15 @@ The caller in `src/pipeline.ts:generateStageBody` emits:
 
 - *Equality* (`===`/`==`/`!==`/`!=`): `NumberLiteral`, `StringLiteral`, `BooleanLiteral`, `NullLiteral`.
 - *Ordered* (`>`/`>=`/`<`/`<=`): `NumberLiteral`, `StringLiteral` only — booleans and nulls in this position are almost certainly user bugs; let them fall through to `$expr` for visibility.
+- `NewDate` (both equality and ordered) **when all its arguments are themselves compile-time literals** — `new Date("2026-01-01")`, `new Date(2026, 0, 1)`, and `new Date(Date.UTC(2026, 0, 1))` are folded to real JS `Date` instances at translate time and placed directly in the query-doc value slot. `new Date()` (zero-arg) and `new Date($.someField)` keep their `{ $toDate: ... }` aggregation form and fall back to `$expr`. The fold is also gated on the result being a valid date — `new Date("nonsense")` falls through so the failure surfaces at query time rather than producing a silently bogus filter. See [filter-mode.md](filter-mode.md) for worked examples.
+- `ParamRef` (function-form bindings via `jsmql.compile`) when its bound value is a query-doc-compatible BSON value: number, string, boolean, null, `Date`, `RegExp` (equality only), `Uint8Array`/`Buffer` (equality only), or duck-typed ObjectId (`_bsontype === "ObjectID"` / `"ObjectId"`, equality only).
 
 **Literal types rejected**:
 
 - `BigIntLiteral` — compiles to `{ $toLong: "..." }` in aggregation form; the query language doesn't recognise that as a value.
 - `ArrayLiteral` — would silently switch on query-language array-element matching; too surprising. Documented as an escape-hatch case.
-- `RegexLiteral` — regex equality isn't a thing in jsmql; method dispatch via `.match()` / `.test()` is the supported surface.
-- Any non-literal (operator call, method call, ternary, template literal, etc.) — these need computed evaluation and only work under `$expr`.
+- `RegexLiteral` — regex equality isn't a thing in jsmql; method dispatch via `.match()` / `.test()` is the supported surface. (A `RegExp` value passed through a `jsmql.compile` binding IS accepted, since the user has explicitly opted in by passing a runtime regex.)
+- Any non-literal (operator call, method call, ternary, template literal, etc.) — these need computed evaluation and only work under `$expr`. **`{ $toDate: ... }` and other aggregation expressions are not query-doc values**: MongoDB compares the literal subdocument, not the evaluated value. This is the reason we fold `new Date(<static-args>)` ourselves rather than emitting `{ $toDate: ... }` into the query-doc slot.
 
 ## Partial extraction under `&&`
 

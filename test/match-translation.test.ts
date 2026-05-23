@@ -214,3 +214,92 @@ describe("$match translation — escape hatch", () => {
     ]);
   });
 });
+
+describe("$match translation — `new Date(...)` RHS (compile-time fold)", () => {
+  // MongoDB's query language doesn't evaluate aggregation expressions in
+  // operator value slots — `{ $gte: { $toDate: "..." } }` would be compared
+  // as a literal subdoc, never matching anything. When the `new Date(...)`
+  // arguments are themselves compile-time literals we fold to a real Date
+  // instance, which BSON compares as a date — index-friendly form.
+
+  it("translates `>=` against `new Date(stringLiteral)` to field-form Date", () => {
+    expect(jsmql('[$match($.createdAt >= new Date("2026-01-01"))]')).toEqual([
+      { $match: { createdAt: { $gte: new Date("2026-01-01") } } },
+    ]);
+  });
+
+  it("translates the bug-report shape in bare Filter mode", () => {
+    expect(jsmql('$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")')).toEqual({
+      method: "postalDelivery",
+      createdAt: { $gte: new Date("2026-01-01") },
+    });
+  });
+
+  it("translates `>`, `<`, `<=` and equality the same way", () => {
+    expect(jsmql('[$match($.createdAt > new Date("2026-01-01"))]')).toEqual([
+      { $match: { createdAt: { $gt: new Date("2026-01-01") } } },
+    ]);
+    expect(jsmql('[$match($.createdAt < new Date("2026-01-01"))]')).toEqual([
+      { $match: { createdAt: { $lt: new Date("2026-01-01") } } },
+    ]);
+    expect(jsmql('[$match($.createdAt <= new Date("2026-01-01"))]')).toEqual([
+      { $match: { createdAt: { $lte: new Date("2026-01-01") } } },
+    ]);
+    expect(jsmql('[$match($.startedAt === new Date("2026-01-01"))]')).toEqual([
+      { $match: { startedAt: new Date("2026-01-01") } },
+    ]);
+    expect(jsmql('[$match($.startedAt !== new Date("2026-01-01"))]')).toEqual([
+      { $match: { startedAt: { $ne: new Date("2026-01-01") } } },
+    ]);
+  });
+
+  it("flips the operator when `new Date` is on the left", () => {
+    expect(jsmql('[$match(new Date("2026-01-01") <= $.createdAt)]')).toEqual([
+      { $match: { createdAt: { $gte: new Date("2026-01-01") } } },
+    ]);
+  });
+
+  it("folds the date-from-parts form (all-numeric args)", () => {
+    expect(jsmql("[$match($.createdAt >= new Date(2026, 0, 1))]")).toEqual([
+      { $match: { createdAt: { $gte: new Date(2026, 0, 1) } } },
+    ]);
+  });
+
+  it("folds `new Date(Date.UTC(...))` for UTC-anchored dates", () => {
+    expect(jsmql("[$match($.createdAt >= new Date(Date.UTC(2026, 0, 1)))]")).toEqual([
+      { $match: { createdAt: { $gte: new Date(Date.UTC(2026, 0, 1)) } } },
+    ]);
+  });
+
+  it("falls back to $expr for `new Date()` (zero-arg — must evaluate at query time)", () => {
+    // `new Date()` codegens to `{ $toDate: "$$NOW" }` and folding it at
+    // compile time would freeze the timestamp. Must stay in $expr.
+    expect(jsmql("[$match($.expiresAt < new Date())]")).toEqual([
+      { $match: { $expr: { $lt: ["$expiresAt", { $toDate: "$$NOW" }] } } },
+    ]);
+  });
+
+  it("falls back to $expr when an argument is a field ref", () => {
+    expect(jsmql("[$match($.createdAt >= new Date($.cutoffStr))]")).toEqual([
+      { $match: { $expr: { $gte: ["$createdAt", { $toDate: "$cutoffStr" }] } } },
+    ]);
+  });
+
+  it("falls back to $expr when the string would produce Invalid Date", () => {
+    // We don't translate to a bogus filter that silently matches nothing —
+    // letting $expr run surfaces the failure when the query actually executes.
+    expect(jsmql('[$match($.createdAt >= new Date("not-a-date"))]')).toEqual([
+      { $match: { $expr: { $gte: ["$createdAt", { $toDate: "not-a-date" }] } } },
+    ]);
+  });
+
+  it("merges with other clauses under && and uses $and on key collision", () => {
+    expect(jsmql('[$match($.createdAt >= new Date("2026-01-01") && $.createdAt < new Date("2026-02-01"))]')).toEqual([
+      {
+        $match: {
+          $and: [{ createdAt: { $gte: new Date("2026-01-01") } }, { createdAt: { $lt: new Date("2026-02-01") } }],
+        },
+      },
+    ]);
+  });
+});

@@ -348,6 +348,262 @@ describe("jsmql template-tag form", () => {
   it("works with no interpolations (template-tag detection survives empty values)", () => {
     expect(jsmql.expr`$.age > 18`).toEqual({ $gt: ["$age", 18] });
   });
+
+  describe("opaque BSON value interpolation", () => {
+    // JSON.stringify mangles these instances — `new Date(...)` becomes an ISO
+    // string (BSON compares as a string), `RegExp` becomes "{}", `Uint8Array`
+    // becomes a sparse object. The template-tag path routes them through a
+    // synthesized ParamRef binding so the original instance reaches the MQL
+    // output untouched — that's the shape MongoDB's driver expects in-situ.
+
+    it("Date interpolation lands in query-doc form as a real Date", () => {
+      const cutoff = new Date("2026-01-01");
+      const out = jsmql`$.method === ${"postalDelivery"} && $.createdAt >= ${cutoff}` as {
+        method: string;
+        createdAt: { $gte: Date };
+      };
+      expect(out).toEqual({ method: "postalDelivery", createdAt: { $gte: cutoff } });
+      expect(out.createdAt.$gte).toBeInstanceOf(Date);
+      expect(out.createdAt.$gte.getTime()).toBe(cutoff.getTime());
+    });
+
+    it("RegExp interpolation lands in query-doc form as a real RegExp", () => {
+      const pat = /^alice/i;
+      const out = jsmql`$.username === ${pat}` as { username: RegExp };
+      expect(out.username).toBe(pat);
+    });
+
+    it("Uint8Array interpolation passes through unchanged", () => {
+      const buf = new Uint8Array([1, 2, 3]);
+      const out = jsmql`$.payload === ${buf}` as { payload: Uint8Array };
+      expect(out.payload).toBe(buf);
+    });
+
+    it("ObjectId duck-typed (legacy _bsontype: 'ObjectID') passes through unchanged", () => {
+      const oid = { _bsontype: "ObjectID", id: "abc" };
+      const out = jsmql`$._id === ${oid}` as { _id: typeof oid };
+      expect(out._id).toBe(oid);
+    });
+
+    it("ObjectId duck-typed (newer _bsontype: 'ObjectId') passes through unchanged", () => {
+      const oid = { _bsontype: "ObjectId", id: "xyz" };
+      const out = jsmql`$._id === ${oid}` as { _id: typeof oid };
+      expect(out._id).toBe(oid);
+    });
+
+    it("Date interpolation works inside an explicit $match pipeline stage", () => {
+      const cutoff = new Date("2026-01-01");
+      const out = jsmql`$match($.createdAt >= ${cutoff});` as Array<{ $match: { createdAt: { $gte: Date } } }>;
+      expect(out).toEqual([{ $match: { createdAt: { $gte: cutoff } } }]);
+      expect(out[0].$match.createdAt.$gte).toBeInstanceOf(Date);
+    });
+
+    it("Date interpolation flows through jsmql.expr — lands directly in the expression", () => {
+      const cutoff = new Date("2026-01-01");
+      const out = jsmql.expr`{ since: ${cutoff} }` as { since: Date };
+      expect(out.since).toBe(cutoff);
+    });
+
+    it("ordered comparison via template tag is index-friendly (no $expr fallback)", () => {
+      // The bug-report shape, expressed via the template tag form.
+      const out = jsmql`$.createdAt >= ${new Date("2026-01-01")}` as Record<string, unknown>;
+      expect("$expr" in out).toBe(false);
+      expect((out.createdAt as { $gte: unknown }).$gte).toBeInstanceOf(Date);
+    });
+
+    it("mixing opaque and JSON-shaped interpolations leaves each on its correct path", () => {
+      const cutoff = new Date("2026-01-01");
+      const tier = "gold";
+      const out = jsmql`$.tier === ${tier} && $.createdAt >= ${cutoff}` as { tier: string; createdAt: { $gte: Date } };
+      expect(out.tier).toBe("gold");
+      expect(out.createdAt.$gte).toBe(cutoff);
+    });
+
+    // Nested-interp cases — opaque BSON instances buried inside an interpolated
+    // object or array still reach the MQL output as live JS instances. The
+    // walker substitutes each instance with a marker carrying a unique binding
+    // name, JSON-stringifies the rewritten tree, then post-replaces the
+    // markers with bare identifiers so the parser resolves them as ParamRefs.
+
+    it("Date nested inside an interpolated object preserves the instance", () => {
+      const since = new Date("2026-01-01");
+      const out = jsmql.expr`${{ since }}` as { since: Date };
+      expect(out.since).toBe(since);
+    });
+
+    it("multiple Dates inside one object each get their own binding", () => {
+      const since = new Date("2026-01-01");
+      const until = new Date("2026-02-01");
+      const out = jsmql.expr`${{ since, until }}` as { since: Date; until: Date };
+      expect(out.since).toBe(since);
+      expect(out.until).toBe(until);
+    });
+
+    it("Date inside an interpolated array preserves position and instance", () => {
+      const since = new Date("2026-01-01");
+      const until = new Date("2026-02-01");
+      const out = jsmql.expr`${[since, until]}` as [Date, Date];
+      expect(out[0]).toBe(since);
+      expect(out[1]).toBe(until);
+    });
+
+    it("mixed JSON + Date inside one interpolated object: each leaf keeps its shape", () => {
+      const since = new Date("2026-01-01");
+      const out = jsmql.expr`${{ name: "foo", since, count: 42 }}` as { name: string; since: Date; count: number };
+      expect(out).toEqual({ name: "foo", since, count: 42 });
+      expect(out.since).toBe(since);
+    });
+
+    it("deeply-nested opaque value (3 levels) survives", () => {
+      const since = new Date("2026-01-01");
+      const out = jsmql.expr`${{ a: { b: { c: since } } }}` as { a: { b: { c: Date } } };
+      expect(out.a.b.c).toBe(since);
+    });
+
+    it("nested RegExp inside an interpolated object preserves the instance", () => {
+      const pat = /^alice/i;
+      const out = jsmql.expr`${{ pat, label: "name" }}` as { pat: RegExp; label: string };
+      expect(out.pat).toBe(pat);
+      expect(out.label).toBe("name");
+    });
+
+    it("$dateDiff with an interpolated object carrying Date instances — realistic shape", () => {
+      // The canonical use case: building a `$dateDiff` body with computed
+      // bounds. The interpolated object lives in operator-call position; the
+      // two Date instances are preserved at their nested keys.
+      const startDate = new Date("2026-01-01");
+      const endDate = new Date("2026-02-01");
+      const out = jsmql.expr`$dateDiff(${{ startDate, endDate, unit: "day" }})` as {
+        $dateDiff: { startDate: Date; endDate: Date; unit: string };
+      };
+      expect(out.$dateDiff.startDate).toBe(startDate);
+      expect(out.$dateDiff.endDate).toBe(endDate);
+      expect(out.$dateDiff.unit).toBe("day");
+    });
+
+    it("circular references inside an interpolated object surface as JsmqlInterpolationError", () => {
+      // Cycle detection in the walker returns the cyclic value as-is so the
+      // subsequent JSON.stringify produces the standard "circular structure"
+      // error — surfaced as `JsmqlInterpolationError`.
+      const cyclic: { since: Date; self?: unknown } = { since: new Date("2026-01-01") };
+      cyclic.self = cyclic;
+      expect(() => jsmql.expr`${cyclic}`).toThrow(/could not be serialised/);
+    });
+  });
+});
+
+describe("jsmql.compile — opaque BSON bindings outside query-doc position", () => {
+  // Pre-existing bug, fixed in tandem with the template-tag side channel:
+  // `safeBoundValue` used to iterate `Object.entries(bsonInstance)` and
+  // silently collapse the value to `{}`. Bindings consumed inside an update
+  // op body, an aggregation expression, etc. now pass through intact.
+
+  it("Date binding lands as a real Date inside an update op", () => {
+    const q = jsmql.compile(({ at }: { at: Date }) => ($.lastSeenAt = at));
+    const at = new Date("2026-01-01");
+    const out = q({ at }) as Array<{ $set: { lastSeenAt: Date } }>;
+    expect(out[0].$set.lastSeenAt).toBe(at);
+  });
+
+  it("RegExp binding lands as a real RegExp inside an update op", () => {
+    const q = jsmql.compile(({ pat }: { pat: RegExp }) => ($.name = pat));
+    const pat = /^alice/i;
+    const out = q({ pat }) as Array<{ $set: { name: RegExp } }>;
+    expect(out[0].$set.name).toBe(pat);
+  });
+
+  // Nested-BSON cases — symmetric with the template-tag nested-interp tests.
+  // `safeBoundValue` recurses through plain objects/arrays and short-circuits
+  // on `isOpaqueBsonValue`, so the same shapes that work via interpolation
+  // also work via parameter bindings — no manual unpacking required at the
+  // call site.
+
+  it("Date nested inside a binding object preserves the instance", () => {
+    const q = jsmql.compile(({ window }: { window: { since: Date; until: Date; unit: string } }) => $set({ window }));
+    const since = new Date("2026-01-01");
+    const until = new Date("2026-02-01");
+    const out = q({ window: { since, until, unit: "day" } }) as Array<{
+      $set: { window: { since: Date; until: Date; unit: string } };
+    }>;
+    expect(out[0].$set.window.since).toBe(since);
+    expect(out[0].$set.window.until).toBe(until);
+    expect(out[0].$set.window.unit).toBe("day");
+  });
+
+  it("Date inside a binding array preserves each instance", () => {
+    const q = jsmql.compile(({ bounds }: { bounds: Date[] }) => $set({ bounds }));
+    const since = new Date("2026-01-01");
+    const until = new Date("2026-02-01");
+    const out = q({ bounds: [since, until] }) as Array<{ $set: { bounds: Date[] } }>;
+    expect(out[0].$set.bounds[0]).toBe(since);
+    expect(out[0].$set.bounds[1]).toBe(until);
+  });
+
+  it("deeply-nested (3 levels) Date inside a binding survives", () => {
+    const q = jsmql.compile(({ cfg }: { cfg: { a: { b: { c: Date } } } }) => $set({ cfg }));
+    const since = new Date("2026-01-01");
+    const out = q({ cfg: { a: { b: { c: since } } } }) as Array<{ $set: { cfg: { a: { b: { c: Date } } } } }>;
+    expect(out[0].$set.cfg.a.b.c).toBe(since);
+  });
+
+  it("mixed JSON + Date inside a binding object: each leaf keeps its shape", () => {
+    const q = jsmql.compile(({ cfg }: { cfg: { name: string; since: Date; count: number; until: Date } }) =>
+      $set({ cfg }),
+    );
+    const since = new Date("2026-01-01");
+    const until = new Date("2026-02-01");
+    const out = q({ cfg: { name: "foo", since, count: 42, until } }) as Array<{
+      $set: { cfg: { name: string; since: Date; count: number; until: Date } };
+    }>;
+    expect(out[0].$set.cfg).toEqual({ name: "foo", since, count: 42, until });
+    expect(out[0].$set.cfg.since).toBe(since);
+    expect(out[0].$set.cfg.until).toBe(until);
+  });
+
+  it("nested RegExp inside a binding object preserves the instance", () => {
+    const q = jsmql.compile(({ matchers }: { matchers: { name: RegExp; status: RegExp } }) => $set({ matchers }));
+    const name = /^alice/i;
+    const status = /^ok$/;
+    const out = q({ matchers: { name, status } }) as Array<{ $set: { matchers: { name: RegExp; status: RegExp } } }>;
+    expect(out[0].$set.matchers.name).toBe(name);
+    expect(out[0].$set.matchers.status).toBe(status);
+  });
+
+  it("nested Uint8Array inside a binding object preserves the instance", () => {
+    const q = jsmql.compile(({ payloads }: { payloads: { hash: Uint8Array } }) => $set({ payloads }));
+    const hash = new Uint8Array([1, 2, 3]);
+    const out = q({ payloads: { hash } }) as Array<{ $set: { payloads: { hash: Uint8Array } } }>;
+    expect(out[0].$set.payloads.hash).toBe(hash);
+  });
+
+  it("nested ObjectId (duck-typed) inside a binding object preserves the instance", () => {
+    // Mirrors the template-tag side: the project accepts both the legacy
+    // `_bsontype: "ObjectID"` (uppercase D) tag and the newer
+    // `_bsontype: "ObjectId"` (lowercase d) tag, since BSON library versions
+    // disagree on the casing.
+    const q = jsmql.compile(({ ids }: { ids: { primary: unknown; secondary: unknown } }) => $set({ ids }));
+    const primary = { _bsontype: "ObjectID", id: "abc" };
+    const secondary = { _bsontype: "ObjectId", id: "xyz" };
+    const out = q({ ids: { primary, secondary } }) as Array<{
+      $set: { ids: { primary: unknown; secondary: unknown } };
+    }>;
+    expect(out[0].$set.ids.primary).toBe(primary);
+    expect(out[0].$set.ids.secondary).toBe(secondary);
+  });
+
+  it("Date inside a binding lands in $set body alongside JSON-shaped siblings (realistic shape)", () => {
+    // The realistic call-site shape: a single `cfg` parameter that bundles a
+    // BSON Date with plain-JSON fields. Mirrors how a caller would package
+    // a typed config object built elsewhere in their codebase.
+    const q = jsmql.compile(({ cfg }: { cfg: { startedAt: Date; mode: string; retries: number } }) => $set({ cfg }));
+    const startedAt = new Date("2026-01-01");
+    const out = q({ cfg: { startedAt, mode: "fast", retries: 3 } }) as Array<{
+      $set: { cfg: { startedAt: Date; mode: string; retries: number } };
+    }>;
+    expect(out[0].$set.cfg.startedAt).toBe(startedAt);
+    expect(out[0].$set.cfg.mode).toBe("fast");
+    expect(out[0].$set.cfg.retries).toBe(3);
+  });
 });
 
 describe("jsmql.expr() input-shape guard", () => {
@@ -3245,6 +3501,20 @@ describe("jsmql.compile()", () => {
         ],
       );
       expect(q({ region: "AU" })).toEqual([{ $match: { region: "AU" } }]);
+    });
+
+    it("Date binding against a field becomes a query-language $match", () => {
+      // BSON `Date` instances are query-doc values — MongoDB indexes work on
+      // them. Without this, a Date parameter would fall through to $expr.
+      const q = jsmql.compile(({ cutoff }: { cutoff: Date }, $) => $.createdAt >= cutoff);
+      const cutoff = new Date("2026-01-01");
+      expect(q({ cutoff })).toEqual({ createdAt: { $gte: cutoff } });
+    });
+
+    it("RegExp binding inlines as a query-doc regex match", () => {
+      const q = jsmql.compile(({ name }: { name: RegExp }, $) => $.username === name);
+      const name = /^alice/i;
+      expect(q({ name })).toEqual({ username: name });
     });
   });
 

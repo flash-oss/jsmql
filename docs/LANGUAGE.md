@@ -90,6 +90,10 @@ The expression is interpreted as a Filter. Field-vs-literal predicates the Mongo
 jsmql("$.age > 18 && $.status === 'active'");
 // → { age: { $gt: 18 }, status: "active" }
 
+// `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
+jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
+// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
+
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
 jsmql("$.status === 'active' && $.name.trim() === 'alice'");
 // → { status: "active", $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } }
@@ -100,6 +104,8 @@ jsmql("$add($.a, $.b)");
 ```
 
 The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/match-query-translation.md](specs/match-query-translation.md) for the full table.
+
+**`new Date(...)` and indexes.** When all `new Date(...)` arguments are compile-time literals — `new Date("2026-01-01")`, `new Date(2026, 0, 1)`, `new Date(Date.UTC(2026, 0, 1))` — jsmql folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. That's the shape MongoDB indexes on `createdAt` actually need. `new Date()` (zero-arg, server-side `$$NOW`) and `new Date($.someField)` necessarily fall back to `$expr` since they can't be evaluated until query time. Conversely, `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter — MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument, never matching anything. The fold avoids that footgun.
 
 ### Stage call → Pipeline (no `;` required)
 
@@ -1848,6 +1854,24 @@ Each restriction produces a clear `FunctionInputError` that names the problem an
 
 Each value on the params object must be a JSON-safe literal: number, string, boolean, null, plain array, or plain object. The same validation that template-tag interpolation uses rejects `NaN`, `Infinity`, functions, Symbols, `undefined`, BigInts, and circular references — at call time, with a `JsmqlInterpolationError` that names the binding key.
 
+BSON instance values — `Date`, `RegExp`, `Uint8Array` (and `Buffer`), and ObjectId (duck-typed via `_bsontype`) — are passed through to the MQL output as the live JS instance, exactly the way the template-tag form preserves them. The pass-through works **anywhere** in the binding value: at the top level, nested inside an object, nested inside an array, and arbitrarily deep. The same shape that works via interpolation also works via parameter bindings — no manual unpacking required at the call site:
+
+```js
+// Top-level Date binding — lands in the query doc as a real Date, so MongoDB
+// uses the index on `createdAt` for the range scan.
+const recentByMethod = jsmql.compile(({ method, cutoff }, $) =>
+  $.method === method && $.createdAt >= cutoff,
+);
+recentByMethod({ method: "postalDelivery", cutoff: new Date("2026-01-01") });
+// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
+
+// Nested Date inside a binding object — preserved at its position in the
+// $set body, alongside JSON-shaped siblings.
+const stampWindow = jsmql.compile(({ window }) => ($.activeWindow = window));
+stampWindow({ window: { startedAt: new Date("2026-01-01"), mode: "fast" } });
+// → [{ $set: { activeWindow: { startedAt: <Date 2026-01-01>, mode: "fast" } } }]
+```
+
 If a binding referenced in the body is missing from the params object, the call throws `UnknownIdentifierError` naming the binding (and the aliased outer key if `{ key: alias }` was used).
 
 ### Validation
@@ -1928,6 +1952,23 @@ jsmql`$.age > ${25}`
 const field = "age";
 jsmql`$.${field} > ${25}`  // syntax error
 ```
+
+### BSON instances round-trip
+
+Interpolations are emitted as JSON literals **except** for native BSON instances that have no fidelity-preserving JSON shape — those reach the MQL output as the JS instance itself, which is what the Node MongoDB driver consumes in-situ:
+
+```js
+// Date — emitted as a real Date, indexed comparisons still work
+const cutoff = new Date("2026-01-01");
+jsmql`$.method === ${"postalDelivery"} && $.createdAt >= ${cutoff}`
+// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
+
+// RegExp — used as a query-language regex match
+jsmql`$.username === ${/^alice/i}`
+// → { username: /^alice/i }
+```
+
+Pass-through types: `Date`, `RegExp`, `Uint8Array` (and `Buffer`, which subclasses `Uint8Array`), and ObjectId (duck-typed via `_bsontype`). Everything else goes through `JSON.stringify`. Pass-through also works for **nested** instances — a Date / RegExp / etc. buried inside an interpolated object or array still arrives as a live instance, so realistic operator-call shapes like `` jsmql.expr`$dateDiff(${{ startDate: new Date(...), endDate: new Date(...), unit: "day" })` `` work the way you'd write them by hand.
 
 `jsmql.validate` is polymorphic in the same way, so `` jsmql.validate`$.age > ${minAge}` `` works as the non-throwing counterpart.
 

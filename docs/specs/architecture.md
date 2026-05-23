@@ -102,12 +102,18 @@ type JsmqlOutput = object | object[];
 jsmql(input: JsmqlInput): JsmqlOutput
 jsmql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
 // Polymorphic over three call shapes: string, arrow function, and template tag.
-// The template-tag form interpolates values via JSON.stringify (with validation —
-// see JsmqlInterpolationError below) and feeds the result into the same parser
-// path as the string form. Function input has its body extracted (toString +
-// arrow-list strip) and is re-parsed on each call — see `jsmql.compile(fn)` for
-// the parse-once-bind-many path. Throws LexError | ParseError | CodegenError
-// | FunctionInputError | JsmqlInterpolationError | TypeError.
+// The template-tag form interpolates JSON-shaped values via JSON.stringify (with
+// validation — see JsmqlInterpolationError below). Opaque BSON instances
+// (Date, RegExp, Uint8Array, ObjectId) bypass JSON.stringify entirely — they
+// would lose fidelity (`new Date(...)` → ISO string, `RegExp` → `"{}"`, etc.) —
+// and are instead routed through a synthesized `__jsmql_interp_<slot>` binding
+// resolved at lower time via the same `bindings` machinery `jsmql.compile()`
+// uses. The MQL output carries the JS instance untouched, which is what the
+// Node MongoDB driver expects in-situ. Function input has its body extracted
+// (toString + arrow-list strip) and is re-parsed on each call — see
+// `jsmql.compile(fn)` for the parse-once-bind-many path. Throws
+// LexError | ParseError | CodegenError | FunctionInputError |
+// JsmqlInterpolationError | TypeError.
 
 jsmql.compile<P>(fn: (params: P, $?, ops?) => unknown): (params: P) => JsmqlOutput
 // Parse once, bind many. The arrow's first slot is a destructure pattern naming

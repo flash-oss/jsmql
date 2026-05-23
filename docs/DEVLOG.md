@@ -10,6 +10,58 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-23 — Template-tag interpolation routes BSON instances through a side channel
+
+Follow-up to the same-day Date-folding entry below. The template-tag form silently mangled non-JSON-serialisable values:
+
+```js
+jsmql`$.createdAt >= ${new Date("2026-01-01")}`
+// before: { createdAt: { $gte: "2026-01-01T00:00:00.000Z" } }   // ← string, not a Date
+// after:  { createdAt: { $gte: <Date 2026-01-01> } }            // ← real Date
+```
+
+Before this change, `JSON.stringify(new Date(...))` turned the Date into an ISO string, which BSON compares as a string — the query silently never matches any actual Date field. Same problem for `RegExp` (becomes `"{}"`), `Uint8Array` (becomes `{}`), and ObjectId (becomes `{}` since BSON tags it with a `_bsontype` rather than enumerable fields).
+
+Fix in [src/index.ts](../src/index.ts) `stringifyInterpolation`: when the interpolated value passes `isOpaqueBsonValue` (exported from [src/codegen.ts](../src/codegen.ts) — `instanceof Date | RegExp | Uint8Array`, or duck-typed ObjectId via `_bsontype === "ObjectID" | "ObjectId"`), the dispatcher synthesises a binding name `__jsmql_interp_<slot>`, puts the original instance into a `bindings` map, and concatenates the name into the parsed source. The lower path then resolves the `ParamRef` through the existing function-form binding machinery — `safeBoundValue` returns the BSON instance unchanged (the second part of this fix; see below). The MQL output carries the JS instance verbatim, which is what the Node MongoDB driver consumes in-situ.
+
+The dispatcher's `lower` callback signature widened from `(program) => output` to `(program, ctx) => output`, replacing the thin `lower` / `lowerExpr` wrappers. The string and arrow paths pass `EMPTY_CTX`; only the template-tag path constructs a non-empty binding ctx. Three other call shapes (string, arrow, `jsmql.compile`) are unchanged in behaviour.
+
+**Pre-existing bug fixed in tandem.** `safeBoundValue` in [src/codegen.ts](../src/codegen.ts) walked any non-string non-array object value via `Object.entries`, which silently turned a `Date` / `RegExp` / `Uint8Array` / ObjectId binding into `{}`. So even before the template-tag work, `jsmql.compile(({ at }) => $set({ lastSeenAt: at }))({ at: new Date(...) })` produced `[{ $set: { lastSeenAt: {} } }]`. `safeBoundValue` now short-circuits on `isOpaqueBsonValue` and returns the instance untouched. Same `paramRefAsLiteral` machinery in [src/match-translation.ts](../src/match-translation.ts) already accepted these instances, so the previously-correct query-doc-position behaviour is unchanged.
+
+**Naming.** The synthesised binding uses the `__jsmql_` prefix the project already reserves for its internal namespace (see the `__jsmql` pipeline let-bindings field in [docs/specs/let-bindings.md](specs/let-bindings.md)). Per-slot, per-instance suffixes (`__jsmql_interp_1_1`, `__jsmql_interp_1_2`, …) make the binding name visible in any debug output the user inspects; the chosen prefix means a deliberate user identifier of the same shape would override the binding (consistent with `jsmql.compile`'s own resolution order), but in practice such a collision is vanishingly unlikely.
+
+**Nested instances work too.** Opaque BSON values buried inside an interpolated object or array are detected by a recursive walker (`containsOpaqueBsonAnywhere`) and substituted by `substituteOpaqueValues`. The walker replaces each instance with a marker string (wrapped in U+E000 Private-Use code points so it can't conflict with any natural user data), JSON-stringifies the rewritten tree, and post-replaces the markers with the bare binding identifiers. The surrounding JSON-shaped parts get the exact same serialization the fast path would have produced, so an interpolation like `${{ startDate: new Date(...), unit: "day" }}` round-trips with the JSON keys/strings intact and the Date instance preserved at its position. Pure-JSON interpolations stay on the fast path (`validateInterpolatable` + `JSON.stringify`, no walker overhead). Tests added in the template-tag describe in [test/codegen.test.ts](../test/codegen.test.ts) cover each top-level BSON instance type, the compile-binding path, and nested-in-object / nested-in-array / deeply-nested / cyclic-reference cases.
+
+**`.compile()` bindings get the same treatment for free.** `safeBoundValue` in [src/codegen.ts](../src/codegen.ts) recurses through plain objects and arrays and short-circuits on `isOpaqueBsonValue` at every level, so a `.compile()` parameter binding like `({ cfg }) => $set({ cfg })` invoked with `{ cfg: { startedAt: new Date(...), mode: "fast", retries: 3 } }` keeps the `Date` (and any nested `RegExp`/`Uint8Array`/ObjectId) as live JS instances in the MQL output — the same shapes that work via template-tag interpolation. The behavior is symmetric across both surfaces; tests in the `jsmql.compile — opaque BSON bindings outside query-doc position` describe block cover each instance type and the same nested-in-object / nested-in-array / deeply-nested / mixed-JSON cases the template-tag describe covers.
+
+---
+
+## 2026-05-23 — `new Date(<static-args>)` folds to a `Date` instance in Filter-mode query position
+
+`jsmql('$.method === "x" && $.createdAt >= new Date("2026-01-01")')` previously emitted
+
+```json
+{ "method": "x", "$expr": { "$gte": ["$createdAt", { "$toDate": "2026-01-01" }] } }
+```
+
+— pushing `createdAt` into `$expr` and disabling the index on that field for MongoDB versions that don't optimise `$expr` index usage (and reducing planner confidence on the versions that do). Reported case had millions of documents on a collection where `createdAt` is the primary read index.
+
+The fix is in [src/match-translation.ts](../src/match-translation.ts): `anyEqualityLiteral` and `anyOrderedLiteral` now accept `NewDate` (and `new Date(Date.UTC(...))`) when every argument is itself a compile-time literal — the new `evaluateStaticDate` helper folds the constructor at translate time and returns a real JS `Date` instance, which the translator places directly in the query-doc value slot. Output for the example above becomes:
+
+```json
+{ "method": "x", "createdAt": { "$gte": <Date 2026-01-01> } }
+```
+
+— index-friendly, and the shape a user would hand-write. Zero-arg `new Date()` (codegens to `{ $toDate: "$$NOW" }`, must evaluate at query time), `new Date($.field)`, and any constructor that produces `Invalid Date` all fall through to `$expr` unchanged.
+
+**Why we couldn't just emit `{ $gte: { $toDate: "..." } }` in query-doc position.** That was the user's first proposal. MongoDB's query language **does not evaluate aggregation expressions in operator value slots** — `{ $toDate: "..." }` would be treated as a literal subdocument with a key called `"$toDate"`, never matching any `createdAt` value. The aggregation form only evaluates inside `$expr`. The fold to a JS `Date` instance is the only shape that's both index-friendly AND semantically equivalent to the `$expr` version. This is now spelled out in [docs/specs/filter-mode.md](specs/filter-mode.md) and [docs/specs/match-query-translation.md](specs/match-query-translation.md).
+
+Same change extends `paramRefAsLiteral` to accept `Date`, `RegExp` (equality only), `Uint8Array`/`Buffer` (equality only), and duck-typed `ObjectId` (equality only) as query-doc-compatible binding values. So `jsmql.compile(($) => $.createdAt >= params.cutoff)({ cutoff: new Date("2026-01-01") })` now produces field-form for the same reason inline `new Date(...)` does — the value is a query-doc-compatible BSON instance, regardless of whether the source is a literal or a bound parameter. No driver dependency added; ObjectId is recognised via `_bsontype === "ObjectID"` / `"ObjectId"` duck typing.
+
+Tests: nine new cases in [test/match-translation.test.ts](../test/match-translation.test.ts) covering positive folds (`>=`, `>`, `<`, `<=`, `===`, `!==`, order-flipped, parts-form, `Date.UTC`-wrapped), negative folds (zero-arg, field-ref arg, Invalid Date), and merge-into-`$and` for same-key bounds. Two new cases in [test/codegen.test.ts](../test/codegen.test.ts) covering `Date` and `RegExp` parameter bindings. `jsmql.expr('new Date("..."))` codegen is unchanged (still `{ $toDate: "..." }`) — the fold is filter-mode-only.
+
+---
+
 ## 2026-05-21 — Widen the strippable-TS floor: Node 22.18+ / 24.3+ run `src/` natively, no flag
 
 The "Node 24+ for native type-stripping (no flag)" claim sprinkled across the docs was conservative. Type stripping was unflagged in **Node 22.18.0** (LTS, August 2025) and in **Node 24.3.0** — and marked stable in 25.2.0 (November 2025). So a user on the current Node 22 LTS line can run `node src/index.ts` directly without any flag, not just users on the 24 line. Doc-only change to widen the documented floor; no source or test code changes.

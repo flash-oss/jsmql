@@ -72,6 +72,11 @@ jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
 //  { "$expr": { "$in": ["$userId", { "$concatArrays": ["$mods", { "$ifNull": ["$room.mods", []] }, ["root"]] }] } }
 // compiles with $ifNull wrappers exactly where a null would crash a downstream operator.
 
+// `new Date(...)` with literal args folds to a real JS Date — index-friendly query doc:
+jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)
+// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
+// `new Date()` and `new Date($.field)` still need server-time evaluation and ride in $expr.
+
 // Template-tag — interpolate runtime literals from outer scope
 const ids = [1, 2, 3];
 jsmql`$.status === "open" && $.id in ${ids}`

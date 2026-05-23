@@ -499,11 +499,15 @@ function literalSafeString(value: string, ctx: GenerateCtx): unknown {
  *
  * `validateInterpolatable` has already rejected functions, symbols, BigInt,
  * non-finite numbers, and circular references, so this walker only needs to
- * handle JSON-shaped data.
+ * handle JSON-shaped data — and opaque BSON instances (Date, RegExp,
+ * Uint8Array, ObjectId), which are passed through unchanged because they're
+ * the very values MongoDB's driver expects in-situ; walking them with
+ * `Object.entries` would silently strip them to `{}`.
  */
 function safeBoundValue(value: unknown, ctx: GenerateCtx): unknown {
   if (ctx.insideLiteral) return value;
   if (typeof value === "string") return literalSafeString(value, ctx);
+  if (isOpaqueBsonValue(value)) return value;
   if (Array.isArray(value)) return value.map((v) => safeBoundValue(v, ctx));
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
@@ -513,6 +517,29 @@ function safeBoundValue(value: unknown, ctx: GenerateCtx): unknown {
     return out;
   }
   return value;
+}
+
+/**
+ * BSON instance values that the MongoDB driver consumes in-situ (i.e. the
+ * driver expects the actual JS object, not a JSON-shaped surrogate). They
+ * have no fidelity-preserving JSON representation: `JSON.stringify` returns
+ * `"{}"` for `RegExp` and `Uint8Array`, an ISO string for `Date` (which
+ * compares as a string in BSON, not a date), and `{}` for ObjectId.
+ *
+ * ObjectId is detected by `_bsontype` because importing the MongoDB driver
+ * would add a hard dependency the library deliberately avoids; the BSON
+ * library tags instances with `"ObjectID"` (older versions) or `"ObjectId"`
+ * (newer versions). Accept both.
+ */
+export function isOpaqueBsonValue(value: unknown): boolean {
+  if (value instanceof Date) return true;
+  if (value instanceof RegExp) return true;
+  if (value instanceof Uint8Array) return true;
+  if (typeof value === "object" && value !== null) {
+    const tag = (value as { _bsontype?: unknown })._bsontype;
+    if (tag === "ObjectID" || tag === "ObjectId") return true;
+  }
+  return false;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
