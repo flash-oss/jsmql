@@ -1656,6 +1656,57 @@ A plain value array like `[1, 2, 3]` is *not* a pipeline — the first element d
 
 All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, `$bucket`, `$bucketAuto`, `$count`, `$densify`, `$documents`, `$facet`, `$fill`, `$geoNear`, `$graphLookup`, `$group`, `$limit`, `$lookup`, `$match`, `$merge`, `$out`, `$project`, `$redact`, `$replaceRoot`, `$replaceWith`, `$sample`, `$search`, `$set`, `$setWindowFields`, `$skip`, `$sort`, `$sortByCount`, `$unionWith`, `$unset`, `$unwind`, `$vectorSearch`, and the rest.
 
+### Cross-collection lookups (`this.<collection>`)
+
+`$lookup` is jsmql's biggest JS-vs-MQL impedance gap, so it gets a dedicated JS-style spelling. Inside a pipeline, `this.<collection>` reaches out to another collection in the same database, and the array methods `.find` and `.filter` decide the result shape — exactly like their JS counterparts. SQL on the left, jsmql on the right:
+
+```sql
+-- One row per order, with the buyer attached as a single sub-document.
+SELECT orders.*, u.*
+FROM orders
+LEFT JOIN users u ON u._id = orders.userId
+LIMIT 1;
+```
+```js
+jsmql(`$.user = this.users.find(u => u._id === $.userId);`);
+// → [
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "user" } },
+//     { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } }
+//   ]
+```
+
+```sql
+-- One row per order, with the matching shipments attached as an array.
+SELECT orders.*, ARRAY_AGG(s.*) AS shipments
+FROM orders
+LEFT JOIN shipments s ON s.orderId = orders._id
+GROUP BY orders._id;
+```
+```js
+jsmql(`$.shipments = this.shipments.filter(s => s.orderId === $._id);`);
+// → [
+//     { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "shipments" } }
+//   ]
+```
+
+**`.find` vs `.filter`:**
+
+- `.find(predicate)` → single doc (or null), via `$lookup` + `$unwind` with `preserveNullAndEmptyArrays`. Mirrors `Array.prototype.find`.
+- `.filter(predicate)` → array of matches, via `$lookup` only. Mirrors `Array.prototype.filter`.
+
+**Predicate shape:** v1 accepts a single equality between a field path on the foreign document and a field path on the local document — `o.x === $.y` or `$.y === o.x`. Both sides may use dotted paths (`o.profile.email === $.contact.email`). Anything richer (computed values, additional conjuncts, ranges) needs the explicit pipeline-form `$lookup({ from, let, pipeline, as })` — the basic form MongoDB exposes is intrinsically limited to two field-path strings.
+
+**Collection names with non-identifier characters:**
+
+```js
+jsmql(`$.x = this["user-orders"].filter(u => u.id === $._id);`);
+// → [{ $lookup: { from: "user-orders", localField: "_id", foreignField: "id", as: "x" } }]
+```
+
+**Where it's allowed:** `this.<coll>` is a pipeline stage, so it's only valid in pipeline-mode input. Using it in a no-`;` source, in `jsmql.filter()`, or in `jsmql.update()` (where `$lookup` isn't in the update-pipeline whitelist) produces an actionable error pointing at the right entry point. The bracketed pipeline form `[$.user = this.users.find(...)]` also works.
+
+**Multi-match caveat (`.find`):** when the predicate matches more than one foreign doc, `$unwind` fans the row out — one document per match. This diverges from JS `find` (which always returns one). The basic form can't apply `LIMIT 1`; if you need scalar-or-null on a multi-match predicate, use the explicit pipeline-form `$lookup({ from, let, pipeline: [{ $match: ... }, { $limit: 1 }], as })`.
+
 ---
 
 ## Function Form
