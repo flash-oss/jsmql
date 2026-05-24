@@ -114,9 +114,11 @@ describe("smoke: built dist", () => {
       // Type-only validation: ensure the `declare module "mongoose"` block at
       // the bottom of src/mongoose.ts merges with mongoose's real `Model<...>`
       // interface and accepts a JSMQL string / arrow at every patched slot.
-      // Runs only when mongoose is installed (which it is in CI; locally a
-      // contributor can symlink /tmp/mongoose into node_modules/mongoose).
-      // Skipped otherwise so `npm test` stays self-sufficient on a fresh clone.
+      // mongoose is pinned at `"*"` in devDependencies, so every fresh
+      // `npm install` pulls the latest published mongoose and this case
+      // catches augmentation drift against new mongoose generics before
+      // users hit it. The skip guard stays for degraded environments where
+      // node_modules/mongoose isn't there for some reason.
       const result = spawnSync(
         resolve(ROOT, "node_modules/.bin/tsc"),
         ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.json")],

@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-24 — mongoose pinned at `"*"` in devDependencies
+
+Follow-up to the mongoose plugin entry below. The type-only validation file in [test/types/mongoose-augmentation.ts](../test/types/mongoose-augmentation.ts) needs a real mongoose import for the augmentation merge to actually mean anything; the first cut relied on a local `/tmp/mongoose` symlink, which made the smoke case work on the author's machine but not in CI or on a contributor's fresh clone. mongoose is now a real `devDependency` so `npm install` brings it in.
+
+The version range is deliberately `"*"` rather than `"^9.6.2"` or any other pin. Rationale: the validation file exists to catch our `declare module "mongoose"` augmentation drifting against mongoose's evolving generics. Pinning it means we'd only learn about drift when someone manually bumps the dep — defeating the point. The unpinned range turns every `npm install` into a fresh probe: if mongoose ships a Model-generic change that breaks the augmentation, the type-validation smoke fails on the next CI run, and we fix it there rather than at user-report time. Runtime behaviour of `src/mongoose.ts` itself doesn't depend on a specific mongoose version (it duck-types whatever it gets), so we're not signing up for runtime risk by floating the dep.
+
+---
+
 ## 2026-05-24 — Mongoose plugin: `@koresar/jsmql/mongoose`
 
 Hand-rolling `jsmql.filter()` / `jsmql.update()` / `jsmql.pipeline()` at every `User.find(…)` / `User.updateMany(…)` / `User.aggregate(…)` call site gets noisy fast in a real mongoose codebase. The new `@koresar/jsmql/mongoose` subpath is a one-shot registration that monkey-patches `mongoose.Model` so the standard query statics accept jsmql source directly:
