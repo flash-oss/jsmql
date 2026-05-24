@@ -1090,28 +1090,3 @@ $.submitted === true
     ).toEqual({ score: { $gte: 75 }, submitted: true, $expr: { $in: ["$grade", ["A", "B"]] } });
   });
 });
-
-describe("orders enriched with buyer and shipments via this.coll", { features: ["Lookups"] }, () => {
-  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
-    // `this.users.find` returns a single buyer doc (one-to-one on _id);
-    // `this.shipments.filter` returns the array of related shipments. The
-    // .find vs .filter asymmetry maps cleanly to the SQL scalar-subquery vs
-    // LEFT-JOIN distinction.
-    expect(
-      jsmql`
-$.buyer     = this.users.find(u => u._id === $.userId);
-$.shipments = this.shipments.filter(s => s.orderId === $._id);
-$.total     = $.shipments.reduce((sum, s) => sum + s.amount, 0);
-        `,
-    ).toEqual([
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
-      { $unwind: { path: "$buyer", preserveNullAndEmptyArrays: true } },
-      { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "shipments" } },
-      {
-        $set: {
-          total: { $reduce: { input: "$shipments", initialValue: 0, in: { $add: ["$$value", "$$this.amount"] } } },
-        },
-      },
-    ]);
-  });
-});

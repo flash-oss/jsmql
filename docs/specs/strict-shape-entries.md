@@ -73,8 +73,6 @@ jsmql.update() rejected '$sort' (stage 1): MongoDB's aggregation-pipeline update
 
 `let` bindings compose cleanly: they lower to `$set: { "__jsmql.<name>": ... }` plus a trailing `$unset: "__jsmql"` (see [let-bindings.md](let-bindings.md)), both of which are in the whitelist.
 
-`$lookup` is intentionally absent from the whitelist, so any `this.<coll>.find/filter(...)` assignment (see [lookup-stage.md](lookup-stage.md)) routed through `jsmql.update()` lowers to a `$lookup` stage and is then rejected by the same whitelist pass — the error names `$lookup` explicitly. (`jsmql.filter()` rejects `this.<coll>` earlier, via the codegen `ThisRef` case — `$lookup` is a pipeline stage and never reaches Filter lowering.)
-
 ## Error messages
 
 Every rejection error carries the offending position from the AST root (`ast.pos`) so editor tooling can underline the source region. The messages follow the DX rules in the root `CLAUDE.md`:

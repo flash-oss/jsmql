@@ -43,12 +43,11 @@
 // pipeline ctx so a let referenced inside an otherwise-translatable $match body
 // still resolves correctly.
 
-import type { Expr, ArrayElement, AssignExpr, UpdateOp, Pipeline, LetDecl } from "./ast.ts";
+import type { Expr, ArrayElement, UpdateOp, Pipeline, LetDecl } from "./ast.ts";
 import {
   generateWithCtx,
   generateUpdateOpGroups,
   generateUpdateFilter,
-  updateOpWritePath,
   CodegenError,
   EMPTY_CTX,
   extendCtxLets,
@@ -61,7 +60,6 @@ import {
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 import { translateMatchBody } from "./match-translation.ts";
-import { detectLookupAssign, translateLookupEquality, type LookupAssign } from "./lookup-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -172,7 +170,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
 
   const flushUpdateOps = () => {
     if (updateBuffer.length === 0) return;
-    emitUpdateOpsWithLookups(updateBuffer, ctx, out);
+    for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
     updateBuffer = [];
   };
 
@@ -228,7 +226,9 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
       return;
     }
     if (stmt.type === "UpdateFilter") {
-      emitUpdateOpsWithLookups(stmt.ops, ctx, out);
+      const result = generateUpdateFilter(stmt, ctx);
+      if (Array.isArray(result)) out.push(...result);
+      else out.push(result);
       return;
     }
     const result = lowerStageElement(stmt, i, ctx);
@@ -238,45 +238,6 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
 
   if (everHadLet) out.push({ $unset: LET_NAMESPACE });
   return out;
-}
-
-/**
- * Lower a sequence of update ops, emitting $lookup (+ $unwind for `.find`) for
- * `this.<coll>.find/filter(...)` assignments and the usual $set/$unset stages
- * for the rest. Lookup ops break the coalescing buffer so the surrounding
- * $set/$unset stages stay in source order around the lookup.
- */
-function emitUpdateOpsWithLookups(ops: UpdateOp[], ctx: GenerateCtx, out: unknown[]): void {
-  let buffer: UpdateOp[] = [];
-  const flush = () => {
-    if (buffer.length === 0) return;
-    for (const stage of generateUpdateOpGroups(buffer, ctx)) out.push(stage);
-    buffer = [];
-  };
-  for (const op of ops) {
-    if (op.type === "AssignExpr") {
-      const shape = detectLookupAssign(op);
-      if (shape !== null) {
-        flush();
-        for (const stage of buildLookupStages(op, shape)) out.push(stage);
-        continue;
-      }
-    }
-    buffer.push(op);
-  }
-  flush();
-}
-
-function buildLookupStages(op: AssignExpr, shape: LookupAssign): unknown[] {
-  const fields = translateLookupEquality(shape.lambda, shape.method);
-  const as = updateOpWritePath(op);
-  const lookup: Record<string, unknown> = {
-    $lookup: { from: shape.from, localField: fields.localField, foreignField: fields.foreignField, as },
-  };
-  if (shape.method === "find") {
-    return [lookup, { $unwind: { path: `$${as}`, preserveNullAndEmptyArrays: true } }];
-  }
-  return [lookup];
 }
 
 type LetLowering = { set: Record<string, unknown>; ctx: GenerateCtx };

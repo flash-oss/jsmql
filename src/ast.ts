@@ -1,5 +1,3 @@
-export type Lambda = { type: "Lambda"; params: string[]; body: Expr; pos: number };
-
 export type SpreadElement = { type: "SpreadElement"; argument: Expr; pos: number };
 
 export type StaticKey = { kind: "static"; name: string };
@@ -120,11 +118,10 @@ export type Expr =
   | { type: "IndexAccess"; object: Expr; index: Expr; pos: number; optional?: boolean }
   | { type: "RegexLiteral"; pattern: string; flags: string; pos: number }
   | { type: "ParamRef"; name: string; pos: number }
-  | { type: "ThisRef"; pos: number }
   | { type: "MemberAccess"; object: Expr; member: string; pos: number; optional?: boolean }
   | { type: "MethodCall"; object: Expr; method: string; args: CallArg[]; pos: number; optional?: boolean }
   | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
-  | Lambda
+  | { type: "Lambda"; params: string[]; body: Expr; pos: number }
   | { type: "TypeofExpr"; operand: Expr; pos: number }
   | { type: "NewDate"; args: Expr[]; pos: number }
   | { type: "NewSet"; arg: Expr | null; pos: number }

@@ -86,7 +86,6 @@ export const TokenType = {
   Typeof: "Typeof", // typeof
   Delete: "Delete", // delete
   Let: "Let", // let
-  This: "This", // this (cross-collection root for $lookup)
 
   // Identifier
   Ident: "Ident",
@@ -165,7 +164,6 @@ export const TOKEN_DISPLAY: Record<TokenType, string> = {
   Typeof: "'typeof'",
   Delete: "'delete'",
   Let: "'let'",
-  This: "'this'",
   Ident: "an identifier",
   EOF: "end of input",
 };
@@ -854,8 +852,6 @@ export class Lexer {
         return { type: TokenType.Delete, value: "delete", pos };
       case "let":
         return { type: TokenType.Let, value: "let", pos };
-      case "this":
-        return { type: TokenType.This, value: "this", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }
