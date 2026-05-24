@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-24 — Strict-shape entry points: `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`
+
+`jsmql()` is polymorphic — it dispatches Filter or Pipeline from the input's top-level shape, which is exactly what you want when the same source string is allowed to produce either. But at most real call sites the shape is fixed by the driver method being called (`find()` wants a Filter, `aggregate()` wants a Pipeline, `updateOne()` wants the pipeline form of an update). When the shape is fixed, a silent mis-dispatch is a footgun — typing `$.x = 1` where you meant a filter would compile fine and then wipe data. Three new entry points let the call site declare its expected shape and turn that footgun into a compile-time error:
+
+- `jsmql.filter(input)` — returns a Filter document; throws on `;`-Pipeline, update-op chain, array-literal Pipeline, or top-level stage call (`$match(...)` etc. — and for `$match` specifically the error nudges users to drop the wrapper).
+- `jsmql.pipeline(input)` — returns a stage array; throws on a bare expression that would lower to a Filter, with the error suggesting `jsmql.filter()` or wrapping in `$match(...)`.
+- `jsmql.update(input)` — returns a stage array; same rejection as `jsmql.pipeline()` plus an extra check that every stage is in MongoDB's [aggregation-pipeline update whitelist](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline) (`$addFields`, `$project`, `$replaceRoot`, `$replaceWith`, `$set`, `$unset`). A misplaced `$match` is caught at compile time with the offending stage name and position, instead of at the server with a generic error.
+
+**Naming: `update`, not `updateFilter`.** The slot this lowers into is typed `UpdateFilter<TSchema>` by the Node MongoDB driver, and our first draft mirrored that name on the public API. The problem: at the `updateOne(filter, update)` call site the *first* argument is the query "filter" — and developers who scan the autocomplete list see `jsmql.filter()` and `jsmql.updateFilter()` and reach for the one with the word "filter" in it, expecting it to fill that first slot. Wrong by exactly the worst possible amount: it compiles, the driver accepts the document, and the update writes to a different shape than the user intended. So the function is `jsmql.update()` instead — the AST node type stays `UpdateFilter` (matching the driver typings and the existing parser machinery), but the user-facing call site uses the unambiguous verb. The DEVLOG entry "Output dispatch terminology … `UpdateFilter`" below settled the AST/type naming; this entry refines only the *function* name layer on top.
+
+Implementation in [src/index.ts](../src/index.ts) reuses the existing dispatcher: each new entry point is a thin wrapper over `dispatchInput` with its own `lower` callback (`lowerFilterStrict`, `lowerPipelineStrict`, `lowerUpdateStrict`). The pipeline and update lowerings share a single helper (`lowerToPipelineStages`) that routes every Pipeline-shape branch to the existing lowerer and throws on bare expressions — the `apiName` parameter is interpolated into the message so the error names the entry point the user actually called. `lowerUpdateStrict` adds one extra pass over the lowered stage array against the `UPDATE_PIPELINE_STAGES` whitelist. The polymorphic `jsmql()` is unchanged — the strict entry points are additive, not a replacement.
+
+The output type is locked down in the signatures: `filter()` returns `object`, `pipeline()` and `update()` return `object[]`. The cast lives in the dispatch wrapper (`as object` / `as object[]`), since `dispatchInput` itself stays parametric on the polymorphic `JsmqlOutput` union — keeping the shared helper from leaking specifics about which caller wanted what.
+
+Coverage in [test/strict-api.test.ts](../test/strict-api.test.ts) (29 cases): happy paths for each entry point across all three call shapes (string, arrow, template tag), plus every rejection path with a regex against the actionable-error message. The reject-`$match` test pins the alphabetically-sorted allowed-stage list so any future addition to the whitelist will surface in CI.
+
+---
+
 ## 2026-05-23 — Template-tag interpolation routes BSON instances through a side channel
 
 Follow-up to the same-day Date-folding entry below. The template-tag form silently mangled non-JSON-serialisable values:

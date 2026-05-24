@@ -59,12 +59,13 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 15. [Pipelines](#pipelines)
 16. [Function Form](#function-form)
 17. [Partial expressions (`jsmql.expr`)](#partial-expressions-jsmqlexpr)
-18. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
-19. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
-20. [Validation](#validation)
-21. [Error Messages](#error-messages)
-22. [Examples](#examples)
-23. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
+18. [Strict-shape entry points (`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`)](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate)
+19. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
+20. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form-jsmql)
+21. [Validation](#validation)
+22. [Error Messages](#error-messages)
+23. [Examples](#examples)
+24. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
 
 ---
 
@@ -1769,6 +1770,87 @@ db.users.aggregate([
 ⚠️ **Don't pass `jsmql.expr()` directly to `updateOne()`.** The bare-doc form `{ $set: { name: { $toUpper: "$name" } } }` would silently store the literal expression object instead of evaluating `$toUpper` — MongoDB only treats `updateOne`'s second argument as an aggregation pipeline when it is an array. Use `jsmql()` for the call site; reserve `jsmql.expr()` for the slot inside another structure.
 
 The rule of thumb: **the function you call should match the call site**. `find()`, `aggregate()`, `updateOne()` → `jsmql()`. Inside a hand-written stage body or a `$cond`'s `then`-branch (where you want the raw aggregation expression) → `jsmql.expr()`.
+
+---
+
+## Strict-shape entry points (`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`)
+
+`jsmql()` is polymorphic — it picks Filter or Pipeline from the input. When the call site demands a specific shape and a silent mis-dispatch would be a footgun, use one of the three strict entry points. Each accepts the same string / arrow / template-tag inputs `jsmql()` does, but refuses to produce the other shape and throws an actionable error instead.
+
+| Function | Returns | Throws on |
+|---|---|---|
+| `jsmql.filter(input)` | a single Filter document | any Pipeline-shaped input |
+| `jsmql.pipeline(input)` | a Pipeline (stage array) | a bare expression that would lower to a Filter |
+| `jsmql.update(input)` | a Pipeline (stage array) | a bare expression, **and** any stage outside the update-pipeline whitelist |
+
+(The function is `update`, not `updateFilter`, even though the Node MongoDB driver types the slot as `UpdateFilter<TSchema>` — "filter" in that type name routinely trips developers into reaching for it when they meant the query document. The MongoDB type name stays as the driver defines it; we just don't repeat the confusing half of it on this call.)
+
+### `jsmql.filter(input)` — for `db.coll.find(filter)`
+
+```js
+db.users.find(jsmql.filter("$.age > 18 && $.status === 'active'"));
+// → db.users.find({ age: { $gt: 18 }, status: "active" })
+
+jsmql.filter("$match($.age > 18)");
+// Error: jsmql.filter() expects a Filter, but received a top-level '$match'
+//        stage call. Call jsmql.pipeline() or jsmql() for Pipeline output — or,
+//        if you wanted a Filter, drop the `$match(...)` wrapper and pass the
+//        predicate directly to jsmql.filter().
+```
+
+The accepted branch is identical to the no-`;` path of `jsmql()` — same indexable-conjunct translation, same `$expr` fallback for the untranslatable residual. The only difference is what gets rejected.
+
+### `jsmql.pipeline(input)` — for `db.coll.aggregate(pipeline)`
+
+```js
+db.users.aggregate(jsmql.pipeline(`
+  $match($.age > 18);
+  $sort({ age: 1 });
+  $project({ name: 1, email: 1 });
+`));
+
+jsmql.pipeline("$.age > 18");
+// Error: jsmql.pipeline() expects a Pipeline (one or more aggregation
+//        stages — `;`-separated, a top-level stage call, or a stage-array
+//        literal), but received a bare expression that would lower to a
+//        Filter document. Call jsmql.filter() or jsmql() for Filter output,
+//        or wrap the predicate as `$match(...)` to make it a Pipeline.
+```
+
+A single top-level stage call (`$match(...)`), single stage-object literal (`{ $match: ... }`), update-op chain, and array-literal Pipeline are all accepted — exactly the same auto-wrap rule `jsmql()` uses for Pipeline shapes.
+
+### `jsmql.update(input)` — for `db.coll.updateOne(filter, update)` / `updateMany`
+
+```js
+db.users.updateOne(
+  { _id: 123 },
+  jsmql.update("$.name = $.name.toUpperCase(), $.updatedAt = new Date()"),
+);
+// → db.users.updateOne(
+//     { _id: 123 },
+//     [
+//       { $set: { name: { $toUpper: "$name" }, updatedAt: { $toDate: "$$NOW" } } },
+//     ],
+//   )
+
+jsmql.update("$match($.age > 18); $set({ x: 1 })");
+// Error: jsmql.update() rejected '$match' (stage 0): MongoDB's
+//        aggregation-pipeline update form only accepts $addFields, $project,
+//        $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if
+//        you need other stages.
+```
+
+Output is **always** an array — never the legacy bare-document update form. That form silently treats RHS expressions as object literals, which is exactly the kind of footgun this entry point exists to avoid. Passing `jsmql.update(...)` to the driver guarantees expressions like `$.name.toUpperCase()` evaluate server-side instead of landing in the document as the literal object `{ $toUpper: "$name" }`.
+
+The allowed stages are MongoDB's [aggregation-pipeline update whitelist](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline): `$addFields`, `$project`, `$replaceRoot`, `$replaceWith`, `$set`, `$unset`. Anything else (e.g. `$match`, `$sort`, `$group`) is rejected at compile time with the offending stage name and position in the message, before MongoDB would reject the same query at runtime with a less helpful error.
+
+### When to use each
+
+- Call site is `find()` / `deleteOne()` / `countDocuments()` → `jsmql.filter()`.
+- Call site is `aggregate()` → `jsmql.pipeline()`.
+- Call site is `updateOne()` / `updateMany()` → `jsmql.update()`.
+- The same source string might legitimately produce either Filter or Pipeline → `jsmql()`.
+- Inside another structure (a hand-written stage body, the `then` branch of a `$cond`) → `jsmql.expr()`.
 
 ---
 

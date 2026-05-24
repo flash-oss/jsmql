@@ -106,6 +106,16 @@ db.users.updateMany({}, jsmql(($) => $.name = $.name.toUpperCase()))
 db.users.updateMany({}, jsmql.expr(($) => $.name = $.name.toUpperCase()))
 // → { "$set": { "name": { "$toUpper": "$name" } } } -> will WIPE OUT all names in the collection
 
+// Strict-shape entry points — throw if the input would produce the wrong shape.
+// Use these when the call site demands a specific shape and a silent
+// mis-dispatch would be a footgun.
+db.users.find(jsmql.filter("$.age > 18"));            // throws on Pipeline-shaped input
+db.users.aggregate(jsmql.pipeline("$match($.age > 18); $sort({ age: 1 })")); // throws on bare expressions
+db.users.updateOne({ _id: 1 }, jsmql.update("$.name = $.name.toUpperCase()"));
+// update() additionally rejects any stage outside MongoDB's update-pipeline
+// whitelist ($addFields, $project, $replaceRoot, $replaceWith, $set, $unset),
+// so a misplaced `$match` is caught at compile time instead of at the server.
+
 // Raw expression — for embedding inside a hand-written stage body
 const stage = { $addFields: { discount: jsmql.expr(($) => $.price * (1 - $.loyalty.multiplier)) } }
 // → { $addFields: { discount: { $multiply: ["$price", { $subtract: [1, "$loyalty.multiplier"] }] } } }
@@ -143,7 +153,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Plain MQL passes through.** Drop hand-written MQL JSON inline — `{ $gt: ["$age", 18] }`, a whole stage, a whole pipeline — and jsmql compiles it to itself. Mix the two freely, migrate one expression at a time, or paste verbatim from the MongoDB docs.
 - **Filter vs Pipeline picked automatically** — a stage call (`$match(...)`, `$project(...)`, …) or an update op (`$.x = …`) at the top level lowers as a `Pipeline` (`db.coll.aggregate(pipeline)` / `db.coll.updateOne(filter, update)`); any `;`-separated input lowers as a multi-stage Pipeline; everything else lowers as a `Filter` (`db.coll.find(filter)`). Index-safe predicates translate to query-document form; only the untranslatable parts ride in a top-level `$expr`. The naming follows the Node.js MongoDB driver's own `Filter<TSchema>` and `pipeline` parameter.
 - **Three call shapes** — arrow `jsmql(($) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
-- **Three output shapes** — `jsmql()` for Filter/Pipeline, `jsmql.compile(fn)` for parameterised parse-once-bind-many, `jsmql.expr()` for raw aggregation expressions that drop into a stage body or `db.coll.updateOne(filter, update)`. The same three call shapes apply to all three.
+- **Polymorphic by default, strict on demand** — `jsmql()` picks Filter or Pipeline from the input; `jsmql.filter()`, `jsmql.pipeline()`, and `jsmql.update()` lock it to one shape and throw an actionable error otherwise (with the offending stage named, for `update()`). `jsmql.compile(fn)` parses once for parameterised parse-once-bind-many. `jsmql.expr()` returns the raw aggregation expression that drops into a stage body. The three call shapes (string / arrow / template tag) apply to all of them.
 - **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
 - **Strict TS, strippable source** — runs as-is on Node 22.18+ / 24.3+, Deno, and Bun (no flags, no transpile).
@@ -151,7 +161,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 ## Try it & learn more
 
 - **[Live playground](https://flash-oss.github.io/jsmql/playground.html)** — write jsmql, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
-- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the `@koresar/jsmql/ops` import, error catalogue, server-side-JS migration guide.
+- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the strict-shape entry points (`jsmql.filter` / `jsmql.pipeline` / `jsmql.update`), the `@koresar/jsmql/ops` import, error catalogue, server-side-JS migration guide.
 - **[docs/DEVLOG.md](docs/DEVLOG.md)** — the running record of language decisions and the reasoning behind them.
 
 ## License

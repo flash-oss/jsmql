@@ -182,6 +182,86 @@ function exprDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unkno
 }
 
 /**
+ * `jsmql.filter(input)` — compile to a Filter document only.
+ *
+ * Same three input shapes as `jsmql()` (string / arrow / template tag), but
+ * rejects any input that would lower to a Pipeline. Use this when the call
+ * site is `db.coll.find(filter)` (or `deleteOne` / `countDocuments` / etc.)
+ * and you want a compile-time guarantee that you won't accidentally hand the
+ * driver a stage array. `jsmql()` is the polymorphic counterpart — call it
+ * when the same source string might legitimately produce either shape.
+ *
+ * Pipeline-shaped inputs that throw here: `;`-separated statements, update-op
+ * chains (`$.x = …`, `delete $.x`), top-level stage calls (`$match(...)`),
+ * single-key stage-object literals (`{ $match: ... }`), and array-literal
+ * Pipelines (`[{ $stage: ... }, ...]`). Each error names the shape it found
+ * and suggests the right call (`jsmql.pipeline()`, `jsmql.update()`,
+ * `jsmql()`).
+ */
+function filterDispatch(input: JsmqlInput): object;
+function filterDispatch(strings: TemplateStringsArray, ...values: unknown[]): object;
+function filterDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): object {
+  return dispatchInput(input, values, "jsmql.filter", lowerFilterStrict) as object;
+}
+
+/**
+ * `jsmql.pipeline(input)` — compile to a Pipeline (stage array) only.
+ *
+ * Same three input shapes as `jsmql()`, but rejects any bare expression that
+ * would lower to a Filter document. Use this when the call site is
+ * `db.coll.aggregate(pipeline)` and you want a compile-time guarantee that
+ * you won't accidentally hand the driver a single document where it expects
+ * a stage array. Accepts every shape that already produces a Pipeline through
+ * `jsmql()`:
+ *
+ *   - `;`-separated statements
+ *   - a single top-level stage call (`$match(...)`) — auto-wraps to one stage
+ *   - a single stage-object literal (`{ $match: ... }`) — auto-wraps too
+ *   - update-op chains (`$.x = …`) — compile to `$set` / `$unset` stages
+ *   - array-literal Pipelines (`[{ $stage: ... }, ...]`)
+ *
+ * A bare expression like `$.age > 18` throws — the error suggests `jsmql.filter()`
+ * if you wanted a Filter, or wrapping in `$match(...)` to make it a Pipeline.
+ */
+function pipelineDispatch(input: JsmqlInput): object[];
+function pipelineDispatch(strings: TemplateStringsArray, ...values: unknown[]): object[];
+function pipelineDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): object[] {
+  return dispatchInput(input, values, "jsmql.pipeline", lowerPipelineStrict) as object[];
+}
+
+/**
+ * `jsmql.update(input)` — compile to an aggregation-pipeline update (the
+ * second argument to `db.coll.updateOne(filter, update)` /
+ * `db.coll.updateMany(filter, update)` in its array form, called an
+ * `UpdateFilter` in the Node.js MongoDB driver's typings).
+ *
+ * The shorter public name (`update` rather than `updateFilter`) avoids the
+ * trap where developers read "filter" as the *query* document — the first
+ * argument to `updateOne(filter, update)` — and reach for this when they
+ * meant `jsmql.filter()`. The MongoDB driver type stays `UpdateFilter<T>`;
+ * we just don't repeat the confusing half of its name in the function.
+ *
+ * Output is always a stage array, never the legacy bare-document update form
+ * — that form silently treats RHS expressions as object literals, which is
+ * exactly the kind of footgun this entry point exists to avoid. Passing this
+ * to the driver guarantees that expressions like `$.name.toUpperCase()`
+ * evaluate server-side instead of landing in the document as the literal
+ * object `{ $toUpper: "$name" }`.
+ *
+ * Accepts the same Pipeline-shaped inputs as `jsmql.pipeline()`, but
+ * additionally rejects any stage outside MongoDB's update-pipeline whitelist
+ * (`$addFields`, `$set`, `$project`, `$unset`, `$replaceRoot`, `$replaceWith`).
+ * If you write `$match` or `$sort` inside an update pipeline, MongoDB rejects
+ * it at runtime with a generic error; this entry point catches it at compile
+ * time and names the offending stage.
+ */
+function updateDispatch(input: JsmqlInput): object[];
+function updateDispatch(strings: TemplateStringsArray, ...values: unknown[]): object[];
+function updateDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): object[] {
+  return dispatchInput(input, values, "jsmql.update", lowerUpdateStrict) as object[];
+}
+
+/**
  * Compile a parameterised arrow function to a reusable MQL builder.
  *
  * The arrow's first slot is a destructure pattern naming the bindings: a
@@ -300,24 +380,36 @@ function validateInput(
   }
 }
 
-// `jsmql` is exposed as a callable with three attached properties:
+// `jsmql` is exposed as a callable with attached properties:
 //   - `jsmql.compile`  — parameterised, reusable Filter / Pipeline builder
 //   - `jsmql.validate` — structured-result form of `jsmql()`
 //   - `jsmql.expr`     — compile a partial / "unfinished" aggregation expression
 //                        (the shape that goes inside `$project`, `$addFields`,
 //                        `db.coll.updateOne(filter, update)`, etc.)
+//   - `jsmql.filter`   — strict-Filter form (throws on Pipeline-shaped input)
+//   - `jsmql.pipeline` — strict-Pipeline form (throws on bare-expression input)
+//   - `jsmql.update`   — strict aggregation-pipeline update (whitelists stages).
+//                        Named `update` rather than `updateFilter` to avoid the
+//                        "filter ≠ query doc" confusion at the call site; the
+//                        underlying driver type is still `UpdateFilter<T>`.
 // The strippable-TS rule (see src/CLAUDE.md) forbids `namespace` declarations,
 // so we build the shape with `Object.assign` and an explicit intersection type.
 type Jsmql = typeof jsmqlDispatch & {
   compile: typeof compileFunction;
   validate: typeof validateInput;
   expr: typeof exprDispatch;
+  filter: typeof filterDispatch;
+  pipeline: typeof pipelineDispatch;
+  update: typeof updateDispatch;
 };
 
 export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {
   compile: compileFunction,
   validate: validateInput,
   expr: exprDispatch,
+  filter: filterDispatch,
+  pipeline: pipelineDispatch,
+  update: updateDispatch,
 });
 
 // Wrap JSON.stringify with the validation needed to keep the template-tag
@@ -553,6 +645,127 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   // gets passed to a doc-form update operation that wants literal semantics.
   return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, c) as object);
 }
+
+/**
+ * Strict Filter-mode lowering: `jsmql.filter()` goes through this.
+ *
+ * Every Pipeline-shaped input that `jsmql()` would auto-route to Pipeline
+ * mode throws here instead, with a message naming the shape that was found
+ * and pointing at the right alternative entry point. The accepted branch is
+ * exactly the bare-expression path of `lowerWithCtx`, lowered through
+ * `generateFilter` (same engine, same indexable-conjunct translation, same
+ * `$expr` fallback for the untranslatable residual).
+ */
+function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  if (ast.type === "Pipeline") {
+    throw new CodegenError(
+      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. " +
+        "Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      ast.pos,
+    );
+  }
+  if (ast.type === "UpdateFilter") {
+    throw new CodegenError(
+      "jsmql.filter() expects a Filter, but received an update-op chain (e.g. `$.x = …`, `delete $.x`). " +
+        "Update-op chains compile to `$set` / `$unset` stages — call jsmql.update() or jsmql() for the Pipeline form.",
+      ast.pos,
+    );
+  }
+  if (isPipelineAst(ast)) {
+    throw new CodegenError(
+      "jsmql.filter() expects a Filter, but received a Pipeline array (`[{ $stage: ... }, ...]`). " +
+        "Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      ast.pos,
+    );
+  }
+  const stageName = detectStageIntent(ast);
+  if (stageName !== null) {
+    const hint =
+      stageName === "$match"
+        ? " — or, if you wanted a Filter, drop the `$match(...)` wrapper and pass the predicate directly to jsmql.filter()."
+        : ".";
+    throw new CodegenError(
+      `jsmql.filter() expects a Filter, but received a top-level '${stageName}' stage call. ` +
+        `Call jsmql.pipeline() or jsmql() for Pipeline output${hint}`,
+      ast.pos,
+    );
+  }
+  return generateFilter(ast, ctx);
+}
+
+/** Strict Pipeline-mode lowering: `jsmql.pipeline()` goes through this. */
+function lowerPipelineStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  return lowerToPipelineStages(ast, ctx, "jsmql.pipeline");
+}
+
+/**
+ * Aggregation-pipeline update lowering: `jsmql.update()` goes through this.
+ * Reuses `lowerToPipelineStages` to share the bare-expression rejection with
+ * `jsmql.pipeline()`, then enforces the update-pipeline stage whitelist so a
+ * stage MongoDB would refuse at runtime (`$match`, `$sort`, `$group`, …)
+ * gets caught at compile time with the offending name in the message.
+ *
+ * (The internal name keeps `Update` rather than `UpdateFilter` to match the
+ * public API. The AST node type is still `UpdateFilter` — that's a parser
+ * concept, not an API concept, and matches the MongoDB driver's typings.)
+ */
+function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  const stages = lowerToPipelineStages(ast, ctx, "jsmql.update");
+  for (let i = 0; i < stages.length; i++) {
+    const stageName = Object.keys(stages[i] as Record<string, unknown>)[0];
+    if (!UPDATE_PIPELINE_STAGES.has(stageName)) {
+      const allowed = Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ");
+      throw new CodegenError(
+        `jsmql.update() rejected '${stageName}' (stage ${i}): MongoDB's aggregation-pipeline update form only accepts ${allowed}. ` +
+          `Use jsmql.pipeline() if you need other stages.`,
+        ast.pos,
+      );
+    }
+  }
+  return stages;
+}
+
+/**
+ * Shared body of `jsmql.pipeline()` and `jsmql.update()`: route every
+ * Pipeline-shape branch to its existing lowerer and throw an actionable error
+ * for a bare expression (the only input shape `jsmql()` would have routed to
+ * Filter mode). `apiName` is interpolated into the error so the message
+ * names the actual entry point the user called.
+ */
+function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string): object[] {
+  if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx) as object[];
+  if (ast.type === "UpdateFilter") {
+    const result = generateUpdateFilter(ast, ctx);
+    return Array.isArray(result) ? result : [result];
+  }
+  if (isPipelineAst(ast)) return generatePipeline(ast, ctx) as object[];
+  if (detectStageIntent(ast) !== null) {
+    const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx) as object[];
+  }
+  throw new CodegenError(
+    `${apiName}() expects a Pipeline (one or more aggregation stages — \`;\`-separated, a top-level stage call, or a stage-array literal), ` +
+      `but received a bare expression that would lower to a Filter document. ` +
+      `Call jsmql.filter() or jsmql() for Filter output, or wrap the predicate as \`$match(...)\` to make it a Pipeline.`,
+    ast.pos,
+  );
+}
+
+/**
+ * The stages MongoDB allows inside an aggregation-pipeline update (the array
+ * form of the second argument to `db.coll.updateOne` / `updateMany`). Any
+ * stage outside this set is rejected by the server at runtime; `jsmql.update()`
+ * catches it at compile time. See
+ * https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline.
+ */
+const UPDATE_PIPELINE_STAGES = new Set<string>([
+  "$addFields",
+  "$project",
+  "$replaceRoot",
+  "$replaceWith",
+  "$set",
+  "$unset",
+]);
 
 /**
  * Lower a single expression AST to a MongoDB **Filter** (the document passed
