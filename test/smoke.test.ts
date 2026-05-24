@@ -37,6 +37,16 @@ describe("smoke: strippable-TS invariant", () => {
     const result = spawnSync(process.execPath, ["src/index.ts"], { cwd: ROOT, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
   });
+
+  it("`node src/mongoose.ts` runs without errors", () => {
+    // The mongoose plugin is a separate published entry point, so it gets
+    // the same strippable-TS guarantee as src/index.ts. The `import type {}
+    // from "mongoose"` anchor and the `declare module "mongoose"` block
+    // below it are both type-only constructs that the Node stripper drops
+    // — this case proves it.
+    const result = spawnSync(process.execPath, ["src/mongoose.ts"], { cwd: ROOT, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
 });
 
 describe("smoke: built dist", () => {
@@ -87,6 +97,72 @@ describe("smoke: built dist", () => {
         const fn = jsmql(($) => $.age > 18);
         if (JSON.stringify(fn) !== '{"age":{"$gt":18}}') {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
+        }
+      `;
+    const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  const mongoosePkg = resolve(ROOT, "node_modules/mongoose/package.json");
+
+  it.skipIf(!existsSync(mongoosePkg))(
+    "mongoose module augmentation in src/mongoose.ts compiles against real mongoose types",
+    () => {
+      // Type-only validation: ensure the `declare module "mongoose"` block at
+      // the bottom of src/mongoose.ts merges with mongoose's real `Model<...>`
+      // interface and accepts a JSMQL string / arrow at every patched slot.
+      // Runs only when mongoose is installed (which it is in CI; locally a
+      // contributor can symlink /tmp/mongoose into node_modules/mongoose).
+      // Skipped otherwise so `npm test` stays self-sufficient on a fresh clone.
+      const result = spawnSync(
+        resolve(ROOT, "node_modules/.bin/tsc"),
+        ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.json")],
+        { cwd: ROOT, encoding: "utf8" },
+      );
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+    },
+  );
+
+  const mongooseEsm = resolve(ROOT, "dist/mongoose.js");
+
+  it.skipIf(!existsSync(mongooseEsm))("dist/mongoose.js loads via ESM import and patches Model.find", () => {
+    const script = `
+        import jsmqlMongoose from ${JSON.stringify("file://" + mongooseEsm)};
+        let captured;
+        class Model { static find(filter) { captured = filter; } }
+        jsmqlMongoose({ Model });
+        Model.find("$.age > 18");
+        if (JSON.stringify(captured) !== '{"age":{"$gt":18}}') {
+          throw new Error("mongoose patch (ESM) output mismatch: " + JSON.stringify(captured));
+        }
+      `;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: ROOT, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  const mongooseCjs = resolve(ROOT, "dist/cjs/mongoose.cjs");
+
+  it.skipIf(!existsSync(mongooseCjs))("dist/cjs/mongoose.cjs is callable as require('…')(mongoose)", () => {
+    // The `require(...)` form is the primary documented call shape, so the
+    // CJS bundle must promote esbuild's default-export shape to
+    // `module.exports = fn`. Without the post-build fixup in
+    // `scripts/build-cjs.mjs`, this test fails with "module.exports is not a
+    // function".
+    const script = `
+        const jsmqlMongoose = require(${JSON.stringify(mongooseCjs)});
+        if (typeof jsmqlMongoose !== "function") {
+          throw new Error("expected require(mongoose.cjs) to return a function, got " + typeof jsmqlMongoose);
+        }
+        let captured;
+        function Model() {}
+        Model.find = function(filter) { captured = filter; };
+        jsmqlMongoose({ Model });
+        Model.find("$.age > 18");
+        if (JSON.stringify(captured) !== '{"age":{"$gt":18}}') {
+          throw new Error("mongoose patch (CJS) output mismatch: " + JSON.stringify(captured));
         }
       `;
     const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {

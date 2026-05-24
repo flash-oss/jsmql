@@ -158,6 +158,40 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
 - **Strict TS, strippable source** — runs as-is on Node 22.18+ / 24.3+, Deno, and Bun (no flags, no transpile).
 
+## Using jsmql with mongoose
+
+A one-shot registration patches the `Model` static methods so the standard `find / updateOne / aggregate / …` calls accept jsmql source directly, alongside the plain MQL-JSON forms you already pass them:
+
+```js
+const mongoose = require("mongoose");
+require("@koresar/jsmql/mongoose")(mongoose);
+// or, ESM: import jsmqlMongoose from "@koresar/jsmql/mongoose"; jsmqlMongoose(mongoose);
+
+const User = mongoose.model("User", new mongoose.Schema({ name: String, age: Number, score: Number }));
+
+User.find("$.age > 18");                            // → find({ age: { $gt: 18 } })
+User.find(($) => $.age > 18 && $.region === "AU"); // → find({ age: { $gt: 18 }, region: "AU" })
+
+User.updateMany({}, ($) => $.score += 1);
+// → updateMany({}, [{ $set: { score: { $add: ["$score", 1] } } }])
+
+User.aggregate(($) => {
+  $match($.status === "active");
+  $group({ _id: $.region, total: { $sum: $.amount } });
+  $sort({ total: -1 });
+});
+
+User.find({ age: { $gt: 18 } });                    // plain MQL JSON still passes through untouched
+```
+
+**Detection rule.** A patched argument is treated as jsmql source only when it's a **string** or a **function**. Plain objects/arrays (the regular MQL JSON forms) pass through to mongoose unchanged, so existing call sites need no migration. Template-tag inputs (`jsmql\`…\``) lower to an object at the user's call site, so they take the pass-through path too.
+
+**TypeScript.** The plugin ships a `declare module "mongoose"` augmentation that adds JSMQL-shaped overloads (`string | JsmqlFn`) to every patched `Model` static, so `User.find("$.age > 18")` and `User.aggregate(($) => …)` type-check after `import "@koresar/jsmql/mongoose"` — no per-call cast required. Mongoose's own `FilterQuery<T>` / `UpdateQuery<T>` overloads still apply on the MQL-JSON pass-through path.
+
+**Patched methods** (with the slot used): `find` / `findOne` / `findOneAnd{Delete,Replace,Update}` / `countDocuments` / `deleteOne` / `deleteMany` / `replaceOne` / `exists` (filter at 0), `updateOne` / `updateMany` / `findOneAndUpdate` / `findByIdAndUpdate` (update at 1), `distinct` (filter at 1), `aggregate` (pipeline at 0). Each slot lowers through the matching strict-shape entry (`jsmql.filter` / `jsmql.update` / `jsmql.pipeline`), so a wrong-shape input — e.g. a bare expression at an `aggregate` slot — throws with the actionable strict-mode error at the patched call site instead of silently going wrong server-side. Registering twice on the same `mongoose` is a no-op.
+
+See [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md) for the full per-slot table, the methods that are deliberately *not* patched (e.g. `findOneAndReplace`'s replacement document), and the idempotence / subclass-propagation contracts.
+
 ## Try it & learn more
 
 - **[Live playground](https://flash-oss.github.io/jsmql/playground.html)** — write jsmql, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.

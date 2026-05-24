@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-24 — Mongoose plugin: `@koresar/jsmql/mongoose`
+
+Hand-rolling `jsmql.filter()` / `jsmql.update()` / `jsmql.pipeline()` at every `User.find(…)` / `User.updateMany(…)` / `User.aggregate(…)` call site gets noisy fast in a real mongoose codebase. The new `@koresar/jsmql/mongoose` subpath is a one-shot registration that monkey-patches `mongoose.Model` so the standard query statics accept jsmql source directly:
+
+```js
+const mongoose = require("mongoose");
+require("@koresar/jsmql/mongoose")(mongoose);
+
+User.find("$.age > 18");                       // → Model.find({ age: { $gt: 18 } })
+User.updateMany({}, ($) => $.score += 1);
+User.aggregate(($) => { $match($.status === "active"); $sort({ score: -1 }); });
+```
+
+**Detection rule: string-or-function only.** A patched argument is treated as jsmql source iff it's a string or a function. Plain objects/arrays pass through to the original mongoose method unchanged, so every existing MQL-JSON call site keeps working untouched — there's no migration step, and library code that calls mongoose with plain documents is unaffected. Template-tag inputs (`jsmql\`…\``) lower at the user's call site to an object, so they take the pass-through path automatically without needing a separate code path in the plugin.
+
+**Patched methods and slots.** 15 mongoose statics, mirroring the set exported from `mongoose/lib/model.js` in mongoose 9.x: `find`, `findOne`, `findOneAndDelete`, `findOneAndReplace`, `findOneAndUpdate`, `findByIdAndUpdate`, `countDocuments`, `distinct`, `deleteOne`, `deleteMany`, `updateOne`, `updateMany`, `replaceOne`, `exists`, `aggregate`. The filter slots route through `jsmql.filter`, the update slots through `jsmql.update`, and `aggregate`'s pipeline through `jsmql.pipeline` — the three strict-shape entries from earlier today. Wrong-shape source surfaces the strict-mode error at the patched call site instead of silently going wrong server-side. The per-method table lives in [docs/specs/mongoose-plugin.md](specs/mongoose-plugin.md).
+
+**Implementation shape: one explicit wrapper per method, no lookup table.** Each patched method is a four-line block in [src/mongoose.ts](../src/mongoose.ts) that captures the original, redeclares with the same parameter names as `mongoose/lib/model.js`, conditionally lowers each jsmql-eligible slot, and delegates via `original.call(this, …)`. There is no `patchMethod` helper, no `FILTER_AT_0` array, no slot-table indirection. The trade-off: a tiny bit of code repetition for stack traces that point at the named method, signatures that sit next to the code, and a grep-able list of what's actually patched. First attempt at this plugin used a generic `slotsByName` Map + a `patchMethod` factory; that was rolled back in favour of the per-method shape after a review on debuggability.
+
+**Deliberately not patched.** `findOneAndReplace` / `replaceOne` take a *replacement document* (not an update spec) at slot 1, so the slot stays untouched — a jsmql expression there would silently land as a literal object. `findById`, `findByIdAndDelete` (id-only methods) have no jsmql-eligible slot. The `Query.prototype.*` builder methods (`.where()`, `.gt()`, `.sort()`, …) are out of scope: the plugin is a Model-static layer; the Query builder is a separate composition surface that the user reaches *after* a static call.
+
+**Idempotent.** A second `jsmqlMongoose(mongoose)` on the same `Model` is a no-op — the first call sets `Model.__jsmqlPatched = true` and the next call short-circuits. One property check, no `Symbol.for` indirection; matches the minimal-implementation spirit. Without this, a second registration would double-wrap every static and the second wrap would feed `jsmql.filter()` an already-lowered Filter document — quietly weird, no obvious place to look.
+
+**CJS interop.** `require("@koresar/jsmql/mongoose")(mongoose)` is the primary documented call shape. esbuild's CJS bundling of an ES-module default export lands the function at `module.exports.default`, so [scripts/build-cjs.mjs](../scripts/build-cjs.mjs) appends a short footer to `dist/cjs/mongoose.cjs` that promotes the default export to `module.exports = fn` (while preserving `.default = fn` so synthetic-default ESM imports keep working). One source file in `src/`, both call shapes work, no duplicate runtime. [test/smoke.test.ts](../test/smoke.test.ts) gained an ESM and a CJS case against the built artifact so this fixup can't silently regress.
+
+**Subclass propagation.** Subclasses compiled by `mongoose.model(name, schema)` inherit the patched statics through the normal JavaScript class chain. Each wrapper uses `original.call(this, …)` so the subclass receiver reaches the underlying mongoose method untouched — covered by an explicit `class User extends Model {}` case in the mock-based test file.
+
+**TypeScript module augmentation.** The bottom of [src/mongoose.ts](../src/mongoose.ts) carries a `declare module "mongoose" { interface Model<…> { … } }` block that adds JSMQL-shaped overloads (parameter type `string | JsmqlFn`) to every patched static. So `User.find("$.age > 18")`, `User.aggregate(($) => { … })`, and `User.updateMany({}, "$.score += 1")` all type-check after `import "@koresar/jsmql/mongoose"` — no cast required. Return types of the JSMQL overloads are `any`: re-declaring mongoose's schema-aware `QueryWithHelpers<…>` / `Aggregate<…>` machinery from inside the augmentation would be brittle and would drift on every mongoose minor release. Users who need the precise return type either pass a typed value (matching mongoose's own overloads) or cast at the call site. The augmentation merges into mongoose's existing interface, so it activates only when mongoose is on the resolution path; projects without mongoose installed see no spurious errors.
+
+**Testing.** [test/mongoose.test.ts](../test/mongoose.test.ts) drives a hand-rolled mongoose-shaped mock — recording each downstream call and asserting the transformed arguments — across every patched method, both detection paths, the wrong-shape error pass-through, and the subclass-propagation contract. No mongoose devDep needed for runtime tests; the plugin treats its argument as a duck-typed shape with `Model.<method>` callables. For TYPE validation, [test/types/mongoose-augmentation.ts](../test/types/mongoose-augmentation.ts) imports the real mongoose and exercises every augmented overload (JSMQL string, JSMQL arrow, plain MQL JSON pass-through) against a real `mongoose.model<User>(...)`; the smoke suite spawns `tsc --noEmit` against it when mongoose resolves from `node_modules`, otherwise skips so a fresh clone without mongoose installed still passes `npm test`.
+
+---
+
 ## 2026-05-24 — Strict-shape entry points: `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`
 
 `jsmql()` is polymorphic — it dispatches Filter or Pipeline from the input's top-level shape, which is exactly what you want when the same source string is allowed to produce either. But at most real call sites the shape is fixed by the driver method being called (`find()` wants a Filter, `aggregate()` wants a Pipeline, `updateOne()` wants the pipeline form of an update). When the shape is fixed, a silent mis-dispatch is a footgun — typing `$.x = 1` where you meant a filter would compile fine and then wipe data. Three new entry points let the call site declare its expected shape and turn that footgun into a compile-time error:

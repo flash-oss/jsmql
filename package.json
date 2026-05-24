@@ -31,6 +31,16 @@
         "types": "./dist/cjs/ops.d.cts",
         "default": "./dist/cjs/ops.cjs"
       }
+    },
+    "./mongoose": {
+      "import": {
+        "types": "./dist/mongoose.d.ts",
+        "default": "./dist/mongoose.js"
+      },
+      "require": {
+        "types": "./dist/cjs/mongoose.d.cts",
+        "default": "./dist/cjs/mongoose.cjs"
+      }
     }
   },
   "files": [

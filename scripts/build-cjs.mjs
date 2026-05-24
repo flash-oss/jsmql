@@ -17,7 +17,7 @@
  * find a types entry for the `require` condition.
  */
 import { build } from "esbuild";
-import { mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, copyFileSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -27,7 +27,11 @@ const OUT_DIR = path.join(ROOT, "dist/cjs");
 mkdirSync(OUT_DIR, { recursive: true });
 
 await build({
-  entryPoints: { index: path.join(ROOT, "src/index.ts"), ops: path.join(ROOT, "src/ops.ts") },
+  entryPoints: {
+    index: path.join(ROOT, "src/index.ts"),
+    ops: path.join(ROOT, "src/ops.ts"),
+    mongoose: path.join(ROOT, "src/mongoose.ts"),
+  },
   outdir: OUT_DIR,
   bundle: true,
   format: "cjs",
@@ -41,11 +45,31 @@ await build({
 // Mirror the ESM .d.ts files as .d.cts so TypeScript's `nodenext` resolution
 // finds types under the `require` condition. The declaration content is
 // identical between ESM and CJS for this package — exports compile the same.
-for (const name of ["index", "ops"]) {
+for (const name of ["index", "ops", "mongoose"]) {
   const src = path.join(ROOT, "dist", `${name}.d.ts`);
   const dst = path.join(OUT_DIR, `${name}.d.cts`);
   copyFileSync(src, dst);
 }
+
+// `require("@koresar/jsmql/mongoose")(mongoose)` expects the module itself to
+// be a function. esbuild's CJS output for a default export normally lands at
+// `module.exports.default`, so without this fixup the user would have to
+// write `require(...).default(mongoose)`. Append a one-liner that promotes
+// the default export to be the module value while keeping `.default` set so
+// both call shapes — and ESM/TS `import jsmqlMongoose from "…/mongoose"` —
+// remain interoperable. Index/ops have no default export, so they're left
+// alone.
+const mongooseCjs = path.join(OUT_DIR, "mongoose.cjs");
+appendFileSync(
+  mongooseCjs,
+  "\n// jsmql: promote the ESM default export to module.exports so " +
+    "`require(...)` returns the plugin function directly.\n" +
+    "if (module.exports && typeof module.exports.default === 'function') {\n" +
+    "  const _fn = module.exports.default;\n" +
+    "  _fn.default = _fn;\n" +
+    "  module.exports = _fn;\n" +
+    "}\n",
+);
 
 // `package.json` with `"type": "commonjs"` inside `dist/cjs/` forces Node to
 // treat the `.cjs` files (and any `.js` sourcemaps esbuild references) as
