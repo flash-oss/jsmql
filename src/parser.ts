@@ -1314,6 +1314,9 @@ export class Parser {
         return this.parseTemplateLiteral();
       case TokenType.New:
         return this.parseNewDate();
+      case TokenType.This:
+        this.lexer.next();
+        return { type: "ThisRef", pos: t.pos };
       case TokenType.LParen:
         if (this.isLambdaStart()) return this.parseLambdaParen();
         return this.parseGrouped();
@@ -1471,7 +1474,8 @@ export class Parser {
       t.type === TokenType.In ||
       t.type === TokenType.New ||
       t.type === TokenType.Typeof ||
-      t.type === TokenType.Let
+      t.type === TokenType.Let ||
+      t.type === TokenType.This
     );
   }
 

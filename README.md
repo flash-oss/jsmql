@@ -67,6 +67,17 @@ jsmql(($) => {
 });
 // → [{ "$match": { "age": { "$gte": 18 }, "region": "AU" } }, { "$group": { "_id": "$shopId", "total": { "$sum": "$amount" } } }, { "$sort": { "total": -1 } }]
 
+// Cross-collection joins via `this.<coll>` — .find is the single-row variant, .filter the multi-row one.
+jsmql(($) => {
+  $.user     = this.users.find(u => u._id === $.userId);     // → $lookup + $unwind(preserve)
+  $.payments = this.payments.filter(p => p.orderId === $._id); // → $lookup, array stays
+});
+// → [
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "user" } },
+//     { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+//     { $lookup: { from: "payments", localField: "_id", foreignField: "orderId", as: "payments" } }
+//   ]
+
 // Optional chaining is a real safety annotation, not a syntactic hint:
 jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
 //  { "$expr": { "$in": ["$userId", { "$concatArrays": ["$mods", { "$ifNull": ["$room.mods", []] }, ["root"]] }] } }
@@ -152,6 +163,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **182 operators, full coverage** — every aggregation expression and accumulator from the official MongoDB MQL spec, including Bitwise and Window categories. Unknown operators pass through, so new MongoDB releases work day one.
 - **Plain MQL passes through.** Drop hand-written MQL JSON inline — `{ $gt: ["$age", 18] }`, a whole stage, a whole pipeline — and jsmql compiles it to itself. Mix the two freely, migrate one expression at a time, or paste verbatim from the MongoDB docs.
 - **Filter vs Pipeline picked automatically** — a stage call (`$match(...)`, `$project(...)`, …) or an update op (`$.x = …`) at the top level lowers as a `Pipeline` (`db.coll.aggregate(pipeline)` / `db.coll.updateOne(filter, update)`); any `;`-separated input lowers as a multi-stage Pipeline; everything else lowers as a `Filter` (`db.coll.find(filter)`). Index-safe predicates translate to query-document form; only the untranslatable parts ride in a top-level `$expr`. The naming follows the Node.js MongoDB driver's own `Filter<TSchema>` and `pipeline` parameter.
+- **Cross-collection joins read like JS.** `$.user = this.users.find(u => u._id === $.userId)` lowers to `$lookup` + `$unwind(preserve)`; `$.orders = this.orders.filter(o => o.userId === $._id)` lowers to `$lookup` keeping the array. `.find` vs `.filter` mirrors the JS semantics (single match vs all matches) and matches SQL's scalar-subquery vs LEFT-JOIN distinction. See [docs/LANGUAGE.md → Cross-collection lookups](docs/LANGUAGE.md#cross-collection-lookups-thiscollection).
 - **Three call shapes** — arrow `jsmql(($) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
 - **Polymorphic by default, strict on demand** — `jsmql()` picks Filter or Pipeline from the input; `jsmql.filter()`, `jsmql.pipeline()`, and `jsmql.update()` lock it to one shape and throw an actionable error otherwise (with the offending stage named, for `update()`). `jsmql.compile(fn)` parses once for parameterised parse-once-bind-many. `jsmql.expr()` returns the raw aggregation expression that drops into a stage body. The three call shapes (string / arrow / template tag) apply to all of them.
 - **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.

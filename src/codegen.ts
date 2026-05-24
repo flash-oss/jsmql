@@ -592,6 +592,12 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "FieldRef":
       return `$${expr.path}`;
 
+    case "ThisRef":
+      throw new CodegenError(
+        "`this.<collection>` is only valid in a `;`-terminated Pipeline statement as the head of a `.find(predicate)` or `.filter(predicate)` chain assigned to a field — e.g. `$.user = this.users.find(u => u._id === $.userId);` (note the semicolon). For richer joins, use the explicit `$lookup({ from, let, pipeline, as })` form in a stage array.",
+        expr.pos,
+      );
+
     case "ArrayLiteral":
       return generateArrayLiteral(expr.elements, ctx, expr.pos);
 
@@ -3170,6 +3176,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "NullLiteral":
     case "RegexLiteral":
     case "ParamRef":
+    case "ThisRef":
     case "MathConst":
     case "DateNow":
     case "TypeCastRef":
