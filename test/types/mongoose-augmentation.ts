@@ -1,12 +1,13 @@
 // Type-only validation. Loaded by `tsc --noEmit -p test/types/tsconfig.json`
 // to prove the `declare module "mongoose"` augmentation in src/mongoose.ts
-// merges correctly with real mongoose 9 types — every patched method must
+// merges correctly with real mongoose types — every patched method must
 // accept a JSMQL string or arrow at the right slot.
 //
-// This file is not a vitest test (no `.test.ts` suffix, so vitest skips it).
-// The smoke suite in test/smoke.test.ts spawns tsc against it when mongoose
-// is resolvable from node_modules; otherwise the smoke case is skipped so a
-// fresh clone without mongoose installed still passes `npm test`.
+// Not a vitest test (no `.test.ts` suffix, so vitest skips it). The smoke
+// suite in test/smoke.test.ts spawns tsc against it; mongoose is pinned at
+// `"*"` in devDependencies so every `npm install` pulls the latest, which
+// turns this case into the canary that catches our augmentation drifting
+// against mongoose's evolving generics.
 
 import mongoose from "mongoose";
 import "../../src/mongoose.ts";
