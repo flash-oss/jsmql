@@ -1286,6 +1286,12 @@ export class Parser {
         return this.parseOperatorCall();
       case TokenType.DollarDot:
         return this.parseFieldRef();
+      case TokenType.DoubleDollar:
+        return this.parseContextRef("CollectionRef", "$$");
+      case TokenType.TripleDollar:
+        return this.parseContextRef("DatabaseRef", "$$$");
+      case TokenType.QuadDollar:
+        return this.parseContextRef("ClusterRef", "$$$$");
       case TokenType.Number:
         return this.parseNumber();
       case TokenType.BigInt:
@@ -1457,6 +1463,25 @@ export class Parser {
     }
     this.lexer.next();
     return { type: "FieldRef", path: first.value, pos: dollarDot.pos };
+  }
+
+  /**
+   * Context-reference prefix: `$$` (collection), `$$$` (database), `$$$$` (cluster).
+   * Returns a bare marker AST node; postfix `.name` (MemberAccess) and `[expr]`
+   * (IndexAccess) compose via the standard primary-postfix loop. Sanity-guards
+   * that the next token is `.` or `[` so bare `$$` / `$$foo` produce an
+   * actionable error rather than a downstream surprise.
+   */
+  private parseContextRef(nodeType: "CollectionRef" | "DatabaseRef" | "ClusterRef", displayPrefix: string): Expr {
+    const prefix = this.lexer.next();
+    const next = this.lexer.peek();
+    if (next.type !== TokenType.Dot && next.type !== TokenType.LBracket) {
+      throw new ParseError(
+        `Expected '.<name>' or '[<expr>]' after '${displayPrefix}' at position ${prefix.pos}`,
+        prefix.pos,
+      );
+    }
+    return { type: nodeType, pos: prefix.pos };
   }
 
   /**

@@ -447,6 +447,28 @@ $.             // ❌ Incomplete
 $.0.name       // ❌ Can't start with digit after $.
 ```
 
+### Context references: `$$`, `$$$`, `$$$$` (reserved syntax — not yet executable)
+
+jsmql reserves three further prefix levels, parallel to `$.`, for cross-collection / cross-database / cross-cluster references. The syntax parses today, but **codegen currently errors with a "reserved syntax" message** — the API surface (what methods exist on these refs, how each one lowers to MQL) lands in a future release.
+
+| Prefix | Scope                          | Planned forms                                          |
+| ------ | ------------------------------ | ------------------------------------------------------ |
+| `$.`   | Current document field         | `$.age`, `$.address.city` (works today)                |
+| `$$`   | Current collection             | `$$.find(…)`                                           |
+| `$$$`  | Current database               | `$$$.myColl`, `$$$[collVar]`                           |
+| `$$$$` | Current cluster / server       | `$$$$.myDb.myColl`, `$$$$[db][coll]`, `$$$$[db].coll`, `$$$$.db[coll]` |
+
+Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
+
+```js
+jsmql("$$$.users.find($.active)");   // ❌ throws CodegenError: '$$$' (current-database reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.
+jsmql('$$$$["db"]["coll"]');         // ❌ same: '$$$$' is reserved syntax
+jsmql("$$");                          // ❌ ParseError: Expected '.<name>' or '[<expr>]' after '$$'
+jsmql("$$$$$.x");                     // ❌ LexError: Up to 4 levels of context reference are supported
+```
+
+You'll see real examples once the codegen for each level ships.
+
 ---
 
 ## Operators

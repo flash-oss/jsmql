@@ -592,6 +592,22 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "FieldRef":
       return `$${expr.path}`;
 
+    case "CollectionRef":
+      throw new CodegenError(
+        `'$$' (current-collection reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.`,
+        expr.pos,
+      );
+    case "DatabaseRef":
+      throw new CodegenError(
+        `'$$$' (current-database reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.`,
+        expr.pos,
+      );
+    case "ClusterRef":
+      throw new CodegenError(
+        `'$$$$' (current-cluster reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.`,
+        expr.pos,
+      );
+
     case "ArrayLiteral":
       return generateArrayLiteral(expr.elements, ctx, expr.pos);
 

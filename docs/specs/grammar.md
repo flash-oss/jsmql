@@ -94,6 +94,7 @@ member_call    = FIELD_SEGMENT "(" call_arg_list ")"         (* method call *)
 
 primary        = operator_call
                | field_ref
+               | context_ref                                 (* $$, $$$, $$$$ — see context-references.md *)
                | math_call | math_const
                | object_call
                | type_cast | type_cast_ref | number_static
@@ -123,6 +124,13 @@ call_arg       = "..." expression                            (* spread *)
 
 field_ref      = "$." FIELD_SEGMENT                          (* one segment only; postfix handles further dots *)
 FIELD_SEGMENT  = IDENT | "in" | "new" | "typeof"             (* see "Strict-JS-subset rule" — numeric segments use [n] *)
+
+context_ref    = ( "$$" | "$$$" | "$$$$" )                   (* bare prefix tokens — collection / database / cluster *)
+               (* parser sanity-guards: next token must be `.` or `[`.
+                  Postfix `.name` / `[expr]` composes via the standard
+                  postfix rule above. Codegen currently throws — the syntax
+                  is reserved; semantics land in a future release. See
+                  docs/specs/context-references.md. *)
 
 array_literal  = "[" array_elements? "]"
 array_elements = array_element ("," array_element)*

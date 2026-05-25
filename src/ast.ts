@@ -104,6 +104,9 @@ export type Expr =
       pos: number;
     }
   | { type: "FieldRef"; path: string; pos: number }
+  | { type: "CollectionRef"; pos: number } // $$  — postfix `.name` / `[expr]` composes via MemberAccess / IndexAccess
+  | { type: "DatabaseRef"; pos: number } //   $$$
+  | { type: "ClusterRef"; pos: number } //    $$$$
   | { type: "NumberLiteral"; value: number; pos: number }
   | { type: "BigIntLiteral"; value: string; pos: number }
   | { type: "StringLiteral"; value: string; pos: number }
