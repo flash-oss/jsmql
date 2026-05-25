@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — Context-reference prefixes: `$$`, `$$$`, `$$$$` (syntax-only)
+
+jsmql gains three new doc-context prefixes parallel to the existing `$.`:
+
+| Prefix | Scope            | Example                  |
+| ------ | ---------------- | ------------------------ |
+| `$.`   | Current document | `$.age` (existing)       |
+| `$$`   | Current collection | `$$.find(…)`           |
+| `$$$`  | Current database | `$$$.myColl.find(…)`     |
+| `$$$$` | Current cluster  | `$$$$.myDb.myColl.find(…)` |
+
+Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner slot can be any expression. The four dot/bracket combinations at depth 4 (`$$$$.db.coll`, `$$$$[db][coll]`, `$$$$[db].coll`, `$$$$.db[coll]`) all parse the same way and reach the same leaf.
+
+**Scope of this change: syntax only.** Lexer emits three new bare prefix tokens (`DoubleDollar`, `TripleDollar`, `QuadDollar`); the parser builds bare marker AST nodes (`CollectionRef`, `DatabaseRef`, `ClusterRef`); the existing `MemberAccess` / `IndexAccess` postfix machinery wraps them. Codegen currently throws a clear `CodegenError` for each: *"'$$$' (current-database reference) is reserved syntax — not yet lowered to MQL. Coming in a future release."* This intentional stage-gating means future sessions only need to add a codegen branch per level — parser / lexer / AST stay stable. The full design (and what each future codegen branch will do) lives in [docs/specs/context-references.md](specs/context-references.md).
+
+**Why bare prefix tokens (not "prefix-with-dot" like the existing `DollarDot`).** The existing `$.` bakes the dot into a single token, forcing the parser to consume an identifier next. That's a barrier to bracket access — `$.[x]` would be a special case. The new prefixes don't bake the dot in, so the standard `Dot` and `LBracket` tokens follow, and the standard postfix loop handles both `.name` and `[expr]` uniformly. Accepts a small asymmetry with `$.` in exchange for a uniform bracket-form and zero parser churn at depths 2–4.
+
+**Sanity-guard at parse time.** Bare `$$`, `$$foo`, `$$$$,`, etc. throw an actionable `ParseError`: *"Expected '.<name>' or '[<expr>]' after '$$' at position N"* — matching the spirit of `parseFieldRef`'s "expected field name after `$.`" check. Lexer caps at 4 dollars: 5+ throws `LexError` naming the supported levels.
+
+**Motivation.** The reverted `this.<coll>.find/filter(predicate)` attempt at `$lookup` syntax (commit `d49be79`) didn't compose — it conflated method dispatch with cross-collection naming. The four-prefix system separates the "what scope" axis from the "what operation" axis, so future API can grow on each level independently (collection methods on `$$`, collection lookups on `$$$`, multi-DB on `$$$$`). The first level (`$.`) was the only doc-context prefix since the project started; this entry adds the other three.
+
+Touched: [src/lexer.ts](../src/lexer.ts), [src/ast.ts](../src/ast.ts), [src/parser.ts](../src/parser.ts), [src/codegen.ts](../src/codegen.ts), [test/codegen.test.ts](../test/codegen.test.ts), [docs/specs/grammar.md](specs/grammar.md), [docs/LANGUAGE.md](LANGUAGE.md), [docs/CLAUDE.md](CLAUDE.md), and the new [docs/specs/context-references.md](specs/context-references.md).
+
+---
+
 ## 2026-05-24 — mongoose pinned at `"*"` in devDependencies
 
 Follow-up to the mongoose plugin entry below. The type-only validation file in [test/types/mongoose-augmentation.ts](../test/types/mongoose-augmentation.ts) needs a real mongoose import for the augmentation merge to actually mean anything; the first cut relied on a local `/tmp/mongoose` symlink, which made the smoke case work on the author's machine but not in CI or on a contributor's fresh clone. mongoose is now a real `devDependency` so `npm install` brings it in.

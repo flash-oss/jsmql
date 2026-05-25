@@ -3933,3 +3933,109 @@ describe("jsmql.expr()", () => {
     expect(() => (jsmql.expr as (x: unknown) => unknown)(42)).toThrow(/jsmql\.expr\(\) expects a string/);
   });
 });
+
+describe("context-reference prefixes ($$, $$$, $$$$)", () => {
+  // Three new prefix levels. Lex + parse succeed; codegen throws a reserved-syntax
+  // error (semantics deferred — see docs/specs/context-references.md). Both dot-ident
+  // (`$$.foo`) and bracket-expr (`$$[x]`) postfix forms are accepted because the
+  // prefix tokens don't bake the dot in; standard MemberAccess/IndexAccess composes.
+  // Tests use the string form because `$$` / `$$$` / `$$$$` aren't yet declared
+  // as ambient globals — that's part of the future-API surface.
+
+  describe("$$ — current collection", () => {
+    it("dot-ident form throws reserved-syntax at codegen", () => {
+      expect(() => jsmql.expr("$$.foo")).toThrow(/current-collection reference.*reserved syntax/s);
+    });
+    it("bracket-expr form (string literal) throws reserved-syntax at codegen", () => {
+      expect(() => jsmql.expr('$$["foo"]')).toThrow(/current-collection reference.*reserved syntax/s);
+    });
+    it("bracket-expr form (compile-form param) throws when the compiled function is called", () => {
+      const q = jsmql.compile("({ name }) => $$[name]");
+      expect(() => q({ name: "users" })).toThrow(/current-collection reference/);
+    });
+    it(".pos points at the prefix in validate()", () => {
+      const r = jsmql.validate("$$.foo");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/current-collection reference/);
+      expect(r.errors[0].pos).toBe(0);
+    });
+  });
+
+  describe("$$$ — current database", () => {
+    it("dot-ident form: $$$.myColl", () => {
+      expect(() => jsmql.expr("$$$.myColl")).toThrow(/current-database reference.*reserved syntax/s);
+    });
+    it('bracket-expr form: $$$["coll"]', () => {
+      expect(() => jsmql.expr('$$$["coll"]')).toThrow(/current-database reference/);
+    });
+    it("postfix composes through the ref: $$$.myColl.find() still errors at the leaf", () => {
+      const r = jsmql.validate("$$$.myColl.find($.x > 0)");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/current-database reference/);
+      expect(r.errors[0].pos).toBe(0);
+    });
+  });
+
+  describe("$$$$ — current cluster", () => {
+    it("dot.dot: $$$$.myDb.myColl", () => {
+      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(/current-cluster reference/);
+    });
+    it('bracket[bracket]: $$$$["db"]["coll"]', () => {
+      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(/current-cluster reference/);
+    });
+    it('bracket.dot: $$$$["db"].coll', () => {
+      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(/current-cluster reference/);
+    });
+    it('dot.bracket: $$$$.db["coll"]', () => {
+      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(/current-cluster reference/);
+    });
+    it(".pos points at the $$$$ prefix", () => {
+      const r = jsmql.validate("  $$$$.db.coll");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].pos).toBe(2);
+    });
+  });
+
+  describe("parser sanity-guards", () => {
+    it("bare $$ without . or [ → actionable ParseError", () => {
+      const r = jsmql.validate("$$");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/Expected '\.<name>' or '\[<expr>\]' after '\$\$'/);
+      expect(r.errors[0].pos).toBe(0);
+    });
+    it("$$foo (ident with no . or [) → actionable ParseError", () => {
+      const r = jsmql.validate("$$foo");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/Expected '\.<name>' or '\[<expr>\]' after '\$\$'/);
+    });
+    it("$$$ alone → message names '$$$' specifically", () => {
+      const r = jsmql.validate("$$$");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/Expected '\.<name>' or '\[<expr>\]' after '\$\$\$'/);
+    });
+    it("$$$$ alone → message names '$$$$' specifically", () => {
+      const r = jsmql.validate("$$$$");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/Expected '\.<name>' or '\[<expr>\]' after '\$\$\$\$'/);
+    });
+  });
+
+  describe("lexer cap", () => {
+    it("5 dollars → LexError naming the supported levels", () => {
+      const r = jsmql.validate("$$$$$.x");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/Up to 4 levels of context reference are supported/);
+      expect(r.errors[0].pos).toBe(0);
+    });
+    it("6 dollars → same LexError", () => {
+      const r = jsmql.validate("$$$$$$.x");
+      expect(r.valid).toBe(false);
+      expect(r.errors[0].message).toMatch(/Up to 4 levels of context reference are supported/);
+    });
+  });
+
+  it("existing $. behaviour is unaffected by the new prefix tokens", () => {
+    expect(jsmql.expr("$abs($.delta)")).toEqual({ $abs: "$delta" });
+    expect(jsmql.expr("$abs($.address.city)")).toEqual({ $abs: "$address.city" });
+  });
+});

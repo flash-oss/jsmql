@@ -18,6 +18,9 @@ export const TokenType = {
   QuestDot: "QuestDot", // ?.  (optional chaining)
   DollarDot: "DollarDot", // $.
   Dollar: "Dollar", // $ (standalone, before IDENT for operator)
+  DoubleDollar: "DoubleDollar", // $$  (current-collection reference, postfix .name or [expr])
+  TripleDollar: "TripleDollar", // $$$  (current-database reference)
+  QuadDollar: "QuadDollar", // $$$$  (current-cluster reference)
   Spread: "Spread", // ...
 
   // Arithmetic operators
@@ -116,6 +119,9 @@ export const TOKEN_DISPLAY: Record<TokenType, string> = {
   QuestDot: "'?.'",
   DollarDot: "'$.'",
   Dollar: "'$'",
+  DoubleDollar: "'$$'",
+  TripleDollar: "'$$$'",
+  QuadDollar: "'$$$$'",
   Spread: "'...'",
   Plus: "'+'",
   Minus: "'-'",
@@ -339,14 +345,40 @@ export class Lexer {
         continue;
       }
 
-      // $ — either $. (field ref prefix) or $ (operator prefix)
+      // $ family — longest-match over consecutive '$' chars:
+      //   $    → Dollar         (operator prefix, e.g. $add)
+      //   $.   → DollarDot       (current-document field ref, $.x)
+      //   $$   → DoubleDollar    (current-collection ref, $$.x / $$[x])
+      //   $$$  → TripleDollar    (current-database ref, $$$.x / $$$[x])
+      //   $$$$ → QuadDollar      (current-cluster ref, $$$$.x / $$$$[x])
+      //   $$$$$+ → LexError (no levels deeper than cluster are defined)
       if (ch === "$") {
-        if (ch2 === ".") {
-          this.emit(TokenType.DollarDot, "$.", start, 2);
-        } else {
-          this.emit(TokenType.Dollar, "$", start, 1);
+        let dollarCount = 1;
+        while (src[start + dollarCount] === "$") dollarCount++;
+        if (dollarCount === 1) {
+          if (ch2 === ".") {
+            this.emit(TokenType.DollarDot, "$.", start, 2);
+          } else {
+            this.emit(TokenType.Dollar, "$", start, 1);
+          }
+          continue;
         }
-        continue;
+        if (dollarCount === 2) {
+          this.emit(TokenType.DoubleDollar, "$$", start, 2);
+          continue;
+        }
+        if (dollarCount === 3) {
+          this.emit(TokenType.TripleDollar, "$$$", start, 3);
+          continue;
+        }
+        if (dollarCount === 4) {
+          this.emit(TokenType.QuadDollar, "$$$$", start, 4);
+          continue;
+        }
+        throw new LexError(
+          `Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$') at position ${start}`,
+          start,
+        );
       }
 
       // ** before *= before *
