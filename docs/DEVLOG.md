@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-27 — `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` sugar
+
+Writing the current pipeline to a destination collection used to require the explicit stage call: `$out("warehouse_orders")` or `$out({ db: "dw", coll: "archive" })`. The new sugar moves the destination to the **left** of `=`, where the JS-equivalent mental model puts it, and lets users compose an inline filter on the right:
+
+```
+$$$.warehouse_orders = $$;                                    // → [{ $out: "warehouse_orders" }]
+$$$$.dw.archive      = $$.filter(u => !u.active);             // → [{ $match: ... }, { $out: { db: "dw", coll: "archive" } }]
+$$$["my-coll.v2"]    = $$;                                    // → [{ $out: "my-coll.v2" }] (bracket — required for non-identifier names)
+```
+
+Detection lives in [`src/out-translation.ts`](../src/out-translation.ts) — a new sibling to `lookup-translation.ts`, `union-translation.ts`, and `facet-translation.ts`. The LHS walker accepts one or two static (dot **or** string-literal-bracket) access steps off `DatabaseRef` / `ClusterRef`; computed brackets are rejected outright (the destination must be statically readable). Segment-count diagnostics throw with precise hints pointing at the correct shape — `$$$.<a>.<b> = …` suggests `$$$$.<db>.<coll>`; `$$$$.<x> = …` suggests adding the collection segment. The RHS chain walker supports bare `$$` (no extra stages) and `$$.filter(<predicate>)` (one `$match` before the `$out`); the shape is structured so adding `.sort`, `.slice`, `.map`, etc. is one branch per method — explicitly deferred so each method's semantics can be designed deliberately. The unsupported-method error names the equivalent stage call as a workaround.
+
+**Last-stage enforcement.** `$out` writes downstream, so nothing may follow it in a pipeline. A new `sawOut` / `outPos` pair is threaded through both `generatePipeline` and `generateImplicitPipeline`, and `lowerUpdateFilterWithLookups` now returns `{ stages, ctx, sawOut, outPos }` so the outer loop knows when to throw. A subsequent statement (or a second `$$$.<coll> = …`) hits `makeAfterOutError` with the offending later statement's `.pos`.
+
+**Parser changes.** `validateUpdateTarget` gained a new `isOutTarget` branch — chains of `MemberAccess`/`IndexAccess` rooted at `DatabaseRef`/`ClusterRef` are now valid assignment LHS shapes. `parseContextRef` was relaxed for `CollectionRef` only: bare `$$` is allowed at parse time so `$$$.coll = $$` parses; the typo case `$$foo` (no separator, Ident next) still gets the parse-time hint. `$$$` / `$$$$` keep the strict pre-check — they have no bare meaning anywhere.
+
+**Mode gates.** `$out` joins lookup and union as Pipeline-only sugar. `jsmql.filter()` and `jsmql.expr()` pre-reject with a precise "use Pipeline mode" hint via the new `containsOutAssign` walker; `jsmql.update()` falls through to the existing whitelist error (`$out` isn't in MongoDB's update-pipeline whitelist). `jsmql("$$$.x = $$")` (no `;`, parses as `UpdateFilter`) and `jsmql.pipeline("$$$.x = $$")` reroute through the lookup-aware pipeline lowerer the same way lookups already do — the bare `generateUpdateFilter` path doesn't know about `$out`.
+
+**Convention.** This DEVLOG entry is also where the cross-cutting rule "**all root-replacing sugar in jsmql starts with `$ =`**" lands explicitly. `$replaceWith` and the `$facet` variant use `$ = …` because the LHS *is* the document being replaced. `$out` doesn't replace root — it writes elsewhere — so the LHS bears the destination instead. The asymmetry is visible to readers at a glance: `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)`. Documented in [`docs/specs/replace-root-stage.md`](specs/replace-root-stage.md#convention-all-root-replacing-sugar-starts-with--), [`docs/LANGUAGE.md`](LANGUAGE.md#replace-root-via--expr) (one-line callout above the replace-root section), and the root [`CLAUDE.md`](../CLAUDE.md) ("Things the user did not explicitly ask for but matter").
+
+Spec: [docs/specs/out-stage.md](specs/out-stage.md). User-facing reference: [docs/LANGUAGE.md → `$out`](LANGUAGE.md#out-write-the-pipeline-to-a-collection). Realistic example: [test/realistic.test.ts → "archive inactive users to a warehouse via $out"](../test/realistic.test.ts).
+
+---
+
 ## 2026-05-26 — `$ = { k: $$.filter(p), … }` → `$facet`
 
 A second variant of the `$ = <expr>` surface: when every value of the object-literal RHS is a `$$.filter(<lambda>)` call, the same construct lowers to a single `$facet` stage with each entry as a named sub-pipeline. The shape pulled in three things:

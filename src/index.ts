@@ -16,6 +16,7 @@ import { lookupStage } from "./stages.ts";
 import { LexError } from "./lexer.ts";
 import { containsLookupCall } from "./lookup-translation.ts";
 import { containsUnionPush, detectUnionPush } from "./union-translation.ts";
+import { containsOutAssign } from "./out-translation.ts";
 import type { Program, Expr, Pipeline } from "./ast.ts";
 
 // Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
@@ -648,6 +649,16 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
+  // An UpdateFilter whose LHS is the `$out` sugar shape (`$$$.<coll> = …`,
+  // `$$$$.<db>.<coll> = …`) follows the same reroute logic as the lookup
+  // case: the bare-doc `generateUpdateFilter` path doesn't know about
+  // `$out` lowering and would surface the generic `DatabaseRef` / `ClusterRef`
+  // bare-reference error. Wrap as a one-stmt Pipeline so the pipeline
+  // integration in `pipeline.ts` recognises and lowers the `$out`.
+  if (ast.type === "UpdateFilter" && containsOutAssign(ast)) {
+    const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
   // Lookup syntax in the bare-expression branch (no `;`, no stage call, no
   // update op): would produce a stray `DatabaseRef` / `ClusterRef` error.
   // Catch it here so the message points at the right shape — add a `;` (or
@@ -690,6 +701,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
+  rejectOutOutsidePipeline(ast, "jsmql.expr");
   // No array-wrap for update-filter output (see `lowerWithCtx` comment): the
   // caller asked for a raw building block, the bare `{ $set: … }` shape is
   // exactly what fits inside a hand-written `$set` / `$addFields` stage or
@@ -710,6 +722,7 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   rejectLookupOutsidePipeline(ast, "jsmql.filter", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.filter");
+  rejectOutOutsidePipeline(ast, "jsmql.filter");
   if (ast.type === "Pipeline") {
     throw new CodegenError(
       "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. " +
@@ -834,6 +847,23 @@ function rejectUnionPushOutsidePipeline(ast: Program, apiName: string): void {
 }
 
 /**
+ * `$out` sugar (`$$$.<coll> = …`, `$$$$.<db>.<coll> = …`) is Pipeline-only —
+ * the assignment lowers to a `$out` stage. Filter / `jsmql.expr` would see
+ * a stray `DatabaseRef` / `ClusterRef` LHS and surface the generic bare-
+ * reference error; this pre-gate gives a precise "use Pipeline mode" message
+ * naming the right entry point.
+ */
+function rejectOutOutsidePipeline(ast: Program, apiName: string): void {
+  if (containsOutAssign(ast)) {
+    throw new CodegenError(
+      `${apiName}() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. ` +
+        "Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' stages.",
+      ast.pos,
+    );
+  }
+}
+
+/**
  * Shared body of `jsmql.pipeline()` and `jsmql.update()`: route every
  * Pipeline-shape branch to its existing lowerer and throw an actionable error
  * for a bare expression (the only input shape `jsmql()` would have routed to
@@ -843,6 +873,13 @@ function rejectUnionPushOutsidePipeline(ast: Program, apiName: string): void {
 function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string): object[] {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx) as object[];
   if (ast.type === "UpdateFilter") {
+    // `$out` sugar (`$$$.<coll> = …`) inside an UpdateFilter must go through
+    // pipeline lowering — `generateUpdateFilter` doesn't know about it. Reroute
+    // the same way `lowerWithCtx` does for the implicit `jsmql()` entry.
+    if (containsOutAssign(ast)) {
+      const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+      return generateImplicitPipeline(synthetic, ctx) as object[];
+    }
     const result = generateUpdateFilter(ast, ctx);
     return Array.isArray(result) ? result : [result];
   }

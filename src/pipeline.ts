@@ -83,6 +83,7 @@ import {
 } from "./lookup-translation.ts";
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
+import { detectOutAssign, lowerOut } from "./out-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -196,6 +197,8 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   let updateBuffer: UpdateOp[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
+  let sawOut = false;
+  let outPos = 0;
   const tracking = makeSlotTracking();
 
   const flushUpdateOps = () => {
@@ -205,6 +208,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   };
 
   ast.elements.forEach((el, i) => {
+    if (sawOut) throw makeAfterOutError(el, outPos);
     if (el.type === "AssignExpr") {
       if (isReplaceRootAssign(el)) {
         const facets = detectFacetShape(el.value);
@@ -217,6 +221,14 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
         flushUpdateOps();
         for (const s of lowerReplaceRoot(el, ctx, tracking.alloc, lowerBlock)) out.push(s);
         ctx = clearCtxLets(ctx, "$replaceWith");
+        return;
+      }
+      const outTarget = detectOutAssign(el);
+      if (outTarget !== null) {
+        flushUpdateOps();
+        for (const s of lowerOut(el, outTarget, ctx, lowerBlock)) out.push(s);
+        sawOut = true;
+        outPos = el.pos;
         return;
       }
       const direct = detectLookupCall(el.value, ctx);
@@ -308,9 +320,12 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
   const out: unknown[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
+  let sawOut = false;
+  let outPos = 0;
   const tracking = makeSlotTracking();
 
   p.stmts.forEach((stmt, i) => {
+    if (sawOut) throw makeAfterOutError(stmt, outPos);
     if (stmt.type === "LetDecl") {
       const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {
@@ -334,10 +349,16 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
       // Process each op in order, splitting at lookup-bearing ops so the
       // lookup stages can sit between coalesced $set groups. A `$ = <expr>`
       // op within the chain clears the let scope (it's a reshape stage), so
-      // the returned ctx may differ from `ctx`.
+      // the returned ctx may differ from `ctx`. A `$$$.<coll> = …` op flips
+      // the `sawOut` flag — once tripped, the next pipeline statement
+      // produces the "must be last stage" error.
       const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock);
       for (const s of result.stages) out.push(s);
       ctx = result.ctx;
+      if (result.sawOut) {
+        sawOut = true;
+        outPos = result.outPos;
+      }
       return;
     }
     // `$$.push(...)` statement → one or more `$unionWith` stages (with
@@ -796,16 +817,19 @@ function lowerUpdateFilterWithLookups(
   startCtx: GenerateCtx,
   allocSlot: SlotAllocator,
   lowerBlockFn: SubPipelineLowerer,
-): { stages: object[]; ctx: GenerateCtx } {
+): { stages: object[]; ctx: GenerateCtx; sawOut: boolean; outPos: number } {
   const out: object[] = [];
   let buffer: UpdateOp[] = [];
   let ctx = startCtx;
+  let sawOut = false;
+  let outPos = 0;
   const flush = () => {
     if (buffer.length === 0) return;
     for (const stage of generateUpdateOpGroups(buffer, ctx)) out.push(stage);
     buffer = [];
   };
   for (const op of stmt.ops) {
+    if (sawOut) throw makeAfterOutError(op, outPos);
     if (op.type === "AssignExpr") {
       if (isReplaceRootAssign(op)) {
         const facets = detectFacetShape(op.value);
@@ -818,6 +842,14 @@ function lowerUpdateFilterWithLookups(
         flush();
         for (const s of lowerReplaceRoot(op, ctx, allocSlot, lowerBlockFn)) out.push(s);
         ctx = clearCtxLets(ctx, "$replaceWith");
+        continue;
+      }
+      const outTarget = detectOutAssign(op);
+      if (outTarget !== null) {
+        flush();
+        for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn)) out.push(s);
+        sawOut = true;
+        outPos = op.pos;
         continue;
       }
       const direct = detectLookupCall(op.value, ctx);
@@ -847,7 +879,23 @@ function lowerUpdateFilterWithLookups(
     buffer.push(op);
   }
   flush();
-  return { stages: out, ctx };
+  return { stages: out, ctx, sawOut, outPos };
+}
+
+/**
+ * Build the "trailing-stage" error raised when a pipeline statement appears
+ * after an `$out` sugar emitted its stage. The error names the offending
+ * statement's `pos` and points back at the `$out` write that should be last.
+ * Used by both `generatePipeline` (bracket form) and `generateImplicitPipeline`
+ * (`;`-separated form), and also by `lowerUpdateFilterWithLookups` for the
+ * `,`-chained intra-statement case.
+ */
+function makeAfterOutError(after: { pos: number; type?: string }, outPos: number): CodegenError {
+  return new CodegenError(
+    `'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position ${outPos}), ` +
+      `or remove it.`,
+    after.pos ?? outPos,
+  );
 }
 
 /**
