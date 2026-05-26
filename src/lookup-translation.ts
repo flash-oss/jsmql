@@ -146,7 +146,7 @@ function staticAccess(node: Expr, ctx: GenerateCtx): StaticAccess | null {
 }
 
 /** Extracted target of a lookup-shaped receiver: `$$$.<coll>` or `$$$$.<db>.<coll>`. */
-type LookupTarget = { pos: number; db?: string; collection: string };
+export type LookupTarget = { pos: number; db?: string; collection: string };
 
 /**
  * Walk back through one or two levels of static (dot or string-bracket) access
@@ -167,7 +167,7 @@ type LookupTarget = { pos: number; db?: string; collection: string };
  * shapes; the bare-reference codegen path then surfaces the standard
  * actionable error.
  */
-function extractLookupTarget(receiver: Expr, ctx: GenerateCtx): LookupTarget | null {
+export function extractLookupTarget(receiver: Expr, ctx: GenerateCtx): LookupTarget | null {
   const outer = staticAccess(receiver, ctx);
   if (outer === null) return null;
   // Single-level: $$$.<coll> / $$$["<coll>"] / $$$[boundCollParam]
@@ -567,13 +567,16 @@ function createLetAllocator(): LetAllocator {
   };
 }
 
-function extractLetsFromExpr(body: Expr, foreignParam: string): { rewritten: Expr; letVars: Record<string, string> } {
+export function extractLetsFromExpr(
+  body: Expr,
+  foreignParam: string,
+): { rewritten: Expr; letVars: Record<string, string> } {
   const allocator = createLetAllocator();
   const rewritten = transformExpr(body, foreignParam, allocator);
   return { rewritten, letVars: allocator.letVars() };
 }
 
-function extractLetsFromPipeline(
+export function extractLetsFromPipeline(
   block: Pipeline,
   foreignParam: string,
 ): { rewritten: Pipeline; letVars: Record<string, string> } {

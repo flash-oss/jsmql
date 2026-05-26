@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — `$$.push(...)` → `$unionWith` (collection union)
+
+`$$` (current collection) lights up its first method: `.push(args...)` lowers to `$unionWith` stages. The receiver–verb pair was chosen because `Array.prototype.push` is the JS idiom for appending items to a stream — exactly the semantics of `$unionWith` (append documents from another source onto the current stream). The JS-faithful spread rule falls out naturally: arrays are spread (`.filter(pred)`, bare collection), scalars are not (`.find(pred)`, inline object). Both rules are enforced at compile time with targeted errors that suggest the fix.
+
+**Why `$$.push` ships before `$$.find`/`$$.filter`.** `$unionWith` only names the *other* collection — the current one is implicit by where the stage sits. That means `$$.push(...)` needs no schema/driver binding for the receiver's name, unlike `$$.find/.filter` which would need to know what the current collection is called. The blocker that holds the rest of `$$` back doesn't apply here, so the feature lands without it.
+
+**Inline-doc batching, source-order preservation.** Consecutive `{...}` arguments collapse into one `$unionWith` whose pipeline uses `$documents` — fewer stages, identical observable behaviour. The moment a non-inline argument arrives, the inline batch flushes and the new argument emits its own stage. Source order across the whole arg list is preserved — `$$.push({a:1}, ...$$$.coll, {b:1})` emits three stages in that order.
+
+**`$unionWith` has no `let` slot — explicit error.** Predicates inside `$$.push(...$$$.coll.filter(pred))` may only reference foreign-doc fields. Local-doc references (`o.x === $.y`) are detected via the let-extraction algorithm shared with `$lookup` predicate translation; any non-empty letVars map throws a precise "move the local filter to `$match` before the push" error. The shared helpers `extractLetsFromExpr` / `extractLetsFromPipeline` from [`src/lookup-translation.ts`](../src/lookup-translation.ts) are now exported and reused by [`src/union-translation.ts`](../src/union-translation.ts).
+
+**Index-friendly inner `$match`.** The predicate body (post let-extraction) is fed through `translateMatchBody` — the same engine `$match` uses at the top level — so the inner `$match` emits the index-friendly `{ field: value }` shape instead of a blanket `{ $expr: … }` wrap. Untranslatable residuals still ride in `$expr`, side-by-side with the translated half. This matters at runtime: the MongoDB query planner can use foreign-collection indexes on the translated portion.
+
+**Cross-database via `$$$$`.** Spread / find against `$$$$.<db>.<coll>` works the same way and emits the Atlas Data Federation `from: { db, coll }` shape. Same caveat as cross-DB `$lookup` — community-server MongoDB rejects the object form at runtime; the lowering is identical regardless of deployment.
+
+**Statement-only; auto-Pipeline-wrap.** `$$.push(...)` has no value and cannot appear on a RHS. A single top-level push expression (no `;`) auto-wraps as a one-statement Pipeline so `jsmql("$$.push(...$$$.archive)")` produces a Pipeline output without forcing the user to append a `;`. Mode gates in [`src/index.ts`](../src/index.ts) reject `$$.push(...)` in Filter / `jsmql.expr` / `jsmql.update` with API-specific messages — `$unionWith` isn't in the update-pipeline whitelist, so `jsmql.update()` calls out the whitelist explicitly. Top-level `$$.<any-method>(...)` (including misspellings like `$$.pop`) all route through Pipeline mode so the targeted "$$ only supports .push" hint surfaces from `validateUnionPushShape` instead of the generic CollectionRef error.
+
+**Nested-push rejection mirrors nested-lookup.** A `$$.push(...)` inside another lookup's block-body, or inside any sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`), would emit stages that target the *outer* collection but land inside the inner pipeline — semantically broken. Both paths reject with "hoist to a sibling stage in the outer pipeline".
+
+**Server-version note.** Inline-doc pushes use the no-`coll` `$unionWith` shape that wraps `$documents` — requires MongoDB 6.0+. Spread-of-collection pushes work on every server that supports `$unionWith` (4.4+). The constraint is documented in [`docs/specs/union-stage.md`](specs/union-stage.md) and [`docs/LANGUAGE.md`](LANGUAGE.md).
+
+**Deliberate design rejection.** `$$.push(scalar)` (a number, a string, a runtime field-ref) is rejected with "collections only hold documents". The footgun of an accidentally-pushed scalar — which JavaScript itself accepts — would translate into nonsensical MQL; we'd rather catch it.
+
+See [`docs/specs/union-stage.md`](specs/union-stage.md) for the full lowering table, predicate translation rules, error catalog, and module-layout reference.
+
+---
+
 ## 2026-05-26 — `jsmql.compile` parameter bindings resolve in lookup bracket-index positions
 
 `$$$[collVar].find(pred)`, `$$$$[dbVar].coll.find(pred)`, `$$$$.db[collVar].find(pred)`, and `$$$$[dbVar][collVar].find(pred)` — the bracket-index positions of lookup receivers — now resolve `jsmql.compile` parameter bindings to strings at compile time and inline the value into `$lookup.from`. This honours the existing promise in [`docs/specs/context-references.md`](specs/context-references.md): *"the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression)."* The promise was previously broken — bound bracket indices were rejected as bare references — and a test codified the wrong behaviour.

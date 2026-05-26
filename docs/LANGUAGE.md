@@ -454,7 +454,7 @@ jsmql provides three further prefix levels, parallel to `$.`, for cross-collecti
 | Prefix | Scope                          | Status                                                                  |
 | ------ | ------------------------------ | ----------------------------------------------------------------------- |
 | `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
-| `$$`   | Current collection             | reserved (`$$.find(…)` — needs schema/driver binding)                   |
+| `$$`   | Current collection             | **live for `.push(...)` → `$unionWith`** — see [Collection union](#collection-union-push) below. `.find` / `.filter` on `$$` still need schema/driver binding (deferred). |
 | `$$$`  | Current database               | **live for `.find/.filter` joins** — see below                          |
 | `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (requires Atlas Data Federation; see below) |
 
@@ -464,10 +464,11 @@ Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postf
 jsmql.expr("$$$.myColl");              // ❌ CodegenError: '$$$.<coll>' must be followed by .find(pred) or .filter(pred)
 jsmql.expr('$$$$["db"]["coll"]');      // ❌ '$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred)
 jsmql("$$");                            // ❌ ParseError: Expected '.<name>' or '[<expr>]' after '$$'
+jsmql("$$.foo");                        // ❌ '$$' is statement-only and only supports '.push(...)'
 jsmql("$$$$$.x");                       // ❌ LexError: Up to 4 levels of context reference are supported
 ```
 
-The full `$$$.<coll>.find/filter(...)` and `$$$$.<db>.<coll>.find/filter(...)` join syntax is documented next.
+The full `$$$.<coll>.find/filter(...)`, `$$$$.<db>.<coll>.find/filter(...)`, and `$$.push(...)` syntaxes are documented next.
 
 ### Cross-collection lookups: `$$$.<coll>.find / .filter`
 
@@ -582,6 +583,76 @@ All four bracket combinations are accepted: `$$$$.db.coll`, `$$$$["db"]["coll"]`
 **Deployment requirement.** The `from: { db, coll }` object shape is documented and accepted by **MongoDB Atlas Data Federation** (where cross-database / cross-cluster joins are a first-class feature). The standard community MongoDB server **does not accept the object form of `$lookup.from`** — it expects a bare collection-name string and rejects the object at runtime. Use `$$$$.<db>.<coll>` only when your runtime is Atlas Data Federation (or a deployment that follows the same federated-query syntax); on a non-federated deployment you'll get a server-side error pointing at the `from` field's shape. jsmql does not gate on deployment — the lowering is the same regardless, and you'll see the runtime error if you target the wrong server.
 
 **Compile-time names only.** The `db` and `coll` names must be resolvable to strings at compile time. That includes static string literals (`$$$$.db.coll` / `$$$$["db"]["coll"]`) *and* [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter bindings — `jsmql.compile(({ dbName }, $) => ($.x = $$$$[dbName].coll.find(...)))({ dbName: "warehouse" })` resolves `dbName` to its bound value at call time and inlines it into `$lookup.from`. What's *not* supported is runtime field refs (`$$$$[$.tenantDb].coll.find(...)`) — `$.tenantDb` is per-document and can't materialise into the `$lookup.from` field, which MongoDB resolves at plan time. Non-string parameter values (a number, an array, …) are rejected with a precise "parameter binding must be a string" error.
+
+### Collection union: `$$.push(...)`
+
+`$$` is the current collection. `.push(...items)` appends those items to the current stream — the JS-faithful name for MongoDB's [`$unionWith`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/) stage. **Statement-only**: `$$.push(...)` emits one or more `$unionWith` stages and has no value. It cannot be used on a RHS, in arithmetic, inside a Filter, or anywhere else an expression is read.
+
+The spread (`...`) rule is identical to JavaScript's: arrays must be spread, scalars must not.
+
+```js
+// 1. Bare collection — short form.
+$$.push(...$$$.archive_users);
+// → { $unionWith: "archive_users" }
+
+// 2. .filter(pred) spread — pipeline-form $unionWith.
+$$.push(...$$$.archive_users.filter(u => u.active));
+// → { $unionWith: { coll: "archive_users", pipeline: [{ $match: { active: true } }] } }
+
+// 3. .find(pred) without spread — single-doc append.
+$$.push($$$.archive_users.find(u => u._id === "ABC"));
+// → { $unionWith: { coll: "archive_users", pipeline: [{ $match: { _id: "ABC" } }, { $limit: 1 }] } }
+
+// 4. Inline document — lowers to a $documents sub-pipeline.
+$$.push({ _id: 1, name: "Alice" });
+// → { $unionWith: { pipeline: [{ $documents: [{ _id: 1, name: "Alice" }] }] } }
+
+// 5. Mixed args — source order preserved; consecutive inline docs batch.
+$$.push({ a: 1 }, { a: 2 }, ...$$$.archive, { b: 3 });
+// → { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } },
+//   { $unionWith: "archive" },
+//   { $unionWith: { pipeline: [{ $documents: [{ b: 3 }] }] } }
+
+// 6. Cross-database (same Atlas Data Federation caveat as $$$$ lookups).
+$$.push(...$$$$.archive_db.users.filter(u => u.deleted));
+// → { $unionWith: { coll: { db: "archive_db", coll: "users" }, pipeline: [...] } }
+
+// 7. Block-body filter — full sub-pipeline.
+$$.push(...$$$.archive_users.filter(u => {
+  $match(u.tier === "gold");
+  $sort({ joined: -1 });
+  $limit(100);
+}));
+// → { $unionWith: { coll: "archive_users", pipeline: [
+//       { $match: { tier: "gold" } },
+//       { $sort: { joined: -1 } },
+//       { $limit: 100 },
+//     ] } }
+```
+
+**Spread rule (JS-faithful):**
+
+| Inside `.push(...)` | Spread `...`? | Why |
+|---|---|---|
+| `$$$.coll` (bare collection) | yes | conceptually an array of docs |
+| `$$$.coll.filter(pred)` | yes | `.filter` returns an array |
+| `$$$.coll.find(pred)` | **no** | `.find` returns a single doc; spreading a scalar is a JS TypeError |
+| `{ ... }` (inline document) | **no** | scalar — push as one item |
+
+Each rule is enforced at compile time with a targeted error:
+
+- `$$.push($$$.coll.filter(pred))` (forgot the `...`) → "use `...` to merge documents from another collection".
+- `$$.push(...$$$.coll.find(pred))` (spurious `...`) → "`.find` returns a single document; drop the `...`".
+
+**`$unionWith` has no `let` slot.** Predicates inside `$$.push(...$$$.coll.filter(pred))` may only reference foreign-document fields. A `$.` reference (`o.userId === $.tenantId`) is a compile-time error pointing you at the fix: move the local filter to a `$match(...)` stage *before* the push.
+
+**Index-friendly inner `$match`.** When the predicate translates to query syntax (the same engine `$match` itself uses), the inner `$match` emits the index-friendly `{ field: value }` form — not a blanket `$expr` wrap — so MongoDB can use indexes on the foreign collection.
+
+**Server version.** The bare `$documents`-only form of `$unionWith` (used for inline docs without a `coll`) requires **MongoDB 6.0+**. Spreads against existing collections work on every server that supports `$unionWith` (4.4+).
+
+**Statement-only.** `$$.push(...)` must appear as a top-level Pipeline statement. `let x = $$.push(...)`, `$.x = $$.push(...)`, or any other read of the result is rejected with the statement-only error. Filter / `jsmql.expr` / `jsmql.update` reject the syntax wholesale — collection union is Pipeline-only.
+
+**Nested.** `$$.push(...)` inside another lookup's block body or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`) is rejected with a hoist-to-outer hint — the stages it would emit can't land inside the inner pipeline without changing what gets unioned.
 
 ---
 

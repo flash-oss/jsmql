@@ -15,6 +15,7 @@ import { translateMatchBody } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
 import { LexError } from "./lexer.ts";
 import { containsLookupCall } from "./lookup-translation.ts";
+import { containsUnionPush, detectUnionPush } from "./union-translation.ts";
 import type { Program, Expr, Pipeline } from "./ast.ts";
 
 // Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
@@ -618,6 +619,22 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
+  // Top-level `$$.<method>(...)` always lowers as a Pipeline statement.
+  // `$$.push(...)` emits `$unionWith` stages; any other method surfaces a
+  // precise "$$ only supports .push" error from the pipeline-level
+  // `validateUnionPushShape` hook. Auto-wrap as a one-stage Pipeline so the
+  // user doesn't have to add a trailing `;` to flip into Pipeline mode and
+  // doesn't see the generic CollectionRef "statement-only" error instead of
+  // the targeted method-name suggestion.
+  if (
+    ast.type !== "Pipeline" &&
+    ast.type !== "UpdateFilter" &&
+    !isPipelineAst(ast) &&
+    isCollectionMethodCall(ast as Expr)
+  ) {
+    const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
   // An UpdateFilter whose RHS contains lookup syntax can't go through the
   // bare-doc `generateUpdateFilter` path — that lowerer doesn't see lookups
   // and would reach the `DatabaseRef` / `ClusterRef` codegen case and throw
@@ -672,6 +689,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 /** Expression-mode lowering: `jsmql.expr()` goes through this. */
 function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
+  rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
   // No array-wrap for update-filter output (see `lowerWithCtx` comment): the
   // caller asked for a raw building block, the bare `{ $set: … }` shape is
   // exactly what fits inside a hand-written `$set` / `$addFields` stage or
@@ -691,6 +709,7 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
  */
 function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   rejectLookupOutsidePipeline(ast, "jsmql.filter", ctx);
+  rejectUnionPushOutsidePipeline(ast, "jsmql.filter");
   if (ast.type === "Pipeline") {
     throw new CodegenError(
       "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. " +
@@ -757,6 +776,14 @@ function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
       ast.pos,
     );
   }
+  if (containsUnionPush(ast)) {
+    throw new CodegenError(
+      "jsmql.update() does not allow '$$.push(...)' (collection union): MongoDB's aggregation-pipeline update form only accepts " +
+        Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") +
+        ". Run the union in a regular aggregation pipeline (jsmql.pipeline()) — '$unionWith' isn't allowed inside an update.",
+      ast.pos,
+    );
+  }
   const stages = lowerToPipelineStages(ast, ctx, "jsmql.update");
   for (let i = 0; i < stages.length; i++) {
     const stageName = Object.keys(stages[i] as Record<string, unknown>)[0];
@@ -784,6 +811,23 @@ function rejectLookupOutsidePipeline(ast: Program, apiName: string, ctx: Generat
     throw new CodegenError(
       `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter(...)') — joins are Pipeline-only. ` +
         "Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      ast.pos,
+    );
+  }
+}
+
+/**
+ * Union-push syntax (`$$.push(...)`) is statement-only and lowers to
+ * `$unionWith` stages — Pipeline-mode-only. Filter mode / `jsmql.expr` /
+ * `jsmql.update` reject it at a pre-codegen pass so the error names the
+ * right entry point and the right shape (`$unionWith` isn't even in the
+ * update-pipeline whitelist).
+ */
+function rejectUnionPushOutsidePipeline(ast: Program, apiName: string): void {
+  if (containsUnionPush(ast)) {
+    throw new CodegenError(
+      `${apiName}() does not allow '$$.push(...)' — collection unions are Pipeline-only. ` +
+        "Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
       ast.pos,
     );
   }
@@ -862,6 +906,18 @@ function generateFilter(ast: Expr, ctx: GenerateCtx): object {
  * the stage name when matched, null otherwise. Used by `generateFilter` to
  * catch the "forgot the `;`" case before the silent `$expr` wrap fires.
  */
+/**
+ * Top-level `$$.<method>(...)` is always a Pipeline statement (currently the
+ * only supported method is `.push`, lowering to `$unionWith`). Detecting any
+ * method call on a `CollectionRef` receiver here lets the auto-wrap route the
+ * input through Pipeline mode so the targeted "$$ only supports .push" error
+ * surfaces from `validateUnionPushShape` instead of the generic CollectionRef
+ * "statement-only" codegen throw.
+ */
+function isCollectionMethodCall(ast: Expr): boolean {
+  return ast.type === "MethodCall" && ast.object.type === "CollectionRef";
+}
+
 function detectStageIntent(ast: Expr): string | null {
   if (ast.type === "OperatorCall" && lookupStage(ast.name) !== undefined) {
     return ast.name;
