@@ -33,7 +33,12 @@
       "Bash(dirname:*)",
       "Bash(test:*)",
       "Bash(true:*)",
-      "Bash(false:*)"
+      "Bash(false:*)",
+      "Bash(/Users/vasyl/.nvm/versions/node/*/bin/node *)",
+      "Write(/tmp/**)",
+      "Write(/private/tmp/**)",
+      "Read(/tmp/**)",
+      "Read(/private/tmp/**)"
     ]
   },
   "hooks": {
