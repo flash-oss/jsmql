@@ -187,7 +187,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
 
   ast.elements.forEach((el, i) => {
     if (el.type === "AssignExpr") {
-      const direct = detectLookupCall(el.value);
+      const direct = detectLookupCall(el.value, ctx);
       if (direct !== null) {
         validateLookupShape(el.value);
         flushUpdateOps();
@@ -210,7 +210,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     }
     if (el.type === "LetDecl") {
       flushUpdateOps();
-      const direct = detectLookupCall(el.value);
+      const direct = detectLookupCall(el.value, ctx);
       if (direct !== null) {
         validateLookupShape(el.value);
         const slot = `${LET_NAMESPACE}.${el.name}`;
@@ -262,7 +262,7 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
 
   p.stmts.forEach((stmt, i) => {
     if (stmt.type === "LetDecl") {
-      const direct = detectLookupCall(stmt.value);
+      const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {
         validateLookupShape(stmt.value);
         const slot = `${LET_NAMESPACE}.${stmt.name}`;
@@ -604,7 +604,7 @@ function lowerUpdateFilterWithLookups(
   };
   for (const op of stmt.ops) {
     if (op.type === "AssignExpr") {
-      const direct = detectLookupCall(op.value);
+      const direct = detectLookupCall(op.value, ctx);
       if (direct !== null) {
         validateLookupShape(op.value);
         flush();
@@ -687,7 +687,11 @@ function findFirstLookupInElement(el: ArrayElement): number | null {
 }
 
 function findFirstLookupInExpr(expr: Expr): number | null {
-  const direct = detectLookupCall(expr);
+  // findFirstLookupInExpr only locates a position for the nested-lookup
+  // rejection in `generatePipelineWithCtx`. The position is informational;
+  // the surrounding code has already established (structurally) that a
+  // lookup is present. EMPTY_CTX is safe here.
+  const direct = detectLookupCall(expr, EMPTY_CTX);
   if (direct !== null) return direct.pos;
   // Recurse into common shapes
   if (expr.type === "MethodCall") {

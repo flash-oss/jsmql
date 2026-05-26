@@ -434,12 +434,55 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
     ]);
   });
 
-  it("dynamic db / coll names (non-static bracket index) are rejected as bare $$$$", () => {
-    // `$$$$[someParam].coll` — non-static db name. extractLookupTarget bails,
-    // detectLookupCall returns null, codegen reaches the ClusterRef leaf and
-    // throws the bare-reference error. Same behaviour as `$$$[someParam]`.
-    expect(() =>
-      jsmql.compile(({ dbName }, $) => ($.x = $$$$[dbName].users.find((u) => u._id === $._id)))({ dbName: "x" }),
-    ).toThrow(/'\$\$\$\$\.<db>\.<coll>'/);
+  it("compile-time-bound db name resolves to the cross-DB $lookup from", () => {
+    // `jsmql.compile` parameter bindings are compile-time constants — the
+    // value is validated as JSON-safe at call time. Resolving them into the
+    // `$lookup.from` object matches the rule MongoDB itself enforces (plan-
+    // time constant). The promise in docs/specs/context-references.md is
+    // honoured: the inner expression can be "a jsmql.compile parameter".
+    const fn = jsmql.compile(({ dbName }, $) => ($.archived = $$$$[dbName].orders.filter((o) => o.userId === $._id)));
+    expect(fn({ dbName: "cold_storage" })).toEqual([
+      {
+        $lookup: {
+          from: { db: "cold_storage", coll: "orders" },
+          localField: "_id",
+          foreignField: "userId",
+          as: "archived",
+        },
+      },
+    ]);
+  });
+
+  it("compile-time-bound coll name (same DB) resolves the $$$[collVar] form", () => {
+    const fn = jsmql.compile(({ collName }, $) => ($.rows = $$$[collName].filter((o) => o.userId === $._id)));
+    expect(fn({ collName: "orders" })).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "rows" } },
+    ]);
+  });
+
+  it("compile-time-bound db AND coll names compose", () => {
+    const fn = jsmql.compile(({ db, coll }, $) => ($.rows = $$$$[db][coll].filter((o) => o.userId === $._id)));
+    expect(fn({ db: "cold_storage", coll: "orders" })).toEqual([
+      {
+        $lookup: {
+          from: { db: "cold_storage", coll: "orders" },
+          localField: "_id",
+          foreignField: "userId",
+          as: "rows",
+        },
+      },
+    ]);
+  });
+
+  it("non-string parameter binding in a name position is rejected with a precise error", () => {
+    const fn = jsmql.compile(({ dbId }, $) => ($.rows = $$$$[dbId].orders.filter((o) => o.userId === $._id)));
+    expect(() => fn({ dbId: 42 })).toThrow(/parameter binding must be a string/);
+  });
+
+  it("a runtime field-ref in the name position is rejected (bare-reference error)", () => {
+    // $.field is runtime-only and can't materialise into $lookup.from at compile time.
+    expect(() => jsmql("$.x = $$$$[$.dynDb].orders.filter(o => o.userId === $._id);")).toThrow(
+      /'\$\$\$\$\.<db>\.<coll>'/,
+    );
   });
 });

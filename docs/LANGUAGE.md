@@ -555,6 +555,7 @@ A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.f
 - **Nested lookups are not yet supported in this release.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda body throws a targeted "not yet supported, hoist to sibling stage" error. Coming in a follow-up.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — deferred.
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
+- **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
 
 ### Cross-database lookups: `$$$$.<db>.<coll>.find / .filter`
 
@@ -580,7 +581,7 @@ All four bracket combinations are accepted: `$$$$.db.coll`, `$$$$["db"]["coll"]`
 
 **Deployment requirement.** The `from: { db, coll }` object shape is documented and accepted by **MongoDB Atlas Data Federation** (where cross-database / cross-cluster joins are a first-class feature). The standard community MongoDB server **does not accept the object form of `$lookup.from`** — it expects a bare collection-name string and rejects the object at runtime. Use `$$$$.<db>.<coll>` only when your runtime is Atlas Data Federation (or a deployment that follows the same federated-query syntax); on a non-federated deployment you'll get a server-side error pointing at the `from` field's shape. jsmql does not gate on deployment — the lowering is the same regardless, and you'll see the runtime error if you target the wrong server.
 
-**Dynamic db / coll names are not supported.** `$$$$[someVar].coll` (or `$$$$.db[someVar]`) with a non-static index can't be materialised into a `$lookup.from` object — MongoDB's `from` field is a compile-time constant. Such expressions reach the bare-reference error path. Use `jsmql.compile`'s parameter bindings to inject static names at call time if you need them, or hand-write the explicit `$lookup({ from: {...}, ... })` callable form for fully dynamic cases.
+**Compile-time names only.** The `db` and `coll` names must be resolvable to strings at compile time. That includes static string literals (`$$$$.db.coll` / `$$$$["db"]["coll"]`) *and* [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter bindings — `jsmql.compile(({ dbName }, $) => ($.x = $$$$[dbName].coll.find(...)))({ dbName: "warehouse" })` resolves `dbName` to its bound value at call time and inlines it into `$lookup.from`. What's *not* supported is runtime field refs (`$$$$[$.tenantDb].coll.find(...)`) — `$.tenantDb` is per-document and can't materialise into the `$lookup.from` field, which MongoDB resolves at plan time. Non-string parameter values (a number, an array, …) are rejected with a precise "parameter binding must be a string" error.
 
 ---
 

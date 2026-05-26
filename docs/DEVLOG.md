@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — `jsmql.compile` parameter bindings resolve in lookup bracket-index positions
+
+`$$$[collVar].find(pred)`, `$$$$[dbVar].coll.find(pred)`, `$$$$.db[collVar].find(pred)`, and `$$$$[dbVar][collVar].find(pred)` — the bracket-index positions of lookup receivers — now resolve `jsmql.compile` parameter bindings to strings at compile time and inline the value into `$lookup.from`. This honours the existing promise in [`docs/specs/context-references.md`](specs/context-references.md): *"the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression)."* The promise was previously broken — bound bracket indices were rejected as bare references — and a test codified the wrong behaviour.
+
+**Three accepted index kinds.** `staticAccess` in [`src/lookup-translation.ts`](../src/lookup-translation.ts) now recognises: `MemberAccess` (dotted), `IndexAccess` with `StringLiteral` (string-bracket), and `IndexAccess` with `ParamRef` whose name resolves in `ctx.bindings` to a string. The third kind is the new compile-time-binding case; the `jsmql.compile` parameter-binding machinery has already validated the value as a JSON-safe compile-time constant, so reading it here matches the rule MongoDB itself enforces on `$lookup.from` (a plan-time string). Non-string bindings (a number, an array) throw a precise "parameter binding must be a string" error at the `IndexAccess.index` position; runtime field-refs (`$.tenantDb`) fail to classify entirely and reach the bare-reference codegen error.
+
+**Threading `ctx` everywhere it's needed.** `detectLookupCall`, `extractLookupTarget`, and `staticAccess` now take `ctx`. `containsLookupCall` gains an optional `ctx` parameter (default `EMPTY_CTX`) so mode-gates without a meaningful context still work, and callers with one (`lowerWithCtx`, `rejectNestedLookup`) pass it explicitly so bound-bracket lookups detect correctly. The nested-lookup guard now correctly rejects nested-bound lookups instead of silently letting them slip through.
+
+**`UpdateFilter` reroute.** A single-stmt arrow body like `jsmql.compile(({ coll }, $) => ($.x = $$$[coll].find(...)))` parses as an `UpdateFilter` (not a `Pipeline`), and the bare `generateUpdateFilter` lowering doesn't know about lookups. `lowerWithCtx` now checks `containsLookupCall(ast, ctx)` and reroutes the lookup-bearing `UpdateFilter` through a synthetic single-stmt Pipeline → `generateImplicitPipeline` → the lookup-aware pipeline integration. The output shape is identical to the previous explicit array-wrap path for non-lookup `UpdateFilter`s (which `lowerWithCtx` already wraps to `[result]`), so no backward-compat concerns.
+
+---
+
 ## 2026-05-26 — `$$$$.<db>.<coll>.find / .filter(pred)` → cross-database `$lookup`
 
 The `$$$$` (current-cluster) prefix lights up the same lookup surface as `$$$`, with the receiver naming the *database* as well: `$$$$.<db>.<coll>.find(pred)` and `$$$$.<db>.<coll>.filter(pred)` lower to MongoDB's `$lookup` stage using the object form of `from`: `{ db: "<db>", coll: "<coll>" }`. All four bracket combinations (`.db.coll`, `["db"]["coll"]`, `.db["coll"]`, `["db"].coll`) are accepted. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work identically to the `$$$` surface. Spec: [docs/specs/lookup-stage.md → Cluster-rooted ($$$$) cross-database joins](specs/lookup-stage.md). User-facing reference: [docs/LANGUAGE.md → Cross-database lookups](LANGUAGE.md#cross-database-lookups-dbcollfind--filter).

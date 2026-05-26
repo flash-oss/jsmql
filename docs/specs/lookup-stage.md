@@ -110,7 +110,19 @@ Detection differences:
 
 Same in every other respect: same predicate-translation (basic vs pipeline form), same auto-`let` extraction, same chained-terminal materialisation, same nested-lookup rejection, same mode-gate behaviour, same `.find` $first follow-up, same `__jsmql.__lookup<N>` slot scheme.
 
-**Dynamic db / coll names.** `$$$$[someVar].coll` or `$$$$.db[someVar]` with a non-static index breaks `extractLookupTarget` (which requires either a `MemberAccess` or a string-literal `IndexAccess` at every step). `detectLookupCall` returns null; codegen reaches the `ClusterRef` leaf and throws the bare-reference error. Static-name-only is appropriate for v1 — MongoDB's `$lookup.from` field is itself a compile-time constant, so a runtime-resolved name would require synthesizing a separate hand-written stage anyway.
+**Compile-time names — three accepted index kinds.** `staticAccess(node, ctx)` resolves one step of a lookup-receiver chain to a compile-time string name. It accepts:
+
+1. **`MemberAccess`** (`$$$.coll` / `$$$$.db.coll`) — the dotted member name.
+2. **`IndexAccess` with a `StringLiteral` index** (`$$$["coll"]` / `$$$$["db"]["coll"]`) — the literal value.
+3. **`IndexAccess` with a `ParamRef` index whose name resolves in `ctx.bindings` to a string** (`jsmql.compile(({ coll }, $) => $$$[coll].find(...))`) — the bound value. The `jsmql.compile` parameter-binding machinery has already validated the value as a JSON-safe compile-time constant, so reading it here matches the rule MongoDB itself enforces on `$lookup.from` (a plan-time string).
+
+The third kind is the new compile-time-binding case. Non-string bindings (a number, an array, …) throw a precise "parameter binding must be a string" error at the `IndexAccess.index` position; unbound names return null (the codegen path then surfaces `UnknownIdentifierError`); runtime field-refs (`$.tenantDb`) fail to classify entirely and reach the bare-reference codegen error.
+
+The `ctx` threads through `detectLookupCall` → `extractLookupTarget` → `staticAccess`. Three call-site categories pass it:
+
+- **Lowering paths** (`pipeline.ts:lowerUpdateFilterWithLookups`, `generatePipeline`, `generateImplicitPipeline`, and `extractLookupCalls`) — pass the local `ctx` so bindings resolve.
+- **Detection helpers without a meaningful ctx** (`walkContainsLookup` called from mode-gates; `findFirstLookupPos`; `findFirstLookupInExpr`) — `containsLookupCall` accepts an optional `ctx` parameter (default `EMPTY_CTX`) so mode-gates that lack one still work, and callers with one (`lowerWithCtx`, `rejectNestedLookup`) pass it explicitly so bound-bracket lookups detect correctly.
+- **`UpdateFilter` reroute in `lowerWithCtx`** — a single-stmt arrow body like `jsmql.compile(({ coll }, $) => ($.x = $$$[coll].find(...)))` parses as an `UpdateFilter`, not a `Pipeline`. Bare `generateUpdateFilter` doesn't know about lookups, so `lowerWithCtx` checks `containsLookupCall(ast, ctx)` and reroutes the lookup-bearing `UpdateFilter` through a synthetic single-stmt Pipeline → `generateImplicitPipeline` → the lookup-aware pipeline integration.
 
 ## Mode gates
 
@@ -142,6 +154,7 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 | Nested lookup inside another lookup's predicate         | `Nested lookup ('$$$.<coll>.find/filter' inside another lookup's predicate or pipeline) is not yet supported …` | `rejectNestedLookup`               |
 | `.reduce()` chained on `.find()` (scalar-or-null)       | `.reduce() on a .find() result is not meaningful — .find returns a scalar-or-null …`                          | `extractLookupCalls` reduce branch |
 | `.length` chained on `.find()` (scalar-or-null)         | `.length on a .find() result is not meaningful — .find returns scalar-or-null …`                              | `extractLookupCalls` length branch |
+| Non-string `jsmql.compile` binding in `[<param>]` slot  | `'$$$[<param>]' / '$$$$[<param>]' parameter binding must be a string (got <typeof>); collection / database names are compile-time constants in MongoDB's $lookup.from.` | `staticAccess` ParamRef branch     |
 | Filter mode / `jsmql.filter()` / `jsmql.expr()` lookup  | `<api>() does not allow lookup syntax ('$$$.<coll>.find/filter(...)') — joins are Pipeline-only …`             | `rejectLookupOutsidePipeline`      |
 | `jsmql.update()` lookup                                 | `jsmql.update() does not allow lookup syntax …: MongoDB's aggregation-pipeline update form only accepts …`     | `lowerUpdateStrict`                |
 | Bare expression with lookup (no `;`, no stage call)     | `Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. …`                                      | `lowerWithCtx`                     |

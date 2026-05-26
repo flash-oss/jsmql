@@ -51,7 +51,7 @@ import type {
   ObjectEntry,
   KeyValueEntry,
 } from "./ast.ts";
-import { CodegenError, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
+import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
@@ -95,13 +95,52 @@ export type LookupCall = {
   lambda: Lambda;
 };
 
-/** One step of static (dot or string-bracket) member access on a receiver. */
+/** One step of static (dot, string-bracket, or bound-param-bracket) member access on a receiver. */
 type StaticAccess = { name: string; object: Expr };
 
-function staticAccess(node: Expr): StaticAccess | null {
+/**
+ * Resolve one step of a lookup-receiver chain to a compile-time string name.
+ * Three index kinds resolve to a static name:
+ *
+ *   - `MemberAccess`        (`$$$.coll`)            → the dotted member name.
+ *   - `IndexAccess` whose index is a `StringLiteral` (`$$$["coll"]`) → the literal.
+ *   - `IndexAccess` whose index is a `ParamRef` whose name is bound in
+ *     `ctx.bindings` to a string value (`jsmql.compile(({ coll }, $) => $$$[coll]…)`)
+ *     → the bound string.
+ *
+ * The third form is the new compile-time-binding case: `jsmql.compile`
+ * parameter bindings are compile-time constants validated as JSON-shaped
+ * values at call time, so resolving them here matches the rule MongoDB
+ * itself enforces on `$lookup.from` (a plan-time constant string).
+ *
+ * Non-string bound values (a number, an array, etc.) throw a precise
+ * "parameter binding must be a string" error — the dynamic-name footgun
+ * surfaces at compile time instead of producing wrong MQL.
+ *
+ * An unbound `ParamRef` (the name isn't in `ctx.bindings` at all) returns
+ * null; the downstream codegen then surfaces either the bare-reference
+ * error (when the chain is reachable as a lookup) or `UnknownIdentifierError`
+ * (when the ParamRef leaks into a non-lookup expression position).
+ */
+function staticAccess(node: Expr, ctx: GenerateCtx): StaticAccess | null {
   if (node.type === "MemberAccess") return { name: node.member, object: node.object };
-  if (node.type === "IndexAccess" && node.index.type === "StringLiteral") {
-    return { name: node.index.value, object: node.object };
+  if (node.type === "IndexAccess") {
+    if (node.index.type === "StringLiteral") {
+      return { name: node.index.value, object: node.object };
+    }
+    if (node.index.type === "ParamRef") {
+      const bindings = ctx.bindings;
+      if (bindings === undefined || !bindings.has(node.index.name)) return null;
+      const bound = bindings.get(node.index.name);
+      if (typeof bound !== "string") {
+        throw new CodegenError(
+          `'$$$[${node.index.name}]' / '$$$$[${node.index.name}]' parameter binding must be a string ` +
+            `(got ${typeof bound}); collection / database names are compile-time constants in MongoDB's $lookup.from.`,
+          node.index.pos,
+        );
+      }
+      return { name: bound, object: node.object };
+    }
   }
   return null;
 }
@@ -128,15 +167,16 @@ type LookupTarget = { pos: number; db?: string; collection: string };
  * shapes; the bare-reference codegen path then surfaces the standard
  * actionable error.
  */
-function extractLookupTarget(receiver: Expr): LookupTarget | null {
-  const outer = staticAccess(receiver);
+function extractLookupTarget(receiver: Expr, ctx: GenerateCtx): LookupTarget | null {
+  const outer = staticAccess(receiver, ctx);
   if (outer === null) return null;
-  // Single-level: $$$.<coll> / $$$["<coll>"]
+  // Single-level: $$$.<coll> / $$$["<coll>"] / $$$[boundCollParam]
   if (outer.object.type === "DatabaseRef") {
     return { pos: outer.object.pos, collection: outer.name };
   }
-  // Two-level: $$$$.<db>.<coll> (any bracket combo)
-  const inner = staticAccess(outer.object);
+  // Two-level: $$$$.<db>.<coll> and all six (literal × literal, literal × bound,
+  // bound × literal, bound × bound — across dot vs bracket) combinations.
+  const inner = staticAccess(outer.object, ctx);
   if (inner === null) return null;
   if (inner.object.type !== "ClusterRef") return null;
   return { pos: inner.object.pos, db: inner.name, collection: outer.name };
@@ -145,14 +185,21 @@ function extractLookupTarget(receiver: Expr): LookupTarget | null {
 /**
  * Recognise `$$$.<coll>.find(pred)` / `$$$.<coll>.filter(pred)` /
  * `$$$$.<db>.<coll>.find(pred)` / `$$$$.<db>.<coll>.filter(pred)` and all
- * their bracket variants. Returns `null` if `expr` is not the shape, or if
- * the shape is malformed (which surfaces an actionable error elsewhere —
- * see `validateLookupShape`).
+ * their bracket variants — including `jsmql.compile`-parameter-bound
+ * bracket indices (resolved through `ctx.bindings`). Returns `null` if
+ * `expr` is not the shape, or if the shape is malformed (which surfaces
+ * an actionable error elsewhere — see `validateLookupShape`).
+ *
+ * Callers in mode-gate / position-locator code paths that don't have a
+ * meaningful `ctx` pass `EMPTY_CTX` — bound-bracket lookups won't be
+ * detected from those paths, but those paths only run in expression
+ * contexts (Filter / `jsmql.expr` / `jsmql.update`) where lookups would
+ * be rejected wholesale anyway, so the trade-off is benign.
  */
-export function detectLookupCall(expr: Expr): LookupCall | null {
+export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | null {
   if (expr.type !== "MethodCall") return null;
   if (expr.method !== "find" && expr.method !== "filter") return null;
-  const target = extractLookupTarget(expr.object);
+  const target = extractLookupTarget(expr.object, ctx);
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
@@ -170,55 +217,65 @@ export function detectLookupCall(expr: Expr): LookupCall | null {
 /**
  * Cheap recursive walk: does `node` (or any sub-tree thereof) contain a
  * lookup call? Used by mode-gates in `index.ts` to pre-reject lookup
- * syntax in Filter / expression / update modes with an actionable error.
+ * syntax in Filter / expression / update modes with an actionable error,
+ * and by `lowerWithCtx` to detect lookup-bearing `UpdateFilter` inputs so
+ * they can be rerouted through the lookup-aware pipeline lowerer.
+ *
+ * `ctx` defaults to `EMPTY_CTX` for the mode-gate call sites that don't
+ * have a meaningful context. When the caller has the real ctx
+ * (`lowerWithCtx`, `rejectNestedLookup`), pass it so bound bracket-index
+ * lookups (`$$$[boundParam].find(...)`) detect correctly — without the
+ * ctx, the binding can't resolve and the detection silently fails.
  */
-export function containsLookupCall(node: Expr | Pipeline | UpdateFilter): boolean {
-  return walkContainsLookup(node);
+export function containsLookupCall(node: Expr | Pipeline | UpdateFilter, ctx: GenerateCtx = EMPTY_CTX): boolean {
+  return walkContainsLookup(node, ctx);
 }
 
-function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt | UpdateOp): boolean {
+function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt | UpdateOp, ctx: GenerateCtx): boolean {
   if (node.type === "Pipeline") {
-    return node.stmts.some((s) => walkContainsLookup(s));
+    return node.stmts.some((s) => walkContainsLookup(s, ctx));
   }
   if (node.type === "UpdateFilter") {
-    return node.ops.some((op) => walkContainsLookup(op));
+    return node.ops.some((op) => walkContainsLookup(op, ctx));
   }
-  if (node.type === "AssignExpr") return walkContainsLookup(node.value);
+  if (node.type === "AssignExpr") return walkContainsLookup(node.value, ctx);
   if (node.type === "DeleteStmt") return false;
-  if (node.type === "LetDecl") return walkContainsLookup(node.value);
+  if (node.type === "LetDecl") return walkContainsLookup(node.value, ctx);
   // Expr branches that could contain nested expressions
   const expr = node;
-  if (detectLookupCall(expr) !== null) return true;
+  if (detectLookupCall(expr, ctx) !== null) return true;
   if (expr.type === "MethodCall") {
-    if (walkContainsLookup(expr.object)) return true;
-    return walkArgsContainLookup(expr.args);
+    if (walkContainsLookup(expr.object, ctx)) return true;
+    return walkArgsContainLookup(expr.args, ctx);
   }
   if (expr.type === "CallExpression") {
-    if (walkContainsLookup(expr.callee)) return true;
-    return walkArgsContainLookup(expr.args);
+    if (walkContainsLookup(expr.callee, ctx)) return true;
+    return walkArgsContainLookup(expr.args, ctx);
   }
-  if (expr.type === "OperatorCall") return walkArgsContainLookup(expr.args);
-  if (expr.type === "MathCall" || expr.type === "ObjectCall") return walkArgsContainLookup(expr.args);
-  if (expr.type === "MemberAccess") return walkContainsLookup(expr.object);
-  if (expr.type === "IndexAccess") return walkContainsLookup(expr.object) || walkContainsLookup(expr.index);
-  if (expr.type === "BinaryExpr") return walkContainsLookup(expr.left) || walkContainsLookup(expr.right);
-  if (expr.type === "UnaryExpr") return walkContainsLookup(expr.operand);
+  if (expr.type === "OperatorCall") return walkArgsContainLookup(expr.args, ctx);
+  if (expr.type === "MathCall" || expr.type === "ObjectCall") return walkArgsContainLookup(expr.args, ctx);
+  if (expr.type === "MemberAccess") return walkContainsLookup(expr.object, ctx);
+  if (expr.type === "IndexAccess") return walkContainsLookup(expr.object, ctx) || walkContainsLookup(expr.index, ctx);
+  if (expr.type === "BinaryExpr") return walkContainsLookup(expr.left, ctx) || walkContainsLookup(expr.right, ctx);
+  if (expr.type === "UnaryExpr") return walkContainsLookup(expr.operand, ctx);
   if (expr.type === "TernaryExpr") {
     return (
-      walkContainsLookup(expr.condition) || walkContainsLookup(expr.consequent) || walkContainsLookup(expr.alternate)
+      walkContainsLookup(expr.condition, ctx) ||
+      walkContainsLookup(expr.consequent, ctx) ||
+      walkContainsLookup(expr.alternate, ctx)
     );
   }
   if (expr.type === "Lambda") {
-    if (expr.body !== undefined) return walkContainsLookup(expr.body);
-    if (expr.block !== undefined) return walkContainsLookup(expr.block);
+    if (expr.body !== undefined) return walkContainsLookup(expr.body, ctx);
+    if (expr.block !== undefined) return walkContainsLookup(expr.block, ctx);
     return false;
   }
   if (expr.type === "ArrayLiteral") {
     for (const el of expr.elements) {
       if (el.type === "SpreadElement") {
-        if (walkContainsLookup(el.argument)) return true;
+        if (walkContainsLookup(el.argument, ctx)) return true;
       } else if (
-        walkContainsLookup(el as Expr | UpdateOp | { type: "LetDecl"; name: string; value: Expr; pos: number })
+        walkContainsLookup(el as Expr | UpdateOp | { type: "LetDecl"; name: string; value: Expr; pos: number }, ctx)
       ) {
         return true;
       }
@@ -228,31 +285,31 @@ function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
   if (expr.type === "ObjectLiteral") {
     for (const entry of expr.entries) {
       if (entry.type === "SpreadElement") {
-        if (walkContainsLookup(entry.argument)) return true;
+        if (walkContainsLookup(entry.argument, ctx)) return true;
       } else {
-        if (entry.key.kind === "computed" && walkContainsLookup(entry.key.expr)) return true;
-        if (walkContainsLookup(entry.value)) return true;
+        if (entry.key.kind === "computed" && walkContainsLookup(entry.key.expr, ctx)) return true;
+        if (walkContainsLookup(entry.value, ctx)) return true;
       }
     }
     return false;
   }
-  if (expr.type === "TemplateLiteral") return expr.expressions.some((e) => walkContainsLookup(e));
-  if (expr.type === "TypeofExpr") return walkContainsLookup(expr.operand);
-  if (expr.type === "NewDate") return expr.args.some((a) => walkContainsLookup(a));
-  if (expr.type === "NewSet") return expr.arg ? walkContainsLookup(expr.arg) : false;
-  if (expr.type === "TypeCast") return walkContainsLookup(expr.arg);
+  if (expr.type === "TemplateLiteral") return expr.expressions.some((e) => walkContainsLookup(e, ctx));
+  if (expr.type === "TypeofExpr") return walkContainsLookup(expr.operand, ctx);
+  if (expr.type === "NewDate") return expr.args.some((a) => walkContainsLookup(a, ctx));
+  if (expr.type === "NewSet") return expr.arg ? walkContainsLookup(expr.arg, ctx) : false;
+  if (expr.type === "TypeCast") return walkContainsLookup(expr.arg, ctx);
   if (expr.type === "ArrayFrom")
-    return walkContainsLookup(expr.input) || (expr.mapFn ? walkContainsLookup(expr.mapFn) : false);
-  if (expr.type === "NumberStatic") return walkContainsLookup(expr.arg);
-  if (expr.type === "DateUTC") return expr.args.some((a) => walkContainsLookup(a));
+    return walkContainsLookup(expr.input, ctx) || (expr.mapFn ? walkContainsLookup(expr.mapFn, ctx) : false);
+  if (expr.type === "NumberStatic") return walkContainsLookup(expr.arg, ctx);
+  if (expr.type === "DateUTC") return expr.args.some((a) => walkContainsLookup(a, ctx));
   return false;
 }
 
-function walkArgsContainLookup(args: CallArg[]): boolean {
+function walkArgsContainLookup(args: CallArg[], ctx: GenerateCtx): boolean {
   for (const a of args) {
     if (a.type === "SpreadElement") {
-      if (walkContainsLookup(a.argument)) return true;
-    } else if (walkContainsLookup(a)) return true;
+      if (walkContainsLookup(a.argument, ctx)) return true;
+    } else if (walkContainsLookup(a, ctx)) return true;
   }
   return false;
 }
@@ -821,7 +878,7 @@ export function lowerLookup(
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
 ): object[] {
-  rejectNestedLookup(call);
+  rejectNestedLookup(call, outerCtx);
   const pred = translatePredicate(call, outerCtx, lowerBlock);
   // `$lookup.from` is a bare string for same-database joins (`$$$.<coll>`) and
   // an object `{ db, coll }` for cross-database joins (`$$$$.<db>.<coll>`).
@@ -880,7 +937,7 @@ export function extractLookupCalls(
   validateLookupShape(expr);
   // Chained `.length` on a lookup
   if (expr.type === "MemberAccess" && expr.member === "length") {
-    const innerCall = detectLookupCall(expr.object);
+    const innerCall = detectLookupCall(expr.object, outerCtx);
     if (innerCall !== null) {
       if (innerCall.method === "find") {
         // `.find()` returns scalar-or-null (after `$set $first`); `.length` on
@@ -903,7 +960,7 @@ export function extractLookupCalls(
   }
   // Chained `.reduce(fn, init)` on a lookup
   if (expr.type === "MethodCall" && expr.method === "reduce") {
-    const innerCall = detectLookupCall(expr.object);
+    const innerCall = detectLookupCall(expr.object, outerCtx);
     if (innerCall !== null) {
       if (innerCall.method === "find") {
         throw new CodegenError(
@@ -931,7 +988,7 @@ export function extractLookupCalls(
     }
   }
   // Direct lookup as the whole expression
-  const direct = detectLookupCall(expr);
+  const direct = detectLookupCall(expr, outerCtx);
   if (direct !== null) {
     const slot = allocSlot();
     const stages = lowerLookup(direct, slot, outerCtx, lowerBlock);
@@ -1180,10 +1237,16 @@ function rewriteCallArgs(args: CallArg[], rewrite: (e: Expr) => Expr): CallArg[]
  * lookup, we check whether the lookup's own lambda body contains another
  * lookup. If so, throw.
  */
-function rejectNestedLookup(call: LookupCall): void {
+function rejectNestedLookup(call: LookupCall, ctx: GenerateCtx): void {
   const inner: Expr | Pipeline | undefined = call.lambda.body ?? call.lambda.block;
   if (inner === undefined) return;
-  if (containsLookupCall(inner)) {
+  // Pass the outer ctx so a nested lookup with a bound bracket-index
+  // (`$$$$[boundDb].coll.find(...)` inside another lookup's predicate)
+  // detects correctly. Without the ctx, the binding wouldn't resolve and
+  // the inner lookup would silently slip past this gate, then get
+  // materialised as an actual nested $lookup later — the exact case we
+  // explicitly defer to v2.
+  if (containsLookupCall(inner, ctx)) {
     // Find the inner lookup's pos for a precise error
     const innerPos = findFirstLookupPos(inner) ?? call.lambda.pos;
     throw new CodegenError(
@@ -1213,7 +1276,11 @@ function findFirstLookupPos(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
   if (node.type === "DeleteStmt") return null;
   if (node.type === "LetDecl") return findFirstLookupPos(node.value);
   // Expr branch
-  const direct = detectLookupCall(node);
+  // findFirstLookupPos only locates a position for the nested-lookup error
+  // message; EMPTY_CTX is fine because the surrounding `rejectNestedLookup`
+  // already established (via containsLookupCall, same EMPTY_CTX semantics)
+  // that a nested lookup is present.
+  const direct = detectLookupCall(node, EMPTY_CTX);
   if (direct !== null) return direct.pos;
   // Recurse into common shapes
   const expr = node;
