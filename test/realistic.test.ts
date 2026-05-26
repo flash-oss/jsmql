@@ -128,6 +128,41 @@ $ = {
   });
 });
 
+describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.clients.aggregate(jsmql(...))" }, () => {
+    // Start from `clients` but pivot the pipeline onto `transactions` filtered
+    // by date and client id. `$$ = $$$.<coll>.filter(...)` lowers to a
+    // `$limit: 0` (drops the current stream) followed by `$unionWith` (brings
+    // in matching foreign docs). The result is the same as if the aggregation
+    // had been run on `transactions` from the start, but the call site keeps
+    // its original collection.
+    expect(
+      jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`,
+    ).toEqual([
+      { $limit: 0 },
+      {
+        $unionWith: {
+          coll: "transactions",
+          pipeline: [{ $match: { createdAt: { $gte: new Date("2026-01-01") }, client: 156 } }],
+        },
+      },
+    ]);
+  });
+});
+
+describe("narrow the current stream (`$$ = $$.filter(...)`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" }, () => {
+    // The symmetric form: source stays on `transactions`, the assignment
+    // narrows the stream. Equivalent to a bare `$match(...)` — the explicit
+    // `$$ = $$.filter(...)` form exists for symmetry with the source-switch
+    // case above, so the two can be swapped without changing the surrounding
+    // shape of the pipeline.
+    expect(jsmql`$$ = $$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
+      { $match: { createdAt: { $gte: new Date("2026-01-01") }, client: 156 } },
+    ]);
+  });
+});
+
 describe("lift the embedded profile to the top level (`$ = …`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // After a $match, replace each user doc with its `profile` sub-doc and then

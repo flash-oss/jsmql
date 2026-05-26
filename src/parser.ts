@@ -935,6 +935,10 @@ export class Parser {
 
   private isFieldPathTarget(target: Expr): boolean {
     if (target.type === "FieldRef") return true;
+    // Bare `$$` is a valid assignment target for the stream-level
+    // root-replacement form (`$$ = <expr>`). The parser accepts the shape
+    // here; pipeline lowering enforces the supported RHS forms.
+    if (target.type === "CollectionRef") return true;
     if (target.type === "MemberAccess") return this.isFieldPathTarget(target.object);
     return false;
   }
@@ -1507,22 +1511,23 @@ export class Parser {
   /**
    * Context-reference prefix: `$$` (collection), `$$$` (database), `$$$$` (cluster).
    * Returns a bare marker AST node; postfix `.name` (MemberAccess) and `[expr]`
-   * (IndexAccess) compose via the standard primary-postfix loop. Sanity-guards
-   * that the next token is `.` or `[` so bare `$$` / `$$foo` produce an
-   * actionable error rather than a downstream surprise.
+   * (IndexAccess) compose via the standard primary-postfix loop.
+   *
+   * Sanity-guards that the next token is `.` or `[` so bare `$$$` / `$$$$`
+   * (which are meaningless on their own) produce an actionable error rather
+   * than a downstream surprise. `$$` (CollectionRef) is more permissive: it
+   * is valid as the LHS of `$$ = <expr>` (the stream-level replacement) and
+   * as the RHS of `$$$.coll = $$` (the no-op `$out` write of the current
+   * stream), so for CollectionRef we accept anything that isn't an
+   * identifier-like follower. The typo case `$$foo` (no separator, an Ident
+   * next) is still rejected so the user sees the actionable
+   * "Expected '.<name>' or '[<expr>]'" hint; codegen continues to gate bare
+   * `$$` in unsupported positions via the CollectionRef branch.
    */
   private parseContextRef(nodeType: "CollectionRef" | "DatabaseRef" | "ClusterRef", displayPrefix: string): Expr {
     const prefix = this.lexer.next();
     const next = this.lexer.peek();
     if (next.type !== TokenType.Dot && next.type !== TokenType.LBracket) {
-      // Bare `$$` (CollectionRef) is allowed at the parse level so the `$out`
-      // sugar can write `$$$.coll = $$` (no-op write of the current pipeline).
-      // Typo case `$$foo` (no separator, just an Ident next) is still rejected
-      // here so the user sees the actionable "Expected '.<name>' or '[<expr>]'"
-      // hint instead of a generic downstream error. Codegen continues to gate
-      // bare `$$` in non-RHS positions via the CollectionRef branch.
-      // `$$$` / `$$$$` keep the strict parse-time check — every supported use
-      // chains with at least one access step.
       if (nodeType === "CollectionRef" && !this.isIdentOrKeyword(next)) {
         return { type: nodeType, pos: prefix.pos };
       }

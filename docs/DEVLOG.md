@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-27 — `$$ = <expr>` → `$match` / `$limit:0 + $unionWith` (replace stream)
+
+Sister to `$ = <expr>` (single-doc replacement) at the stream level: `$$ = …` replaces the pipeline's document stream. Two RHS shapes ship; nothing else is accepted:
+
+- **Narrow** (`$$ = $$.filter(<lambda>)`) lowers to a single `$match` stage. Functionally identical to writing the predicate as a bare statement (`p;` form) — the explicit shape exists for symmetry with the source-switch form below, so the two can be swapped without changing the surrounding pipeline.
+- **Source switch** (`$$ = $$$.<coll>.filter(<lambda>)`) lowers to `[{ $limit: 0 }, { $unionWith: { coll, pipeline: [{ $match: <translated> }] } }]`. The `$limit: 0` drops the current stream; the `$unionWith` brings in filtered docs from the foreign collection. After this stage the pipeline operates on `<coll>` filtered by the predicate, but the driver call (`db.<original>.aggregate(...)`) keeps its original collection — useful when you start a query on one collection and decide to pivot.
+
+Cross-DB (`$$ = $$$$.<db>.<coll>.filter(...)`) uses the Atlas Data Federation `from: { db, coll }` shape, same as the lookup-translation does for cross-DB joins.
+
+**Predicate translation.** Both shapes share `lowerStreamFilterPredicate` in [`src/pipeline.ts`](../src/pipeline.ts): expression bodies run through `translateMatchBody` (index-friendly query syntax for the translatable half, `$expr` for the residual); block bodies pass through `lowerBlock`. The lambda param is the document being matched — `param.x` rewrites to a bare `FieldRef("x")` via `extractLetsFromExpr`; `$.<field>` references are rejected with a "use the lambda parameter" hint. Same convention as the facet form — a second spelling for the current doc would only invite drift.
+
+**Let-scope rules.** The narrow form preserves the outer pipeline's `let` scope (the predicate's `$match` is a top-level stage, not a sub-pipeline; outer lets resolve through `ctx.pipelineLets`). The source-switch form clears the let scope via `clearCtxLets(ctx, "$unionWith")` — the outer docs are gone after `$limit: 0`, so any prior `let` binding becomes unreadable. A subsequent reference produces the existing precise error: "`x` is a `let` binding and can't be read after `$unionWith` …".
+
+**Parser changes.** Two small adjustments in [`src/parser.ts`](../src/parser.ts):
+- `parseContextRef` previously required `$$` to be followed by `.` or `[` (the sanity guard against bare `$$`). Now the `CollectionRef` variant also accepts `=` so `$$ = X` parses; the other context prefixes (`$$$`, `$$$$`) keep the strict rule because `$$$ = X` / `$$$$ = X` are meaningless.
+- `isFieldPathTarget` now accepts `CollectionRef` as an assignment target, alongside `FieldRef` and its `MemberAccess` chains.
+
+**Rejections.** Anything outside the two supported RHS shapes errors with an actionable message: `$$ = []` (empty stream), `$$ = <ternary>` (conditional branching), `$$ = $$$.<coll>.find(...)` (single-doc result, not a stream), `$$ = $$.map(...)` / `$$ = $$.<other>(...)` (wrong method), bare `$$ = $$$.<coll>` (missing `.filter`), `$$ += …` / `$$++` (compound assignment, not a scalar). Each names the supported forms and, where applicable, redirects to `$ = $$$.<coll>.find(...)` for the single-doc case.
+
+**Out of scope.** `$$ = []`, top-level ternaries, and `$$.find(<predicate>)` (self-lookup) all error with "not yet supported" messages. The genuinely hard piece — passing outer `let` bindings into a `$unionWith` sub-pipeline — is deferred; the source-switch form is therefore best paired with `$$$.<other>.find(...)` for the lookup-style "fetch a scalar first" pattern rather than a `let` on the current source.
+
+Spec: [docs/specs/replace-stream-stage.md](specs/replace-stream-stage.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#replace-stream).
+
+---
+
 ## 2026-05-27 — `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` sugar
 
 Writing the current pipeline to a destination collection used to require the explicit stage call: `$out("warehouse_orders")` or `$out({ db: "dw", coll: "archive" })`. The new sugar moves the destination to the **left** of `=`, where the JS-equivalent mental model puts it, and lets users compose an inline filter on the right:
@@ -78,16 +103,6 @@ Spec: [docs/specs/replace-root-stage.md](specs/replace-root-stage.md). User-faci
 
 ---
 
-## 2026-05-26 — GitHub Pages publishes only `playground.html`
-
-Added a root `_config.yml` to constrain the GitHub Pages Jekyll build to the single artefact users actually consume — [`playground.html`](../playground.html). Previously the build had no config, so Jekyll defaulted to processing every Markdown file at the repo root and under `docs/` as a Liquid template. JS-syntax `{{ … }}` blocks inside [`docs/LANGUAGE.md`](LANGUAGE.md) and [`docs/DEVLOG.md`](DEVLOG.md) (e.g. `{{ startDate: new Date(...), unit: "day" }}`) tripped Liquid's variable-terminator regex and crashed `actions/jekyll-build-pages@v1` with a `Liquid::SyntaxError`, blocking the deploy.
-
-The config excludes every directory and file pattern that isn't `playground.html` — Markdown, TypeScript sources, build output (`dist/`), tooling configs, `vendor/`, `node_modules/`, dotfiles — and keeps `include: [playground.html]` explicit so a future Jekyll default change can't silently drop it. The site surface is now exactly one file at `https://flash-oss.github.io/jsmql/playground.html`, which is what [README.md](../README.md) already links to.
-
-This is a deploy-pipeline fix, not a language change; no source files were touched.
-
----
-
 ## 2026-05-26 — `$$.push(...)` → `$unionWith` (collection union)
 
 `$$` (current collection) lights up its first method: `.push(args...)` lowers to `$unionWith` stages. The receiver–verb pair was chosen because `Array.prototype.push` is the JS idiom for appending items to a stream — exactly the semantics of `$unionWith` (append documents from another source onto the current stream). The JS-faithful spread rule falls out naturally: arrays are spread (`.filter(pred)`, bare collection), scalars are not (`.find(pred)`, inline object). Both rules are enforced at compile time with targeted errors that suggest the fix.
@@ -114,30 +129,6 @@ See [`docs/specs/union-stage.md`](specs/union-stage.md) for the full lowering ta
 
 ---
 
-## 2026-05-26 — `jsmql.compile` parameter bindings resolve in lookup bracket-index positions
-
-`$$$[collVar].find(pred)`, `$$$$[dbVar].coll.find(pred)`, `$$$$.db[collVar].find(pred)`, and `$$$$[dbVar][collVar].find(pred)` — the bracket-index positions of lookup receivers — now resolve `jsmql.compile` parameter bindings to strings at compile time and inline the value into `$lookup.from`. This honours the existing promise in [`docs/specs/context-references.md`](specs/context-references.md): *"the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression)."* The promise was previously broken — bound bracket indices were rejected as bare references — and a test codified the wrong behaviour.
-
-**Three accepted index kinds.** `staticAccess` in [`src/lookup-translation.ts`](../src/lookup-translation.ts) now recognises: `MemberAccess` (dotted), `IndexAccess` with `StringLiteral` (string-bracket), and `IndexAccess` with `ParamRef` whose name resolves in `ctx.bindings` to a string. The third kind is the new compile-time-binding case; the `jsmql.compile` parameter-binding machinery has already validated the value as a JSON-safe compile-time constant, so reading it here matches the rule MongoDB itself enforces on `$lookup.from` (a plan-time string). Non-string bindings (a number, an array) throw a precise "parameter binding must be a string" error at the `IndexAccess.index` position; runtime field-refs (`$.tenantDb`) fail to classify entirely and reach the bare-reference codegen error.
-
-**Threading `ctx` everywhere it's needed.** `detectLookupCall`, `extractLookupTarget`, and `staticAccess` now take `ctx`. `containsLookupCall` gains an optional `ctx` parameter (default `EMPTY_CTX`) so mode-gates without a meaningful context still work, and callers with one (`lowerWithCtx`, `rejectNestedLookup`) pass it explicitly so bound-bracket lookups detect correctly. The nested-lookup guard now correctly rejects nested-bound lookups instead of silently letting them slip through.
-
-**`UpdateFilter` reroute.** A single-stmt arrow body like `jsmql.compile(({ coll }, $) => ($.x = $$$[coll].find(...)))` parses as an `UpdateFilter` (not a `Pipeline`), and the bare `generateUpdateFilter` lowering doesn't know about lookups. `lowerWithCtx` now checks `containsLookupCall(ast, ctx)` and reroutes the lookup-bearing `UpdateFilter` through a synthetic single-stmt Pipeline → `generateImplicitPipeline` → the lookup-aware pipeline integration. The output shape is identical to the previous explicit array-wrap path for non-lookup `UpdateFilter`s (which `lowerWithCtx` already wraps to `[result]`), so no backward-compat concerns.
-
----
-
-## 2026-05-26 — `$$$$.<db>.<coll>.find / .filter(pred)` → cross-database `$lookup`
-
-The `$$$$` (current-cluster) prefix lights up the same lookup surface as `$$$`, with the receiver naming the *database* as well: `$$$$.<db>.<coll>.find(pred)` and `$$$$.<db>.<coll>.filter(pred)` lower to MongoDB's `$lookup` stage using the object form of `from`: `{ db: "<db>", coll: "<coll>" }`. All four bracket combinations (`.db.coll`, `["db"]["coll"]`, `.db["coll"]`, `["db"].coll`) are accepted. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work identically to the `$$$` surface. Spec: [docs/specs/lookup-stage.md → Cluster-rooted ($$$$) cross-database joins](specs/lookup-stage.md). User-facing reference: [docs/LANGUAGE.md → Cross-database lookups](LANGUAGE.md#cross-database-lookups-dbcollfind--filter).
-
-**Deployment requirement.** MongoDB's `$lookup.from: { db, coll }` is the [MongoDB Atlas Data Federation](https://www.mongodb.com/docs/atlas/data-federation/query/sql/aggregation-pipeline-stages/) form. The community MongoDB server validates `from` as a string and rejects the object shape at runtime. jsmql emits the object form regardless — the lowering is deployment-agnostic, and a user targeting community Mongo will see the server's "`from` must be a string" error. The LANGUAGE.md and DEVLOG entries call this requirement out so a user picking up `$$$$` knows what they're committing to. We chose not to gate at compile time because (a) jsmql has no awareness of the user's runtime deployment, and (b) the surface is genuinely useful on Atlas Data Federation, which is a major MongoDB deployment.
-
-**Implementation reuse.** Everything below `detectLookupCall` is shared with the `$$$` path. `LookupCall` gains an optional `db?: string` field; `extractLookupTarget` walks one or two `StaticAccess` steps (one for `$$$`, two for `$$$$`); `lowerLookup` emits `from: "<coll>"` or `from: { db, coll }` based on whether `db` is set. `validateLookupShape` threads the right spelling (`'$$$.<coll>'` vs `'$$$$.<db>.<coll>'`) into error messages via a small `classifyLookupReceiver` walker. The parser's lookup-receiver helper (formerly `isDatabaseRefRooted`, now `isLookupReceiverRooted`) accepts both `DatabaseRef` and `ClusterRef` leaves so block-body lambdas opt in for both surfaces. The `ClusterRef` codegen case now mirrors `DatabaseRef`'s actionable bare-reference error.
-
-**Static names only.** `$$$$[someVar].coll` (or `$$$$.db[someVar]`) with a non-static index doesn't extract — `$lookup.from` is itself a compile-time constant in MongoDB. Such expressions hit the bare-reference error path with the same message a bare `$$$$` reference would produce. Documented in the LANGUAGE.md "Dynamic db / coll names" caveat.
-
----
-
 ## 2026-05-26 — `$$$.<coll>.find / .filter(pred)` → `$lookup`
 
 The `$$$` context-reference prefix lights up: `$$$.<coll>.find(pred)` and `$$$.<coll>.filter(pred)` now lower to MongoDB's `$lookup` stage, with chained terminal composition (`.length`, `.reduce(fn, init)`, member access on `.find` results), block-body sub-pipeline lambdas (`o => { $match(...); $sort(...); $limit(N); }`), and auto-`let` extraction for outer-doc references. Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md). User-facing reference: [docs/LANGUAGE.md → Cross-collection lookups](LANGUAGE.md#cross-collection-lookups-coll-find--filter).
@@ -153,6 +144,30 @@ The `$$$` context-reference prefix lights up: `$$$.<coll>.find(pred)` and `$$$.<
 **Block-body lambdas — parser surface.** Lambda bodies were expression-only before this change. The lookup-callback position (a `.find/.filter` whose receiver chain walks back to `DatabaseRef`) now opts into a block body: `parsePostfix` checks for the database-rooted receiver, threads `allowBlockBody = true` through `parseMethodCallArgs` → `parseCallArg` → `parseArgOrLambda` → the lambda parsers, and the lambda parsers dispatch to a new `parseLambdaBlockBody()` when they see `=> {`. The block reuses the existing top-level block-body machinery (the same `;`-separated statement collector top-level `($) => { ... }` arrows use). Outside lookup-callback positions, `=> {` keeps its current meaning (object literal via paren-wrap, ParseError otherwise) — no general extension of block lambdas. AST: `Lambda` gains an optional `block?: Pipeline` sibling to `body?: Expr`; existing consumers (array methods, IIFE, `$let`, `Object.groupBy`, `Array.from`) reject block-form with targeted errors.
 
 **Nested lookups deferred to v2.** A `$$$.coll2.find/filter(...)` inside another lookup's predicate or block body is rejected by `rejectNestedLookup` in [src/lookup-translation.ts](../src/lookup-translation.ts) with a clear "hoist to sibling stage" message. The implementation considerations (auto-`let` extraction across nested binding scopes — outer-doc `$.x` AND outer-foreign-doc `u.x`) are non-trivial; the rejection lets us ship the core surface first and re-enter nested support cleanly.
+
+---
+
+## 2026-05-26 — `$$$$.<db>.<coll>.find / .filter(pred)` → cross-database `$lookup`
+
+The `$$$$` (current-cluster) prefix lights up the same lookup surface as `$$$`, with the receiver naming the *database* as well: `$$$$.<db>.<coll>.find(pred)` and `$$$$.<db>.<coll>.filter(pred)` lower to MongoDB's `$lookup` stage using the object form of `from`: `{ db: "<db>", coll: "<coll>" }`. All four bracket combinations (`.db.coll`, `["db"]["coll"]`, `.db["coll"]`, `["db"].coll`) are accepted. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work identically to the `$$$` surface. Spec: [docs/specs/lookup-stage.md → Cluster-rooted ($$$$) cross-database joins](specs/lookup-stage.md). User-facing reference: [docs/LANGUAGE.md → Cross-database lookups](LANGUAGE.md#cross-database-lookups-dbcollfind--filter).
+
+**Deployment requirement.** MongoDB's `$lookup.from: { db, coll }` is the [MongoDB Atlas Data Federation](https://www.mongodb.com/docs/atlas/data-federation/query/sql/aggregation-pipeline-stages/) form. The community MongoDB server validates `from` as a string and rejects the object shape at runtime. jsmql emits the object form regardless — the lowering is deployment-agnostic, and a user targeting community Mongo will see the server's "`from` must be a string" error. The LANGUAGE.md and DEVLOG entries call this requirement out so a user picking up `$$$$` knows what they're committing to. We chose not to gate at compile time because (a) jsmql has no awareness of the user's runtime deployment, and (b) the surface is genuinely useful on Atlas Data Federation, which is a major MongoDB deployment.
+
+**Implementation reuse.** Everything below `detectLookupCall` is shared with the `$$$` path. `LookupCall` gains an optional `db?: string` field; `extractLookupTarget` walks one or two `StaticAccess` steps (one for `$$$`, two for `$$$$`); `lowerLookup` emits `from: "<coll>"` or `from: { db, coll }` based on whether `db` is set. `validateLookupShape` threads the right spelling (`'$$$.<coll>'` vs `'$$$$.<db>.<coll>'`) into error messages via a small `classifyLookupReceiver` walker. The parser's lookup-receiver helper (formerly `isDatabaseRefRooted`, now `isLookupReceiverRooted`) accepts both `DatabaseRef` and `ClusterRef` leaves so block-body lambdas opt in for both surfaces. The `ClusterRef` codegen case now mirrors `DatabaseRef`'s actionable bare-reference error.
+
+**Static names only.** `$$$$[someVar].coll` (or `$$$$.db[someVar]`) with a non-static index doesn't extract — `$lookup.from` is itself a compile-time constant in MongoDB. Such expressions hit the bare-reference error path with the same message a bare `$$$$` reference would produce. Documented in the LANGUAGE.md "Dynamic db / coll names" caveat.
+
+---
+
+## 2026-05-26 — `jsmql.compile` parameter bindings resolve in lookup bracket-index positions
+
+`$$$[collVar].find(pred)`, `$$$$[dbVar].coll.find(pred)`, `$$$$.db[collVar].find(pred)`, and `$$$$[dbVar][collVar].find(pred)` — the bracket-index positions of lookup receivers — now resolve `jsmql.compile` parameter bindings to strings at compile time and inline the value into `$lookup.from`. This honours the existing promise in [`docs/specs/context-references.md`](specs/context-references.md): *"the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression)."* The promise was previously broken — bound bracket indices were rejected as bare references — and a test codified the wrong behaviour.
+
+**Three accepted index kinds.** `staticAccess` in [`src/lookup-translation.ts`](../src/lookup-translation.ts) now recognises: `MemberAccess` (dotted), `IndexAccess` with `StringLiteral` (string-bracket), and `IndexAccess` with `ParamRef` whose name resolves in `ctx.bindings` to a string. The third kind is the new compile-time-binding case; the `jsmql.compile` parameter-binding machinery has already validated the value as a JSON-safe compile-time constant, so reading it here matches the rule MongoDB itself enforces on `$lookup.from` (a plan-time string). Non-string bindings (a number, an array) throw a precise "parameter binding must be a string" error at the `IndexAccess.index` position; runtime field-refs (`$.tenantDb`) fail to classify entirely and reach the bare-reference codegen error.
+
+**Threading `ctx` everywhere it's needed.** `detectLookupCall`, `extractLookupTarget`, and `staticAccess` now take `ctx`. `containsLookupCall` gains an optional `ctx` parameter (default `EMPTY_CTX`) so mode-gates without a meaningful context still work, and callers with one (`lowerWithCtx`, `rejectNestedLookup`) pass it explicitly so bound-bracket lookups detect correctly. The nested-lookup guard now correctly rejects nested-bound lookups instead of silently letting them slip through.
+
+**`UpdateFilter` reroute.** A single-stmt arrow body like `jsmql.compile(({ coll }, $) => ($.x = $$$[coll].find(...)))` parses as an `UpdateFilter` (not a `Pipeline`), and the bare `generateUpdateFilter` lowering doesn't know about lookups. `lowerWithCtx` now checks `containsLookupCall(ast, ctx)` and reroutes the lookup-bearing `UpdateFilter` through a synthetic single-stmt Pipeline → `generateImplicitPipeline` → the lookup-aware pipeline integration. The output shape is identical to the previous explicit array-wrap path for non-lookup `UpdateFilter`s (which `lowerWithCtx` already wraps to `[result]`), so no backward-compat concerns.
 
 ---
 
@@ -178,6 +193,16 @@ Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postf
 **Motivation.** The reverted `this.<coll>.find/filter(predicate)` attempt at `$lookup` syntax (commit `d49be79`) didn't compose — it conflated method dispatch with cross-collection naming. The four-prefix system separates the "what scope" axis from the "what operation" axis, so future API can grow on each level independently (collection methods on `$$`, collection lookups on `$$$`, multi-DB on `$$$$`). The first level (`$.`) was the only doc-context prefix since the project started; this entry adds the other three.
 
 Touched: [src/lexer.ts](../src/lexer.ts), [src/ast.ts](../src/ast.ts), [src/parser.ts](../src/parser.ts), [src/codegen.ts](../src/codegen.ts), [test/codegen.test.ts](../test/codegen.test.ts), [docs/specs/grammar.md](specs/grammar.md), [docs/LANGUAGE.md](LANGUAGE.md), [docs/CLAUDE.md](CLAUDE.md), and the new [docs/specs/context-references.md](specs/context-references.md).
+
+---
+
+## 2026-05-26 — GitHub Pages publishes only `playground.html`
+
+Added a root `_config.yml` to constrain the GitHub Pages Jekyll build to the single artefact users actually consume — [`playground.html`](../playground.html). Previously the build had no config, so Jekyll defaulted to processing every Markdown file at the repo root and under `docs/` as a Liquid template. JS-syntax `{{ … }}` blocks inside [`docs/LANGUAGE.md`](LANGUAGE.md) and [`docs/DEVLOG.md`](DEVLOG.md) (e.g. `{{ startDate: new Date(...), unit: "day" }}`) tripped Liquid's variable-terminator regex and crashed `actions/jekyll-build-pages@v1` with a `Liquid::SyntaxError`, blocking the deploy.
+
+The config excludes every directory and file pattern that isn't `playground.html` — Markdown, TypeScript sources, build output (`dist/`), tooling configs, `vendor/`, `node_modules/`, dotfiles — and keeps `include: [playground.html]` explicit so a future Jekyll default change can't silently drop it. The site surface is now exactly one file at `https://flash-oss.github.io/jsmql/playground.html`, which is what [README.md](../README.md) already links to.
+
+This is a deploy-pipeline fix, not a language change; no source files were touched.
 
 ---
 
@@ -240,32 +265,6 @@ Coverage in [test/strict-api.test.ts](../test/strict-api.test.ts) (29 cases): ha
 
 ---
 
-## 2026-05-23 — Template-tag interpolation routes BSON instances through a side channel
-
-Follow-up to the same-day Date-folding entry below. The template-tag form silently mangled non-JSON-serialisable values:
-
-```js
-jsmql`$.createdAt >= ${new Date("2026-01-01")}`
-// before: { createdAt: { $gte: "2026-01-01T00:00:00.000Z" } }   // ← string, not a Date
-// after:  { createdAt: { $gte: <Date 2026-01-01> } }            // ← real Date
-```
-
-Before this change, `JSON.stringify(new Date(...))` turned the Date into an ISO string, which BSON compares as a string — the query silently never matches any actual Date field. Same problem for `RegExp` (becomes `"{}"`), `Uint8Array` (becomes `{}`), and ObjectId (becomes `{}` since BSON tags it with a `_bsontype` rather than enumerable fields).
-
-Fix in [src/index.ts](../src/index.ts) `stringifyInterpolation`: when the interpolated value passes `isOpaqueBsonValue` (exported from [src/codegen.ts](../src/codegen.ts) — `instanceof Date | RegExp | Uint8Array`, or duck-typed ObjectId via `_bsontype === "ObjectID" | "ObjectId"`), the dispatcher synthesises a binding name `__jsmql_interp_<slot>`, puts the original instance into a `bindings` map, and concatenates the name into the parsed source. The lower path then resolves the `ParamRef` through the existing function-form binding machinery — `safeBoundValue` returns the BSON instance unchanged (the second part of this fix; see below). The MQL output carries the JS instance verbatim, which is what the Node MongoDB driver consumes in-situ.
-
-The dispatcher's `lower` callback signature widened from `(program) => output` to `(program, ctx) => output`, replacing the thin `lower` / `lowerExpr` wrappers. The string and arrow paths pass `EMPTY_CTX`; only the template-tag path constructs a non-empty binding ctx. Three other call shapes (string, arrow, `jsmql.compile`) are unchanged in behaviour.
-
-**Pre-existing bug fixed in tandem.** `safeBoundValue` in [src/codegen.ts](../src/codegen.ts) walked any non-string non-array object value via `Object.entries`, which silently turned a `Date` / `RegExp` / `Uint8Array` / ObjectId binding into `{}`. So even before the template-tag work, `jsmql.compile(({ at }) => $set({ lastSeenAt: at }))({ at: new Date(...) })` produced `[{ $set: { lastSeenAt: {} } }]`. `safeBoundValue` now short-circuits on `isOpaqueBsonValue` and returns the instance untouched. Same `paramRefAsLiteral` machinery in [src/match-translation.ts](../src/match-translation.ts) already accepted these instances, so the previously-correct query-doc-position behaviour is unchanged.
-
-**Naming.** The synthesised binding uses the `__jsmql_` prefix the project already reserves for its internal namespace (see the `__jsmql` pipeline let-bindings field in [docs/specs/let-bindings.md](specs/let-bindings.md)). Per-slot, per-instance suffixes (`__jsmql_interp_1_1`, `__jsmql_interp_1_2`, …) make the binding name visible in any debug output the user inspects; the chosen prefix means a deliberate user identifier of the same shape would override the binding (consistent with `jsmql.compile`'s own resolution order), but in practice such a collision is vanishingly unlikely.
-
-**Nested instances work too.** Opaque BSON values buried inside an interpolated object or array are detected by a recursive walker (`containsOpaqueBsonAnywhere`) and substituted by `substituteOpaqueValues`. The walker replaces each instance with a marker string (wrapped in U+E000 Private-Use code points so it can't conflict with any natural user data), JSON-stringifies the rewritten tree, and post-replaces the markers with the bare binding identifiers. The surrounding JSON-shaped parts get the exact same serialization the fast path would have produced, so an interpolation like `${{ startDate: new Date(...), unit: "day" }}` round-trips with the JSON keys/strings intact and the Date instance preserved at its position. Pure-JSON interpolations stay on the fast path (`validateInterpolatable` + `JSON.stringify`, no walker overhead). Tests added in the template-tag describe in [test/codegen.test.ts](../test/codegen.test.ts) cover each top-level BSON instance type, the compile-binding path, and nested-in-object / nested-in-array / deeply-nested / cyclic-reference cases.
-
-**`.compile()` bindings get the same treatment for free.** `safeBoundValue` in [src/codegen.ts](../src/codegen.ts) recurses through plain objects and arrays and short-circuits on `isOpaqueBsonValue` at every level, so a `.compile()` parameter binding like `({ cfg }) => $set({ cfg })` invoked with `{ cfg: { startedAt: new Date(...), mode: "fast", retries: 3 } }` keeps the `Date` (and any nested `RegExp`/`Uint8Array`/ObjectId) as live JS instances in the MQL output — the same shapes that work via template-tag interpolation. The behavior is symmetric across both surfaces; tests in the `jsmql.compile — opaque BSON bindings outside query-doc position` describe block cover each instance type and the same nested-in-object / nested-in-array / deeply-nested / mixed-JSON cases the template-tag describe covers.
-
----
-
 ## 2026-05-23 — `new Date(<static-args>)` folds to a `Date` instance in Filter-mode query position
 
 `jsmql('$.method === "x" && $.createdAt >= new Date("2026-01-01")')` previously emitted
@@ -292,6 +291,48 @@ Tests: nine new cases in [test/match-translation.test.ts](../test/match-translat
 
 ---
 
+## 2026-05-23 — Template-tag interpolation routes BSON instances through a side channel
+
+Follow-up to the same-day Date-folding entry below. The template-tag form silently mangled non-JSON-serialisable values:
+
+```js
+jsmql`$.createdAt >= ${new Date("2026-01-01")}`
+// before: { createdAt: { $gte: "2026-01-01T00:00:00.000Z" } }   // ← string, not a Date
+// after:  { createdAt: { $gte: <Date 2026-01-01> } }            // ← real Date
+```
+
+Before this change, `JSON.stringify(new Date(...))` turned the Date into an ISO string, which BSON compares as a string — the query silently never matches any actual Date field. Same problem for `RegExp` (becomes `"{}"`), `Uint8Array` (becomes `{}`), and ObjectId (becomes `{}` since BSON tags it with a `_bsontype` rather than enumerable fields).
+
+Fix in [src/index.ts](../src/index.ts) `stringifyInterpolation`: when the interpolated value passes `isOpaqueBsonValue` (exported from [src/codegen.ts](../src/codegen.ts) — `instanceof Date | RegExp | Uint8Array`, or duck-typed ObjectId via `_bsontype === "ObjectID" | "ObjectId"`), the dispatcher synthesises a binding name `__jsmql_interp_<slot>`, puts the original instance into a `bindings` map, and concatenates the name into the parsed source. The lower path then resolves the `ParamRef` through the existing function-form binding machinery — `safeBoundValue` returns the BSON instance unchanged (the second part of this fix; see below). The MQL output carries the JS instance verbatim, which is what the Node MongoDB driver consumes in-situ.
+
+The dispatcher's `lower` callback signature widened from `(program) => output` to `(program, ctx) => output`, replacing the thin `lower` / `lowerExpr` wrappers. The string and arrow paths pass `EMPTY_CTX`; only the template-tag path constructs a non-empty binding ctx. Three other call shapes (string, arrow, `jsmql.compile`) are unchanged in behaviour.
+
+**Pre-existing bug fixed in tandem.** `safeBoundValue` in [src/codegen.ts](../src/codegen.ts) walked any non-string non-array object value via `Object.entries`, which silently turned a `Date` / `RegExp` / `Uint8Array` / ObjectId binding into `{}`. So even before the template-tag work, `jsmql.compile(({ at }) => $set({ lastSeenAt: at }))({ at: new Date(...) })` produced `[{ $set: { lastSeenAt: {} } }]`. `safeBoundValue` now short-circuits on `isOpaqueBsonValue` and returns the instance untouched. Same `paramRefAsLiteral` machinery in [src/match-translation.ts](../src/match-translation.ts) already accepted these instances, so the previously-correct query-doc-position behaviour is unchanged.
+
+**Naming.** The synthesised binding uses the `__jsmql_` prefix the project already reserves for its internal namespace (see the `__jsmql` pipeline let-bindings field in [docs/specs/let-bindings.md](specs/let-bindings.md)). Per-slot, per-instance suffixes (`__jsmql_interp_1_1`, `__jsmql_interp_1_2`, …) make the binding name visible in any debug output the user inspects; the chosen prefix means a deliberate user identifier of the same shape would override the binding (consistent with `jsmql.compile`'s own resolution order), but in practice such a collision is vanishingly unlikely.
+
+**Nested instances work too.** Opaque BSON values buried inside an interpolated object or array are detected by a recursive walker (`containsOpaqueBsonAnywhere`) and substituted by `substituteOpaqueValues`. The walker replaces each instance with a marker string (wrapped in U+E000 Private-Use code points so it can't conflict with any natural user data), JSON-stringifies the rewritten tree, and post-replaces the markers with the bare binding identifiers. The surrounding JSON-shaped parts get the exact same serialization the fast path would have produced, so an interpolation like `${{ startDate: new Date(...), unit: "day" }}` round-trips with the JSON keys/strings intact and the Date instance preserved at its position. Pure-JSON interpolations stay on the fast path (`validateInterpolatable` + `JSON.stringify`, no walker overhead). Tests added in the template-tag describe in [test/codegen.test.ts](../test/codegen.test.ts) cover each top-level BSON instance type, the compile-binding path, and nested-in-object / nested-in-array / deeply-nested / cyclic-reference cases.
+
+**`.compile()` bindings get the same treatment for free.** `safeBoundValue` in [src/codegen.ts](../src/codegen.ts) recurses through plain objects and arrays and short-circuits on `isOpaqueBsonValue` at every level, so a `.compile()` parameter binding like `({ cfg }) => $set({ cfg })` invoked with `{ cfg: { startedAt: new Date(...), mode: "fast", retries: 3 } }` keeps the `Date` (and any nested `RegExp`/`Uint8Array`/ObjectId) as live JS instances in the MQL output — the same shapes that work via template-tag interpolation. The behavior is symmetric across both surfaces; tests in the `jsmql.compile — opaque BSON bindings outside query-doc position` describe block cover each instance type and the same nested-in-object / nested-in-array / deeply-nested / mixed-JSON cases the template-tag describe covers.
+
+---
+
+## 2026-05-21 — Bare stage call auto-wraps as a one-stage Pipeline (no `;` required)
+
+`jsmql("$match($.age > 18)")` now returns `[{ $match: { age: { $gt: 18 } } }]` instead of throwing `CodegenError("$match is a Pipeline stage, … add a trailing ;")`. Same auto-wrap applies to every registered stage (`$project`, `$sort`, `$limit`, `$group`, …) and to the Compass copy-paste form `{ $match: ... }`. The `;`-suffixed form keeps working and produces identical output. `jsmql.expr()` is **not** changed — passing a stage call to it stays a misuse case, since `jsmql.expr`'s contract is "raw aggregation expression" and stages are not aggregation expressions.
+
+Motivation: a user wrote `$match(...)` at the top level and got an error telling them what they did wrong instead of the right MQL. The `;` was bookkeeping the surface didn't need. The original guard (DEVLOG 2026-05-19, "Filter dispatch: reject bare stage calls with a `;` suggestion") existed to prevent the silent footgun where the same input would otherwise produce `{ $expr: { $match: ... } }` — a syntactically valid Filter that MongoDB can't execute. But "throw with a fix-it message" was the second-cleanest option; "just do the right thing" is the cleanest. **More code = bad DX, less code = good DX** (from root [CLAUDE.md](../CLAUDE.md)) — applied to the keystrokes users have to type, not just to the MQL output.
+
+Implementation in [src/index.ts](../src/index.ts): a four-condition check at the top of `lowerWithCtx` (not Pipeline, not UpdateFilter, not array-literal Pipeline, but **is** stage intent) constructs a synthetic `Pipeline` AST node (`{ type: "Pipeline", stmts: [ast], pos: ast.pos }`) and routes it through `generateImplicitPipeline`. So stage-specific behaviour (the `$match` index-friendly query translator; `$lookup` / `$unionWith` / `$facet` sub-pipeline recursion; let-binding scope rules) runs through exactly the same path it would in an explicit `;`-separated pipeline. The throw in `generateFilter` is gone; the function's contract is now "lower a Filter document" rather than "lower a Filter document or throw if Pipeline-intent is detected". `detectStageIntent` stays as a helper.
+
+Test impact: the five existing tests asserting `toThrow(/Pipeline stage/)` — three in `test/codegen.test.ts`'s `stage-call-without-\`;\` guard` describe and two in `test/implicit-pipeline.test.ts` — were rewritten to expect the wrapped Pipeline output. The describes were renamed (`"stage-call-without-\`;\` guard"` → `"bare stage call auto-wraps as a one-stage Pipeline"`) and surrounding comments updated to reflect the new behaviour. All 1025 tests pass.
+
+Doc updates: [docs/LANGUAGE.md](LANGUAGE.md) § Output dispatch was restructured — the rule table now reads "stage call / update filter / `;` / anything else" instead of the binary `;` vs no-`;`. The new "Stage call → Pipeline (no `;` required)" subsection sits between the Filter and multi-stage Pipeline sections. The function-form subsection now shows an expression-body arrow with a stage-call body as the third example. [README.md](../README.md)'s Highlights bullet was rephrased from "Filter vs Pipeline by the semicolon" to "Filter vs Pipeline picked automatically" with the new dispatch table embedded in prose. [docs/specs/filter-mode.md](specs/filter-mode.md) replaced the "Stage-call-without-`;` guard" section with a "Stage-call auto-wrap" section. Also added a new rule to root [CLAUDE.md](../CLAUDE.md) — **Maintain README.md** — so every observable library change must update the README in the same commit.
+
+Pre-1.0 breaking output-shape change for one input shape (`jsmql("$match(...)")` used to throw, now returns an array). No grammar, AST, or runtime semantics change beyond the dispatch routing.
+
+---
+
 ## 2026-05-21 — Widen the strippable-TS floor: Node 22.18+ / 24.3+ run `src/` natively, no flag
 
 The "Node 24+ for native type-stripping (no flag)" claim sprinkled across the docs was conservative. Type stripping was unflagged in **Node 22.18.0** (LTS, August 2025) and in **Node 24.3.0** — and marked stable in 25.2.0 (November 2025). So a user on the current Node 22 LTS line can run `node src/index.ts` directly without any flag, not just users on the 24 line. Doc-only change to widen the documented floor; no source or test code changes.
@@ -312,22 +353,6 @@ No DEVLOG entries were edited — historical entries describing "Node 24+ native
 
 ---
 
-## 2026-05-21 — Bare stage call auto-wraps as a one-stage Pipeline (no `;` required)
-
-`jsmql("$match($.age > 18)")` now returns `[{ $match: { age: { $gt: 18 } } }]` instead of throwing `CodegenError("$match is a Pipeline stage, … add a trailing ;")`. Same auto-wrap applies to every registered stage (`$project`, `$sort`, `$limit`, `$group`, …) and to the Compass copy-paste form `{ $match: ... }`. The `;`-suffixed form keeps working and produces identical output. `jsmql.expr()` is **not** changed — passing a stage call to it stays a misuse case, since `jsmql.expr`'s contract is "raw aggregation expression" and stages are not aggregation expressions.
-
-Motivation: a user wrote `$match(...)` at the top level and got an error telling them what they did wrong instead of the right MQL. The `;` was bookkeeping the surface didn't need. The original guard (DEVLOG 2026-05-19, "Filter dispatch: reject bare stage calls with a `;` suggestion") existed to prevent the silent footgun where the same input would otherwise produce `{ $expr: { $match: ... } }` — a syntactically valid Filter that MongoDB can't execute. But "throw with a fix-it message" was the second-cleanest option; "just do the right thing" is the cleanest. **More code = bad DX, less code = good DX** (from root [CLAUDE.md](../CLAUDE.md)) — applied to the keystrokes users have to type, not just to the MQL output.
-
-Implementation in [src/index.ts](../src/index.ts): a four-condition check at the top of `lowerWithCtx` (not Pipeline, not UpdateFilter, not array-literal Pipeline, but **is** stage intent) constructs a synthetic `Pipeline` AST node (`{ type: "Pipeline", stmts: [ast], pos: ast.pos }`) and routes it through `generateImplicitPipeline`. So stage-specific behaviour (the `$match` index-friendly query translator; `$lookup` / `$unionWith` / `$facet` sub-pipeline recursion; let-binding scope rules) runs through exactly the same path it would in an explicit `;`-separated pipeline. The throw in `generateFilter` is gone; the function's contract is now "lower a Filter document" rather than "lower a Filter document or throw if Pipeline-intent is detected". `detectStageIntent` stays as a helper.
-
-Test impact: the five existing tests asserting `toThrow(/Pipeline stage/)` — three in `test/codegen.test.ts`'s `stage-call-without-\`;\` guard` describe and two in `test/implicit-pipeline.test.ts` — were rewritten to expect the wrapped Pipeline output. The describes were renamed (`"stage-call-without-\`;\` guard"` → `"bare stage call auto-wraps as a one-stage Pipeline"`) and surrounding comments updated to reflect the new behaviour. All 1025 tests pass.
-
-Doc updates: [docs/LANGUAGE.md](LANGUAGE.md) § Output dispatch was restructured — the rule table now reads "stage call / update filter / `;` / anything else" instead of the binary `;` vs no-`;`. The new "Stage call → Pipeline (no `;` required)" subsection sits between the Filter and multi-stage Pipeline sections. The function-form subsection now shows an expression-body arrow with a stage-call body as the third example. [README.md](../README.md)'s Highlights bullet was rephrased from "Filter vs Pipeline by the semicolon" to "Filter vs Pipeline picked automatically" with the new dispatch table embedded in prose. [docs/specs/filter-mode.md](specs/filter-mode.md) replaced the "Stage-call-without-`;` guard" section with a "Stage-call auto-wrap" section. Also added a new rule to root [CLAUDE.md](../CLAUDE.md) — **Maintain README.md** — so every observable library change must update the README in the same commit.
-
-Pre-1.0 breaking output-shape change for one input shape (`jsmql("$match(...)")` used to throw, now returns an array). No grammar, AST, or runtime semantics change beyond the dispatch routing.
-
----
-
 ## 2026-05-20 — `jsmql()` always returns a pipeline for update-filter inputs
 
 Single-statement update filters through `jsmql()` now lower to a **one-element pipeline array** (`[{ $set: { …RHS… } }]`) instead of the bare update document (`{ $set: { …RHS… } }`). Multi-statement update filters were already arrays; this change makes the single-statement case match. `jsmql.expr()` is **not** changed — it still produces the bare-doc shape for callers that want a building block to embed elsewhere.
@@ -339,22 +364,6 @@ The fix is a four-line addition to `lowerWithCtx` in [src/index.ts](../src/index
 Test impact: 38 assertions in [test/update-filter.test.ts](../test/update-filter.test.ts), 5 in [test/implicit-pipeline.test.ts](../test/implicit-pipeline.test.ts), and 2 in [test/realistic.test.ts](../test/realistic.test.ts) updated to expect the wrapped array form. The implicit-pipeline `describe` that used to assert "single-statement inputs unchanged" was retitled and its comment rewritten — the new contract is "single-statement update-filter inputs always wrap as pipelines". The realistic-test `usage` strings for the two update-filter cases were repointed from `db.users.updateOne({…}, jsmql.expr(…))` to `db.users.updateOne({…}, jsmql(…))`, since that is the correct call shape now.
 
 Doc updates: [README.md](../README.md)'s update-filter Tour comment and the headline `updateOne` example switched from `jsmql.expr(…)` to `jsmql(…)` with the wrapped output. [docs/LANGUAGE.md](LANGUAGE.md)'s § Update filters opens with the new pipeline-array contract, every code block in that section uses the wrapped form, and a new "Bare-document form via `jsmql.expr`" subsection documents the escape hatch with an explicit "do not pass this to `updateOne()`" warning. The § Partial expressions section gained a second differentiator bullet (update-filter input) and a matching ⚠️ warning. Breaking output-shape change to one branch of `jsmql()`; pre-1.0, so acceptable. No grammar or AST change.
-
----
-
-## 2026-05-19 — Rename "Mutation" → "Update filter" (match the MongoDB driver)
-
-"Mutation" was a jsmql-only invention. The MongoDB Node.js driver and the official docs call the second argument to `db.coll.updateOne(filter, update)` an **Update Filter** (TypeScript type `UpdateFilter<TSchema>`) — a document of update operators like `{ $set: …, $unset: … }`. We were quietly using our own word for it; now we use theirs.
-
-Renamed across the repo:
-
-- AST: `MutationProgram` → `UpdateFilter` (the `type: "UpdateFilter"` AST node), `Mutation` → `UpdateOp` (the `AssignExpr | DeleteStmt` union), and the `mutations: Mutation[]` field is now `ops: UpdateOp[]`.
-- Codegen: `generateMutationProgram` → `generateUpdateFilter`, `generateMutationGroups` → `generateUpdateOpGroups`, `groupMutations` → `groupUpdateOps`, `collectMutationReads` → `collectUpdateOpReads`, `mutationWritePath` → `updateOpWritePath`, `mutationBuffer` → `updateBuffer`.
-- Parser: `parseMutationProgram*` → `parseUpdateFilter*`, `parseMutation` → `parseUpdateOp`, `validateMutationTarget` → `validateUpdateTarget`, `describeMutationTarget` → `describeUpdateTarget`, `peekMutationSeparator` → `peekUpdateOpSeparator`, `makeIncDecMutation` → `makeIncDecUpdateOp`.
-- Files: `test/mutations.test.ts` → `test/update-filter.test.ts`, `docs/specs/mutations.md` → `docs/specs/update-filter.md`. Describe titles in `test/realistic.test.ts` like `"Mutations: ..."` became `"Update filters: ..."`.
-- Prose throughout `docs/LANGUAGE.md`, the specs, and the codebase comments swapped "mutation" / "Mutations" for "update op" / "Update filters". No behaviour change — `$.field = expr` still lowers to `$set` and `delete $.field` still lowers to `$unset`; the dispatch routing is identical.
-
-Why this matters: the playground, tests, and docs are now greppable with one term that newcomers can also find in the MongoDB driver's own type declarations. No more guessing whether `Mutation` is a jsmql-specific concept or a thing they should look up in the MongoDB docs.
 
 ---
 
@@ -386,6 +395,22 @@ Implementation in [src/index.ts](../src/index.ts) via a new `detectStageIntent(a
 
 ---
 
+## 2026-05-19 — Rename "Mutation" → "Update filter" (match the MongoDB driver)
+
+"Mutation" was a jsmql-only invention. The MongoDB Node.js driver and the official docs call the second argument to `db.coll.updateOne(filter, update)` an **Update Filter** (TypeScript type `UpdateFilter<TSchema>`) — a document of update operators like `{ $set: …, $unset: … }`. We were quietly using our own word for it; now we use theirs.
+
+Renamed across the repo:
+
+- AST: `MutationProgram` → `UpdateFilter` (the `type: "UpdateFilter"` AST node), `Mutation` → `UpdateOp` (the `AssignExpr | DeleteStmt` union), and the `mutations: Mutation[]` field is now `ops: UpdateOp[]`.
+- Codegen: `generateMutationProgram` → `generateUpdateFilter`, `generateMutationGroups` → `generateUpdateOpGroups`, `groupMutations` → `groupUpdateOps`, `collectMutationReads` → `collectUpdateOpReads`, `mutationWritePath` → `updateOpWritePath`, `mutationBuffer` → `updateBuffer`.
+- Parser: `parseMutationProgram*` → `parseUpdateFilter*`, `parseMutation` → `parseUpdateOp`, `validateMutationTarget` → `validateUpdateTarget`, `describeMutationTarget` → `describeUpdateTarget`, `peekMutationSeparator` → `peekUpdateOpSeparator`, `makeIncDecMutation` → `makeIncDecUpdateOp`.
+- Files: `test/mutations.test.ts` → `test/update-filter.test.ts`, `docs/specs/mutations.md` → `docs/specs/update-filter.md`. Describe titles in `test/realistic.test.ts` like `"Mutations: ..."` became `"Update filters: ..."`.
+- Prose throughout `docs/LANGUAGE.md`, the specs, and the codebase comments swapped "mutation" / "Mutations" for "update op" / "Update filters". No behaviour change — `$.field = expr` still lowers to `$set` and `delete $.field` still lowers to `$unset`; the dispatch routing is identical.
+
+Why this matters: the playground, tests, and docs are now greppable with one term that newcomers can also find in the MongoDB driver's own type declarations. No more guessing whether `Mutation` is a jsmql-specific concept or a thing they should look up in the MongoDB docs.
+
+---
+
 ## 2026-05-19 — Semicolon-driven dispatch: Filter vs Pipeline
 
 `jsmql(input)` now picks its output shape from the presence (or absence) of a top-level `;`, using the Node.js MongoDB driver's own terminology. Inputs with **no `;`** lower to a **Filter** (the document `db.coll.find(filter)` takes); inputs with **any `;`** stay in **Pipeline** mode (the existing implicit-pipeline path, the array `db.coll.aggregate(pipeline)` takes). The function form mirrors the rule: an expression-body arrow `($) => …` lowers as a Filter; a block-body arrow `($) => { …; … }` lowers as a Pipeline. Breaking change to the no-`;` default — acceptable pre-1.0.
@@ -410,12 +435,6 @@ All changes are confined to the inline script in `playground.html` — outside t
 
 ---
 
-## 2026-05-17 — Doc fix: spread examples in Valid Constructs use field refs
-
-The "Valid Constructs" bullet for spread in [docs/LANGUAGE.md](LANGUAGE.md) showed `[...arr]` and `{ ...obj }` — bareword identifiers that don't resolve in string-form jsmql and would have produced an `UnknownIdentifierError` if a reader copy-pasted them. Replaced with `[...$.arr]` and `{ ...$.obj }` so the examples actually compile, matching the field-ref shape used everywhere else in the bullet list and in the deeper Arrays/Objects subsections (lines 181-182, 194-195).
-
----
-
 ## 2026-05-17 — Array methods: fill the MDN list, bind `(element, index)`, shim mutators
 
 A single pass over MDN's `Array.prototype.*` list to close the gap between "JS you already know" and what jsmql actually accepts. Three buckets:
@@ -432,6 +451,12 @@ Specs updated: [docs/specs/method-dispatch.md](specs/method-dispatch.md) (new ro
 
 ---
 
+## 2026-05-17 — Doc fix: spread examples in Valid Constructs use field refs
+
+The "Valid Constructs" bullet for spread in [docs/LANGUAGE.md](LANGUAGE.md) showed `[...arr]` and `{ ...obj }` — bareword identifiers that don't resolve in string-form jsmql and would have produced an `UnknownIdentifierError` if a reader copy-pasted them. Replaced with `[...$.arr]` and `{ ...$.obj }` so the examples actually compile, matching the field-ref shape used everywhere else in the bullet list and in the deeper Arrays/Objects subsections (lines 181-182, 194-195).
+
+---
+
 ## 2026-05-16 — Auto-`$literal` wrap for `"$..."` string values
 
 User-supplied string literals (and `jsmql.compile()` bindings, and template-tag interpolations) whose value starts with `$` are now auto-wrapped in `{ $literal: value }` so MongoDB does not read them as field references at query time. The wrap fires on any `"$..."` shape in a *value* position — top-level, array element, object value, operator argument, method argument. Object **keys** are deliberately unaffected (MongoDB doesn't auto-evaluate keys, so `{ "$foo": 1 }` is how you intentionally name a field `$foo`).
@@ -441,14 +466,6 @@ Why this matters for DX: the existing behaviour quietly produced `{ $eq: ["$x", 
 Implementation: a new `insideLiteral?: boolean` field on `GenerateCtx` ([src/codegen.ts](../src/codegen.ts)). The `$literal(...)` operator codegen recurses on its argument with that flag set, suppressing the wrap inside the envelope so a literal-of-a-literal doesn't emit. `literalSafeString` is the single point where string literals are emitted; `safeBoundValue` walks `jsmql.compile()` param values recursively, applying the same policy to nested arrays and objects. `extendCtx` propagates the flag through lambda bodies; `freshSubPipelineCtx` drops it (a sub-pipeline starts fresh).
 
 `$literal(...)` keeps working when called explicitly — the operator's fast-path codegen sits ahead of the `style === "object"` branch in `generateOperatorCall` so `$literal({ x: 1 })` is treated as a value to wrap, not as object-style named-key wire format. 14 new test cases in `test/codegen.test.ts` cover the auto-wrap shapes, the suppression inside `$literal`, the key vs. value distinction, the template-tag path, and the `jsmql.compile()` binding path with nested arrays and objects. Spec updated in [docs/specs/operator-registry.md](specs/operator-registry.md).
-
----
-
-## 2026-05-16 — Parser: accept comma-chained parenthesized assignments
-
-Prettier and oxfmt rewrite a top-level assignment chain like `$.a = 1, $.b = 2` to `($.a = 1), ($.b = 2)` when each assignment could otherwise be read as a destructuring assignment. The parser already accepted a single parenthesized assignment (`($.x = 5)`), but the comma-chained form failed with `Cannot assign to this expression …` because `parseUpdateFilterRest` called `parseUpdateOp()`, which called `parsePostfix()`, which returned a parenthesized `AssignExpr`, and then `validateUpdateTarget` rejected the `AssignExpr` as a non-field-path target.
-
-`parseUpdateOp()` ([src/parser.ts](../src/parser.ts)) now short-circuits: if `parsePostfix()` returns something whose `type` is already `"AssignExpr"`, it's surfaced as a complete update op rather than running through `validateUpdateTarget` + `parseAssignmentChainFrom`. The paren-form `parseGrouped` path already builds the `AssignExpr` correctly — it just had no consumer at the comma-tail position. Three new cases in `test/update-filter.test.ts` cover the bare statement form, the function-body form (exactly the example LANGUAGE.md was claiming worked), and the mixed paren-assignment + paren-postfix-inc/dec form. The spec update lives in [docs/specs/update-filter.md](specs/update-filter.md).
 
 ---
 
@@ -464,53 +481,11 @@ Audit pass over [docs/LANGUAGE.md](LANGUAGE.md) against the current implementati
 
 ---
 
-## 2026-05-15 — Dual ESM + CJS distribution, Node 14+ as the floor
+## 2026-05-16 — Parser: accept comma-chained parenthesized assignments
 
-The package now ships a CommonJS build alongside the existing ESM one so `require('@koresar/jsmql')` works on Node 14+ CJS consumers without forcing them onto ESM. `package.json#exports` gained `import` / `require` conditions for both `.` and `./ops`; `main` is repointed at `dist/cjs/index.cjs` so older resolvers (or any tool that still ignores `exports`) get a working entry point. `module` is added for bundlers that key off it. Engines stays at `>=14` — that has been our claimed floor, but until now `"type": "module"` made a CJS-only Node app fail at `require()`.
+Prettier and oxfmt rewrite a top-level assignment chain like `$.a = 1, $.b = 2` to `($.a = 1), ($.b = 2)` when each assignment could otherwise be read as a destructuring assignment. The parser already accepted a single parenthesized assignment (`($.x = 5)`), but the comma-chained form failed with `Cannot assign to this expression …` because `parseUpdateFilterRest` called `parseUpdateOp()`, which called `parsePostfix()`, which returned a parenthesized `AssignExpr`, and then `validateUpdateTarget` rejected the `AssignExpr` as a non-field-path target.
 
-The CJS bundles are produced by [scripts/build-cjs.mjs](../scripts/build-cjs.mjs): esbuild bundles each entry into a single `.cjs` file targeting `node14`, copies the matching `.d.ts` to `.d.cts` for `moduleResolution: nodenext` consumers, and writes a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. Bundling — rather than per-file CJS emit — avoids the dual-package hazard where ESM and CJS would each carry their own copy of the parser/codegen and diverge on singleton state. The script runs as the second half of `npm run build` (after `tsc`).
-
-A third smoke case in [test/smoke.test.ts](../test/smoke.test.ts) spawns `node --input-type=commonjs -e 'require("./dist/cjs/index.cjs")'` and exercises all three call shapes (string, arrow, template tag) plus `.validate()`. It's `skipIf(!exists(dist/cjs/index.cjs))` so local `npm test` stays fast, and active in `npm run smoke:dist` after a build. No source under `src/` changed; this is a packaging-and-publish-shape change only.
-
----
-
-## 2026-05-15 — Package renamed to `@koresar/jsmql` on npm
-
-The bare `jsmql` name was unavailable on npm — already taken — so the package now ships as the scoped `@koresar/jsmql` (with the `@koresar/jsmql/ops` subpath for ambient operator types). The "hopefully temporary" qualifier in commit 953520d's message reflects that we may still claim the unscoped name later if it becomes available; until then, every user-facing example, install instruction, and import snippet uses the scoped specifier.
-
-Updated every doc, comment, and test description that suggested `require("jsmql")` / `import { jsmql } from "jsmql"` / `import "jsmql/ops"`: [README.md](../README.md), [docs/LANGUAGE.md](LANGUAGE.md) (Quick Start, Function Form, `jsmql.compile`, Template-Tag, Validation sections + the Operator-autocomplete heading and tsconfig note), [docs/specs/ops-generation.md](specs/ops-generation.md), [docs/specs/operator-registry.md](specs/operator-registry.md), [docs/specs/function-form-params.md](specs/function-form-params.md), [docs/specs/architecture.md](specs/architecture.md), the four CLAUDE.md files (root, `src/`, `docs/`, `scripts/`), [test/realistic.test.ts](../test/realistic.test.ts) (top-of-file comment + the `Compile form: ambient ops via …` describe), [test/smoke.test.ts](../test/smoke.test.ts), [src/index.ts](../src/index.ts) (`FunctionInputError` re-export comment), and the generator [scripts/generate-ops.mjs](../scripts/generate-ops.mjs) (header comments and the `// User-facing import shape` block embedded in the generated `src/ops.ts`). Earlier DEVLOG entries that reference the bare name are left as-is — they describe state at write time. The runtime contract (input shapes, output shapes, error types) is unchanged; this is a documentation-and-published-name change only.
-
-Verification: `npm run generate:ops` refreshes `src/ops.ts` (which carries the user-facing `import "@koresar/jsmql/ops"` comment block), the drift check in `test/operator-spec-coverage.test.ts` stays green, and `npm test` passes. `package.json` already shipped as `@koresar/jsmql` in commit 953520d; this entry brings the in-repo documentation in line with the published name.
-
----
-
-## 2026-05-15 — `.reduce()` accumulator type narrowing trims the dead `$isArray` cond
-
-`acc[k]` inside `reduce((acc, x) => ({ … }), {})` (and the array-symmetric `reduce(…, [])`) now compiles to a bare `$getField` / `$arrayElemAt` instead of the 3-branch `$cond` on `$isArray` that the bracket-access codegen used to emit for every non-structurally-known receiver. The codegen ctx gains a `bindingTypes` field ([src/codegen.ts:80](../src/codegen.ts)); reduce-codegen ([src/codegen.ts:1936-1991](../src/codegen.ts)) pins `params[0]` to `"object"` or `"array"` when **both** `initialValue` and the lambda body are statically the same compound type. The IndexAccess case ([src/codegen.ts:444-484](../src/codegen.ts)) reads it to short-circuit the dispatch, and flips the optional-chain `$ifNull` fallback to `{}` on the known-object branch so a null receiver doesn't feed `$getField` an array.
-
-The both-sides-must-agree rule exists because `$$value` after iteration `i ≥ 1` is the body's return from `i-1`, not the initialValue — narrowing on the initial alone is unsound the moment the body returns a different shape (`reduce((a,x) => x.foo, {})` legitimately keeps the cond). When both agree, the type is invariant across iterations. Nested reduces that reuse the accumulator name explicitly shadow the outer narrowing (the inner's `bindingTypes` entry overwrites or deletes the outer's), so `outer-object → inner-array` doesn't miscompile inner `acc[0]` as `$getField`. `isObjectProducing` is the minimum-viable `expr.type === "ObjectLiteral"` check; broadening it to `$mergeObjects` / `$arrayToObject` operator calls is left for when a real case shows up.
-
-This cleans up the README's headline histogram example ([test/realistic.test.ts:75-148](../test/realistic.test.ts)) — the 3-branch `$cond` block disappears from the demo MQL panel in the playground. The new `describe("reduce accumulator type narrowing", …)` block in [test/codegen.test.ts](../test/codegen.test.ts) covers positive object + array cases, three negatives (body diverges, non-literal initial, element param not narrowed), the nested-reduce shadow, and the optional-chain fallback flip. [docs/specs/method-dispatch.md](specs/method-dispatch.md) documents the new field and the three-way IndexAccess dispatch.
-
----
-
-## 2026-05-15 — Sync CLAUDE.md to the actual public-API shape
-
-Root [CLAUDE.md](../CLAUDE.md) used to describe the public API as "two exports from `src/index.ts`: `jsmql(input)`, `validate(input)`". That hadn't been accurate for a while — `validate` is a property on `jsmql` ([src/index.ts:281-284](../src/index.ts)), not a top-level named export, and `jsmql.compile()` (the parameterised, pre-compile path) wasn't mentioned at all despite being a first-class feature with its own [spec](specs/function-form-params.md) and [LANGUAGE.md section](LANGUAGE.md#parameterised-queries-jsmqlcompile). The framing leaked into the file-map, the semver note, and into `docs/CLAUDE.md`'s LANGUAGE.md guidance.
-
-Replaced the "two exports" paragraph with the actual shape: `jsmql` is a callable that carries `.compile` and `.validate` as properties, built via `Object.assign` because the strippable-TS rule forbids `namespace`. The shape rationale is now also surfaced in [src/CLAUDE.md](../src/CLAUDE.md) so future-Claude (and future-anyone) extends the surface the same way next time. Added an explicit scope line: jsmql targets aggregation expressions and pipeline stages, not `db.collection.find()` filter documents — preventing the article-style framing from creeping in. The corresponding line in [docs/CLAUDE.md](CLAUDE.md) was updated to name `jsmql.compile()` and `jsmql.validate()` instead of a free-standing `validate()`.
-
-Docs-only change. No code under `src/` touched, no tests changed.
-
----
-
-## 2026-05-15 — Widen the dist support floor to Node 14
-
-`package.json` `"engines"` drops from `>=24` to `>=14`, and [tsconfig.json](../tsconfig.json) gains `"target": "es2020"` so the emitted JS pins to a syntax level v14 actually supports. The previous `"engines"` floor was tied to the source-tree invariant (`src/` runs as-is on Node 24+ via native type-stripping), but that constraint never applied to the dist — `dist/index.js` is plain JS and runs anywhere the syntax does. With no `target` set, `tsc` was preserving modern syntax verbatim, which left `?.` and `??` in the dist and shut out anything below v14 unnecessarily.
-
-A sweep across the user's installed Node versions confirmed the floor: v12.18.3 fails on `??` (and on `?.` before that), v14.21.2 through v24.15.0 all pass the smoke script (string / arrow / template-tag forms plus `validate()`). v12 reaches end-of-life territory and v14 is the lowest LTS anyone realistically still runs, so that's where the new floor sits. The strippable-TS invariant is unchanged — `src/` still requires Node 24+ for native type-stripping, that's a source-running-as-script concern that's orthogonal to the dist.
-
-No code under `src/` changed and no tests changed; the existing dist-import smoke in [test/smoke.test.ts](../test/smoke.test.ts) is the in-repo regression test. The full suite (899 tests across 12 files) is green on the rebuilt dist.
+`parseUpdateOp()` ([src/parser.ts](../src/parser.ts)) now short-circuits: if `parsePostfix()` returns something whose `type` is already `"AssignExpr"`, it's surfaced as a complete update op rather than running through `validateUpdateTarget` + `parseAssignmentChainFrom`. The paren-form `parseGrouped` path already builds the `AssignExpr` correctly — it just had no consumer at the comma-tail position. Three new cases in `test/update-filter.test.ts` cover the bare statement form, the function-body form (exactly the example LANGUAGE.md was claiming worked), and the mixed paren-assignment + paren-postfix-inc/dec form. The spec update lives in [docs/specs/update-filter.md](specs/update-filter.md).
 
 ---
 
@@ -538,6 +513,68 @@ This is a behavioural change, not a bug fix in the strict sense — any user wit
 
 ---
 
+## 2026-05-15 — `.reduce()` accumulator type narrowing trims the dead `$isArray` cond
+
+`acc[k]` inside `reduce((acc, x) => ({ … }), {})` (and the array-symmetric `reduce(…, [])`) now compiles to a bare `$getField` / `$arrayElemAt` instead of the 3-branch `$cond` on `$isArray` that the bracket-access codegen used to emit for every non-structurally-known receiver. The codegen ctx gains a `bindingTypes` field ([src/codegen.ts:80](../src/codegen.ts)); reduce-codegen ([src/codegen.ts:1936-1991](../src/codegen.ts)) pins `params[0]` to `"object"` or `"array"` when **both** `initialValue` and the lambda body are statically the same compound type. The IndexAccess case ([src/codegen.ts:444-484](../src/codegen.ts)) reads it to short-circuit the dispatch, and flips the optional-chain `$ifNull` fallback to `{}` on the known-object branch so a null receiver doesn't feed `$getField` an array.
+
+The both-sides-must-agree rule exists because `$$value` after iteration `i ≥ 1` is the body's return from `i-1`, not the initialValue — narrowing on the initial alone is unsound the moment the body returns a different shape (`reduce((a,x) => x.foo, {})` legitimately keeps the cond). When both agree, the type is invariant across iterations. Nested reduces that reuse the accumulator name explicitly shadow the outer narrowing (the inner's `bindingTypes` entry overwrites or deletes the outer's), so `outer-object → inner-array` doesn't miscompile inner `acc[0]` as `$getField`. `isObjectProducing` is the minimum-viable `expr.type === "ObjectLiteral"` check; broadening it to `$mergeObjects` / `$arrayToObject` operator calls is left for when a real case shows up.
+
+This cleans up the README's headline histogram example ([test/realistic.test.ts:75-148](../test/realistic.test.ts)) — the 3-branch `$cond` block disappears from the demo MQL panel in the playground. The new `describe("reduce accumulator type narrowing", …)` block in [test/codegen.test.ts](../test/codegen.test.ts) covers positive object + array cases, three negatives (body diverges, non-literal initial, element param not narrowed), the nested-reduce shadow, and the optional-chain fallback flip. [docs/specs/method-dispatch.md](specs/method-dispatch.md) documents the new field and the three-way IndexAccess dispatch.
+
+---
+
+## 2026-05-15 — Dual ESM + CJS distribution, Node 14+ as the floor
+
+The package now ships a CommonJS build alongside the existing ESM one so `require('@koresar/jsmql')` works on Node 14+ CJS consumers without forcing them onto ESM. `package.json#exports` gained `import` / `require` conditions for both `.` and `./ops`; `main` is repointed at `dist/cjs/index.cjs` so older resolvers (or any tool that still ignores `exports`) get a working entry point. `module` is added for bundlers that key off it. Engines stays at `>=14` — that has been our claimed floor, but until now `"type": "module"` made a CJS-only Node app fail at `require()`.
+
+The CJS bundles are produced by [scripts/build-cjs.mjs](../scripts/build-cjs.mjs): esbuild bundles each entry into a single `.cjs` file targeting `node14`, copies the matching `.d.ts` to `.d.cts` for `moduleResolution: nodenext` consumers, and writes a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. Bundling — rather than per-file CJS emit — avoids the dual-package hazard where ESM and CJS would each carry their own copy of the parser/codegen and diverge on singleton state. The script runs as the second half of `npm run build` (after `tsc`).
+
+A third smoke case in [test/smoke.test.ts](../test/smoke.test.ts) spawns `node --input-type=commonjs -e 'require("./dist/cjs/index.cjs")'` and exercises all three call shapes (string, arrow, template tag) plus `.validate()`. It's `skipIf(!exists(dist/cjs/index.cjs))` so local `npm test` stays fast, and active in `npm run smoke:dist` after a build. No source under `src/` changed; this is a packaging-and-publish-shape change only.
+
+---
+
+## 2026-05-15 — Package renamed to `@koresar/jsmql` on npm
+
+The bare `jsmql` name was unavailable on npm — already taken — so the package now ships as the scoped `@koresar/jsmql` (with the `@koresar/jsmql/ops` subpath for ambient operator types). The "hopefully temporary" qualifier in commit 953520d's message reflects that we may still claim the unscoped name later if it becomes available; until then, every user-facing example, install instruction, and import snippet uses the scoped specifier.
+
+Updated every doc, comment, and test description that suggested `require("jsmql")` / `import { jsmql } from "jsmql"` / `import "jsmql/ops"`: [README.md](../README.md), [docs/LANGUAGE.md](LANGUAGE.md) (Quick Start, Function Form, `jsmql.compile`, Template-Tag, Validation sections + the Operator-autocomplete heading and tsconfig note), [docs/specs/ops-generation.md](specs/ops-generation.md), [docs/specs/operator-registry.md](specs/operator-registry.md), [docs/specs/function-form-params.md](specs/function-form-params.md), [docs/specs/architecture.md](specs/architecture.md), the four CLAUDE.md files (root, `src/`, `docs/`, `scripts/`), [test/realistic.test.ts](../test/realistic.test.ts) (top-of-file comment + the `Compile form: ambient ops via …` describe), [test/smoke.test.ts](../test/smoke.test.ts), [src/index.ts](../src/index.ts) (`FunctionInputError` re-export comment), and the generator [scripts/generate-ops.mjs](../scripts/generate-ops.mjs) (header comments and the `// User-facing import shape` block embedded in the generated `src/ops.ts`). Earlier DEVLOG entries that reference the bare name are left as-is — they describe state at write time. The runtime contract (input shapes, output shapes, error types) is unchanged; this is a documentation-and-published-name change only.
+
+Verification: `npm run generate:ops` refreshes `src/ops.ts` (which carries the user-facing `import "@koresar/jsmql/ops"` comment block), the drift check in `test/operator-spec-coverage.test.ts` stays green, and `npm test` passes. `package.json` already shipped as `@koresar/jsmql` in commit 953520d; this entry brings the in-repo documentation in line with the published name.
+
+---
+
+## 2026-05-15 — Sync CLAUDE.md to the actual public-API shape
+
+Root [CLAUDE.md](../CLAUDE.md) used to describe the public API as "two exports from `src/index.ts`: `jsmql(input)`, `validate(input)`". That hadn't been accurate for a while — `validate` is a property on `jsmql` ([src/index.ts:281-284](../src/index.ts)), not a top-level named export, and `jsmql.compile()` (the parameterised, pre-compile path) wasn't mentioned at all despite being a first-class feature with its own [spec](specs/function-form-params.md) and [LANGUAGE.md section](LANGUAGE.md#parameterised-queries-jsmqlcompile). The framing leaked into the file-map, the semver note, and into `docs/CLAUDE.md`'s LANGUAGE.md guidance.
+
+Replaced the "two exports" paragraph with the actual shape: `jsmql` is a callable that carries `.compile` and `.validate` as properties, built via `Object.assign` because the strippable-TS rule forbids `namespace`. The shape rationale is now also surfaced in [src/CLAUDE.md](../src/CLAUDE.md) so future-Claude (and future-anyone) extends the surface the same way next time. Added an explicit scope line: jsmql targets aggregation expressions and pipeline stages, not `db.collection.find()` filter documents — preventing the article-style framing from creeping in. The corresponding line in [docs/CLAUDE.md](CLAUDE.md) was updated to name `jsmql.compile()` and `jsmql.validate()` instead of a free-standing `validate()`.
+
+Docs-only change. No code under `src/` touched, no tests changed.
+
+---
+
+## 2026-05-15 — Widen the dist support floor to Node 14
+
+`package.json` `"engines"` drops from `>=24` to `>=14`, and [tsconfig.json](../tsconfig.json) gains `"target": "es2020"` so the emitted JS pins to a syntax level v14 actually supports. The previous `"engines"` floor was tied to the source-tree invariant (`src/` runs as-is on Node 24+ via native type-stripping), but that constraint never applied to the dist — `dist/index.js` is plain JS and runs anywhere the syntax does. With no `target` set, `tsc` was preserving modern syntax verbatim, which left `?.` and `??` in the dist and shut out anything below v14 unnecessarily.
+
+A sweep across the user's installed Node versions confirmed the floor: v12.18.3 fails on `??` (and on `?.` before that), v14.21.2 through v24.15.0 all pass the smoke script (string / arrow / template-tag forms plus `validate()`). v12 reaches end-of-life territory and v14 is the lowest LTS anyone realistically still runs, so that's where the new floor sits. The strippable-TS invariant is unchanged — `src/` still requires Node 24+ for native type-stripping, that's a source-running-as-script concern that's orthogonal to the dist.
+
+No code under `src/` changed and no tests changed; the existing dist-import smoke in [test/smoke.test.ts](../test/smoke.test.ts) is the in-repo regression test. The full suite (899 tests across 12 files) is green on the rebuilt dist.
+
+---
+
+## 2026-05-14 — `jsmql.compile()` accepts a string source
+
+`jsmql.compile()` now accepts a string containing the arrow source in addition to a real arrow function — `jsmql.compile("({ minAge }, $) => $.age > minAge")` is equivalent to passing the function value. This brings `compile()` in line with `jsmql()` and `jsmql.validate()`, both of which already polymorph over string / arrow / template tag. The motivating use case is queries stored externally (config files, database rows, admin tooling): callers who only have the text can still benefit from the parse-once-bind-many semantics that make `compile()` more than a wrapper around `jsmql()`.
+
+The implementation is small: [src/index.ts](../src/index.ts) gains an overload on `compileFunction` and a `typeof input === "string"` branch that uses the string directly as `src`. Everything downstream — `parseFunctionInput`, the bindings map, the closure shape — is unchanged. A string without an arrow shape inherits the existing `FunctionInputError` ("jsmql expects an arrow function `($) => …`"); a value that is neither a function nor a string throws `TypeError` from the entry point.
+
+We explicitly **did not** add a `${name}`-placeholder syntax inside compile strings, even though it would superficially look like template-tag syntax that users already know. Two reasons. First, the strict-JS-subset rule (root [CLAUDE.md](../CLAUDE.md)) requires that every expression jsmql accepts be valid JS — `${id}` outside a template literal isn't, so the string contents would no longer "copy-paste into a JS file and parse." Second, plain-string `${name}` placeholders are a footgun next to real template literals: a user who writes `` jsmql.compile(`… ${id} …`) `` with backticks (easy, especially for multi-line queries) gets JS-time interpolation, not deferred binding — silently breaking the `compile()` contract. Keeping the destructure as the single parameter-declaration mechanism preserves the invariant in both directions: anything `jsmql.compile()` accepts is valid JS, and the only way values reach the MQL output is through the params object at call time. The tagged-template form of `compile()` was rejected on the same reasoning — interpolation happens at tag-evaluation time, which is the wrong time for a "compile once, bind many" surface.
+
+Test coverage in [test/codegen.test.ts](../test/codegen.test.ts) under the new `describe("string input")` block; spec updates in [docs/specs/function-form-params.md](specs/function-form-params.md) and the user-facing reference in [docs/LANGUAGE.md](LANGUAGE.md#string-input).
+
+---
+
 ## 2026-05-14 — `jsmql.validate` accepts compile-form arrows (same shape as `jsmql.compile`)
 
 `jsmql.validate` now accepts the parameterised arrow shape that `jsmql.compile` accepts — `({ minAge }, $) => …` and friends — in addition to the one-shot string / function / template-tag inputs it has always taken. Motivation: when the user writes `jsmql.validate(({ age }, $) => …)`, TypeScript was contextually typing the second parameter as `JsmqlOps` (because the existing `JsmqlInput` overload's `JsmqlFn` is `($: any, ops: JsmqlOps) => unknown`), which made `$.dob` fail in the IDE even though the runtime accepted the expression. The new overload `validate<P>(fn: JsmqlCompileFn<P>)` is listed first in source order so TS picks `(params: P, $: any, ops: JsmqlOps)` for any two-or-three-parameter arrow, leaving `$: any` and `$.dob` typing cleanly.
@@ -548,25 +585,25 @@ Files: [src/index.ts](../src/index.ts) (new overload, inline function-input bran
 
 ---
 
-## 2026-05-14 — Thread `.pos` through codegen and adapter errors so `.validate()` honours its contract
+## 2026-05-14 — `playground.html` becomes a self-sufficient single-file artifact
 
-Every AST node in [src/ast.ts](../src/ast.ts) now carries a required `pos: number` field, populated by the parser at every construction site from the leading token of each construct (literal token for literals, opening delimiter for collections, operator for binary/unary/ternary, `let`/`delete`/`$`/`$.` keyword for statements and refs). `CodegenError`, `UnknownIdentifierError`, and `FunctionInputError` all gained `readonly pos: number` fields and a constructor parameter, and every throw site forwards the appropriate node or token offset. `errorToValidationResult` in [src/index.ts](../src/index.ts) now passes `err.pos` through for codegen and function-input errors instead of the previous `0` placeholder, closing the gap the [CLAUDE.md](../CLAUDE.md) DX rule called out in the prior commit.
+[playground.html](../playground.html) used to need two sibling assets at runtime — `./dist/index.js` (the tsc output) and `./playground-examples.json` (the example manifest written by `sync-playground.mjs`). That made it impossible to ship on its own: you couldn't email it, drop it on a static host, or just double-click it from disk, because Chrome blocks `fetch()` from `file://` URLs and the dist import obviously can't resolve without the rest of the build.
 
-`JsmqlInterpolationError` stays at `.pos = 0` for the documented reason: the template-tag form's source text lives across the `strings` and `values` arrays, and there is no single byte offset to report. Callers needing to locate a failing interpolation read `.slot` (1-based index) or `.key` (parameter name) on the underlying error class. `RangeError` / `TypeError` / generic catch-all also stay at `0` — they come from outside our control.
+Now the file is fully self-contained. [scripts/sync-playground.mjs](../scripts/sync-playground.mjs) was extended to also bundle [src/index.ts](../src/index.ts) via esbuild as an IIFE — `format: "iife"`, `globalName: "JSMQL"`, `minify: true`, `target: "es2022"`, `platform: "browser"` — and inject the result into a managed region in `playground.html` between `<!-- jsmql-bundle:start -->` / `<!-- jsmql-bundle:end -->` comments. The examples manifest is no longer a sibling JSON; it lives inside a second managed region as a `<script type="application/json" id="examples-data">` JSON island. The module script then reads `const { jsmql } = globalThis.JSMQL;` and parses the JSON island synchronously instead of fetching. The only external dependency remaining is the CodeMirror CDN — explicitly kept out of the bundle, the user wanted the syntax highlighter to stay external.
 
-[test/error-pos.test.ts](../test/error-pos.test.ts) is new — focused assertions that `.pos` lands on the right region for every error class (lexer, parser, codegen, function-input, interpolation). The four cases in `test/realistic.test.ts`'s `describe("jsmql.validate(): realistic error cases", …)` block grew `.pos` range assertions so the contract is exercised at the integration level too. Specs in [docs/specs/architecture.md](specs/architecture.md), [docs/specs/let-bindings.md](specs/let-bindings.md), [docs/specs/update-filter.md](specs/update-filter.md), and [docs/specs/function-form-params.md](specs/function-form-params.md) were updated to describe the new invariant.
+The script is now also wired into `prebuild`, so `npm run build` keeps the playground in sync with both the test file and the library source. `playground-examples.json` was deleted (its data lives inside the HTML now). The output file is ~130 kB and the script is idempotent — running `npm run sync:playground` a second time exits 0 without writing if nothing changed. Verified end-to-end against a local static server: example selection populates, prettify works, and the syntax-error marker still highlights the offending position with no fetches to `./dist/` or `./playground-examples.json` in the network log.
 
-Out of scope for this change (intentional, called out in the plan): sub-node positions on individual `KeyValueEntry` / `SpreadElement` / array-element members beyond what the AST already carries, and a synthesised offset for interpolation errors. The parent-node `pos` already covers ~60 of the ~70 codegen throw sites; sub-node precision is a follow-up if a real user hits it.
+Adds `esbuild` to `devDependencies`. The one DX trade-off worth noting: edits to `src/*.ts` outside Claude Code now need a manual `npm run sync:playground` (or `npm run build`) to re-embed the bundle — the existing PostToolUse hook only fires on `test/realistic.test.ts` edits. A src-watching hook is a possible follow-up.
 
 ---
 
-## 2026-05-14 — DX rule: `.validate()` errors must always carry a meaningful `.pos`
+## 2026-05-14 — `tsconfig.test.json` so the IDE stops flagging `node:` imports in test files
 
-Added a new sub-bullet under "#1 priority: developer experience" → "Errors stay consistent and helpful across the surface" in [CLAUDE.md](../CLAUDE.md). The rule states that every `ValidationError` returned by `validate()` must have a real source offset in `.pos`, not the `0` placeholder. Tooling consumers (editor integrations, the playground) rely on `.pos` to underline the offending region, and the public `ValidationError` shape already declares `.pos: number` as required — returning `0` silently breaks that contract while still type-checking.
+The root [tsconfig.json](../tsconfig.json) has `rootDir: "src"` and `include: ["src"]` because that's what the published build needs. Side effect: when the IDE opens a file under `test/`, the TypeScript language service decides the file doesn't belong to any project, falls back to inferred-project mode, and never auto-picks `@types/node`. Result is `TS2591: Cannot find name node:child_process` on every `import { spawnSync } from "node:child_process"` in `test/smoke.test.ts`, `test/operator-spec-coverage.test.ts`, etc. The IDE's own JS/TS resolver still finds the symbols, so hovers and completions work — but the module specifier sits there permanently red.
 
-An audit of every throw site reachable from `validate()` found that only `LexError` and `ParseError` set `.pos` to a real byte offset. `CodegenError`, `UnknownIdentifierError`, `FunctionInputError`, `JsmqlInterpolationError`, and the catch-all in [src/index.ts](../src/index.ts) all fall back to `.pos = 0`. Root cause: AST node types in [src/ast.ts](../src/ast.ts) carry no position field — the parser discards token offsets when it builds nodes, so codegen has nothing to forward even when it knows which node is at fault. No test currently asserts `.pos > 0`, so the gap is invisible to CI.
+Fix is a dedicated [tsconfig.test.json](../tsconfig.test.json) that extends the root config, covers `test/`, sets `noEmit: true`, and explicitly opts back out of TS 6's strict-by-default (`strict: false`, `noImplicitAny: false`, plus `types: ["node"]` since auto-include of `@types/*` doesn't always fire under `moduleResolution: "bundler"` when `types` is unset). Kept lenient on purpose — the goal is to scope test files into a project so `@types/node` resolves, not to start type-checking the test corpus, which has long-standing intentional patterns (e.g. `jsmql(() => $.age > 18)` references a `$` that only exists in the source-text view, not the JS scope) that wouldn't survive strict mode and aren't a real bug.
 
-The rule is recorded as a forward-looking principle; the implementation gap (threading positions through the AST + codegen + adapter throws + adding test coverage) is a separate task to be planned and landed next.
+`npm test` is unaffected — vitest does its own transpilation and doesn't look at this file. The only consumer is the IDE/editor TypeScript service. `scripts/*.mjs` weren't included because they're plain JS, not TS, so the original error never reached them.
 
 ---
 
@@ -582,25 +619,13 @@ Files: [src/index.ts](../src/index.ts) (delete cache helpers + simplify function
 
 ---
 
-## 2026-05-14 — Playground pipeline examples dedent past the lone-opener `[`
+## 2026-05-14 — DX rule: `.validate()` errors must always carry a meaningful `.pos`
 
-The three pipeline examples that came in through `jsmql\`[\n  $match(...)\n  ...\n]\`` tagged templates — `top-orders-report-by-department`, `count-orders-by-status-per-shop-accumulator-replacement`, `invoice-finalisation-pipeline-update ops-match` — were rendering in the playground with the raw test-file indent (6-space body, 4-space closer) instead of the canonical 2-space pipeline shape. Root cause: the `dedent()` helper in [scripts/sync-playground.mjs](../scripts/sync-playground.mjs) computes the global minimum indent across all non-empty lines, but a template that starts with `[` directly after the backtick puts that opener on line 1 at column 0, dragging the minimum to zero and short-circuiting the strip. The simple-expression cases sidestep this because they either fit on one line or start with `\n` (so the first content line is itself indented).
+Added a new sub-bullet under "#1 priority: developer experience" → "Errors stay consistent and helpful across the surface" in [CLAUDE.md](../CLAUDE.md). The rule states that every `ValidationError` returned by `validate()` must have a real source offset in `.pos`, not the `0` placeholder. Tooling consumers (editor integrations, the playground) rely on `.pos` to underline the offending region, and the public `ValidationError` shape already declares `.pos: number` as required — returning `0` silently breaks that contract while still type-checking.
 
-Added a small fallback: when the global min is zero *and* the first line is a lone opener (`[`, `{`, or `(`), measure the minimum indent of the body lines and strip that instead. The opener stays at column 0, the body lines drop to a canonical depth (typically 2 spaces because the test-file closer was 4 spaces in), and nested structure is preserved at relative depth. Verified by hand against all three pipeline examples in the live playground — they still parse and produce the same MQL, just with readable indentation.
+An audit of every throw site reachable from `validate()` found that only `LexError` and `ParseError` set `.pos` to a real byte offset. `CodegenError`, `UnknownIdentifierError`, `FunctionInputError`, `JsmqlInterpolationError`, and the catch-all in [src/index.ts](../src/index.ts) all fall back to `.pos = 0`. Root cause: AST node types in [src/ast.ts](../src/ast.ts) carry no position field — the parser discards token offsets when it builds nodes, so codegen has nothing to forward even when it knows which node is at fault. No test currently asserts `.pos > 0`, so the gap is invisible to CI.
 
-Also extended [`.oxfmtrc.json`](../.oxfmtrc.json) to ignore `playground.html`. The two managed regions inside the file (the minified jsmql IIFE bundle, the JSON-island manifest) are both generator output that needs to stay byte-stable; oxfmt's pretty-printer was unfolding the bundle from one line to ~5000 between syncs, which created huge spurious diffs and forced contributors to remember to re-run `sync:playground` after every `format`. The file is regenerated by `sync-playground.mjs` and doesn't need oxfmt's attention.
-
----
-
-## 2026-05-14 — `playground.html` becomes a self-sufficient single-file artifact
-
-[playground.html](../playground.html) used to need two sibling assets at runtime — `./dist/index.js` (the tsc output) and `./playground-examples.json` (the example manifest written by `sync-playground.mjs`). That made it impossible to ship on its own: you couldn't email it, drop it on a static host, or just double-click it from disk, because Chrome blocks `fetch()` from `file://` URLs and the dist import obviously can't resolve without the rest of the build.
-
-Now the file is fully self-contained. [scripts/sync-playground.mjs](../scripts/sync-playground.mjs) was extended to also bundle [src/index.ts](../src/index.ts) via esbuild as an IIFE — `format: "iife"`, `globalName: "JSMQL"`, `minify: true`, `target: "es2022"`, `platform: "browser"` — and inject the result into a managed region in `playground.html` between `<!-- jsmql-bundle:start -->` / `<!-- jsmql-bundle:end -->` comments. The examples manifest is no longer a sibling JSON; it lives inside a second managed region as a `<script type="application/json" id="examples-data">` JSON island. The module script then reads `const { jsmql } = globalThis.JSMQL;` and parses the JSON island synchronously instead of fetching. The only external dependency remaining is the CodeMirror CDN — explicitly kept out of the bundle, the user wanted the syntax highlighter to stay external.
-
-The script is now also wired into `prebuild`, so `npm run build` keeps the playground in sync with both the test file and the library source. `playground-examples.json` was deleted (its data lives inside the HTML now). The output file is ~130 kB and the script is idempotent — running `npm run sync:playground` a second time exits 0 without writing if nothing changed. Verified end-to-end against a local static server: example selection populates, prettify works, and the syntax-error marker still highlights the offending position with no fetches to `./dist/` or `./playground-examples.json` in the network log.
-
-Adds `esbuild` to `devDependencies`. The one DX trade-off worth noting: edits to `src/*.ts` outside Claude Code now need a manual `npm run sync:playground` (or `npm run build`) to re-embed the bundle — the existing PostToolUse hook only fires on `test/realistic.test.ts` edits. A src-watching hook is a possible follow-up.
+The rule is recorded as a forward-looking principle; the implementation gap (threading positions through the AST + codegen + adapter throws + adding test coverage) is a separate task to be planned and landed next.
 
 ---
 
@@ -628,25 +653,25 @@ UI-only change, no behaviour change in the library. Verified by hand against the
 
 ---
 
-## 2026-05-14 — `jsmql.compile()` accepts a string source
+## 2026-05-14 — Playground pipeline examples dedent past the lone-opener `[`
 
-`jsmql.compile()` now accepts a string containing the arrow source in addition to a real arrow function — `jsmql.compile("({ minAge }, $) => $.age > minAge")` is equivalent to passing the function value. This brings `compile()` in line with `jsmql()` and `jsmql.validate()`, both of which already polymorph over string / arrow / template tag. The motivating use case is queries stored externally (config files, database rows, admin tooling): callers who only have the text can still benefit from the parse-once-bind-many semantics that make `compile()` more than a wrapper around `jsmql()`.
+The three pipeline examples that came in through `jsmql\`[\n  $match(...)\n  ...\n]\`` tagged templates — `top-orders-report-by-department`, `count-orders-by-status-per-shop-accumulator-replacement`, `invoice-finalisation-pipeline-update ops-match` — were rendering in the playground with the raw test-file indent (6-space body, 4-space closer) instead of the canonical 2-space pipeline shape. Root cause: the `dedent()` helper in [scripts/sync-playground.mjs](../scripts/sync-playground.mjs) computes the global minimum indent across all non-empty lines, but a template that starts with `[` directly after the backtick puts that opener on line 1 at column 0, dragging the minimum to zero and short-circuiting the strip. The simple-expression cases sidestep this because they either fit on one line or start with `\n` (so the first content line is itself indented).
 
-The implementation is small: [src/index.ts](../src/index.ts) gains an overload on `compileFunction` and a `typeof input === "string"` branch that uses the string directly as `src`. Everything downstream — `parseFunctionInput`, the bindings map, the closure shape — is unchanged. A string without an arrow shape inherits the existing `FunctionInputError` ("jsmql expects an arrow function `($) => …`"); a value that is neither a function nor a string throws `TypeError` from the entry point.
+Added a small fallback: when the global min is zero *and* the first line is a lone opener (`[`, `{`, or `(`), measure the minimum indent of the body lines and strip that instead. The opener stays at column 0, the body lines drop to a canonical depth (typically 2 spaces because the test-file closer was 4 spaces in), and nested structure is preserved at relative depth. Verified by hand against all three pipeline examples in the live playground — they still parse and produce the same MQL, just with readable indentation.
 
-We explicitly **did not** add a `${name}`-placeholder syntax inside compile strings, even though it would superficially look like template-tag syntax that users already know. Two reasons. First, the strict-JS-subset rule (root [CLAUDE.md](../CLAUDE.md)) requires that every expression jsmql accepts be valid JS — `${id}` outside a template literal isn't, so the string contents would no longer "copy-paste into a JS file and parse." Second, plain-string `${name}` placeholders are a footgun next to real template literals: a user who writes `` jsmql.compile(`… ${id} …`) `` with backticks (easy, especially for multi-line queries) gets JS-time interpolation, not deferred binding — silently breaking the `compile()` contract. Keeping the destructure as the single parameter-declaration mechanism preserves the invariant in both directions: anything `jsmql.compile()` accepts is valid JS, and the only way values reach the MQL output is through the params object at call time. The tagged-template form of `compile()` was rejected on the same reasoning — interpolation happens at tag-evaluation time, which is the wrong time for a "compile once, bind many" surface.
-
-Test coverage in [test/codegen.test.ts](../test/codegen.test.ts) under the new `describe("string input")` block; spec updates in [docs/specs/function-form-params.md](specs/function-form-params.md) and the user-facing reference in [docs/LANGUAGE.md](LANGUAGE.md#string-input).
+Also extended [`.oxfmtrc.json`](../.oxfmtrc.json) to ignore `playground.html`. The two managed regions inside the file (the minified jsmql IIFE bundle, the JSON-island manifest) are both generator output that needs to stay byte-stable; oxfmt's pretty-printer was unfolding the bundle from one line to ~5000 between syncs, which created huge spurious diffs and forced contributors to remember to re-run `sync:playground` after every `format`. The file is regenerated by `sync-playground.mjs` and doesn't need oxfmt's attention.
 
 ---
 
-## 2026-05-14 — `tsconfig.test.json` so the IDE stops flagging `node:` imports in test files
+## 2026-05-14 — Thread `.pos` through codegen and adapter errors so `.validate()` honours its contract
 
-The root [tsconfig.json](../tsconfig.json) has `rootDir: "src"` and `include: ["src"]` because that's what the published build needs. Side effect: when the IDE opens a file under `test/`, the TypeScript language service decides the file doesn't belong to any project, falls back to inferred-project mode, and never auto-picks `@types/node`. Result is `TS2591: Cannot find name node:child_process` on every `import { spawnSync } from "node:child_process"` in `test/smoke.test.ts`, `test/operator-spec-coverage.test.ts`, etc. The IDE's own JS/TS resolver still finds the symbols, so hovers and completions work — but the module specifier sits there permanently red.
+Every AST node in [src/ast.ts](../src/ast.ts) now carries a required `pos: number` field, populated by the parser at every construction site from the leading token of each construct (literal token for literals, opening delimiter for collections, operator for binary/unary/ternary, `let`/`delete`/`$`/`$.` keyword for statements and refs). `CodegenError`, `UnknownIdentifierError`, and `FunctionInputError` all gained `readonly pos: number` fields and a constructor parameter, and every throw site forwards the appropriate node or token offset. `errorToValidationResult` in [src/index.ts](../src/index.ts) now passes `err.pos` through for codegen and function-input errors instead of the previous `0` placeholder, closing the gap the [CLAUDE.md](../CLAUDE.md) DX rule called out in the prior commit.
 
-Fix is a dedicated [tsconfig.test.json](../tsconfig.test.json) that extends the root config, covers `test/`, sets `noEmit: true`, and explicitly opts back out of TS 6's strict-by-default (`strict: false`, `noImplicitAny: false`, plus `types: ["node"]` since auto-include of `@types/*` doesn't always fire under `moduleResolution: "bundler"` when `types` is unset). Kept lenient on purpose — the goal is to scope test files into a project so `@types/node` resolves, not to start type-checking the test corpus, which has long-standing intentional patterns (e.g. `jsmql(() => $.age > 18)` references a `$` that only exists in the source-text view, not the JS scope) that wouldn't survive strict mode and aren't a real bug.
+`JsmqlInterpolationError` stays at `.pos = 0` for the documented reason: the template-tag form's source text lives across the `strings` and `values` arrays, and there is no single byte offset to report. Callers needing to locate a failing interpolation read `.slot` (1-based index) or `.key` (parameter name) on the underlying error class. `RangeError` / `TypeError` / generic catch-all also stay at `0` — they come from outside our control.
 
-`npm test` is unaffected — vitest does its own transpilation and doesn't look at this file. The only consumer is the IDE/editor TypeScript service. `scripts/*.mjs` weren't included because they're plain JS, not TS, so the original error never reached them.
+[test/error-pos.test.ts](../test/error-pos.test.ts) is new — focused assertions that `.pos` lands on the right region for every error class (lexer, parser, codegen, function-input, interpolation). The four cases in `test/realistic.test.ts`'s `describe("jsmql.validate(): realistic error cases", …)` block grew `.pos` range assertions so the contract is exercised at the integration level too. Specs in [docs/specs/architecture.md](specs/architecture.md), [docs/specs/let-bindings.md](specs/let-bindings.md), [docs/specs/update-filter.md](specs/update-filter.md), and [docs/specs/function-form-params.md](specs/function-form-params.md) were updated to describe the new invariant.
+
+Out of scope for this change (intentional, called out in the plan): sub-node positions on individual `KeyValueEntry` / `SpreadElement` / array-element members beyond what the AST already carries, and a synthesised offset for interpolation errors. The parent-node `pos` already covers ~60 of the ~70 codegen throw sites; sub-node precision is a follow-up if a real user hits it.
 
 ---
 
@@ -897,26 +922,6 @@ The motivation is straightforward: relying on muscle memory to enforce a documen
 
 ---
 
-## 2026-05-09 — Update filters: `=`, `+=`, `-=`, `*=`, `/=`, and `delete` compile to `$set`/`$unset` stages
-
-Closes the longest-standing item in `Invalid Constructs` (assignments) and adds `delete` alongside it. Users now write document updates in JS-natural form — `$.score += 1`, `delete $.tmp`, `$.user.name = "alice"` — and the compiler emits the correct MongoDB pipeline-stage shapes. Multiple update ops separated by `;` or `,` coalesce into the smallest correct stage sequence.
-
-**Wire format.** `$set` and `$unset` were already registered pipeline stages in `src/stages.ts`; the new code only synthesises the stage objects, no operator-registry changes. Single `$unset` deletes use the string form (`{ $unset: "tmp" }`); two-or-more deletes coalesce to the array form (`{ $unset: ["a", "b"] }`). One assignment yields a bare `{$set:{…}}` object, multiple stages yield an array — same convention as existing pipeline-vs-expression output.
-
-**Coalescing.** Adjacent same-kind update ops (all assignments, or all deletes) merge into one stage *unless* a path collision (parent/child) or a read-after-write would change the semantics. `$.a = 1; $.b = 2` is one `$set`; `$.a = 1; $.b = $.a` is two `$set`s because the second reads what the first wrote — preserves JS sequential semantics. Same algorithm runs at the top level and between adjacent update op elements inside a pipeline.
-
-**Parser shape.** `parse()` now returns `Program = Expr | UpdateFilter`. Top-level dispatch: a leading `delete` keyword, or any expression followed by an assignment operator, triggers update op-program parsing. Inside `parseArrayLiteral`, the same per-element heuristic runs so `[$match(...), $.a = 1, delete $.tmp, $sort(...)]` works. `=` is right-associative and chainable; `+=`/`-=`/`*=`/`/=` are not — `a += b += 1` is rejected because it's too easy to misread. Compound operators are desugared at parse time into `=` plus a `BinaryExpr`, so codegen sees only plain assignments and inherits the existing type-aware `+` (numeric `$add` vs string `$concat`) for free.
-
-**Parenthesized assignments accepted.** Formatters wrap assignment expressions in parens when they sit in array element position, and Vite/Vitest's transform silently strips them — so without parser support, `jsmql(($) => [($.a = 5)])` would fail in production runtimes even though it passed in tests. `parseGrouped` now recognises an assignment operator after the inner expression, parses the assignment inside the parens, and returns the resulting `AssignExpr`. Misuse as a value (`1 + ($.a = 5)`) is rejected at codegen with a clear message.
-
-**Targets.** Restricted to static field paths (`$.x` / `$.x.y.z`). Bare identifiers, index access, and computed paths are rejected with operator-specific error messages. Update filters are statement-only — invalid inside expressions, lambda bodies, or as values. The `delete` keyword does not return a boolean (unlike JS).
-
-**Both `;` and `,` work as separators**, freely interchangeable. `,` was already a list separator inside arrays/calls; the parser disambiguates by position. `;` is a new lexer token. Trailing separator allowed.
-
-**Spec.** `docs/specs/update-filter.md` covers the AST, lexer additions, parser dispatch, codegen coalescer, pipeline integration, and the parens-handling. User-facing reference is `docs/LANGUAGE.md` § Update filters. Tests in `test/update-filter.test.ts` (62 cases) plus a paired-form realistic case (`jsmql(string)` ≡ `jsmql(func)`) in `test/realistic.test.ts`.
-
----
-
 ## 2026-05-09 — Project-wide simplification sweep
 
 A whole-tree audit followed by 14 small commits, ranked by impact-to-risk and committed individually so any one is easy to revert. Every change kept the test suite green and preserved (or improved) user-facing DX. Three correctness bugs, six internal cleanups, three test-suite trims, two contributor-tooling wins, three DX-improving error messages.
@@ -982,6 +987,26 @@ Two course-corrections on the same day's sweep, both based on user feedback that
 **`in` with an object-literal RHS now compiles to property existence (JS-faithful).** The earlier commit rejected `\$.x in { a: 1 }` outright with a "use Object.keys().includes()" hint, on the grounds that JS's `key in object` semantic had no useful MongoDB equivalent. Wrong call — the JS semantic *does* have a clean MQL mapping for object literals: extract the keys at compile time and reduce to `\$in` against a literal array. `\$.x in { a: 1, b: 2 }` now emits `{ \$in: ["\$x", ["a", "b"]] }`. Computed keys evaluate at runtime; spread entries lower to `\$objectToArray(expr).k` and splice in via `\$concatArrays`. The semantic divergence is now documented explicitly in LANGUAGE.md: array on the right is value-membership (deliberate divergence from JS, matches MongoDB query intent), object on the right is property-existence (JS-faithful), scalar on the right still errors. Five new tests cover the static, computed-key, mixed-spread, and spread-only cases.
 
 The principle: the project's #2 priority is *strict subset of JavaScript syntax*, but the per-construct semantic decisions are case-by-case. For `in`, MongoDB users typing `value in array` overwhelmingly want value-membership and we keep that even though JS does index-existence; but `value in object` already maps cleanly to property-existence and we should match JS there. Refusing to compile is the wrong default when a clean mapping exists.
+
+---
+
+## 2026-05-09 — Update filters: `=`, `+=`, `-=`, `*=`, `/=`, and `delete` compile to `$set`/`$unset` stages
+
+Closes the longest-standing item in `Invalid Constructs` (assignments) and adds `delete` alongside it. Users now write document updates in JS-natural form — `$.score += 1`, `delete $.tmp`, `$.user.name = "alice"` — and the compiler emits the correct MongoDB pipeline-stage shapes. Multiple update ops separated by `;` or `,` coalesce into the smallest correct stage sequence.
+
+**Wire format.** `$set` and `$unset` were already registered pipeline stages in `src/stages.ts`; the new code only synthesises the stage objects, no operator-registry changes. Single `$unset` deletes use the string form (`{ $unset: "tmp" }`); two-or-more deletes coalesce to the array form (`{ $unset: ["a", "b"] }`). One assignment yields a bare `{$set:{…}}` object, multiple stages yield an array — same convention as existing pipeline-vs-expression output.
+
+**Coalescing.** Adjacent same-kind update ops (all assignments, or all deletes) merge into one stage *unless* a path collision (parent/child) or a read-after-write would change the semantics. `$.a = 1; $.b = 2` is one `$set`; `$.a = 1; $.b = $.a` is two `$set`s because the second reads what the first wrote — preserves JS sequential semantics. Same algorithm runs at the top level and between adjacent update op elements inside a pipeline.
+
+**Parser shape.** `parse()` now returns `Program = Expr | UpdateFilter`. Top-level dispatch: a leading `delete` keyword, or any expression followed by an assignment operator, triggers update op-program parsing. Inside `parseArrayLiteral`, the same per-element heuristic runs so `[$match(...), $.a = 1, delete $.tmp, $sort(...)]` works. `=` is right-associative and chainable; `+=`/`-=`/`*=`/`/=` are not — `a += b += 1` is rejected because it's too easy to misread. Compound operators are desugared at parse time into `=` plus a `BinaryExpr`, so codegen sees only plain assignments and inherits the existing type-aware `+` (numeric `$add` vs string `$concat`) for free.
+
+**Parenthesized assignments accepted.** Formatters wrap assignment expressions in parens when they sit in array element position, and Vite/Vitest's transform silently strips them — so without parser support, `jsmql(($) => [($.a = 5)])` would fail in production runtimes even though it passed in tests. `parseGrouped` now recognises an assignment operator after the inner expression, parses the assignment inside the parens, and returns the resulting `AssignExpr`. Misuse as a value (`1 + ($.a = 5)`) is rejected at codegen with a clear message.
+
+**Targets.** Restricted to static field paths (`$.x` / `$.x.y.z`). Bare identifiers, index access, and computed paths are rejected with operator-specific error messages. Update filters are statement-only — invalid inside expressions, lambda bodies, or as values. The `delete` keyword does not return a boolean (unlike JS).
+
+**Both `;` and `,` work as separators**, freely interchangeable. `,` was already a list separator inside arrays/calls; the parser disambiguates by position. `;` is a new lexer token. Trailing separator allowed.
+
+**Spec.** `docs/specs/update-filter.md` covers the AST, lexer additions, parser dispatch, codegen coalescer, pipeline integration, and the parens-handling. User-facing reference is `docs/LANGUAGE.md` § Update filters. Tests in `test/update-filter.test.ts` (62 cases) plus a paired-form realistic case (`jsmql(string)` ≡ `jsmql(func)`) in `test/realistic.test.ts`.
 
 ---
 
