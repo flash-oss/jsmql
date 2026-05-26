@@ -1206,7 +1206,7 @@ export class Parser {
           // at `$$$` (DatabaseRef) and the method is `.find` / `.filter`, the
           // lambda argument may use the block-body form (a sub-pipeline body
           // for the eventual `$lookup` stage). See docs/specs/lookup-stage.md.
-          const allowBlockBody = (member.value === "find" || member.value === "filter") && isDatabaseRefRooted(left);
+          const allowBlockBody = (member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left);
           const args = this.parseMethodCallArgs(allowBlockBody);
           left = {
             type: "MethodCall",
@@ -2015,22 +2015,26 @@ export class Parser {
  * complaining the target wasn't a field path.
  */
 /**
- * Walk a receiver chain back to its root and report whether the root is a
- * `DatabaseRef` (`$$$`). Used by `parsePostfix` to decide whether a
- * `.find(...)` / `.filter(...)` method call should accept the lookup-callback
- * grammar (block-body lambda, future-resolved as a `$lookup` sub-pipeline).
+ * Walk a receiver chain back to its root and report whether the root is one
+ * of the lookup-receiver context-ref prefixes — `DatabaseRef` (`$$$`, same
+ * database) or `ClusterRef` (`$$$$`, cross-database). Used by `parsePostfix`
+ * to decide whether a `.find(...)` / `.filter(...)` method call should accept
+ * the lookup-callback grammar (block-body lambda, future-resolved as a
+ * `$lookup` sub-pipeline).
  *
- * The chain may include any number of `MemberAccess` (`$$$.users`) and
- * `IndexAccess` (`$$$["users"]`) hops; method calls and other expression
+ * The chain may include any number of `MemberAccess` and `IndexAccess` hops
+ * (so `$$$.users`, `$$$["users"]`, `$$$$.myDb.myColl`, `$$$$["db"]["coll"]`,
+ * and the mixed bracket combos all match); method calls and other expression
  * shapes do not — only direct property navigation off the context ref is the
- * lookup-receiver shape. A receiver like `$$$.users.posts.find(...)` is NOT
- * treated as a lookup (the second `.posts` step is a chained navigation, not
- * a join) — that's enforced at the codegen / lookup-translation layer.
+ * lookup-receiver shape. Depth-checking (rejecting `$$$.foo.bar.find(...)`
+ * or `$$$$.db.coll.extra.find(...)`) happens at the codegen / lookup-
+ * translation layer (`extractLookupTarget` requires exactly one or two
+ * static-access levels).
  */
-function isDatabaseRefRooted(expr: Expr): boolean {
+function isLookupReceiverRooted(expr: Expr): boolean {
   let node: Expr = expr;
   for (;;) {
-    if (node.type === "DatabaseRef") return true;
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef") return true;
     if (node.type === "MemberAccess") {
       node = node.object;
       continue;

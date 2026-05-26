@@ -451,23 +451,23 @@ $.0.name       // ❌ Can't start with digit after $.
 
 jsmql provides three further prefix levels, parallel to `$.`, for cross-collection / cross-database / cross-cluster references.
 
-| Prefix | Scope                          | Status                                                  |
-| ------ | ------------------------------ | ------------------------------------------------------- |
-| `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                 |
-| `$$`   | Current collection             | reserved (`$$.find(…)` — needs schema/driver binding)   |
-| `$$$`  | Current database               | **live for `.find/.filter` joins** — see below          |
-| `$$$$` | Current cluster / server       | reserved (no native MQL surface in the basic case)      |
+| Prefix | Scope                          | Status                                                                  |
+| ------ | ------------------------------ | ----------------------------------------------------------------------- |
+| `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
+| `$$`   | Current collection             | reserved (`$$.find(…)` — needs schema/driver binding)                   |
+| `$$$`  | Current database               | **live for `.find/.filter` joins** — see below                          |
+| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (requires Atlas Data Federation; see below) |
 
 Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
 
 ```js
 jsmql.expr("$$$.myColl");              // ❌ CodegenError: '$$$.<coll>' must be followed by .find(pred) or .filter(pred)
-jsmql('$$$$["db"]["coll"]');           // ❌ '$$$$' (current-cluster reference) is reserved syntax
+jsmql.expr('$$$$["db"]["coll"]');      // ❌ '$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred)
 jsmql("$$");                            // ❌ ParseError: Expected '.<name>' or '[<expr>]' after '$$'
 jsmql("$$$$$.x");                       // ❌ LexError: Up to 4 levels of context reference are supported
 ```
 
-The full `$$$.<coll>.find/filter(...)` join syntax is documented next.
+The full `$$$.<coll>.find/filter(...)` and `$$$$.<db>.<coll>.find/filter(...)` join syntax is documented next.
 
 ### Cross-collection lookups: `$$$.<coll>.find / .filter`
 
@@ -554,8 +554,33 @@ A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.f
 **Caveats:**
 - **Nested lookups are not yet supported in this release.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda body throws a targeted "not yet supported, hoist to sibling stage" error. Coming in a follow-up.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — deferred.
-- **`$$$$.<db>.<coll>...` (cross-database)** has no native MQL surface in the basic case — stays reserved.
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
+
+### Cross-database lookups: `$$$$.<db>.<coll>.find / .filter`
+
+The `$$$$` (current-cluster) prefix is the cross-database counterpart of `$$$`. The same `.find` / `.filter` methods, the same predicate-translation rules, the same chained terminals, the same block-body lambdas — the only difference is that the receiver names the *database* as well, and the compiled MQL uses MongoDB's `from: { db, coll }` object shape instead of the bare-string `from`:
+
+```js
+$.archivedOrders = $$$$.cold_storage.orders.filter(o => o.userId === $._id);
+// → [{
+//     $lookup: {
+//       from: { db: "cold_storage", coll: "orders" },
+//       localField: "_id",
+//       foreignField: "userId",
+//       as: "archivedOrders"
+//     }
+//   }]
+
+$.profile = $$$$.users_db.profiles.find(p => p.userId === $._id);
+// → $lookup with from: { db: "users_db", coll: "profiles" }, plus the
+//   standard $set { $first } for .find's scalar-or-null contract.
+```
+
+All four bracket combinations are accepted: `$$$$.db.coll`, `$$$$["db"]["coll"]`, `$$$$.db["coll"]`, `$$$$["db"].coll`. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work exactly the same as the `$$$` surface.
+
+**Deployment requirement.** The `from: { db, coll }` object shape is documented and accepted by **MongoDB Atlas Data Federation** (where cross-database / cross-cluster joins are a first-class feature). The standard community MongoDB server **does not accept the object form of `$lookup.from`** — it expects a bare collection-name string and rejects the object at runtime. Use `$$$$.<db>.<coll>` only when your runtime is Atlas Data Federation (or a deployment that follows the same federated-query syntax); on a non-federated deployment you'll get a server-side error pointing at the `from` field's shape. jsmql does not gate on deployment — the lowering is the same regardless, and you'll see the runtime error if you target the wrong server.
+
+**Dynamic db / coll names are not supported.** `$$$$[someVar].coll` (or `$$$$.db[someVar]`) with a non-static index can't be materialised into a `$lookup.from` object — MongoDB's `from` field is a compile-time constant. Such expressions reach the bare-reference error path. Use `jsmql.compile`'s parameter bindings to inject static names at call time if you need them, or hand-write the explicit `$lookup({ from: {...}, ... })` callable form for fully dynamic cases.
 
 ---
 

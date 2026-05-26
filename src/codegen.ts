@@ -611,8 +611,13 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         expr.pos,
       );
     case "ClusterRef":
+      // Like DatabaseRef: the supported shape is `$$$$.<db>.<coll>.find/filter(pred)`,
+      // materialised into a `$lookup` stage by `pipeline.ts` before codegen
+      // sees the surrounding expression. Reaching this case means the user
+      // used `$$$$` outside that shape (bare reference, expression-only
+      // position, wrong depth, dynamic db/coll names, etc.).
       throw new CodegenError(
-        `'$$$$' (current-cluster reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.`,
+        `'$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred) and consumed as a value (assigned to a field, let-bound, or read via .length / .reduce / member access). Bare '$$$$' reference is not a value, and cross-database lookups are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos,
       );
 

@@ -282,3 +282,164 @@ describe("$$$.coll.find/filter — interactions with other features", () => {
     expect(r.errors[0].pos).toBeGreaterThan(0);
   });
 });
+
+describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
+  // The cross-database surface uses MongoDB's `from: { db, coll }` shape —
+  // accepted on Atlas Data Federation, rejected by community MongoDB. The
+  // emitted MQL is the same for both; whether it works at runtime depends
+  // on the deployment. Same predicate-dispatch and chained-terminal rules
+  // as the same-database `$$$.<coll>` surface.
+
+  it("dot.dot form: $$$$.<db>.<coll>.filter emits `from: { db, coll }`", () => {
+    expect(jsmql("$.orders = $$$$.analytics.orders.filter(o => o.userId === $._id);")).toEqual([
+      {
+        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
+      },
+    ]);
+  });
+
+  it("dot.dot form: .find adds the $set $first follow-up", () => {
+    expect(jsmql("$.user = $$$$.analytics.users.find(u => u._id === $.userId);")).toEqual([
+      { $lookup: { from: { db: "analytics", coll: "users" }, localField: "userId", foreignField: "_id", as: "user" } },
+      { $set: { user: { $first: "$user" } } },
+    ]);
+  });
+
+  it("bracket.bracket form: $$$$['db']['coll']", () => {
+    expect(jsmql(`$.orders = $$$$["analytics"]["orders"].filter(o => o.userId === $._id);`)).toEqual([
+      {
+        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
+      },
+    ]);
+  });
+
+  it("dot.bracket form: $$$$.db['coll']", () => {
+    expect(jsmql(`$.orders = $$$$.analytics["orders"].filter(o => o.userId === $._id);`)).toEqual([
+      {
+        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
+      },
+    ]);
+  });
+
+  it("bracket.dot form: $$$$['db'].coll", () => {
+    expect(jsmql(`$.orders = $$$$["analytics"].orders.filter(o => o.userId === $._id);`)).toEqual([
+      {
+        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
+      },
+    ]);
+  });
+
+  it("compound predicate falls through to pipeline form with auto-let extraction", () => {
+    const out = jsmql("$.user = $$$$.analytics.users.find(u => u._id === $.userId && u.active);");
+    const lookup = ((out as object[])[0] as { $lookup: { from: object; let: object } }).$lookup;
+    expect(lookup.from).toEqual({ db: "analytics", coll: "users" });
+    expect(lookup.let).toEqual({ userId: "$userId" });
+  });
+
+  it("block-body lambdas work the same as `$$$.<coll>`", () => {
+    const out = jsmql(`
+      $.recent = $$$$.analytics.orders.filter(o => {
+        $match(o.userId === $._id);
+        $sort({ createdAt: -1 });
+        $limit(5);
+      });
+    `);
+    expect(out).toEqual([
+      {
+        $lookup: {
+          from: { db: "analytics", coll: "orders" },
+          let: { _id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$_id"] } } }, { $sort: { createdAt: -1 } }, { $limit: 5 }],
+          as: "recent",
+        },
+      },
+    ]);
+  });
+
+  it("chained .length on .filter works against a cross-DB lookup", () => {
+    const out = jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;");
+    expect(out).toEqual([
+      {
+        $lookup: {
+          from: { db: "analytics", coll: "orders" },
+          localField: "_id",
+          foreignField: "userId",
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+      { $set: { "__jsmql.n": "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("chained .reduce on .filter folds over the cross-DB result", () => {
+    const out = jsmql(
+      "let total = $$$$.bank.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);",
+    );
+    const lookup = ((out as object[])[0] as { $lookup: { from: object } }).$lookup;
+    expect(lookup.from).toEqual({ db: "bank", coll: "tx" });
+  });
+
+  it("member access on a cross-DB .find result", () => {
+    const out = jsmql("let name = $$$$.analytics.users.find(u => u._id === $.userId).name;");
+    expect(out).toEqual([
+      {
+        $lookup: {
+          from: { db: "analytics", coll: "users" },
+          localField: "userId",
+          foreignField: "_id",
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+      { $set: { "__jsmql.name": "$__jsmql.__lookup1.name" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("wrong method on $$$$.<db>.<coll> uses the cluster spelling in the error", () => {
+    expect(() => jsmql("$.x = $$$$.analytics.users.fnid(u => u._id === $._id);")).toThrow(
+      /'\$\$\$\$\.<db>\.<coll>' supports \.find\(pred\) and \.filter\(pred\), not \.fnid\(\)\. Did you mean '\.find'\?/,
+    );
+  });
+
+  it(".find().length on a cross-DB lookup is rejected (same rule as $$$)", () => {
+    expect(() => jsmql("let n = $$$$.analytics.users.find(u => u._id === $._id).length;")).toThrow(
+      /\.length on a \.find\(\) result is not meaningful/,
+    );
+  });
+
+  it("Filter-mode rejection uses the generic lookup message (covers both $$$ and $$$$)", () => {
+    expect(() => jsmql.filter("$.x = $$$$.analytics.users.find(u => u._id === $._id)")).toThrow(
+      /jsmql\.filter\(\) does not allow lookup syntax/,
+    );
+  });
+
+  it("intermixes $$$ and $$$$ lookups in one pipeline", () => {
+    const out = jsmql(`
+      $.orders = $$$.orders.filter(o => o.userId === $._id);
+      $.archivedOrders = $$$$.cold_storage.orders.filter(o => o.userId === $._id);
+    `);
+    expect(out).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } },
+      {
+        $lookup: {
+          from: { db: "cold_storage", coll: "orders" },
+          localField: "_id",
+          foreignField: "userId",
+          as: "archivedOrders",
+        },
+      },
+    ]);
+  });
+
+  it("dynamic db / coll names (non-static bracket index) are rejected as bare $$$$", () => {
+    // `$$$$[someParam].coll` — non-static db name. extractLookupTarget bails,
+    // detectLookupCall returns null, codegen reaches the ClusterRef leaf and
+    // throws the bare-reference error. Same behaviour as `$$$[someParam]`.
+    expect(() =>
+      jsmql.compile(({ dbName }, $) => ($.x = $$$$[dbName].users.find((u) => u._id === $._id)))({ dbName: "x" }),
+    ).toThrow(/'\$\$\$\$\.<db>\.<coll>'/);
+  });
+});

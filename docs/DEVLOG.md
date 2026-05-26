@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — `$$$$.<db>.<coll>.find / .filter(pred)` → cross-database `$lookup`
+
+The `$$$$` (current-cluster) prefix lights up the same lookup surface as `$$$`, with the receiver naming the *database* as well: `$$$$.<db>.<coll>.find(pred)` and `$$$$.<db>.<coll>.filter(pred)` lower to MongoDB's `$lookup` stage using the object form of `from`: `{ db: "<db>", coll: "<coll>" }`. All four bracket combinations (`.db.coll`, `["db"]["coll"]`, `.db["coll"]`, `["db"].coll`) are accepted. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work identically to the `$$$` surface. Spec: [docs/specs/lookup-stage.md → Cluster-rooted ($$$$) cross-database joins](specs/lookup-stage.md). User-facing reference: [docs/LANGUAGE.md → Cross-database lookups](LANGUAGE.md#cross-database-lookups-dbcollfind--filter).
+
+**Deployment requirement.** MongoDB's `$lookup.from: { db, coll }` is the [MongoDB Atlas Data Federation](https://www.mongodb.com/docs/atlas/data-federation/query/sql/aggregation-pipeline-stages/) form. The community MongoDB server validates `from` as a string and rejects the object shape at runtime. jsmql emits the object form regardless — the lowering is deployment-agnostic, and a user targeting community Mongo will see the server's "`from` must be a string" error. The LANGUAGE.md and DEVLOG entries call this requirement out so a user picking up `$$$$` knows what they're committing to. We chose not to gate at compile time because (a) jsmql has no awareness of the user's runtime deployment, and (b) the surface is genuinely useful on Atlas Data Federation, which is a major MongoDB deployment.
+
+**Implementation reuse.** Everything below `detectLookupCall` is shared with the `$$$` path. `LookupCall` gains an optional `db?: string` field; `extractLookupTarget` walks one or two `StaticAccess` steps (one for `$$$`, two for `$$$$`); `lowerLookup` emits `from: "<coll>"` or `from: { db, coll }` based on whether `db` is set. `validateLookupShape` threads the right spelling (`'$$$.<coll>'` vs `'$$$$.<db>.<coll>'`) into error messages via a small `classifyLookupReceiver` walker. The parser's lookup-receiver helper (formerly `isDatabaseRefRooted`, now `isLookupReceiverRooted`) accepts both `DatabaseRef` and `ClusterRef` leaves so block-body lambdas opt in for both surfaces. The `ClusterRef` codegen case now mirrors `DatabaseRef`'s actionable bare-reference error.
+
+**Static names only.** `$$$$[someVar].coll` (or `$$$$.db[someVar]`) with a non-static index doesn't extract — `$lookup.from` is itself a compile-time constant in MongoDB. Such expressions hit the bare-reference error path with the same message a bare `$$$$` reference would produce. Documented in the LANGUAGE.md "Dynamic db / coll names" caveat.
+
+---
+
 ## 2026-05-26 — `$$$.<coll>.find / .filter(pred)` → `$lookup`
 
 The `$$$` context-reference prefix lights up: `$$$.<coll>.find(pred)` and `$$$.<coll>.filter(pred)` now lower to MongoDB's `$lookup` stage, with chained terminal composition (`.length`, `.reduce(fn, init)`, member access on `.find` results), block-body sub-pipeline lambdas (`o => { $match(...); $sort(...); $limit(N); }`), and auto-`let` extraction for outer-doc references. Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md). User-facing reference: [docs/LANGUAGE.md → Cross-collection lookups](LANGUAGE.md#cross-collection-lookups-coll-find--filter).

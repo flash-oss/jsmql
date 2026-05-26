@@ -1,8 +1,8 @@
-# `$$$.<coll>.find / .filter` → `$lookup`
+# `$$$.<coll>` / `$$$$.<db>.<coll>` `.find / .filter` → `$lookup`
 
 ## What this covers
 
-The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection, predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.__lookup<N>` slots, the mode-gate behaviour, and the error catalog.
+The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection (both `$$$.<coll>` same-database and `$$$$.<db>.<coll>` cross-database shapes), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.__lookup<N>` slots, the mode-gate behaviour, the deployment requirement for the cross-database `from: { db, coll }` shape, and the error catalog.
 
 ## Why `$$$` (and not `this.`)
 
@@ -10,9 +10,19 @@ The first attempt at this surface used `this.<coll>.find(pred)` ([reverted commi
 
 ## Grammar
 
-No new lexer or parser tokens. The receiver chain is the existing `MemberAccess`-of-`DatabaseRef` (for `$$$.<name>`) or `IndexAccess`-of-`DatabaseRef` with a `StringLiteral` index (for `$$$["<name>"]`), both built by the standard primary-postfix loop ([`src/parser.ts:1164`](../../src/parser.ts:1164)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
+No new lexer or parser tokens. The receiver chain is one of:
 
-The one parser extension: **block-body lambdas in lookup-callback position**. In `parsePostfix`, when the method being consumed is `find` or `filter` *and* the receiver chain walks back to a `DatabaseRef` (checked via the file-local `isDatabaseRefRooted` helper), `parseMethodCallArgs` is invoked with `allowBlockBody = true`. That flag threads through `parseCallArg` → `parseArgOrLambda` → `parseLambdaUnparen` / `parseLambdaParen`; when the lambda's body begins with `{`, those parsers dispatch to a new `parseLambdaBlockBody()` that reuses the same `;`-separated statement collector as the top-level block-body arrow form ([`src/parser.ts:501`](../../src/parser.ts:501)). The result is normalised to a `Pipeline` AST node and assigned to the lambda's new optional `block` field; the regular `body` field remains undefined.
+| Source                       | AST shape (outermost first)                                                                        |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- |
+| `$$$.<coll>`                 | `MemberAccess { object: DatabaseRef, member: <coll> }`                                              |
+| `$$$["<coll>"]`              | `IndexAccess { object: DatabaseRef, index: StringLiteral }`                                         |
+| `$$$$.<db>.<coll>`           | `MemberAccess { object: MemberAccess { object: ClusterRef, member: <db> }, member: <coll> }`        |
+| `$$$$["db"]["coll"]`         | `IndexAccess { object: IndexAccess { object: ClusterRef, index: StringLiteral }, index: StringLiteral }` |
+| `$$$$.db["coll"]` / `$$$$["db"].coll` | mixed `MemberAccess` / `IndexAccess` over `ClusterRef`                                    |
+
+All shapes are built by the standard primary-postfix loop ([`src/parser.ts:1164`](../../src/parser.ts:1164)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
+
+The one parser extension: **block-body lambdas in lookup-callback position**. In `parsePostfix`, when the method being consumed is `find` or `filter` *and* the receiver chain walks back to either a `DatabaseRef` or a `ClusterRef` leaf (checked via the file-local `isLookupReceiverRooted` helper), `parseMethodCallArgs` is invoked with `allowBlockBody = true`. That flag threads through `parseCallArg` → `parseArgOrLambda` → `parseLambdaUnparen` / `parseLambdaParen`; when the lambda's body begins with `{`, those parsers dispatch to a new `parseLambdaBlockBody()` that reuses the same `;`-separated statement collector as the top-level block-body arrow form ([`src/parser.ts:501`](../../src/parser.ts:501)). The result is normalised to a `Pipeline` AST node and assigned to the lambda's new optional `block` field; the regular `body` field remains undefined.
 
 Outside lookup-callback positions, `=> {` retains its existing meaning (an object-literal value when wrapped in parens, ParseError otherwise) — no general extension of block-body lambdas.
 
@@ -30,7 +40,7 @@ Exactly one of `body` / `block` is set. All existing consumers (array methods, I
 
 `src/lookup-translation.ts` owns three responsibilities:
 
-1. **Detection.** `detectLookupCall(expr)` recognises a well-formed `$$$.<coll>.<find|filter>(<Lambda>)` shape. `containsLookupCall(node)` is the cheap deep walk used by mode-gates and the nested-lookup guard. `validateLookupShape(expr)` surfaces the precise error for *malformed* lookups (wrong method, wrong arity, non-arrow predicate, multi-param lambda).
+1. **Detection.** `detectLookupCall(expr)` recognises a well-formed `$$$.<coll>.<find|filter>(<Lambda>)` *or* `$$$$.<db>.<coll>.<find|filter>(<Lambda>)` shape, returning a `LookupCall` whose optional `db` field is set in the cross-database case. The receiver-walk helper `extractLookupTarget` handles all six bracket combinations across the two shapes by recursing through up to two `StaticAccess` steps (one dot or string-bracket access each). `containsLookupCall(node)` is the cheap deep walk used by mode-gates and the nested-lookup guard. `validateLookupShape(expr)` surfaces the precise error for *malformed* lookups (wrong method, wrong arity, non-arrow predicate, multi-param lambda); its `classifyLookupReceiver` walker accepts either `DatabaseRef`- or `ClusterRef`-rooted chains and threads the right spelling into the error message (`'$$$.<coll>'` vs `'$$$$.<db>.<coll>'`).
 
 2. **Predicate translation.** `translatePredicate(call, ctx, lowerBlock)` picks between the basic form (`{ from, localField, foreignField, as }`) and the correlated-pipeline form (`{ from, let, pipeline, as }`). The basic-form fast path is taken when the lambda body is exactly one `===` between a foreign-rooted path (`o.x.y`) and a `$.` local-rooted path. Anything richer — including `==` (which jsmql restricts to `null` comparisons project-wide; see LANGUAGE.md's `===` vs `==` table) — falls through to the pipeline form, where the sub-pipeline codegen then surfaces the standard "use `===`" rejection if the user wrote `==` between two field paths. Block-body lambdas always use the pipeline form, with the rewritten block as the `pipeline:` body.
 
@@ -85,6 +95,23 @@ A chained terminal that doesn't carry its own predicate (`<lookup>.length`, `.re
 
 The slot allocator (`makeSlotTracking`) returns `{ alloc, used }` so the trailing `$unset "__jsmql"` cleanup fires whenever either a `let` was declared **or** at least one internal lookup slot was used — keeping the trailing cleanup symmetric with the existing `let`-only path.
 
+## Cluster-rooted (`$$$$`) cross-database joins
+
+The cluster-rooted surface (`$$$$.<db>.<coll>.find/filter(...)`) is identical to the database-rooted surface in every respect *except* the `$lookup.from` shape:
+
+- **Same-database (`$$$.<coll>`):** `lowerLookup` emits `from: "<coll>"` (bare string) — the only shape standard community MongoDB accepts.
+- **Cross-database (`$$$$.<db>.<coll>`):** `lowerLookup` emits `from: { db: "<db>", coll: "<coll>" }` (object) — the [MongoDB Atlas Data Federation form](https://www.mongodb.com/docs/atlas/data-federation/query/sql/aggregation-pipeline-stages/). The community MongoDB server **does not** accept this form (`$lookup.from` is server-validated to be a string), so the lowered MQL only runs on Atlas Data Federation or equivalent federated deployments. jsmql does not gate on deployment — the lowering is the same regardless, and the user sees the runtime error if they target the wrong server. The docs section in [LANGUAGE.md → Cross-database lookups](../LANGUAGE.md#cross-database-lookups-dbcollfind--filter) names this requirement up front.
+
+Detection differences:
+- `LookupCall.db` carries the database name when extracted from `$$$$.<db>.<coll>`; undefined for `$$$.<coll>`.
+- `extractLookupTarget` walks one or two `StaticAccess` steps. The outer step yields the collection name; the inner (if present) yields the db name. The leaf must be a `DatabaseRef` (one step) or `ClusterRef` (two steps); deeper chains return null and the bare-reference codegen path then surfaces the targeted "must be followed by .find/.filter" error.
+- `validateLookupShape`'s `classifyLookupReceiver` returns `'$$$.<coll>'` for DatabaseRef-rooted chains and `'$$$$.<db>.<coll>'` for ClusterRef-rooted chains, so the wrong-method / wrong-arity error messages name the right spelling.
+- The parser's `isLookupReceiverRooted` (used to enable block-body lambdas) accepts either leaf kind.
+
+Same in every other respect: same predicate-translation (basic vs pipeline form), same auto-`let` extraction, same chained-terminal materialisation, same nested-lookup rejection, same mode-gate behaviour, same `.find` $first follow-up, same `__jsmql.__lookup<N>` slot scheme.
+
+**Dynamic db / coll names.** `$$$$[someVar].coll` or `$$$$.db[someVar]` with a non-static index breaks `extractLookupTarget` (which requires either a `MemberAccess` or a string-literal `IndexAccess` at every step). `detectLookupCall` returns null; codegen reaches the `ClusterRef` leaf and throws the bare-reference error. Static-name-only is appropriate for v1 — MongoDB's `$lookup.from` field is itself a compile-time constant, so a runtime-resolved name would require synthesizing a separate hand-written stage anyway.
+
 ## Mode gates
 
 `src/index.ts` adds pre-codegen `containsLookupCall` gates so the user sees the right error before the generic bare-reference fallback fires:
@@ -105,7 +132,9 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 | Trigger                                                | Message (paraphrased)                                                                                          | Where                              |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | Bare `$$$.<coll>` (no `.find/.filter`)                  | `'$$$.<coll>' must be followed by .find(pred) or .filter(pred) and consumed as a value …`                       | codegen `DatabaseRef` case         |
+| Bare `$$$$.<db>.<coll>` (no `.find/.filter`)            | `'$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred) … cross-database lookups are only valid in Pipeline mode …` | codegen `ClusterRef` case          |
 | `$$$.<coll>.<other-method>(...)` (e.g. `.fnid(...)`)    | `'$$$.<coll>' supports .find(pred) and .filter(pred), not .<m>(). Did you mean '.find'?`                        | `validateLookupShape`              |
+| `$$$$.<db>.<coll>.<other-method>(...)`                  | `'$$$$.<db>.<coll>' supports .find(pred) and .filter(pred), not .<m>(). Did you mean '.find'?`                  | `validateLookupShape`              |
 | `$$$.<coll>.find()` (no args)                           | `.find(predicate) takes exactly one argument …`                                                                | `validateLookupShape`              |
 | `$$$.<coll>.find(<non-arrow>)`                          | `.find(predicate) requires an arrow predicate …`                                                               | `validateLookupShape`              |
 | Multi-param lambda                                      | `.find(predicate) takes a single-parameter arrow (the foreign document), got N`                               | `validateLookupShape`              |
@@ -121,7 +150,6 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 
 - **Nested lookups.** Auto-extract two binding sources (outer-doc `$.x` + outer-foreign-doc `u.x`) when an inner `$$$.coll.find/filter(...)` appears inside another lookup's lambda body. Currently rejected with a clear message.
 - **`$$.find(...)` self-join.** Needs collection-name binding from a schema/driver — see [`context-references.md`](./context-references.md) future-work list.
-- **`$$$$.<db>.<coll>...` cross-DB.** No native MQL surface in the basic case.
 - **`$$$.coll.concat(arrow)` → `$unionWith`.** Plausible candidate, but `$unionWith` has no `as` slot — needs a statement form (not an assignment) to lower cleanly.
 - **Ambient TS types for `$$$`** so the function-form lookup (`($) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).
 - **Optimised chained terminals.** `.map`, `.at`, second `.filter` currently fall through the generic path (one extra `$set` stage); they could emit specialised single-stage transforms.

@@ -3986,17 +3986,28 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("$$$$ — current cluster", () => {
-    it("dot.dot: $$$$.myDb.myColl", () => {
-      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(/current-cluster reference/);
+    // Like $$$, the four bracket combos all reach the same bare-reference
+    // error when used outside the supported `$$$$.<db>.<coll>.find/filter(...)`
+    // lookup shape. Lookup-mode behaviour is covered in test/lookup.test.ts.
+    it("dot.dot: $$$$.myDb.myColl is not a value outside a lookup chain", () => {
+      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('bracket[bracket]: $$$$["db"]["coll"]', () => {
-      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(/current-cluster reference/);
+    it('bracket[bracket]: $$$$["db"]["coll"] is not a value either', () => {
+      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('bracket.dot: $$$$["db"].coll', () => {
-      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(/current-cluster reference/);
+    it('bracket.dot: $$$$["db"].coll is not a value either', () => {
+      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('dot.bracket: $$$$.db["coll"]', () => {
-      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(/current-cluster reference/);
+    it('dot.bracket: $$$$.db["coll"] is not a value either', () => {
+      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
     it(".pos points at the $$$$ prefix", () => {
       const r = jsmql.validate("  $$$$.db.coll");

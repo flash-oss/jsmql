@@ -75,11 +75,19 @@ export type SubPipelineLowerer = (block: Pipeline, ctx: GenerateCtx) => object[]
 // ── Detection ─────────────────────────────────────────────────────────────────
 
 export type LookupCall = {
-  /** Position of the `$$$` prefix (for errors). */
+  /** Position of the context-ref prefix `$$$` / `$$$$` (for errors). */
   pos: number;
   /** Position of the method call (for errors specific to the call shape). */
   callPos: number;
-  /** Collection name extracted from `$$$.<name>` or `$$$["<name>"]`. */
+  /**
+   * Database name extracted from `$$$$.<db>.<coll>` (any bracket combination).
+   * Undefined for the same-database form `$$$.<coll>` — in which case
+   * `$lookup.from` is emitted as a bare collection-name string. When set,
+   * `$lookup.from` is emitted as `{ db, coll }` — the Atlas Data Federation
+   * shape for cross-database joins. See docs/specs/lookup-stage.md.
+   */
+  db?: string;
+  /** Collection name extracted from `.<name>` or `["<name>"]`. */
   collection: string;
   /** `.find` returns scalar-or-null; `.filter` returns an array. */
   method: "find" | "filter";
@@ -87,51 +95,76 @@ export type LookupCall = {
   lambda: Lambda;
 };
 
+/** One step of static (dot or string-bracket) member access on a receiver. */
+type StaticAccess = { name: string; object: Expr };
+
+function staticAccess(node: Expr): StaticAccess | null {
+  if (node.type === "MemberAccess") return { name: node.member, object: node.object };
+  if (node.type === "IndexAccess" && node.index.type === "StringLiteral") {
+    return { name: node.index.value, object: node.object };
+  }
+  return null;
+}
+
+/** Extracted target of a lookup-shaped receiver: `$$$.<coll>` or `$$$$.<db>.<coll>`. */
+type LookupTarget = { pos: number; db?: string; collection: string };
+
+/**
+ * Walk back through one or two levels of static (dot or string-bracket) access
+ * to recognise the four lookup-receiver shapes:
+ *
+ * | Source                  | AST shape (outermost first)                                 |
+ * | ----------------------- | ----------------------------------------------------------- |
+ * | `$$$.<coll>`            | one-level access onto `DatabaseRef`                          |
+ * | `$$$["<coll>"]`         | one-level bracket-access onto `DatabaseRef`                  |
+ * | `$$$$.<db>.<coll>`      | two-level access; inner onto `ClusterRef`                    |
+ * | `$$$$["db"]["coll"]`    | two-level bracket access; inner onto `ClusterRef`            |
+ * | `$$$$.db["coll"]`       | two-level mixed (bracket outer, dot inner); onto `ClusterRef` |
+ * | `$$$$["db"].coll`       | two-level mixed (dot outer, bracket inner); onto `ClusterRef` |
+ *
+ * Non-static indices (`$$$$[someVar].coll`) break the classification — we
+ * can't materialise a runtime-computed db/coll name into `$lookup.from`
+ * (the field is a compile-time string in MQL). Returns null for those
+ * shapes; the bare-reference codegen path then surfaces the standard
+ * actionable error.
+ */
+function extractLookupTarget(receiver: Expr): LookupTarget | null {
+  const outer = staticAccess(receiver);
+  if (outer === null) return null;
+  // Single-level: $$$.<coll> / $$$["<coll>"]
+  if (outer.object.type === "DatabaseRef") {
+    return { pos: outer.object.pos, collection: outer.name };
+  }
+  // Two-level: $$$$.<db>.<coll> (any bracket combo)
+  const inner = staticAccess(outer.object);
+  if (inner === null) return null;
+  if (inner.object.type !== "ClusterRef") return null;
+  return { pos: inner.object.pos, db: inner.name, collection: outer.name };
+}
+
 /**
  * Recognise `$$$.<coll>.find(pred)` / `$$$.<coll>.filter(pred)` /
- * `$$$["<coll>"].find(pred)` / etc. Returns `null` if `expr` is not the
- * shape, or if the shape is malformed (which surfaces an actionable
- * error elsewhere — see `validateLookupShape`).
+ * `$$$$.<db>.<coll>.find(pred)` / `$$$$.<db>.<coll>.filter(pred)` and all
+ * their bracket variants. Returns `null` if `expr` is not the shape, or if
+ * the shape is malformed (which surfaces an actionable error elsewhere —
+ * see `validateLookupShape`).
  */
 export function detectLookupCall(expr: Expr): LookupCall | null {
   if (expr.type !== "MethodCall") return null;
   if (expr.method !== "find" && expr.method !== "filter") return null;
-  const receiver = expr.object;
-  // $$$.<coll>
-  if (receiver.type === "MemberAccess" && receiver.object.type === "DatabaseRef") {
-    if (expr.args.length === 1) {
-      const arg = expr.args[0];
-      if (arg.type === "Lambda") {
-        return {
-          pos: receiver.object.pos,
-          callPos: expr.pos,
-          collection: receiver.member,
-          method: expr.method,
-          lambda: arg,
-        };
-      }
-    }
-  }
-  // $$$["<coll>"]
-  if (
-    receiver.type === "IndexAccess" &&
-    receiver.object.type === "DatabaseRef" &&
-    receiver.index.type === "StringLiteral"
-  ) {
-    if (expr.args.length === 1) {
-      const arg = expr.args[0];
-      if (arg.type === "Lambda") {
-        return {
-          pos: receiver.object.pos,
-          callPos: expr.pos,
-          collection: receiver.index.value,
-          method: expr.method,
-          lambda: arg,
-        };
-      }
-    }
-  }
-  return null;
+  const target = extractLookupTarget(expr.object);
+  if (target === null) return null;
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type !== "Lambda") return null;
+  return {
+    pos: target.pos,
+    callPos: expr.pos,
+    db: target.db,
+    collection: target.collection,
+    method: expr.method,
+    lambda: arg,
+  };
 }
 
 /**
@@ -227,25 +260,46 @@ function walkArgsContainLookup(args: CallArg[]): boolean {
 // ── Validation ────────────────────────────────────────────────────────────────
 
 /**
+ * Walk `expr` back to a context-ref leaf and report which prefix it's rooted
+ * at, alongside the spelling used in error messages. Returns null if the
+ * receiver isn't context-ref-shaped. Distinct from `extractLookupTarget` —
+ * that helper requires a *valid* one-or-two-level shape with static names;
+ * this one is used to gate the validation-error throw site so a malformed
+ * lookup-shaped receiver (wrong method, dynamic indices, missing levels)
+ * still produces the targeted error instead of falling through to the
+ * generic codegen one.
+ */
+function classifyLookupReceiver(receiver: Expr): { spelling: string } | null {
+  let node: Expr = receiver;
+  for (;;) {
+    if (node.type === "DatabaseRef") return { spelling: "$$$.<coll>" };
+    if (node.type === "ClusterRef") return { spelling: "$$$$.<db>.<coll>" };
+    if (node.type === "MemberAccess" || node.type === "IndexAccess") {
+      node = node.object;
+      continue;
+    }
+    return null;
+  }
+}
+
+/**
  * If `expr` looks like a lookup but is malformed (wrong method, wrong arity,
  * non-lambda arg), throw the targeted error. Used by the prologue extractor
  * before falling through to a generic walk.
  */
 export function validateLookupShape(expr: Expr): void {
   if (expr.type !== "MethodCall") return;
-  const receiver = expr.object;
-  const receiverIsDbRef =
-    (receiver.type === "MemberAccess" && receiver.object.type === "DatabaseRef") ||
-    (receiver.type === "IndexAccess" && receiver.object.type === "DatabaseRef");
-  if (!receiverIsDbRef) return;
-  // We're definitely on a `$$$.x.<method>(...)` chain. Validate the shape.
+  const shape = classifyLookupReceiver(expr.object);
+  if (shape === null) return;
+  // We're on a `$$$.<coll>.<method>(...)` or `$$$$.<db>.<coll>.<method>(...)` chain.
+  const spell = shape.spelling;
   if (expr.method !== "find" && expr.method !== "filter") {
     const suggestion = closestNameTo(expr.method, ["find", "filter"]);
     const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
     throw new CodegenError(
-      `'$$$.<coll>' supports .find(pred) and .filter(pred), not .${expr.method}().${hint} ` +
+      `'${spell}' supports .find(pred) and .filter(pred), not .${expr.method}().${hint} ` +
         `For richer queries, use a block-body lambda: ` +
-        `\`$$$.<coll>.filter(o => { $match(...); $sort(...); ... })\`.`,
+        `\`${spell}.filter(o => { $match(...); $sort(...); ... })\`.`,
       expr.pos,
     );
   }
@@ -769,13 +823,20 @@ export function lowerLookup(
 ): object[] {
   rejectNestedLookup(call);
   const pred = translatePredicate(call, outerCtx, lowerBlock);
+  // `$lookup.from` is a bare string for same-database joins (`$$$.<coll>`) and
+  // an object `{ db, coll }` for cross-database joins (`$$$$.<db>.<coll>`).
+  // The object shape is the Atlas Data Federation form — community-server
+  // MongoDB does not accept it; we still emit it because the surface lights
+  // up on Atlas Data Federation and the runtime error on community Mongo
+  // names the offending shape if a user runs it on the wrong deployment.
+  // See docs/specs/lookup-stage.md and the DEVLOG entry.
+  const from: string | { db: string; coll: string } =
+    call.db !== undefined ? { db: call.db, coll: call.collection } : call.collection;
   const stages: object[] = [];
   if (pred.kind === "basic") {
-    stages.push({
-      $lookup: { from: call.collection, localField: pred.localField, foreignField: pred.foreignField, as },
-    });
+    stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
   } else {
-    stages.push({ $lookup: { from: call.collection, let: pred.letVars, pipeline: pred.pipeline, as } });
+    stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
   }
   if (call.method === "find") {
     // JS `.find()` returns scalar-or-null. Overwrite the slot with `$first`
