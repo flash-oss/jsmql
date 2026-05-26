@@ -612,26 +612,31 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         expr.pos,
       );
     case "DatabaseRef":
-      // The lookup path (`$$$.<coll>.find/filter(...)`) is materialised into
-      // pipeline stages by `pipeline.ts` *before* codegen sees the
-      // surrounding expression — so a bare `DatabaseRef` that reaches this
-      // case is a use outside the supported shape. Either the user wrote
-      // `$$$.<coll>` without `.find/.filter`, used the chain in an
-      // expression-only position (a Filter, `jsmql.expr`, an arithmetic
-      // operand), or used a method other than `.find/.filter` that the
-      // pre-materialisation walker didn't recognise.
+      // The two supported uses of `$$$` are both materialised by `pipeline.ts`
+      // *before* codegen sees the surrounding expression:
+      //   - `$$$.<coll>.find/filter(pred)` → `$lookup` stage (read).
+      //   - `$$$.<coll> = <RHS>`            → `$out` stage (write).
+      // Reaching this case means neither matched: the user wrote `$$$.<coll>`
+      // as a bare value, used the chain in an expression-only position (a
+      // Filter, `jsmql.expr`, an arithmetic operand), or used a method other
+      // than `.find/.filter` that the pre-materialisation walker didn't
+      // recognise.
       throw new CodegenError(
-        `'$$$.<coll>' must be followed by .find(pred) or .filter(pred) and consumed as a value (assigned to a field, let-bound, or read via .length / .reduce / member access). Bare '$$$' reference is not a value, and lookups are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
+        `'$$$.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a $lookup read), ` +
+          `or assigned to as a destination ('$$$.<coll> = $$' → $out write). Bare '$$$' reference is not a value, ` +
+          `and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos,
       );
     case "ClusterRef":
-      // Like DatabaseRef: the supported shape is `$$$$.<db>.<coll>.find/filter(pred)`,
-      // materialised into a `$lookup` stage by `pipeline.ts` before codegen
-      // sees the surrounding expression. Reaching this case means the user
-      // used `$$$$` outside that shape (bare reference, expression-only
-      // position, wrong depth, dynamic db/coll names, etc.).
+      // Like DatabaseRef: the two supported uses of `$$$$.<db>.<coll>` are
+      // `.find/.filter(pred)` (cross-db lookup) and `= <RHS>` (cross-db $out).
+      // Both are materialised pre-codegen. Reaching this case means a use
+      // outside those shapes (bare reference, expression-only position,
+      // wrong depth, dynamic db/coll names, etc.).
       throw new CodegenError(
-        `'$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred) and consumed as a value (assigned to a field, let-bound, or read via .length / .reduce / member access). Bare '$$$$' reference is not a value, and cross-database lookups are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
+        `'$$$$.<db>.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a cross-database $lookup), ` +
+          `or assigned to as a destination ('$$$$.<db>.<coll> = $$' → cross-database $out). Bare '$$$$' reference is not a value, ` +
+          `and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos,
       );
 

@@ -908,6 +908,12 @@ export class Parser {
    */
   private validateUpdateTarget(target: Expr): void {
     if (this.isFieldPathTarget(target)) return;
+    // `$out` sugar: `$$$.<coll> = …`, `$$$$.<db>.<coll> = …`, and their bracket
+    // variants. Shape-only check here — segment-count, computed-bracket, and
+    // any other malformations are diagnosed at codegen time in
+    // `detectOutAssign` (src/out-translation.ts) so the error message can
+    // suggest the right corrective form.
+    if (this.isOutTarget(target)) return;
     const pos = this.lexer.peek().pos;
     if (target.type === "ParamRef") {
       throw new ParseError(
@@ -930,6 +936,20 @@ export class Parser {
   private isFieldPathTarget(target: Expr): boolean {
     if (target.type === "FieldRef") return true;
     if (target.type === "MemberAccess") return this.isFieldPathTarget(target.object);
+    return false;
+  }
+
+  /**
+   * Accept the `$out` sugar LHS shape: one or two static (dot or bracket)
+   * accesses rooted at `DatabaseRef` (`$$$`) or `ClusterRef` (`$$$$`). The
+   * detailed validation (right segment count, no computed bracket) lives in
+   * codegen — at parse time we only commit to "this looks like a write
+   * destination" so the assignment can be built and routed.
+   */
+  private isOutTarget(target: Expr): boolean {
+    if (target.type === "DatabaseRef" || target.type === "ClusterRef") return true;
+    if (target.type === "MemberAccess") return this.isOutTarget(target.object);
+    if (target.type === "IndexAccess") return this.isOutTarget(target.object);
     return false;
   }
 
@@ -1495,6 +1515,17 @@ export class Parser {
     const prefix = this.lexer.next();
     const next = this.lexer.peek();
     if (next.type !== TokenType.Dot && next.type !== TokenType.LBracket) {
+      // Bare `$$` (CollectionRef) is allowed at the parse level so the `$out`
+      // sugar can write `$$$.coll = $$` (no-op write of the current pipeline).
+      // Typo case `$$foo` (no separator, just an Ident next) is still rejected
+      // here so the user sees the actionable "Expected '.<name>' or '[<expr>]'"
+      // hint instead of a generic downstream error. Codegen continues to gate
+      // bare `$$` in non-RHS positions via the CollectionRef branch.
+      // `$$$` / `$$$$` keep the strict parse-time check — every supported use
+      // chains with at least one access step.
+      if (nodeType === "CollectionRef" && !this.isIdentOrKeyword(next)) {
+        return { type: nodeType, pos: prefix.pos };
+      }
       throw new ParseError(
         `Expected '.<name>' or '[<expr>]' after '${displayPrefix}' at position ${prefix.pos}`,
         prefix.pos,

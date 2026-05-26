@@ -3976,18 +3976,14 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("$$$ — current database", () => {
-    it("dot-ident form: $$$.myColl is not a value outside a lookup chain", () => {
-      // Once $$$ lights up the `$$$.<coll>.find/filter(...)` join syntax, the
-      // bare reference message points at the supported shape instead of just
-      // saying "reserved".
-      expect(() => jsmql.expr("$$$.myColl")).toThrow(
-        /'\$\$\$\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
-      );
+    it("dot-ident form: $$$.myColl is not a value outside a lookup or $out chain", () => {
+      // Once $$$ lights up the `$$$.<coll>.find/filter(...)` join syntax and
+      // the `$$$.<coll> = …` $out sugar, the bare reference message points
+      // at both supported shapes.
+      expect(() => jsmql.expr("$$$.myColl")).toThrow(/\$lookup read.*\$out write/);
     });
     it('bracket-expr form: $$$["coll"] is not a value either', () => {
-      expect(() => jsmql.expr('$$$["coll"]')).toThrow(
-        /'\$\$\$\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
-      );
+      expect(() => jsmql.expr('$$$["coll"]')).toThrow(/\$lookup read.*\$out write/);
     });
     it("$$$.<coll>.find(...) outside Pipeline mode hits the bare-reference error", () => {
       // Bare expression form (no `;`, not in jsmql.pipeline) — `$$$` only
@@ -4001,27 +3997,19 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
 
   describe("$$$$ — current cluster", () => {
     // Like $$$, the four bracket combos all reach the same bare-reference
-    // error when used outside the supported `$$$$.<db>.<coll>.find/filter(...)`
-    // lookup shape. Lookup-mode behaviour is covered in test/lookup.test.ts.
-    it("dot.dot: $$$$.myDb.myColl is not a value outside a lookup chain", () => {
-      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(
-        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
-      );
+    // error when used outside the supported cross-database lookup or $out
+    // sugar shapes. Lookup behaviour: test/lookup.test.ts; $out: test/out.test.ts.
+    it("dot.dot: $$$$.myDb.myColl is not a value outside a lookup or $out chain", () => {
+      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(/cross-database \$lookup.*cross-database \$out/);
     });
     it('bracket[bracket]: $$$$["db"]["coll"] is not a value either', () => {
-      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(
-        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
-      );
+      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(/cross-database \$lookup.*cross-database \$out/);
     });
     it('bracket.dot: $$$$["db"].coll is not a value either', () => {
-      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(
-        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
-      );
+      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(/cross-database \$lookup.*cross-database \$out/);
     });
     it('dot.bracket: $$$$.db["coll"] is not a value either', () => {
-      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(
-        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
-      );
+      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(/cross-database \$lookup.*cross-database \$out/);
     });
     it(".pos points at the $$$$ prefix", () => {
       const r = jsmql.validate("  $$$$.db.coll");
@@ -4031,10 +4019,15 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("parser sanity-guards", () => {
-    it("bare $$ without . or [ → actionable ParseError", () => {
+    it("bare $$ without . or [ → CollectionRef codegen error (statement-only message)", () => {
+      // Once `$out` sugar allows bare `$$` as the RHS of `$$$.coll = $$`, the
+      // parser stops pre-rejecting bare `$$` and codegen surfaces the
+      // actionable "statement-only" message when `$$` lands somewhere
+      // meaningless. The typo case `$$foo` (no separator) is still rejected
+      // at parse time — see the next test.
       const r = jsmql.validate("$$");
       expect(r.valid).toBe(false);
-      expect(r.errors[0].message).toMatch(/Expected '\.<name>' or '\[<expr>\]' after '\$\$'/);
+      expect(r.errors[0].message).toMatch(/'\$\$' \(current collection\) is statement-only/);
       expect(r.errors[0].pos).toBe(0);
     });
     it("$$foo (ident with no . or [) → actionable ParseError", () => {

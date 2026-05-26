@@ -172,8 +172,8 @@ describe("$$$.coll.find/filter — chained terminals", () => {
 });
 
 describe("$$$.coll.find/filter — error cases", () => {
-  it("bare $$$ outside a chain points at the lookup shape", () => {
-    expect(() => jsmql.expr("$$$.myColl")).toThrow(/must be followed by \.find\(pred\) or \.filter\(pred\)/);
+  it("bare $$$ outside a chain points at the lookup and $out shapes", () => {
+    expect(() => jsmql.expr("$$$.myColl")).toThrow(/\$lookup read.*\$out write/);
   });
 
   it("wrong method on $$$.<coll> suggests .find / .filter via closestNameTo", () => {

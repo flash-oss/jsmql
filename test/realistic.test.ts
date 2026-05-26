@@ -1212,3 +1212,45 @@ $limit(50);
     },
   );
 });
+
+// `$$$.<coll> = <RHS>` / `$$$$.<db>.<coll> = <RHS>` — write the current
+// pipeline into a destination collection via `$out`. The LHS names *where*
+// the documents land, the RHS describes *which* documents land there.
+// Two idioms here, side by side so users can see the trade-off:
+//
+//   1. Multi-stage pipeline with a bare `$$` write at the end. Pick this when
+//      you need more than one transformation stage before the write (here:
+//      an indexable `$match` on multiple fields).
+//   2. Single-statement inline filter. Pick this when one `$$.filter(...)`
+//      is the whole transformation — the LHS-says-destination,
+//      RHS-says-source shape reads as one English sentence.
+describe("archive inactive users to a warehouse via $out (multi-stage)", { features: ["Pipelines"] }, () => {
+  it(
+    "filters then writes to a cross-database $out destination",
+    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      expect(
+        jsmql`
+$match($.active === false && $.lastSeen < "2025-01-01");
+$$$$.dw.archive_users = $$;
+      `,
+      ).toEqual([
+        { $match: { active: false, lastSeen: { $lt: "2025-01-01" } } },
+        { $out: { db: "dw", coll: "archive_users" } },
+      ]);
+    },
+  );
+});
+
+describe("archive expired users via $out (inline filter)", { features: ["Pipelines"] }, () => {
+  it(
+    "the whole pipeline is one $$$$.<db>.<coll> = $$.filter(...) statement",
+    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      expect(jsmql(`$$$$.dw.archive = $$.filter(u => u.status === "expired");`)).toEqual([
+        { $match: { status: "expired" } },
+        { $out: { db: "dw", coll: "archive" } },
+      ]);
+    },
+  );
+});

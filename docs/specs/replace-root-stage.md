@@ -24,6 +24,26 @@ goes through the normal pipeline-mode-required gate.
 See [`docs/LANGUAGE.md#replace-root`](../LANGUAGE.md#replace-root) for the
 user-facing reference.
 
+## Convention: all root-replacing sugar starts with `$ =`
+
+**`$ = …` is reserved for *root-replacing* sugar in jsmql.** The bare `$`
+LHS is the visual signal that the document itself is being replaced.
+Today that means `$replaceWith` and the `$facet` variant of the same
+surface; future root-replacing sugar must follow the same shape.
+
+Stages that do *not* replace root use **different** LHS prefixes so the
+asymmetry is visible to readers at a glance:
+
+- `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → [`$out`](out-stage.md) (write to a destination).
+- `$$$.<coll>.find(…)` / `.filter(…)` → [`$lookup`](lookup-stage.md) (read from a source).
+- `$$.push(…)` → [`$unionWith`](union-stage.md) (append a stream).
+
+When adding new sugar, follow this rule: if the stage replaces the
+document root, it starts with `$ =`. If it writes elsewhere, reads from
+elsewhere, or composes a derived stream, it gets a destination-bearing
+LHS prefix. Don't blur the asymmetry — the LHS is the user's first cue
+about what the statement does to the document.
+
 ## Lowering table
 
 | Input | Output stage(s) |

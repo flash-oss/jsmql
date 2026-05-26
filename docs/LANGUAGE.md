@@ -654,6 +654,60 @@ Each rule is enforced at compile time with a targeted error:
 
 **Nested.** `$$.push(...)` inside another lookup's block body or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`) is rejected with a hoist-to-outer hint — the stages it would emit can't land inside the inner pipeline without changing what gets unioned.
 
+### `$out`: write the pipeline to a collection
+
+Assigning to a context-ref-rooted LHS writes the current pipeline's documents into a destination collection — MongoDB's [`$out`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/out/) stage. The destination is named on the **left** (where the documents go), the (optionally filtered) source on the **right**:
+
+```js
+// 1. Same-database write — destination is a bare string.
+jsmql("$$$.warehouse_orders = $$;")
+// → [{ $out: "warehouse_orders" }]
+
+// 2. Cross-database write — destination is { db, coll }.
+jsmql("$$$$.dw.archive = $$;")
+// → [{ $out: { db: "dw", coll: "archive" } }]
+
+// 3. Pre-filter inline — $$.filter(<predicate>) on the RHS emits a $match before the $out.
+jsmql("$$$$.dw.archive = $$.filter(u => !u.active);")
+// → [{ $match: ... }, { $out: { db: "dw", coll: "archive" } }]
+
+// 4. Bracket form — required for collection names that aren't valid JS identifiers.
+jsmql('$$$["my-archive.v2"] = $$;')
+// → [{ $out: "my-archive.v2" }]
+
+// 5. Block-body filter — full sub-pipeline lands before the $out.
+jsmql("$$$.top10 = $$.filter(o => { $sort({ score: -1 }); $limit(10); });")
+// → [{ $sort: { score: -1 } }, { $limit: 10 }, { $out: "top10" }]
+
+// 6. Composes with preceding stages.
+jsmql("$.tier = 'gold'; $$$.gold_users = $$;")
+// → [{ $set: { tier: "gold" } }, { $out: "gold_users" }]
+```
+
+**LHS shapes:**
+
+| Form | Lowers `$out` body to |
+|---|---|
+| `$$$.<coll> = …` / `$$$["<coll>"] = …` | `"<coll>"` (same database) |
+| `$$$$.<db>.<coll> = …` / `$$$$["<db>"]["<coll>"] = …` | `{ db: "<db>", coll: "<coll>" }` (cross-database) |
+
+Bracket and dotted segments mix freely (`$$$$.dw["archive"]` is equivalent to `$$$$["dw"].archive`). Bracket is **required** for non-identifier names (hyphens, dots, leading digits, reserved words). Computed brackets (`$$$[someVar]`) are rejected — the destination must be a literal so it's readable from the source; for parameterised destinations, use `jsmql.compile` and pass the name in as a binding.
+
+**RHS chain (v1):**
+
+| Method | Stage | Notes |
+|---|---|---|
+| bare `$$` | (none) | Writes the current stream unchanged. |
+| `$$.filter(<predicate>)` | `$match` | Same index-friendly translator `$match` uses. Expression body → query syntax + `$expr` residual; block body → full sub-pipeline. |
+
+Other chain methods (`.map`, `.sort`, `.slice`, etc.) are not yet wired — the compiler error names the equivalent stage call as a workaround (`$sort({ … }) before the $out`, `$project({ … }) before the $out`, …).
+
+**`$out` must be the last stage.** Anything after the sugar throws an actionable compile-time error pointing at the offending later statement. Two `$out` statements in one pipeline are rejected via the same guard.
+
+**Pipeline-mode only.** Like `$$.push(...)` and `$$$.<coll>.find(...)`, the `$out` sugar can't appear in Filter (`jsmql.filter`), expression (`jsmql.expr`), or update-pipeline (`jsmql.update`) modes — `$out` writes are a Pipeline-only concept and MongoDB itself rejects them inside `db.coll.updateOne(filter, update)`.
+
+**Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** jsmql reserves `$ = …` for *root-replacing* sugar (see [Replace root via `$ = <expr>`](#replace-root-via---expr)). `$out` writes elsewhere — it doesn't replace the current document — so the LHS makes the destination visible on the left, mirroring `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`).
+
 ---
 
 ## Operators
@@ -1625,6 +1679,8 @@ The `delete` keyword is statement-only — unlike JavaScript, it does not return
 ### Replace root via `$ = <expr>`
 
 Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`).
+
+> **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith` and the `$facet` variant below). Stages that write elsewhere — `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)` — use distinct LHS prefixes so the write destination is visible at a glance.
 
 ```js
 // Lift an embedded sub-document to the top level
