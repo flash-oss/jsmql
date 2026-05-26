@@ -37,6 +37,7 @@
       "Bash(/Users/vasyl/.nvm/versions/node/*/bin/node *)",
       "Bash(cd /Users/vasyl/code/jsmql && *)",
       "Bash(cd /Users/vasyl/code/jsmql)",
+      "Bash(cat > /tmp/**)",
       "Write(/tmp/**)",
       "Write(/private/tmp/**)",
       "Read(/tmp/**)",
