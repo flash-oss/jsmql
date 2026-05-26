@@ -3962,32 +3962,52 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("$$$ — current database", () => {
-    it("dot-ident form: $$$.myColl", () => {
-      expect(() => jsmql.expr("$$$.myColl")).toThrow(/current-database reference.*reserved syntax/s);
+    it("dot-ident form: $$$.myColl is not a value outside a lookup chain", () => {
+      // Once $$$ lights up the `$$$.<coll>.find/filter(...)` join syntax, the
+      // bare reference message points at the supported shape instead of just
+      // saying "reserved".
+      expect(() => jsmql.expr("$$$.myColl")).toThrow(
+        /'\$\$\$\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('bracket-expr form: $$$["coll"]', () => {
-      expect(() => jsmql.expr('$$$["coll"]')).toThrow(/current-database reference/);
+    it('bracket-expr form: $$$["coll"] is not a value either', () => {
+      expect(() => jsmql.expr('$$$["coll"]')).toThrow(
+        /'\$\$\$\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it("postfix composes through the ref: $$$.myColl.find() still errors at the leaf", () => {
-      const r = jsmql.validate("$$$.myColl.find($.x > 0)");
+    it("$$$.<coll>.find(...) outside Pipeline mode hits the bare-reference error", () => {
+      // Bare expression form (no `;`, not in jsmql.pipeline) — `$$$` only
+      // means something as a Pipeline-mode lookup; the error names that.
+      const r = jsmql.validate("$$$.myColl.find(o => o.x === $.y)");
       expect(r.valid).toBe(false);
-      expect(r.errors[0].message).toMatch(/current-database reference/);
+      expect(r.errors[0].message).toMatch(/requires Pipeline mode/);
       expect(r.errors[0].pos).toBe(0);
     });
   });
 
   describe("$$$$ — current cluster", () => {
-    it("dot.dot: $$$$.myDb.myColl", () => {
-      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(/current-cluster reference/);
+    // Like $$$, the four bracket combos all reach the same bare-reference
+    // error when used outside the supported `$$$$.<db>.<coll>.find/filter(...)`
+    // lookup shape. Lookup-mode behaviour is covered in test/lookup.test.ts.
+    it("dot.dot: $$$$.myDb.myColl is not a value outside a lookup chain", () => {
+      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('bracket[bracket]: $$$$["db"]["coll"]', () => {
-      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(/current-cluster reference/);
+    it('bracket[bracket]: $$$$["db"]["coll"] is not a value either', () => {
+      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('bracket.dot: $$$$["db"].coll', () => {
-      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(/current-cluster reference/);
+    it('bracket.dot: $$$$["db"].coll is not a value either', () => {
+      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
-    it('dot.bracket: $$$$.db["coll"]', () => {
-      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(/current-cluster reference/);
+    it('dot.bracket: $$$$.db["coll"] is not a value either', () => {
+      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(
+        /'\$\$\$\$\.<db>\.<coll>' must be followed by \.find\(pred\) or \.filter\(pred\)/,
+      );
     });
     it(".pos points at the $$$$ prefix", () => {
       const r = jsmql.validate("  $$$$.db.coll");

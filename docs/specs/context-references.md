@@ -116,13 +116,16 @@ No changes needed to any of these helpers.
 
 Tests use the string form rather than the arrow form because `$$` / `$$$` / `$$$$` are not yet declared as ambient globals (that's part of the future API surface — see `ops-generation.md`).
 
+## Status
+
+- **`$$$.<coll>.find / .filter(...) → $lookup`** — **shipped**. See [`lookup-stage.md`](./lookup-stage.md) for the predicate translation, auto-`let` extraction, chained-terminal materialisation, and error catalog. User-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter).
+- **`$$$$.<db>.<coll>.find / .filter(...) → $lookup` with `from: { db, coll }`** — **shipped**. Same surface as `$$$`, with the cross-database `from` object shape (Atlas Data Federation form). Community MongoDB doesn't accept the object form, so the lowered MQL runs only on Atlas Data Federation or equivalent federated deployments. See [`lookup-stage.md`](./lookup-stage.md) → "Cluster-rooted ($$$$) cross-database joins" and [LANGUAGE.md → Cross-database lookups](../LANGUAGE.md#cross-database-lookups-dbcollfind--filter).
+
 ## Future work
 
-Each item lands in its own session as a codegen branch on the corresponding ref node — the parser, lexer, and AST stay stable.
+Each remaining item lands in its own session as a codegen branch on the corresponding ref node — the parser, lexer, and AST stay stable.
 
-- **Method dispatch on `$$`** — `$$.find(…)`, `$$.aggregate(…)`, etc. as the entry to operations on the current collection.
-- **Database-rooted collection lookup** — `$$$.myColl.find(…)` → `$lookup` or equivalent.
-- **Cluster-rooted database lookup** — `$$$$.myDb.myColl.find(…)` → cross-cluster `$lookup` (when MongoDB grows that surface) or driver-side decomposition.
+- **Method dispatch on `$$`** — `$$.find(…)`, `$$.aggregate(…)`, etc. as the entry to operations on the current collection. Needs the schema/metadata threading below.
 - **Schema / metadata threading** — collection-name and database-name binding needs a slot on `GenerateCtx`, fed by the entry-point (`jsmql.compile`, the mongoose plugin, or a new `jsmql.bind({ db, collection })`).
 - **Ambient globals** — `src/ops.ts` (or a parallel generator) declares `$$`, `$$$`, `$$$$` so the arrow-form syntax type-checks under TypeScript.
-- **README and LANGUAGE.md examples** — currently `LANGUAGE.md` marks the syntax as reserved; once the first codegen branch lands, both files grow real examples.
+- **Nested lookups** — `$$$.coll2.find/filter(...)` (or any `$$$$` variant) inside another lookup's predicate or block body. Currently rejected with a targeted error by `rejectNestedLookup` in [`lookup-stage.md`](./lookup-stage.md).

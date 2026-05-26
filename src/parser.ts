@@ -1202,8 +1202,12 @@ export class Parser {
         }
         this.lexer.next(); // consume member name
         if (this.lexer.peek().type === TokenType.LParen) {
-          // Method call: left.member(args)
-          const args = this.parseMethodCallArgs();
+          // Method call: left.member(args). When the receiver chain is rooted
+          // at `$$$` (DatabaseRef) and the method is `.find` / `.filter`, the
+          // lambda argument may use the block-body form (a sub-pipeline body
+          // for the eventual `$lookup` stage). See docs/specs/lookup-stage.md.
+          const allowBlockBody = (member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left);
+          const args = this.parseMethodCallArgs(allowBlockBody);
           left = {
             type: "MethodCall",
             object: left,
@@ -1230,16 +1234,16 @@ export class Parser {
   }
 
   /** Parse method call argument list: "(" [argOrLambda (, argOrLambda)*] ")" */
-  private parseMethodCallArgs(): CallArg[] {
+  private parseMethodCallArgs(allowBlockBody: boolean = false): CallArg[] {
     this.lexer.expect(TokenType.LParen);
     if (this.lexer.peek().type === TokenType.RParen) {
       this.lexer.next();
       return [];
     }
-    const args: CallArg[] = [this.parseCallArg()];
+    const args: CallArg[] = [this.parseCallArg(allowBlockBody)];
     while (this.lexer.peek().type === TokenType.Comma) {
       this.lexer.next();
-      args.push(this.parseCallArg());
+      args.push(this.parseCallArg(allowBlockBody));
     }
     this.lexer.expect(TokenType.RParen);
     return args;
@@ -1251,28 +1255,31 @@ export class Parser {
    *   - lambda forms (x => ..., (x) => ..., (x, y) => ...)
    *   - any expression
    */
-  private parseCallArg(): CallArg {
+  private parseCallArg(allowBlockBody: boolean = false): CallArg {
     if (this.lexer.peek().type === TokenType.Spread) {
       const spreadTok = this.lexer.next();
       const argument = this.parseExpression();
       const spread: SpreadElement = { type: "SpreadElement", argument, pos: spreadTok.pos };
       return spread;
     }
-    return this.parseArgOrLambda();
+    return this.parseArgOrLambda(allowBlockBody);
   }
 
   /**
    * Parse an argument that might be a lambda expression.
    * Checks for lambda patterns before falling back to parseExpression().
+   * When `allowBlockBody` is true, the lambda body may be a `{ stmt; stmt; }`
+   * block (only set inside `$$$.<coll>.find/filter(...)`); otherwise `=> {`
+   * keeps its current meaning (object-literal start via parseObjectLiteral).
    */
-  private parseArgOrLambda(): Expr {
+  private parseArgOrLambda(allowBlockBody: boolean = false): Expr {
     // x => expr  (unparenthesized single param)
     if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
-      return this.parseLambdaUnparen();
+      return this.parseLambdaUnparen(allowBlockBody);
     }
     // (x) => expr  or  (x, y) => expr  or  () => expr
     if (this.isLambdaStart()) {
-      return this.parseLambdaParen();
+      return this.parseLambdaParen(allowBlockBody);
     }
     return this.parseExpression();
   }
@@ -1524,15 +1531,19 @@ export class Parser {
   }
 
   /** Parse "x => expr" — single unparenthesized parameter */
-  private parseLambdaUnparen(): Expr {
+  private parseLambdaUnparen(allowBlockBody: boolean = false): Expr {
     const paramTok = this.lexer.next(); // consume Ident
     this.lexer.next(); // consume =>
+    if (allowBlockBody && this.lexer.peek().type === TokenType.LBrace) {
+      const block = this.parseLambdaBlockBody();
+      return { type: "Lambda", params: [paramTok.value], block, pos: paramTok.pos };
+    }
     const body = this.parseExpression();
     return { type: "Lambda", params: [paramTok.value], body, pos: paramTok.pos };
   }
 
   /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
-  private parseLambdaParen(): Expr {
+  private parseLambdaParen(allowBlockBody: boolean = false): Expr {
     const lparen = this.lexer.next(); // consume (
     const params: string[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
@@ -1544,8 +1555,46 @@ export class Parser {
     }
     this.lexer.expect(TokenType.RParen);
     this.lexer.expect(TokenType.Arrow);
+    if (allowBlockBody && this.lexer.peek().type === TokenType.LBrace) {
+      const block = this.parseLambdaBlockBody();
+      return { type: "Lambda", params, block, pos: lparen.pos };
+    }
     const body = this.parseExpression();
     return { type: "Lambda", params, body, pos: lparen.pos };
+  }
+
+  /**
+   * Parse the block-body of a lookup-callback lambda: `{ stmt; stmt; }`.
+   * The block reuses the same machinery as the top-level `;`-separated
+   * pipeline form — every statement must be a stage call, an update op
+   * (`$.x = …`, `delete $.x`), or a `let` binding. The result is normalised
+   * to a `Pipeline` (one stmt = single-stage pipeline, several = multi-stage).
+   * Only callable when the lookup-callback `allowBlockBody` flag is set —
+   * outside that, `=> {` keeps its existing object-literal interpretation.
+   */
+  private parseLambdaBlockBody(): Pipeline {
+    const openBrace = this.lexer.next(); // consume `{`
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      throw new ParseError(
+        `Expected at least one statement inside the lookup callback's block body at position ${openBrace.pos}`,
+        openBrace.pos,
+      );
+    }
+    const stmts: PipelineStmt[] = [this.collectStatement()];
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+      if (this.lexer.peek().type === TokenType.RBrace) break;
+      stmts.push(this.collectStatement());
+    }
+    const closeTok = this.lexer.peek();
+    if (closeTok.type !== TokenType.RBrace) {
+      throw new ParseError(
+        `Expected '}' to close the lookup callback's block body at position ${closeTok.pos}`,
+        closeTok.pos,
+      );
+    }
+    this.lexer.next(); // consume `}`
+    return { type: "Pipeline", stmts, pos: openBrace.pos };
   }
 
   /** "new Date()" / "new Date(expr)" or "new Set()" / "new Set(expr)" */
@@ -1965,6 +2014,39 @@ export class Parser {
  * wrote (a method call, a comparison, a literal, …) rather than just
  * complaining the target wasn't a field path.
  */
+/**
+ * Walk a receiver chain back to its root and report whether the root is one
+ * of the lookup-receiver context-ref prefixes — `DatabaseRef` (`$$$`, same
+ * database) or `ClusterRef` (`$$$$`, cross-database). Used by `parsePostfix`
+ * to decide whether a `.find(...)` / `.filter(...)` method call should accept
+ * the lookup-callback grammar (block-body lambda, future-resolved as a
+ * `$lookup` sub-pipeline).
+ *
+ * The chain may include any number of `MemberAccess` and `IndexAccess` hops
+ * (so `$$$.users`, `$$$["users"]`, `$$$$.myDb.myColl`, `$$$$["db"]["coll"]`,
+ * and the mixed bracket combos all match); method calls and other expression
+ * shapes do not — only direct property navigation off the context ref is the
+ * lookup-receiver shape. Depth-checking (rejecting `$$$.foo.bar.find(...)`
+ * or `$$$$.db.coll.extra.find(...)`) happens at the codegen / lookup-
+ * translation layer (`extractLookupTarget` requires exactly one or two
+ * static-access levels).
+ */
+function isLookupReceiverRooted(expr: Expr): boolean {
+  let node: Expr = expr;
+  for (;;) {
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef") return true;
+    if (node.type === "MemberAccess") {
+      node = node.object;
+      continue;
+    }
+    if (node.type === "IndexAccess") {
+      node = node.object;
+      continue;
+    }
+    return false;
+  }
+}
+
 function describeUpdateTarget(target: Expr): string {
   switch (target.type) {
     case "MethodCall":

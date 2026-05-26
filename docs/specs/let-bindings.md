@@ -167,7 +167,24 @@ semantics predictable and the error path well-defined.
 
 Pipelines with no `let` declarations produce **byte-identical** MQL output to
 pre-feature jsmql. The `__jsmql` field name and the trailing `$unset` only
-appear when at least one `let` is in scope at some point during lowering.
+appear when at least one `let` is in scope at some point during lowering — or
+at least one `$$$.<coll>.find/filter(...)` chained terminal materialises into
+an internal `__jsmql.__lookup<N>` slot (see [`lookup-stage.md`](./lookup-stage.md)).
+The two features share the `__jsmql` namespace and the single trailing `$unset`
+cleanup, so a pipeline that uses both still emits exactly one `$unset` stage at
+the end.
+
+## Lookup as a `let` RHS
+
+`let x = $$$.coll.find/filter(...)` is recognised in `lowerImplicitPipeline`
+and `lowerPipeline`: instead of materialising the value through the usual
+`$set { __jsmql.<name>: <value> }` shape, the `$lookup.as` slot is set
+directly to `__jsmql.<name>` and the binding is registered in the same way.
+For chained-on-lookup RHSes (`let n = $$$.coll.filter(p).length`,
+`let s = $$$.tx.filter(p).reduce(fn, init)`), the chained terminal materialises
+into an internal `__jsmql.__lookup<N>` slot first; the let machinery then
+materialises `__jsmql.<name>` from that slot in the standard way. See
+[`lookup-stage.md`](./lookup-stage.md) for the chained-terminal lowering table.
 
 ## Deferred (not in v1)
 

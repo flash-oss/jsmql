@@ -447,27 +447,141 @@ $.             // ❌ Incomplete
 $.0.name       // ❌ Can't start with digit after $.
 ```
 
-### Context references: `$$`, `$$$`, `$$$$` (reserved syntax — not yet executable)
+### Context references: `$$`, `$$$`, `$$$$`
 
-jsmql reserves three further prefix levels, parallel to `$.`, for cross-collection / cross-database / cross-cluster references. The syntax parses today, but **codegen currently errors with a "reserved syntax" message** — the API surface (what methods exist on these refs, how each one lowers to MQL) lands in a future release.
+jsmql provides three further prefix levels, parallel to `$.`, for cross-collection / cross-database / cross-cluster references.
 
-| Prefix | Scope                          | Planned forms                                          |
-| ------ | ------------------------------ | ------------------------------------------------------ |
-| `$.`   | Current document field         | `$.age`, `$.address.city` (works today)                |
-| `$$`   | Current collection             | `$$.find(…)`                                           |
-| `$$$`  | Current database               | `$$$.myColl`, `$$$[collVar]`                           |
-| `$$$$` | Current cluster / server       | `$$$$.myDb.myColl`, `$$$$[db][coll]`, `$$$$[db].coll`, `$$$$.db[coll]` |
+| Prefix | Scope                          | Status                                                                  |
+| ------ | ------------------------------ | ----------------------------------------------------------------------- |
+| `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
+| `$$`   | Current collection             | reserved (`$$.find(…)` — needs schema/driver binding)                   |
+| `$$$`  | Current database               | **live for `.find/.filter` joins** — see below                          |
+| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (requires Atlas Data Federation; see below) |
 
 Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
 
 ```js
-jsmql("$$$.users.find($.active)");   // ❌ throws CodegenError: '$$$' (current-database reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.
-jsmql('$$$$["db"]["coll"]');         // ❌ same: '$$$$' is reserved syntax
-jsmql("$$");                          // ❌ ParseError: Expected '.<name>' or '[<expr>]' after '$$'
-jsmql("$$$$$.x");                     // ❌ LexError: Up to 4 levels of context reference are supported
+jsmql.expr("$$$.myColl");              // ❌ CodegenError: '$$$.<coll>' must be followed by .find(pred) or .filter(pred)
+jsmql.expr('$$$$["db"]["coll"]');      // ❌ '$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred)
+jsmql("$$");                            // ❌ ParseError: Expected '.<name>' or '[<expr>]' after '$$'
+jsmql("$$$$$.x");                       // ❌ LexError: Up to 4 levels of context reference are supported
 ```
 
-You'll see real examples once the codegen for each level ships.
+The full `$$$.<coll>.find/filter(...)` and `$$$$.<db>.<coll>.find/filter(...)` join syntax is documented next.
+
+### Cross-collection lookups: `$$$.<coll>.find / .filter`
+
+`$$$.<coll>.find(predicate)` and `$$$.<coll>.filter(predicate)` lower to MongoDB's `$lookup` stage — JS-style spellings for the most common join shape. The two methods follow JS semantics:
+
+| Method      | Returns                  | MQL lowering                                                    |
+| ----------- | ------------------------ | --------------------------------------------------------------- |
+| `.find(p)`  | one matching doc or null | `$lookup` + `$set { <as>: { $first: "$<as>" } }`               |
+| `.filter(p)`| array of matching docs   | bare `$lookup`                                                  |
+
+**Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
+
+**Basic form vs pipeline form.** When the predicate is a single `===` between a foreign field-path (e.g. `o.userId`) and a `$.` local field-path (e.g. `$._id`), jsmql emits the index-friendly basic form (`{ from, localField, foreignField, as }`). Anything richer auto-hoists `$.x` references into the `let` clause and emits the correlated-pipeline form:
+
+```js
+// Basic form: pure equality predicate
+$.orders = $$$.orders.filter(o => o.userId === $._id);
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } }]
+
+// .find adds a $set { $first } so the slot holds scalar-or-null
+$.user = $$$.users.find(u => u._id === $.userId);
+// → [
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "user" } },
+//     { $set: { user: { $first: "$user" } } }
+//   ]
+
+// Pipeline form: compound predicate, auto-let hoist
+$.user = $$$.users.find(u => u._id === $.userId && u.active);
+// → [
+//     { $lookup: {
+//         from: "users",
+//         let: { userId: "$userId" },
+//         pipeline: [{ $match: { $expr: { /* u._id === $$userId && u.active */ } } }],
+//         as: "user"
+//       } },
+//     { $set: { user: { $first: "$user" } } }
+//   ]
+```
+
+**Block-body lambdas — full sub-pipeline.** When the predicate is a block-body arrow (`o => { stmt; stmt; }`), each statement becomes one stage in the `$lookup.pipeline` body. `$match`, `$sort`, `$limit`, `$project`, etc. all work; outer-doc `$.x` references auto-hoist into the lookup's `let` clause:
+
+```js
+$.recentOrders = $$$.orders.filter(o => {
+  $match(o.userId === $._id);
+  $sort({ createdAt: -1 });
+  $limit(10);
+});
+// → [{
+//     $lookup: {
+//       from: "orders",
+//       let: { _id: "$_id" },
+//       pipeline: [
+//         { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+//         { $sort: { createdAt: -1 } },
+//         { $limit: 10 }
+//       ],
+//       as: "recentOrders"
+//     }
+//   }]
+```
+
+**Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.__lookup<N>` slot, emits the chained transform as a follow-up `$set`, and substitutes a FieldRef into the parent expression. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
+
+```js
+let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
+// → [
+//     { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
+//     { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+//     { $set: { "__jsmql.nOrders": "$__jsmql.__lookup1" } },
+//     { $unset: "__jsmql" }
+//   ]
+
+let total = $$$.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);
+// uses $reduce against the materialised slot
+
+let name = $$$.users.find(u => u._id === $.userId).name;
+// .find's $first is applied first; the trailing .name reads off the scalar slot
+```
+
+A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
+
+**Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
+
+**Caveats:**
+- **Nested lookups are not yet supported in this release.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda body throws a targeted "not yet supported, hoist to sibling stage" error. Coming in a follow-up.
+- **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — deferred.
+- **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
+- **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
+
+### Cross-database lookups: `$$$$.<db>.<coll>.find / .filter`
+
+The `$$$$` (current-cluster) prefix is the cross-database counterpart of `$$$`. The same `.find` / `.filter` methods, the same predicate-translation rules, the same chained terminals, the same block-body lambdas — the only difference is that the receiver names the *database* as well, and the compiled MQL uses MongoDB's `from: { db, coll }` object shape instead of the bare-string `from`:
+
+```js
+$.archivedOrders = $$$$.cold_storage.orders.filter(o => o.userId === $._id);
+// → [{
+//     $lookup: {
+//       from: { db: "cold_storage", coll: "orders" },
+//       localField: "_id",
+//       foreignField: "userId",
+//       as: "archivedOrders"
+//     }
+//   }]
+
+$.profile = $$$$.users_db.profiles.find(p => p.userId === $._id);
+// → $lookup with from: { db: "users_db", coll: "profiles" }, plus the
+//   standard $set { $first } for .find's scalar-or-null contract.
+```
+
+All four bracket combinations are accepted: `$$$$.db.coll`, `$$$$["db"]["coll"]`, `$$$$.db["coll"]`, `$$$$["db"].coll`. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work exactly the same as the `$$$` surface.
+
+**Deployment requirement.** The `from: { db, coll }` object shape is documented and accepted by **MongoDB Atlas Data Federation** (where cross-database / cross-cluster joins are a first-class feature). The standard community MongoDB server **does not accept the object form of `$lookup.from`** — it expects a bare collection-name string and rejects the object at runtime. Use `$$$$.<db>.<coll>` only when your runtime is Atlas Data Federation (or a deployment that follows the same federated-query syntax); on a non-federated deployment you'll get a server-side error pointing at the `from` field's shape. jsmql does not gate on deployment — the lowering is the same regardless, and you'll see the runtime error if you target the wrong server.
+
+**Compile-time names only.** The `db` and `coll` names must be resolvable to strings at compile time. That includes static string literals (`$$$$.db.coll` / `$$$$["db"]["coll"]`) *and* [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter bindings — `jsmql.compile(({ dbName }, $) => ($.x = $$$$[dbName].coll.find(...)))({ dbName: "warehouse" })` resolves `dbName` to its bound value at call time and inlines it into `$lookup.from`. What's *not* supported is runtime field refs (`$$$$[$.tenantDb].coll.find(...)`) — `$.tenantDb` is per-document and can't materialise into the `$lookup.from` field, which MongoDB resolves at plan time. Non-string parameter values (a number, an array, …) are rejected with a precise "parameter binding must be a string" error.
 
 ---
 
