@@ -3948,25 +3948,29 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     // bare reference, RHS use) is rejected by the CollectionRef codegen case
     // with a precise "statement-only / only .push(...)" message. See
     // docs/specs/union-stage.md.
-    it("dot-ident form (not .push) throws statement-only at codegen", () => {
-      expect(() => jsmql.expr("$$.foo")).toThrow(/statement-only and only supports '\.push\(\.\.\.\)'/);
+    it("dot-ident form (not .push / .filter) throws statement-only at codegen", () => {
+      expect(() => jsmql.expr("$$.foo")).toThrow(
+        /statement-only and supports '\.push\(\.\.\.\)' or '\.filter\(\.\.\.\)' in the facet pattern/,
+      );
     });
     it("bracket-expr form (string literal) throws statement-only at codegen", () => {
-      expect(() => jsmql.expr('$$["foo"]')).toThrow(/statement-only and only supports '\.push\(\.\.\.\)'/);
+      expect(() => jsmql.expr('$$["foo"]')).toThrow(
+        /statement-only and supports '\.push\(\.\.\.\)' or '\.filter\(\.\.\.\)' in the facet pattern/,
+      );
     });
     it("bracket-expr form (compile-form param) throws when the compiled function is called", () => {
       const q = jsmql.compile("({ name }) => $$[name]");
-      expect(() => q({ name: "users" })).toThrow(/statement-only and only supports '\.push/);
+      expect(() => q({ name: "users" })).toThrow(/statement-only and supports '\.push/);
     });
     it(".pos points at the prefix in validate()", () => {
       const r = jsmql.validate("$$.foo");
       expect(r.valid).toBe(false);
-      expect(r.errors[0].message).toMatch(/statement-only and only supports '\.push/);
+      expect(r.errors[0].message).toMatch(/statement-only and supports '\.push/);
       expect(r.errors[0].pos).toBe(0);
     });
-    it("wrong method on $$ surfaces a precise 'use .push' hint", () => {
+    it("wrong method on $$ surfaces a precise 'use .push / .filter' hint", () => {
       expect(() => jsmql("$$.pop({a:1})")).toThrow(
-        /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) — \.pop\(\) is not defined/,
+        /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) and \.filter\(\.\.\.\) — \.pop\(\) is not defined/,
       );
     });
   });

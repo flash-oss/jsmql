@@ -333,3 +333,93 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(() => jsmql("let x = $.a; $ = $.profile; $.b = x;")).toThrow(/can't be read after.*\$replaceWith/);
   });
 });
+
+describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
+  it("expression-body predicate becomes a `$match` sub-pipeline", () => {
+    expect(jsmql(`$ = { recent: $$.filter(o => o.createdAt >= "2026-01-01") };`)).toEqual([
+      { $facet: { recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }] } },
+    ]);
+  });
+
+  it("block-body predicate becomes the block's stages", () => {
+    expect(jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toEqual([
+      { $facet: { topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }] } },
+    ]);
+  });
+
+  it("multi-facet pipeline with mixed predicate shapes", () => {
+    expect(
+      jsmql(`$ = {
+        topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+        recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+        byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); })
+      };`),
+    ).toEqual([
+      {
+        $facet: {
+          topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
+          recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
+          byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
+        },
+      },
+    ]);
+  });
+
+  it("non-translatable predicate residual rides in `$expr`", () => {
+    expect(jsmql(`$ = { active: $$.filter(o => o.active) };`)).toEqual([
+      { $facet: { active: [{ $match: { $expr: "$active" } }] } },
+    ]);
+  });
+
+  it("uses lambda-param references for foreign fields (basic shape)", () => {
+    expect(jsmql(`$ = { byCat: $$.filter(o => { $group({ _id: o.category }); }) };`)).toEqual([
+      { $facet: { byCat: [{ $group: { _id: "$category" } }] } },
+    ]);
+  });
+
+  it("vacuous predicate (literal `true`) emits a trivial `$match`", () => {
+    expect(jsmql(`$ = { all: $$.filter(o => true) };`)).toEqual([{ $facet: { all: [{ $match: { $expr: true } }] } }]);
+  });
+
+  it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
+    expect(() => jsmql(`$ = { recent: $$.filter(o => $.x > 5) };`)).toThrow(
+      /\$\.<field>.*use the lambda parameter.*\bo\.x\b/,
+    );
+  });
+
+  it("rejects zero-argument lambda — the doc must be named", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(() => true) };`)).toThrow(/must take exactly one parameter/);
+  });
+
+  it("rejects two-argument lambda", () => {
+    expect(() => jsmql(`$ = { a: $$.filter((a, b) => a.x > 5) };`)).toThrow(/must take exactly one parameter/);
+  });
+
+  it("rejects mixed-shape RHS where some values aren't `$$.filter(...)`", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), b: 1 };`)).toThrow(
+      /every value must be `\$\$\.filter\(<predicate>\)`.*Entry 'b'/,
+    );
+  });
+
+  it("rejects spread entries inside the facet object", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(o => true), ...rest };`)).toThrow(
+      /\$facet pattern: spread entries are not allowed/,
+    );
+  });
+
+  it("rejects duplicate facet keys", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), a: $$.filter(o => o.y > 0) };`)).toThrow(/duplicate key 'a'/);
+  });
+
+  it("statement-position `$$.filter(...)` (not in facet) suggests `$match` or facet shape", () => {
+    expect(() => jsmql(`$$.filter(o => o.x > 0);`)).toThrow(
+      /'\$\$\.filter\(<predicate>\)' is only valid as a value inside.*`\$match\(<predicate>\)` instead/,
+    );
+  });
+
+  it("$facet is reshape-clearing: prior lets can't be read after", () => {
+    expect(() => jsmql(`let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;`)).toThrow(
+      /can't be read after.*\$facet/,
+    );
+  });
+});

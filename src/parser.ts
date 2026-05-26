@@ -1202,11 +1202,17 @@ export class Parser {
         }
         this.lexer.next(); // consume member name
         if (this.lexer.peek().type === TokenType.LParen) {
-          // Method call: left.member(args). When the receiver chain is rooted
-          // at `$$$` (DatabaseRef) and the method is `.find` / `.filter`, the
-          // lambda argument may use the block-body form (a sub-pipeline body
-          // for the eventual `$lookup` stage). See docs/specs/lookup-stage.md.
-          const allowBlockBody = (member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left);
+          // Method call: left.member(args). Block-body lambdas (a sub-pipeline
+          // body inside the predicate) are allowed for:
+          //   - `$$$.<coll>.find/.filter(...)` (rooted at DatabaseRef) — the
+          //     eventual `$lookup` stage's sub-pipeline body. See
+          //     docs/specs/lookup-stage.md.
+          //   - `$$.filter(...)` (rooted directly at CollectionRef) — the
+          //     facet entry's sub-pipeline body. See
+          //     docs/specs/replace-root-stage.md (#facet pattern).
+          const allowBlockBody =
+            ((member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left)) ||
+            (member.value === "filter" && left.type === "CollectionRef");
           const args = this.parseMethodCallArgs(allowBlockBody);
           left = {
             type: "MethodCall",

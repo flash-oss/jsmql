@@ -102,6 +102,32 @@ describe("alternative bracketed array form", { features: ["Pipelines"] }, () => 
   });
 });
 
+describe("orders summary via $facet (`$ = { k: $$.filter(...) }`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // Three named sub-pipelines run side-by-side against the same input
+    // stream. `$$.filter(o => ...)` is the facet entry surface: the lambda
+    // param is each input document. Expression bodies lower to `$match`;
+    // block bodies lower to their own stage list.
+    expect(
+      jsmql(`$match($.status === "shipped");
+$ = {
+  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+};`),
+    ).toEqual([
+      { $match: { status: "shipped" } },
+      {
+        $facet: {
+          topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
+          recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
+          byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
+        },
+      },
+    ]);
+  });
+});
+
 describe("lift the embedded profile to the top level (`$ = …`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // After a $match, replace each user doc with its `profile` sub-doc and then

@@ -106,6 +106,18 @@ jsmql(`$match($.profile != null); $ = $.profile; $ = { ...$, score: $.points * 1
 //     { "$replaceWith": { "$mergeObjects": ["$$ROOT", { "score": { "$multiply": ["$points", 1.1] } }] } }
 //   ]
 
+// Multi-facet aggregation — every value a `$$.filter(...)` lowers to one $facet stage
+jsmql(`$ = {
+  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); })
+}`);
+// → [{ "$facet": {
+//       "topByScore": [{ "$sort": { "score": -1 } }, { "$limit": 10 }],
+//       "recent":     [{ "$match": { "createdAt": { "$gte": "2026-01-01" } } }],
+//       "byStatus":   [{ "$group": { "_id": "$status", "n": { "$sum": 1 } } }]
+//   } }]
+
 // `jsmql()` returns an UpdateFilter as a pipeline, to avoid common footgun of wiping out the whole collection.
 db.users.updateMany({}, jsmql(($) => $.name = $.name.toUpperCase()))
 // → [{ "$set": { "name": { "$toUpper": "$name" } } }] -> will upper-case all names in the collection
@@ -163,6 +175,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Joins as JS** — `$$$.<coll>.find(pred)` / `$$$.<coll>.filter(pred)` lower to `$lookup` stages, with predicate auto-translation to basic-form (`localField`/`foreignField`) or correlated-pipeline form. `.find()` follows JS semantics (scalar-or-null via `$set { $first }`); `.filter()` keeps the array. Chained `.length`, `.reduce(fn, init)`, and member access compose inline. Block-body lambdas (`o => { $match(...); $sort(...); $limit(N); }`) become the full sub-pipeline body. `$$$$.<db>.<coll>.find/filter(pred)` covers the same surface for cross-database joins (uses MongoDB's `from: { db, coll }` shape — requires Atlas Data Federation). See [docs/LANGUAGE.md → Cross-collection lookups](docs/LANGUAGE.md#cross-collection-lookups-coll-find--filter).
 - **Collection unions as `Array.push`** — `$$.push({...}, ...$$$.<coll>.filter(pred), $$$.<other>.find(pred))` lowers to one or more `$unionWith` stages, with consecutive inline-doc args batched into a single `$documents` sub-pipeline. The spread (`...`) rule is JS-faithful: `.filter` and bare collections are arrays so they must be spread; `.find` and inline objects are scalars so they must not. `$$$$.<db>.<coll>` works for cross-database union (same Atlas caveat as cross-DB lookups). See [docs/LANGUAGE.md → Collection union](docs/LANGUAGE.md#collection-union-push).
 - **Replace root as JS assignment** — `$ = <expr>` lowers to `$replaceWith` (the lean MQL spelling for `$replaceRoot: { newRoot: <expr> }`): lift a sub-document (`$ = $.profile`), merge fresh fields (`$ = { ...$, score: ... }` — bare `$` is the current document, like MQL's `$$ROOT`), or pivot to a joined doc (`$ = $$$.users.find(pred)`). Compile-time rejection points the user at the fix when the RHS obviously isn't a document (array literals, scalars, `.filter()` lookups). See [docs/LANGUAGE.md → Replace root via `$ = <expr>`](docs/LANGUAGE.md#replace-root-via--expr).
+- **`$facet` as a named object of filters** — when every value of `$ = { … }` is a `$$.filter(<lambda>)`, the same surface lowers to one `$facet` stage with each entry as a named sub-pipeline. Expression bodies become `$match`; block bodies become the block's stages. The lambda param is each input document (use `o.<field>`, not `$.<field>`). See [docs/LANGUAGE.md → $facet via `$ = { key: $$.filter(p), … }`](docs/LANGUAGE.md#facet-via---key-filterp-).
 - **Three call shapes** — arrow `jsmql(($) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
 - **Polymorphic by default, strict on demand** — `jsmql()` picks Filter or Pipeline from the input; `jsmql.filter()`, `jsmql.pipeline()`, and `jsmql.update()` lock it to one shape and throw an actionable error otherwise (with the offending stage named, for `update()`). `jsmql.compile(fn)` parses once for parameterised parse-once-bind-many. `jsmql.expr()` returns the raw aggregation expression that drops into a stage body. The three call shapes (string / arrow / template tag) apply to all of them.
 - **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.

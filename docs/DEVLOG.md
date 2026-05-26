@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — `$ = { k: $$.filter(p), … }` → `$facet`
+
+A second variant of the `$ = <expr>` surface: when every value of the object-literal RHS is a `$$.filter(<lambda>)` call, the same construct lowers to a single `$facet` stage with each entry as a named sub-pipeline. The shape pulled in three things:
+
+- **Detection in [`src/facet-translation.ts`](../src/facet-translation.ts).** `detectFacetShape(value)` returns null when the RHS isn't an object literal, or when no entry is `$$.filter(...)`. When at least one entry is, the function enters strict-shape mode: every entry must be `$$.filter(<lambda>)`, and mixed shapes / spreads / computed keys throw precise errors naming the offending entry. Otherwise the user would fall through to `$replaceWith`, where the inner `$$.filter` would surface a confusing "$$ is statement-only" error from the CollectionRef codegen.
+- **Lambda predicate translation.** Each `$$.filter(<lambda>)` body becomes the facet's sub-pipeline. Expression bodies run through `translateMatchBody` (same engine `$match` uses, index-friendly query syntax for the translatable half); block bodies pass through `lowerBlock` (the same `SubPipelineLowerer` lookup and union use). Reuses `extractLetsFromExpr` / `extractLetsFromPipeline` from `lookup-translation` — but flips their letVars output into a rejection: any `$.<field>` reference inside the predicate is rejected with a "use the lambda parameter (e.g. `o.<field>`)" hint. Rationale: inside a facet sub-pipeline, the lambda param IS the current document, so `$.x` and `o.x` would mean the same thing — supporting both spellings would invite drift. (Contrast with `$lookup`, where `$.x` is the outer doc and gets auto-`let`-extracted.)
+- **Parser tweak in [`src/parser.ts`](../src/parser.ts).** Block-body lambdas (`o => { stmts; }`) inside method calls were previously gated on the receiver being rooted at `$$$` / `$$$$` (lookup). The facet form needs them for `$$.filter(...)` too, so the gate also accepts `left.type === "CollectionRef"` for `.filter`. No new tokens or AST nodes.
+
+**Parameter shape.** `$$.filter(<predicate>)` must take exactly one lambda parameter. Zero-arg (`() => …`) and multi-arg shapes are rejected. Naming the doc explicitly lets the `$.<field>` rejection message point at the right replacement (`o.<field>`, where `o` is whatever name the user picked).
+
+**`$facet` joined `RESHAPE_CLEARING_STAGES`.** Pre-existing oversight — `$facet`'s output is `{ facetName: [docs], … }`, completely replacing the input doc. The interception in `pipeline.ts` calls `clearCtxLets(ctx, "$facet")` after emission so a subsequent let reference produces the standard "can't be read after `$facet`" error.
+
+**Statement-position `$$.filter(...)`.** `validateUnionPushShape` (now misleadingly named, kept for stability) recognises a standalone `$$.filter(...)` and throws a targeted error pointing at `$match(<predicate>)` for stream-level filtering or the `$ = { ... }` shape for facets. The bare-`$$` CollectionRef codegen message was updated in parallel to mention both `.push` and `.filter`.
+
+Spec: [docs/specs/replace-root-stage.md](specs/replace-root-stage.md) (facet variant section). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#facet-via---key-filterp-).
+
+---
+
 ## 2026-05-26 — `$ = <expr>` → `$replaceWith` (replace root)
 
 Assigning to bare `$` replaces the whole document. The LHS *is* the document, the RHS is the new value — the JS shape exactly mirrors what the stage does. Three variants land:

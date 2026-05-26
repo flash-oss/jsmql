@@ -82,11 +82,12 @@ import {
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
+import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
 /** Stages that replace the document and so drop all in-scope `let` bindings. */
-const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith"]);
+const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith", "$facet"]);
 
 /** Compiler-owned namespace for materialised `let` bindings. */
 const LET_NAMESPACE = "__jsmql";
@@ -206,6 +207,13 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   ast.elements.forEach((el, i) => {
     if (el.type === "AssignExpr") {
       if (isReplaceRootAssign(el)) {
+        const facets = detectFacetShape(el.value);
+        if (facets !== null) {
+          flushUpdateOps();
+          for (const s of lowerFacet(facets, ctx, lowerBlock)) out.push(s);
+          ctx = clearCtxLets(ctx, "$facet");
+          return;
+        }
         flushUpdateOps();
         for (const s of lowerReplaceRoot(el, ctx, tracking.alloc, lowerBlock)) out.push(s);
         ctx = clearCtxLets(ctx, "$replaceWith");
@@ -800,6 +808,13 @@ function lowerUpdateFilterWithLookups(
   for (const op of stmt.ops) {
     if (op.type === "AssignExpr") {
       if (isReplaceRootAssign(op)) {
+        const facets = detectFacetShape(op.value);
+        if (facets !== null) {
+          flush();
+          for (const s of lowerFacet(facets, ctx, lowerBlockFn)) out.push(s);
+          ctx = clearCtxLets(ctx, "$facet");
+          continue;
+        }
         flush();
         for (const s of lowerReplaceRoot(op, ctx, allocSlot, lowerBlockFn)) out.push(s);
         ctx = clearCtxLets(ctx, "$replaceWith");

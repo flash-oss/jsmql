@@ -1,4 +1,4 @@
-# `$ = <expr>` → `$replaceWith` stage
+# `$ = <expr>` → `$replaceWith` / `$facet` stage
 
 ## Overview
 
@@ -60,6 +60,49 @@ This is why `$ = { ...$, … }` works with no spread-specific code in
 `lowerReplaceRoot` — the spread codegen already emits `$mergeObjects`
 operands by calling `_generate(arg, ctx)`, and the first operand for a bare
 `$` is just `"$$ROOT"`.
+
+## Facet variant
+
+When the RHS of `$ = …` is an object literal where every value is a
+`$$.filter(<lambda>)` call, the same `$ = { … }` surface lowers to a
+`$facet` stage instead of `$replaceWith`. The detection lives in
+`src/facet-translation.ts` and runs *before* the `$replaceWith` emission
+inside `lowerReplaceRoot`'s callers:
+
+```
+$ = {
+  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+};
+// → [{ $facet: {
+//       topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
+//       recent:     [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
+//       byStatus:   [{ $group: { _id: "$status", n: { $sum: 1 } } }]
+//   } }]
+```
+
+**Detection — all-or-nothing.** `detectFacetShape(value)`:
+
+1. If `value` isn't an `ObjectLiteral`, returns `null` (caller falls through to `$replaceWith`).
+2. Scans for any entry whose value is a `$$.filter(<lambda>)` call.
+   - Zero filter entries → returns `null`. The RHS is treated as a normal `$replaceWith` body.
+   - At least one filter entry → enters strict-shape mode: *every* entry must be a `$$.filter(<lambda>)`. Mixed shapes throw a precise error naming the offending key (`Entry 'b' is something else. Either convert it to '$$.filter(<predicate>)' or move it out of the object.`).
+
+Spread entries (`...rest`) and computed keys are also rejected in strict mode.
+
+**Each filter lambda becomes one sub-pipeline body.** `lowerFacetEntry(lambda, ctx, lowerBlock)`:
+
+- Lambda must take exactly one parameter — the doc is named explicitly so the rejection message for `$.<field>` references can point at the right replacement (`o.<field>`).
+- Expression body: rewritten via `extractLetsFromExpr` (foreign param → `FieldRef`), then run through `translateMatchBody` (same engine `$match` uses). Translatable portions emit index-friendly `{ field: value }`; residuals ride in `$expr` side-by-side.
+- Block body: rewritten via `extractLetsFromPipeline`, then lowered via `lowerBlock` (same `SubPipelineLowerer` used by lookup and union).
+- **`$.<field>` is rejected.** If `extractLetsFromExpr` / `extractLetsFromPipeline` returns any letVars (= the predicate referenced the local doc), the helper throws: `\`$.<field>\` inside \`$$.filter(p)\` in a \`$ = { ... }\` $facet is not supported — use the lambda parameter …`. Rationale: inside a facet sub-pipeline, the lambda param IS the current document, so `$.x` and `o.x` would mean the same thing — supporting both invites drift. (Contrast with `$lookup`, where `$.x` refers to the *outer* doc and gets auto-`let`-extracted.)
+
+**Reshape-clearing.** `$facet` joined `RESHAPE_CLEARING_STAGES` in this work (it was a pre-existing oversight — `$facet`'s output is `{ facetName: […], … }`, completely replacing the input doc). The interception in `pipeline.ts` calls `clearCtxLets(ctx, "$facet")` after emission so a subsequent let reference produces the existing precise "can't be read after `$facet`" error.
+
+**Parser tweak.** Block-body lambdas (`o => { stmts; }`) inside method calls were previously allowed only when the receiver chain was rooted at `$$$` / `$$$$` (lookup). The new facet form needs block bodies for `$$.filter(...)` too, so the gate in `parsePostfix` now also allows `left.type === "CollectionRef"` for `.filter`. No new tokens or AST nodes — block-body parsing was already implemented, just gated by receiver shape.
+
+**Statement-position `$$.filter(...)`.** `validateUnionPushShape` (now misleadingly named, kept for stability) emits a targeted error when a user writes `$$.filter(...)` at a statement position rather than inside the facet object: it suggests `$match(<predicate>)` for stream-level filtering or the `$ = { ... }` shape for facets. The bare-`$$` codegen message in `codegen.ts` was updated in parallel to mention both `.push` and `.filter`.
 
 ## Detection
 
@@ -163,6 +206,16 @@ src/
                            and is reused by lowerReplaceRoot's direct-lookup
                            branch.
   stages.ts                No change. $replaceWith was already registered.
+  facet-translation.ts     New. detectFacetShape, lowerFacet, lowerFacetEntry.
+                           Reuses extractLetsFromExpr / extractLetsFromPipeline
+                           from lookup-translation and translateMatchBody from
+                           match-translation. Treats any non-empty letVars as
+                           a "use lambda param instead of $.<field>" error.
+  union-translation.ts     Updated. validateUnionPushShape recognises a
+                           statement-position $$.filter call and emits a
+                           "use $match or move into facet" hint; other
+                           wrong-method calls mention both .push and .filter
+                           as supported.
 ```
 
 ## Deferred
