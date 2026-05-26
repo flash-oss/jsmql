@@ -70,6 +70,7 @@ import {
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
+import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -114,6 +115,12 @@ function isStageCandidate(el: ArrayElement): boolean {
   // value arrays of operator calls are vanishingly rare in real aggregation
   // use; copy-pasted MongoDB pipelines are the common case.
   if (el.type === "OperatorCall") return true;
+  // `$$.push(...)` is a stage-shaped statement — it lowers to `$unionWith`
+  // stages. Recognising it here flips the array into pipeline mode so a
+  // bracketed `[$$.push(...), $sort(...)]` works and a sub-pipeline carrying
+  // a push (e.g. `$facet.*`) routes through the sub-pipeline path that
+  // pre-rejects it with a precise hoist-to-outer hint.
+  if (el.type === "MethodCall" && detectUnionPush(el as Expr) !== null) return true;
   return false;
 }
 
@@ -229,6 +236,18 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       return;
     }
     flushUpdateOps();
+    // `$$.push(...)` statement → one or more `$unionWith` stages (with inline-doc
+    // batching across consecutive `{...}` args). Statement-only; runs before
+    // the generic stage-element lowering so a bare `$$` receiver doesn't fall
+    // through to `lowerStageElement`'s "not a recognised stage" error.
+    if (el.type !== "SpreadElement") {
+      const pushCall = detectUnionPush(el as Expr);
+      if (pushCall !== null) {
+        for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
+        return;
+      }
+      validateUnionPushShape(el as Expr);
+    }
     const rewrittenEl = extractFromStageElement(el, ctx, tracking.alloc, lowerBlock, out);
     const result = lowerStageElement(rewrittenEl, i, ctx);
     out.push(result.stage);
@@ -287,6 +306,14 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
       for (const s of result) out.push(s);
       return;
     }
+    // `$$.push(...)` statement → one or more `$unionWith` stages (with
+    // inline-doc batching across consecutive `{...}` args). Statement-only.
+    const pushCall = detectUnionPush(stmt as Expr);
+    if (pushCall !== null) {
+      for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
+      return;
+    }
+    validateUnionPushShape(stmt as Expr);
     // Stage call statement (Expr that resolves to a stage shape).
     const rewrittenStmt = extractFromStageElement(stmt as Expr, ctx, tracking.alloc, lowerBlock, out);
     const result = lowerStageElement(rewrittenStmt as ArrayElement, i, ctx);
@@ -423,6 +450,22 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
         inner,
       );
     }
+    // `$$.push(...)` inside a sub-pipeline targets the *outer* collection but
+    // emits stages that would live inside the inner pipeline — the semantics are
+    // ambiguous and the MongoDB server has no equivalent shape. Reject for v1.
+    if (el.type !== "SpreadElement") {
+      const innerPush =
+        el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl"
+          ? null
+          : detectUnionPush(el as Expr);
+      if (innerPush !== null) {
+        throw new CodegenError(
+          `'$$.push(...)' inside a sub-pipeline ('$lookup.pipeline', '$unionWith.pipeline', '$facet.*') is not supported — ` +
+            `$$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.`,
+          innerPush.pos,
+        );
+      }
+    }
   }
   const out: unknown[] = [];
   let updateBuffer: UpdateOp[] = [];
@@ -558,7 +601,24 @@ function formatStageList(): string {
  * by the time `lowerBlock` runs the block is free of nested lookups and can be
  * lowered with `generateImplicitPipeline` unchanged.
  */
-const lowerBlock: SubPipelineLowerer = (block, ctx) => generateImplicitPipeline(block, ctx) as object[];
+const lowerBlock: SubPipelineLowerer = (block, ctx) => {
+  // `$$.push(...)` targets the *outer* collection but the stages it emits
+  // would live inside this lookup's `$lookup.pipeline` — semantically wrong
+  // (the push wouldn't union into the outer stream). Reject before lowering
+  // with a precise hoist-to-outer hint, mirroring the nested-lookup rule.
+  for (const stmt of block.stmts) {
+    const innerPush =
+      stmt.type === "LetDecl" ? null : stmt.type === "UpdateFilter" ? null : detectUnionPush(stmt as Expr);
+    if (innerPush !== null) {
+      throw new CodegenError(
+        `'$$.push(...)' inside a lookup's block-body lambda is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. ` +
+          `Hoist the push to a sibling stage in the outer pipeline.`,
+        innerPush.pos,
+      );
+    }
+  }
+  return generateImplicitPipeline(block, ctx) as object[];
+};
 
 /**
  * Per-pipeline slot allocator plus a flag for whether any slot was handed out.

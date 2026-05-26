@@ -3943,21 +3943,31 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   // as ambient globals — that's part of the future-API surface.
 
   describe("$$ — current collection", () => {
-    it("dot-ident form throws reserved-syntax at codegen", () => {
-      expect(() => jsmql.expr("$$.foo")).toThrow(/current-collection reference.*reserved syntax/s);
+    // $$ lights up the `$$.push(...)` → `$unionWith` shape. Any other use of $$
+    // (`.foo` member access, `["foo"]` index access, `.bar()` method call,
+    // bare reference, RHS use) is rejected by the CollectionRef codegen case
+    // with a precise "statement-only / only .push(...)" message. See
+    // docs/specs/union-stage.md.
+    it("dot-ident form (not .push) throws statement-only at codegen", () => {
+      expect(() => jsmql.expr("$$.foo")).toThrow(/statement-only and only supports '\.push\(\.\.\.\)'/);
     });
-    it("bracket-expr form (string literal) throws reserved-syntax at codegen", () => {
-      expect(() => jsmql.expr('$$["foo"]')).toThrow(/current-collection reference.*reserved syntax/s);
+    it("bracket-expr form (string literal) throws statement-only at codegen", () => {
+      expect(() => jsmql.expr('$$["foo"]')).toThrow(/statement-only and only supports '\.push\(\.\.\.\)'/);
     });
     it("bracket-expr form (compile-form param) throws when the compiled function is called", () => {
       const q = jsmql.compile("({ name }) => $$[name]");
-      expect(() => q({ name: "users" })).toThrow(/current-collection reference/);
+      expect(() => q({ name: "users" })).toThrow(/statement-only and only supports '\.push/);
     });
     it(".pos points at the prefix in validate()", () => {
       const r = jsmql.validate("$$.foo");
       expect(r.valid).toBe(false);
-      expect(r.errors[0].message).toMatch(/current-collection reference/);
+      expect(r.errors[0].message).toMatch(/statement-only and only supports '\.push/);
       expect(r.errors[0].pos).toBe(0);
+    });
+    it("wrong method on $$ surfaces a precise 'use .push' hint", () => {
+      expect(() => jsmql("$$.pop({a:1})")).toThrow(
+        /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) — \.pop\(\) is not defined/,
+      );
     });
   });
 

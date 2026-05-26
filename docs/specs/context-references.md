@@ -13,7 +13,7 @@ Four levels of jsmql doc-context prefix, one per scope:
 
 The first level (`$.` → `FieldRef`) has been the only doc-context prefix since the project started. The three new levels exist to give jsmql a uniform vocabulary for cross-collection / cross-database / cross-cluster references — the primary intended use is driving `$lookup` and similar multi-collection operators from a syntax users already understand.
 
-This spec covers **syntax only**. Codegen currently throws a reserved-syntax `CodegenError` for each of the three new levels; the semantic API surface (what methods exist, how each ref lowers into MQL) is staged into future releases.
+This spec covers **syntax only**. Codegen throws a `CodegenError` for any use of each prefix that isn't already wired into a shipped lowering (`$$.push(...)`, `$$$.coll.find/filter(...)`, `$$$$.db.coll.find/filter(...)`). The semantic API surface for the remaining shapes (`$$.find/.filter` on the current collection, anything else on `$$$$`, etc.) is staged into future releases.
 
 ## Lexer
 
@@ -118,6 +118,7 @@ Tests use the string form rather than the arrow form because `$$` / `$$$` / `$$$
 
 ## Status
 
+- **`$$.push(...) → $unionWith`** — **shipped**. Statement-only collection union. JS-faithful spread rules (`...` on arrays, no `...` on scalars), inline-doc batching into `$documents`, source-order preserved, and a precise rejection for correlated predicates (`$unionWith` has no `let`). Re-uses `extractLetsFromExpr` / `extractLetsFromPipeline` / `extractLookupTarget` / `validateLookupShape` from [`lookup-stage.md`](./lookup-stage.md). See [`union-stage.md`](./union-stage.md) and [LANGUAGE.md → Collection union](../LANGUAGE.md#collection-union-push).
 - **`$$$.<coll>.find / .filter(...) → $lookup`** — **shipped**. See [`lookup-stage.md`](./lookup-stage.md) for the predicate translation, auto-`let` extraction, chained-terminal materialisation, and error catalog. User-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter).
 - **`$$$$.<db>.<coll>.find / .filter(...) → $lookup` with `from: { db, coll }`** — **shipped**. Same surface as `$$$`, with the cross-database `from` object shape (Atlas Data Federation form). Community MongoDB doesn't accept the object form, so the lowered MQL runs only on Atlas Data Federation or equivalent federated deployments. See [`lookup-stage.md`](./lookup-stage.md) → "Cluster-rooted ($$$$) cross-database joins" and [LANGUAGE.md → Cross-database lookups](../LANGUAGE.md#cross-database-lookups-dbcollfind--filter).
 
@@ -125,7 +126,7 @@ Tests use the string form rather than the arrow form because `$$` / `$$$` / `$$$
 
 Each remaining item lands in its own session as a codegen branch on the corresponding ref node — the parser, lexer, and AST stay stable.
 
-- **Method dispatch on `$$`** — `$$.find(…)`, `$$.aggregate(…)`, etc. as the entry to operations on the current collection. Needs the schema/metadata threading below.
+- **`$$.find / .filter` on the current collection** — needs the schema/metadata threading below to resolve the receiver's name into the inner `$lookup.from` (or the outer match against `$$ROOT`). Until then, only `.push(...)` is supported on `$$`.
 - **Schema / metadata threading** — collection-name and database-name binding needs a slot on `GenerateCtx`, fed by the entry-point (`jsmql.compile`, the mongoose plugin, or a new `jsmql.bind({ db, collection })`).
 - **Ambient globals** — `src/ops.ts` (or a parallel generator) declares `$$`, `$$$`, `$$$$` so the arrow-form syntax type-checks under TypeScript.
 - **Nested lookups** — `$$$.coll2.find/filter(...)` (or any `$$$$` variant) inside another lookup's predicate or block body. Currently rejected with a targeted error by `rejectNestedLookup` in [`lookup-stage.md`](./lookup-stage.md).

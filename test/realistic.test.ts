@@ -1122,3 +1122,47 @@ $project({ name: 1, recentOrders: 1, nOrders });
     ]);
   });
 });
+
+// `$$.push(...)` — merge active users from the live collection with deleted
+// users from an archive collection and a couple of synthetic placeholder
+// docs, then page the unified result. Demonstrates inline-doc batching,
+// `.filter` spread, and source-order preservation across mixed args. Each
+// real-world dashboard that paginates across "current + archived" data uses
+// the same shape; this is the canonical jsmql idiom.
+describe("union live + archive users with placeholders via $$.push", { features: ["Pipelines"] }, () => {
+  it(
+    "compiles to a series of $unionWith stages with batched $documents",
+    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      expect(
+        jsmql`
+$match($.active === true);
+$$.push(
+  { _id: "system", name: "System", role: "synthetic" },
+  { _id: "anon",   name: "Anonymous", role: "synthetic" },
+  ...$$$.archive_users.filter(u => u.deleted === true)
+);
+$sort({ name: 1 });
+$limit(50);
+      `,
+      ).toEqual([
+        { $match: { active: true } },
+        {
+          $unionWith: {
+            pipeline: [
+              {
+                $documents: [
+                  { _id: "system", name: "System", role: "synthetic" },
+                  { _id: "anon", name: "Anonymous", role: "synthetic" },
+                ],
+              },
+            ],
+          },
+        },
+        { $unionWith: { coll: "archive_users", pipeline: [{ $match: { deleted: true } }] } },
+        { $sort: { name: 1 } },
+        { $limit: 50 },
+      ]);
+    },
+  );
+});

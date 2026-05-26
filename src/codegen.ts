@@ -593,8 +593,17 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return `$${expr.path}`;
 
     case "CollectionRef":
+      // `$$.push(...)` is materialised into `$unionWith` stages by `pipeline.ts`
+      // *before* codegen sees the surrounding expression, so a bare
+      // `CollectionRef` reaching this case is a use outside the supported
+      // shape — either `$$` was referenced as a value (in arithmetic, a Filter,
+      // an inline expression) or `.push(...)` appears outside Pipeline
+      // statement position (on a RHS, inside another expression, etc.).
       throw new CodegenError(
-        `'$$' (current-collection reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.`,
+        `'$$' (current collection) is statement-only and only supports '.push(...)'. ` +
+          `Write \`$$.push({...})\`, \`$$.push(...$$$.<coll>[.filter(pred)])\`, or \`$$.push($$$.<coll>.find(pred))\` ` +
+          `as a top-level Pipeline statement to append documents (lowers to '$unionWith'). ` +
+          `Bare '$$' has no value, and '$$.push(...)' cannot appear on a RHS or inside another expression.`,
         expr.pos,
       );
     case "DatabaseRef":
