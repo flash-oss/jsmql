@@ -1090,3 +1090,35 @@ $.submitted === true
     ).toEqual({ score: { $gte: 75 }, submitted: true, $expr: { $in: ["$grade", ["A", "B"]] } });
   });
 });
+
+describe("user-with-orders join via $$$ lookup", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+    expect(
+      jsmql`
+$match($.active === true);
+$.recentOrders = $$$.orders.filter(o => {
+  $match(o.userId === $._id);
+  $sort({ createdAt: -1 });
+  $limit(5);
+});
+let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
+$project({ name: 1, recentOrders: 1, nOrders });
+      `,
+    ).toEqual([
+      { $match: { active: true } },
+      {
+        $lookup: {
+          from: "orders",
+          let: { _id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$_id"] } } }, { $sort: { createdAt: -1 } }, { $limit: 5 }],
+          as: "recentOrders",
+        },
+      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
+      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+      { $set: { "__jsmql.nOrders": "$__jsmql.__lookup1" } },
+      { $project: { name: 1, recentOrders: 1, nOrders: "$__jsmql.nOrders" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});

@@ -14,6 +14,7 @@ import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pip
 import { translateMatchBody } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
 import { LexError } from "./lexer.ts";
+import { containsLookupCall } from "./lookup-translation.ts";
 import type { Program, Expr, Pipeline } from "./ast.ts";
 
 // Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
@@ -617,6 +618,24 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
+  // Lookup syntax in the bare-expression branch (no `;`, no stage call): would
+  // produce a stray `DatabaseRef` error. Catch it here so the message points
+  // at the right shape — add a `;` (or any update op / let / stage call) to
+  // flip into Pipeline mode.
+  if (
+    ast.type !== "Pipeline" &&
+    ast.type !== "UpdateFilter" &&
+    !isPipelineAst(ast) &&
+    detectStageIntent(ast) === null &&
+    containsLookupCall(ast)
+  ) {
+    throw new CodegenError(
+      "Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. " +
+        "Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, " +
+        "and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
+      ast.pos,
+    );
+  }
   const result = lowerProgram(ast, ctx, generateFilter);
   // Update-filter inputs that compile to a single stage (`{ $set: { …RHS… } }`
   // or `{ $unset: "x" }`) get wrapped into a one-element pipeline at the
@@ -639,6 +658,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 
 /** Expression-mode lowering: `jsmql.expr()` goes through this. */
 function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  rejectLookupOutsidePipeline(ast, "jsmql.expr");
   // No array-wrap for update-filter output (see `lowerWithCtx` comment): the
   // caller asked for a raw building block, the bare `{ $set: … }` shape is
   // exactly what fits inside a hand-written `$set` / `$addFields` stage or
@@ -657,6 +677,7 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
  * `$expr` fallback for the untranslatable residual).
  */
 function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  rejectLookupOutsidePipeline(ast, "jsmql.filter");
   if (ast.type === "Pipeline") {
     throw new CodegenError(
       "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. " +
@@ -710,6 +731,19 @@ function lowerPipelineStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
  * concept, not an API concept, and matches the MongoDB driver's typings.)
  */
 function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  // MongoDB's update-pipeline form whitelists only $addFields/$set, $project/$unset,
+  // $replaceRoot/$replaceWith — $lookup isn't in that list (it's documented as
+  // disallowed on every update method's reference page). Catching the lookup
+  // syntax pre-codegen gives a message that names the right entry point instead
+  // of the generic "rejected '$lookup'" produced by the downstream whitelist.
+  if (containsLookupCall(ast)) {
+    throw new CodegenError(
+      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter(...)'): MongoDB's aggregation-pipeline update form only accepts " +
+        Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") +
+        ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
+      ast.pos,
+    );
+  }
   const stages = lowerToPipelineStages(ast, ctx, "jsmql.update");
   for (let i = 0; i < stages.length; i++) {
     const stageName = Object.keys(stages[i] as Record<string, unknown>)[0];
@@ -723,6 +757,23 @@ function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     }
   }
   return stages;
+}
+
+/**
+ * Lookup syntax (`$$$.<coll>.find/filter(...)`) requires Pipeline mode —
+ * the lowering emits `$lookup` (+ follow-up) stages. Filter mode /
+ * `jsmql.expr` would just see a stray `DatabaseRef` and surface the
+ * generic bare-reference error; this pre-gate gives a precise message
+ * naming the right entry point instead.
+ */
+function rejectLookupOutsidePipeline(ast: Program, apiName: string): void {
+  if (containsLookupCall(ast)) {
+    throw new CodegenError(
+      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter(...)') — joins are Pipeline-only. ` +
+        "Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      ast.pos,
+    );
+  }
 }
 
 /**

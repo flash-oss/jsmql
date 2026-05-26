@@ -43,11 +43,12 @@
 // pipeline ctx so a let referenced inside an otherwise-translatable $match body
 // still resolves correctly.
 
-import type { Expr, ArrayElement, UpdateOp, Pipeline, LetDecl } from "./ast.ts";
+import type { Expr, ArrayElement, UpdateOp, Pipeline, LetDecl, PipelineStmt, UpdateFilter, CallArg } from "./ast.ts";
 import {
   generateWithCtx,
   generateUpdateOpGroups,
   generateUpdateFilter,
+  updateOpWritePath,
   CodegenError,
   EMPTY_CTX,
   extendCtxLets,
@@ -60,6 +61,15 @@ import {
 import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 import { translateMatchBody } from "./match-translation.ts";
+import {
+  detectLookupCall,
+  lowerLookup,
+  extractLookupCalls,
+  createSlotAllocator,
+  validateLookupShape,
+  type SlotAllocator,
+  type SubPipelineLowerer,
+} from "./lookup-translation.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -167,6 +177,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   let updateBuffer: UpdateOp[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
+  const tracking = makeSlotTracking();
 
   const flushUpdateOps = () => {
     if (updateBuffer.length === 0) return;
@@ -175,25 +186,56 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   };
 
   ast.elements.forEach((el, i) => {
-    if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+    if (el.type === "AssignExpr") {
+      const direct = detectLookupCall(el.value);
+      if (direct !== null) {
+        validateLookupShape(el.value);
+        flushUpdateOps();
+        const asPath = updateOpWritePath({ type: "AssignExpr", target: el.target, value: el.value, pos: el.pos });
+        const stages = lowerLookup(direct, asPath, ctx, lowerBlock);
+        for (const s of stages) out.push(s);
+        return;
+      }
+      const { stages, rewritten } = extractLookupCalls(el.value, ctx, tracking.alloc, lowerBlock);
+      if (stages.length > 0) {
+        flushUpdateOps();
+        for (const s of stages) out.push(s);
+      }
+      updateBuffer.push({ type: "AssignExpr", target: el.target, value: rewritten, pos: el.pos });
+      return;
+    }
+    if (el.type === "DeleteStmt") {
       updateBuffer.push(el);
       return;
     }
     if (el.type === "LetDecl") {
       flushUpdateOps();
-      const stage = lowerLetDecl(el, ctx);
+      const direct = detectLookupCall(el.value);
+      if (direct !== null) {
+        validateLookupShape(el.value);
+        const slot = `${LET_NAMESPACE}.${el.name}`;
+        const stages = lowerLookup(direct, slot, ctx, lowerBlock);
+        for (const s of stages) out.push(s);
+        ctx = extendCtxLets(ctx, el.name, slot);
+        everHadLet = true;
+        return;
+      }
+      const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, tracking.alloc, lowerBlock);
+      for (const s of prologue) out.push(s);
+      const stage = lowerLetDecl({ type: "LetDecl", name: el.name, value: rewritten, pos: el.pos }, ctx);
       out.push(stage.set);
       ctx = stage.ctx;
       everHadLet = true;
       return;
     }
     flushUpdateOps();
-    const result = lowerStageElement(el, i, ctx);
+    const rewrittenEl = extractFromStageElement(el, ctx, tracking.alloc, lowerBlock, out);
+    const result = lowerStageElement(rewrittenEl, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
   });
   flushUpdateOps();
-  if (everHadLet) out.push({ $unset: LET_NAMESPACE });
+  if (everHadLet || tracking.used()) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
@@ -216,27 +258,43 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
   const out: unknown[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
+  const tracking = makeSlotTracking();
 
   p.stmts.forEach((stmt, i) => {
     if (stmt.type === "LetDecl") {
-      const stage = lowerLetDecl(stmt, ctx);
+      const direct = detectLookupCall(stmt.value);
+      if (direct !== null) {
+        validateLookupShape(stmt.value);
+        const slot = `${LET_NAMESPACE}.${stmt.name}`;
+        const stages = lowerLookup(direct, slot, ctx, lowerBlock);
+        for (const s of stages) out.push(s);
+        ctx = extendCtxLets(ctx, stmt.name, slot);
+        everHadLet = true;
+        return;
+      }
+      const { stages: prologue, rewritten } = extractLookupCalls(stmt.value, ctx, tracking.alloc, lowerBlock);
+      for (const s of prologue) out.push(s);
+      const stage = lowerLetDecl({ type: "LetDecl", name: stmt.name, value: rewritten, pos: stmt.pos }, ctx);
       out.push(stage.set);
       ctx = stage.ctx;
       everHadLet = true;
       return;
     }
     if (stmt.type === "UpdateFilter") {
-      const result = generateUpdateFilter(stmt, ctx);
-      if (Array.isArray(result)) out.push(...result);
-      else out.push(result);
+      // Process each op in order, splitting at lookup-bearing ops so the
+      // lookup stages can sit between coalesced $set groups.
+      const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock);
+      for (const s of result) out.push(s);
       return;
     }
-    const result = lowerStageElement(stmt, i, ctx);
+    // Stage call statement (Expr that resolves to a stage shape).
+    const rewrittenStmt = extractFromStageElement(stmt as Expr, ctx, tracking.alloc, lowerBlock, out);
+    const result = lowerStageElement(rewrittenStmt as ArrayElement, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
   });
 
-  if (everHadLet) out.push({ $unset: LET_NAMESPACE });
+  if (everHadLet || tracking.used()) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
@@ -349,6 +407,22 @@ function generateBodyObject(
 function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
   if (ast.type !== "ArrayLiteral") {
     internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
+  }
+  // Nested lookups: a sub-pipeline (`$lookup.pipeline`, `$unionWith.pipeline`,
+  // `$facet.*`) that contains its own `$$$.<coll>.find/filter(...)` is not
+  // supported in this release. The pre-materialisation walker would emit
+  // stages *inside* the sub-pipeline, but coordinating the outer-pipeline's
+  // let-bindings across the nesting is the bit we've deferred to v2 —
+  // surface a targeted error here instead of producing wrong MQL.
+  for (const el of ast.elements) {
+    const inner = findFirstLookupInElement(el);
+    if (inner !== null) {
+      throw new CodegenError(
+        `Nested lookup ('$$$.<coll>.find/filter' inside another sub-pipeline) is not yet supported in this release. ` +
+          `Hoist the inner lookup to a sibling stage in the outer pipeline.`,
+        inner,
+      );
+    }
   }
   const out: unknown[] = [];
   let updateBuffer: UpdateOp[] = [];
@@ -471,4 +545,224 @@ function formatStageList(): string {
   const all = Object.keys(STAGES).sort();
   const head = all.slice(0, 12).join(", ");
   return `${head}, … (${all.length} total)`;
+}
+
+// ── Lookup integration ────────────────────────────────────────────────────────
+
+/**
+ * Lower a Pipeline AST (a block-body lambda body, normalised by the parser) to a
+ * stage array. Provided to lookup-translation as its SubPipelineLowerer so the
+ * `$lookup.pipeline` body for a block-body lambda uses the same `;`-separated
+ * semantics as a top-level pipeline. `extractLookupCalls` itself rejects nested
+ * `$$$.<coll>.find/filter(...)` inside this block via `rejectNestedLookup`, so
+ * by the time `lowerBlock` runs the block is free of nested lookups and can be
+ * lowered with `generateImplicitPipeline` unchanged.
+ */
+const lowerBlock: SubPipelineLowerer = (block, ctx) => generateImplicitPipeline(block, ctx) as object[];
+
+/**
+ * Per-pipeline slot allocator plus a flag for whether any slot was handed out.
+ * Used to decide whether to emit the trailing `$unset "__jsmql"` cleanup at
+ * the end of a top-level pipeline — `__jsmql.__lookup<N>` slots ride the same
+ * cleanup as `let`-bindings, so a pipeline with no lets but at least one
+ * lookup still needs the trailing `$unset`.
+ */
+function makeSlotTracking(): { alloc: SlotAllocator; used: () => boolean } {
+  const base = createSlotAllocator();
+  let touched = false;
+  return {
+    alloc: () => {
+      touched = true;
+      return base();
+    },
+    used: () => touched,
+  };
+}
+
+/**
+ * Lower one `UpdateFilter` statement, splitting at any update op whose RHS is
+ * a direct lookup. Adjacent non-lookup update ops keep coalescing through
+ * `generateUpdateOpGroups`; a direct-lookup op flushes the buffer, emits the
+ * lookup stages (using its LHS field path as the `$lookup.as` slot), and
+ * resumes buffering on the next op. Chained-on-lookup and lookup-bearing
+ * arithmetic RHSes go through `extractLookupCalls` first — the prologue
+ * stages flush before the op is queued.
+ */
+function lowerUpdateFilterWithLookups(
+  stmt: UpdateFilter,
+  startCtx: GenerateCtx,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+): object[] {
+  const out: object[] = [];
+  let buffer: UpdateOp[] = [];
+  const ctx = startCtx;
+  const flush = () => {
+    if (buffer.length === 0) return;
+    for (const stage of generateUpdateOpGroups(buffer, ctx)) out.push(stage);
+    buffer = [];
+  };
+  for (const op of stmt.ops) {
+    if (op.type === "AssignExpr") {
+      const direct = detectLookupCall(op.value);
+      if (direct !== null) {
+        validateLookupShape(op.value);
+        flush();
+        const asPath = updateOpWritePath(op);
+        const stages = lowerLookup(direct, asPath, ctx, lowerBlockFn);
+        for (const s of stages) out.push(s);
+        continue;
+      }
+      const { stages, rewritten } = extractLookupCalls(op.value, ctx, allocSlot, lowerBlockFn);
+      if (stages.length > 0) {
+        flush();
+        for (const s of stages) out.push(s);
+      }
+      buffer.push({ type: "AssignExpr", target: op.target, value: rewritten, pos: op.pos });
+      continue;
+    }
+    // DeleteStmt — target is a field path; no lookups possible.
+    buffer.push(op);
+  }
+  flush();
+  return out;
+}
+
+/**
+ * Extract lookups from one stage-call element (e.g. a `$project({...})` or
+ * `{ $project: {...} }` whose body has a lookup buried in some entry). The
+ * stage's body expressions are walked; lookups are materialised into internal
+ * slots and prologue stages are pushed to `out` *before* the stage itself.
+ * Returns the rewritten element (an ArrayElement of the same shape) so the
+ * existing stage lowering machinery handles it unchanged.
+ */
+function extractFromStageElement(
+  el: ArrayElement,
+  ctx: GenerateCtx,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+  out: unknown[],
+): ArrayElement {
+  if (el.type === "OperatorCall") {
+    const args = el.args.map((arg): CallArg => {
+      if (arg.type === "SpreadElement") {
+        const { stages, rewritten } = extractLookupCalls(arg.argument, ctx, allocSlot, lowerBlockFn);
+        for (const s of stages) out.push(s);
+        return { type: "SpreadElement", argument: rewritten, pos: arg.pos };
+      }
+      const { stages, rewritten } = extractLookupCalls(arg, ctx, allocSlot, lowerBlockFn);
+      for (const s of stages) out.push(s);
+      return rewritten;
+    });
+    return { type: "OperatorCall", name: el.name, style: el.style, args, pos: el.pos };
+  }
+  if (el.type === "ObjectLiteral") {
+    // Stage-object form: `{ $stage: <body> }`. Walk the entries.
+    const entries = el.entries.map((entry) => {
+      if (entry.type === "SpreadElement") {
+        const { stages, rewritten } = extractLookupCalls(entry.argument, ctx, allocSlot, lowerBlockFn);
+        for (const s of stages) out.push(s);
+        return { type: "SpreadElement" as const, argument: rewritten, pos: entry.pos };
+      }
+      const { stages, rewritten } = extractLookupCalls(entry.value, ctx, allocSlot, lowerBlockFn);
+      for (const s of stages) out.push(s);
+      return { type: "KeyValueEntry" as const, key: entry.key, value: rewritten, pos: entry.pos };
+    });
+    return { type: "ObjectLiteral", entries, pos: el.pos };
+  }
+  return el;
+}
+
+/**
+ * Find the source position of the first `$$$.<coll>.find/filter(...)` chain
+ * inside an ArrayElement, or null if none. Used by `generatePipelineWithCtx`
+ * to surface a precise nested-lookup-not-supported error.
+ */
+function findFirstLookupInElement(el: ArrayElement): number | null {
+  if (el.type === "AssignExpr") return findFirstLookupInExpr(el.value);
+  if (el.type === "DeleteStmt") return null;
+  if (el.type === "LetDecl") return findFirstLookupInExpr(el.value);
+  if (el.type === "SpreadElement") return findFirstLookupInExpr(el.argument);
+  return findFirstLookupInExpr(el as Expr);
+}
+
+function findFirstLookupInExpr(expr: Expr): number | null {
+  const direct = detectLookupCall(expr);
+  if (direct !== null) return direct.pos;
+  // Recurse into common shapes
+  if (expr.type === "MethodCall") {
+    const a = findFirstLookupInExpr(expr.object);
+    if (a !== null) return a;
+    for (const arg of expr.args) {
+      const a2 = arg.type === "SpreadElement" ? findFirstLookupInExpr(arg.argument) : findFirstLookupInExpr(arg);
+      if (a2 !== null) return a2;
+    }
+    return null;
+  }
+  if (expr.type === "MemberAccess") return findFirstLookupInExpr(expr.object);
+  if (expr.type === "IndexAccess") {
+    return findFirstLookupInExpr(expr.object) ?? findFirstLookupInExpr(expr.index);
+  }
+  if (expr.type === "BinaryExpr") return findFirstLookupInExpr(expr.left) ?? findFirstLookupInExpr(expr.right);
+  if (expr.type === "UnaryExpr") return findFirstLookupInExpr(expr.operand);
+  if (expr.type === "TernaryExpr") {
+    return (
+      findFirstLookupInExpr(expr.condition) ??
+      findFirstLookupInExpr(expr.consequent) ??
+      findFirstLookupInExpr(expr.alternate)
+    );
+  }
+  if (expr.type === "OperatorCall" || expr.type === "MathCall" || expr.type === "ObjectCall") {
+    for (const arg of expr.args) {
+      const a = arg.type === "SpreadElement" ? findFirstLookupInExpr(arg.argument) : findFirstLookupInExpr(arg);
+      if (a !== null) return a;
+    }
+    return null;
+  }
+  if (expr.type === "ArrayLiteral") {
+    for (const child of expr.elements) {
+      const a = findFirstLookupInElement(child);
+      if (a !== null) return a;
+    }
+    return null;
+  }
+  if (expr.type === "ObjectLiteral") {
+    for (const entry of expr.entries) {
+      if (entry.type === "SpreadElement") {
+        const a = findFirstLookupInExpr(entry.argument);
+        if (a !== null) return a;
+      } else {
+        if (entry.key.kind === "computed") {
+          const a = findFirstLookupInExpr(entry.key.expr);
+          if (a !== null) return a;
+        }
+        const a = findFirstLookupInExpr(entry.value);
+        if (a !== null) return a;
+      }
+    }
+    return null;
+  }
+  if (expr.type === "Lambda") {
+    if (expr.body !== undefined) return findFirstLookupInExpr(expr.body);
+    if (expr.block !== undefined) {
+      for (const stmt of expr.block.stmts) {
+        if (stmt.type === "UpdateFilter") {
+          for (const op of stmt.ops) {
+            if (op.type === "AssignExpr") {
+              const a = findFirstLookupInExpr(op.value);
+              if (a !== null) return a;
+            }
+          }
+        } else if (stmt.type === "LetDecl") {
+          const a = findFirstLookupInExpr(stmt.value);
+          if (a !== null) return a;
+        } else {
+          const a = findFirstLookupInExpr(stmt as Expr);
+          if (a !== null) return a;
+        }
+      }
+    }
+    return null;
+  }
+  return null;
 }

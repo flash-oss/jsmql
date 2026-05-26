@@ -124,7 +124,7 @@ export type Expr =
   | { type: "MemberAccess"; object: Expr; member: string; pos: number; optional?: boolean }
   | { type: "MethodCall"; object: Expr; method: string; args: CallArg[]; pos: number; optional?: boolean }
   | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
-  | { type: "Lambda"; params: string[]; body: Expr; pos: number }
+  | { type: "Lambda"; params: string[]; body?: Expr; block?: Pipeline; pos: number }
   | { type: "TypeofExpr"; operand: Expr; pos: number }
   | { type: "NewDate"; args: Expr[]; pos: number }
   | { type: "NewSet"; arg: Expr | null; pos: number }

@@ -598,8 +598,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         expr.pos,
       );
     case "DatabaseRef":
+      // The lookup path (`$$$.<coll>.find/filter(...)`) is materialised into
+      // pipeline stages by `pipeline.ts` *before* codegen sees the
+      // surrounding expression — so a bare `DatabaseRef` that reaches this
+      // case is a use outside the supported shape. Either the user wrote
+      // `$$$.<coll>` without `.find/.filter`, used the chain in an
+      // expression-only position (a Filter, `jsmql.expr`, an arithmetic
+      // operand), or used a method other than `.find/.filter` that the
+      // pre-materialisation walker didn't recognise.
       throw new CodegenError(
-        `'$$$' (current-database reference) is reserved syntax — not yet lowered to MQL. Coming in a future release.`,
+        `'$$$.<coll>' must be followed by .find(pred) or .filter(pred) and consumed as a value (assigned to a field, let-bound, or read via .length / .reduce / member access). Bare '$$$' reference is not a value, and lookups are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos,
       );
     case "ClusterRef":
@@ -1414,6 +1422,12 @@ function generateOperatorCall(
     }
     const lambdaExpr = args[1];
     if (lambdaExpr.type !== "Lambda") throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
+    if (lambdaExpr.body === undefined) {
+      throw new CodegenError(
+        "$let second argument cannot be a block-body arrow — only '$$$.<coll>.find/filter(...)' accepts block bodies.",
+        lambdaExpr.pos,
+      );
+    }
     const vars = generateStaticObjectEntries(varsExpr.entries, ctx);
     const bodyCtx = extendCtx(ctx, lambdaExpr.params);
     return { $let: { vars, in: _generate(lambdaExpr.body, bodyCtx) } };
@@ -2518,7 +2532,13 @@ function requireLambda(
       first?.pos ?? callerPos,
     );
   }
-  return first;
+  if (first.body === undefined) {
+    throw new CodegenError(
+      `.${method}() does not accept a block-body arrow — only '$$$.<coll>.find/filter(...)' does. Use an expression-body arrow like \`x => x > 0\`.`,
+      first.pos,
+    );
+  }
+  return first as { type: "Lambda"; params: string[]; body: Expr; pos: number };
 }
 
 // ── Call expressions (IIFE → $let) ────────────────────────────────────────────
@@ -2537,6 +2557,12 @@ function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx,
     throw new CodegenError(
       `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE → $let). For named operators use $opName(...); for methods use receiver.method(...).`,
       pos,
+    );
+  }
+  if (callee.body === undefined) {
+    throw new CodegenError(
+      `IIFE callee cannot be a block-body arrow — only '$$$.<coll>.find/filter(...)' accepts block bodies.`,
+      callee.pos,
     );
   }
   if (callee.params.length !== args.length) {
@@ -2737,6 +2763,12 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
           lambda.pos,
         );
       }
+      if (lambda.body === undefined) {
+        throw new CodegenError(
+          `Object.groupBy() does not accept a block-body arrow — only '$$$.<coll>.find/filter(...)' does.`,
+          lambda.pos,
+        );
+      }
       // Reduce over the input. For each element, compute the discriminator key with the
       // user's lambda param bound to $$this. Use $let to materialise the key once, then
       // append the current element to the array under that key in the accumulator.
@@ -2878,6 +2910,12 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
   }
   if (mapFn.type !== "Lambda") {
     throw new CodegenError(`Array.from() second argument must be an arrow function (e.g. (_, i) => i * 2)`, mapFn.pos);
+  }
+  if (mapFn.body === undefined) {
+    throw new CodegenError(
+      `Array.from() does not accept a block-body arrow — only '$$$.<coll>.find/filter(...)' does.`,
+      mapFn.pos,
+    );
   }
   if (mapFn.params.length !== 2) {
     throw new CodegenError(
@@ -3239,7 +3277,11 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
       collectArgsInto(expr.args, out);
       return;
     case "Lambda":
-      collectReadsInto(expr.body, out);
+      // collectReadsInto runs on coalesced update-op RHS chains; block-form
+      // lambdas only appear inside `$$$.<coll>.find/filter(...)`, which is
+      // intercepted before this walker runs — so a block-form here is
+      // unreachable. Defensive guard: skip the body if absent.
+      if (expr.body !== undefined) collectReadsInto(expr.body, out);
       return;
     case "TypeofExpr":
       collectReadsInto(expr.operand, out);

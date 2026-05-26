@@ -73,6 +73,8 @@ jsmql.update() rejected '$sort' (stage 1): MongoDB's aggregation-pipeline update
 
 `let` bindings compose cleanly: they lower to `$set: { "__jsmql.<name>": ... }` plus a trailing `$unset: "__jsmql"` (see [let-bindings.md](let-bindings.md)), both of which are in the whitelist.
 
+**Lookup syntax is pre-rejected.** `$$$.<coll>.find/filter(...)` lowers to `$lookup` (+ follow-up) stages — MongoDB does not permit `$lookup` in the aggregation-pipeline update form (cross-checked against the [`db.collection.updateOne`](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline) documentation). `lowerUpdateStrict` runs `containsLookupCall` before codegen and throws a targeted message that names the right entry point (`jsmql.pipeline()`) instead of the generic post-codegen "rejected `$lookup`" whitelist error. The whitelist itself stays as-is and is the second line of defence. See [lookup-stage.md](lookup-stage.md).
+
 ## Error messages
 
 Every rejection error carries the offending position from the AST root (`ast.pos`) so editor tooling can underline the source region. The messages follow the DX rules in the root `CLAUDE.md`:
