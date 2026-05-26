@@ -413,7 +413,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("statement-position `$$.filter(...)` (not in facet) suggests `$match` or facet shape", () => {
     expect(() => jsmql(`$$.filter(o => o.x > 0);`)).toThrow(
-      /'\$\$\.filter\(<predicate>\)' is only valid as a value inside.*`\$match\(<predicate>\)` instead/,
+      /'\$\$\.filter\(<predicate>\)' is only valid as the RHS of `\$\$ = \$\$\.filter\(<predicate>\)` or as a value inside.*`\$match\(<predicate>\)` instead/,
     );
   });
 
@@ -421,5 +421,117 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     expect(() => jsmql(`let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;`)).toThrow(
       /can't be read after.*\$facet/,
     );
+  });
+});
+
+describe("pipeline — replace stream (`$$ = <expr>`)", () => {
+  it("`$$ = $$.filter(p)` lowers to a single `$match` stage", () => {
+    expect(jsmql(`$$ = $$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)).toEqual([
+      { $match: { client: 156, createdAt: { $gte: "2026-01-01" } } },
+    ]);
+  });
+
+  it("`$$ = $$$.<coll>.filter(p)` lowers to `$limit: 0` + `$unionWith`", () => {
+    expect(jsmql(`$$ = $$$.transactions.filter(t => t.client === 156);`)).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "transactions", pipeline: [{ $match: { client: 156 } }] } },
+    ]);
+  });
+
+  it("source switch translates Date literal in the predicate", () => {
+    const out = jsmql(`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01"));`) as object[];
+    // Date folds to a JS `Date` instance, so deep-equal needs the same shape.
+    expect(out).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "transactions", pipeline: [{ $match: { createdAt: { $gte: new Date("2026-01-01") } } }] } },
+    ]);
+  });
+
+  it("bracketed `[...]` form works for both shapes", () => {
+    expect(jsmql(`[ $$ = $$.filter(t => t.x > 0) ]`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
+    expect(jsmql(`[ $$ = $$$.users.filter(u => u.active) ]`)).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "users", pipeline: [{ $match: { $expr: "$active" } }] } },
+    ]);
+  });
+
+  it("block-body predicate in source-switch becomes the block's stages", () => {
+    expect(
+      jsmql(`$$ = $$$.transactions.filter(t => { $match(t.amount > 100); $sort({ amount: -1 }); $limit(5); });`),
+    ).toEqual([
+      { $limit: 0 },
+      {
+        $unionWith: {
+          coll: "transactions",
+          pipeline: [{ $match: { amount: { $gt: 100 } } }, { $sort: { amount: -1 } }, { $limit: 5 }],
+        },
+      },
+    ]);
+  });
+
+  it("cross-DB source switch emits the `{ db, coll }` shape", () => {
+    expect(jsmql(`$$ = $$$$.analytics.events.filter(e => e.type === "purchase");`)).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: { db: "analytics", coll: "events" }, pipeline: [{ $match: { type: "purchase" } }] } },
+    ]);
+  });
+
+  it("`$$ = $$.filter(...)` preserves the outer let scope", () => {
+    // The narrow form is just a $match — outer lets stay visible inside its
+    // predicate AND in subsequent stages.
+    expect(jsmql(`let cutoff = 10; $$ = $$.filter(t => t.score > cutoff); $.flagged = true;`)).toEqual([
+      { $set: { "__jsmql.cutoff": 10 } },
+      { $match: { $expr: { $gt: ["$score", "$__jsmql.cutoff"] } } },
+      { $set: { flagged: true } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("source switch (`$$ = $$$.<coll>.filter(...)`) clears the let scope", () => {
+    // The outer collection's docs are gone after `$limit: 0`, so any prior
+    // `let` binding is unreadable. Subsequent references must error precisely.
+    expect(() => jsmql(`let cutoff = 10; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`)).toThrow(
+      /can't be read after.*\$unionWith/,
+    );
+  });
+
+  it("rejects `$$ = []` with a 'not supported' hint", () => {
+    expect(() => jsmql(`$$ = [];`)).toThrow(/'\$\$ = \[\]'.*not supported.*\$match.*\$limit\(0\)/);
+  });
+
+  it("rejects `$$ = <ternary>` as 'not yet supported'", () => {
+    expect(() => jsmql(`$$ = true ? $$.filter(o => o.x) : $$.filter(o => o.y);`)).toThrow(
+      /'\$\$ = <ternary>'.*not yet supported/,
+    );
+  });
+
+  it("rejects `$$ = $$$.<coll>.find(...)` and suggests `.filter`", () => {
+    expect(() => jsmql(`$$ = $$$.users.find(u => u.active);`)).toThrow(/'\.find\(\.\.\.\)' is not allowed/);
+  });
+
+  it("rejects `$$ = $$.map(...)` with a 'only `.filter`' hint", () => {
+    expect(() => jsmql(`$$ = $$.map(t => t.x);`)).toThrow(
+      /'\$\$ = …' RHS supports only.*\.filter.*'\.map\(\.\.\.\)' is not allowed/,
+    );
+  });
+
+  it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
+    expect(() => jsmql(`$$ = $$.filter(t => $.x > 5);`)).toThrow(/\$\.<field>.*use the lambda parameter.*\bt\.x\b/);
+  });
+
+  it("rejects bare `$$$.<coll>` on the RHS (no `.filter`)", () => {
+    // The user named a collection but didn't call `.filter` — the catch-all
+    // path names both supported forms.
+    expect(() => jsmql(`$$ = $$$.transactions;`)).toThrow(
+      /'\$\$ = …' RHS must be.*\$\$\.filter.*or.*\$\$\$\.<coll>\.filter/,
+    );
+  });
+
+  it("validate() surfaces a real .pos for `$$ = []`", () => {
+    const r = jsmql.validate(`$$ = [];`);
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].code).toBe("CODEGEN_ERROR");
+    expect(r.errors[0].pos).toBeGreaterThan(0);
+    expect(r.errors[0].message).toMatch(/not supported/);
   });
 });

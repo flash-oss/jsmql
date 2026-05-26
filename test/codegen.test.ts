@@ -3950,12 +3950,12 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     // docs/specs/union-stage.md.
     it("dot-ident form (not .push / .filter) throws statement-only at codegen", () => {
       expect(() => jsmql.expr("$$.foo")).toThrow(
-        /statement-only and supports '\.push\(\.\.\.\)' or '\.filter\(\.\.\.\)' in the facet pattern/,
+        /statement-only and supports '\.push\(\.\.\.\)', '\.filter\(\.\.\.\)' in the facet pattern, and '\$\$ = <expr>'/,
       );
     });
     it("bracket-expr form (string literal) throws statement-only at codegen", () => {
       expect(() => jsmql.expr('$$["foo"]')).toThrow(
-        /statement-only and supports '\.push\(\.\.\.\)' or '\.filter\(\.\.\.\)' in the facet pattern/,
+        /statement-only and supports '\.push\(\.\.\.\)', '\.filter\(\.\.\.\)' in the facet pattern, and '\$\$ = <expr>'/,
       );
     });
     it("bracket-expr form (compile-form param) throws when the compiled function is called", () => {

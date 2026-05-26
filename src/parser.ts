@@ -929,6 +929,10 @@ export class Parser {
 
   private isFieldPathTarget(target: Expr): boolean {
     if (target.type === "FieldRef") return true;
+    // Bare `$$` is a valid assignment target for the stream-level
+    // root-replacement form (`$$ = <expr>`). The parser accepts the shape
+    // here; pipeline lowering enforces the supported RHS forms.
+    if (target.type === "CollectionRef") return true;
     if (target.type === "MemberAccess") return this.isFieldPathTarget(target.object);
     return false;
   }
@@ -1487,14 +1491,19 @@ export class Parser {
   /**
    * Context-reference prefix: `$$` (collection), `$$$` (database), `$$$$` (cluster).
    * Returns a bare marker AST node; postfix `.name` (MemberAccess) and `[expr]`
-   * (IndexAccess) compose via the standard primary-postfix loop. Sanity-guards
-   * that the next token is `.` or `[` so bare `$$` / `$$foo` produce an
-   * actionable error rather than a downstream surprise.
+   * (IndexAccess) compose via the standard primary-postfix loop.
+   *
+   * Sanity-guards that the next token is `.` or `[` so bare `$$$` / `$$$$`
+   * (which are meaningless on their own) produce an actionable error rather
+   * than a downstream surprise. `$$` (CollectionRef) is also valid as the LHS
+   * of `$$ = <expr>` — the stream-level root replacement — so for that prefix
+   * we additionally accept `=` and let pipeline lowering handle the shape.
    */
   private parseContextRef(nodeType: "CollectionRef" | "DatabaseRef" | "ClusterRef", displayPrefix: string): Expr {
     const prefix = this.lexer.next();
     const next = this.lexer.peek();
-    if (next.type !== TokenType.Dot && next.type !== TokenType.LBracket) {
+    const isAssignLhs = nodeType === "CollectionRef" && next.type === TokenType.Eq;
+    if (next.type !== TokenType.Dot && next.type !== TokenType.LBracket && !isAssignLhs) {
       throw new ParseError(
         `Expected '.<name>' or '[<expr>]' after '${displayPrefix}' at position ${prefix.pos}`,
         prefix.pos,

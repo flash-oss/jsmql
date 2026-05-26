@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-27 — `$$ = <expr>` → `$match` / `$limit:0 + $unionWith` (replace stream)
+
+Sister to `$ = <expr>` (single-doc replacement) at the stream level: `$$ = …` replaces the pipeline's document stream. Two RHS shapes ship; nothing else is accepted:
+
+- **Narrow** (`$$ = $$.filter(<lambda>)`) lowers to a single `$match` stage. Functionally identical to writing the predicate as a bare statement (`p;` form) — the explicit shape exists for symmetry with the source-switch form below, so the two can be swapped without changing the surrounding pipeline.
+- **Source switch** (`$$ = $$$.<coll>.filter(<lambda>)`) lowers to `[{ $limit: 0 }, { $unionWith: { coll, pipeline: [{ $match: <translated> }] } }]`. The `$limit: 0` drops the current stream; the `$unionWith` brings in filtered docs from the foreign collection. After this stage the pipeline operates on `<coll>` filtered by the predicate, but the driver call (`db.<original>.aggregate(...)`) keeps its original collection — useful when you start a query on one collection and decide to pivot.
+
+Cross-DB (`$$ = $$$$.<db>.<coll>.filter(...)`) uses the Atlas Data Federation `from: { db, coll }` shape, same as the lookup-translation does for cross-DB joins.
+
+**Predicate translation.** Both shapes share `lowerStreamFilterPredicate` in [`src/pipeline.ts`](../src/pipeline.ts): expression bodies run through `translateMatchBody` (index-friendly query syntax for the translatable half, `$expr` for the residual); block bodies pass through `lowerBlock`. The lambda param is the document being matched — `param.x` rewrites to a bare `FieldRef("x")` via `extractLetsFromExpr`; `$.<field>` references are rejected with a "use the lambda parameter" hint. Same convention as the facet form — a second spelling for the current doc would only invite drift.
+
+**Let-scope rules.** The narrow form preserves the outer pipeline's `let` scope (the predicate's `$match` is a top-level stage, not a sub-pipeline; outer lets resolve through `ctx.pipelineLets`). The source-switch form clears the let scope via `clearCtxLets(ctx, "$unionWith")` — the outer docs are gone after `$limit: 0`, so any prior `let` binding becomes unreadable. A subsequent reference produces the existing precise error: "`x` is a `let` binding and can't be read after `$unionWith` …".
+
+**Parser changes.** Two small adjustments in [`src/parser.ts`](../src/parser.ts):
+- `parseContextRef` previously required `$$` to be followed by `.` or `[` (the sanity guard against bare `$$`). Now the `CollectionRef` variant also accepts `=` so `$$ = X` parses; the other context prefixes (`$$$`, `$$$$`) keep the strict rule because `$$$ = X` / `$$$$ = X` are meaningless.
+- `isFieldPathTarget` now accepts `CollectionRef` as an assignment target, alongside `FieldRef` and its `MemberAccess` chains.
+
+**Rejections.** Anything outside the two supported RHS shapes errors with an actionable message: `$$ = []` (empty stream), `$$ = <ternary>` (conditional branching), `$$ = $$$.<coll>.find(...)` (single-doc result, not a stream), `$$ = $$.map(...)` / `$$ = $$.<other>(...)` (wrong method), bare `$$ = $$$.<coll>` (missing `.filter`), `$$ += …` / `$$++` (compound assignment, not a scalar). Each names the supported forms and, where applicable, redirects to `$ = $$$.<coll>.find(...)` for the single-doc case.
+
+**Out of scope.** `$$ = []`, top-level ternaries, and `$$.find(<predicate>)` (self-lookup) all error with "not yet supported" messages. The genuinely hard piece — passing outer `let` bindings into a `$unionWith` sub-pipeline — is deferred; the source-switch form is therefore best paired with `$$$.<other>.find(...)` for the lookup-style "fetch a scalar first" pattern rather than a `let` on the current source.
+
+Spec: [docs/specs/replace-stream-stage.md](specs/replace-stream-stage.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#replace-stream).
+
+---
+
 ## 2026-05-26 — `$ = { k: $$.filter(p), … }` → `$facet`
 
 A second variant of the `$ = <expr>` surface: when every value of the object-literal RHS is a `$$.filter(<lambda>)` call, the same construct lowers to a single `$facet` stage with each entry as a named sub-pipeline. The shape pulled in three things:

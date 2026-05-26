@@ -595,19 +595,21 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
 
     case "CollectionRef":
-      // `$$.push(...)` is materialised into `$unionWith` stages, and
+      // `$$.push(...)` is materialised into `$unionWith` stages,
       // `$$.filter(...)` inside `$ = { ... }` is materialised into a `$facet`
-      // stage — both by `pipeline.ts` *before* codegen sees the surrounding
-      // expression. A bare `CollectionRef` reaching this case is a use
-      // outside those supported shapes — either `$$` was referenced as a
-      // value (in arithmetic, a Filter, an inline expression) or the
-      // statement-shaped form appeared in a non-statement position (on a
-      // RHS, inside another expression, etc.).
+      // stage, and `$$ = <expr>` is materialised into `$match` (narrow) or
+      // `$limit: 0` + `$unionWith` (source switch) — all by `pipeline.ts`
+      // *before* codegen sees the surrounding expression. A bare
+      // `CollectionRef` reaching this case is a use outside those supported
+      // shapes — either `$$` was referenced as a value (in arithmetic, a
+      // Filter, an inline expression) or the statement-shaped form appeared
+      // in a non-statement position (on a RHS, inside another expression, etc.).
       throw new CodegenError(
-        `'$$' (current collection) is statement-only and supports '.push(...)' or '.filter(...)' in the facet pattern. ` +
+        `'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. ` +
           `Write \`$$.push({...})\`, \`$$.push(...$$$.<coll>[.filter(pred)])\`, or \`$$.push($$$.<coll>.find(pred))\` ` +
           `as a top-level Pipeline statement to append documents (lowers to '$unionWith'), ` +
-          `or \`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` to build a '$facet' stage. ` +
+          `\`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` to build a '$facet' stage, ` +
+          `or \`$$ = $$.filter(<pred>)\` / \`$$ = $$$.<coll>.filter(<pred>)\` to replace the current stream. ` +
           `Bare '$$' has no value, and these statement shapes cannot appear on a RHS or inside another expression.`,
         expr.pos,
       );

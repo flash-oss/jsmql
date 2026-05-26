@@ -79,11 +79,11 @@ export function validateUnionPushShape(expr: Expr): void {
   if (expr.method === "push") return;
   if (expr.method === "filter") {
     // `$$.filter(<predicate>)` is only valid as a value inside the facet
-    // pattern `$ = { key: $$.filter(p), ... }`. At a statement position,
-    // the user almost certainly meant `$match(<predicate>)` (filter the
-    // current stream) or the facet form (split into named sub-pipelines).
+    // pattern `$ = { key: $$.filter(p), ... }` or as the RHS of `$$ = …`.
+    // At a statement position, the user almost certainly meant
+    // `$match(<predicate>)` (the leaner form for narrowing the current stream).
     throw new CodegenError(
-      `'$$.filter(<predicate>)' is only valid as a value inside \`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` (the \`$facet\` pattern). For filtering the current stream as a stage, use \`$match(<predicate>)\` instead.`,
+      `'$$.filter(<predicate>)' is only valid as the RHS of \`$$ = $$.filter(<predicate>)\` or as a value inside \`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` (the \`$facet\` pattern). For filtering the current stream as a stage, use \`$match(<predicate>)\` instead.`,
       expr.pos,
     );
   }

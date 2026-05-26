@@ -78,6 +78,9 @@ import {
   createSlotAllocator,
   validateLookupShape,
   translatePredicate,
+  extractLookupTarget,
+  extractLetsFromExpr,
+  extractLetsFromPipeline,
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
@@ -206,6 +209,13 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
 
   ast.elements.forEach((el, i) => {
     if (el.type === "AssignExpr") {
+      if (isReplaceStreamAssign(el)) {
+        flushUpdateOps();
+        const result = lowerReplaceStream(el, ctx, lowerBlock);
+        for (const s of result.stages) out.push(s);
+        if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
+        return;
+      }
       if (isReplaceRootAssign(el)) {
         const facets = detectFacetShape(el.value);
         if (facets !== null) {
@@ -491,6 +501,170 @@ function rejectNonDocumentReplaceRoot(value: Expr): void {
       value.pos,
     );
   }
+}
+
+type LambdaNode = Extract<Expr, { type: "Lambda" }>;
+
+/**
+ * `$$ = <expr>` is an AssignExpr whose LHS is the `$$` token (the current
+ * document stream) — represented in the AST as `CollectionRef`. Sister shape
+ * to `$ = <expr>` (single-doc replacement → `$replaceWith`); `$$ = <expr>`
+ * replaces the *stream* and lowers to either a `$match` (narrow) or
+ * `$limit: 0` + `$unionWith` (switch source).
+ */
+function isReplaceStreamAssign(op: AssignExpr): boolean {
+  return op.target.type === "CollectionRef";
+}
+
+/**
+ * Lower `$$ = <expr>` to the stage(s) it represents.
+ *
+ * Two RHS shapes are accepted; anything else throws an actionable error:
+ *
+ *   - `$$.filter(<lambda>)`            → `[{ $match: <translated> }]`
+ *   - `$$$.<coll>.filter(<lambda>)`    → `[{ $limit: 0 },
+ *                                          { $unionWith: { coll, pipeline: [{ $match }] } }]`
+ *
+ * Inside both shapes the lambda parameter IS the document being matched;
+ * `param.x` rewrites to a bare `FieldRef("x")` and `$.<field>` references
+ * are rejected with a "use the lambda parameter" hint. This mirrors the
+ * facet form's convention — adding a second spelling for the current doc
+ * would only invite drift.
+ *
+ * `clearLets` distinguishes the two outcomes for the caller: the source-
+ * switch form drops the outer collection entirely, so any prior `let`
+ * binding becomes unreadable; the narrow form preserves the stream and
+ * its bindings.
+ */
+function lowerReplaceStream(
+  el: AssignExpr,
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+): { stages: object[]; clearLets: boolean } {
+  if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
+    throw new CodegenError(
+      `Cannot use compound assignment / increment on '$$' — '$$' is the document stream, not a scalar. Use '$$ = $$.filter(<predicate>)' to narrow the stream or '$$ = $$$.<coll>.filter(<predicate>)' to switch source.`,
+      el.pos,
+    );
+  }
+  const v = el.value;
+  if (v.type === "MethodCall" && v.method === "filter" && v.args.length === 1 && v.args[0].type === "Lambda") {
+    const lambda = v.args[0] as LambdaNode;
+    if (v.object.type === "CollectionRef") {
+      // Form B's `$match` lives at the top level of the outer pipeline, so
+      // the predicate must see the outer pipeline's let scope (a `cutoff`
+      // declared earlier resolves through `ctx.pipelineLets`).
+      const stages = lowerStreamFilterPredicate(lambda, outerCtx, lowerBlockFn);
+      return { stages, clearLets: false };
+    }
+    const target = extractLookupTarget(v.object, outerCtx);
+    if (target !== null) {
+      // Form A's sub-pipeline runs in a fresh ctx — outer lets don't cross
+      // `$unionWith.pipeline` boundaries (no `let:` slot exists on `$unionWith`).
+      const inner = lowerStreamFilterPredicate(lambda, freshSubPipelineCtx(outerCtx), lowerBlockFn);
+      const from: string | { db: string; coll: string } =
+        target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
+      const stages: object[] = [{ $limit: 0 }];
+      if (inner.length === 0) {
+        // Vacuous predicate (e.g. `o => true`). Skip the inner sub-pipeline
+        // and use the short-form `$unionWith`.
+        if (typeof from === "string") {
+          stages.push({ $unionWith: from });
+        } else {
+          stages.push({ $unionWith: { coll: from } });
+        }
+      } else {
+        stages.push({ $unionWith: { coll: from, pipeline: inner } });
+      }
+      return { stages, clearLets: true };
+    }
+  }
+  rejectInvalidReplaceStream(v, outerCtx);
+}
+
+function lowerStreamFilterPredicate(
+  lambda: LambdaNode,
+  predicateCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+): object[] {
+  if (lambda.params.length !== 1) {
+    throw new CodegenError(
+      `'.filter(<predicate>)' on the RHS of '$$ = …' must take exactly one parameter — write '.filter(o => …)' (the param name is your choice). The param represents each document.`,
+      lambda.pos,
+    );
+  }
+  const param = lambda.params[0];
+  if (lambda.body !== undefined) {
+    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, param);
+    rejectLocalRefInStreamFilter(letVars, param, lambda.pos);
+    const t = translateMatchBody(rewritten, { bindings: predicateCtx.bindings });
+    const queryEmpty = Object.keys(t.query).length === 0;
+    if (queryEmpty && t.residual === null) return [];
+    if (t.residual === null) return [{ $match: t.query }];
+    const exprBody = generateWithCtx(t.residual, predicateCtx);
+    if (queryEmpty) return [{ $match: { $expr: exprBody } }];
+    return [{ $match: { ...t.query, $expr: exprBody } }];
+  }
+  if (lambda.block !== undefined) {
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, param);
+    rejectLocalRefInStreamFilter(letVars, param, lambda.pos);
+    return lowerBlockFn(rewritten, predicateCtx);
+  }
+  throw new CodegenError(
+    `'.filter(<predicate>)' lambda is missing a body — internal parser bug; please report.`,
+    lambda.pos,
+  );
+}
+
+function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: string, pos: number): void {
+  if (Object.keys(letVars).length === 0) return;
+  const sample = Object.values(letVars)[0];
+  const samplePath = sample.replace(/^\$+/, "");
+  throw new CodegenError(
+    `'$.<field>' inside the '.filter(<predicate>)' of '$$ = …' is not supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each document. Inside this filter, the lambda parameter IS the document being matched.`,
+    pos,
+  );
+}
+
+function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
+  if (value.type === "ArrayLiteral") {
+    throw new CodegenError(
+      `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.`,
+      value.pos,
+    );
+  }
+  if (value.type === "TernaryExpr") {
+    throw new CodegenError(
+      `'$$ = <ternary>' (conditional stream branching) is not yet supported. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+      value.pos,
+    );
+  }
+  if (value.type === "MethodCall") {
+    const onCollection = value.object.type === "CollectionRef";
+    const onDatabase = extractLookupTarget(value.object, ctx) !== null;
+    if (onCollection || onDatabase) {
+      const suggestion = closestNameTo(value.method, ["filter"]);
+      const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
+      const recv = onCollection ? "$$" : "$$$.<coll>";
+      const intent = onCollection ? "narrow the current stream" : "switch source to another collection";
+      throw new CodegenError(
+        `'$$ = …' RHS supports only '${recv}.filter(<predicate>)' — '.${value.method}(...)' is not allowed here.${hint} ` +
+          `Use '${recv}.filter(<predicate>)' to ${intent}, ` +
+          `or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.`,
+        value.pos,
+      );
+    }
+  }
+  if (value.type === "CollectionRef" || value.type === "DatabaseRef") {
+    throw new CodegenError(
+      `'$$ = …' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source.`,
+      value.pos,
+    );
+  }
+  throw new CodegenError(
+    `'$$ = …' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+    value.pos,
+  );
 }
 
 type StageLowering = { stage: Record<string, unknown>; ctx: GenerateCtx };
@@ -807,6 +981,13 @@ function lowerUpdateFilterWithLookups(
   };
   for (const op of stmt.ops) {
     if (op.type === "AssignExpr") {
+      if (isReplaceStreamAssign(op)) {
+        flush();
+        const result = lowerReplaceStream(op, ctx, lowerBlockFn);
+        for (const s of result.stages) out.push(s);
+        if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
+        continue;
+      }
       if (isReplaceRootAssign(op)) {
         const facets = detectFacetShape(op.value);
         if (facets !== null) {

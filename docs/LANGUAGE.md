@@ -1693,6 +1693,40 @@ Rules:
 
 For filtering the current stream as a top-level stage (one $match, not split into facets), use `$match(<predicate>)` directly — `$$.filter(...)` at a statement position is rejected with a hint pointing at `$match`.
 
+### Replace stream via `$$ = <expr>`
+
+Sister to `$ = <expr>` at the *stream* level. Assigning to bare `$$` replaces the pipeline's document stream. Two RHS shapes are accepted:
+
+```js
+// Narrow the current stream (equivalent to $match($.client === 156 && $.createdAt >= "2026-01-01"))
+jsmql(`$$ = $$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)
+// → [{ $match: { client: 156, createdAt: { $gte: "2026-01-01" } } }]
+
+// Switch source to another collection: drop the current stream, union in filtered foreign docs.
+// The driver call (`db.<original>.aggregate(...)`) keeps its original collection.
+jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new Date("2026-01-01"));`)
+// → [
+//     { $limit: 0 },
+//     { $unionWith: { coll: "transactions",
+//                     pipeline: [{ $match: { client: 156, createdAt: { $gte: <Date> } } }] } }
+//   ]
+```
+
+The lambda param IS the document being matched — write `t.client`, not `$.client`. Same convention as the facet form: `$.<field>` inside the predicate is rejected with a "use the lambda parameter" hint. Block-body predicates (`o => { $sort(...); $limit(...); }`) work in the source-switch form just like in lookups.
+
+Compile-time rejections:
+
+| RHS | Why it's rejected |
+|---|---|
+| `$$ = []` | Empty stream not yet supported. Use `$limit(0)` or `$match($expr(false))` directly. |
+| `$$ = cond ? A : B` | Stream-level ternary not yet supported. |
+| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single doc, not a stream. Did you mean `.filter`? Or, for replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)`. |
+| `$$ = $$.map(...)` and other methods | Only `.filter(...)` is supported on the RHS. |
+| `$$ = $$$.<coll>` (no `.filter`) | Bare collection ref — name a predicate (`.filter(o => …)`) or use a `$lookup` if you wanted a join. |
+| `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
+
+**Let scope.** The narrow form (`$$ = $$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after `$limit: 0`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
+
 ---
 
 ## Pipelines
