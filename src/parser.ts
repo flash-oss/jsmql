@@ -1290,7 +1290,13 @@ export class Parser {
 
     switch (t.type) {
       case TokenType.Dollar:
-        return this.parseOperatorCall();
+        // `$` followed by an identifier is an operator call (`$add(...)`).
+        // `$` standalone is the current document — same role MQL's `$$ROOT`
+        // plays. Used as a value (`{ ...$, x: 1 }`, `$mergeObjects($, ...)`)
+        // and as the LHS of `$ = <expr>` to replace the root document.
+        if (this.isIdentOrKeyword(this.lexer.lookahead(1))) return this.parseOperatorCall();
+        this.lexer.next();
+        return { type: "FieldRef", path: "", pos: t.pos };
       case TokenType.DollarDot:
         return this.parseFieldRef();
       case TokenType.DoubleDollar:

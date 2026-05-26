@@ -232,3 +232,104 @@ describe("pipeline — function input", () => {
     ]);
   });
 });
+
+describe("pipeline — replace root (`$ = <expr>`)", () => {
+  it("bare field-ref RHS lowers to `$replaceWith: <path>`", () => {
+    expect(jsmql("[ $ = $.profile ]")).toEqual([{ $replaceWith: "$profile" }]);
+  });
+
+  it("identity (`$ = $`) round-trips through `$$ROOT`", () => {
+    // No-op semantically; we still emit the stage rather than dropping it.
+    expect(jsmql("[ $ = $ ]")).toEqual([{ $replaceWith: "$$ROOT" }]);
+  });
+
+  it("spread-merge over `$` emits a `$mergeObjects` newRoot", () => {
+    expect(jsmql("[ $ = { ...$, computedScore: $.points * 1.1 } ]")).toEqual([
+      { $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } },
+    ]);
+  });
+
+  it("nested field path RHS lowers verbatim", () => {
+    expect(jsmql("[ $ = $.user.address ]")).toEqual([{ $replaceWith: "$user.address" }]);
+  });
+
+  it("wraps the current doc under a key (`$ = { summary: $ }`)", () => {
+    // Bare `$` in a value position is the whole current document — the same
+    // role MQL spells as `$$ROOT`. This is the natural way to demote the
+    // current root into a sub-document of a fresh wrapper.
+    expect(jsmql("[ $ = { summary: $ } ]")).toEqual([{ $replaceWith: { summary: "$$ROOT" } }]);
+  });
+
+  it("operator-call RHS lowers verbatim (object form)", () => {
+    expect(jsmql("[ $ = $mergeObjects($.a, $.b) ]")).toEqual([{ $replaceWith: { $mergeObjects: ["$a", "$b"] } }]);
+  });
+
+  it("direct lookup `.find` lowers to $lookup + $replaceWith {$first}", () => {
+    expect(jsmql("[ $ = $$$.users.find(u => u._id === $.userId) ]")).toEqual([
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $replaceWith: { $first: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("adjacent update ops flush correctly around `$ = ...`", () => {
+    expect(jsmql("$.a = 1; $ = $.profile; $.b = 2")).toEqual([
+      { $set: { a: 1 } },
+      { $replaceWith: "$profile" },
+      { $set: { b: 2 } },
+    ]);
+  });
+
+  it("`;`-form mirrors `[…]`-form for the bare-field-ref RHS", () => {
+    expect(jsmql("$ = $.profile;")).toEqual([{ $replaceWith: "$profile" }]);
+  });
+
+  it("bare `$` in expression position lowers to `$$ROOT`", () => {
+    expect(jsmql.expr("$mergeObjects($, { x: 1 })")).toEqual({ $mergeObjects: ["$$ROOT", { x: 1 }] });
+  });
+
+  it("rejects array RHS with an actionable error", () => {
+    expect(() => jsmql("[ $ = [1, 2] ]")).toThrow(/Cannot replace root with an array.*\$ = \{ items: \[\.\.\.\] \}/);
+  });
+
+  it("rejects scalar number RHS with an actionable error", () => {
+    expect(() => jsmql("[ $ = 5 ]")).toThrow(/Cannot replace root with a number.*\$ = \{ value: \.\.\. \}/);
+  });
+
+  it("rejects string RHS with an actionable error", () => {
+    expect(() => jsmql('[ $ = "foo" ]')).toThrow(/Cannot replace root with a string/);
+  });
+
+  it("rejects `.filter()` lookup RHS, suggesting `.find()`", () => {
+    expect(() => jsmql("[ $ = $$$.users.filter(u => u.active) ]")).toThrow(
+      /Cannot replace root with an array.*\.filter\(\.\.\.\).*\.find\(\.\.\.\)/,
+    );
+  });
+
+  it("rejects `delete $` with a hint pointing at `$ = …`", () => {
+    expect(() => jsmql("delete $;")).toThrow(/Cannot 'delete \$'.*'\$ = <newDoc>'/);
+  });
+
+  it("rejects compound increment on bare `$`", () => {
+    expect(() => jsmql("$++;")).toThrow(/compound assignment \/ increment on bare '\$'/);
+  });
+
+  it("rejects compound assignment on bare `$`", () => {
+    expect(() => jsmql("$ += 5;")).toThrow(/compound assignment \/ increment on bare '\$'/);
+  });
+
+  it("validate() surfaces the rejection with a real .pos (not 0)", () => {
+    const r = jsmql.validate("[ $ = [1, 2] ]");
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].code).toBe("CODEGEN_ERROR");
+    expect(r.errors[0].pos).toBeGreaterThan(0);
+    expect(r.errors[0].message).toMatch(/Cannot replace root with an array/);
+  });
+
+  it("clears `let` scope after `$ = …` (subsequent reference errors precisely)", () => {
+    // `$replaceWith` is reshape-clearing: any `let` declared before is gone.
+    // The next statement's reference to `$$.x` must surface a precise error
+    // rather than silently resolve against a slot that no longer exists.
+    expect(() => jsmql("let x = $.a; $ = $.profile; $.b = x;")).toThrow(/can't be read after.*\$replaceWith/);
+  });
+});

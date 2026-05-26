@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — `$ = <expr>` → `$replaceWith` (replace root)
+
+Assigning to bare `$` replaces the whole document. The LHS *is* the document, the RHS is the new value — the JS shape exactly mirrors what the stage does. Three variants land:
+
+- **Bare field-ref RHS.** `$ = $.profile;` → `[{ $replaceWith: "$profile" }]`. Lifts an embedded sub-doc to the top level.
+- **Spread-merge.** `$ = { ...$, score: $.points * 1.1 };` → `[{ $replaceWith: { $mergeObjects: ["$$ROOT", { score: { $multiply: ["$points", 1.1] } }] } }]`. The bare `$` inside the spread refers to the current document — same role MQL's `$$ROOT` plays. Works with no spread-specific code because the object-spread codegen already calls `_generate(arg, ctx)` on each operand.
+- **Direct lookup RHS.** `$ = $$$.users.find(u => u._id === $.userId);` lowers to `$lookup` (into an internal `__jsmql.__lookup<N>` slot) followed by `$replaceWith: { $first: "$<slot>" }`. We deliberately skip the `$set { slot: $first slot }` step that `lowerLookup` emits for assignment-target form — the slot is discarded by the replace anyway, so `$first` folds into the `$replaceWith` body and the pipeline is one stage shorter.
+
+**`$replaceWith`, not `$replaceRoot`.** Both spellings produce identical runtime behaviour on MongoDB 4.2+. We pick the shorter one — `{ $replaceWith: "$profile" }` is 24 characters; `{ $replaceRoot: { newRoot: "$profile" } }` is 38 — consistent with the rest of the language ("less code = good DX"). The 4.0/4.1 line is already excluded by other features (`$function`, `let` on `$lookup`); no compatibility loss.
+
+**Bare `$` is a new primary expression.** Lowered to `"$$ROOT"` in any expression context, not just on the LHS. `$mergeObjects($, { x: 1 })` works the same way. AST representation: `FieldRef { path: "" }` (reuses the existing node — no new variant). One added branch in `parsePrimary`'s `TokenType.Dollar` case: peek the next token; if it isn't an identifier, return the empty-path field ref instead of falling through to `parseOperatorCall`. Codegen treats empty path → `"$$ROOT"` in both the main `_generate` case and the `asFieldPath` helper used by `isPureRef` and the `MemberAccess` collapser.
+
+**Compile-time RHS rejection.** Four shapes are caught up front, each with an actionable message that names the fix:
+- Array literal (`$ = [1, 2]`) → "Use `.find(...)` for a single doc, or wrap: `$ = { items: [...] }`."
+- Scalar literal (number / bigint / string / boolean / null / regex) → "the new root must be a document. Did you mean `$ = { value: ... }`?"
+- Direct `.filter()` lookup (`$ = $$$.users.filter(pred)`) → "`.filter(...)` returns an array. Use `.find(...)` for a single match, or wrap…"
+- Compound-op desugar (`$++`, `$ += 5`, `$ /= 2`, …) → "`$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields…". Detection is by AST-node referential identity (`el.value.left === el.target`) — the parser reuses the target node when synthesising the compound `BinaryExpr`, so distinct syntactic `$` occurrences in real user code don't false-positive.
+
+`delete $` is rejected separately ("bare `$` is the whole document — use `$ = <newDoc>` to replace it"). All rejections live in the pipeline lowerer rather than `validateUpdateTarget`, so the same parser path serves both `$ = X` (good) and `$++` / `delete $` (bad), and each error message carries the precise `.pos` for the offending construct.
+
+**Let scope clears across `$ = …`.** `$replaceWith` was already in `RESHAPE_CLEARING_STAGES`, but `lowerUpdateFilterWithLookups` (which handles `,`-chained update statements in `;`-form) returned only `stages` — so a `$ = …` inside a comma-chain didn't propagate the cleared `ctx` back to the outer loop. The helper now returns `{ stages, ctx }`; the caller in `generateImplicitPipeline` threads the post-replace ctx. A subsequent `let`-binding reference produces the existing precise "can't be read after `$replaceWith`" error.
+
+Spec: [docs/specs/replace-root-stage.md](specs/replace-root-stage.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#replace-root-via--expr).
+
+---
+
 ## 2026-05-26 — GitHub Pages publishes only `playground.html`
 
 Added a root `_config.yml` to constrain the GitHub Pages Jekyll build to the single artefact users actually consume — [`playground.html`](../playground.html). Previously the build had no config, so Jekyll defaulted to processing every Markdown file at the repo root and under `docs/` as a Liquid template. JS-syntax `{{ … }}` blocks inside [`docs/LANGUAGE.md`](LANGUAGE.md) and [`docs/DEVLOG.md`](DEVLOG.md) (e.g. `{{ startDate: new Date(...), unit: "day" }}`) tripped Liquid's variable-terminator regex and crashed `actions/jekyll-build-pages@v1` with a `Liquid::SyntaxError`, blocking the deploy.

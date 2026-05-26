@@ -43,7 +43,17 @@
 // pipeline ctx so a let referenced inside an otherwise-translatable $match body
 // still resolves correctly.
 
-import type { Expr, ArrayElement, UpdateOp, Pipeline, LetDecl, PipelineStmt, UpdateFilter, CallArg } from "./ast.ts";
+import type {
+  Expr,
+  ArrayElement,
+  UpdateOp,
+  AssignExpr,
+  Pipeline,
+  LetDecl,
+  PipelineStmt,
+  UpdateFilter,
+  CallArg,
+} from "./ast.ts";
 import {
   generateWithCtx,
   generateUpdateOpGroups,
@@ -67,6 +77,7 @@ import {
   extractLookupCalls,
   createSlotAllocator,
   validateLookupShape,
+  translatePredicate,
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
@@ -194,6 +205,12 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
 
   ast.elements.forEach((el, i) => {
     if (el.type === "AssignExpr") {
+      if (isReplaceRootAssign(el)) {
+        flushUpdateOps();
+        for (const s of lowerReplaceRoot(el, ctx, tracking.alloc, lowerBlock)) out.push(s);
+        ctx = clearCtxLets(ctx, "$replaceWith");
+        return;
+      }
       const direct = detectLookupCall(el.value, ctx);
       if (direct !== null) {
         validateLookupShape(el.value);
@@ -212,6 +229,12 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       return;
     }
     if (el.type === "DeleteStmt") {
+      if (el.target.type === "FieldRef" && el.target.path === "") {
+        throw new CodegenError(
+          `Cannot 'delete $' — bare '$' is the whole document. Use '$ = <newDoc>' to replace it, or 'delete $.<field>' to drop a single field.`,
+          el.pos,
+        );
+      }
       updateBuffer.push(el);
       return;
     }
@@ -301,9 +324,12 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
     }
     if (stmt.type === "UpdateFilter") {
       // Process each op in order, splitting at lookup-bearing ops so the
-      // lookup stages can sit between coalesced $set groups.
+      // lookup stages can sit between coalesced $set groups. A `$ = <expr>`
+      // op within the chain clears the let scope (it's a reshape stage), so
+      // the returned ctx may differ from `ctx`.
       const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock);
-      for (const s of result) out.push(s);
+      for (const s of result.stages) out.push(s);
+      ctx = result.ctx;
       return;
     }
     // `$$.push(...)` statement → one or more `$unionWith` stages (with
@@ -348,6 +374,115 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
   const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
   const value = generateWithCtx(decl.value, ctx);
   return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath) };
+}
+
+/**
+ * `$ = <expr>` is an AssignExpr whose LHS is the bare `$` token — represented
+ * in the AST as `FieldRef { path: "" }`. Different from `$.<x> = <expr>`
+ * (which has a non-empty path) and from any `MemberAccess` chain. This helper
+ * recognises the shape; lowering is performed by `lowerReplaceRoot`.
+ */
+function isReplaceRootAssign(op: AssignExpr): boolean {
+  return op.target.type === "FieldRef" && op.target.path === "";
+}
+
+/**
+ * Lower `$ = <expr>` to a `$replaceWith` stage (MQL's shorthand for
+ * `$replaceRoot: { newRoot: <expr> }` — same runtime, fewer characters).
+ *
+ * Four variants:
+ *   - Compound desugar (`$++`, `$ += 5`, …) is rejected up front: the parser
+ *     reuses the same AST node for both `target` and `value.left`, so a
+ *     referential-identity check on `BinaryExpr.left === target` catches all of
+ *     them without us needing to remember the original surface operator.
+ *   - Obviously non-document RHS (`$ = [1,2]`, `$ = 5`, `$ = "x"`, direct
+ *     `.filter()` lookup) is rejected with an actionable message.
+ *   - Direct `$$$.<coll>.find(pred)` RHS becomes `$lookup` (into an internal
+ *     `__jsmql.__lookup<N>` slot) followed by `$replaceWith: { $first: "$<slot>" }`.
+ *     We don't reuse `lowerLookup` because its `.find` form emits an extra
+ *     `$set { slot: $first slot }` stage that's wasteful here — the slot is
+ *     discarded by the replace anyway, so `$first` lives inside the
+ *     `$replaceWith` instead.
+ *   - Anything else: any buried lookups inside the RHS materialise as prologue
+ *     stages, then `$replaceWith: <rewritten-RHS>`.
+ */
+function lowerReplaceRoot(
+  el: AssignExpr,
+  ctx: GenerateCtx,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+): object[] {
+  if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
+    throw new CodegenError(
+      `Cannot use compound assignment / increment on bare '$' — '$' is the whole document, not a scalar. Use '$ = { ...$, ...overrides }' to merge fields into the root or '$ = <newRoot>' to replace it outright.`,
+      el.pos,
+    );
+  }
+  rejectNonDocumentReplaceRoot(el.value);
+
+  const direct = detectLookupCall(el.value, ctx);
+  if (direct !== null) {
+    validateLookupShape(el.value);
+    if (direct.method === "filter") {
+      throw new CodegenError(
+        `Cannot replace root with an array — '.filter(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.filter(...) }'.`,
+        el.value.pos,
+      );
+    }
+    const slot = allocSlot();
+    const pred = translatePredicate(direct, ctx, lowerBlockFn);
+    const from: string | { db: string; coll: string } =
+      direct.db !== undefined ? { db: direct.db, coll: direct.collection } : direct.collection;
+    const stages: object[] = [];
+    if (pred.kind === "basic") {
+      stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
+    } else {
+      stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } });
+    }
+    stages.push({ $replaceWith: { $first: `$${slot}` } });
+    return stages;
+  }
+
+  const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, allocSlot, lowerBlockFn);
+  const out: object[] = [...prologue];
+  out.push({ $replaceWith: generateWithCtx(rewritten, ctx) });
+  return out;
+}
+
+/**
+ * Reject RHS shapes that the user wouldn't have meant as a new document root.
+ * Permissive by design — anything that *might* be a document (FieldRef,
+ * MemberAccess, ObjectLiteral, OperatorCall, MethodCall, BinaryExpr, ternaries,
+ * `$let`-style helpers) passes through; MongoDB validates document-shape at
+ * runtime if our static check missed something.
+ */
+function rejectNonDocumentReplaceRoot(value: Expr): void {
+  if (value.type === "ArrayLiteral") {
+    throw new CodegenError(
+      `Cannot replace root with an array. Use '.find(...)' for a single doc, or wrap: '$ = { items: [...] }'.`,
+      value.pos,
+    );
+  }
+  const literalKind =
+    value.type === "NumberLiteral"
+      ? "number"
+      : value.type === "BigIntLiteral"
+        ? "bigint"
+        : value.type === "StringLiteral"
+          ? "string"
+          : value.type === "BooleanLiteral"
+            ? "boolean"
+            : value.type === "NullLiteral"
+              ? "null"
+              : value.type === "RegexLiteral"
+                ? "regex"
+                : null;
+  if (literalKind !== null) {
+    throw new CodegenError(
+      `Cannot replace root with a ${literalKind} — the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?`,
+      value.pos,
+    );
+  }
 }
 
 type StageLowering = { stage: Record<string, unknown>; ctx: GenerateCtx };
@@ -653,10 +788,10 @@ function lowerUpdateFilterWithLookups(
   startCtx: GenerateCtx,
   allocSlot: SlotAllocator,
   lowerBlockFn: SubPipelineLowerer,
-): object[] {
+): { stages: object[]; ctx: GenerateCtx } {
   const out: object[] = [];
   let buffer: UpdateOp[] = [];
-  const ctx = startCtx;
+  let ctx = startCtx;
   const flush = () => {
     if (buffer.length === 0) return;
     for (const stage of generateUpdateOpGroups(buffer, ctx)) out.push(stage);
@@ -664,6 +799,12 @@ function lowerUpdateFilterWithLookups(
   };
   for (const op of stmt.ops) {
     if (op.type === "AssignExpr") {
+      if (isReplaceRootAssign(op)) {
+        flush();
+        for (const s of lowerReplaceRoot(op, ctx, allocSlot, lowerBlockFn)) out.push(s);
+        ctx = clearCtxLets(ctx, "$replaceWith");
+        continue;
+      }
       const direct = detectLookupCall(op.value, ctx);
       if (direct !== null) {
         validateLookupShape(op.value);
@@ -682,10 +823,16 @@ function lowerUpdateFilterWithLookups(
       continue;
     }
     // DeleteStmt — target is a field path; no lookups possible.
+    if (op.target.type === "FieldRef" && op.target.path === "") {
+      throw new CodegenError(
+        `Cannot 'delete $' — bare '$' is the whole document. Use '$ = <newDoc>' to replace it, or 'delete $.<field>' to drop a single field.`,
+        op.pos,
+      );
+    }
     buffer.push(op);
   }
   flush();
-  return out;
+  return { stages: out, ctx };
 }
 
 /**

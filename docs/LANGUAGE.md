@@ -1622,6 +1622,49 @@ Update filters are **statements**, not expression values. They are valid only at
 
 The `delete` keyword is statement-only — unlike JavaScript, it does not return a boolean.
 
+### Replace root via `$ = <expr>`
+
+Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`).
+
+```js
+// Lift an embedded sub-document to the top level
+jsmql("$ = $.profile;")
+// → [{ $replaceWith: "$profile" }]
+
+// Merge fresh fields into the existing root.
+// Bare `$` inside the spread is the current document ($$ROOT in MQL).
+jsmql("$ = { ...$, computedScore: $.points * 1.1 };")
+// → [{ $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } }]
+
+// Replace the doc with a single matched join.
+// `.find` returns scalar-or-null; `$replaceWith` runs `$first` on the lookup slot.
+jsmql("$ = $$$.users.find(u => u._id === $.userId);")
+// → [
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+//     { $replaceWith: { $first: "$__jsmql.__lookup1" } },
+//     { $unset: "__jsmql" }
+//   ]
+```
+
+Bare `$` is a new primary expression — the current document. It plays the same role MQL spells as `"$$ROOT"`, and you can use it anywhere a field path is valid:
+
+```js
+jsmql.expr("$mergeObjects($, { x: 1 })")
+// → { $mergeObjects: ["$$ROOT", { x: 1 }] }
+```
+
+Compile-time rejections (each with an actionable hint):
+
+| RHS | Why it's rejected |
+|---|---|
+| `$ = [1, 2]` | Arrays aren't documents. Wrap with `$ = { items: [...] }`, or pick `.find()` over `.filter()` for a join. |
+| `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | Scalars aren't documents. Wrap with `$ = { value: ... }`. |
+| `$ = $$$.users.filter(...)` | `.filter()` returns an array; use `.find()` for a single doc. |
+| `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields. |
+| `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
+
+`$replaceWith` is a **reshape-clearing stage** — any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
+
 ---
 
 ## Pipelines

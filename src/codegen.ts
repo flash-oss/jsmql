@@ -590,7 +590,9 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "NullLiteral":
       return null;
     case "FieldRef":
-      return `$${expr.path}`;
+      // Bare `$` (empty path) is the current document — MQL spells it `$$ROOT`.
+      // Nested paths (`$.a.b`) lower verbatim to `"$a.b"`.
+      return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
 
     case "CollectionRef":
       // `$$.push(...)` is materialised into `$unionWith` stages by `pipeline.ts`
@@ -926,7 +928,7 @@ function neutralForMethod(method: string, object: Expr): unknown | undefined {
 // ── Field path reconstruction ─────────────────────────────────────────────────
 
 function asFieldPath(expr: Expr, ctx: GenerateCtx): string | null {
-  if (expr.type === "FieldRef") return `$${expr.path}`;
+  if (expr.type === "FieldRef") return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
   if (expr.type === "ParamRef") {
     if (ctx.reduceRemap?.has(expr.name)) {
       return `$$${ctx.reduceRemap.get(expr.name)!}`;

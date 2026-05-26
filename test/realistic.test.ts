@@ -102,6 +102,26 @@ describe("alternative bracketed array form", { features: ["Pipelines"] }, () => 
   });
 });
 
+describe("lift the embedded profile to the top level (`$ = …`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+    // After a $match, replace each user doc with its `profile` sub-doc and then
+    // tag on a derived score. `$ = <expr>` lowers to `$replaceWith` — MQL's
+    // shorthand for `$replaceRoot: { newRoot: <expr> }`. The bare `$` inside
+    // the spread refers to the document being replaced ($$ROOT in MQL).
+    expect(
+      jsmql`
+$match($.profile != null);
+$ = $.profile;
+$ = { ...$, computedScore: $.points * 1.1 };
+      `,
+    ).toEqual([
+      { $match: { profile: { $ne: null } } },
+      { $replaceWith: "$profile" },
+      { $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } },
+    ]);
+  });
+});
+
 describe("invoice finalisation pipeline", { features: ["Update filters"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.invoices.aggregate(jsmql(...))" }, () => {
     expect(
