@@ -590,20 +590,25 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "NullLiteral":
       return null;
     case "FieldRef":
-      return `$${expr.path}`;
+      // Bare `$` (empty path) is the current document — MQL spells it `$$ROOT`.
+      // Nested paths (`$.a.b`) lower verbatim to `"$a.b"`.
+      return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
 
     case "CollectionRef":
-      // `$$.push(...)` is materialised into `$unionWith` stages by `pipeline.ts`
-      // *before* codegen sees the surrounding expression, so a bare
-      // `CollectionRef` reaching this case is a use outside the supported
-      // shape — either `$$` was referenced as a value (in arithmetic, a Filter,
-      // an inline expression) or `.push(...)` appears outside Pipeline
-      // statement position (on a RHS, inside another expression, etc.).
+      // `$$.push(...)` is materialised into `$unionWith` stages, and
+      // `$$.filter(...)` inside `$ = { ... }` is materialised into a `$facet`
+      // stage — both by `pipeline.ts` *before* codegen sees the surrounding
+      // expression. A bare `CollectionRef` reaching this case is a use
+      // outside those supported shapes — either `$$` was referenced as a
+      // value (in arithmetic, a Filter, an inline expression) or the
+      // statement-shaped form appeared in a non-statement position (on a
+      // RHS, inside another expression, etc.).
       throw new CodegenError(
-        `'$$' (current collection) is statement-only and only supports '.push(...)'. ` +
+        `'$$' (current collection) is statement-only and supports '.push(...)' or '.filter(...)' in the facet pattern. ` +
           `Write \`$$.push({...})\`, \`$$.push(...$$$.<coll>[.filter(pred)])\`, or \`$$.push($$$.<coll>.find(pred))\` ` +
-          `as a top-level Pipeline statement to append documents (lowers to '$unionWith'). ` +
-          `Bare '$$' has no value, and '$$.push(...)' cannot appear on a RHS or inside another expression.`,
+          `as a top-level Pipeline statement to append documents (lowers to '$unionWith'), ` +
+          `or \`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` to build a '$facet' stage. ` +
+          `Bare '$$' has no value, and these statement shapes cannot appear on a RHS or inside another expression.`,
         expr.pos,
       );
     case "DatabaseRef":
@@ -926,7 +931,7 @@ function neutralForMethod(method: string, object: Expr): unknown | undefined {
 // ── Field path reconstruction ─────────────────────────────────────────────────
 
 function asFieldPath(expr: Expr, ctx: GenerateCtx): string | null {
-  if (expr.type === "FieldRef") return `$${expr.path}`;
+  if (expr.type === "FieldRef") return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
   if (expr.type === "ParamRef") {
     if (ctx.reduceRemap?.has(expr.name)) {
       return `$$${ctx.reduceRemap.get(expr.name)!}`;

@@ -232,3 +232,194 @@ describe("pipeline — function input", () => {
     ]);
   });
 });
+
+describe("pipeline — replace root (`$ = <expr>`)", () => {
+  it("bare field-ref RHS lowers to `$replaceWith: <path>`", () => {
+    expect(jsmql("[ $ = $.profile ]")).toEqual([{ $replaceWith: "$profile" }]);
+  });
+
+  it("identity (`$ = $`) round-trips through `$$ROOT`", () => {
+    // No-op semantically; we still emit the stage rather than dropping it.
+    expect(jsmql("[ $ = $ ]")).toEqual([{ $replaceWith: "$$ROOT" }]);
+  });
+
+  it("spread-merge over `$` emits a `$mergeObjects` newRoot", () => {
+    expect(jsmql("[ $ = { ...$, computedScore: $.points * 1.1 } ]")).toEqual([
+      { $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } },
+    ]);
+  });
+
+  it("nested field path RHS lowers verbatim", () => {
+    expect(jsmql("[ $ = $.user.address ]")).toEqual([{ $replaceWith: "$user.address" }]);
+  });
+
+  it("wraps the current doc under a key (`$ = { summary: $ }`)", () => {
+    // Bare `$` in a value position is the whole current document — the same
+    // role MQL spells as `$$ROOT`. This is the natural way to demote the
+    // current root into a sub-document of a fresh wrapper.
+    expect(jsmql("[ $ = { summary: $ } ]")).toEqual([{ $replaceWith: { summary: "$$ROOT" } }]);
+  });
+
+  it("operator-call RHS lowers verbatim (object form)", () => {
+    expect(jsmql("[ $ = $mergeObjects($.a, $.b) ]")).toEqual([{ $replaceWith: { $mergeObjects: ["$a", "$b"] } }]);
+  });
+
+  it("direct lookup `.find` lowers to $lookup + $replaceWith {$first}", () => {
+    expect(jsmql("[ $ = $$$.users.find(u => u._id === $.userId) ]")).toEqual([
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $replaceWith: { $first: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("adjacent update ops flush correctly around `$ = ...`", () => {
+    expect(jsmql("$.a = 1; $ = $.profile; $.b = 2")).toEqual([
+      { $set: { a: 1 } },
+      { $replaceWith: "$profile" },
+      { $set: { b: 2 } },
+    ]);
+  });
+
+  it("`;`-form mirrors `[…]`-form for the bare-field-ref RHS", () => {
+    expect(jsmql("$ = $.profile;")).toEqual([{ $replaceWith: "$profile" }]);
+  });
+
+  it("bare `$` in expression position lowers to `$$ROOT`", () => {
+    expect(jsmql.expr("$mergeObjects($, { x: 1 })")).toEqual({ $mergeObjects: ["$$ROOT", { x: 1 }] });
+  });
+
+  it("rejects array RHS with an actionable error", () => {
+    expect(() => jsmql("[ $ = [1, 2] ]")).toThrow(/Cannot replace root with an array.*\$ = \{ items: \[\.\.\.\] \}/);
+  });
+
+  it("rejects scalar number RHS with an actionable error", () => {
+    expect(() => jsmql("[ $ = 5 ]")).toThrow(/Cannot replace root with a number.*\$ = \{ value: \.\.\. \}/);
+  });
+
+  it("rejects string RHS with an actionable error", () => {
+    expect(() => jsmql('[ $ = "foo" ]')).toThrow(/Cannot replace root with a string/);
+  });
+
+  it("rejects `.filter()` lookup RHS, suggesting `.find()`", () => {
+    expect(() => jsmql("[ $ = $$$.users.filter(u => u.active) ]")).toThrow(
+      /Cannot replace root with an array.*\.filter\(\.\.\.\).*\.find\(\.\.\.\)/,
+    );
+  });
+
+  it("rejects `delete $` with a hint pointing at `$ = …`", () => {
+    expect(() => jsmql("delete $;")).toThrow(/Cannot 'delete \$'.*'\$ = <newDoc>'/);
+  });
+
+  it("rejects compound increment on bare `$`", () => {
+    expect(() => jsmql("$++;")).toThrow(/compound assignment \/ increment on bare '\$'/);
+  });
+
+  it("rejects compound assignment on bare `$`", () => {
+    expect(() => jsmql("$ += 5;")).toThrow(/compound assignment \/ increment on bare '\$'/);
+  });
+
+  it("validate() surfaces the rejection with a real .pos (not 0)", () => {
+    const r = jsmql.validate("[ $ = [1, 2] ]");
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].code).toBe("CODEGEN_ERROR");
+    expect(r.errors[0].pos).toBeGreaterThan(0);
+    expect(r.errors[0].message).toMatch(/Cannot replace root with an array/);
+  });
+
+  it("clears `let` scope after `$ = …` (subsequent reference errors precisely)", () => {
+    // `$replaceWith` is reshape-clearing: any `let` declared before is gone.
+    // The next statement's reference to `$$.x` must surface a precise error
+    // rather than silently resolve against a slot that no longer exists.
+    expect(() => jsmql("let x = $.a; $ = $.profile; $.b = x;")).toThrow(/can't be read after.*\$replaceWith/);
+  });
+});
+
+describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
+  it("expression-body predicate becomes a `$match` sub-pipeline", () => {
+    expect(jsmql(`$ = { recent: $$.filter(o => o.createdAt >= "2026-01-01") };`)).toEqual([
+      { $facet: { recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }] } },
+    ]);
+  });
+
+  it("block-body predicate becomes the block's stages", () => {
+    expect(jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toEqual([
+      { $facet: { topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }] } },
+    ]);
+  });
+
+  it("multi-facet pipeline with mixed predicate shapes", () => {
+    expect(
+      jsmql(`$ = {
+        topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+        recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+        byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); })
+      };`),
+    ).toEqual([
+      {
+        $facet: {
+          topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
+          recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
+          byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
+        },
+      },
+    ]);
+  });
+
+  it("non-translatable predicate residual rides in `$expr`", () => {
+    expect(jsmql(`$ = { active: $$.filter(o => o.active) };`)).toEqual([
+      { $facet: { active: [{ $match: { $expr: "$active" } }] } },
+    ]);
+  });
+
+  it("uses lambda-param references for foreign fields (basic shape)", () => {
+    expect(jsmql(`$ = { byCat: $$.filter(o => { $group({ _id: o.category }); }) };`)).toEqual([
+      { $facet: { byCat: [{ $group: { _id: "$category" } }] } },
+    ]);
+  });
+
+  it("vacuous predicate (literal `true`) emits a trivial `$match`", () => {
+    expect(jsmql(`$ = { all: $$.filter(o => true) };`)).toEqual([{ $facet: { all: [{ $match: { $expr: true } }] } }]);
+  });
+
+  it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
+    expect(() => jsmql(`$ = { recent: $$.filter(o => $.x > 5) };`)).toThrow(
+      /\$\.<field>.*use the lambda parameter.*\bo\.x\b/,
+    );
+  });
+
+  it("rejects zero-argument lambda — the doc must be named", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(() => true) };`)).toThrow(/must take exactly one parameter/);
+  });
+
+  it("rejects two-argument lambda", () => {
+    expect(() => jsmql(`$ = { a: $$.filter((a, b) => a.x > 5) };`)).toThrow(/must take exactly one parameter/);
+  });
+
+  it("rejects mixed-shape RHS where some values aren't `$$.filter(...)`", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), b: 1 };`)).toThrow(
+      /every value must be `\$\$\.filter\(<predicate>\)`.*Entry 'b'/,
+    );
+  });
+
+  it("rejects spread entries inside the facet object", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(o => true), ...rest };`)).toThrow(
+      /\$facet pattern: spread entries are not allowed/,
+    );
+  });
+
+  it("rejects duplicate facet keys", () => {
+    expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), a: $$.filter(o => o.y > 0) };`)).toThrow(/duplicate key 'a'/);
+  });
+
+  it("statement-position `$$.filter(...)` (not in facet) suggests `$match` or facet shape", () => {
+    expect(() => jsmql(`$$.filter(o => o.x > 0);`)).toThrow(
+      /'\$\$\.filter\(<predicate>\)' is only valid as a value inside.*`\$match\(<predicate>\)` instead/,
+    );
+  });
+
+  it("$facet is reshape-clearing: prior lets can't be read after", () => {
+    expect(() => jsmql(`let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;`)).toThrow(
+      /can't be read after.*\$facet/,
+    );
+  });
+});

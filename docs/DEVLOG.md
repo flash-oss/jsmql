@@ -10,6 +10,50 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — `$ = { k: $$.filter(p), … }` → `$facet`
+
+A second variant of the `$ = <expr>` surface: when every value of the object-literal RHS is a `$$.filter(<lambda>)` call, the same construct lowers to a single `$facet` stage with each entry as a named sub-pipeline. The shape pulled in three things:
+
+- **Detection in [`src/facet-translation.ts`](../src/facet-translation.ts).** `detectFacetShape(value)` returns null when the RHS isn't an object literal, or when no entry is `$$.filter(...)`. When at least one entry is, the function enters strict-shape mode: every entry must be `$$.filter(<lambda>)`, and mixed shapes / spreads / computed keys throw precise errors naming the offending entry. Otherwise the user would fall through to `$replaceWith`, where the inner `$$.filter` would surface a confusing "$$ is statement-only" error from the CollectionRef codegen.
+- **Lambda predicate translation.** Each `$$.filter(<lambda>)` body becomes the facet's sub-pipeline. Expression bodies run through `translateMatchBody` (same engine `$match` uses, index-friendly query syntax for the translatable half); block bodies pass through `lowerBlock` (the same `SubPipelineLowerer` lookup and union use). Reuses `extractLetsFromExpr` / `extractLetsFromPipeline` from `lookup-translation` — but flips their letVars output into a rejection: any `$.<field>` reference inside the predicate is rejected with a "use the lambda parameter (e.g. `o.<field>`)" hint. Rationale: inside a facet sub-pipeline, the lambda param IS the current document, so `$.x` and `o.x` would mean the same thing — supporting both spellings would invite drift. (Contrast with `$lookup`, where `$.x` is the outer doc and gets auto-`let`-extracted.)
+- **Parser tweak in [`src/parser.ts`](../src/parser.ts).** Block-body lambdas (`o => { stmts; }`) inside method calls were previously gated on the receiver being rooted at `$$$` / `$$$$` (lookup). The facet form needs them for `$$.filter(...)` too, so the gate also accepts `left.type === "CollectionRef"` for `.filter`. No new tokens or AST nodes.
+
+**Parameter shape.** `$$.filter(<predicate>)` must take exactly one lambda parameter. Zero-arg (`() => …`) and multi-arg shapes are rejected. Naming the doc explicitly lets the `$.<field>` rejection message point at the right replacement (`o.<field>`, where `o` is whatever name the user picked).
+
+**`$facet` joined `RESHAPE_CLEARING_STAGES`.** Pre-existing oversight — `$facet`'s output is `{ facetName: [docs], … }`, completely replacing the input doc. The interception in `pipeline.ts` calls `clearCtxLets(ctx, "$facet")` after emission so a subsequent let reference produces the standard "can't be read after `$facet`" error.
+
+**Statement-position `$$.filter(...)`.** `validateUnionPushShape` (now misleadingly named, kept for stability) recognises a standalone `$$.filter(...)` and throws a targeted error pointing at `$match(<predicate>)` for stream-level filtering or the `$ = { ... }` shape for facets. The bare-`$$` CollectionRef codegen message was updated in parallel to mention both `.push` and `.filter`.
+
+Spec: [docs/specs/replace-root-stage.md](specs/replace-root-stage.md) (facet variant section). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#facet-via---key-filterp-).
+
+---
+
+## 2026-05-26 — `$ = <expr>` → `$replaceWith` (replace root)
+
+Assigning to bare `$` replaces the whole document. The LHS *is* the document, the RHS is the new value — the JS shape exactly mirrors what the stage does. Three variants land:
+
+- **Bare field-ref RHS.** `$ = $.profile;` → `[{ $replaceWith: "$profile" }]`. Lifts an embedded sub-doc to the top level.
+- **Spread-merge.** `$ = { ...$, score: $.points * 1.1 };` → `[{ $replaceWith: { $mergeObjects: ["$$ROOT", { score: { $multiply: ["$points", 1.1] } }] } }]`. The bare `$` inside the spread refers to the current document — same role MQL's `$$ROOT` plays. Works with no spread-specific code because the object-spread codegen already calls `_generate(arg, ctx)` on each operand.
+- **Direct lookup RHS.** `$ = $$$.users.find(u => u._id === $.userId);` lowers to `$lookup` (into an internal `__jsmql.__lookup<N>` slot) followed by `$replaceWith: { $first: "$<slot>" }`. We deliberately skip the `$set { slot: $first slot }` step that `lowerLookup` emits for assignment-target form — the slot is discarded by the replace anyway, so `$first` folds into the `$replaceWith` body and the pipeline is one stage shorter.
+
+**`$replaceWith`, not `$replaceRoot`.** Both spellings produce identical runtime behaviour on MongoDB 4.2+. We pick the shorter one — `{ $replaceWith: "$profile" }` is 24 characters; `{ $replaceRoot: { newRoot: "$profile" } }` is 38 — consistent with the rest of the language ("less code = good DX"). The 4.0/4.1 line is already excluded by other features (`$function`, `let` on `$lookup`); no compatibility loss.
+
+**Bare `$` is a new primary expression.** Lowered to `"$$ROOT"` in any expression context, not just on the LHS. `$mergeObjects($, { x: 1 })` works the same way. AST representation: `FieldRef { path: "" }` (reuses the existing node — no new variant). One added branch in `parsePrimary`'s `TokenType.Dollar` case: peek the next token; if it isn't an identifier, return the empty-path field ref instead of falling through to `parseOperatorCall`. Codegen treats empty path → `"$$ROOT"` in both the main `_generate` case and the `asFieldPath` helper used by `isPureRef` and the `MemberAccess` collapser.
+
+**Compile-time RHS rejection.** Four shapes are caught up front, each with an actionable message that names the fix:
+- Array literal (`$ = [1, 2]`) → "Use `.find(...)` for a single doc, or wrap: `$ = { items: [...] }`."
+- Scalar literal (number / bigint / string / boolean / null / regex) → "the new root must be a document. Did you mean `$ = { value: ... }`?"
+- Direct `.filter()` lookup (`$ = $$$.users.filter(pred)`) → "`.filter(...)` returns an array. Use `.find(...)` for a single match, or wrap…"
+- Compound-op desugar (`$++`, `$ += 5`, `$ /= 2`, …) → "`$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields…". Detection is by AST-node referential identity (`el.value.left === el.target`) — the parser reuses the target node when synthesising the compound `BinaryExpr`, so distinct syntactic `$` occurrences in real user code don't false-positive.
+
+`delete $` is rejected separately ("bare `$` is the whole document — use `$ = <newDoc>` to replace it"). All rejections live in the pipeline lowerer rather than `validateUpdateTarget`, so the same parser path serves both `$ = X` (good) and `$++` / `delete $` (bad), and each error message carries the precise `.pos` for the offending construct.
+
+**Let scope clears across `$ = …`.** `$replaceWith` was already in `RESHAPE_CLEARING_STAGES`, but `lowerUpdateFilterWithLookups` (which handles `,`-chained update statements in `;`-form) returned only `stages` — so a `$ = …` inside a comma-chain didn't propagate the cleared `ctx` back to the outer loop. The helper now returns `{ stages, ctx }`; the caller in `generateImplicitPipeline` threads the post-replace ctx. A subsequent `let`-binding reference produces the existing precise "can't be read after `$replaceWith`" error.
+
+Spec: [docs/specs/replace-root-stage.md](specs/replace-root-stage.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#replace-root-via--expr).
+
+---
+
 ## 2026-05-26 — GitHub Pages publishes only `playground.html`
 
 Added a root `_config.yml` to constrain the GitHub Pages Jekyll build to the single artefact users actually consume — [`playground.html`](../playground.html). Previously the build had no config, so Jekyll defaulted to processing every Markdown file at the repo root and under `docs/` as a Liquid template. JS-syntax `{{ … }}` blocks inside [`docs/LANGUAGE.md`](LANGUAGE.md) and [`docs/DEVLOG.md`](DEVLOG.md) (e.g. `{{ startDate: new Date(...), unit: "day" }}`) tripped Liquid's variable-terminator regex and crashed `actions/jekyll-build-pages@v1` with a `Liquid::SyntaxError`, blocking the deploy.

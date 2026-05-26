@@ -1622,6 +1622,77 @@ Update filters are **statements**, not expression values. They are valid only at
 
 The `delete` keyword is statement-only — unlike JavaScript, it does not return a boolean.
 
+### Replace root via `$ = <expr>`
+
+Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`).
+
+```js
+// Lift an embedded sub-document to the top level
+jsmql("$ = $.profile;")
+// → [{ $replaceWith: "$profile" }]
+
+// Merge fresh fields into the existing root.
+// Bare `$` inside the spread is the current document ($$ROOT in MQL).
+jsmql("$ = { ...$, computedScore: $.points * 1.1 };")
+// → [{ $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } }]
+
+// Replace the doc with a single matched join.
+// `.find` returns scalar-or-null; `$replaceWith` runs `$first` on the lookup slot.
+jsmql("$ = $$$.users.find(u => u._id === $.userId);")
+// → [
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+//     { $replaceWith: { $first: "$__jsmql.__lookup1" } },
+//     { $unset: "__jsmql" }
+//   ]
+```
+
+Bare `$` is a new primary expression — the current document. It plays the same role MQL spells as `"$$ROOT"`, and you can use it anywhere a field path is valid:
+
+```js
+jsmql.expr("$mergeObjects($, { x: 1 })")
+// → { $mergeObjects: ["$$ROOT", { x: 1 }] }
+```
+
+Compile-time rejections (each with an actionable hint):
+
+| RHS | Why it's rejected |
+|---|---|
+| `$ = [1, 2]` | Arrays aren't documents. Wrap with `$ = { items: [...] }`, or pick `.find()` over `.filter()` for a join. |
+| `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | Scalars aren't documents. Wrap with `$ = { value: ... }`. |
+| `$ = $$$.users.filter(...)` | `.filter()` returns an array; use `.find()` for a single doc. |
+| `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields. |
+| `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
+
+`$replaceWith` is a **reshape-clearing stage** — any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
+
+#### `$facet` via `$ = { key: $$.filter(p), … }`
+
+When every value of the object literal is a `$$.filter(<lambda>)` call, the same `$ = { … }` surface lowers to a `$facet` stage instead — each named filter becomes its own sub-pipeline running against the parent's input docs:
+
+```js
+jsmql(`$ = {
+  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+};`)
+// → [{ $facet: {
+//       topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
+//       recent:     [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
+//       byStatus:   [{ $group: { _id: "$status", n: { $sum: 1 } } }]
+//   } }]
+```
+
+The lambda parameter (`o` in the examples — name is your choice) represents each input document inside the sub-pipeline. Expression bodies become a `$match` stage; block bodies become the block's stages verbatim.
+
+Rules:
+
+- **Every value must be `$$.filter(<lambda>)`.** Mixing in a static value (`b: 1`) or a spread (`...rest`) is a compile-time error — the parser would otherwise silently fall through to `$replaceWith`, which would surface a confusing "$$ is statement-only" error inside the codegen.
+- **Lambda takes exactly one parameter.** You must name the doc explicitly so the error message for stray `$.<field>` references can point at the right replacement.
+- **Use `o.<field>`, not `$.<field>`.** Inside a facet sub-pipeline, the lambda param IS the current document — supporting both spellings would just invite drift. `$.x` inside the predicate is rejected with a precise hint.
+- **`$facet` clears the let scope** (it replaces the document with `{ facetName: [docs], … }`). A later `let`-binding reference produces the standard "can't be read after `$facet`" error.
+
+For filtering the current stream as a top-level stage (one $match, not split into facets), use `$match(<predicate>)` directly — `$$.filter(...)` at a statement position is rejected with a hint pointing at `$match`.
+
 ---
 
 ## Pipelines

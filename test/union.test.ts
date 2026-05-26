@@ -155,9 +155,9 @@ describe("$$.push — error cases", () => {
     expect(() => jsmql("$$.push()")).toThrow(/requires at least one argument/);
   });
 
-  it("wrong method on $$ → reject naming .push as the only supported method", () => {
+  it("wrong method on $$ → reject naming .push and .filter as the only supported methods", () => {
     expect(() => jsmql('$$.pop("x")')).toThrow(
-      /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) — \.pop\(\) is not defined/,
+      /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) and \.filter\(\.\.\.\) — \.pop\(\) is not defined/,
     );
   });
 
