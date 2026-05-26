@@ -1,0 +1,29 @@
+# GitHub Pages publishes a single artefact: playground.html.
+#
+# Everything else (Markdown docs, TypeScript sources, build output, configs,
+# dotfiles) is excluded so Jekyll doesn't try to render it as Liquid — JS-syntax
+# `{{ ... }}` blocks inside docs/LANGUAGE.md and docs/DEVLOG.md crash the build.
+
+include:
+  - playground.html
+
+exclude:
+  - "*.md"
+  - "*.json"
+  - "*.ts"
+  - "*.mjs"
+  - .claude
+  - .idea
+  - .npmrc
+  - .nvmrc
+  - .oxfmtrc.json
+  - CLAUDE.md
+  - README.md
+  - dist
+  - docs
+  - node_modules
+  - scripts
+  - src
+  - test
+  - vendor
+  - vitest.config.ts

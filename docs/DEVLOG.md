@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-26 — GitHub Pages publishes only `playground.html`
+
+Added a root `_config.yml` to constrain the GitHub Pages Jekyll build to the single artefact users actually consume — [`playground.html`](../playground.html). Previously the build had no config, so Jekyll defaulted to processing every Markdown file at the repo root and under `docs/` as a Liquid template. JS-syntax `{{ … }}` blocks inside [`docs/LANGUAGE.md`](LANGUAGE.md) and [`docs/DEVLOG.md`](DEVLOG.md) (e.g. `{{ startDate: new Date(...), unit: "day" }}`) tripped Liquid's variable-terminator regex and crashed `actions/jekyll-build-pages@v1` with a `Liquid::SyntaxError`, blocking the deploy.
+
+The config excludes every directory and file pattern that isn't `playground.html` — Markdown, TypeScript sources, build output (`dist/`), tooling configs, `vendor/`, `node_modules/`, dotfiles — and keeps `include: [playground.html]` explicit so a future Jekyll default change can't silently drop it. The site surface is now exactly one file at `https://flash-oss.github.io/jsmql/playground.html`, which is what [README.md](../README.md) already links to.
+
+This is a deploy-pipeline fix, not a language change; no source files were touched.
+
+---
+
 ## 2026-05-26 — `$$.push(...)` → `$unionWith` (collection union)
 
 `$$` (current collection) lights up its first method: `.push(args...)` lowers to `$unionWith` stages. The receiver–verb pair was chosen because `Array.prototype.push` is the JS idiom for appending items to a stream — exactly the semantics of `$unionWith` (append documents from another source onto the current stream). The JS-faithful spread rule falls out naturally: arrays are spread (`.filter(pred)`, bare collection), scalars are not (`.find(pred)`, inline object). Both rules are enforced at compile time with targeted errors that suggest the fix.
