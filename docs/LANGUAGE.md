@@ -1776,12 +1776,37 @@ Compile-time rejections:
 |---|---|
 | `$$ = []` | Empty stream not yet supported. Use `$limit(0)` or `$match($expr(false))` directly. |
 | `$$ = cond ? A : B` | Stream-level ternary not yet supported. |
-| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single doc, not a stream. Did you mean `.filter`? Or, for replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)`. |
-| `$$ = $$.map(...)` and other methods | Only `.filter(...)` is supported on the RHS. |
-| `$$ = $$$.<coll>` (no `.filter`) | Bare collection ref — name a predicate (`.filter(o => …)`) or use a `$lookup` if you wanted a join. |
+| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS but pipelines are arrays. For "first match", write `.filter(p).slice(0, 1)`. For replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
+| `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
 
 **Let scope.** The narrow form (`$$ = $$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after `$limit: 0`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
+
+#### Stream methods chained after the RHS
+
+The RHS of `$$ = …` accepts chainable JS-array-shaped methods after the initial `$$` / `$$$.<coll>` receiver (with or without a leading `.filter(<pred>)`). Each chained method appends one or more stages to the surrounding pipeline (for `$$.<chain>`) or the `$unionWith.pipeline` body (for `$$$.<coll>.<chain>`):
+
+```js
+// Skip the first 5 and keep the next 10 — pure $skip + $limit, no $match.
+jsmql(`$$ = $$.slice(5, 15);`)
+// → [{ $skip: 5 }, { $limit: 10 }]
+
+// Filter then take the first 10 — $match + $limit.
+jsmql(`$$ = $$.filter(o => o.tier === "gold").slice(0, 10);`)
+// → [{ $match: { tier: "gold" } }, { $limit: 10 }]
+
+// Source-switch with a slice inside the union body.
+jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
+// → [{ $limit: 0 },
+//    { $unionWith: { coll: "archive",
+//                    pipeline: [{ $match: { tier: "gold" } }, { $limit: 10 }] } }]
+```
+
+| Method | Args | Lowering |
+|---|---|---|
+| `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
+
+Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 
 ---
 

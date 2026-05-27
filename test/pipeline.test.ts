@@ -505,14 +505,17 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("rejects `$$ = $$$.<coll>.find(...)` and suggests `.filter`", () => {
-    expect(() => jsmql(`$$ = $$$.users.find(u => u.active);`)).toThrow(/'\.find\(\.\.\.\)' is not allowed/);
+  it("rejects `$$ = $$$.<coll>.find(...)` and points at the `.slice(0, 1)` / `$ = $$$.<coll>.find` alternatives", () => {
+    expect(() => jsmql(`$$ = $$$.users.find(u => u.active);`)).toThrow(
+      /'\.find\(\.\.\.\)' is not allowed.*pipelines are arrays.*\.slice\(0, 1\).*\$ = \$\$\$\.<coll>\.find/s,
+    );
   });
 
-  it("rejects `$$ = $$.map(...)` with a 'only `.filter`' hint", () => {
-    expect(() => jsmql(`$$ = $$.map(t => t.x);`)).toThrow(
-      /'\$\$ = …' RHS supports only.*\.filter.*'\.map\(\.\.\.\)' is not allowed/,
-    );
+  it("rejects `$$ = $$.map(...)` with an actionable registry-style error (until `.map` lands)", () => {
+    // `.map` is planned for a follow-up commit — for now it surfaces the
+    // generic "not a chainable stream method" message so the user knows
+    // they need to wait or fall back to `$ = <expr>` per-doc reshape.
+    expect(() => jsmql(`$$ = $$.map(t => t.x);`)).toThrow(/'\.map\(\.\.\.\)' is not a chainable stream method/);
   });
 
   it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {

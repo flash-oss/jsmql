@@ -87,6 +87,7 @@ import {
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
+import { collectStreamChain, lookupStreamMethod, streamMethodNames, type MethodCallNode } from "./stream-methods.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -569,38 +570,141 @@ function lowerReplaceStream(
     );
   }
   const v = el.value;
-  if (v.type === "MethodCall" && v.method === "filter" && v.args.length === 1 && v.args[0].type === "Lambda") {
-    const lambda = v.args[0] as LambdaNode;
-    if (v.object.type === "CollectionRef") {
-      // Form B's `$match` lives at the top level of the outer pipeline, so
-      // the predicate must see the outer pipeline's let scope (a `cutoff`
-      // declared earlier resolves through `ctx.pipelineLets`).
-      const stages = lowerStreamFilterPredicate(lambda, outerCtx, lowerBlockFn);
-      return { stages, clearLets: false };
-    }
-    const target = extractLookupTarget(v.object, outerCtx);
+  const chain = collectStreamChain(v);
+  if (chain.root.type === "CollectionRef" && chain.methods.length > 0) {
+    return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, v);
+  }
+  if (chain.methods.length > 0) {
+    const target = extractLookupTarget(chain.root, outerCtx);
     if (target !== null) {
-      // Form A's sub-pipeline runs in a fresh ctx — outer lets don't cross
-      // `$unionWith.pipeline` boundaries (no `let:` slot exists on `$unionWith`).
-      const inner = lowerStreamFilterPredicate(lambda, freshSubPipelineCtx(outerCtx), lowerBlockFn);
-      const from: string | { db: string; coll: string } =
-        target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
-      const stages: object[] = [{ $limit: 0 }];
-      if (inner.length === 0) {
-        // Vacuous predicate (e.g. `o => true`). Skip the inner sub-pipeline
-        // and use the short-form `$unionWith`.
-        if (typeof from === "string") {
-          stages.push({ $unionWith: from });
-        } else {
-          stages.push({ $unionWith: { coll: from } });
-        }
-      } else {
-        stages.push({ $unionWith: { coll: from, pipeline: inner } });
-      }
-      return { stages, clearLets: true };
+      return lowerChainOnCollection(chain.methods, target, outerCtx, lowerBlockFn, v);
     }
   }
   rejectInvalidReplaceStream(v, outerCtx);
+}
+
+/**
+ * Lower a chain `$$.<m1>(...).<m2>(...)…` into stages on the outer pipeline.
+ *
+ * The first method may be `.filter(<lambda>)` — that produces a `$match`
+ * stage exactly as before (predicate translated in the outer ctx so prior
+ * `let` bindings resolve). Any subsequent method, or a non-`.filter` first
+ * method, is dispatched through the stream-method registry. Unknown method
+ * names throw an actionable error listing the registered alternatives.
+ */
+function lowerChainOnStream(
+  methods: MethodCallNode[],
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  rhs: Expr,
+): { stages: object[]; clearLets: boolean } {
+  const stages: object[] = [];
+  let clearLets = false;
+  let i = 0;
+  if (methods[0].method === "filter") {
+    const m = methods[0];
+    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
+      rejectInvalidReplaceStream(rhs, outerCtx);
+    }
+    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, outerCtx, lowerBlockFn);
+    stages.push(...matchStages);
+    i = 1;
+  }
+  for (; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) {
+      throw unknownStreamMethod(m, "$$");
+    }
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, outerCtx, m.pos);
+    stages.push(...result.stages);
+    if (result.clearLets) clearLets = true;
+  }
+  return { stages, clearLets };
+}
+
+/**
+ * Lower a chain `$$$.<coll>.<m1>(...).<m2>(...)…` into a `$limit: 0` +
+ * `$unionWith` pair, with the chained stages making up the `$unionWith`
+ * sub-pipeline body. Predicate / lowering runs in a fresh sub-pipeline
+ * ctx — outer lets don't cross `$unionWith.pipeline` boundaries (the
+ * stage has no `let:` slot).
+ *
+ * When the chain is just `.filter(o => true)` (vacuous predicate, no
+ * additional methods) the inner pipeline is empty and the short-form
+ * `$unionWith` shape is emitted — same as before this chain walker
+ * existed.
+ */
+function lowerChainOnCollection(
+  methods: MethodCallNode[],
+  target: { db?: string; collection: string },
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  rhs: Expr,
+): { stages: object[]; clearLets: boolean } {
+  const innerCtx = freshSubPipelineCtx(outerCtx);
+  const inner: object[] = [];
+  let i = 0;
+  if (methods[0].method === "filter") {
+    const m = methods[0];
+    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
+      rejectInvalidReplaceStream(rhs, outerCtx);
+    }
+    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, innerCtx, lowerBlockFn);
+    inner.push(...matchStages);
+    i = 1;
+  }
+  for (; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) {
+      throw unknownStreamMethod(m, "$$$.<coll>");
+    }
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos);
+    inner.push(...result.stages);
+  }
+  const from: string | { db: string; coll: string } =
+    target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
+  const stages: object[] = [{ $limit: 0 }];
+  if (inner.length === 0) {
+    if (typeof from === "string") {
+      stages.push({ $unionWith: from });
+    } else {
+      stages.push({ $unionWith: { coll: from } });
+    }
+  } else {
+    stages.push({ $unionWith: { coll: from, pipeline: inner } });
+  }
+  return { stages, clearLets: true };
+}
+
+function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError {
+  // Methods that return a single element in JS — deliberately rejected because
+  // pipelines are arrays. The error names the explicit alternative so the user
+  // doesn't have to dig for it.
+  if (m.method === "find" || m.method === "findLast" || m.method === "at") {
+    const alt = m.method === "at" ? `'${receiver}.slice(n, n + 1)'` : `'${receiver}.filter(<pred>).slice(0, 1)'`;
+    const findHint =
+      receiver === "$$$.<coll>"
+        ? ` (For replacing the current document with a single matched foreign doc, write '$ = $$$.<coll>.find(<pred>)' instead — that's a separate lookup form.)`
+        : "";
+    return new CodegenError(
+      `'.${m.method}(...)' is not allowed in a chain on '${receiver}' — '.${m.method}' returns a single element in JS, but pipelines are arrays. ` +
+        `Use ${alt} for the equivalent "first match" / "n-th" shape.${findHint}`,
+      m.pos,
+    );
+  }
+  const names = streamMethodNames();
+  const suggestion = closestNameTo(m.method, ["filter", ...names]);
+  const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
+  const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
+  return new CodegenError(
+    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} ` +
+      `The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.`,
+    m.pos,
+  );
 }
 
 function lowerStreamFilterPredicate(

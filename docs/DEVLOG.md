@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — Stream-method registry + `.slice(start, end?)` on `$$` / `$$$.<coll>` chains
+
+The RHS of `$$ = …` was limited to a single `.filter(<pred>)` call. To make chains like `$$.filter(p).slice(0, 10)` work — and to give the planned ES2023 immutable-array methods (`.toSorted`, `.toReversed`, …) one place to live — this commit introduces a per-method registry at [`src/stream-methods.ts`](../src/stream-methods.ts) and rewires `lowerReplaceStream` to walk arbitrary method chains through it. `.slice(start, end?)` is the first registered entry.
+
+**Registry shape.** One entry per JS method (`StreamMethodDef`), each declaring an `arity` / arg-shape validator and a `lower(args, ctx, callPos) → { stages, clearLets? }` lowering. The chain walker in [`src/pipeline.ts`](../src/pipeline.ts) (`lowerChainOnStream` for the `$$` head, `lowerChainOnCollection` for the `$$$.<coll>` head) collects the chain via `collectStreamChain`, treats `.filter` as the optional first method (still handled by the pre-existing `lowerStreamFilterPredicate`), then dispatches every subsequent call through `lookupStreamMethod`. Adding a new method later is a registry entry + tests — no parser or chain-walker changes.
+
+**`.slice(start, end?)` lowering.** Non-negative integer literals only in v1. `start === 0` skips the `$skip` emission; an absent `end` skips the `$limit`; `slice(0)` produces zero stages. Inside a `$$$.<coll>` chain the same stages land inside the emitted `$unionWith.pipeline` body — same registry entry, two contexts.
+
+**Error wording.** Unknown method names now run through a chain-aware `unknownStreamMethod` helper. `.find` / `.findLast` / `.at` get an explicit message naming pipelines-are-arrays and pointing at the `.slice(0, 1)` / `.slice(n, n+1)` equivalents; for `$$$.<coll>.find(...)` the message also points at `$ = $$$.<coll>.find(<pred>)` as the lookup-context single-doc form. Other unknown names get a `closestNameTo` suggestion against `.filter` plus the registered method list. The previous `'$$ = …' RHS supports only '.filter'` wording was retired — it's no longer accurate now that the chain is open-ended.
+
+**Out of scope (this batch).** Bare-statement `$$.<chain>;` (no `$$ =`) is still rejected; the user opted to keep the explicit assignment form. `$$$.<coll>.find/.filter(p).<chain>` in **expression position** (as a value, not the RHS of `$$ = …`) still uses the existing chained-terminal walker in [`src/lookup-translation.ts`](../src/lookup-translation.ts) for `.length` / `.reduce` only — routing that walker through the registry is a follow-up. Top-level `$$.length` is also intentionally deferred; the mapping (`$count: "<auto-slot>"`) is clear but held back until the surrounding registry shape proves out.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-27 — `$$ = <expr>` → `$match` / `$limit:0 + $unionWith` (replace stream)
 
 Sister to `$ = <expr>` (single-doc replacement) at the stream level: `$$ = …` replaces the pipeline's document stream. Two RHS shapes ship; nothing else is accepted:
