@@ -9,6 +9,8 @@
 
 import type { CallArg, Expr } from "./ast.ts";
 import { CodegenError, type GenerateCtx } from "./codegen.ts";
+import type { SubPipelineLowerer } from "./lookup-translation.ts";
+import { lowerUnionPush } from "./union-translation.ts";
 
 export type StreamMethodResult = {
   /** Stages this method contributes, appended to the surrounding chain. */
@@ -31,7 +33,12 @@ export type StreamMethodDef = {
    */
   validate: (args: readonly CallArg[], callPos: number) => void;
   /** Produce the stages this method contributes. */
-  lower: (args: readonly CallArg[], ctx: GenerateCtx, callPos: number) => StreamMethodResult;
+  lower: (
+    args: readonly CallArg[],
+    ctx: GenerateCtx,
+    callPos: number,
+    lowerBlock: SubPipelineLowerer,
+  ) => StreamMethodResult;
 };
 
 // ── .slice(start, end?) → $skip + $limit ──────────────────────────────────────
@@ -85,9 +92,38 @@ const SLICE: StreamMethodDef = {
   },
 };
 
+// ── .concat(...others) → $unionWith per arg ───────────────────────────────────
+//
+// JS-idiomatic alias for `$$.push(...)` in the chain context. Same arg-shape
+// rules — collections must be spread (`...$$$.coll[.filter(p)]`), inline docs
+// must not, `.find(pred)` results must not. The lowering routes through
+// `lowerUnionPush` so the two codepaths stay in lock-step (no second copy of
+// the spread / inline-doc / `.find` validation logic).
+//
+// Statement-only `$$.push(...)` continues to live in `union-translation.ts`;
+// `.concat` is purely the chain-method analogue.
+const CONCAT: StreamMethodDef = {
+  name: "concat",
+  validate(args, callPos) {
+    if (args.length === 0) {
+      throw new CodegenError(
+        `.concat(...) requires at least one argument — a document literal ('{...}'), a spread of '$$$.<coll>[.filter(pred)]', or '$$$.<coll>.find(pred)'.`,
+        callPos,
+      );
+    }
+    // Per-arg shape validation lives inside `lowerUnionPush` (same engine
+    // `$$.push` uses) — running it here would duplicate the rejection branches
+    // verbatim. Defer.
+  },
+  lower(args, ctx, callPos, lowerBlock) {
+    const stages = lowerUnionPush({ pos: callPos, callPos, args: [...args] }, ctx, lowerBlock);
+    return { stages };
+  },
+};
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
-const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE };
+const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE, concat: CONCAT };
 
 /** Look up a registered stream method by name; null if not registered. */
 export function lookupStreamMethod(name: string): StreamMethodDef | null {

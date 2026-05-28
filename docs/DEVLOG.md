@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.concat(...others)` chain method on `$$` (alias for `$$.push`)
+
+JS-idiomatic alias for `$$.push(...)` in the chain context. `.concat` accepts the same arg shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` docs, `$$$.<coll>.find(p)`) and routes through `lowerUnionPush` — no second copy of the spread / inline-doc / `.find` validation logic. `$$.push(...)` remains the statement-only form; `.concat` is purely chainable, so `$$ = $$.filter(p).concat(...$$$.archive);` lowers to `[{$match}, {$unionWith: "archive"}]`.
+
+The registry's `lower` signature gained a `lowerBlock: SubPipelineLowerer` parameter so the `.concat` entry can forward to `lowerUnionPush`. Existing `.slice` ignores the new parameter.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — Stream-method registry + `.slice(start, end?)` on `$$` / `$$$.<coll>` chains
 
 The RHS of `$$ = …` was limited to a single `.filter(<pred>)` call. To make chains like `$$.filter(p).slice(0, 10)` work — and to give the planned ES2023 immutable-array methods (`.toSorted`, `.toReversed`, …) one place to live — this commit introduces a per-method registry at [`src/stream-methods.ts`](../src/stream-methods.ts) and rewires `lowerReplaceStream` to walk arbitrary method chains through it. `.slice(start, end?)` is the first registered entry.

@@ -116,6 +116,49 @@ describe(".slice — rejection branches", () => {
   });
 });
 
+describe(".concat(...others) — JS-idiomatic alias for $$.push", () => {
+  it("spread of $$$.<coll> emits short-form $unionWith", () => {
+    expect(jsmql("$$ = $$.concat(...$$$.archive);")).toEqual([{ $unionWith: "archive" }]);
+  });
+
+  it("inline doc batches into $documents", () => {
+    expect(jsmql("$$ = $$.concat({ _id: 1, name: 'Alice' });")).toEqual([
+      { $unionWith: { pipeline: [{ $documents: [{ _id: 1, name: "Alice" }] }] } },
+    ]);
+  });
+
+  it(".find without spread emits $unionWith with $match + $limit:1", () => {
+    expect(jsmql("$$ = $$.concat($$$.archive.find(u => u._id === 'X'));")).toEqual([
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { _id: "X" } }, { $limit: 1 }] } },
+    ]);
+  });
+
+  it("chains after .filter — $match + $unionWith", () => {
+    expect(jsmql("$$ = $$.filter(o => o.active === true).concat(...$$$.archive);")).toEqual([
+      { $match: { active: true } },
+      { $unionWith: "archive" },
+    ]);
+  });
+
+  it("multi-arg concat emits one $unionWith per arg, source order preserved", () => {
+    expect(jsmql("$$ = $$.concat({ a: 1 }, ...$$$.coll, { b: 2 });")).toEqual([
+      { $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } },
+      { $unionWith: "coll" },
+      { $unionWith: { pipeline: [{ $documents: [{ b: 2 }] }] } },
+    ]);
+  });
+
+  it("zero args is rejected with an actionable message", () => {
+    expect(() => jsmql("$$ = $$.concat();")).toThrow(/at least one argument/);
+  });
+
+  it("spread of a scalar `.find` is rejected", () => {
+    expect(() => jsmql("$$ = $$.concat(...$$$.archive.find(u => u._id === 'X'));")).toThrow(
+      /spreading isn't meaningful/,
+    );
+  });
+});
+
 describe("unknown chain method on $$ → registry error with hint", () => {
   it("typo like .slise is corrected via 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);
