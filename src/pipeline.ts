@@ -990,10 +990,11 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
   }
   // Nested lookups: a sub-pipeline (`$lookup.pipeline`, `$unionWith.pipeline`,
   // `$facet.*`) that contains its own `$$$.<coll>.find/filter(...)` is not
-  // supported in this release. The pre-materialisation walker would emit
-  // stages *inside* the sub-pipeline, but coordinating the outer-pipeline's
-  // let-bindings across the nesting is the bit we've deferred to v2 —
-  // surface a targeted error here instead of producing wrong MQL.
+  // yet implemented. The pre-materialisation walker would emit stages
+  // *inside* the sub-pipeline, but coordinating the outer-pipeline's
+  // let-bindings across the nesting is the open problem — tracked as
+  // planned future work in docs/specs/lookup-stage.md. Surface a targeted
+  // error here instead of producing wrong MQL.
   for (const el of ast.elements) {
     const inner = findFirstLookupInElement(el);
     if (inner !== null) {
@@ -1005,7 +1006,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
     }
     // `$$.push(...)` inside a sub-pipeline targets the *outer* collection but
     // emits stages that would live inside the inner pipeline — the semantics are
-    // ambiguous and the MongoDB server has no equivalent shape. Reject for v1.
+    // ambiguous and the MongoDB server has no equivalent shape. Reject.
     if (el.type !== "SpreadElement") {
       const innerPush =
         el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl"
