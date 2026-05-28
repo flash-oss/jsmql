@@ -1821,12 +1821,98 @@ Compile-time rejections:
 |---|---|
 | `$$ = []` | Empty stream not yet supported. Use `$limit(0)` or `$match($expr(false))` directly. |
 | `$$ = cond ? A : B` | Stream-level ternary not yet supported. |
-| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single doc, not a stream. Did you mean `.filter`? Or, for replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)`. |
-| `$$ = $$.map(...)` and other methods | Only `.filter(...)` is supported on the RHS. |
-| `$$ = $$$.<coll>` (no `.filter`) | Bare collection ref — name a predicate (`.filter(o => …)`) or use a `$lookup` if you wanted a join. |
+| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS but pipelines are arrays. For "first match", write `.filter(p).slice(0, 1)`. For replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
+| `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
 
 **Let scope.** The narrow form (`$$ = $$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after `$limit: 0`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
+
+#### Stream methods chained after the RHS
+
+The RHS of `$$ = …` accepts chainable JS-array-shaped methods after the initial `$$` / `$$$.<coll>` receiver (with or without a leading `.filter(<pred>)`). Each chained method appends one or more stages to the surrounding pipeline (for `$$.<chain>`) or the `$unionWith.pipeline` body (for `$$$.<coll>.<chain>`):
+
+```js
+// Skip the first 5 and keep the next 10 — pure $skip + $limit, no $match.
+jsmql(`$$ = $$.slice(5, 15);`)
+// → [{ $skip: 5 }, { $limit: 10 }]
+
+// Filter then take the first 10 — $match + $limit.
+jsmql(`$$ = $$.filter(o => o.tier === "gold").slice(0, 10);`)
+// → [{ $match: { tier: "gold" } }, { $limit: 10 }]
+
+// Source-switch with a slice inside the union body.
+jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
+// → [{ $limit: 0 },
+//    { $unionWith: { coll: "archive",
+//                    pipeline: [{ $match: { tier: "gold" } }, { $limit: 10 }] } }]
+```
+
+| Method | Args | Lowering |
+|---|---|---|
+| `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
+| `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
+| `.map(d => <expr>)` | Single-param expression-body arrow; the param is the current document (write `d.x`, not `$.x`). Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
+| `.toSorted((a, b) => <cmp>)` | Two-param arrow; comparator body built from `a.<field> - b.<field>` (asc), `b.<field> - a.<field>` (desc), combined with `\|\|` for compound sort | `$sort: { … }` — key order preserved from source. Zero-arg `.toSorted()` is rejected (MongoDB streams have no natural document ordering) |
+| `.toReversed()` | Zero args; must immediately follow `.toSorted(...)` in the same chain | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding `.toSorted` the call is rejected with a "needs a sort key" hint |
+| `.flatMap(d => d.<path>)` | Single-param arrow whose body is a bare field-path on the param (v1) | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
+
+Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+
+**`.reduce` is not a chain method either** — `arr.reduce(...)` returns a scalar / object in JS, not an array, so assigning it directly to `$$` (which must stay a stream of docs) would violate the array invariant. Instead jsmql provides two **explicit reduce wraps** — both lower to the same `$group` + `$replaceWith` pair, pick whichever reads best at the call site:
+
+**Scalar wrap** — one `$$.reduce(...)` per named field:
+
+```js
+// Single aggregate
+jsmql(`$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }];`)
+// → [{ $group: { _id: null, total: { $sum: "$amount" } } },
+//    { $replaceWith: { total: "$total" } }]
+
+// Multiple aggregates share one $group
+jsmql(`$$ = [{
+  count: $$.reduce((acc, d) => acc + 1, 0),
+  total: $$.reduce((acc, d) => acc + d.amount, 0),
+  best:  $$.reduce((acc, d) => Math.max(acc, d.score), 0)
+}];`)
+// → [{ $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
+//    { $replaceWith: { count: "$count", total: "$total", best: "$best" } }]
+```
+
+**Object reducer** — one `$$.reduce(...)` whose body returns an object naming every accumulator:
+
+```js
+jsmql(`$$ = [$$.reduce(
+  (acc, d) => ({
+    ...acc,
+    count: acc.count + 1,
+    total: acc.total + d.amount,
+    best:  Math.max(acc.best, d.score)
+  }),
+  { count: 0, total: 0, best: 0 }
+)];`)
+// → identical to the multi-aggregate scalar wrap above
+```
+
+Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) → `$sum`; `acc + 1` → `$sum: 1` (count); `Math.max(acc, d.<field>)` → `$max`; `Math.min(acc, d.<field>)` → `$min`. In the object form each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body (extra or missing keys on either side throw — in JS this would silently work but mean something different).
+
+The `init` value is required for JS-faithfulness but the MQL accumulators have their own neutral elements, so its actual value doesn't matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
+
+**Array-returning reducer** — for "flatten the stream by projecting each doc to a sub-doc, optionally filtered":
+
+```js
+// Filter active users with an email, project to their contactDetails sub-doc.
+jsmql(`$$ = [$$.reduce(
+  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
+  []
+)];`)
+// → [{ $match: <translated condition> }, { $replaceWith: "$contactDetails" }]
+
+// Unconditional projection (just the map).
+jsmql(`$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [])];`)
+// → [{ $replaceWith: "$contactDetails" }]
+```
+
+This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) + `$replaceWith` (when the projection is a field path on `d`). Equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer — pick whichever reads better at the call site. Init must be `[]`; the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers) aren't recognised in v1.
 
 ---
 

@@ -10,6 +10,83 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.concat(...others)` chain method on `$$` (alias for `$$.push`)
+
+JS-idiomatic alias for `$$.push(...)` in the chain context. `.concat` accepts the same arg shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` docs, `$$$.<coll>.find(p)`) and routes through `lowerUnionPush` — no second copy of the spread / inline-doc / `.find` validation logic. `$$.push(...)` remains the statement-only form; `.concat` is purely chainable, so `$$ = $$.filter(p).concat(...$$$.archive);` lowers to `[{$match}, {$unionWith: "archive"}]`.
+
+The registry's `lower` signature gained a `lowerBlock: SubPipelineLowerer` parameter so the `.concat` entry can forward to `lowerUnionPush`. Existing `.slice` ignores the new parameter.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — `.flatMap(d => d.<path>)` chain method → `$unwind`
+
+The chain-form way to introduce `$unwind` without reaching for `$op("$unwind", …)`. v1 only supports a bare field-path body (the lambda body must walk back to the param ref through `.member` / `["literal"]` access) — that lowers to a single `{ $unwind: "$<path>" }` stage with surrounding fields preserved.
+
+Note this departs from JS `.flatMap` semantics — JS would yield just the bare elements; MQL `$unwind` preserves the surrounding doc with the array field replaced by one element. Users who want "just the elements" chain `.map(d => d.<path>)` after.
+
+Complex bodies (`.flatMap(d => d.items.map(item => ({...})))`) are rejected — they'd require a slot allocator threaded through the chain walker (to materialise the per-doc array as a temp field before `$unwind`), which is a follow-up.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — `.map(d => <expr>)` chain method → `$replaceWith`
+
+Chain-form of the existing `$ = <expr>` statement sugar. `$$ = $$.filter(p).map(d => ({ id: d._id, n: d.name }));` lowers to `[{$match: …}, {$replaceWith: { id: "$_id", n: "$name" }}]`. The lambda parameter IS the current document — `d.x` rewrites to the bare field path `$x` via `extractLetsFromExpr`, and `$.<field>` references are rejected with the standard "use the lambda parameter" hint.
+
+**Out of scope (v1).** Two-arg arrows (`(d, i) => …`) are rejected — MongoDB streams have no per-doc index. Block-body arrows are rejected; split into separate stages instead. Lookups (`$$$.<coll>.find/filter(...)`) and `$$.push(...)` calls inside the body are also rejected — hoist them above the chain. The first two limitations stay permanently; the lookup-in-body restriction is a v1 simplification (the chain walker doesn't yet thread a slot allocator into per-method `lower` functions; doable in a follow-up).
+
+The lower function emits `clearLets: true` because `$replaceWith` is a reshape stage that drops in-scope `let` bindings.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — `.reduce((acc, d) => …, init)` on `$$` chain → `$group { _id: null, … }`
+
+Last method in the 2026-05 stream-methods batch. Folds the document stream down to a single doc carrying the aggregate. Pattern-matches the reducer body to one of MongoDB's accumulator operators:
+
+- `acc + d.<field>` → `{ $sum: "$<field>" }`
+- `acc + 1` → `{ $sum: 1 }` (count documents)
+- `Math.max(acc, d.<field>)` → `{ $max: "$<field>" }`
+- `Math.min(acc, d.<field>)` → `{ $min: "$<field>" }`
+
+Output stream is a single doc `{ _id: null, value: <aggregate> }`. To get just the scalar, chain a `.map(r => r.value)` after — though most call sites at this point are terminal and the user reads `result[0].value` driver-side.
+
+The `init` argument is required (JS-faithful — `.reduce` without an initial value is a footgun in JS too) but its specific value doesn't affect the MQL output. MongoDB's `$group` accumulators have their own neutral elements (`$sum` starts at 0, `$max` at `null` then takes any value, etc.). The init is validated to be a literal so a stray `$.field` reference can't leak through unnoticed.
+
+This is **distinct** from the existing `$$$.<coll>.find/filter(...).reduce(...)` chained terminal in [`src/lookup-translation.ts`](../src/lookup-translation.ts) — that one builds a `$reduce` expression over a materialised array slot (different surface, different operator). Intentionally kept separate.
+
+**Other reducer shapes (`acc * d.x`, `acc.concat(...)`, etc.) are rejected** with an explicit list of the v1-supported shapes. The pattern is conservative on purpose: a misclassified accumulator (e.g. silently widening `acc + d.x * 2` to `$sum: { $multiply: ["$x", 2] }`) would be hard to debug. Future broadening is a matter of extending `classifyReduceBody`.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — `.toReversed()` chain method → flips the preceding `$sort`
+
+Second ES2023 immutable-array method. Zero-arg, must immediately follow `.toSorted(...)` in the same chain — MongoDB streams of documents have no natural ordering, so reversing requires a sort key. Rather than appending a new stage, the lowering rewrites the previous `$sort` with every direction flipped (1 ↔ -1). Net stage count stays equal to a hand-written descending `.toSorted`.
+
+To make this work, the registry's `lower` signature gained a fifth parameter — `prevStages: readonly object[]` — and the result type a `replacesPreviousStage?: boolean` flag. The chain walkers in [src/pipeline.ts](../src/pipeline.ts) (`lowerChainOnStream` / `lowerChainOnCollection`) pass the accumulator-so-far as `prevStages` and pop the last stage when the flag is set. Existing methods (`.slice`, `.concat`, `.map`, `.toSorted`) ignore the new parameter.
+
+Rejections: `.toReversed()` without a preceding `.toSorted` errors with "needs a sort key" pointing at the descending `.toSorted` alternative; non-numeric sort directions (text-meta etc.) are rejected; positional args are rejected.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — `.toSorted((a, b) => …)` chain method → `$sort`
+
+The first ES2023 immutable-array method to land. Accepts a comparator-shape expression body built from `a.<path> - b.<path>` (ascending), `b.<path> - a.<path>` (descending), and `||` combining multiple terms (compound sort). Source order of `||` branches becomes the key order of the emitted `$sort` document — `(a, b) => a.x - b.x || b.y - a.y` lowers to `{ $sort: { x: 1, y: -1 } }`.
+
+A small recursive parser (`parseComparatorBody` in [src/stream-methods.ts](../src/stream-methods.ts)) walks the body. Each subtraction is classified via `classifyComparatorPath`, which walks `MemberAccess` / string-literal `IndexAccess` back to the originating param ref and reports the dotted path. Mismatched paths (`a.x - b.y`), non-subtraction terms (`a.x + b.x`), and bare `.toSorted()` (default JS string compare — MongoDB has no natural document ordering) all error with actionable messages.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — Array mutators mutate at statement position; `.toSorted(keyFn)` accepts a key function
 
 JavaScript's array mutators — `.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()` — now lower to `$set` stages when called at statement position on a writable field-path receiver (`$.<path>` or `$.a.b.c`). Expression-position calls still throw the existing DX errors, now updated to mention the statement-position option alongside the immutable variant.
@@ -21,6 +98,149 @@ The change also fixed `.reverse()`, which was previously aliased to `.toReversed
 Separately, `.toSorted()` (and the new `.sort()`) now accept an optional 1-parameter key-function lambda — `e => e.distance` lowers to `sortBy: { distance: 1 }`, unary `-` flips direction, nested member paths produce dotted keys. Comparator-style `(a, b) => …` is rejected with a pointer at `$op($sortArray, { input, sortBy })`. The new helper `lambdaToSortBy()` lives next to the `.toSorted` case in `codegen.ts`. `.copyWithin()` was deferred (no clean MQL shape; the existing throw still names the workaround).
 
 Spec: [docs/specs/method-dispatch.md § Mutators at statement position](specs/method-dispatch.md#mutators-at-statement-position) and [docs/specs/update-filter.md § Mutating-method desugar](specs/update-filter.md#mutating-method-desugar). User-facing reference: [docs/LANGUAGE.md § Mutators](LANGUAGE.md#array-methods).
+
+---
+
+## 2026-05-28 — feat: array-returning reducer wrap `$$ = [$$.reduce(... => acc.concat(...), [])]`
+
+Third (and last for this batch) reduce-wrap form. Where the scalar / object wraps both lower to `$group` + `$replaceWith` (single summary doc out), the array-returning form is a filter-and-map flattener:
+
+```js
+$$ = [$$.reduce(
+  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
+  []
+)];
+// →
+[
+  { $match: { $expr: { $cond: [<truthy(d.active)>, "$contactDetails.email", "$active"] } } },
+  { $replaceWith: "$contactDetails" }
+]
+```
+
+Equivalent to `$$.filter(d => cond).map(d => d.contactDetails);` written as a single reducer. The point isn't terseness — the user can already write the explicit filter+map chain — it's keeping the `.reduce` mental model coherent: if the reducer returns an array, the wrap consumes that array as the new stream, just like JS would. The other two wraps reject the wrong return types; this one accepts the JS-faithful "array-out" case.
+
+**Supported body shapes.** v1 recognises just two — both centred on `acc.concat(<arg>)`:
+
+| Shape | Lowering |
+|---|---|
+| `acc.concat(d.<path>)` (unconditional) | `[{ $replaceWith: "$<path>" }]` |
+| `<cond> ? acc.concat(d.<path>) : acc` (ternary) | `[{ $match: <cond translated> }, { $replaceWith: "$<path>" }]` |
+| `acc.concat(d)` (bare param) | `[]` (identity) |
+| `<cond> ? acc.concat(d) : acc` | `[{ $match: <cond translated> }]` (filter only) |
+
+The condition translates through `lowerStreamFilterPredicate` — the same engine `.filter` uses — so it gets the full match-translator treatment (index-friendly query syntax when possible, `$expr` fallback otherwise) and the same `$.<field>`-is-rejected rule.
+
+**Constraints.** Init must be `[]` (a non-empty seed array isn't expressible in MQL accumulator semantics). The ternary alternate must be bare `acc` (`<cond> ? <concat> : acc`) — other alternates break the "this either adds an element or doesn't" pattern. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers like `acc.concat([d.<x>, d.<y>])`) aren't recognised in v1 — the JS-equivalent semantics aren't representable as a single `$replaceWith` projection.
+
+**Implementation.** `detectArrayReducerWrap` lives in [src/stream-methods.ts](../src/stream-methods.ts) alongside the other reduce detectors, dispatched at the array-init branch (the scalar/object detector falls through when it sees an `ArrayLiteral` init). `lowerArrayReducerWrap` lives in [src/pipeline.ts](../src/pipeline.ts) so it can reuse `lowerStreamFilterPredicate` for the condition. The `unknownStreamMethod` and `rejectInvalidReplaceStream` error messages now list all three wrap shapes.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — feat: object-returning reducer wrap for `$$ = [$$.reduce(…)]`
+
+Sibling to the scalar wrap added last commit. Where the scalar form puts one `$$.reduce(...)` per named field in an inline object:
+
+```js
+$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0),
+        total: $$.reduce((acc, d) => acc + d.amount, 0) }];
+```
+
+…the object-reducer form names every accumulator inside one reducer body:
+
+```js
+$$ = [$$.reduce(
+  (acc, d) => ({ ...acc, count: acc.count + 1, total: acc.total + d.amount }),
+  { count: 0, total: 0 }
+)];
+```
+
+Both lower to the same `$group` + `$replaceWith` pair (one `$group` across all keys, then a `$replaceWith` that drops `_id`). The user picks whichever shape reads best at the call site — `classifyAccumulatorExpr` does the per-key body classification for both, parameterised on what counts as "the accumulator reference" (bare `acc` for the scalar form, `acc.<key>` for the object form).
+
+**Object-reducer specifics.** Optional leading `...acc` spread (must be first, must spread the accumulator param specifically); subsequent entries are `<key>: <expr>` pairs. Each entry's body must reference `acc.<sameKey>` — `total: acc.count + d.amount` is rejected with `Each entry must reference 'acc.total'`. The init object must declare the same key set as the body — asymmetric sets throw with `init is missing keys [...]` / `body is missing keys [...]` (in JS this would silently work but produce the wrong shape).
+
+The `unknownStreamMethod` rejection for the bare `.reduce` chain form now lists both wrap shapes.
+
+**Out of scope (v1).** Dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`) would need `$arrayToObject` + `$push` (push `{ k, v }` pairs in `$group`, convert in `$replaceWith`) — a different lowering family. Richer per-key body shapes (multiplicative accumulators, `$avg`, `$first`/`$last`, …) are also future work.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — fix: `.reduce` on `$$` — replace the bogus `$group {value: …}` chain method with the explicit wrap pattern
+
+The original `.reduce` chain-method on `$$` (added a few commits ago) was wrong. JS `arr.reduce(...)` returns a scalar / object / array depending on the reducer; my implementation silently produced a single-doc stream `[{_id: null, value: <aggregate>}]` and treated that as "the stream". That violates the project-wide invariant that `$$` is always a stream of documents — assigning a scalar to it doesn't make sense.
+
+**Fix.** `.reduce` is no longer a chain method. Two changes:
+
+1. **Reject `.reduce` as a chain method** with an actionable wrap-pattern hint in `unknownStreamMethod` (so `$$ = $$.reduce(...)` and `$$ = $$.filter(p).reduce(...)` both error and point the user at the wrap).
+2. **Add the explicit wrap form**: `$$ = [{ <key>: $$.reduce((acc, d) => …, <init>), … }];` lowers to `[{ $group: { _id: null, <key>: { $<op>: … }, … } }, { $replaceWith: { <key>: "$<key>", … } }]`. Multiple aggregates share one `$group` stage. The wrap is detected in `lowerReplaceStream` via the new `detectReduceWrap` exported from `src/stream-methods.ts`.
+
+The wrap makes the JS-faithful semantic explicit: the user is wrapping a scalar/object into a single-doc stream by hand, exactly as they'd write `[{ count: arr.length }]` in JS. The pattern is also more useful than the old chain method — the user names each aggregate field, and multiple aggregates compose into one `$group`.
+
+**Reducer body shapes** stay the same (`acc + d.<field>` → `$sum`, etc.); `classifyReduceBody` is reused from the old code. `init` must be a literal (was already enforced); object-returning reducers (`$$ = [$$.reduce((acc, d) => ({...acc, ...}), {})]`) are future work.
+
+The lookup-chain `.reduce` terminal in [`src/lookup-translation.ts`](../src/lookup-translation.ts) is unaffected — that one's a `$reduce` *expression* over a materialised array slot, which is its own surface and stays.
+
+Also tightened `rejectInvalidReplaceStream`: a non-empty ArrayLiteral RHS that *isn't* the reduce-wrap now gets a precise "use the wrap pattern, or `$$.push(...)` if you wanted a literal-doc seeder" message instead of the generic "`$$ = []` not supported" one.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — Lookups inside `.map(d => …)` body — supported in lookup-body context too
+
+Removes the `inSubPipeline` rejection branch introduced one commit earlier. `$$ = $$$.users.filter(p).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));` now lowers to a `$unionWith.pipeline` containing a nested `$lookup`:
+
+```js
+[
+  { $limit: 0 },
+  { $unionWith: { coll: "users", pipeline: [
+    { $match: { active: true } },
+    { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
+    { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+    { $replaceWith: { a: "$__jsmql.__lookup1" } },
+  ] } },
+  { $unset: "__jsmql" },
+]
+```
+
+**Why the original rejection was conservative.** The project-wide "nested lookup deferred to v2" rule (still in force for `$lookup.pipeline` and `$facet.*` containing inner lookups) is about *let-binding coordination* — outer-pipeline `let` slots can't be threaded across the sub-pipeline boundary because `$unionWith` has no `let:` slot, and `$lookup.pipeline` does have one but threading the outer scope through it gets complex. For our case the lookup inside `.map` doesn't reference any outer-pipeline let-bindings — it correlates only against the foreign collection's current doc (the user's doc inside the `$unionWith.pipeline`), which is the *local* doc of that sub-pipeline. Both basic-form (`{localField, foreignField}`) and pipeline-form (`{let: {field: "$field"}, pipeline: [...]}`) correlate correctly: the field paths are resolved against the sub-pipeline's stream.
+
+Pipeline-form also works: `.map(d => ({ archives: $$$.archive.filter(x => x.userId === d._id && x.tier === d.tier) }))` hoists `d._id` / `d.tier` to `$lookup.let` slots, and the resulting `$lookup` (with `let: { _id: "$_id", tier: "$tier" }`) sits inside the outer `$unionWith.pipeline` with its `let:` slots correctly referencing the users-doc fields.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — Lookups inside `.map(d => …)` body — supported in top-level `$$` chain
+
+The original `.map` commit deferred lookups in the body (`.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }))`) because the chain walker didn't thread a slot allocator into per-method `lower` functions. This commit threads `allocSlot` (and an `inSubPipeline: boolean` flag) through `lowerReplaceStream` → `lowerChainOnStream` / `lowerChainOnCollection` → `def.lower`, and rewrites `MAP.lower` to run the rewritten body through `extractLookupCalls` after the `extractLetsFromExpr` pass.
+
+The flow: `extractLetsFromExpr(body, "d")` rewrites every `d.<path>` (including ones inside the lookup's predicate lambda — the walker recurses into nested lambdas) to bare `FieldRef`s. The lookup's predicate then sees `x._id === FieldRef("_id")`; `tryBasicForm` recognises the foreign-vs-local split and emits the basic-form `$lookup { localField, foreignField }`. `extractLookupCalls` allocates an `__jsmql.__lookup<N>` slot, emits the prologue `$lookup` (+ `$set { $first }` for `.find`), and rewrites the body to reference the slot. `MAP.lower` then emits `[...prologue, { $replaceWith: <body> }]`.
+
+**Lookup-body context (`$$$.<coll>.filter(p).map(...)`) keeps the rejection.** Materialising a lookup there would land a nested `$lookup` inside the outer `$unionWith.pipeline` — the same nested-lookup case that's deferred to v2 elsewhere in the codebase. The rejection message names the offending shape and points at the "hoist to a sibling stage" fix.
+
+**Registry signature change:** `StreamMethodDef.lower` now takes `allocSlot: SlotAllocator` (the pipeline's tracker) and `inSubPipeline: boolean` (true when the chain is in a `$unionWith.pipeline` body). All other methods (`.slice`, `.concat`, `.toSorted`, `.toReversed`, `.flatMap`, `.reduce`) ignore the new params.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — Stream-method registry + `.slice(start, end?)` on `$$` / `$$$.<coll>` chains
+
+The RHS of `$$ = …` was limited to a single `.filter(<pred>)` call. To make chains like `$$.filter(p).slice(0, 10)` work — and to give the planned ES2023 immutable-array methods (`.toSorted`, `.toReversed`, …) one place to live — this commit introduces a per-method registry at [`src/stream-methods.ts`](../src/stream-methods.ts) and rewires `lowerReplaceStream` to walk arbitrary method chains through it. `.slice(start, end?)` is the first registered entry.
+
+**Registry shape.** One entry per JS method (`StreamMethodDef`), each declaring an `arity` / arg-shape validator and a `lower(args, ctx, callPos) → { stages, clearLets? }` lowering. The chain walker in [`src/pipeline.ts`](../src/pipeline.ts) (`lowerChainOnStream` for the `$$` head, `lowerChainOnCollection` for the `$$$.<coll>` head) collects the chain via `collectStreamChain`, treats `.filter` as the optional first method (still handled by the pre-existing `lowerStreamFilterPredicate`), then dispatches every subsequent call through `lookupStreamMethod`. Adding a new method later is a registry entry + tests — no parser or chain-walker changes.
+
+**`.slice(start, end?)` lowering.** Non-negative integer literals only in v1. `start === 0` skips the `$skip` emission; an absent `end` skips the `$limit`; `slice(0)` produces zero stages. Inside a `$$$.<coll>` chain the same stages land inside the emitted `$unionWith.pipeline` body — same registry entry, two contexts.
+
+**Error wording.** Unknown method names now run through a chain-aware `unknownStreamMethod` helper. `.find` / `.findLast` / `.at` get an explicit message naming pipelines-are-arrays and pointing at the `.slice(0, 1)` / `.slice(n, n+1)` equivalents; for `$$$.<coll>.find(...)` the message also points at `$ = $$$.<coll>.find(<pred>)` as the lookup-context single-doc form. Other unknown names get a `closestNameTo` suggestion against `.filter` plus the registered method list. The previous `'$$ = …' RHS supports only '.filter'` wording was retired — it's no longer accurate now that the chain is open-ended.
+
+**Out of scope (this batch).** Bare-statement `$$.<chain>;` (no `$$ =`) is still rejected; the user opted to keep the explicit assignment form. `$$$.<coll>.find/.filter(p).<chain>` in **expression position** (as a value, not the RHS of `$$ = …`) still uses the existing chained-terminal walker in [`src/lookup-translation.ts`](../src/lookup-translation.ts) for `.length` / `.reduce` only — routing that walker through the registry is a follow-up. Top-level `$$.length` is also intentionally deferred; the mapping (`$count: "<auto-slot>"`) is clear but held back until the surrounding registry shape proves out.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
 
 ---
 

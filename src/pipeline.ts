@@ -88,6 +88,16 @@ import {
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
+import {
+  collectStreamChain,
+  detectArrayReducerWrap,
+  detectReduceWrap,
+  lookupStreamMethod,
+  lowerReduceWrap,
+  streamMethodNames,
+  type ArrayReducerWrap,
+  type MethodCallNode,
+} from "./stream-methods.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -226,7 +236,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     if (el.type === "AssignExpr") {
       if (isReplaceStreamAssign(el)) {
         flushUpdateOps();
-        const result = lowerReplaceStream(el, ctx, lowerBlock);
+        const result = lowerReplaceStream(el, ctx, lowerBlock, tracking.alloc);
         for (const s of result.stages) out.push(s);
         if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
         return;
@@ -583,6 +593,7 @@ function lowerReplaceStream(
   el: AssignExpr,
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
 ): { stages: object[]; clearLets: boolean } {
   if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
     throw new CodegenError(
@@ -591,38 +602,206 @@ function lowerReplaceStream(
     );
   }
   const v = el.value;
-  if (v.type === "MethodCall" && v.method === "filter" && v.args.length === 1 && v.args[0].type === "Lambda") {
-    const lambda = v.args[0] as LambdaNode;
-    if (v.object.type === "CollectionRef") {
-      // Form B's `$match` lives at the top level of the outer pipeline, so
-      // the predicate must see the outer pipeline's let scope (a `cutoff`
-      // declared earlier resolves through `ctx.pipelineLets`).
-      const stages = lowerStreamFilterPredicate(lambda, outerCtx, lowerBlockFn);
-      return { stages, clearLets: false };
-    }
-    const target = extractLookupTarget(v.object, outerCtx);
+  // `$$ = [{ <key>: $$.reduce(…), … }];` — the JS-faithful wrap pattern for
+  // folding the stream into a single-doc summary. `.reduce` is NOT a chain
+  // method on `$$` (would break the "stream is always an array" invariant);
+  // this wrap is the only legal way to consume a reduce result back into
+  // the stream. See docs/specs/stream-methods.md.
+  const reduceWrap = detectReduceWrap(v);
+  if (reduceWrap !== null) {
+    return { stages: lowerReduceWrap(reduceWrap), clearLets: true };
+  }
+  // `$$ = [$$.reduce((acc, d) => acc.concat(d.<path>), [])];` — the
+  // array-returning reducer wrap. Lowers to `$match` (when the reducer is
+  // a `cond ? concat : acc` ternary) + `$replaceWith` (when the projection
+  // is a field path). Sibling to the `$group`-shaped wrap above; different
+  // lowering family.
+  const arrayReducer = detectArrayReducerWrap(v);
+  if (arrayReducer !== null) {
+    return { stages: lowerArrayReducerWrap(arrayReducer, outerCtx, lowerBlockFn), clearLets: true };
+  }
+  const chain = collectStreamChain(v);
+  if (chain.root.type === "CollectionRef" && chain.methods.length > 0) {
+    return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, allocSlot, v);
+  }
+  if (chain.methods.length > 0) {
+    const target = extractLookupTarget(chain.root, outerCtx);
     if (target !== null) {
-      // Form A's sub-pipeline runs in a fresh ctx — outer lets don't cross
-      // `$unionWith.pipeline` boundaries (no `let:` slot exists on `$unionWith`).
-      const inner = lowerStreamFilterPredicate(lambda, freshSubPipelineCtx(outerCtx), lowerBlockFn);
-      const from: string | { db: string; coll: string } =
-        target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
-      const stages: object[] = [{ $limit: 0 }];
-      if (inner.length === 0) {
-        // Vacuous predicate (e.g. `o => true`). Skip the inner sub-pipeline
-        // and use the short-form `$unionWith`.
-        if (typeof from === "string") {
-          stages.push({ $unionWith: from });
-        } else {
-          stages.push({ $unionWith: { coll: from } });
-        }
-      } else {
-        stages.push({ $unionWith: { coll: from, pipeline: inner } });
-      }
-      return { stages, clearLets: true };
+      return lowerChainOnCollection(chain.methods, target, outerCtx, lowerBlockFn, allocSlot, v);
     }
   }
   rejectInvalidReplaceStream(v, outerCtx);
+}
+
+/**
+ * Lower a chain `$$.<m1>(...).<m2>(...)…` into stages on the outer pipeline.
+ *
+ * The first method may be `.filter(<lambda>)` — that produces a `$match`
+ * stage exactly as before (predicate translated in the outer ctx so prior
+ * `let` bindings resolve). Any subsequent method, or a non-`.filter` first
+ * method, is dispatched through the stream-method registry. Unknown method
+ * names throw an actionable error listing the registered alternatives.
+ */
+function lowerChainOnStream(
+  methods: MethodCallNode[],
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+  rhs: Expr,
+): { stages: object[]; clearLets: boolean } {
+  const stages: object[] = [];
+  let clearLets = false;
+  let i = 0;
+  if (methods[0].method === "filter") {
+    const m = methods[0];
+    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
+      rejectInvalidReplaceStream(rhs, outerCtx);
+    }
+    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, outerCtx, lowerBlockFn);
+    stages.push(...matchStages);
+    i = 1;
+  }
+  for (; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) {
+      throw unknownStreamMethod(m, "$$");
+    }
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, outerCtx, m.pos, lowerBlockFn, stages, allocSlot, false);
+    if (result.replacesPreviousStage) stages.pop();
+    stages.push(...result.stages);
+    if (result.clearLets) clearLets = true;
+  }
+  return { stages, clearLets };
+}
+
+/**
+ * Lower a chain `$$$.<coll>.<m1>(...).<m2>(...)…` into a `$limit: 0` +
+ * `$unionWith` pair, with the chained stages making up the `$unionWith`
+ * sub-pipeline body. Predicate / lowering runs in a fresh sub-pipeline
+ * ctx — outer lets don't cross `$unionWith.pipeline` boundaries (the
+ * stage has no `let:` slot).
+ *
+ * When the chain is just `.filter(o => true)` (vacuous predicate, no
+ * additional methods) the inner pipeline is empty and the short-form
+ * `$unionWith` shape is emitted — same as before this chain walker
+ * existed.
+ */
+function lowerChainOnCollection(
+  methods: MethodCallNode[],
+  target: { db?: string; collection: string },
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+  rhs: Expr,
+): { stages: object[]; clearLets: boolean } {
+  const innerCtx = freshSubPipelineCtx(outerCtx);
+  const inner: object[] = [];
+  let i = 0;
+  if (methods[0].method === "filter") {
+    const m = methods[0];
+    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
+      rejectInvalidReplaceStream(rhs, outerCtx);
+    }
+    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, innerCtx, lowerBlockFn);
+    inner.push(...matchStages);
+    i = 1;
+  }
+  for (; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) {
+      throw unknownStreamMethod(m, "$$$.<coll>");
+    }
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
+    if (result.replacesPreviousStage) inner.pop();
+    inner.push(...result.stages);
+  }
+  const from: string | { db: string; coll: string } =
+    target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
+  const stages: object[] = [{ $limit: 0 }];
+  if (inner.length === 0) {
+    if (typeof from === "string") {
+      stages.push({ $unionWith: from });
+    } else {
+      stages.push({ $unionWith: { coll: from } });
+    }
+  } else {
+    stages.push({ $unionWith: { coll: from, pipeline: inner } });
+  }
+  return { stages, clearLets: true };
+}
+
+function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError {
+  // Methods that return a single element in JS — deliberately rejected because
+  // pipelines are arrays. The error names the explicit alternative so the user
+  // doesn't have to dig for it.
+  if (m.method === "find" || m.method === "findLast" || m.method === "at") {
+    const alt = m.method === "at" ? `'${receiver}.slice(n, n + 1)'` : `'${receiver}.filter(<pred>).slice(0, 1)'`;
+    const findHint =
+      receiver === "$$$.<coll>"
+        ? ` (For replacing the current document with a single matched foreign doc, write '$ = $$$.<coll>.find(<pred>)' instead — that's a separate lookup form.)`
+        : "";
+    return new CodegenError(
+      `'.${m.method}(...)' is not allowed in a chain on '${receiver}' — '.${m.method}' returns a single element in JS, but pipelines are arrays. ` +
+        `Use ${alt} for the equivalent "first match" / "n-th" shape.${findHint}`,
+      m.pos,
+    );
+  }
+  // `.reduce` is rejected as a chain method for the same reason — in JS,
+  // `arr.reduce(...)` returns a scalar / object / array depending on the
+  // reducer. Assigning a non-array result directly to `$$` would break the
+  // "stream is always an array of docs" invariant. The user must wrap.
+  if (m.method === "reduce") {
+    return new CodegenError(
+      `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS:\n` +
+        `  • Scalar reducer:  '$$ = [{ <key>: $$.reduce((acc, d) => …, <literal-init>) }];' — each entry becomes a '$group' accumulator; output is a single-doc stream of your named keys.\n` +
+        `  • Object reducer:  '$$ = [$$.reduce((acc, d) => ({ ...acc, <key1>: <expr1>, <key2>: <expr2> }), { <key1>: <init1>, <key2>: <init2> })];' — same MQL output as the scalar form, keyed accumulators declared inline.\n` +
+        `  • Array reducer:   '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])];' — lowers to '$match' (when the body is a ternary) + '$replaceWith: "$<field>"'. Each input doc that passes <cond> becomes its <field> sub-doc.\n` +
+        `Pick the wrap shape that matches what your reducer would return in plain JS.`,
+      m.pos,
+    );
+  }
+  const names = streamMethodNames();
+  const suggestion = closestNameTo(m.method, ["filter", ...names]);
+  const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
+  const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
+  return new CodegenError(
+    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} ` +
+      `The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.`,
+    m.pos,
+  );
+}
+
+/**
+ * Lower a detected `$$ = [$$.reduce((acc, d) => …, [])]` array-returning
+ * reducer wrap into `$match` (when the body is `cond ? acc.concat(...) : acc`)
+ * + `$replaceWith` (when the projection is `d.<path>`; omitted when the
+ * reducer concats bare `d` — the docs flow through unchanged).
+ *
+ * The condition translates through the same `lowerStreamFilterPredicate`
+ * engine `.filter` uses; the condition's `$.<field>` refs are rejected
+ * with the standard "use the lambda parameter" hint.
+ */
+function lowerArrayReducerWrap(
+  wrap: ArrayReducerWrap,
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+): object[] {
+  const stages: object[] = [];
+  if (wrap.condition !== null) {
+    // Synthesise a single-param Lambda from (dParam, condition) so the
+    // existing predicate-translation engine handles the body unchanged.
+    // `pos` carries the lambda's original pos for error reporting.
+    const fakeLambda: LambdaNode = { type: "Lambda", params: [wrap.dParam], body: wrap.condition, pos: wrap.lambdaPos };
+    stages.push(...lowerStreamFilterPredicate(fakeLambda, outerCtx, lowerBlockFn));
+  }
+  if (wrap.project.kind === "field") {
+    stages.push({ $replaceWith: `$${wrap.project.path}` });
+  }
+  return stages;
 }
 
 function lowerStreamFilterPredicate(
@@ -671,8 +850,22 @@ function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: st
 
 function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
   if (value.type === "ArrayLiteral") {
+    if (value.elements.length === 0) {
+      throw new CodegenError(
+        `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.`,
+        value.pos,
+      );
+    }
+    // The only ArrayLiteral RHSes we accept today are the reduce-wrap
+    // patterns — already detected upstream — so reaching here means the user
+    // wrote something else. Point at all three wrap forms explicitly so they
+    // don't have to guess.
     throw new CodegenError(
-      `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.`,
+      `'$$ = [<expr>]' is only supported as one of the three reduce-wrap patterns: ` +
+        `'$$ = [{ <key>: $$.reduce(…, <literal-init>), … }]' (scalar accumulators → '$group' + '$replaceWith'), ` +
+        `'$$ = [$$.reduce((acc, d) => ({ ...acc, <key>: <expr>, … }), { <key>: <init>, … })]' (object-returning reducer, same lowering), ` +
+        `or '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])]' (array-returning reducer → '$match' + '$replaceWith'). ` +
+        `Other ArrayLiteral RHSes (literal doc lists, multi-element arrays, non-reduce single docs) aren't yet supported — for a literal-doc seeder, use '$$.push({...}, {...}, …)' instead.`,
       value.pos,
     );
   }
@@ -1029,7 +1222,7 @@ function lowerUpdateFilterWithLookups(
     if (op.type === "AssignExpr") {
       if (isReplaceStreamAssign(op)) {
         flush();
-        const result = lowerReplaceStream(op, ctx, lowerBlockFn);
+        const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot);
         for (const s of result.stages) out.push(s);
         if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
         continue;

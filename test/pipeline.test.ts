@@ -505,14 +505,14 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("rejects `$$ = $$$.<coll>.find(...)` and suggests `.filter`", () => {
-    expect(() => jsmql(`$$ = $$$.users.find(u => u.active);`)).toThrow(/'\.find\(\.\.\.\)' is not allowed/);
+  it("rejects `$$ = $$$.<coll>.find(...)` and points at the `.slice(0, 1)` / `$ = $$$.<coll>.find` alternatives", () => {
+    expect(() => jsmql(`$$ = $$$.users.find(u => u.active);`)).toThrow(
+      /'\.find\(\.\.\.\)' is not allowed.*pipelines are arrays.*\.slice\(0, 1\).*\$ = \$\$\$\.<coll>\.find/s,
+    );
   });
 
-  it("rejects `$$ = $$.map(...)` with a 'only `.filter`' hint", () => {
-    expect(() => jsmql(`$$ = $$.map(t => t.x);`)).toThrow(
-      /'\$\$ = …' RHS supports only.*\.filter.*'\.map\(\.\.\.\)' is not allowed/,
-    );
+  it("`$$ = $$.map(d => <expr>)` lowers to `$replaceWith` via the stream-method registry", () => {
+    expect(jsmql(`$$ = $$.map(t => ({ x: t.x }));`)).toEqual([{ $replaceWith: { x: "$x" } }]);
   });
 
   it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
