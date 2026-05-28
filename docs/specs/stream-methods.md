@@ -78,6 +78,7 @@ export type StreamMethodResult = {
 | `.map(d => <expr>)` | One single-param expression-body arrow; `$.<field>` and lookups in body rejected | `extractLetsFromExpr` (param rewrite) + `generateWithCtx` | One `{ $replaceWith: <expr> }` stage; clears the let scope (reshape stage) |
 | `.toSorted((a, b) => <cmp>)` | Two-param expression-body arrow; body built from `a.<path> - b.<path>` / `b.<path> - a.<path>` terms combined with `\|\|` | `parseComparatorBody` walks the expression, classifies each subtraction's paths, emits a `$sort` spec | One `{ $sort: { … } }` stage; key order preserved from source for compound sorts |
 | `.toReversed()` | Zero args; must immediately follow a `.toSorted(...)` (or any preceding stage whose `$sort` has 1/-1 directions) in the same chain | Reads `prevStages`, flips every direction (1 ↔ -1), returns `replacesPreviousStage: true` so the caller drops the old `$sort` | One `{ $sort: { … } }` stage replacing the previous one — net stage count unchanged vs. writing `.toSorted` descending directly |
+| `.flatMap(d => d.<path>)` | Single-param arrow whose expression body is a bare field-path on the param (v1) | `paramFieldPath` resolves the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
 
 Future methods (per the planning notes) extend this table — see
 [docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.

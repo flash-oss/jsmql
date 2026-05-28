@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.flatMap(d => d.<path>)` chain method → `$unwind`
+
+The chain-form way to introduce `$unwind` without reaching for `$op("$unwind", …)`. v1 only supports a bare field-path body (the lambda body must walk back to the param ref through `.member` / `["literal"]` access) — that lowers to a single `{ $unwind: "$<path>" }` stage with surrounding fields preserved.
+
+Note this departs from JS `.flatMap` semantics — JS would yield just the bare elements; MQL `$unwind` preserves the surrounding doc with the array field replaced by one element. Users who want "just the elements" chain `.map(d => d.<path>)` after.
+
+Complex bodies (`.flatMap(d => d.items.map(item => ({...})))`) are rejected — they'd require a slot allocator threaded through the chain walker (to materialise the per-doc array as a temp field before `$unwind`), which is a follow-up.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — `.toReversed()` chain method → flips the preceding `$sort`
 
 Second ES2023 immutable-array method. Zero-arg, must immediately follow `.toSorted(...)` in the same chain — MongoDB streams of documents have no natural ordering, so reversing requires a sort key. Rather than appending a new stage, the lowering rewrites the previous `$sort` with every direction flipped (1 ↔ -1). Net stage count stays equal to a hand-written descending `.toSorted`.

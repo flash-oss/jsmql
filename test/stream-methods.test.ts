@@ -321,6 +321,41 @@ describe(".toReversed() — flips the preceding $sort", () => {
   });
 });
 
+describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
+  it("bare field path lowers to $unwind", () => {
+    expect(jsmql("$$ = $$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }]);
+  });
+
+  it("nested field path lowers to $unwind on the dotted path", () => {
+    expect(jsmql("$$ = $$.flatMap(d => d.profile.tags);")).toEqual([{ $unwind: "$profile.tags" }]);
+  });
+
+  it("composes after .filter and before .map (the JS-faithful unwind+project pattern)", () => {
+    expect(
+      jsmql("$$ = $$.filter(o => o.active === true).flatMap(d => d.items).map(d => ({ item: d.items }));"),
+    ).toEqual([{ $match: { active: true } }, { $unwind: "$items" }, { $replaceWith: { item: "$items" } }]);
+  });
+
+  it("works inside $$$.<coll> lookup body", () => {
+    expect(jsmql("$$ = $$$.orders.filter(o => o.shipped === true).flatMap(d => d.items);")).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "orders", pipeline: [{ $match: { shipped: true } }, { $unwind: "$items" }] } },
+    ]);
+  });
+
+  it("non-path body is rejected with a 'hoist to a separate stage' hint", () => {
+    expect(() => jsmql("$$ = $$.flatMap(d => d.items.map(x => x * 2));")).toThrow(/bare field-path body.*hoist/);
+  });
+
+  it("zero-arg body is rejected (no path → not derivable)", () => {
+    expect(() => jsmql("$$ = $$.flatMap(d => 5);")).toThrow(/bare field-path body/);
+  });
+
+  it("two-param arrow is rejected", () => {
+    expect(() => jsmql("$$ = $$.flatMap((d, i) => d.items);")).toThrow(/single-parameter arrow/);
+  });
+});
+
 describe("unknown chain method on $$ → registry error with hint", () => {
   it("typo like .slise is corrected via 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);

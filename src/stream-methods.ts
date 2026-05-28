@@ -341,6 +341,86 @@ const TO_REVERSED: StreamMethodDef = {
   },
 };
 
+// ── .flatMap(d => d.<path>) → $unwind ─────────────────────────────────────────
+//
+// v1 only supports bare-field-path bodies. The lambda body must walk back
+// to the param ref through `.member` / `["literal"]` access; the lowered
+// stage is a single `$unwind: "$<path>"` that splits each input doc into
+// one-per-element, with surrounding fields preserved (MQL-natural — differs
+// from JS `flatMap` which yields bare elements).
+//
+// Users who want JS-faithful "just the elements" can chain
+// `.map(d => d.<path>)` after to project the unwound array down to its
+// element. More complex bodies (e.g. `.flatMap(d => d.items.map(...))`)
+// would require a slot allocator threaded through the chain walker;
+// deferred to a follow-up.
+
+function paramFieldPath(expr: Expr, param: string): string | null {
+  const segments: string[] = [];
+  let cur: Expr = expr;
+  while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
+    if (cur.type === "MemberAccess") {
+      segments.unshift(cur.member);
+      cur = cur.object;
+      continue;
+    }
+    if (cur.type === "IndexAccess" && cur.index.type === "StringLiteral") {
+      segments.unshift(cur.index.value);
+      cur = cur.object;
+      continue;
+    }
+    return null;
+  }
+  if (cur.type !== "ParamRef") return null;
+  if (cur.name !== param) return null;
+  if (segments.length === 0) return null;
+  return segments.join(".");
+}
+
+const FLAT_MAP: StreamMethodDef = {
+  name: "flatMap",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.flatMap(d => d.<path>) takes exactly one argument (a single-parameter arrow), got ${args.length}.`,
+        callPos,
+      );
+    }
+    const arg = args[0];
+    if (arg.type === "SpreadElement") {
+      throw new CodegenError(`.flatMap(...) does not accept a spread argument.`, arg.pos);
+    }
+    if (arg.type !== "Lambda") {
+      throw new CodegenError(
+        `.flatMap(d => d.<path>) requires an arrow function — in v1 the body must be a bare field-path on the lambda param (e.g. 'd.items', 'd.profile.tags').`,
+        arg.pos,
+      );
+    }
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `.flatMap(d => d.<path>) requires a single-parameter arrow (got ${arg.params.length} params).`,
+        arg.pos,
+      );
+    }
+    if (arg.body === undefined) {
+      throw new CodegenError(`.flatMap(d => d.<path>) requires an expression body, not a block.`, arg.pos);
+    }
+  },
+  lower(args, _ctx, callPos, _lowerBlock, _prevStages) {
+    const lambda = args[0] as LambdaNode;
+    const param = lambda.params[0];
+    const body = lambda.body as Expr;
+    const path = paramFieldPath(body, param);
+    if (path === null) {
+      throw new CodegenError(
+        `.flatMap(d => …) v1 only supports a bare field-path body on the lambda param (e.g. '.flatMap(d => d.items)'). Complex bodies (e.g. '.flatMap(d => d.items.map(...))') aren't supported yet — hoist the transformation to a separate stage above the chain.`,
+        body.pos ?? callPos,
+      );
+    }
+    return { stages: [{ $unwind: `$${path}` }] };
+  },
+};
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 const STREAM_METHODS: Record<string, StreamMethodDef> = {
@@ -349,6 +429,7 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   map: MAP,
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
+  flatMap: FLAT_MAP,
 };
 
 /** Look up a registered stream method by name; null if not registered. */
