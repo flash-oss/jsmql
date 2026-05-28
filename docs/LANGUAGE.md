@@ -402,7 +402,7 @@ or poison every downstream caller).
 |---|---|---|
 | Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
 | Array spread | `[]` | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Array method receiver (`.map`, `.filter`, `.reduce`, `.reduceRight`, `.find`, `.findIndex`, `.some`, `.every`, `.flat`, `.flatMap`, `.at`, `.reverse`, `.toSorted`, `.toSpliced`, `.with`, `.join`, `.findLast`, `.findLastIndex`, `.lastIndexOf`, `.toString`) | `[]` | `$.user?.posts.map(p => p.id)` → `{ $map: { input: { $ifNull: ["$user.posts", []] }, ... } }` |
+| Array method receiver (`.map`, `.filter`, `.reduce`, `.reduceRight`, `.find`, `.findIndex`, `.some`, `.every`, `.flat`, `.flatMap`, `.at`, `.toReversed`, `.toSorted`, `.toSpliced`, `.with`, `.join`, `.findLast`, `.findLastIndex`, `.lastIndexOf`, `.toString`) | `[]` | `$.user?.posts.map(p => p.id)` → `{ $map: { input: { $ifNull: ["$user.posts", []] }, ... } }` |
 | Either-method receiver (`.slice`, `.indexOf`, `.includes`, `.concat` — `.slice` since type depends on receiver) | `""` (string-typed) / `[]` otherwise | `$.user?.tags.slice(0, 3)` → runtime `$cond` over `$ifNull("$user.tags", [])` |
 | String method receiver (`.trim`, `.toUpperCase`, `.toLowerCase`, `.split`, `.substr`, `.substring`, `.charAt`, `.startsWith`, `.endsWith`, `.replace`, `.replaceAll`, `.padStart`, `.padEnd`, `.repeat`, `.match`, `.matchAll`, `.search`) | `""` | `$.user?.name.trim()` → `{ $trim: { input: { $ifNull: ["$user.name", ""] } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
@@ -907,9 +907,12 @@ $.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
 [1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 0, 2] }      (known array → $slice)
 $.items.slice(1, 3)        // runtime $cond on $isArray — array → $slice, string → $substrCP
                            // (type-aware, like .indexOf / .includes / .concat)
-$.items.reverse()          // { $reverseArray: "$items" }
-$.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, identical to .reverse())
+$.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, immutable)
 $.scores.toSorted()        // { $sortArray: { input: "$scores", sortBy: 1 } } (ascending)
+$.scores.toSorted(s => s.value)
+                           // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }
+$.scores.toSorted(s => -s.value)
+                           // { $sortArray: { input: "$scores", sortBy: { value: -1 } } } (descending)
 $.items.with(0, 99)        // immutable index-set — replace element at index, returns new array (ES2023)
 $.items.toSpliced(1, 2)    // immutable splice — remove 2 items starting at 1 (ES2023)
 $.items.toSpliced(1, 0, "x", "y")
@@ -1010,21 +1013,63 @@ $.items.filter((_, i) => i > 0)
 $.scores.reduce((acc, x, i) => acc + x * i, 0)
 ```
 
-### Mutator methods raise an actionable error
+### Mutators: at statement position, they mutate the field
 
-JavaScript's in-place mutators have no place in immutable MongoDB expressions. Calling them surfaces a tailored error that points at the right immutable replacement:
+JavaScript's array mutators (`.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`) modify the receiver in place. In jsmql they work the same way **when called at statement position on a `$.<field>` receiver** — the call lowers to a `$set` stage that re-assigns the field. JS semantics are preserved: `.toSorted()` returns a new array and leaves the field unchanged; `.sort()` mutates the field.
 
-| You wrote | Error message says |
+```js
+// At statement position — each line desugars to a $set stage.
+$.events.sort(e => e.timestamp);
+// → { $set: { events: { $sortArray: { input: "$events", sortBy: { timestamp: 1 } } } } }
+
+$.events.push($.newEvent);
+// → { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } }
+
+$.events.pop();
+// → { $set: { events: { $slice: ["$events", 0, { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } }
+
+$.events.reverse();
+// → { $set: { events: { $reverseArray: "$events" } } }
+```
+
+Chained mutators on the same field interact with the `$set` coalescer exactly the same way explicit `$.events = …` assignments do — a read-after-write splits into separate stages:
+
+```js
+jsmql`
+  $.events.push($.newEvent);
+  $.events.sort(e => e.timestamp);
+  $.events = $.events.slice(-10);
+`
+// → three $set stages, in order
+```
+
+**In expression position, mutators throw.** Calling `.sort()` (or any other mutator) inside an expression — chained, in a `$match` body, as a `$project` value — surfaces a tailored error pointing at both the immutable variant and the statement-position option:
+
+| You wrote in expression position | Use instead |
 |---|---|
-| `.sort()` | Use `.toSorted()` instead. |
-| `.splice()` | Use `.toSpliced(start, deleteCount, ...items)` instead. |
-| `.push()` | Use `.concat(x)` or spread `[...arr, x]` instead. |
-| `.pop()` | Use `.at(-1)` to read, or `.slice(0, -1)` for everything-but-last. |
-| `.shift()` | Use `.at(0)` to read, or `.slice(1)` for everything-but-first. |
-| `.unshift()` | Use `.concat()` with the new items first, or spread `[...newItems, ...arr]`. |
-| `.fill()`, `.copyWithin()` | No direct immutable replacement — compose with `$range`, `.slice()`, and `$concatArrays`. |
+| `.sort()` | `.toSorted()` (or write `$.field.sort()` at statement position) |
+| `.reverse()` | `.toReversed()` (or write `$.field.reverse()` at statement position) |
+| `.splice(...)` | `.toSpliced(start, deleteCount, ...items)` |
+| `.push(x)` | `.concat(x)` or spread `[...arr, x]` |
+| `.pop()` | `.at(-1)` to read, or `.slice(0, -1)` for everything-but-last |
+| `.shift()` | `.at(0)` to read, or `.slice(1)` for everything-but-first |
+| `.unshift(x)` | `.concat()` with the new items first, or spread `[...newItems, ...arr]` |
+| `.fill(v[, s[, e]])` | No direct immutable replacement — call at statement position, or build via `.map` and `$range` |
+| `.copyWithin(...)` | No direct immutable replacement — compose `.slice()` calls with `$concatArrays` |
 
 `.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors explaining why they're not expressible (iterator protocol / void return / locale-dependence) and what to use instead.
+
+#### Sort key functions: `.toSorted(keyFn)` and `.sort(keyFn)`
+
+Both accept an optional 1-parameter lambda that names the field to sort by. The same shapes work everywhere — `.toSorted()` returns a new array, `.sort()` mutates at statement position:
+
+```js
+$.events.toSorted(e => e.distance)        // { $sortArray: { input: "$events", sortBy: { distance: 1 } } }
+$.events.toSorted(e => -e.distance)       // descending, via unary -
+$.events.toSorted(e => e.user.name)       // nested paths welcome
+```
+
+Comparator-style lambdas (`(a, b) => a.x - b.x`) and anything more complex than `x => x.path` (optionally negated) are rejected at compile time — use `$op($sortArray, { input, sortBy })` to spell out a multi-key or non-trivial sort.
 
 ### Bare type-cast callbacks
 

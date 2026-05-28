@@ -1113,8 +1113,8 @@ describe("array methods (no lambda)", () => {
   it("slice(start, end) on known array → $slice", () => {
     expect(jsmql.expr("[1,2,3,4,5].slice(1, 3)")).toEqual({ $slice: [[1, 2, 3, 4, 5], 1, 3] });
   });
-  it("reverse()", () => {
-    expect(jsmql.expr("$.items.reverse()")).toEqual({ $reverseArray: "$items" });
+  it("toReversed()", () => {
+    expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
   });
 });
 
@@ -1661,7 +1661,7 @@ describe("immutable array methods", () => {
     expect(jsmql.expr("$.scores.toSorted()")).toEqual({ $sortArray: { input: "$scores", sortBy: 1 } });
   });
   it(".toSorted with comparator throws helpful error", () => {
-    expect(() => jsmql.expr("$.scores.toSorted((a, b) => a - b)")).toThrow(/comparator is not supported/);
+    expect(() => jsmql.expr("$.scores.toSorted((a, b) => a - b)")).toThrow(/comparator-style/);
   });
   it(".toReversed() is array-context", () => {
     expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
@@ -1979,10 +1979,14 @@ describe("array callbacks support (element, index)", () => {
   });
 });
 
-describe("mutator DX shims", () => {
-  it(".sort() points at .toSorted()", () => {
+describe("mutator DX shims (expression position rejects mutators)", () => {
+  it(".sort() points at .toSorted() and statement position", () => {
     expect(() => jsmql.expr("$.xs.sort()")).toThrow(/\.toSorted\(\)/);
-    expect(() => jsmql.expr("$.xs.sort()")).toThrow(/immutable/);
+    expect(() => jsmql.expr("$.xs.sort()")).toThrow(/mutates|statement position/);
+  });
+  it(".reverse() points at .toReversed() and statement position", () => {
+    expect(() => jsmql.expr("$.xs.reverse()")).toThrow(/\.toReversed\(\)/);
+    expect(() => jsmql.expr("$.xs.reverse()")).toThrow(/mutates|statement position/);
   });
   it(".splice() points at .toSpliced()", () => {
     expect(() => jsmql.expr("$.xs.splice(1, 2)")).toThrow(/\.toSpliced/);
@@ -2000,10 +2004,125 @@ describe("mutator DX shims", () => {
     expect(() => jsmql.expr("$.xs.unshift(1)")).toThrow(/\.concat\(\)|newItems/);
   });
   it(".fill() throws with a workaround hint", () => {
-    expect(() => jsmql.expr("$.xs.fill(0)")).toThrow(/immutable/);
+    expect(() => jsmql.expr("$.xs.fill(0)")).toThrow(/immutable|statement position/);
   });
   it(".copyWithin() throws with a workaround hint", () => {
     expect(() => jsmql.expr("$.xs.copyWithin(0, 1)")).toThrow(/immutable/);
+  });
+});
+
+describe("toSorted / sort key function", () => {
+  it(".toSorted(x => x.path) → ascending sortBy by that field", () => {
+    expect(jsmql.expr("$.events.toSorted(e => e.distance)")).toEqual({
+      $sortArray: { input: "$events", sortBy: { distance: 1 } },
+    });
+  });
+  it(".toSorted(x => -x.path) → descending sortBy", () => {
+    expect(jsmql.expr("$.events.toSorted(e => -e.distance)")).toEqual({
+      $sortArray: { input: "$events", sortBy: { distance: -1 } },
+    });
+  });
+  it(".toSorted with nested key path", () => {
+    expect(jsmql.expr("$.events.toSorted(e => e.user.name)")).toEqual({
+      $sortArray: { input: "$events", sortBy: { "user.name": 1 } },
+    });
+  });
+  it(".toSorted(keyFn) chains with .slice(-10) (the README example)", () => {
+    expect(jsmql.expr("$.events.toSorted(e => e.distance).slice(-10)")).toEqual({
+      $slice: [{ $sortArray: { input: "$events", sortBy: { distance: 1 } } }, -10],
+    });
+  });
+  it(".toSorted with 2-param (comparator) lambda is rejected", () => {
+    expect(() => jsmql.expr("$.events.toSorted((a, b) => a.x - b.x)")).toThrow(/comparator-style/);
+  });
+  it(".toSorted with non-key-function body is rejected", () => {
+    expect(() => jsmql.expr("$.events.toSorted(e => e.x + e.y)")).toThrow(/key function body/);
+  });
+  it(".toSorted with bare param (x => x) is rejected", () => {
+    expect(() => jsmql.expr("$.events.toSorted(e => e)")).toThrow(/key function body/);
+  });
+});
+
+describe("statement-position mutators", () => {
+  it(".sort() — 0-arg ascending", () => {
+    expect(jsmql("$.events.sort();")).toEqual([{ $set: { events: { $sortArray: { input: "$events", sortBy: 1 } } } }]);
+  });
+  it(".sort(keyFn) — desugars to $set with $sortArray sortBy", () => {
+    expect(jsmql("$.events.sort(e => e.distance);")).toEqual([
+      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
+    ]);
+  });
+  it(".reverse() — desugars to $set with $reverseArray", () => {
+    expect(jsmql("$.events.reverse();")).toEqual([{ $set: { events: { $reverseArray: "$events" } } }]);
+  });
+  it(".push(item) — appends a single element with $concatArrays + array wrap", () => {
+    expect(jsmql("$.events.push($.newEvent);")).toEqual([
+      { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
+    ]);
+  });
+  it(".push(a, b) — appends multiple elements", () => {
+    expect(jsmql("$.tags.push('a', 'b');")).toEqual([{ $set: { tags: { $concatArrays: ["$tags", ["a", "b"]] } } }]);
+  });
+  it(".unshift(a, b) — prepends with items-first", () => {
+    expect(jsmql("$.events.unshift($.x, $.y);")).toEqual([
+      { $set: { events: { $concatArrays: [["$x", "$y"], "$events"] } } },
+    ]);
+  });
+  it(".pop() — drops last element with $slice and a clamp", () => {
+    expect(jsmql("$.events.pop();")).toEqual([
+      { $set: { events: { $slice: ["$events", 0, { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } },
+    ]);
+  });
+  it(".shift() — drops first element with $slice", () => {
+    expect(jsmql("$.events.shift();")).toEqual([
+      { $set: { events: { $slice: ["$events", 1, { $size: "$events" }] } } },
+    ]);
+  });
+  it(".splice(s, dc, ...items) — delegates to the .toSpliced shape inside $set", () => {
+    const out = jsmql("$.events.splice(0, 2, 99);") as Array<Record<string, unknown>>;
+    const eventsValue = (out[0]?.$set as { events: unknown }).events as Record<string, unknown>;
+    expect(Object.keys(eventsValue)).toEqual(["$let"]);
+  });
+  it(".fill(v) — every element becomes v via $map", () => {
+    expect(jsmql("$.events.fill(0);")).toEqual([
+      { $set: { events: { $map: { input: "$events", as: "__jsmql_unused", in: 0 } } } },
+    ]);
+  });
+  it(".fill(v, s, e) with non-negative literals — IIFE bindings inline the literals (no normalisation $cond)", () => {
+    const out = jsmql("$.events.fill(0, 1, 3);") as Array<Record<string, unknown>>;
+    const setVal = (out[0]?.$set as { events: unknown }).events as { $let: { vars: Record<string, unknown> } };
+    expect(setVal.$let.vars).toEqual({ __jsmql_s0: 1, __jsmql_e0: 3 });
+  });
+  it(".reverse() with extra args is rejected (preserves the existing .toReversed arg-count check)", () => {
+    expect(() => jsmql("$.events.reverse(123);")).toThrow();
+  });
+  it("nested receiver $.user.history.push(...) emits a dotted $set key", () => {
+    expect(jsmql("$.user.history.push($.e);")).toEqual([
+      { $set: { "user.history": { $concatArrays: ["$user.history", ["$e"]] } } },
+    ]);
+  });
+  it("top-level mutator without a trailing `;` auto-wraps into Pipeline mode", () => {
+    expect(jsmql("$.events.push($.x)")).toEqual([{ $set: { events: { $concatArrays: ["$events", ["$x"]] } } }]);
+  });
+  it("expression-position mutator still throws (not auto-rewritten inside a larger expression)", () => {
+    expect(() => jsmql.expr("$.events.sort().slice(-10)")).toThrow(/\.sort\(\) mutates/);
+  });
+  it("expression-position .push in a $project body throws", () => {
+    expect(() => jsmql.expr("$.events.push(x)")).toThrow(/\.push\(\) mutates/);
+  });
+  it("two writes to the same field split into two $set stages (read-after-write)", () => {
+    // The second .sort reads $events (which was just written), so the
+    // coalescer correctly splits — same logic as explicit `=` chains.
+    expect(jsmql(`$.events.push($.newEvent); $.events.sort(e => e.distance);`)).toEqual([
+      { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
+      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
+    ]);
+  });
+  it("mutator inside a [...] pipeline literal also rewrites", () => {
+    expect(jsmql.pipeline("[{ $match: { active: true } }, $.events.sort()]")).toEqual([
+      { $match: { active: true } },
+      { $set: { events: { $sortArray: { input: "$events", sortBy: 1 } } } },
+    ]);
   });
 });
 
@@ -2618,8 +2737,8 @@ describe("optional chaining (?.)", () => {
   it(".at on optional receiver wraps with []", () => {
     expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$user.posts", []] }, 0] });
   });
-  it(".reverse on optional receiver wraps with []", () => {
-    expect(jsmql.expr("$.user?.posts.reverse()")).toEqual({ $reverseArray: { $ifNull: ["$user.posts", []] } });
+  it(".toReversed on optional receiver wraps with []", () => {
+    expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$user.posts", []] } });
   });
   it(".slice on optional receiver wraps with [] then runtime-dispatches", () => {
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
@@ -2632,11 +2751,11 @@ describe("optional chaining (?.)", () => {
   });
 
   // `.includes` / `.indexOf` / `.concat` dispatch on receiver type. Chain
-  // walking stops at `MethodCall` boundaries — once `.reverse()` ran (and its
-  // own wrap took effect), the result is guaranteed not-null, so `.includes`
-  // doesn't add a redundant outer wrap.
-  it(".includes after .reverse() of optional propagates the inner wrap, no outer wrap", () => {
-    expect(jsmql.expr("$.user?.posts.reverse().includes('hello')")).toEqual({
+  // walking stops at `MethodCall` boundaries — once `.toReversed()` ran (and
+  // its own wrap took effect), the result is guaranteed not-null, so
+  // `.includes` doesn't add a redundant outer wrap.
+  it(".includes after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
+    expect(jsmql.expr("$.user?.posts.toReversed().includes('hello')")).toEqual({
       $in: ["hello", { $reverseArray: { $ifNull: ["$user.posts", []] } }],
     });
   });
@@ -2721,9 +2840,9 @@ describe("optional chaining (?.)", () => {
     });
   });
   it("optional bracket access on known array wraps with []", () => {
-    // `.reverse()` is known array-producing, so the bracket access uses the
-    // compact $arrayElemAt form. The `?.` adds the wrap on the receiver.
-    expect(jsmql.expr("$.items.reverse()?.[0]")).toEqual({
+    // `.toReversed()` is known array-producing, so the bracket access uses
+    // the compact $arrayElemAt form. The `?.` adds the wrap on the receiver.
+    expect(jsmql.expr("$.items.toReversed()?.[0]")).toEqual({
       $arrayElemAt: [{ $ifNull: [{ $reverseArray: "$items" }, []] }, 0],
     });
   });

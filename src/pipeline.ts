@@ -59,6 +59,7 @@ import {
   generateUpdateOpGroups,
   generateUpdateFilter,
   updateOpWritePath,
+  tryRewriteMutatorCall,
   CodegenError,
   EMPTY_CTX,
   extendCtxLets,
@@ -210,8 +211,18 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     updateBuffer = [];
   };
 
-  ast.elements.forEach((el, i) => {
-    if (sawOut) throw makeAfterOutError(el, outPos);
+  ast.elements.forEach((rawEl, i) => {
+    if (sawOut) throw makeAfterOutError(rawEl, outPos);
+    let el: ArrayElement = rawEl;
+    // Statement-position mutator rewrite: a `$.<field>.sort(...)` / `.push(...)`
+    // / … call becomes a synthetic `$.<field> = <immutable RHS>` assignment so
+    // it flows through the existing UpdateOp coalescer. Expression-position
+    // calls and non-field-path receivers leave the AST untouched and fall
+    // through to the dedicated codegen throws.
+    if (el.type === "MethodCall") {
+      const rewrite = tryRewriteMutatorCall(el);
+      if (rewrite.kind === "rewrite") el = rewrite.assign;
+    }
     if (el.type === "AssignExpr") {
       if (isReplaceStreamAssign(el)) {
         flushUpdateOps();
@@ -334,8 +345,19 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
   let outPos = 0;
   const tracking = makeSlotTracking();
 
-  p.stmts.forEach((stmt, i) => {
-    if (sawOut) throw makeAfterOutError(stmt, outPos);
+  p.stmts.forEach((rawStmt, i) => {
+    if (sawOut) throw makeAfterOutError(rawStmt, outPos);
+    let stmt: PipelineStmt = rawStmt;
+    // Statement-position mutator rewrite: same logic as `generatePipeline`,
+    // wrapped in a single-op `UpdateFilter` so it routes through the existing
+    // `lowerUpdateFilterWithLookups` path. See the matching block in
+    // `generatePipeline` for the rationale.
+    if (stmt.type === "MethodCall") {
+      const rewrite = tryRewriteMutatorCall(stmt);
+      if (rewrite.kind === "rewrite") {
+        stmt = { type: "UpdateFilter", ops: [rewrite.assign], pos: rewrite.assign.pos };
+      }
+    }
     if (stmt.type === "LetDecl") {
       const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {

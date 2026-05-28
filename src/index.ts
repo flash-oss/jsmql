@@ -3,6 +3,7 @@ import {
   generate,
   generateUpdateFilter,
   generateWithCtx,
+  tryRewriteMutatorCall,
   CodegenError,
   EMPTY_CTX,
   UnknownIdentifierError,
@@ -635,6 +636,24 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   ) {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
+  }
+  // Top-level mutating array method on a writable field-path receiver
+  // (`$.events.push(x)`, `$.events.sort(e => e.t)`, …) without a trailing `;`.
+  // Same reasoning as the `$$.<method>(...)` and stage-call auto-wraps above:
+  // the user has written a statement that only makes sense as a single
+  // Pipeline stage, so route it through Pipeline mode where the mutator
+  // rewrite materialises the assignment. Without this, the bare-expression
+  // path would reach the codegen mutator throw with its "use the immutable
+  // variant" hint — wrong message for a clearly statement-shaped call.
+  // Not done for `jsmql.expr()`: the raw-expression entry point is for
+  // building blocks that get embedded inside an outer stage, where the
+  // mutator throw is the correct error.
+  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast)) {
+    const rewrite = tryRewriteMutatorCall(ast as Expr);
+    if (rewrite.kind === "rewrite") {
+      const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+      return generateImplicitPipeline(synthetic, ctx);
+    }
   }
   // An UpdateFilter whose RHS contains lookup syntax can't go through the
   // bare-doc `generateUpdateFilter` path — that lowerer doesn't see lookups

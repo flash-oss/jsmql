@@ -216,6 +216,45 @@ describe("uppercase a user's name via updateOne", { features: ["Update filters"]
   );
 });
 
+describe("keep the user's last 10 events in chronological order", { features: ["Update filters"] }, () => {
+  it(
+    "compiles to the expected MQL",
+    { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
+    () => {
+      // Append a new event, sort the (now-extended) list by timestamp, then
+      // truncate to the most recent 10. Each `;`-separated statement reads
+      // a field its predecessor just wrote, so the coalescer splits into
+      // three $set stages — matching the dataflow the user would write by
+      // hand. Demonstrates `.push` / `.sort(keyFn)` mutating the field in
+      // place, then a plain `=` reassignment for the final truncate.
+      expect(
+        jsmql`
+$.events.push($.newEvent);
+$.events.sort(e => e.timestamp);
+$.events = $.events.slice(-10);
+      `,
+      ).toEqual([
+        { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
+        { $set: { events: { $sortArray: { input: "$events", sortBy: { timestamp: 1 } } } } },
+        // `.slice(-10)` on an unknown-type receiver dispatches at runtime —
+        // the array branch produces the last 10 elements, the string branch
+        // produces the last 10 codepoints. Both are correct for their type.
+        {
+          $set: {
+            events: {
+              $cond: [
+                { $isArray: "$events" },
+                { $slice: ["$events", -10] },
+                { $substrCP: ["$events", { $subtract: [{ $strLenCP: "$events" }, 10] }, 10] },
+              ],
+            },
+          },
+        },
+      ]);
+    },
+  );
+});
+
 describe("stamp login activity (multi-field update)", { features: ["Update filters"] }, () => {
   it(
     "compiles to the expected MQL",

@@ -12,6 +12,7 @@ import type {
   MathConstant,
   ObjectMethod,
   TypeCastOp,
+  AssignExpr,
   UpdateOp,
   UpdateFilter,
 } from "./ast.ts";
@@ -1906,7 +1907,6 @@ function generateMethodCall(
       if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
       return { $cond: [{ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx)] };
     }
-    case "reverse":
     case "toReversed": {
       if (args.length !== 0) {
         throw new CodegenError(`.${method}() takes no arguments`, callPos);
@@ -1914,13 +1914,15 @@ function generateMethodCall(
       return { $reverseArray: genObj };
     }
     case "toSorted": {
-      if (args.length !== 0) {
-        throw new CodegenError(
-          `.toSorted() with a comparator is not supported — use $op($sortArray, { input, sortBy }) for custom sort criteria.`,
-          callPos,
-        );
+      if (args.length === 0) {
+        return { $sortArray: { input: genObj, sortBy: 1 } };
       }
-      return { $sortArray: { input: genObj, sortBy: 1 } };
+      const exprArgs = exprArgsOnly(args, "toSorted");
+      if (exprArgs.length !== 1) {
+        throw new CodegenError(`.toSorted() takes 0 or 1 arguments (an optional key function)`, callPos);
+      }
+      const sortBy = lambdaToSortBy(exprArgs[0], "toSorted");
+      return { $sortArray: { input: genObj, sortBy } };
     }
     case "toSpliced": {
       const exprArgs = exprArgsOnly(args, "toSpliced");
@@ -2292,42 +2294,51 @@ function generateMethodCall(
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
 
     // ── DX shims: mutating Array methods ────────────────────────────────────
-    // These all mutate the receiver in JavaScript. jsmql expressions are
-    // immutable, so we surface a tailored "use the immutable equivalent"
-    // message rather than letting the user discover the problem at runtime.
+    // These all mutate the receiver in JavaScript. In expression position
+    // jsmql is immutable, so we surface a tailored "use the immutable
+    // equivalent" message. At statement position (a top-level pipeline
+    // statement on a field-path receiver), `tryRewriteMutatorCall` rewrites
+    // the call to `$.<field> = $.<field>.<immutable>(...)` before codegen
+    // sees it — so reaching these throws means the user used a mutator in
+    // expression position.
     case "sort":
       throw new CodegenError(
-        `.sort() mutates the array in JavaScript; jsmql expressions are immutable. Use '.toSorted()' instead.`,
+        `.sort() mutates the array in JavaScript. In expression position, use '.toSorted()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
+        callPos,
+      );
+    case "reverse":
+      throw new CodegenError(
+        `.reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
         callPos,
       );
     case "splice":
       throw new CodegenError(
-        `.splice() mutates the array in JavaScript; jsmql expressions are immutable. Use '.toSpliced(start, deleteCount, ...items)' instead.`,
+        `.splice() mutates the array in JavaScript. In expression position, use '.toSpliced(start, deleteCount, ...items)' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
         callPos,
       );
     case "push":
       throw new CodegenError(
-        `.push() mutates the array in JavaScript; jsmql expressions are immutable. Use '.concat(x)' or spread '[...arr, x]' instead.`,
+        `.push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
         callPos,
       );
     case "pop":
       throw new CodegenError(
-        `.pop() mutates the array in JavaScript; jsmql expressions are immutable. Use '.at(-1)' to read the last element, or '.slice(0, -1)' for everything-but-last.`,
+        `.pop() mutates the array in JavaScript. In expression position, use '.at(-1)' to read the last element or '.slice(0, -1)' for everything-but-last — or call it at statement position (top-level on a '$.<field>' receiver) to drop the last element.`,
         callPos,
       );
     case "shift":
       throw new CodegenError(
-        `.shift() mutates the array in JavaScript; jsmql expressions are immutable. Use '.at(0)' to read the first element, or '.slice(1)' for everything-but-first.`,
+        `.shift() mutates the array in JavaScript. In expression position, use '.at(0)' to read the first element or '.slice(1)' for everything-but-first — or call it at statement position (top-level on a '$.<field>' receiver) to drop the first element.`,
         callPos,
       );
     case "unshift":
       throw new CodegenError(
-        `.unshift() mutates the array in JavaScript; jsmql expressions are immutable. Use '.concat()' with the new items first, or spread '[...newItems, ...arr]' instead.`,
+        `.unshift() mutates the array in JavaScript. In expression position, use '.concat()' with the new items first or spread '[...newItems, ...arr]' — or call it at statement position (top-level on a '$.<field>' receiver) to prepend in place.`,
         callPos,
       );
     case "fill":
       throw new CodegenError(
-        `.fill() mutates the array in JavaScript; jsmql expressions are immutable. No direct immutable replacement — build the array from a $range or pass a pre-filled array as a parameter.`,
+        `.fill() mutates the array in JavaScript. In expression position there is no direct immutable replacement (build from a $range or pass a pre-filled array as a parameter) — or call it at statement position (top-level on a '$.<field>' receiver) to fill the field in place.`,
         callPos,
       );
     case "copyWithin":
@@ -2427,6 +2438,275 @@ function arrayIterInput(
       },
     }),
   };
+}
+
+/**
+ * Translate a `.toSorted(keyFn)` / `.sort(keyFn)` callback into the `sortBy`
+ * value MongoDB's `$sortArray` expects.
+ *
+ * Supported callback shapes (the key-function form):
+ *   - `x => x.path` → `{ "path": 1 }`            (ascending, dotted nested paths welcome)
+ *   - `x => -x.path` → `{ "path": -1 }`          (descending, unary `-` only)
+ *
+ * Everything else — comparator-style `(a, b) => …`, arithmetic on the key,
+ * computed indices, 0-param or ≥2-param arrows — is rejected with a pointer at
+ * the `$op($sortArray, { input, sortBy })` escape hatch.
+ */
+function lambdaToSortBy(arg: Expr, method: string): Record<string, 1 | -1> {
+  if (arg.type !== "Lambda") {
+    throw new CodegenError(
+      `.${method}() supports 0 or 1 arguments — an optional key function 'x => x.path' or 'x => -x.path'. For comparator-style sorts use $op($sortArray, { input, sortBy }).`,
+      arg.pos,
+    );
+  }
+  if (arg.body === undefined) {
+    throw new CodegenError(
+      `.${method}() does not accept a block-body arrow — pass an expression-body key function like 'x => x.field'.`,
+      arg.pos,
+    );
+  }
+  if (arg.params.length !== 1) {
+    throw new CodegenError(
+      `.${method}() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).`,
+      arg.pos,
+    );
+  }
+  const param = arg.params[0];
+  let body = arg.body;
+  let direction: 1 | -1 = 1;
+  if (body.type === "UnaryExpr" && body.op === "-") {
+    direction = -1;
+    body = body.operand;
+  }
+  const path = paramKeyPath(body, param);
+  if (path === null) {
+    throw new CodegenError(
+      `.${method}() key function body must be '${param}.<field>' (optionally negated). For more complex sort criteria use $op($sortArray, { input, sortBy }).`,
+      arg.body.pos,
+    );
+  }
+  return { [path]: direction };
+}
+
+/**
+ * If `expr` is a `MemberAccess` chain rooted at `ParamRef(param)`, return the
+ * dotted key path (e.g. `MemberAccess(MemberAccess(ParamRef("x"), "user"), "name")`
+ * with `param = "x"` → `"user.name"`). Otherwise null.
+ */
+function paramKeyPath(expr: Expr, param: string): string | null {
+  if (expr.type === "ParamRef" && expr.name === param) {
+    // `x => x` — sort by self isn't a valid sortBy key (an empty object key).
+    return null;
+  }
+  if (expr.type === "MemberAccess") {
+    const base = paramKeyPath(expr.object, param);
+    if (expr.object.type === "ParamRef" && expr.object.name === param) {
+      return expr.member;
+    }
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+
+// ── Mutating-method rewrite (statement-position desugar) ──────────────────────
+//
+// In JavaScript the array mutators (`.sort`, `.reverse`, `.push`, `.pop`,
+// `.shift`, `.unshift`, `.splice`, `.fill`) modify the receiver in place and
+// return either the array itself or the removed element(s). MQL pipelines are
+// declaratively immutable, so we surface these as `$set` stages when — and
+// only when — the call appears at statement position with a writable
+// field-path receiver. The rewrite materialises a synthetic `AssignExpr`
+// (`$.<field> = $.<field>.<immutable equivalent>(...)`) and hands it to the
+// existing UpdateOp coalescer, so chained mutations on the same field
+// compose through the same read-after-write logic explicit `=` already uses.
+//
+// Expression-position calls (anywhere inside a larger expression, sub-pipeline,
+// `$match` body, etc.) and statement-position calls on non-field-path
+// receivers fall through to the dedicated throws in `generateMethodCall` —
+// each one names the immutable variant the user should reach for instead.
+
+const MUTATING_ARRAY_METHODS: ReadonlySet<string> = new Set([
+  "sort",
+  "reverse",
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "splice",
+  "fill",
+]);
+
+/**
+ * Predicate: can `target` appear on the LHS of an `AssignExpr`? Mirrors the
+ * parser's constraint for `$.<path> = <expr>` — a `FieldRef` with a non-empty
+ * path, or a `MemberAccess` chain rooted at one. Bare `$` (path `""`) is the
+ * `$replaceWith` sugar, not an assignable field.
+ */
+export function isWritableFieldPath(expr: Expr): boolean {
+  if (expr.type === "FieldRef") return expr.path !== "";
+  if (expr.type === "MemberAccess") return isWritableFieldPath(expr.object);
+  return false;
+}
+
+export type MutatorRewrite = { kind: "rewrite"; assign: AssignExpr } | { kind: "passthrough" };
+
+/**
+ * If `expr` is a mutating array method on a writable field-path receiver,
+ * return the synthesized `$.<field> = <immutable RHS>` `AssignExpr`. The RHS
+ * AST is built from existing Expr node types so it flows through normal
+ * codegen — there is no per-mutator branch in the lowering path.
+ */
+export function tryRewriteMutatorCall(expr: Expr): MutatorRewrite {
+  if (expr.type !== "MethodCall") return { kind: "passthrough" };
+  if (!MUTATING_ARRAY_METHODS.has(expr.method)) return { kind: "passthrough" };
+  if (!isWritableFieldPath(expr.object)) return { kind: "passthrough" };
+  const value = buildMutatorRhs(expr.method, expr.object, expr.args, expr.pos);
+  return { kind: "rewrite", assign: { type: "AssignExpr", target: expr.object, value, pos: expr.pos } };
+}
+
+function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: number): Expr {
+  switch (method) {
+    case "sort":
+      // Delegate to the existing `.toSorted` lowering — including 0-arg ascending
+      // form and 1-arg key-function form. The args list is forwarded as-is.
+      return { type: "MethodCall", object, method: "toSorted", args, pos };
+    case "reverse":
+      if (args.length !== 0) {
+        throw new CodegenError(`.reverse() takes no arguments`, pos);
+      }
+      return { type: "MethodCall", object, method: "toReversed", args: [], pos };
+    case "splice":
+      return { type: "MethodCall", object, method: "toSpliced", args, pos };
+    case "push": {
+      // `arr.push(a, b)` → `arr.concat([a, b])`-style, but `.concat` flattens
+      // arrays one level (JS spec), while `.push` does not. Emit
+      // `$concatArrays: [arr, [a, b]]` directly so an array argument is added
+      // as a single element, matching JS.
+      const items: ArrayElement[] = args.map((a) => a as ArrayElement);
+      const itemsArr: Expr = { type: "ArrayLiteral", elements: items, pos };
+      return { type: "OperatorCall", name: "$concatArrays", style: "positional", args: [object, itemsArr], pos };
+    }
+    case "unshift": {
+      const items: ArrayElement[] = args.map((a) => a as ArrayElement);
+      const itemsArr: Expr = { type: "ArrayLiteral", elements: items, pos };
+      return { type: "OperatorCall", name: "$concatArrays", style: "positional", args: [itemsArr, object], pos };
+    }
+    case "pop": {
+      if (args.length !== 0) {
+        throw new CodegenError(`.pop() takes no arguments`, pos);
+      }
+      // `arr.slice(0, max(0, size - 1))` — everything-but-last with a clamp so
+      // an empty input yields an empty output instead of `$slice([], 0, -1)`.
+      const sizeExpr: Expr = mkOpCall("$size", [object], pos);
+      const minus1: Expr = { type: "BinaryExpr", op: "-", left: sizeExpr, right: mkNumber(1, pos), pos };
+      const clamped: Expr = mkOpCall("$max", [mkNumber(0, pos), minus1], pos);
+      return mkOpCall("$slice", [object, mkNumber(0, pos), clamped], pos);
+    }
+    case "shift": {
+      if (args.length !== 0) {
+        throw new CodegenError(`.shift() takes no arguments`, pos);
+      }
+      // `$slice: [arr, 1, $size(arr)]` — start at index 1 and take everything
+      // remaining. MongoDB clamps `len` to what's actually available, so an
+      // empty input yields an empty output.
+      const sizeExpr: Expr = mkOpCall("$size", [object], pos);
+      return mkOpCall("$slice", [object, mkNumber(1, pos), sizeExpr], pos);
+    }
+    case "fill":
+      return buildFillRhs(object, args, pos);
+  }
+  return internalError(`tryRewriteMutatorCall: unhandled method '${method}'`, pos);
+}
+
+function mkOpCall(name: string, args: Expr[], pos: number): Expr {
+  return { type: "OperatorCall", name, style: "positional", args, pos };
+}
+
+function mkNumber(value: number, pos: number): Expr {
+  return { type: "NumberLiteral", value, pos };
+}
+
+/**
+ * `.fill(v[, start[, end]])` at statement position.
+ *
+ * Lower to an IIFE that binds the normalised start/end once, then maps over
+ * the array swapping in `v` for indices in `[s0, e0)` and keeping the original
+ * element elsewhere:
+ *
+ *   ((s0, e0) => arr.map((x, i) => (i >= s0 && i < e0) ? v : x))(
+ *     <normalised start>, <normalised end>,
+ *   )
+ *
+ * Normalisation matches JS:
+ *   - `start` undefined  ⇒ 0
+ *   - `start < 0`        ⇒ max(0, size + start)
+ *   - `start >= 0`       ⇒ start
+ *   - `end` undefined    ⇒ size
+ *   - `end < 0`          ⇒ max(0, size + end)
+ *   - `end >= 0`         ⇒ end
+ */
+function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
+  if (args.length < 1) {
+    throw new CodegenError(`.fill() requires at least 1 argument (value[, start[, end]])`, pos);
+  }
+  if (args.length > 3) {
+    throw new CodegenError(`.fill() takes 1, 2, or 3 arguments (value[, start[, end]])`, pos);
+  }
+  const exprArgs: Expr[] = [];
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`Spread (...) is not supported as an argument to .fill()`, a.pos);
+    }
+    exprArgs.push(a);
+  }
+  const v = exprArgs[0];
+  const startArg: Expr | undefined = exprArgs[1];
+  const endArg: Expr | undefined = exprArgs[2];
+
+  const zero = mkNumber(0, pos);
+
+  // Compile-time fast path: when `start` and `end` are both omitted, every
+  // element becomes `v`. Skip the IIFE and the index plumbing entirely.
+  if (startArg === undefined && endArg === undefined) {
+    const unusedAndV: Expr = { type: "Lambda", params: ["__jsmql_unused"], body: v, pos };
+    return { type: "MethodCall", object, method: "map", args: [unusedAndV], pos };
+  }
+
+  const sizeOf = (): Expr => mkOpCall("$size", [object], pos);
+  const normalize = (e: Expr | undefined, defaultIfUndef: () => Expr): Expr => {
+    if (e === undefined) return defaultIfUndef();
+    // Compile-time fast path: a non-negative number literal needs no
+    // normalisation — pass it through verbatim. Avoids emitting a runtime
+    // `$cond: [{ $lt: [n, 0] }, …, n]` whose test is statically false.
+    if (e.type === "NumberLiteral" && e.value >= 0) return e;
+    // `e < 0 ? max(0, size + e) : e`
+    const isNeg: Expr = { type: "BinaryExpr", op: "<", left: e, right: zero, pos };
+    const fromTail: Expr = { type: "BinaryExpr", op: "+", left: sizeOf(), right: e, pos };
+    const clamped = mkOpCall("$max", [zero, fromTail], pos);
+    return { type: "TernaryExpr", condition: isNeg, consequent: clamped, alternate: e, pos };
+  };
+
+  const s0Init = normalize(startArg, () => zero);
+  const e0Init = normalize(endArg, () => sizeOf());
+
+  // Inner map body: `(i >= __jsmql_s0 && i < __jsmql_e0) ? v : x`.
+  const sRef: Expr = { type: "ParamRef", name: "__jsmql_s0", pos };
+  const eRef: Expr = { type: "ParamRef", name: "__jsmql_e0", pos };
+  const xRef: Expr = { type: "ParamRef", name: "x", pos };
+  const iRef: Expr = { type: "ParamRef", name: "i", pos };
+  const condition: Expr = {
+    type: "BinaryExpr",
+    op: "&&",
+    left: { type: "BinaryExpr", op: ">=", left: iRef, right: sRef, pos },
+    right: { type: "BinaryExpr", op: "<", left: iRef, right: eRef, pos },
+    pos,
+  };
+  const mapBody: Expr = { type: "TernaryExpr", condition, consequent: v, alternate: xRef, pos };
+  const mapLambda: Expr = { type: "Lambda", params: ["x", "i"], body: mapBody, pos };
+  const mapCall: Expr = { type: "MethodCall", object, method: "map", args: [mapLambda], pos };
+
+  const iifeCallee: Expr = { type: "Lambda", params: ["__jsmql_s0", "__jsmql_e0"], body: mapCall, pos };
+  return { type: "CallExpression", callee: iifeCallee, args: [s0Init, e0Init], pos };
 }
 
 // Every method name with a dedicated case in generateMethodCall, used to power
