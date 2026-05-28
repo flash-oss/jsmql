@@ -356,6 +356,77 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   });
 });
 
+describe(".reduce((acc, d) => …, <init>) on $$ — fold-to-aggregate via $group", () => {
+  it("acc + d.<field> → $sum on the field", () => {
+    expect(jsmql("$$ = $$.reduce((acc, d) => acc + d.amount, 0);")).toEqual([
+      { $group: { _id: null, value: { $sum: "$amount" } } },
+    ]);
+  });
+
+  it("acc + 1 → $sum: 1 (count documents)", () => {
+    expect(jsmql("$$ = $$.reduce((acc, d) => acc + 1, 0);")).toEqual([{ $group: { _id: null, value: { $sum: 1 } } }]);
+  });
+
+  it("Math.max(acc, d.<field>) → $max", () => {
+    expect(jsmql("$$ = $$.reduce((acc, d) => Math.max(acc, d.score), 0);")).toEqual([
+      { $group: { _id: null, value: { $max: "$score" } } },
+    ]);
+  });
+
+  it("Math.min(acc, d.<field>) → $min", () => {
+    expect(jsmql("$$ = $$.reduce((acc, d) => Math.min(acc, d.score), 0);")).toEqual([
+      { $group: { _id: null, value: { $min: "$score" } } },
+    ]);
+  });
+
+  it("commutative order: d.<field> + acc → $sum", () => {
+    expect(jsmql("$$ = $$.reduce((acc, d) => d.amount + acc, 0);")).toEqual([
+      { $group: { _id: null, value: { $sum: "$amount" } } },
+    ]);
+  });
+
+  it("composes after .filter — $match + $group", () => {
+    expect(jsmql("$$ = $$.filter(o => o.tier === 'gold').reduce((acc, d) => acc + d.amount, 0);")).toEqual([
+      { $match: { tier: "gold" } },
+      { $group: { _id: null, value: { $sum: "$amount" } } },
+    ]);
+  });
+
+  it("works inside $$$.<coll> lookup body", () => {
+    expect(jsmql("$$ = $$$.archive.filter(o => o.active === true).reduce((acc, d) => acc + 1, 0);")).toEqual([
+      { $limit: 0 },
+      {
+        $unionWith: {
+          coll: "archive",
+          pipeline: [{ $match: { active: true } }, { $group: { _id: null, value: { $sum: 1 } } }],
+        },
+      },
+    ]);
+  });
+
+  it("zero args is rejected", () => {
+    expect(() => jsmql("$$ = $$.reduce();")).toThrow(/takes exactly two arguments/);
+  });
+
+  it("one arg is rejected (init is mandatory)", () => {
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.x);")).toThrow(/takes exactly two arguments/);
+  });
+
+  it("one-param arrow is rejected", () => {
+    expect(() => jsmql("$$ = $$.reduce(acc => acc + 1, 0);")).toThrow(/two-parameter arrow/);
+  });
+
+  it("non-literal init is rejected", () => {
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.x, $.seed);")).toThrow(/initial value must be a literal/);
+  });
+
+  it("unrecognised body shape is rejected with a v1-supported-shapes list", () => {
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc * d.x, 1);")).toThrow(
+      /v1 supports only these reducer shapes.*\$sum.*\$max.*\$min/s,
+    );
+  });
+});
+
 describe("unknown chain method on $$ → registry error with hint", () => {
   it("typo like .slise is corrected via 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);

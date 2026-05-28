@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.reduce((acc, d) => …, init)` on `$$` chain → `$group { _id: null, … }`
+
+Last method in the 2026-05 stream-methods batch. Folds the document stream down to a single doc carrying the aggregate. Pattern-matches the reducer body to one of MongoDB's accumulator operators:
+
+- `acc + d.<field>` → `{ $sum: "$<field>" }`
+- `acc + 1` → `{ $sum: 1 }` (count documents)
+- `Math.max(acc, d.<field>)` → `{ $max: "$<field>" }`
+- `Math.min(acc, d.<field>)` → `{ $min: "$<field>" }`
+
+Output stream is a single doc `{ _id: null, value: <aggregate> }`. To get just the scalar, chain a `.map(r => r.value)` after — though most call sites at this point are terminal and the user reads `result[0].value` driver-side.
+
+The `init` argument is required (JS-faithful — `.reduce` without an initial value is a footgun in JS too) but its specific value doesn't affect the MQL output. MongoDB's `$group` accumulators have their own neutral elements (`$sum` starts at 0, `$max` at `null` then takes any value, etc.). The init is validated to be a literal so a stray `$.field` reference can't leak through unnoticed.
+
+This is **distinct** from the existing `$$$.<coll>.find/filter(...).reduce(...)` chained terminal in [`src/lookup-translation.ts`](../src/lookup-translation.ts) — that one builds a `$reduce` expression over a materialised array slot (different surface, different operator). Intentionally kept separate.
+
+**Other reducer shapes (`acc * d.x`, `acc.concat(...)`, etc.) are rejected** with an explicit list of the v1-supported shapes. The pattern is conservative on purpose: a misclassified accumulator (e.g. silently widening `acc + d.x * 2` to `$sum: { $multiply: ["$x", 2] }`) would be hard to debug. Future broadening is a matter of extending `classifyReduceBody`.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — `.flatMap(d => d.<path>)` chain method → `$unwind`
 
 The chain-form way to introduce `$unwind` without reaching for `$op("$unwind", …)`. v1 only supports a bare field-path body (the lambda body must walk back to the param ref through `.member` / `["literal"]` access) — that lowers to a single `{ $unwind: "$<path>" }` stage with surrounding fields preserved.

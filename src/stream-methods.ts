@@ -421,6 +421,126 @@ const FLAT_MAP: StreamMethodDef = {
   },
 };
 
+// ── .reduce((acc, d) => …, <init>) on $$ → $group { _id: null, … } ────────────
+//
+// Folds the document stream down to a single doc carrying the aggregate.
+// Output shape: `{ _id: null, value: <aggregate> }`. Pattern-matches the
+// reducer body to one of MongoDB's accumulator operators:
+//
+//   `acc + d.<field>`              → `{ $sum: "$<field>" }`
+//   `acc + 1`                       → `{ $sum: 1 }` (count documents)
+//   `Math.max(acc, d.<field>)`     → `{ $max: "$<field>" }`
+//   `Math.min(acc, d.<field>)`     → `{ $min: "$<field>" }`
+//
+// The `init` argument is required (JS-faithful — `.reduce` without an
+// initial value is a footgun in JS too) but its specific value is unused
+// in the `$group` lowering (MongoDB accumulators have their own neutral
+// elements). Validated to be a literal so a stray `$.field` reference
+// can't sneak through.
+//
+// Distinct from the existing `.reduce` chained terminal on
+// `$$$.<coll>.find/filter(...)` chains (in `lookup-translation.ts`) —
+// that one builds a `$reduce` expression over a materialised array slot.
+// Different surface, different target operator, intentionally kept
+// separate.
+
+type ReduceAccumulator =
+  | { kind: "sum"; value: string | number }
+  | { kind: "max"; value: string }
+  | { kind: "min"; value: string };
+
+function classifyReduceBody(body: Expr, accParam: string, dParam: string): ReduceAccumulator | null {
+  if (body.type === "BinaryExpr" && body.op === "+") {
+    const accSide = body.left.type === "ParamRef" && body.left.name === accParam ? body.right : null;
+    const otherSide =
+      accSide === null && body.right.type === "ParamRef" && body.right.name === accParam ? body.left : accSide;
+    if (otherSide !== null) {
+      if (otherSide.type === "NumberLiteral" && otherSide.value === 1) {
+        return { kind: "sum", value: 1 };
+      }
+      const path = paramFieldPath(otherSide, dParam);
+      if (path !== null) return { kind: "sum", value: `$${path}` };
+    }
+  }
+  if (body.type === "MathCall" && (body.method === "max" || body.method === "min") && body.args.length === 2) {
+    const [a0, a1] = body.args;
+    if (a0.type === "SpreadElement" || a1.type === "SpreadElement") return null;
+    const otherSide =
+      a0.type === "ParamRef" && a0.name === accParam ? a1 : a1.type === "ParamRef" && a1.name === accParam ? a0 : null;
+    if (otherSide !== null) {
+      const path = paramFieldPath(otherSide, dParam);
+      if (path !== null) return { kind: body.method, value: path };
+    }
+  }
+  return null;
+}
+
+const REDUCE: StreamMethodDef = {
+  name: "reduce",
+  validate(args, callPos) {
+    if (args.length !== 2) {
+      throw new CodegenError(
+        `.reduce((acc, d) => <expr>, <init>) takes exactly two arguments (the reducer arrow and the initial value), got ${args.length}.`,
+        callPos,
+      );
+    }
+    const [arg0, arg1] = args;
+    if (arg0.type === "SpreadElement") {
+      throw new CodegenError(`.reduce(...) does not accept spread arguments.`, arg0.pos);
+    }
+    if (arg1.type === "SpreadElement") {
+      throw new CodegenError(`.reduce(...) does not accept spread arguments.`, arg1.pos);
+    }
+    if (arg0.type !== "Lambda") {
+      throw new CodegenError(
+        `.reduce((acc, d) => <expr>, <init>) requires an arrow function as the first argument.`,
+        arg0.pos,
+      );
+    }
+    if (arg0.params.length !== 2) {
+      throw new CodegenError(
+        `.reduce((acc, d) => <expr>, <init>) requires a two-parameter arrow '(acc, d) => …' (got ${arg0.params.length} params).`,
+        arg0.pos,
+      );
+    }
+    if (arg0.body === undefined) {
+      throw new CodegenError(`.reduce(...) requires an expression body, not a block.`, arg0.pos);
+    }
+    // The init must be a literal — anything else (field refs, computed expressions)
+    // would suggest the user expects per-doc state, which $group can't provide.
+    const isLiteral =
+      arg1.type === "NumberLiteral" ||
+      arg1.type === "StringLiteral" ||
+      arg1.type === "BooleanLiteral" ||
+      arg1.type === "NullLiteral" ||
+      arg1.type === "BigIntLiteral";
+    if (!isLiteral) {
+      throw new CodegenError(
+        `.reduce((acc, d) => …, <init>) — the initial value must be a literal (number, string, boolean, null). Computed initial values aren't supported when reducing a document stream (MongoDB's $group accumulators have fixed neutral elements).`,
+        ("pos" in arg1 ? arg1.pos : callPos) as number,
+      );
+    }
+  },
+  lower(args, _ctx, callPos, _lowerBlock, _prevStages) {
+    const lambda = args[0] as LambdaNode;
+    const [accParam, dParam] = lambda.params;
+    const body = lambda.body as Expr;
+    const accumulator = classifyReduceBody(body, accParam, dParam);
+    if (accumulator === null) {
+      throw new CodegenError(
+        `.reduce((${accParam}, ${dParam}) => …) v1 supports only these reducer shapes: ` +
+          `'${accParam} + ${dParam}.<field>' (→ $sum), '${accParam} + 1' (→ $sum: 1, count), ` +
+          `'Math.max(${accParam}, ${dParam}.<field>)' (→ $max), 'Math.min(${accParam}, ${dParam}.<field>)' (→ $min). ` +
+          `Other shapes aren't supported yet — write the $group stage by hand.`,
+        body.pos ?? callPos,
+      );
+    }
+    const op = accumulator.kind === "sum" ? "$sum" : accumulator.kind === "max" ? "$max" : "$min";
+    const value: string | number = accumulator.kind === "sum" ? accumulator.value : `$${accumulator.value}`;
+    return { stages: [{ $group: { _id: null, value: { [op]: value } } }], clearLets: true };
+  },
+};
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 const STREAM_METHODS: Record<string, StreamMethodDef> = {
@@ -430,6 +550,7 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
   flatMap: FLAT_MAP,
+  reduce: REDUCE,
 };
 
 /** Look up a registered stream method by name; null if not registered. */
