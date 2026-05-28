@@ -511,11 +511,8 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("rejects `$$ = $$.map(...)` with an actionable registry-style error (until `.map` lands)", () => {
-    // `.map` is planned for a follow-up commit — for now it surfaces the
-    // generic "not a chainable stream method" message so the user knows
-    // they need to wait or fall back to `$ = <expr>` per-doc reshape.
-    expect(() => jsmql(`$$ = $$.map(t => t.x);`)).toThrow(/'\.map\(\.\.\.\)' is not a chainable stream method/);
+  it("`$$ = $$.map(d => <expr>)` lowers to `$replaceWith` via the stream-method registry", () => {
+    expect(jsmql(`$$ = $$.map(t => ({ x: t.x }));`)).toEqual([{ $replaceWith: { x: "$x" } }]);
   });
 
   it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {

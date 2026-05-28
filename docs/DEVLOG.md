@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.map(d => <expr>)` chain method → `$replaceWith`
+
+Chain-form of the existing `$ = <expr>` statement sugar. `$$ = $$.filter(p).map(d => ({ id: d._id, n: d.name }));` lowers to `[{$match: …}, {$replaceWith: { id: "$_id", n: "$name" }}]`. The lambda parameter IS the current document — `d.x` rewrites to the bare field path `$x` via `extractLetsFromExpr`, and `$.<field>` references are rejected with the standard "use the lambda parameter" hint.
+
+**Out of scope (v1).** Two-arg arrows (`(d, i) => …`) are rejected — MongoDB streams have no per-doc index. Block-body arrows are rejected; split into separate stages instead. Lookups (`$$$.<coll>.find/filter(...)`) and `$$.push(...)` calls inside the body are also rejected — hoist them above the chain. The first two limitations stay permanently; the lookup-in-body restriction is a v1 simplification (the chain walker doesn't yet thread a slot allocator into per-method `lower` functions; doable in a follow-up).
+
+The lower function emits `clearLets: true` because `$replaceWith` is a reshape stage that drops in-scope `let` bindings.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — `.concat(...others)` chain method on `$$` (alias for `$$.push`)
 
 JS-idiomatic alias for `$$.push(...)` in the chain context. `.concat` accepts the same arg shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` docs, `$$$.<coll>.find(p)`) and routes through `lowerUnionPush` — no second copy of the spread / inline-doc / `.find` validation logic. `$$.push(...)` remains the statement-only form; `.concat` is purely chainable, so `$$ = $$.filter(p).concat(...$$$.archive);` lowers to `[{$match}, {$unionWith: "archive"}]`.

@@ -159,6 +159,66 @@ describe(".concat(...others) — JS-idiomatic alias for $$.push", () => {
   });
 });
 
+describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
+  it("inline object body lowers to $replaceWith", () => {
+    expect(jsmql("$$ = $$.map(d => ({ id: d._id, n: d.name }));")).toEqual([
+      { $replaceWith: { id: "$_id", n: "$name" } },
+    ]);
+  });
+
+  it("scalar arithmetic expression body lowers to $replaceWith", () => {
+    expect(jsmql("$$ = $$.map(d => ({ total: d.price * d.qty }));")).toEqual([
+      { $replaceWith: { total: { $multiply: ["$price", "$qty"] } } },
+    ]);
+  });
+
+  it("composes after .filter — $match + $replaceWith", () => {
+    expect(jsmql("$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));")).toEqual([
+      { $match: { tier: "gold" } },
+      { $replaceWith: { id: "$_id" } },
+    ]);
+  });
+
+  it("composes before .slice — $replaceWith + $limit", () => {
+    expect(jsmql("$$ = $$.map(d => ({ n: d.name })).slice(0, 5);")).toEqual([
+      { $replaceWith: { n: "$name" } },
+      { $limit: 5 },
+    ]);
+  });
+
+  it("works inside $$$.<coll> lookup body", () => {
+    expect(jsmql("$$ = $$$.archive.filter(o => o.tier === 'gold').map(d => ({ n: d.name }));")).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { tier: "gold" } }, { $replaceWith: { n: "$name" } }] } },
+    ]);
+  });
+
+  it("zero args is rejected", () => {
+    expect(() => jsmql("$$ = $$.map();")).toThrow(/takes exactly one argument/);
+  });
+
+  it("two-arg arrow `(d, i) => …` is rejected with a no-index hint", () => {
+    expect(() => jsmql("$$ = $$.map((d, i) => ({ id: d._id, idx: i }));")).toThrow(
+      /single-parameter arrow.*no per-doc index/,
+    );
+  });
+
+  // (Block-body arrows like `d => { … }` are caught by the parser before .map's
+  // validator runs in expression contexts, so a dedicated codegen-level test
+  // isn't reachable from the public surface; the rejection branch in .map's
+  // validator stays as a defence-in-depth guard.)
+
+  it("`$.<field>` inside .map body is rejected — must use the lambda param", () => {
+    expect(() => jsmql("$$ = $$.map(d => ({ n: $.name }));")).toThrow(/'\$\.<field>'.*use the lambda parameter/);
+  });
+
+  it("lookup inside .map body is rejected for v1", () => {
+    expect(() => jsmql("$$ = $$.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));")).toThrow(
+      /inside a '\.map.*hoist/,
+    );
+  });
+});
+
 describe("unknown chain method on $$ → registry error with hint", () => {
   it("typo like .slise is corrected via 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);

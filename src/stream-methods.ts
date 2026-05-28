@@ -8,9 +8,12 @@
 // shape/lowering/error table.
 
 import type { CallArg, Expr } from "./ast.ts";
-import { CodegenError, type GenerateCtx } from "./codegen.ts";
-import type { SubPipelineLowerer } from "./lookup-translation.ts";
+import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
+import { containsLookupCall, extractLetsFromExpr, type SubPipelineLowerer } from "./lookup-translation.ts";
+import { containsUnionPush } from "./union-translation.ts";
 import { lowerUnionPush } from "./union-translation.ts";
+
+type LambdaNode = Extract<Expr, { type: "Lambda" }>;
 
 export type StreamMethodResult = {
   /** Stages this method contributes, appended to the surrounding chain. */
@@ -121,9 +124,78 @@ const CONCAT: StreamMethodDef = {
   },
 };
 
+// ── .map(d => <expr>) → $replaceWith ──────────────────────────────────────────
+//
+// Chain-form of the existing `$ = <expr>` statement sugar. Single-param
+// arrow only; the parameter IS the current document, so `d.x` rewrites to
+// the bare field path `$x` and `$.<field>` references are rejected (same
+// "use the lambda parameter" convention as `.filter`). Lookups and
+// `$$.push` calls inside the body are rejected for v1 — hoist them above
+// the chain.
+const MAP: StreamMethodDef = {
+  name: "map",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.map(d => <expr>) takes exactly one argument (a single-parameter arrow), got ${args.length}.`,
+        callPos,
+      );
+    }
+    const arg = args[0];
+    if (arg.type === "SpreadElement") {
+      throw new CodegenError(`.map(...) does not accept a spread argument — pass a '(d) => <expr>' arrow.`, arg.pos);
+    }
+    if (arg.type !== "Lambda") {
+      throw new CodegenError(
+        `.map(d => <expr>) requires an arrow function as its argument, e.g. '.map(d => ({ id: d._id, name: d.name }))'.`,
+        arg.pos,
+      );
+    }
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `.map(d => <expr>) takes a single-parameter arrow (got ${arg.params.length}). MongoDB streams have no per-doc index, so '(d, i) => …' isn't meaningful here.`,
+        arg.pos,
+      );
+    }
+    if (arg.body === undefined) {
+      throw new CodegenError(
+        `.map(d => <expr>) requires an expression body. Block-body arrows ('d => { … }') aren't supported here — split into separate stages ($set, $project, …) instead.`,
+        arg.pos,
+      );
+    }
+  },
+  lower(args, ctx, _callPos, _lowerBlock) {
+    const lambda = args[0] as LambdaNode;
+    const param = lambda.params[0];
+    const body = lambda.body as Expr;
+    if (containsLookupCall(body, ctx)) {
+      throw new CodegenError(
+        `'$$$.<coll>.find/filter(...)' inside a '.map(d => …)' body isn't supported in v1 — hoist the lookup to a 'let' before the chain, then reference the bound name from the body.`,
+        lambda.pos,
+      );
+    }
+    if (containsUnionPush(body)) {
+      throw new CodegenError(
+        `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
+        lambda.pos,
+      );
+    }
+    const { rewritten, letVars } = extractLetsFromExpr(body, param);
+    if (Object.keys(letVars).length > 0) {
+      const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
+      throw new CodegenError(
+        `'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+        lambda.pos,
+      );
+    }
+    const expr = generateWithCtx(rewritten, ctx);
+    return { stages: [{ $replaceWith: expr }], clearLets: true };
+  },
+};
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
-const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE, concat: CONCAT };
+const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE, concat: CONCAT, map: MAP };
 
 /** Look up a registered stream method by name; null if not registered. */
 export function lookupStreamMethod(name: string): StreamMethodDef | null {
