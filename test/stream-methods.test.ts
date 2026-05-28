@@ -431,74 +431,93 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   });
 });
 
-describe(".reduce((acc, d) => …, <init>) on $$ — fold-to-aggregate via $group", () => {
-  it("acc + d.<field> → $sum on the field", () => {
-    expect(jsmql("$$ = $$.reduce((acc, d) => acc + d.amount, 0);")).toEqual([
-      { $group: { _id: null, value: { $sum: "$amount" } } },
+describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary via $group + $replaceWith", () => {
+  it("single $sum accumulator → $group + $replaceWith dropping _id", () => {
+    expect(jsmql("$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }];")).toEqual([
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $replaceWith: { total: "$total" } },
     ]);
   });
 
-  it("acc + 1 → $sum: 1 (count documents)", () => {
-    expect(jsmql("$$ = $$.reduce((acc, d) => acc + 1, 0);")).toEqual([{ $group: { _id: null, value: { $sum: 1 } } }]);
-  });
-
-  it("Math.max(acc, d.<field>) → $max", () => {
-    expect(jsmql("$$ = $$.reduce((acc, d) => Math.max(acc, d.score), 0);")).toEqual([
-      { $group: { _id: null, value: { $max: "$score" } } },
+  it("count: acc + 1 → $sum: 1", () => {
+    expect(jsmql("$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0) }];")).toEqual([
+      { $group: { _id: null, count: { $sum: 1 } } },
+      { $replaceWith: { count: "$count" } },
     ]);
   });
 
-  it("Math.min(acc, d.<field>) → $min", () => {
-    expect(jsmql("$$ = $$.reduce((acc, d) => Math.min(acc, d.score), 0);")).toEqual([
-      { $group: { _id: null, value: { $min: "$score" } } },
+  it("Math.max → $max accumulator", () => {
+    expect(jsmql("$$ = [{ best: $$.reduce((acc, d) => Math.max(acc, d.score), 0) }];")).toEqual([
+      { $group: { _id: null, best: { $max: "$score" } } },
+      { $replaceWith: { best: "$best" } },
     ]);
   });
 
-  it("commutative order: d.<field> + acc → $sum", () => {
-    expect(jsmql("$$ = $$.reduce((acc, d) => d.amount + acc, 0);")).toEqual([
-      { $group: { _id: null, value: { $sum: "$amount" } } },
+  it("Math.min → $min accumulator", () => {
+    expect(jsmql("$$ = [{ worst: $$.reduce((acc, d) => Math.min(acc, d.score), 0) }];")).toEqual([
+      { $group: { _id: null, worst: { $min: "$score" } } },
+      { $replaceWith: { worst: "$worst" } },
     ]);
   });
 
-  it("composes after .filter — $match + $group", () => {
-    expect(jsmql("$$ = $$.filter(o => o.tier === 'gold').reduce((acc, d) => acc + d.amount, 0);")).toEqual([
-      { $match: { tier: "gold" } },
-      { $group: { _id: null, value: { $sum: "$amount" } } },
+  it("multiple keyed accumulators share one $group", () => {
+    expect(
+      jsmql(
+        "$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0), total: $$.reduce((acc, d) => acc + d.amount, 0), best: $$.reduce((acc, d) => Math.max(acc, d.score), 0) }];",
+      ),
+    ).toEqual([
+      { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
+      { $replaceWith: { count: "$count", total: "$total", best: "$best" } },
     ]);
   });
 
-  it("works inside $$$.<coll> lookup body", () => {
-    expect(jsmql("$$ = $$$.archive.filter(o => o.active === true).reduce((acc, d) => acc + 1, 0);")).toEqual([
-      { $limit: 0 },
-      {
-        $unionWith: {
-          coll: "archive",
-          pipeline: [{ $match: { active: true } }, { $group: { _id: null, value: { $sum: 1 } } }],
-        },
-      },
+  it("commutative reducer order: d.<field> + acc → $sum", () => {
+    expect(jsmql("$$ = [{ total: $$.reduce((acc, d) => d.amount + acc, 0) }];")).toEqual([
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $replaceWith: { total: "$total" } },
     ]);
   });
 
-  it("zero args is rejected", () => {
-    expect(() => jsmql("$$ = $$.reduce();")).toThrow(/takes exactly two arguments/);
+  it("zero args inside the wrap is rejected with the reduce-arity error", () => {
+    expect(() => jsmql("$$ = [{ total: $$.reduce() }];")).toThrow(/takes exactly two arguments/);
   });
 
-  it("one arg is rejected (init is mandatory)", () => {
-    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.x);")).toThrow(/takes exactly two arguments/);
+  it("one-param reducer arrow inside the wrap is rejected", () => {
+    expect(() => jsmql("$$ = [{ total: $$.reduce(acc => acc + 1, 0) }];")).toThrow(/two-parameter arrow/);
   });
 
-  it("one-param arrow is rejected", () => {
-    expect(() => jsmql("$$ = $$.reduce(acc => acc + 1, 0);")).toThrow(/two-parameter arrow/);
+  it("non-literal init inside the wrap is rejected", () => {
+    expect(() => jsmql("$$ = [{ total: $$.reduce((acc, d) => acc + d.x, $.seed) }];")).toThrow(
+      /initial value must be a literal/,
+    );
   });
 
-  it("non-literal init is rejected", () => {
-    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.x, $.seed);")).toThrow(/initial value must be a literal/);
-  });
-
-  it("unrecognised body shape is rejected with a v1-supported-shapes list", () => {
-    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc * d.x, 1);")).toThrow(
+  it("unrecognised reducer body inside the wrap is rejected with the v1-shapes list", () => {
+    expect(() => jsmql("$$ = [{ total: $$.reduce((acc, d) => acc * d.x, 1) }];")).toThrow(
       /v1 supports only these reducer shapes.*\$sum.*\$max.*\$min/s,
     );
+  });
+});
+
+describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", () => {
+  it("bare $$ = $$.reduce(...) is rejected (would collapse the stream to a scalar)", () => {
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.amount, 0);")).toThrow(
+      /'\.reduce\(\.\.\.\)' is not a chain method.*Wrap the reduce result.*\$\$ = \[\{ <key>: \$\$\.reduce/s,
+    );
+  });
+
+  it("$$ = $$.filter(p).reduce(...) is rejected (same reason)", () => {
+    expect(() => jsmql("$$ = $$.filter(o => o.tier === 'gold').reduce((acc, d) => acc + d.amount, 0);")).toThrow(
+      /'\.reduce\(\.\.\.\)' is not a chain method.*Wrap the reduce result/s,
+    );
+  });
+
+  it("non-reduce ArrayLiteral RHS points the user at the wrap pattern", () => {
+    expect(() => jsmql("$$ = [{ x: 1 }];")).toThrow(/reduce-wrap pattern.*\$\$\.reduce/s);
+  });
+
+  it("multi-element ArrayLiteral RHS points at $$.push as the seeder alternative", () => {
+    expect(() => jsmql("$$ = [{ a: 1 }, { b: 2 }];")).toThrow(/\$\$\.push\(\{\.\.\.\}/);
   });
 });
 

@@ -1810,9 +1810,28 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.toSorted((a, b) => <cmp>)` | Two-param arrow; comparator body built from `a.<field> - b.<field>` (asc), `b.<field> - a.<field>` (desc), combined with `\|\|` for compound sort | `$sort: { … }` — key order preserved from source. Zero-arg `.toSorted()` is rejected (MongoDB streams have no natural document ordering) |
 | `.toReversed()` | Zero args; must immediately follow `.toSorted(...)` in the same chain | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding `.toSorted` the call is rejected with a "needs a sort key" hint |
 | `.flatMap(d => d.<path>)` | Single-param arrow whose body is a bare field-path on the param (v1) | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
-| `.reduce((acc, d) => …, <init>)` | Two-param arrow + literal init. Body must match one of `acc + d.<field>`, `acc + 1`, `Math.max(acc, d.<field>)`, `Math.min(acc, d.<field>)` | `$group: { _id: null, value: { $sum/$max/$min: … } }` — output stream is one doc `{_id: null, value: <aggregate>}`. The init arg is JS-required but doesn't affect the MQL output |
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+
+**`.reduce` is not a chain method either** — `arr.reduce(...)` returns a scalar / object in JS, not an array, so assigning it directly to `$$` (which must stay a stream of docs) would violate the array invariant. Instead jsmql provides the explicit **reduce wrap**:
+
+```js
+// Single aggregate
+jsmql(`$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }];`)
+// → [{ $group: { _id: null, total: { $sum: "$amount" } } },
+//    { $replaceWith: { total: "$total" } }]
+
+// Multiple aggregates share one $group
+jsmql(`$$ = [{
+  count: $$.reduce((acc, d) => acc + 1, 0),
+  total: $$.reduce((acc, d) => acc + d.amount, 0),
+  best:  $$.reduce((acc, d) => Math.max(acc, d.score), 0)
+}];`)
+// → [{ $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
+//    { $replaceWith: { count: "$count", total: "$total", best: "$best" } }]
+```
+
+Each entry's reducer body must pattern-match a MongoDB accumulator: `acc + d.<field>` / `acc + 1` → `$sum`, `Math.max(acc, d.<field>)` → `$max`, `Math.min(acc, d.<field>)` → `$min`. The `init` value is required for JS-faithfulness but the MQL accumulators have their own neutral elements, so the init's actual value doesn't matter (just write `0`). Object-returning reducers (`$$ = [$$.reduce((acc, d) => ({...acc, ...}), {})]`) are future work.
 
 ---
 

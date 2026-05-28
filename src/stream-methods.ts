@@ -462,11 +462,30 @@ const FLAT_MAP: StreamMethodDef = {
   },
 };
 
-// ── .reduce((acc, d) => …, <init>) on $$ → $group { _id: null, … } ────────────
+// ── $$ = [{ key: $$.reduce(…) }] wrap pattern → $group + $replaceWith ─────────
 //
-// Folds the document stream down to a single doc carrying the aggregate.
-// Output shape: `{ _id: null, value: <aggregate> }`. Pattern-matches the
-// reducer body to one of MongoDB's accumulator operators:
+// `.reduce(...)` is NOT a chain method on `$$`. In JS, `arr.reduce(...)`
+// returns a single value (scalar / object / array depending on the
+// reducer); assigning a non-array value directly to `$$` would violate
+// the "stream is always an array of docs" invariant. So jsmql requires
+// the user to **explicitly wrap** the reduce result(s) into a stream-
+// shaped RHS:
+//
+//   - For scalar reducers: `$$ = [{ <key>: $$.reduce(<reducer>, <init>) }];`
+//     The wrap turns the scalar into a named field of a single-doc stream.
+//   - For object reducers: `$$ = [$$.reduce(<reducer>, <init>)];`
+//     (future work — needs object-returning reducer patterns).
+//
+// This file owns the scalar-into-object wrap. Each entry of the inner
+// object must be a direct `$$.reduce(...)` call; lowering pattern-matches
+// each reducer body to a MongoDB `$group` accumulator and emits:
+//
+//   [
+//     { $group: { _id: null, <key>: { $sum/$max/$min: <expr> }, ... } },
+//     { $replaceWith: { <key>: "$<key>", ... } },                    // drop _id
+//   ]
+//
+// Reducer-body shapes (pattern-matched per entry):
 //
 //   `acc + d.<field>`              → `{ $sum: "$<field>" }`
 //   `acc + 1`                       → `{ $sum: 1 }` (count documents)
@@ -483,12 +502,16 @@ const FLAT_MAP: StreamMethodDef = {
 // `$$$.<coll>.find/filter(...)` chains (in `lookup-translation.ts`) —
 // that one builds a `$reduce` expression over a materialised array slot.
 // Different surface, different target operator, intentionally kept
-// separate.
+// separate. `.reduce` is also explicitly NOT in `STREAM_METHODS` — the
+// chain walker rejects it with an actionable wrap-pattern hint via
+// `unknownStreamMethod`.
 
 type ReduceAccumulator =
   | { kind: "sum"; value: string | number }
   | { kind: "max"; value: string }
   | { kind: "min"; value: string };
+
+export type ReduceWrapEntry = { key: string; accumulator: ReduceAccumulator; pos: number };
 
 function classifyReduceBody(body: Expr, accParam: string, dParam: string): ReduceAccumulator | null {
   if (body.type === "BinaryExpr" && body.op === "+") {
@@ -516,71 +539,120 @@ function classifyReduceBody(body: Expr, accParam: string, dParam: string): Reduc
   return null;
 }
 
-const REDUCE: StreamMethodDef = {
-  name: "reduce",
-  validate(args, callPos) {
-    if (args.length !== 2) {
-      throw new CodegenError(
-        `.reduce((acc, d) => <expr>, <init>) takes exactly two arguments (the reducer arrow and the initial value), got ${args.length}.`,
-        callPos,
-      );
-    }
-    const [arg0, arg1] = args;
-    if (arg0.type === "SpreadElement") {
-      throw new CodegenError(`.reduce(...) does not accept spread arguments.`, arg0.pos);
-    }
-    if (arg1.type === "SpreadElement") {
-      throw new CodegenError(`.reduce(...) does not accept spread arguments.`, arg1.pos);
-    }
-    if (arg0.type !== "Lambda") {
-      throw new CodegenError(
-        `.reduce((acc, d) => <expr>, <init>) requires an arrow function as the first argument.`,
-        arg0.pos,
-      );
-    }
-    if (arg0.params.length !== 2) {
-      throw new CodegenError(
-        `.reduce((acc, d) => <expr>, <init>) requires a two-parameter arrow '(acc, d) => …' (got ${arg0.params.length} params).`,
-        arg0.pos,
-      );
-    }
-    if (arg0.body === undefined) {
-      throw new CodegenError(`.reduce(...) requires an expression body, not a block.`, arg0.pos);
-    }
-    // The init must be a literal — anything else (field refs, computed expressions)
-    // would suggest the user expects per-doc state, which $group can't provide.
-    const isLiteral =
-      arg1.type === "NumberLiteral" ||
-      arg1.type === "StringLiteral" ||
-      arg1.type === "BooleanLiteral" ||
-      arg1.type === "NullLiteral" ||
-      arg1.type === "BigIntLiteral";
-    if (!isLiteral) {
-      throw new CodegenError(
-        `.reduce((acc, d) => …, <init>) — the initial value must be a literal (number, string, boolean, null). Computed initial values aren't supported when reducing a document stream (MongoDB's $group accumulators have fixed neutral elements).`,
-        ("pos" in arg1 ? arg1.pos : callPos) as number,
-      );
-    }
-  },
-  lower(args, _ctx, callPos, _lowerBlock, _prevStages) {
-    const lambda = args[0] as LambdaNode;
+/**
+ * Detect the `$$ = [{ key: $$.reduce(…), … }]` wrap pattern. Returns the
+ * list of `(key, accumulator)` entries if the shape matches and every
+ * entry is a direct `$$.reduce(...)` call with a pattern-matched reducer.
+ *
+ * Returns `null` for non-matching shapes (the caller falls through to the
+ * other RHS handlers). Throws for matching-but-malformed shapes (e.g. a
+ * single-doc array literal whose entries are all `$$.reduce(...)` but with
+ * invalid args or unrecognised reducer bodies) so the user sees a precise
+ * error instead of a generic "RHS must be …".
+ */
+export function detectReduceWrap(value: Expr): ReduceWrapEntry[] | null {
+  if (value.type !== "ArrayLiteral") return null;
+  if (value.elements.length !== 1) return null;
+  const docEl = value.elements[0];
+  if (docEl.type !== "ObjectLiteral") return null;
+  if (docEl.entries.length === 0) return null;
+  // First pass: every entry must be `<staticKey>: $$.reduce(...)`.
+  for (const entry of docEl.entries) {
+    if (entry.type !== "KeyValueEntry") return null;
+    if (entry.key.kind !== "static") return null;
+    const ev = entry.value;
+    if (ev.type !== "MethodCall") return null;
+    if (ev.method !== "reduce") return null;
+    if (ev.object.type !== "CollectionRef") return null;
+  }
+  // Second pass: validate and classify each reducer. (Throwing only happens
+  // here so a near-miss shape — e.g. a single-doc array literal with one
+  // non-reduce entry — falls through cleanly via the early `return null`s
+  // above.)
+  const out: ReduceWrapEntry[] = [];
+  for (const entry of docEl.entries) {
+    if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") continue;
+    const ev = entry.value as Extract<Expr, { type: "MethodCall" }>;
+    validateReduceCallShape(ev);
+    const lambda = ev.args[0] as LambdaNode;
     const [accParam, dParam] = lambda.params;
     const body = lambda.body as Expr;
     const accumulator = classifyReduceBody(body, accParam, dParam);
     if (accumulator === null) {
       throw new CodegenError(
-        `.reduce((${accParam}, ${dParam}) => …) v1 supports only these reducer shapes: ` +
+        `$$.reduce((${accParam}, ${dParam}) => …) v1 supports only these reducer shapes: ` +
           `'${accParam} + ${dParam}.<field>' (→ $sum), '${accParam} + 1' (→ $sum: 1, count), ` +
           `'Math.max(${accParam}, ${dParam}.<field>)' (→ $max), 'Math.min(${accParam}, ${dParam}.<field>)' (→ $min). ` +
           `Other shapes aren't supported yet — write the $group stage by hand.`,
-        body.pos ?? callPos,
+        body.pos ?? ev.pos,
       );
     }
-    const op = accumulator.kind === "sum" ? "$sum" : accumulator.kind === "max" ? "$max" : "$min";
-    const value: string | number = accumulator.kind === "sum" ? accumulator.value : `$${accumulator.value}`;
-    return { stages: [{ $group: { _id: null, value: { [op]: value } } }], clearLets: true };
-  },
-};
+    out.push({ key: entry.key.name, accumulator, pos: entry.pos });
+  }
+  return out;
+}
+
+function validateReduceCallShape(call: Extract<Expr, { type: "MethodCall" }>): void {
+  if (call.args.length !== 2) {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <expr>, <init>) takes exactly two arguments (the reducer arrow and the initial value), got ${call.args.length}.`,
+      call.pos,
+    );
+  }
+  const [arg0, arg1] = call.args;
+  if (arg0.type === "SpreadElement") {
+    throw new CodegenError(`$$.reduce(...) does not accept spread arguments.`, arg0.pos);
+  }
+  if (arg1.type === "SpreadElement") {
+    throw new CodegenError(`$$.reduce(...) does not accept spread arguments.`, arg1.pos);
+  }
+  if (arg0.type !== "Lambda") {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <expr>, <init>) requires an arrow function as the first argument.`,
+      arg0.pos,
+    );
+  }
+  if (arg0.params.length !== 2) {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <expr>, <init>) requires a two-parameter arrow '(acc, d) => …' (got ${arg0.params.length} params).`,
+      arg0.pos,
+    );
+  }
+  if (arg0.body === undefined) {
+    throw new CodegenError(`$$.reduce(...) requires an expression body, not a block.`, arg0.pos);
+  }
+  const isLiteral =
+    arg1.type === "NumberLiteral" ||
+    arg1.type === "StringLiteral" ||
+    arg1.type === "BooleanLiteral" ||
+    arg1.type === "NullLiteral" ||
+    arg1.type === "BigIntLiteral";
+  if (!isLiteral) {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => …, <init>) — the initial value must be a literal (number, string, boolean, null). Computed initial values aren't supported when reducing a document stream (MongoDB's $group accumulators have fixed neutral elements).`,
+      ("pos" in arg1 ? arg1.pos : call.pos) as number,
+    );
+  }
+}
+
+/**
+ * Emit the `$group` + `$replaceWith` pair for a detected `[{key: $$.reduce(…), …}]`
+ * wrap. The `$group` collects every keyed accumulator under `_id: null`; the
+ * trailing `$replaceWith` drops the `_id: null` field so the output stream is
+ * a single doc with exactly the user-named keys.
+ */
+export function lowerReduceWrap(entries: readonly ReduceWrapEntry[]): object[] {
+  const groupBody: Record<string, unknown> = { _id: null };
+  const replaceBody: Record<string, unknown> = {};
+  for (const entry of entries) {
+    const op = entry.accumulator.kind === "sum" ? "$sum" : entry.accumulator.kind === "max" ? "$max" : "$min";
+    const v: string | number =
+      entry.accumulator.kind === "sum" ? entry.accumulator.value : `$${entry.accumulator.value}`;
+    groupBody[entry.key] = { [op]: v };
+    replaceBody[entry.key] = `$${entry.key}`;
+  }
+  return [{ $group: groupBody }, { $replaceWith: replaceBody }];
+}
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
@@ -591,7 +663,12 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
   flatMap: FLAT_MAP,
-  reduce: REDUCE,
+  // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
+  // returns a scalar/object in JS, not an array; assigning it directly to
+  // `$$` would break the "stream is always an array of docs" invariant.
+  // The chain walker's `unknownStreamMethod` helper special-cases `.reduce`
+  // with an actionable wrap-pattern hint, and `detectReduceWrap` (above)
+  // implements the wrap form `$$ = [{ <key>: $$.reduce(…) }];`.
 };
 
 /** Look up a registered stream method by name; null if not registered. */

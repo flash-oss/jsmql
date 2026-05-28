@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — fix: `.reduce` on `$$` — replace the bogus `$group {value: …}` chain method with the explicit wrap pattern
+
+The original `.reduce` chain-method on `$$` (added a few commits ago) was wrong. JS `arr.reduce(...)` returns a scalar / object / array depending on the reducer; my implementation silently produced a single-doc stream `[{_id: null, value: <aggregate>}]` and treated that as "the stream". That violates the project-wide invariant that `$$` is always a stream of documents — assigning a scalar to it doesn't make sense.
+
+**Fix.** `.reduce` is no longer a chain method. Two changes:
+
+1. **Reject `.reduce` as a chain method** with an actionable wrap-pattern hint in `unknownStreamMethod` (so `$$ = $$.reduce(...)` and `$$ = $$.filter(p).reduce(...)` both error and point the user at the wrap).
+2. **Add the explicit wrap form**: `$$ = [{ <key>: $$.reduce((acc, d) => …, <init>), … }];` lowers to `[{ $group: { _id: null, <key>: { $<op>: … }, … } }, { $replaceWith: { <key>: "$<key>", … } }]`. Multiple aggregates share one `$group` stage. The wrap is detected in `lowerReplaceStream` via the new `detectReduceWrap` exported from `src/stream-methods.ts`.
+
+The wrap makes the JS-faithful semantic explicit: the user is wrapping a scalar/object into a single-doc stream by hand, exactly as they'd write `[{ count: arr.length }]` in JS. The pattern is also more useful than the old chain method — the user names each aggregate field, and multiple aggregates compose into one `$group`.
+
+**Reducer body shapes** stay the same (`acc + d.<field>` → `$sum`, etc.); `classifyReduceBody` is reused from the old code. `init` must be a literal (was already enforced); object-returning reducers (`$$ = [$$.reduce((acc, d) => ({...acc, ...}), {})]`) are future work.
+
+The lookup-chain `.reduce` terminal in [`src/lookup-translation.ts`](../src/lookup-translation.ts) is unaffected — that one's a `$reduce` *expression* over a materialised array slot, which is its own surface and stays.
+
+Also tightened `rejectInvalidReplaceStream`: a non-empty ArrayLiteral RHS that *isn't* the reduce-wrap now gets a precise "use the wrap pattern, or `$$.push(...)` if you wanted a literal-doc seeder" message instead of the generic "`$$ = []` not supported" one.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — Lookups inside `.map(d => …)` body — supported in lookup-body context too
 
 Removes the `inSubPipeline` rejection branch introduced one commit earlier. `$$ = $$$.users.filter(p).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));` now lowers to a `$unionWith.pipeline` containing a nested `$lookup`:

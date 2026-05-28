@@ -79,10 +79,43 @@ export type StreamMethodResult = {
 | `.toSorted((a, b) => <cmp>)` | Two-param expression-body arrow; body built from `a.<path> - b.<path>` / `b.<path> - a.<path>` terms combined with `\|\|` | `parseComparatorBody` walks the expression, classifies each subtraction's paths, emits a `$sort` spec | One `{ $sort: { … } }` stage; key order preserved from source for compound sorts |
 | `.toReversed()` | Zero args; must immediately follow a `.toSorted(...)` (or any preceding stage whose `$sort` has 1/-1 directions) in the same chain | Reads `prevStages`, flips every direction (1 ↔ -1), returns `replacesPreviousStage: true` so the caller drops the old `$sort` | One `{ $sort: { … } }` stage replacing the previous one — net stage count unchanged vs. writing `.toSorted` descending directly |
 | `.flatMap(d => d.<path>)` | Single-param arrow whose expression body is a bare field-path on the param (v1) | `paramFieldPath` resolves the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
-| `.reduce((acc, d) => …, <init>)` | Two-param expression-body arrow + literal init. Body shape pattern-matched to MongoDB accumulators (`+ d.<f>` / `+ 1` → `$sum`; `Math.max(acc, d.<f>)` → `$max`; `Math.min` → `$min`) | `classifyReduceBody` returns the accumulator kind + operand; init is unused in MQL but JS-required | One `{ $group: { _id: null, value: { $<op>: … } } }` stage; output stream is a single `{_id: null, value: …}` doc. Clears the let scope (reshape stage) |
 
 Future methods (per the planning notes) extend this table — see
 [docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.
+
+### `.reduce` is intentionally NOT in the registry
+
+In JS, `arr.reduce(...)` returns a single value — scalar, object, or array
+depending on the reducer. Assigning a non-array result directly to `$$`
+would violate the project-wide invariant that the stream is always an array
+of documents. So `.reduce` is rejected as a chain method (with an actionable
+wrap-pattern hint in `unknownStreamMethod`) and instead consumed via the
+**reduce wrap**:
+
+```js
+$$ = [{ <key>: $$.reduce((acc, d) => …, <init>), … }];
+```
+
+The wrap is detected in `lowerReplaceStream` by `detectReduceWrap` (exported
+from [src/stream-methods.ts](../../src/stream-methods.ts)) and lowered by
+`lowerReduceWrap` into:
+
+```js
+[
+  { $group: { _id: null, <key>: { $<op>: <expr> }, … } },
+  { $replaceWith: { <key>: "$<key>", … } },  // drops _id
+]
+```
+
+Each entry's reducer body is pattern-matched through `classifyReduceBody` to
+one of `$sum` (`acc + d.<f>` / `acc + 1`), `$max` (`Math.max(acc, d.<f>)`),
+or `$min` (`Math.min(acc, d.<f>)`). The `init` arg is required (JS-faithful)
+but unused by the MQL accumulators (which have their own neutral elements);
+it's validated to be a literal so a stray `$.<field>` can't sneak through.
+
+Multiple aggregates can share one wrap — they all collapse into one `$group`
+stage. Future work: object-returning reducers (`$$ = [$$.reduce(…)]` with
+no inner object literal), and richer reducer body shapes.
 
 ## Error wording
 

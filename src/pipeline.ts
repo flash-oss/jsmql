@@ -87,7 +87,14 @@ import {
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
-import { collectStreamChain, lookupStreamMethod, streamMethodNames, type MethodCallNode } from "./stream-methods.ts";
+import {
+  collectStreamChain,
+  detectReduceWrap,
+  lookupStreamMethod,
+  lowerReduceWrap,
+  streamMethodNames,
+  type MethodCallNode,
+} from "./stream-methods.ts";
 
 type StageShape = { name: string; body: Expr };
 
@@ -571,6 +578,15 @@ function lowerReplaceStream(
     );
   }
   const v = el.value;
+  // `$$ = [{ <key>: $$.reduce(…), … }];` — the JS-faithful wrap pattern for
+  // folding the stream into a single-doc summary. `.reduce` is NOT a chain
+  // method on `$$` (would break the "stream is always an array" invariant);
+  // this wrap is the only legal way to consume a reduce result back into
+  // the stream. See docs/specs/stream-methods.md.
+  const reduceWrap = detectReduceWrap(v);
+  if (reduceWrap !== null) {
+    return { stages: lowerReduceWrap(reduceWrap), clearLets: true };
+  }
   const chain = collectStreamChain(v);
   if (chain.root.type === "CollectionRef" && chain.methods.length > 0) {
     return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, allocSlot, v);
@@ -701,6 +717,18 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       m.pos,
     );
   }
+  // `.reduce` is rejected as a chain method for the same reason — in JS,
+  // `arr.reduce(...)` returns a scalar / object / array depending on the
+  // reducer. Assigning a non-array result directly to `$$` would break the
+  // "stream is always an array of docs" invariant. The user must wrap.
+  if (m.method === "reduce") {
+    return new CodegenError(
+      `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. ` +
+        `Wrap the reduce result into a single-doc stream: '$$ = [{ <key>: $$.reduce((acc, d) => …, <init>) }];' for scalar reducers (each entry becomes a '$group' accumulator, then '$replaceWith' drops the '_id' to leave just your named fields). ` +
+        `Multiple aggregates can share one wrap: '$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0), total: $$.reduce((acc, d) => acc + d.amount, 0) }];'.`,
+      m.pos,
+    );
+  }
   const names = streamMethodNames();
   const suggestion = closestNameTo(m.method, ["filter", ...names]);
   const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
@@ -758,8 +786,18 @@ function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: st
 
 function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
   if (value.type === "ArrayLiteral") {
+    if (value.elements.length === 0) {
+      throw new CodegenError(
+        `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.`,
+        value.pos,
+      );
+    }
+    // The only ArrayLiteral RHS we accept today is the reduce-wrap pattern
+    // (`$$ = [{ <key>: $$.reduce(…), … }]`), and that's already detected
+    // upstream — so reaching here means the user wrote something else.
+    // Point at the wrap pattern explicitly so they don't have to guess.
     throw new CodegenError(
-      `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.`,
+      `'$$ = [<expr>]' is only supported as the reduce-wrap pattern '$$ = [{ <key>: $$.reduce((acc, d) => …, <init>), … }]' — the JS-faithful way to fold a stream into a single-doc summary. Other ArrayLiteral RHSes (literal doc lists, multi-element arrays, non-reduce single docs) aren't yet supported. If you wanted to seed the stream from a literal doc list, use '$$.push({...}, {...}, …)' instead.`,
       value.pos,
     );
   }
