@@ -553,8 +553,8 @@ A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.f
 **Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
 
 **Caveats:**
-- **Nested lookups are not yet supported in this release.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda body throws a targeted "not yet supported, hoist to sibling stage" error. Coming in a follow-up.
-- **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — deferred.
+- **Nested lookups are planned but not yet implemented.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda body throws a targeted "not yet supported, hoist to sibling stage" error. The work — auto-extracting outer-doc *and* outer-foreign-doc binding sources — is on the roadmap; for now, hoist the inner lookup to a sibling stage.
+- **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — also planned (see `$$$` schema-threading work).
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
 

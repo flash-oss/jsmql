@@ -229,8 +229,8 @@ const MAP: StreamMethodDef = {
     // — valid MQL; the basic-form / pipeline-form translation in
     // `lookup-translation.ts` correlates against the sub-pipeline's local
     // doc (the foreign collection from the outer `$unionWith`), not any
-    // outer-pipeline `let` bindings, so the v2-deferred let-coordination
-    // case doesn't apply here.
+    // outer-pipeline `let` bindings, so the let-coordination problem that
+    // blocks the general nested-lookup case doesn't apply here.
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
     if (Object.keys(letVars).length > 0) {
       const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
