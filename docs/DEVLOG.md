@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — Lookups inside `.map(d => …)` body — supported in top-level `$$` chain
+
+The original `.map` commit deferred lookups in the body (`.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }))`) because the chain walker didn't thread a slot allocator into per-method `lower` functions. This commit threads `allocSlot` (and an `inSubPipeline: boolean` flag) through `lowerReplaceStream` → `lowerChainOnStream` / `lowerChainOnCollection` → `def.lower`, and rewrites `MAP.lower` to run the rewritten body through `extractLookupCalls` after the `extractLetsFromExpr` pass.
+
+The flow: `extractLetsFromExpr(body, "d")` rewrites every `d.<path>` (including ones inside the lookup's predicate lambda — the walker recurses into nested lambdas) to bare `FieldRef`s. The lookup's predicate then sees `x._id === FieldRef("_id")`; `tryBasicForm` recognises the foreign-vs-local split and emits the basic-form `$lookup { localField, foreignField }`. `extractLookupCalls` allocates an `__jsmql.__lookup<N>` slot, emits the prologue `$lookup` (+ `$set { $first }` for `.find`), and rewrites the body to reference the slot. `MAP.lower` then emits `[...prologue, { $replaceWith: <body> }]`.
+
+**Lookup-body context (`$$$.<coll>.filter(p).map(...)`) keeps the rejection.** Materialising a lookup there would land a nested `$lookup` inside the outer `$unionWith.pipeline` — the same nested-lookup case that's deferred to v2 elsewhere in the codebase. The rejection message names the offending shape and points at the "hoist to a sibling stage" fix.
+
+**Registry signature change:** `StreamMethodDef.lower` now takes `allocSlot: SlotAllocator` (the pipeline's tracker) and `inSubPipeline: boolean` (true when the chain is in a `$unionWith.pipeline` body). All other methods (`.slice`, `.concat`, `.toSorted`, `.toReversed`, `.flatMap`, `.reduce`) ignore the new params.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — `.reduce((acc, d) => …, init)` on `$$` chain → `$group { _id: null, … }`
 
 Last method in the 2026-05 stream-methods batch. Folds the document stream down to a single doc carrying the aggregate. Pattern-matches the reducer body to one of MongoDB's accumulator operators:

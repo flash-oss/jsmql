@@ -216,7 +216,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     if (el.type === "AssignExpr") {
       if (isReplaceStreamAssign(el)) {
         flushUpdateOps();
-        const result = lowerReplaceStream(el, ctx, lowerBlock);
+        const result = lowerReplaceStream(el, ctx, lowerBlock, tracking.alloc);
         for (const s of result.stages) out.push(s);
         if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
         return;
@@ -562,6 +562,7 @@ function lowerReplaceStream(
   el: AssignExpr,
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
 ): { stages: object[]; clearLets: boolean } {
   if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
     throw new CodegenError(
@@ -572,12 +573,12 @@ function lowerReplaceStream(
   const v = el.value;
   const chain = collectStreamChain(v);
   if (chain.root.type === "CollectionRef" && chain.methods.length > 0) {
-    return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, v);
+    return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, allocSlot, v);
   }
   if (chain.methods.length > 0) {
     const target = extractLookupTarget(chain.root, outerCtx);
     if (target !== null) {
-      return lowerChainOnCollection(chain.methods, target, outerCtx, lowerBlockFn, v);
+      return lowerChainOnCollection(chain.methods, target, outerCtx, lowerBlockFn, allocSlot, v);
     }
   }
   rejectInvalidReplaceStream(v, outerCtx);
@@ -596,6 +597,7 @@ function lowerChainOnStream(
   methods: MethodCallNode[],
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
   rhs: Expr,
 ): { stages: object[]; clearLets: boolean } {
   const stages: object[] = [];
@@ -617,7 +619,7 @@ function lowerChainOnStream(
       throw unknownStreamMethod(m, "$$");
     }
     def.validate(m.args, m.pos);
-    const result = def.lower(m.args, outerCtx, m.pos, lowerBlockFn, stages);
+    const result = def.lower(m.args, outerCtx, m.pos, lowerBlockFn, stages, allocSlot, false);
     if (result.replacesPreviousStage) stages.pop();
     stages.push(...result.stages);
     if (result.clearLets) clearLets = true;
@@ -642,6 +644,7 @@ function lowerChainOnCollection(
   target: { db?: string; collection: string },
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
   rhs: Expr,
 ): { stages: object[]; clearLets: boolean } {
   const innerCtx = freshSubPipelineCtx(outerCtx);
@@ -663,7 +666,7 @@ function lowerChainOnCollection(
       throw unknownStreamMethod(m, "$$$.<coll>");
     }
     def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
     if (result.replacesPreviousStage) inner.pop();
     inner.push(...result.stages);
   }
@@ -1113,7 +1116,7 @@ function lowerUpdateFilterWithLookups(
     if (op.type === "AssignExpr") {
       if (isReplaceStreamAssign(op)) {
         flush();
-        const result = lowerReplaceStream(op, ctx, lowerBlockFn);
+        const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot);
         for (const s of result.stages) out.push(s);
         if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
         continue;

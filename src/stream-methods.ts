@@ -9,7 +9,13 @@
 
 import type { CallArg, Expr } from "./ast.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
-import { containsLookupCall, extractLetsFromExpr, type SubPipelineLowerer } from "./lookup-translation.ts";
+import {
+  containsLookupCall,
+  extractLetsFromExpr,
+  extractLookupCalls,
+  type SlotAllocator,
+  type SubPipelineLowerer,
+} from "./lookup-translation.ts";
 import { containsUnionPush } from "./union-translation.ts";
 import { lowerUnionPush } from "./union-translation.ts";
 
@@ -51,6 +57,16 @@ export type StreamMethodDef = {
    * peek (`.slice`, `.map`, …) simply ignore it. Methods that do
    * (`.toReversed`) can read the last stage and return
    * `replacesPreviousStage: true` so the caller drops it before appending.
+   *
+   * `allocSlot` allocates a fresh `__jsmql.__lookup<N>` slot from the
+   * surrounding pipeline's tracker — used by methods that need to
+   * materialise embedded `$$$.<coll>.find/filter(...)` lookups (e.g.
+   * `.map`'s body). Each call to `allocSlot()` marks the pipeline as
+   * having used the namespace so the trailing `$unset: "__jsmql"` cleanup
+   * is emitted. `inSubPipeline` is true when the chain is being lowered
+   * inside a `$unionWith.pipeline` body (i.e. the `$$$.<coll>.<chain>` head);
+   * methods that would otherwise produce nested `$lookup` stages use this
+   * flag to surface the standard "nested lookup not yet supported" error.
    */
   lower: (
     args: readonly CallArg[],
@@ -58,6 +74,8 @@ export type StreamMethodDef = {
     callPos: number,
     lowerBlock: SubPipelineLowerer,
     prevStages: readonly object[],
+    allocSlot: SlotAllocator,
+    inSubPipeline: boolean,
   ) => StreamMethodResult;
 };
 
@@ -146,9 +164,24 @@ const CONCAT: StreamMethodDef = {
 // Chain-form of the existing `$ = <expr>` statement sugar. Single-param
 // arrow only; the parameter IS the current document, so `d.x` rewrites to
 // the bare field path `$x` and `$.<field>` references are rejected (same
-// "use the lambda parameter" convention as `.filter`). Lookups and
-// `$$.push` calls inside the body are rejected for v1 — hoist them above
-// the chain.
+// "use the lambda parameter" convention as `.filter`). `$$.push` calls
+// inside the body are rejected (statement-only construct, semantics don't
+// fit inside an expression-position lambda).
+//
+// `$$$.<coll>.find/filter(...)` lookups inside the body ARE supported in
+// the top-level `$$` chain context: the body is post-processed through
+// `extractLookupCalls` to materialise each lookup into an
+// `__jsmql.__lookup<N>` slot ahead of the `$replaceWith`. References to
+// the outer doc (`d.<field>`) get rewritten to bare field paths via
+// `extractLetsFromExpr` BEFORE the lookup extractor runs, so the lookup
+// predicate's `extractLetsFromExpr` (called from inside
+// `translatePredicate`) sees those as `$.<field>` and hoists them to
+// `$lookup.let` slots — basic-form is preferred when the predicate is a
+// single `===` between matching paths. In the lookup-body context
+// (`$$$.<coll>.filter(p).map(...)`), an embedded lookup would land inside
+// a `$unionWith.pipeline` — a nested lookup, which jsmql defers to v2
+// across the codebase. That case is rejected with the standard
+// "hoist to sibling stage" message.
 const MAP: StreamMethodDef = {
   name: "map",
   validate(args, callPos) {
@@ -181,19 +214,19 @@ const MAP: StreamMethodDef = {
       );
     }
   },
-  lower(args, ctx, _callPos, _lowerBlock) {
+  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, inSubPipeline) {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const body = lambda.body as Expr;
-    if (containsLookupCall(body, ctx)) {
-      throw new CodegenError(
-        `'$$$.<coll>.find/filter(...)' inside a '.map(d => …)' body isn't supported in v1 — hoist the lookup to a 'let' before the chain, then reference the bound name from the body.`,
-        lambda.pos,
-      );
-    }
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
+        lambda.pos,
+      );
+    }
+    if (inSubPipeline && containsLookupCall(body, ctx)) {
+      throw new CodegenError(
+        `'$$$.<coll>.find/filter(...)' inside a '.map(d => …)' body of a '$$$.<coll>.<chain>' RHS would emit a nested '$lookup' inside a '$unionWith.pipeline' — nested lookups are deferred to v2. Hoist the inner lookup to a sibling stage in the outer pipeline.`,
         lambda.pos,
       );
     }
@@ -205,8 +238,15 @@ const MAP: StreamMethodDef = {
         lambda.pos,
       );
     }
-    const expr = generateWithCtx(rewritten, ctx);
-    return { stages: [{ $replaceWith: expr }], clearLets: true };
+    // Materialise any `$$$.<coll>.find/filter(...)` lookups in the rewritten
+    // body into prologue stages. `extractLookupCalls` handles the basic-vs-
+    // pipeline-form predicate translation, auto-`let` extraction (for the
+    // outer-doc paths we just rewrote to bare `FieldRef`s), and `$first`
+    // wrapping for `.find`. When there are no lookups it returns prologue=[]
+    // and the unchanged expr.
+    const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, ctx, allocSlot, lowerBlock);
+    const expr = generateWithCtx(rewritten2, ctx);
+    return { stages: [...prologue, { $replaceWith: expr }], clearLets: true };
   },
 };
 

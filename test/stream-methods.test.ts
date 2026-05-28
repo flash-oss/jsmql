@@ -212,10 +212,41 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     expect(() => jsmql("$$ = $$.map(d => ({ n: $.name }));")).toThrow(/'\$\.<field>'.*use the lambda parameter/);
   });
 
-  it("lookup inside .map body is rejected for v1", () => {
-    expect(() => jsmql("$$ = $$.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));")).toThrow(
-      /inside a '\.map.*hoist/,
-    );
+  it("lookup inside .map body materialises into prologue $lookup + $set, $replaceWith reads the slot", () => {
+    expect(jsmql("$$ = $$.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));")).toEqual([
+      { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+      { $replaceWith: { a: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".filter + .map with internal lookup composes — $match, $lookup, $set, $replaceWith", () => {
+    expect(
+      jsmql(
+        "$$ = $$.filter(o => o.active === true).map(d => ({ id: d._id, archived: $$$.archive.find(x => x._id === d._id) }));",
+      ),
+    ).toEqual([
+      { $match: { active: true } },
+      { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+      { $replaceWith: { id: "$_id", archived: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("array-valued .filter lookup inside .map body uses the pipeline-form $lookup (no $first wrap)", () => {
+    expect(jsmql("$$ = $$.map(d => ({ id: d._id, items: $$$.archive.filter(x => x.userId === d._id) }));")).toEqual([
+      { $lookup: { from: "archive", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
+      { $replaceWith: { id: "$_id", items: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("lookup inside .map body of a `$$$.<coll>.<chain>` RHS is rejected (would emit a nested $lookup)", () => {
+    expect(() =>
+      jsmql("$$ = $$$.users.filter(u => u.active === true).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));"),
+    ).toThrow(/nested.*\$unionWith\.pipeline.*hoist/i);
   });
 });
 
