@@ -77,6 +77,7 @@ export type StreamMethodResult = {
 | `.concat(...others)` | 1+ args matching the `$$.push(...)` shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, `$$$.<coll>.find(p)`) | `lowerUnionPush` (shared with `$$.push`) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents`-form stage |
 | `.map(d => <expr>)` | One single-param expression-body arrow; `$.<field>` and lookups in body rejected | `extractLetsFromExpr` (param rewrite) + `generateWithCtx` | One `{ $replaceWith: <expr> }` stage; clears the let scope (reshape stage) |
 | `.toSorted((a, b) => <cmp>)` | Two-param expression-body arrow; body built from `a.<path> - b.<path>` / `b.<path> - a.<path>` terms combined with `\|\|` | `parseComparatorBody` walks the expression, classifies each subtraction's paths, emits a `$sort` spec | One `{ $sort: { … } }` stage; key order preserved from source for compound sorts |
+| `.toReversed()` | Zero args; must immediately follow a `.toSorted(...)` (or any preceding stage whose `$sort` has 1/-1 directions) in the same chain | Reads `prevStages`, flips every direction (1 ↔ -1), returns `replacesPreviousStage: true` so the caller drops the old `$sort` | One `{ $sort: { … } }` stage replacing the previous one — net stage count unchanged vs. writing `.toSorted` descending directly |
 
 Future methods (per the planning notes) extend this table — see
 [docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.
@@ -118,9 +119,10 @@ To add a new method:
 6. Add a [DEVLOG.md](../DEVLOG.md) entry.
 
 Methods that need state from earlier in the chain (e.g. `.toReversed()` peeking
-at the preceding `$sort` to flip its spec) will need the registry signature
-extended to pass `prevStages` — defer that until the first such method
-lands.
+at the preceding `$sort` to flip its spec) receive `prevStages: readonly object[]`
+— the read-only view of stages emitted so far in the same context. They can
+return `replacesPreviousStage: true` to have the caller drop the previous stage
+before appending their own.
 
 ## Out of scope (v1)
 

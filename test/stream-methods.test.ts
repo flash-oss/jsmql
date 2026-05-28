@@ -277,6 +277,50 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
   });
 });
 
+describe(".toReversed() — flips the preceding $sort", () => {
+  it("after ascending .toSorted → descending $sort", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.age - b.age).toReversed();")).toEqual([{ $sort: { age: -1 } }]);
+  });
+
+  it("after descending .toSorted → ascending $sort", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => b.score - a.score).toReversed();")).toEqual([{ $sort: { score: 1 } }]);
+  });
+
+  it("compound sort: every key flips", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.x - b.x || b.y - a.y).toReversed();")).toEqual([
+      { $sort: { x: -1, y: 1 } },
+    ]);
+  });
+
+  it("composes with .slice — $sort + $limit (top-N bottom-first)", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.score - b.score).toReversed().slice(0, 3);")).toEqual([
+      { $sort: { score: -1 } },
+      { $limit: 3 },
+    ]);
+  });
+
+  it("works inside the $$$.<coll> lookup body", () => {
+    expect(
+      jsmql("$$ = $$$.archive.filter(o => o.active === true).toSorted((a, b) => a.x - b.x).toReversed();"),
+    ).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { active: true } }, { $sort: { x: -1 } }] } },
+    ]);
+  });
+
+  it("without a preceding .toSorted is rejected", () => {
+    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/needs a preceding \.toSorted/);
+  });
+
+  it("after a non-$sort stage (e.g. .slice) is rejected", () => {
+    expect(() => jsmql("$$ = $$.slice(0, 10).toReversed();")).toThrow(/needs a preceding \.toSorted/);
+  });
+
+  it("rejects positional args", () => {
+    expect(() => jsmql("$$ = $$.toSorted((a, b) => a.x - b.x).toReversed(1);")).toThrow(/takes no arguments/);
+  });
+});
+
 describe("unknown chain method on $$ → registry error with hint", () => {
   it("typo like .slise is corrected via 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);

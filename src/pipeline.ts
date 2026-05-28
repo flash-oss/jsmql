@@ -617,7 +617,8 @@ function lowerChainOnStream(
       throw unknownStreamMethod(m, "$$");
     }
     def.validate(m.args, m.pos);
-    const result = def.lower(m.args, outerCtx, m.pos, lowerBlockFn);
+    const result = def.lower(m.args, outerCtx, m.pos, lowerBlockFn, stages);
+    if (result.replacesPreviousStage) stages.pop();
     stages.push(...result.stages);
     if (result.clearLets) clearLets = true;
   }
@@ -662,7 +663,8 @@ function lowerChainOnCollection(
       throw unknownStreamMethod(m, "$$$.<coll>");
     }
     def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner);
+    if (result.replacesPreviousStage) inner.pop();
     inner.push(...result.stages);
   }
   const from: string | { db: string; coll: string } =

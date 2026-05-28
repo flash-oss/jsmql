@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.toReversed()` chain method → flips the preceding `$sort`
+
+Second ES2023 immutable-array method. Zero-arg, must immediately follow `.toSorted(...)` in the same chain — MongoDB streams of documents have no natural ordering, so reversing requires a sort key. Rather than appending a new stage, the lowering rewrites the previous `$sort` with every direction flipped (1 ↔ -1). Net stage count stays equal to a hand-written descending `.toSorted`.
+
+To make this work, the registry's `lower` signature gained a fifth parameter — `prevStages: readonly object[]` — and the result type a `replacesPreviousStage?: boolean` flag. The chain walkers in [src/pipeline.ts](../src/pipeline.ts) (`lowerChainOnStream` / `lowerChainOnCollection`) pass the accumulator-so-far as `prevStages` and pop the last stage when the flag is set. Existing methods (`.slice`, `.concat`, `.map`, `.toSorted`) ignore the new parameter.
+
+Rejections: `.toReversed()` without a preceding `.toSorted` errors with "needs a sort key" pointing at the descending `.toSorted` alternative; non-numeric sort directions (text-meta etc.) are rejected; positional args are rejected.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — `.toSorted((a, b) => …)` chain method → `$sort`
 
 The first ES2023 immutable-array method to land. Accepts a comparator-shape expression body built from `a.<path> - b.<path>` (ascending), `b.<path> - a.<path>` (descending), and `||` combining multiple terms (compound sort). Source order of `||` branches becomes the key order of the emitted `$sort` document — `(a, b) => a.x - b.x || b.y - a.y` lowers to `{ $sort: { x: 1, y: -1 } }`.

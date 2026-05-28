@@ -24,6 +24,13 @@ export type StreamMethodResult = {
    * clear the let scope. Defaults to false.
    */
   clearLets?: boolean;
+  /**
+   * If true, the caller drops the *immediately preceding* stage from the
+   * accumulator before appending `stages`. Used by methods like
+   * `.toReversed()` that rewrite the preceding `$sort` rather than appending
+   * a new stage. Defaults to false.
+   */
+  replacesPreviousStage?: boolean;
 };
 
 export type StreamMethodDef = {
@@ -35,12 +42,22 @@ export type StreamMethodDef = {
    * args have the shape the validator accepts.
    */
   validate: (args: readonly CallArg[], callPos: number) => void;
-  /** Produce the stages this method contributes. */
+  /**
+   * Produce the stages this method contributes.
+   *
+   * `prevStages` is the read-only view of stages the chain has emitted so
+   * far in this context (outer pipeline for `$$` chains; `$unionWith`
+   * sub-pipeline body for `$$$.<coll>` chains). Methods that don't need to
+   * peek (`.slice`, `.map`, …) simply ignore it. Methods that do
+   * (`.toReversed`) can read the last stage and return
+   * `replacesPreviousStage: true` so the caller drops it before appending.
+   */
   lower: (
     args: readonly CallArg[],
     ctx: GenerateCtx,
     callPos: number,
     lowerBlock: SubPipelineLowerer,
+    prevStages: readonly object[],
   ) => StreamMethodResult;
 };
 
@@ -286,9 +303,53 @@ const TO_SORTED: StreamMethodDef = {
   },
 };
 
+// ── .toReversed() → flips the preceding $sort spec ────────────────────────────
+//
+// Zero-arg. Only valid immediately after `.toSorted(...)` in the same chain
+// — MongoDB streams of documents have no natural ordering, so reversing
+// requires a sort key. Lowering doesn't emit a new $sort stage: it rewrites
+// the preceding one with all directions flipped (1 → -1, -1 → 1), so the
+// total stage count stays equal to a hand-written descending `.toSorted`.
+const TO_REVERSED: StreamMethodDef = {
+  name: "toReversed",
+  validate(args, callPos) {
+    if (args.length !== 0) {
+      throw new CodegenError(`.toReversed() takes no arguments, got ${args.length}.`, callPos);
+    }
+  },
+  lower(_args, _ctx, callPos, _lowerBlock, prevStages) {
+    const last = prevStages[prevStages.length - 1] as Record<string, unknown> | undefined;
+    const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
+    if (sortSpec === undefined) {
+      throw new CodegenError(
+        `.toReversed() needs a preceding .toSorted(...) in the same chain — MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or chain after a '.toSorted(...)' call to invert it.`,
+        callPos,
+      );
+    }
+    const flipped: Record<string, 1 | -1> = {};
+    for (const key of Object.keys(sortSpec)) {
+      const dir = sortSpec[key];
+      if (dir !== 1 && dir !== -1) {
+        throw new CodegenError(
+          `.toReversed() can only invert a '$sort' with numeric 1/-1 directions (preceding stage has '${key}: ${String(dir)}'). Inverting non-direction sort specs (text-meta, custom expressions) isn't supported.`,
+          callPos,
+        );
+      }
+      flipped[key] = dir === 1 ? -1 : 1;
+    }
+    return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
+  },
+};
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
-const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE, concat: CONCAT, map: MAP, toSorted: TO_SORTED };
+const STREAM_METHODS: Record<string, StreamMethodDef> = {
+  slice: SLICE,
+  concat: CONCAT,
+  map: MAP,
+  toSorted: TO_SORTED,
+  toReversed: TO_REVERSED,
+};
 
 /** Look up a registered stream method by name; null if not registered. */
 export function lookupStreamMethod(name: string): StreamMethodDef | null {
