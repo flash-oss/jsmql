@@ -513,11 +513,17 @@ type ReduceAccumulator =
 
 export type ReduceWrapEntry = { key: string; accumulator: ReduceAccumulator; pos: number };
 
-function classifyReduceBody(body: Expr, accParam: string, dParam: string): ReduceAccumulator | null {
+/**
+ * Pattern-match an accumulator expression. The `isAccRef` predicate decides
+ * what counts as the accumulator reference — for scalar reducers it's
+ * `ParamRef(accParam)`; for object reducers (one accumulator per key) it's
+ * `MemberAccess { object: ParamRef(accParam), member: key }`. Reusing one
+ * matcher keeps the supported reducer shapes ($sum / $max / $min) in lock-step
+ * across both forms.
+ */
+function classifyAccumulatorExpr(body: Expr, isAccRef: (e: Expr) => boolean, dParam: string): ReduceAccumulator | null {
   if (body.type === "BinaryExpr" && body.op === "+") {
-    const accSide = body.left.type === "ParamRef" && body.left.name === accParam ? body.right : null;
-    const otherSide =
-      accSide === null && body.right.type === "ParamRef" && body.right.name === accParam ? body.left : accSide;
+    const otherSide = isAccRef(body.left) ? body.right : isAccRef(body.right) ? body.left : null;
     if (otherSide !== null) {
       if (otherSide.type === "NumberLiteral" && otherSide.value === 1) {
         return { kind: "sum", value: 1 };
@@ -529,8 +535,9 @@ function classifyReduceBody(body: Expr, accParam: string, dParam: string): Reduc
   if (body.type === "MathCall" && (body.method === "max" || body.method === "min") && body.args.length === 2) {
     const [a0, a1] = body.args;
     if (a0.type === "SpreadElement" || a1.type === "SpreadElement") return null;
-    const otherSide =
-      a0.type === "ParamRef" && a0.name === accParam ? a1 : a1.type === "ParamRef" && a1.name === accParam ? a0 : null;
+    const a0e = a0 as Expr;
+    const a1e = a1 as Expr;
+    const otherSide = isAccRef(a0e) ? a1e : isAccRef(a1e) ? a0e : null;
     if (otherSide !== null) {
       const path = paramFieldPath(otherSide, dParam);
       if (path !== null) return { kind: body.method, value: path };
@@ -539,22 +546,44 @@ function classifyReduceBody(body: Expr, accParam: string, dParam: string): Reduc
   return null;
 }
 
+function classifyReduceBody(body: Expr, accParam: string, dParam: string): ReduceAccumulator | null {
+  return classifyAccumulatorExpr(body, (e) => e.type === "ParamRef" && e.name === accParam, dParam);
+}
+
+type ObjectLiteralNode = Extract<Expr, { type: "ObjectLiteral" }>;
+
 /**
- * Detect the `$$ = [{ key: $$.reduce(…), … }]` wrap pattern. Returns the
- * list of `(key, accumulator)` entries if the shape matches and every
- * entry is a direct `$$.reduce(...)` call with a pattern-matched reducer.
+ * Detect the wrap patterns that consume `$$.reduce(...)` back into the
+ * stream. Two forms, both lowering to the same `$group` + `$replaceWith`
+ * pair via `lowerReduceWrap`:
+ *
+ *   1. **Scalar wrap.** `$$ = [{ <key>: $$.reduce(…, <literal-init>), … }];`
+ *      The inner array element is an object literal; each entry is a direct
+ *      `$$.reduce(...)` call. One accumulator per entry.
+ *
+ *   2. **Object reducer.** `$$ = [$$.reduce((acc, d) => ({...acc, <key>: <expr>, ...}), { <key>: <init>, ... })];`
+ *      The inner array element is the `$$.reduce(...)` call itself; the
+ *      reducer body returns an object literal whose keys become the
+ *      accumulator namespace. Each entry's value is pattern-matched the
+ *      same way as the scalar form, except `acc` is referenced as
+ *      `acc.<key>` (not bare `acc`).
  *
  * Returns `null` for non-matching shapes (the caller falls through to the
- * other RHS handlers). Throws for matching-but-malformed shapes (e.g. a
- * single-doc array literal whose entries are all `$$.reduce(...)` but with
- * invalid args or unrecognised reducer bodies) so the user sees a precise
- * error instead of a generic "RHS must be …".
+ * other RHS handlers). Throws for matching-but-malformed shapes so the user
+ * sees a precise error instead of a generic "RHS must be …".
  */
 export function detectReduceWrap(value: Expr): ReduceWrapEntry[] | null {
   if (value.type !== "ArrayLiteral") return null;
   if (value.elements.length !== 1) return null;
-  const docEl = value.elements[0];
-  if (docEl.type !== "ObjectLiteral") return null;
+  const el = value.elements[0];
+  if (el.type === "ObjectLiteral") return detectScalarReduceWrap(el);
+  if (el.type === "MethodCall" && el.method === "reduce" && el.object.type === "CollectionRef") {
+    return detectObjectReducerWrap(el);
+  }
+  return null;
+}
+
+function detectScalarReduceWrap(docEl: ObjectLiteralNode): ReduceWrapEntry[] | null {
   if (docEl.entries.length === 0) return null;
   // First pass: every entry must be `<staticKey>: $$.reduce(...)`.
   for (const entry of docEl.entries) {
@@ -573,7 +602,8 @@ export function detectReduceWrap(value: Expr): ReduceWrapEntry[] | null {
   for (const entry of docEl.entries) {
     if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") continue;
     const ev = entry.value as Extract<Expr, { type: "MethodCall" }>;
-    validateReduceCallShape(ev);
+    validateReduceCallBasics(ev);
+    ensureLiteralInit(ev);
     const lambda = ev.args[0] as LambdaNode;
     const [accParam, dParam] = lambda.params;
     const body = lambda.body as Expr;
@@ -592,7 +622,126 @@ export function detectReduceWrap(value: Expr): ReduceWrapEntry[] | null {
   return out;
 }
 
-function validateReduceCallShape(call: Extract<Expr, { type: "MethodCall" }>): void {
+function detectObjectReducerWrap(reduceCall: Extract<Expr, { type: "MethodCall" }>): ReduceWrapEntry[] {
+  validateReduceCallBasics(reduceCall);
+  const lambda = reduceCall.args[0] as LambdaNode;
+  const initArg = reduceCall.args[1];
+  const [accParam, dParam] = lambda.params;
+  const body = lambda.body as Expr;
+  if (body.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `'$$ = [$$.reduce(...)]' requires the reducer to return an object literal — '(${accParam}, ${dParam}) => ({ ...${accParam}, <key>: <expr>, ... })'. ` +
+        `For scalar reducers, use the object-wrap form instead: '$$ = [{ <key>: $$.reduce((acc, d) => …, <literal-init>) }];'.`,
+      body.pos,
+    );
+  }
+  if (initArg.type === "SpreadElement" || initArg.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `'$$ = [$$.reduce(<reducer>, <init>)]' with an object-returning reducer requires an object init that names each accumulator key — got '${initArg.type}'. Write '{ <key1>: <init1>, <key2>: <init2>, ... }' matching the keys returned by the reducer body.`,
+      ("pos" in initArg ? initArg.pos : reduceCall.pos) as number,
+    );
+  }
+  return classifyObjectReducer(reduceCall, body, initArg, accParam, dParam);
+}
+
+function classifyObjectReducer(
+  reduceCall: Extract<Expr, { type: "MethodCall" }>,
+  body: ObjectLiteralNode,
+  init: ObjectLiteralNode,
+  accParam: string,
+  dParam: string,
+): ReduceWrapEntry[] {
+  // Body entries: optional leading `...accParam` spread, then static-keyed entries.
+  const bodyEntries: { key: string; value: Expr; pos: number }[] = [];
+  let seenNamedEntry = false;
+  for (const entry of body.entries) {
+    if (entry.type === "SpreadElement") {
+      if (seenNamedEntry) {
+        throw new CodegenError(
+          `Object-reducer body's '...${accParam}' spread must be the first entry, not after named keys.`,
+          entry.pos,
+        );
+      }
+      const sp = entry.argument;
+      if (sp.type !== "ParamRef" || sp.name !== accParam) {
+        throw new CodegenError(
+          `Object-reducer body may only spread the accumulator parameter ('...${accParam}'). Spreads of other expressions aren't supported in v1.`,
+          entry.pos,
+        );
+      }
+      continue;
+    }
+    seenNamedEntry = true;
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(
+        `Object-reducer body entry must have a static key. Computed keys ('[expr]: …') aren't supported in v1.`,
+        entry.pos,
+      );
+    }
+    bodyEntries.push({ key: entry.key.name, value: entry.value, pos: entry.pos });
+  }
+  if (bodyEntries.length === 0) {
+    throw new CodegenError(
+      `Object-reducer body must declare at least one '<key>: <reducer-expr>' entry (got an empty or spread-only object).`,
+      body.pos,
+    );
+  }
+  // Init keys.
+  const initKeys = new Set<string>();
+  for (const entry of init.entries) {
+    if (entry.type !== "KeyValueEntry") {
+      throw new CodegenError(
+        `The init object passed to $$.reduce must be a literal '{ <key>: <init>, ... }' — spreads aren't supported in v1.`,
+        entry.pos,
+      );
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(`The init object's keys must be static (no computed '[expr]:' keys).`, entry.pos);
+    }
+    initKeys.add(entry.key.name);
+  }
+  // Body keys must match init keys exactly. (Asymmetric sets would mean
+  // either an accumulator with no starting value or a starting value with
+  // no per-doc update — both are user-side bugs in JS too.)
+  const bodyKeys = new Set(bodyEntries.map((e) => e.key));
+  const missingInInit = Array.from(bodyKeys).filter((k) => !initKeys.has(k));
+  const missingInBody = Array.from(initKeys).filter((k) => !bodyKeys.has(k));
+  if (missingInInit.length > 0 || missingInBody.length > 0) {
+    const parts: string[] = [];
+    if (missingInInit.length > 0) parts.push(`init is missing keys [${missingInInit.join(", ")}]`);
+    if (missingInBody.length > 0) parts.push(`body is missing keys [${missingInBody.join(", ")}]`);
+    throw new CodegenError(
+      `Object-reducer body and init must declare the same keys (${parts.join("; ")}). Each key needs a starting value in init and a per-doc update in the body.`,
+      reduceCall.pos,
+    );
+  }
+  // Classify each body entry's value.
+  const out: ReduceWrapEntry[] = [];
+  for (const entry of bodyEntries) {
+    const accumulator = classifyAccumulatorExpr(
+      entry.value,
+      (e) =>
+        e.type === "MemberAccess" &&
+        e.object.type === "ParamRef" &&
+        e.object.name === accParam &&
+        e.member === entry.key,
+      dParam,
+    );
+    if (accumulator === null) {
+      throw new CodegenError(
+        `Object-reducer entry '${entry.key}: …' — v1 supports only: ` +
+          `'${accParam}.${entry.key} + ${dParam}.<field>' (→ $sum), '${accParam}.${entry.key} + 1' (→ $sum: 1, count), ` +
+          `'Math.max(${accParam}.${entry.key}, ${dParam}.<field>)' (→ $max), 'Math.min(${accParam}.${entry.key}, ${dParam}.<field>)' (→ $min). ` +
+          `Each entry must reference '${accParam}.${entry.key}' as the accumulator side.`,
+        entry.value.pos ?? entry.pos,
+      );
+    }
+    out.push({ key: entry.key, accumulator, pos: entry.pos });
+  }
+  return out;
+}
+
+function validateReduceCallBasics(call: Extract<Expr, { type: "MethodCall" }>): void {
   if (call.args.length !== 2) {
     throw new CodegenError(
       `$$.reduce((acc, d) => <expr>, <init>) takes exactly two arguments (the reducer arrow and the initial value), got ${call.args.length}.`,
@@ -621,6 +770,10 @@ function validateReduceCallShape(call: Extract<Expr, { type: "MethodCall" }>): v
   if (arg0.body === undefined) {
     throw new CodegenError(`$$.reduce(...) requires an expression body, not a block.`, arg0.pos);
   }
+}
+
+function ensureLiteralInit(call: Extract<Expr, { type: "MethodCall" }>): void {
+  const arg1 = call.args[1] as Expr;
   const isLiteral =
     arg1.type === "NumberLiteral" ||
     arg1.type === "StringLiteral" ||
@@ -629,7 +782,7 @@ function validateReduceCallShape(call: Extract<Expr, { type: "MethodCall" }>): v
     arg1.type === "BigIntLiteral";
   if (!isLiteral) {
     throw new CodegenError(
-      `$$.reduce((acc, d) => …, <init>) — the initial value must be a literal (number, string, boolean, null). Computed initial values aren't supported when reducing a document stream (MongoDB's $group accumulators have fixed neutral elements).`,
+      `$$.reduce((acc, d) => <scalar-expr>, <init>) — the initial value must be a literal (number, string, boolean, null) for the scalar wrap form. For object-returning reducers, use '$$ = [$$.reduce((acc, d) => ({ ...acc, ... }), { ... })];' instead.`,
       ("pos" in arg1 ? arg1.pos : call.pos) as number,
     );
   }

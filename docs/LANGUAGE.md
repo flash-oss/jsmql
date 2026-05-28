@@ -1813,7 +1813,9 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 
-**`.reduce` is not a chain method either** — `arr.reduce(...)` returns a scalar / object in JS, not an array, so assigning it directly to `$$` (which must stay a stream of docs) would violate the array invariant. Instead jsmql provides the explicit **reduce wrap**:
+**`.reduce` is not a chain method either** — `arr.reduce(...)` returns a scalar / object in JS, not an array, so assigning it directly to `$$` (which must stay a stream of docs) would violate the array invariant. Instead jsmql provides two **explicit reduce wraps** — both lower to the same `$group` + `$replaceWith` pair, pick whichever reads best at the call site:
+
+**Scalar wrap** — one `$$.reduce(...)` per named field:
 
 ```js
 // Single aggregate
@@ -1831,7 +1833,24 @@ jsmql(`$$ = [{
 //    { $replaceWith: { count: "$count", total: "$total", best: "$best" } }]
 ```
 
-Each entry's reducer body must pattern-match a MongoDB accumulator: `acc + d.<field>` / `acc + 1` → `$sum`, `Math.max(acc, d.<field>)` → `$max`, `Math.min(acc, d.<field>)` → `$min`. The `init` value is required for JS-faithfulness but the MQL accumulators have their own neutral elements, so the init's actual value doesn't matter (just write `0`). Object-returning reducers (`$$ = [$$.reduce((acc, d) => ({...acc, ...}), {})]`) are future work.
+**Object reducer** — one `$$.reduce(...)` whose body returns an object naming every accumulator:
+
+```js
+jsmql(`$$ = [$$.reduce(
+  (acc, d) => ({
+    ...acc,
+    count: acc.count + 1,
+    total: acc.total + d.amount,
+    best:  Math.max(acc.best, d.score)
+  }),
+  { count: 0, total: 0, best: 0 }
+)];`)
+// → identical to the multi-aggregate scalar wrap above
+```
+
+Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) → `$sum`; `acc + 1` → `$sum: 1` (count); `Math.max(acc, d.<field>)` → `$max`; `Math.min(acc, d.<field>)` → `$min`. In the object form each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body (extra or missing keys on either side throw — in JS this would silently work but mean something different).
+
+The `init` value is required for JS-faithfulness but the MQL accumulators have their own neutral elements, so its actual value doesn't matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
 
 ---
 

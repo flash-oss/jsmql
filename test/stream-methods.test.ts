@@ -499,6 +499,94 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary vi
   });
 });
 
+describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-returning reducer wrap", () => {
+  it("single keyed accumulator with spread of acc → $group + $replaceWith", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, count: acc.count + 1 }), { count: 0 })];")).toEqual([
+      { $group: { _id: null, count: { $sum: 1 } } },
+      { $replaceWith: { count: "$count" } },
+    ]);
+  });
+
+  it("multiple keyed accumulators in one reducer → one $group across all keys", () => {
+    expect(
+      jsmql(
+        "$$ = [$$.reduce((acc, d) => ({ ...acc, count: acc.count + 1, total: acc.total + d.amount, best: Math.max(acc.best, d.score) }), { count: 0, total: 0, best: 0 })];",
+      ),
+    ).toEqual([
+      { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
+      { $replaceWith: { count: "$count", total: "$total", best: "$best" } },
+    ]);
+  });
+
+  it("body without spread of acc is accepted (init keys still must match body keys)", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ total: acc.total + d.amount }), { total: 0 })];")).toEqual([
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $replaceWith: { total: "$total" } },
+    ]);
+  });
+
+  it("Math.min on a keyed accumulator → $min", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, low: Math.min(acc.low, d.score) }), { low: 0 })];")).toEqual([
+      { $group: { _id: null, low: { $min: "$score" } } },
+      { $replaceWith: { low: "$low" } },
+    ]);
+  });
+
+  it("non-object reducer body is rejected with a pointer at the scalar wrap", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc + d.amount, 0)];")).toThrow(
+      /requires the reducer to return an object literal.*\$\$ = \[\{ <key>: \$\$\.reduce/s,
+    );
+  });
+
+  it("non-object init is rejected with a hint", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, count: acc.count + 1 }), 0)];")).toThrow(
+      /requires an object init that names each accumulator key/,
+    );
+  });
+
+  it("body and init keys must match — extra body key is rejected", () => {
+    expect(() =>
+      jsmql("$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1, total: acc.total + d.amount }), { count: 0 })];"),
+    ).toThrow(/body and init must declare the same keys.*init is missing keys.*total/s);
+  });
+
+  it("body and init keys must match — extra init key is rejected", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1 }), { count: 0, total: 0 })];")).toThrow(
+      /body and init must declare the same keys.*body is missing keys.*total/s,
+    );
+  });
+
+  it("spread of something other than acc is rejected", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ ...d, count: acc.count + 1 }), { count: 0 })];")).toThrow(
+      /may only spread the accumulator parameter/,
+    );
+  });
+
+  it("spread after named entries is rejected (position matters in v1)", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1, ...acc }), { count: 0 })];")).toThrow(
+      /spread must be the first entry/,
+    );
+  });
+
+  it("entry referencing acc.<otherKey> instead of acc.<sameKey> is rejected", () => {
+    // `total: acc.count + d.amount` references acc.count, not acc.total — a
+    // semantic mismatch that JS would silently accept but mean something
+    // different from the user's intent. The v1-shapes message names the
+    // expected accumulator side.
+    expect(() =>
+      jsmql(
+        "$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1, total: acc.count + d.amount }), { count: 0, total: 0 })];",
+      ),
+    ).toThrow(/Each entry must reference 'acc\.total' as the accumulator side/);
+  });
+
+  it("unrecognised body-entry shape is rejected with the v1-shapes list", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ total: acc.total * d.x }), { total: 1 })];")).toThrow(
+      /v1 supports only.*\$sum.*\$max.*\$min/s,
+    );
+  });
+});
+
 describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", () => {
   it("bare $$ = $$.reduce(...) is rejected (would collapse the stream to a scalar)", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.amount, 0);")).toThrow(

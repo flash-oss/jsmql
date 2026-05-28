@@ -723,9 +723,10 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
   // "stream is always an array of docs" invariant. The user must wrap.
   if (m.method === "reduce") {
     return new CodegenError(
-      `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. ` +
-        `Wrap the reduce result into a single-doc stream: '$$ = [{ <key>: $$.reduce((acc, d) => …, <init>) }];' for scalar reducers (each entry becomes a '$group' accumulator, then '$replaceWith' drops the '_id' to leave just your named fields). ` +
-        `Multiple aggregates can share one wrap: '$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0), total: $$.reduce((acc, d) => acc + d.amount, 0) }];'.`,
+      `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a single-doc stream:\n` +
+        `  • Scalar reducer:  '$$ = [{ <key>: $$.reduce((acc, d) => …, <literal-init>) }];' — each entry becomes a '$group' accumulator, '$replaceWith' projects to just your named keys.\n` +
+        `  • Object reducer:  '$$ = [$$.reduce((acc, d) => ({ ...acc, <key1>: <expr1>, <key2>: <expr2> }), { <key1>: <init1>, <key2>: <init2> })];' — same MQL output (one '$group' across all keys, then '$replaceWith'), but the reducer body declares the keyed accumulators inline.\n` +
+        `Multiple aggregates can share either wrap; pick the shape that reads best at the call site.`,
       m.pos,
     );
   }

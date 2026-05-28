@@ -89,16 +89,25 @@ In JS, `arr.reduce(...)` returns a single value — scalar, object, or array
 depending on the reducer. Assigning a non-array result directly to `$$`
 would violate the project-wide invariant that the stream is always an array
 of documents. So `.reduce` is rejected as a chain method (with an actionable
-wrap-pattern hint in `unknownStreamMethod`) and instead consumed via the
-**reduce wrap**:
+wrap-pattern hint in `unknownStreamMethod`) and instead consumed via one of
+two wrap forms — both lowering to the same `$group` + `$replaceWith` pair
+through `lowerReduceWrap`:
+
+**Scalar wrap** — one `$$.reduce(...)` per named field:
 
 ```js
-$$ = [{ <key>: $$.reduce((acc, d) => …, <init>), … }];
+$$ = [{ <key>: $$.reduce((acc, d) => <scalar-expr>, <literal-init>), … }];
 ```
 
-The wrap is detected in `lowerReplaceStream` by `detectReduceWrap` (exported
-from [src/stream-methods.ts](../../src/stream-methods.ts)) and lowered by
-`lowerReduceWrap` into:
+**Object reducer** — one `$$.reduce(...)` whose body returns an object literal
+naming every accumulator:
+
+```js
+$$ = [$$.reduce((acc, d) => ({ ...acc, <key>: <expr>, … }), { <key>: <init>, … })];
+```
+
+Both forms are recognised by `detectReduceWrap` (exported from
+[src/stream-methods.ts](../../src/stream-methods.ts)) and produce:
 
 ```js
 [
@@ -107,15 +116,42 @@ from [src/stream-methods.ts](../../src/stream-methods.ts)) and lowered by
 ]
 ```
 
-Each entry's reducer body is pattern-matched through `classifyReduceBody` to
-one of `$sum` (`acc + d.<f>` / `acc + 1`), `$max` (`Math.max(acc, d.<f>)`),
-or `$min` (`Math.min(acc, d.<f>)`). The `init` arg is required (JS-faithful)
-but unused by the MQL accumulators (which have their own neutral elements);
-it's validated to be a literal so a stray `$.<field>` can't sneak through.
+A small helper `classifyAccumulatorExpr` pattern-matches every per-key body
+expression to a MongoDB accumulator. The same supported shapes apply to both
+forms — only what counts as "the accumulator reference" differs:
 
-Multiple aggregates can share one wrap — they all collapse into one `$group`
-stage. Future work: object-returning reducers (`$$ = [$$.reduce(…)]` with
-no inner object literal), and richer reducer body shapes.
+- **Scalar form:** the bare `acc` ParamRef.
+- **Object reducer:** `acc.<key>` (MemberAccess on the param), one per
+  named entry.
+
+Supported per-key bodies:
+
+| Shape | Lowers to |
+|---|---|
+| `acc + d.<field>` / `acc.<key> + d.<field>` | `$sum: "$<field>"` |
+| `acc + 1` / `acc.<key> + 1` | `$sum: 1` (count documents) |
+| `Math.max(acc, d.<field>)` / `Math.max(acc.<key>, d.<field>)` | `$max: "$<field>"` |
+| `Math.min(acc, d.<field>)` / `Math.min(acc.<key>, d.<field>)` | `$min: "$<field>"` |
+
+**Object-reducer specifics.** An optional leading `...acc` spread is allowed
+as the first body entry (mirrors the JS-idiomatic carry pattern); subsequent
+entries must be static `<key>: <expr>` pairs. The init object must declare
+the same key set as the body — extra or missing keys on either side throw an
+actionable error (in JS this would silently work but mean something
+different). Each entry's body must reference `acc.<sameKey>` as the
+accumulator side (`total: acc.count + d.amount` is rejected with a
+`'Each entry must reference acc.total'` hint, because that's the v1
+constraint that keeps the per-key lowering local).
+
+The `init` value is required for JS-faithfulness but unused in the MQL
+lowering (MongoDB accumulators have their own neutral elements). In the
+scalar form it must be a literal so a stray `$.<field>` can't sneak through;
+in the object-reducer form it's a literal object whose keys define the
+accumulator namespace.
+
+Multiple aggregates in either form share **one** `$group` stage. Future work:
+dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`, would
+need `$arrayToObject` + `$push`), and richer per-key body shapes.
 
 ## Error wording
 

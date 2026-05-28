@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — feat: object-returning reducer wrap for `$$ = [$$.reduce(…)]`
+
+Sibling to the scalar wrap added last commit. Where the scalar form puts one `$$.reduce(...)` per named field in an inline object:
+
+```js
+$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0),
+        total: $$.reduce((acc, d) => acc + d.amount, 0) }];
+```
+
+…the object-reducer form names every accumulator inside one reducer body:
+
+```js
+$$ = [$$.reduce(
+  (acc, d) => ({ ...acc, count: acc.count + 1, total: acc.total + d.amount }),
+  { count: 0, total: 0 }
+)];
+```
+
+Both lower to the same `$group` + `$replaceWith` pair (one `$group` across all keys, then a `$replaceWith` that drops `_id`). The user picks whichever shape reads best at the call site — `classifyAccumulatorExpr` does the per-key body classification for both, parameterised on what counts as "the accumulator reference" (bare `acc` for the scalar form, `acc.<key>` for the object form).
+
+**Object-reducer specifics.** Optional leading `...acc` spread (must be first, must spread the accumulator param specifically); subsequent entries are `<key>: <expr>` pairs. Each entry's body must reference `acc.<sameKey>` — `total: acc.count + d.amount` is rejected with `Each entry must reference 'acc.total'`. The init object must declare the same key set as the body — asymmetric sets throw with `init is missing keys [...]` / `body is missing keys [...]` (in JS this would silently work but produce the wrong shape).
+
+The `unknownStreamMethod` rejection for the bare `.reduce` chain form now lists both wrap shapes.
+
+**Out of scope (v1).** Dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`) would need `$arrayToObject` + `$push` (push `{ k, v }` pairs in `$group`, convert in `$replaceWith`) — a different lowering family. Richer per-key body shapes (multiplicative accumulators, `$avg`, `$first`/`$last`, …) are also future work.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — fix: `.reduce` on `$$` — replace the bogus `$group {value: …}` chain method with the explicit wrap pattern
 
 The original `.reduce` chain-method on `$$` (added a few commits ago) was wrong. JS `arr.reduce(...)` returns a scalar / object / array depending on the reducer; my implementation silently produced a single-doc stream `[{_id: null, value: <aggregate>}]` and treated that as "the stream". That violates the project-wide invariant that `$$` is always a stream of documents — assigning a scalar to it doesn't make sense.
