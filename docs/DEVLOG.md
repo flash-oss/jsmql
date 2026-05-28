@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — Array mutators mutate at statement position; `.toSorted(keyFn)` accepts a key function
+
+JavaScript's array mutators — `.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()` — now lower to `$set` stages when called at statement position on a writable field-path receiver (`$.<path>` or `$.a.b.c`). Expression-position calls still throw the existing DX errors, now updated to mention the statement-position option alongside the immutable variant.
+
+The mechanism is a pure AST pre-pass: `tryRewriteMutatorCall` in [`src/codegen.ts`](../src/codegen.ts) returns a synthetic `AssignExpr { target: <receiver>, value: <immutable RHS> }` when both predicates match; the synthesized RHS uses existing AST node types (a `.toSorted` MethodCall for `.sort`, an `$concatArrays` OperatorCall for `.push`, an IIFE for `.fill`) so codegen has no new branches. Both pipeline lowering paths in [`src/pipeline.ts`](../src/pipeline.ts) call the helper before classifying a statement; `index.ts`'s top-level dispatcher also calls it so `jsmql("$.events.push(x)")` (no trailing `;`) routes to Pipeline mode the same way `$.a = 1` already does. The synthesized assignment is indistinguishable from explicit `=` at the coalescer, so chained mutators on the same field split on read-after-write the same way explicit assignments do.
+
+The change also fixed `.reverse()`, which was previously aliased to `.toReversed()` (silently non-mutating). With JS semantics restored, `.reverse()` mutates at statement position and throws at expression position. Two tests that exercised `.reverse()` in expression position were updated to `.toReversed()`. Pre-1.0, so this is allowed to break.
+
+Separately, `.toSorted()` (and the new `.sort()`) now accept an optional 1-parameter key-function lambda — `e => e.distance` lowers to `sortBy: { distance: 1 }`, unary `-` flips direction, nested member paths produce dotted keys. Comparator-style `(a, b) => …` is rejected with a pointer at `$op($sortArray, { input, sortBy })`. The new helper `lambdaToSortBy()` lives next to the `.toSorted` case in `codegen.ts`. `.copyWithin()` was deferred (no clean MQL shape; the existing throw still names the workaround).
+
+Spec: [docs/specs/method-dispatch.md § Mutators at statement position](specs/method-dispatch.md#mutators-at-statement-position) and [docs/specs/update-filter.md § Mutating-method desugar](specs/update-filter.md#mutating-method-desugar). User-facing reference: [docs/LANGUAGE.md § Mutators](LANGUAGE.md#array-methods).
+
+---
+
 ## 2026-05-27 — `$$ = <expr>` → `$match` / `$limit:0 + $unionWith` (replace stream)
 
 Sister to `$ = <expr>` (single-doc replacement) at the stream level: `$$ = …` replaces the pipeline's document stream. Two RHS shapes ship; nothing else is accepted:

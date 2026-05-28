@@ -135,6 +135,10 @@ There are two pipeline forms, with one important behavioural difference:
 - **Bracketed `[…]`** — `isStageCandidate` in `src/pipeline.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare update op (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline. `generatePipeline` walks elements left-to-right with a `updateBuffer`. Consecutive update op elements accumulate; non-update op stages flush the buffer through `generateUpdateOpGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage.
 - **Implicit `;`-separated** — `generateImplicitPipeline` in `src/pipeline.ts` lowers each `;`-separated statement in isolation. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already handles RAW splits inside its `,`-grouped chain); a stage expression goes through the same single-element path used for bracketed pipelines. Adjacent update op statements **never** coalesce across `;` — the boundary is hard. Comma-grouped update ops inside one `;` chunk still coalesce via the usual rules.
 
+### Mutating-method desugar
+
+`AssignExpr`s also enter the lowering path via the statement-position mutator rewrite (see [method-dispatch.md § Mutators at statement position](method-dispatch.md#mutators-at-statement-position)). Before classifying a statement as an Expr, both pipeline loops call `tryRewriteMutatorCall` from `codegen.ts`; if it returns a synthetic `AssignExpr`, that node enters the same UpdateOp coalescer the explicit-`=` path uses. From the coalescer's perspective the two sources are indistinguishable — chained mutators on the same field (`$.events.push(x); $.events.sort(e => e.t);`) split on read-after-write the same way `$.events = …; $.events = …` already does. There is no separate "mutator stage" type.
+
 ## Error message conventions
 
 | Situation                       | Where caught | Message theme |

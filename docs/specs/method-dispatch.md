@@ -55,9 +55,10 @@ Method calls are handled by `generateMethodCall(object, method, args, ctx)` via 
 | `.at(n)` | `{ $arrayElemAt: [expr, n] }` |
 | `.slice(start)` | `{ $slice: [expr, start] }` |
 | `.slice(start, count)` | `{ $slice: [expr, start, count] }` |
-| `.reverse()` | `{ $reverseArray: expr }` |
-| `.toReversed()` | `{ $reverseArray: expr }` (alias for `.reverse()`, ES2023) |
-| `.toSorted()` | `{ $sortArray: { input: expr, sortBy: 1 } }` (ES2023, ascending only — comparator rejected) |
+| `.toReversed()` | `{ $reverseArray: expr }` (ES2023). `.reverse()` is rejected at expression position — see *Mutators at statement position* below. |
+| `.toSorted()` | `{ $sortArray: { input: expr, sortBy: 1 } }` (ES2023, ascending). `.sort()` is rejected at expression position — see *Mutators at statement position* below. |
+| `.toSorted(x => x.path)` | `{ $sortArray: { input: expr, sortBy: { "path": 1 } } }` — key-function form, ascending. Lowered via `lambdaToSortBy()` in `codegen.ts`. |
+| `.toSorted(x => -x.path)` | `{ $sortArray: { input: expr, sortBy: { "path": -1 } } }` — key-function form with unary `-`, descending. |
 | `.toSpliced(start, [deleteCount, ...items])` | `$let` over receiver + start + tail-start, then `$concatArrays` of `[$slice(arr, 0, start), [items...], $slice(arr, tailStart, max(0, size - tailStart))]`. Omitted `deleteCount` ⇒ remove to end. ES2023. Negative-literal `start`/`deleteCount` rejected at compile time. |
 | `.with(index, value)` | `$let` over receiver + index + value, then `$concatArrays` of `[$slice(arr, 0, idx), [value], $slice(arr, idx+1, max(0, size - (idx+1)))]`. ES2023. Negative-literal `index` rejected at compile time. |
 | `.includes(x)` *(known array receiver)* | `{ $in: [x, expr] }` |
@@ -114,9 +115,36 @@ Per-method shape under 2 params:
 
 `.reduce` / `.reduceRight` accept 2 or 3 params: `(acc, x[, i])`. With 3 params, `input` becomes the zipped `$range × expr` (for `.reduceRight`, `$reverseArray` wraps the zip so indices reflect the original array). The accumulator still rides through `reduceRemap` (`acc` → `$$value`); the element and index come from a `$let` wrap that rebinds `params[1]` to `$arrayElemAt($$this, 1)` and `params[2]` to `$arrayElemAt($$this, 0)`.
 
-### Mutator / iterator / locale methods — DX shims
+### Mutators at statement position
 
-jsmql expressions are immutable, so the in-place mutators (`.sort()`, `.splice()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.fill()`, `.copyWithin()`) and the iterator / void / locale methods (`.entries()`, `.forEach()`, `.keys()`, `.values()`, `.toLocaleString()`) cannot be lowered. Rather than letting them fall through to the generic "Unknown method, did you mean…" handler, the dispatcher has an explicit case for each that throws a tailored error pointing at the right replacement (e.g. `.sort() mutates …; jsmql expressions are immutable. Use '.toSorted()' instead.`). All shimmed method names appear in `KNOWN_METHODS` so a typo on a different receiver still gets a "did you mean?" suggestion toward them when relevant.
+The in-place JS array mutators — `.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()` — work at **statement position** on a writable field-path receiver, lowering to a `$set` stage that re-assigns the field. At **expression position** they keep throwing the tailored DX errors (which also mention the statement-position option). `.copyWithin()` is deferred — its rejection still names `.slice()` + `$concatArrays` as the workaround.
+
+The mechanism is a pre-pass on the statement list:
+
+- `MUTATING_ARRAY_METHODS` in `codegen.ts` lists the eight method names that participate.
+- `isWritableFieldPath(expr)` mirrors the parser's `AssignExpr.target` constraint: `FieldRef` with a non-empty path, or a `MemberAccess` chain rooted at one. Bare `$` (path `""`) is excluded because it's `$replaceWith` sugar, not a writable field.
+- `tryRewriteMutatorCall(expr)` returns `{ kind: "rewrite", assign }` when both predicates match, where `assign` is a synthetic `AssignExpr { target: <receiver>, value: <immutable RHS> }`. Otherwise `{ kind: "passthrough" }`.
+- The immutable RHS is built from existing AST node types, so it flows through normal codegen with no per-mutator branch in the lowering path:
+  - `.sort(args)` → `MethodCall(object, "toSorted", args)` (delegates to the existing `.toSorted` case, including the 1-arg key-function form).
+  - `.reverse()` → `MethodCall(object, "toReversed", [])`.
+  - `.splice(args)` → `MethodCall(object, "toSpliced", args)`.
+  - `.push(...items)` → `OperatorCall($concatArrays, [object, ArrayLiteral(items)])`. Items are wrapped in an `ArrayLiteral` because `$concatArrays`-with-`.concat`-semantics would flatten one level, but JS `.push` does not.
+  - `.unshift(...items)` → `OperatorCall($concatArrays, [ArrayLiteral(items), object])`.
+  - `.pop()` → `OperatorCall($slice, [object, 0, $max(0, $subtract($size(object), 1))])`. The `$max` clamp keeps an empty receiver yielding `[]` instead of an invalid `$slice` length.
+  - `.shift()` → `OperatorCall($slice, [object, 1, $size(object)])`.
+  - `.fill(v[, s[, e]])` → IIFE binding the normalised start/end once, then `object.map((x, i) => i >= s0 && i < e0 ? v : x)` (built directly in `buildFillRhs()`). Normalisation matches JS semantics (`< 0` ⇒ `max(0, size + n)`, undefined ⇒ default), with a compile-time fast path that inlines non-negative numeric literals.
+
+Hook sites (the pre-pass runs in each):
+
+- `pipeline.ts::generatePipeline` — `[...]` Pipeline literal element loop.
+- `pipeline.ts::generateImplicitPipeline` — `;`-separated Pipeline statement loop. Wraps the synthesized `AssignExpr` in a single-op `UpdateFilter` (which is what a bare `$.a = …` statement parses to in this form).
+- `index.ts::lowerWithCtx` — top-level dispatcher. When the parsed root is an `Expr` that `tryRewriteMutatorCall` would rewrite, the program is routed through Pipeline mode without requiring a trailing `;`, mirroring the existing auto-wraps for stage calls and `$$.<method>(...)`. **Not** applied in `lowerExprWithCtx` (`jsmql.expr`) — the raw-expression entry point should still surface the mutator throw, since its callers want the bare value-shape building block.
+
+The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = …` by the time it reaches the UpdateOp coalescer, so chained mutators (e.g. `$.events.push(x); $.events.sort(e => e.t);`) interact with read-after-write splitting exactly the same way explicit assignments do.
+
+### Iterator / void / locale methods — DX shims
+
+`.entries()`, `.forEach()`, `.keys()`, `.values()`, `.toLocaleString()` cannot be lowered to any MQL shape (iterators have no representation; `.forEach` returns undefined; locale-dependent output isn't deterministic). Each has an explicit case in the dispatcher that throws a tailored error pointing at the right replacement (e.g. `.entries()` → `.map((v, i) => [i, v])`). All shimmed names appear in `KNOWN_METHODS` so a typo on a different receiver still gets a "did you mean?" suggestion toward them when relevant.
 
 ### Date methods
 
