@@ -486,3 +486,111 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
     );
   });
 });
+
+describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup.pipeline body", () => {
+  it(".map(...) becomes $replaceWith inside the lookup's pipeline body", () => {
+    // The previous behaviour materialised the lookup into a slot and applied
+    // an expression-form `$map` afterwards (two stages + a temp slot). The
+    // chain-extension path pushes `.map`'s `$replaceWith` straight into the
+    // sub-pipeline — the slot holds the already-transformed array.
+    expect(jsmql("$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));")).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          let: {},
+          pipeline: [{ $match: { $expr: "$active" } }, { $replaceWith: { id: "$_id", name: "$name" } }],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $set: { stats: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".toSorted((a, b) => …) — comparator-shape sort that has no clean expression-form equivalent", () => {
+    // The bare `.toSorted((a, b) => …)` shape couldn't be lowered in
+    // expression position before this change (no `$sortArray` comparator
+    // form); pushing it into the pipeline body lets the existing stream-
+    // method registry's stage-form $sort lowering kick in.
+    expect(
+      jsmql("$.byScore = $$$.users.filter(u => u.active).toSorted((a, b) => b.score - a.score).slice(0, 5);"),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          let: {},
+          pipeline: [{ $match: { $expr: "$active" } }, { $sort: { score: -1 } }, { $limit: 5 }],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $set: { byScore: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".toReversed() after .toSorted() flips the preceding $sort spec inside the body", () => {
+    expect(
+      jsmql(
+        "$.recent = $$$.events.filter(e => e.userId === $._id).toSorted((a, b) => a.createdAt - b.createdAt).toReversed().slice(0, 10);",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "events",
+          let: { _id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 10 },
+          ],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $set: { recent: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".flatMap(d => d.<path>) becomes $unwind inside the lookup's pipeline body", () => {
+    expect(jsmql("$.items = $$$.orders.filter(o => o.userId === $._id).flatMap(o => o.items);")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { _id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$_id"] } } }, { $unwind: "$items" }],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $set: { items: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("existing chained terminals (.length, .reduce) still take precedence over the chain extension", () => {
+    // `.length` and `.reduce(fn, init)` are MemberAccess / MethodCall shapes
+    // that fire BEFORE the chain-extension check in extractLookupCalls; they
+    // continue to lower the same way they did before this commit.
+    expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
+      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.__lookup1" } },
+      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+      { $set: { count: "$__jsmql.__lookup1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("non-registered chain methods (e.g. .toLowerCase) fall through to the existing expression-form path", () => {
+    // `.toLowerCase()` isn't a stream method — the chain extension returns
+    // null and `descendAndExtract` handles it, producing the bulkier but
+    // still correct expression-form output. This keeps unrelated string /
+    // array operators on lookup results unaffected.
+    const out = jsmql("$.firstName = $$$.users.find(u => u._id === $.userId).name;") as object[];
+    // The .find + member-access path runs through existing logic — not the
+    // new chain extension — and produces the same shape it always did.
+    expect(out).toEqual([
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+      { $set: { firstName: "$__jsmql.__lookup1.name" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});

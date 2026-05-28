@@ -1679,3 +1679,48 @@ describe("invalid reduce on $$ — validate() catches the wrap-pattern omission"
     },
   );
 });
+
+describe(
+  "denormalise a user with their top-5 most recent orders (chain extension inside $lookup)",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "the chain after $$$.coll.filter(...) becomes the $lookup's pipeline body",
+      { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+      () => {
+        // `$.<field> = $$$.<coll>.filter(p).<chain>` is a single-statement way
+        // to embed a *filtered, sorted, sliced* slice of a foreign collection
+        // into each input doc. The chain methods after `.filter` push into
+        // the `$lookup.pipeline` body — no temp slot, no expression-form
+        // `$sortArray` / `$slice` gymnastics. The reverse-then-slice gets the
+        // five most recent orders per user.
+        expect(
+          jsmql`
+$.recentOrders = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5)
+  .map(o => ({ id: o._id, total: o.total, placedAt: o.placedAt }));
+          `,
+        ).toEqual([
+          {
+            $lookup: {
+              from: "orders",
+              let: { _id: "$_id" },
+              pipeline: [
+                { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+                { $sort: { placedAt: -1 } },
+                { $limit: 5 },
+                { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
+              ],
+              as: "__jsmql.__lookup1",
+            },
+          },
+          { $set: { recentOrders: "$__jsmql.__lookup1" } },
+          { $unset: "__jsmql" },
+        ]);
+      },
+    );
+  },
+);

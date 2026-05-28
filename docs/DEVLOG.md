@@ -101,6 +101,46 @@ Spec: [docs/specs/method-dispatch.md § Mutators at statement position](specs/me
 
 ---
 
+## 2026-05-28 — feat: stream-method chains push into the `$lookup.pipeline` body
+
+Before this commit, `$.<field> = $$$.<coll>.filter(p).<chain>` in expression position materialised the lookup into an internal slot first and applied each chain method via the **expression-form** of its operator — `$map` for `.map`, `$filter` for `.filter`, `$slice` (wrapped in `$cond` + `$isArray` guards) for `.slice`. That mostly worked but failed for methods without a clean expression form: `.toSorted((a, b) => a.x - b.x)` errored out (no `$sortArray` comparator form), and `.flatMap` had no expression-form equivalent at all.
+
+This commit pushes any chain of registered stream methods after `$$$.<coll>.filter(<pred>)` into the `$lookup.pipeline:` body. The slot then holds the already-transformed array, and methods get their proper stage-form lowering:
+
+```js
+$.recentOrders = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5)
+  .map(o => ({ id: o._id, total: o.total }));
+// →
+[
+  { $lookup: { from: "orders", let: { _id: "$_id" },
+    pipeline: [
+      { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+      { $sort: { placedAt: -1 } },
+      { $limit: 5 },
+      { $replaceWith: { id: "$_id", total: "$total" } },
+    ],
+    as: "__jsmql.__lookup1" } },
+  { $set: { recentOrders: "$__jsmql.__lookup1" } },
+  { $unset: "__jsmql" },
+]
+```
+
+**Implementation.** A new `tryExtractChainedLookup` in [`src/lookup-translation.ts`](../src/lookup-translation.ts) walks the chain back to its innermost receiver, checks for a `.filter` lookup head + a tail of registered stream methods (via `lookupStreamMethod` from [`src/stream-methods.ts`](../src/stream-methods.ts) — a cycle-safe runtime import), forces pipeline-form predicate translation, and runs the chain methods through the registry's `lower(... inSubPipeline = true)` path. The result substitutes a `FieldRef(slot)` for the entire chain; the surrounding expression's codegen reads the slot as `"$<slot>"`.
+
+The check fires AFTER the existing `.length` / `.reduce` / direct-lookup checks so those terminals keep their precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing `descendAndExtract` expression-form path, so unrelated string / array operators on lookup results are unaffected.
+
+`.find` heads are deliberately not eligible — they return scalar-or-null after the `$first` wrap; chain methods don't have a stream-shape to extend in that case.
+
+**Future optimisation.** When the chain is the entire RHS of a `$.<field> = <chain>` assignment, the `as` slot could be the field path directly — collapsing the trailing `$set` + `$unset` cleanup and producing a single-stage lookup. Detection at the AssignExpr level (mirroring the existing direct-lookup branch in `lowerUpdateFilterWithLookups`) is a follow-up.
+
+Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md) — needs an update. User-facing: [docs/LANGUAGE.md → Cross-collection lookups](LANGUAGE.md#cross-collection-lookups-collfind--filter).
+
+---
+
 ## 2026-05-28 — feat: array-returning reducer wrap `$$ = [$$.reduce(... => acc.concat(...), [])]`
 
 Third (and last for this batch) reduce-wrap form. Where the scalar / object wraps both lower to `$group` + `$replaceWith` (single summary doc out), the array-returning form is a filter-and-map flattener:

@@ -550,6 +550,34 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 
 A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
+**Stream-method chains push into the `$lookup.pipeline` body.** Any sequence of registered stream methods (`.map`, `.filter`, `.toSorted`, `.toReversed`, `.slice`, `.flatMap`, `.concat`) chained after `$$$.coll.filter(<pred>)` becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly:
+
+```js
+$.recentOrders = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5)
+  .map(o => ({ id: o._id, total: o.total }));
+// → [{
+//     $lookup: {
+//       from: "orders",
+//       let: { _id: "$_id" },
+//       pipeline: [
+//         { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+//         { $sort: { placedAt: -1 } },     // toSorted + toReversed
+//         { $limit: 5 },                    // slice(0, 5)
+//         { $replaceWith: { id: "$_id", total: "$total" } },  // map
+//       ],
+//       as: "__jsmql.__lookup1",
+//     },
+//   },
+//   { $set: { recentOrders: "$__jsmql.__lookup1" } },
+//   { $unset: "__jsmql" }]
+```
+
+The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
+
 **Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
 
 **Caveats:**

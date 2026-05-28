@@ -53,6 +53,10 @@ import type {
 } from "./ast.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
+// Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
+// from this module, and lookupStreamMethod is a runtime function (not consumed
+// at this module's top level), so ESM's late-binding handles it cleanly.
+import { lookupStreamMethod } from "./stream-methods.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -997,9 +1001,112 @@ export function extractLookupCalls(
     const stages = lowerLookup(direct, slot, outerCtx, lowerBlock);
     return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
   }
+  // Chained stream methods on a `.filter` lookup (e.g.,
+  // `$$$.coll.filter(p).map(...).toSorted((a,b) => …).slice(0, N)`): push the
+  // chain stages INTO the `$lookup.pipeline` body so methods without a clean
+  // expression-form ($sort with comparator, $unwind, $group, …) lower the
+  // same way they would in a stage-position chain. The slot then holds the
+  // already-transformed array, and chained terminals (`.length`, `.reduce`)
+  // / member access on the result keep working through the recursion below.
+  const chained = tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock);
+  if (chained !== null) return chained;
   // Otherwise: recurse into children so a lookup buried deeper still
   // materialises. Reuse the AST-mapping pattern but accumulate stages.
   return descendAndExtract(expr, outerCtx, allocSlot, lowerBlock);
+}
+
+/**
+ * Detect `$$$.<coll>.filter(p).<m1>(...).<m2>(...)…` — a `.filter` lookup
+ * followed by one or more registered stream methods. When matched, build the
+ * `$lookup` with all the chain stages pushed into its `pipeline:` body and
+ * return a `FieldRef(slot)` substituting the entire chain. The slot holds the
+ * transformed array; the surrounding expression's codegen reads it as
+ * `"$<slot>"`.
+ *
+ * Returns `null` when:
+ *   - `expr` isn't a `MethodCall`,
+ *   - the chain has no methods on top of the lookup head,
+ *   - the innermost receiver isn't a `.filter` lookup (`.find` heads are
+ *     scalar — chain methods don't apply the same way; left to the caller's
+ *     existing `descendAndExtract` path), or
+ *   - any chain method isn't in the stream-methods registry.
+ *
+ * This is the stage-form counterpart to the expression-form fallthrough
+ * `descendAndExtract` would produce: same final array, fewer stages, and
+ * stream-method semantics for `.toSorted` / `.toReversed` / `.flatMap` /
+ * `.slice` / `.concat` / `.map` / `.filter` (which expression-form either
+ * couldn't represent or represented as the bulkier `$map` / `$filter` / `$slice`
+ * operators).
+ */
+function tryExtractChainedLookup(
+  expr: Expr,
+  outerCtx: GenerateCtx,
+  allocSlot: SlotAllocator,
+  lowerBlock: SubPipelineLowerer,
+): { stages: object[]; rewritten: Expr } | null {
+  if (expr.type !== "MethodCall") return null;
+  // Walk back collecting the chain of MethodCall nodes.
+  const methods: MethodCall[] = [];
+  let cur: Expr = expr;
+  while (cur.type === "MethodCall") {
+    methods.push(cur);
+    cur = cur.object;
+  }
+  methods.reverse(); // innermost first
+  if (methods.length < 2) return null;
+  // Innermost must be a `.filter` lookup head (a `$$$.<coll>.filter(<lambda>)` call).
+  const head = methods[0];
+  const direct = detectLookupCall(head, outerCtx);
+  if (direct === null) return null;
+  if (direct.method !== "filter") return null;
+  // Every subsequent method must come from the stream-methods registry —
+  // otherwise the chain falls through to the existing expression-form path,
+  // which can still handle e.g. string methods on lookup results.
+  for (let i = 1; i < methods.length; i++) {
+    if (lookupStreamMethod(methods[i].method) === null) return null;
+  }
+  // Past this point we commit. Reject nested lookups inside the predicate
+  // (the existing v2-deferred rule) before building any stages.
+  rejectNestedLookup(direct, outerCtx);
+  // Force pipeline form for the lookup so the chain stages can extend it.
+  const lambda = direct.lambda;
+  const foreignParam = lambda.params[0];
+  let letVars: Record<string, string> = {};
+  const pipelineBody: object[] = [];
+  if (lambda.body !== undefined) {
+    const ext = extractLetsFromExpr(lambda.body, foreignParam);
+    letVars = ext.letVars;
+    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
+    pipelineBody.push({ $match: { $expr: generateWithCtx(ext.rewritten, subCtx) } });
+  } else if (lambda.block !== undefined) {
+    const ext = extractLetsFromPipeline(lambda.block, foreignParam);
+    letVars = ext.letVars;
+    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
+    pipelineBody.push(...lowerBlock(ext.rewritten, subCtx));
+  }
+  // Apply each chain method through the stream-methods registry. `inSubPipeline`
+  // is true so methods know they're emitting inside a sub-pipeline body.
+  const innerCtx = freshSubPipelineCtx(outerCtx);
+  for (let i = 1; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) return null; // (defensive — already filtered above)
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
+    if (result.replacesPreviousStage) pipelineBody.pop();
+    pipelineBody.push(...result.stages);
+  }
+  // Build the $lookup stage. `as` is an internal slot; the surrounding
+  // expression's codegen reads it. (Future optimisation: detect when the
+  // chain is the entire RHS of a `$.<field> = <chain>` and use the field
+  // path as `as` directly, dropping the trailing `$set` + `$unset`.)
+  const slot = allocSlot();
+  const from: string | { db: string; coll: string } =
+    direct.db !== undefined ? { db: direct.db, coll: direct.collection } : direct.collection;
+  return {
+    stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }],
+    rewritten: { type: "FieldRef", path: slot, pos: expr.pos },
+  };
 }
 
 function descendAndExtract(
