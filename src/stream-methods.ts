@@ -568,9 +568,15 @@ type ObjectLiteralNode = Extract<Expr, { type: "ObjectLiteral" }>;
  *      same way as the scalar form, except `acc` is referenced as
  *      `acc.<key>` (not bare `acc`).
  *
+ * The array-returning reducer form (`$$ = [$$.reduce(... => acc.concat(...), [])]`)
+ * is **not** handled here — its lowering is `$match` + `$replaceWith` rather
+ * than `$group`-shaped, so it has its own detector / lowering pair
+ * (`detectArrayReducerWrap` / `lowerArrayReducerWrap`).
+ *
  * Returns `null` for non-matching shapes (the caller falls through to the
- * other RHS handlers). Throws for matching-but-malformed shapes so the user
- * sees a precise error instead of a generic "RHS must be …".
+ * other RHS handlers, including the array-reducer detector). Throws for
+ * matching-but-malformed shapes so the user sees a precise error instead of
+ * a generic "RHS must be …".
  */
 export function detectReduceWrap(value: Expr): ReduceWrapEntry[] | null {
   if (value.type !== "ArrayLiteral") return null;
@@ -578,6 +584,12 @@ export function detectReduceWrap(value: Expr): ReduceWrapEntry[] | null {
   const el = value.elements[0];
   if (el.type === "ObjectLiteral") return detectScalarReduceWrap(el);
   if (el.type === "MethodCall" && el.method === "reduce" && el.object.type === "CollectionRef") {
+    // An ArrayLiteral init means the user wants the array-returning reducer
+    // form — let `detectArrayReducerWrap` handle it. (We could also throw
+    // here with a more precise message, but the fall-through keeps the two
+    // detectors decoupled: each one only commits to its shape when it sees
+    // its own init type.)
+    if (el.args.length === 2 && el.args[1].type === "ArrayLiteral") return null;
     return detectObjectReducerWrap(el);
   }
   return null;
@@ -807,6 +819,124 @@ export function lowerReduceWrap(entries: readonly ReduceWrapEntry[]): object[] {
   return [{ $group: groupBody }, { $replaceWith: replaceBody }];
 }
 
+// ── Array-returning reducer wrap → $match (optional) + $replaceWith ───────────
+//
+// `$$ = [$$.reduce(<reducer>, [])];` — the third wrap form. Used when the
+// reducer collapses the stream into a flat array of projected docs:
+//
+//   • Unconditional map:  '(acc, d) => acc.concat(d.<path>)'
+//       → '[{$replaceWith: "$<path>"}]'   (each input doc becomes its sub-doc)
+//
+//   • Filter + map (ternary):  '(acc, d) => (cond ? acc.concat(d.<path>) : acc)'
+//       → '[{$match: <cond translated>}, {$replaceWith: "$<path>"}]'
+//
+//   • Identity variants where `d` itself is concatted (bare param, no `.path`)
+//     skip the `$replaceWith` — the docs flow through unchanged.
+//
+// The init MUST be `[]` (empty array) — non-empty initial arrays are rejected
+// because no MQL accumulator preserves a JS-faithful "seed array" semantic.
+// The body's `.concat(...)` argument must be a path on `d` (a sub-doc the
+// stream will replace each input doc with) or bare `d` (identity, used for
+// pure filter shapes).
+//
+// Distinct from the `$group`-shaped scalar/object wraps because the output
+// is a doc-shaped stream of the projected fields, not a single summary doc.
+// Detection commits at the init-is-empty-ArrayLiteral check; lowering lives
+// in `pipeline.ts` so it can reuse `lowerStreamFilterPredicate` for the
+// condition (same predicate translation `.filter` uses).
+
+export type ArrayReducerProject = { kind: "field"; path: string } | { kind: "identity" };
+
+export type ArrayReducerWrap = {
+  /** Identity (`acc.concat(d)`) or field-path projection (`acc.concat(d.<path>)`). */
+  project: ArrayReducerProject;
+  /**
+   * When present, the lowering emits a `$match` stage before the projection
+   * using this expression as the predicate body. Translated through
+   * `lowerStreamFilterPredicate` in pipeline.ts (same engine `.filter` uses).
+   */
+  condition: Expr | null;
+  /** The reducer's per-doc parameter name (used to translate the condition). */
+  dParam: string;
+  /** Lambda position (for actionable errors). */
+  lambdaPos: number;
+};
+
+/**
+ * Detect `$$ = [$$.reduce(<reducer>, [])]` — the array-returning reducer wrap.
+ * Returns the classified `ArrayReducerWrap` or null for non-matching shapes
+ * (the caller falls through to other handlers). Throws for matching-but-
+ * malformed shapes (init is array-but-non-empty, body shape not recognised,
+ * etc.) so the user sees a precise error.
+ */
+export function detectArrayReducerWrap(value: Expr): ArrayReducerWrap | null {
+  if (value.type !== "ArrayLiteral") return null;
+  if (value.elements.length !== 1) return null;
+  const el = value.elements[0];
+  if (el.type !== "MethodCall") return null;
+  if (el.method !== "reduce") return null;
+  if (el.object.type !== "CollectionRef") return null;
+  if (el.args.length !== 2) return null;
+  const initArg = el.args[1];
+  if (initArg.type !== "ArrayLiteral") return null;
+  // Past this point we commit — throw for malformed shapes.
+  if (initArg.elements.length !== 0) {
+    throw new CodegenError(
+      `'$$ = [$$.reduce(<reducer>, <init>)]' with an array-returning reducer requires the init to be '[]' — a non-empty seed array isn't supported (no MQL accumulator preserves the JS-faithful "start with these elements" semantic).`,
+      initArg.pos,
+    );
+  }
+  validateReduceCallBasics(el);
+  const lambda = el.args[0] as LambdaNode;
+  const [accParam, dParam] = lambda.params;
+  const body = lambda.body as Expr;
+  const classified = classifyArrayReducerBody(body, accParam, dParam);
+  if (classified === null) {
+    throw new CodegenError(
+      `Array-returning reducer body — v1 supports only:\n` +
+        `  • Unconditional map:  '(${accParam}, ${dParam}) => ${accParam}.concat(${dParam}.<field>)'  →  '$replaceWith: "$<field>"'\n` +
+        `  • Filter + map:       '(${accParam}, ${dParam}) => (<cond> ? ${accParam}.concat(${dParam}.<field>) : ${accParam})'  →  '$match(<cond>) + $replaceWith: "$<field>"'\n` +
+        `  • The '${dParam}' itself (bare param) instead of '${dParam}.<field>' projects the whole doc (no '$replaceWith').\n` +
+        `Other shapes — '${accParam}.concat([${dParam}.<x>, ${dParam}.<y>])', '[...${accParam}, ${dParam}.<x>]', non-ternary branches — aren't supported yet.`,
+      body.pos,
+    );
+  }
+  return { ...classified, dParam, lambdaPos: lambda.pos };
+}
+
+function classifyArrayReducerBody(
+  body: Expr,
+  accParam: string,
+  dParam: string,
+): { project: ArrayReducerProject; condition: Expr | null } | null {
+  // Filter + map: `<cond> ? <concat-call> : acc`
+  if (body.type === "TernaryExpr") {
+    if (body.alternate.type !== "ParamRef" || body.alternate.name !== accParam) return null;
+    const project = classifyConcatCall(body.consequent, accParam, dParam);
+    if (project === null) return null;
+    return { project, condition: body.condition };
+  }
+  // Unconditional map: `<concat-call>`
+  const project = classifyConcatCall(body, accParam, dParam);
+  if (project !== null) return { project, condition: null };
+  return null;
+}
+
+function classifyConcatCall(expr: Expr, accParam: string, dParam: string): ArrayReducerProject | null {
+  if (expr.type !== "MethodCall") return null;
+  if (expr.method !== "concat") return null;
+  if (expr.object.type !== "ParamRef" || expr.object.name !== accParam) return null;
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") return null;
+  // Bare `d` — identity (no projection).
+  if (arg.type === "ParamRef" && arg.name === dParam) return { kind: "identity" };
+  // `d.<path>` — field-path projection.
+  const path = paramFieldPath(arg, dParam);
+  if (path !== null) return { kind: "field", path };
+  return null;
+}
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 const STREAM_METHODS: Record<string, StreamMethodDef> = {
@@ -817,11 +947,13 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toReversed: TO_REVERSED,
   flatMap: FLAT_MAP,
   // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
-  // returns a scalar/object in JS, not an array; assigning it directly to
-  // `$$` would break the "stream is always an array of docs" invariant.
-  // The chain walker's `unknownStreamMethod` helper special-cases `.reduce`
-  // with an actionable wrap-pattern hint, and `detectReduceWrap` (above)
-  // implements the wrap form `$$ = [{ <key>: $$.reduce(…) }];`.
+  // returns a scalar / object / array in JS depending on the reducer;
+  // assigning a non-array result directly to `$$` would break the "stream
+  // is always an array of docs" invariant. The chain walker's
+  // `unknownStreamMethod` helper special-cases `.reduce` with an actionable
+  // wrap-pattern hint, and three wrap forms are implemented above:
+  //   • `detectReduceWrap`         — scalar-into-object & object-returning ($group + $replaceWith)
+  //   • `detectArrayReducerWrap`   — array-returning ($match + $replaceWith)
 };
 
 /** Look up a registered stream method by name; null if not registered. */

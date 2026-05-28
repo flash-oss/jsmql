@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — feat: array-returning reducer wrap `$$ = [$$.reduce(... => acc.concat(...), [])]`
+
+Third (and last for this batch) reduce-wrap form. Where the scalar / object wraps both lower to `$group` + `$replaceWith` (single summary doc out), the array-returning form is a filter-and-map flattener:
+
+```js
+$$ = [$$.reduce(
+  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
+  []
+)];
+// →
+[
+  { $match: { $expr: { $cond: [<truthy(d.active)>, "$contactDetails.email", "$active"] } } },
+  { $replaceWith: "$contactDetails" }
+]
+```
+
+Equivalent to `$$.filter(d => cond).map(d => d.contactDetails);` written as a single reducer. The point isn't terseness — the user can already write the explicit filter+map chain — it's keeping the `.reduce` mental model coherent: if the reducer returns an array, the wrap consumes that array as the new stream, just like JS would. The other two wraps reject the wrong return types; this one accepts the JS-faithful "array-out" case.
+
+**Supported body shapes.** v1 recognises just two — both centred on `acc.concat(<arg>)`:
+
+| Shape | Lowering |
+|---|---|
+| `acc.concat(d.<path>)` (unconditional) | `[{ $replaceWith: "$<path>" }]` |
+| `<cond> ? acc.concat(d.<path>) : acc` (ternary) | `[{ $match: <cond translated> }, { $replaceWith: "$<path>" }]` |
+| `acc.concat(d)` (bare param) | `[]` (identity) |
+| `<cond> ? acc.concat(d) : acc` | `[{ $match: <cond translated> }]` (filter only) |
+
+The condition translates through `lowerStreamFilterPredicate` — the same engine `.filter` uses — so it gets the full match-translator treatment (index-friendly query syntax when possible, `$expr` fallback otherwise) and the same `$.<field>`-is-rejected rule.
+
+**Constraints.** Init must be `[]` (a non-empty seed array isn't expressible in MQL accumulator semantics). The ternary alternate must be bare `acc` (`<cond> ? <concat> : acc`) — other alternates break the "this either adds an element or doesn't" pattern. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers like `acc.concat([d.<x>, d.<y>])`) aren't recognised in v1 — the JS-equivalent semantics aren't representable as a single `$replaceWith` projection.
+
+**Implementation.** `detectArrayReducerWrap` lives in [src/stream-methods.ts](../src/stream-methods.ts) alongside the other reduce detectors, dispatched at the array-init branch (the scalar/object detector falls through when it sees an `ArrayLiteral` init). `lowerArrayReducerWrap` lives in [src/pipeline.ts](../src/pipeline.ts) so it can reuse `lowerStreamFilterPredicate` for the condition. The `unknownStreamMethod` and `rejectInvalidReplaceStream` error messages now list all three wrap shapes.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — feat: object-returning reducer wrap for `$$ = [$$.reduce(…)]`
 
 Sibling to the scalar wrap added last commit. Where the scalar form puts one `$$.reduce(...)` per named field in an inline object:

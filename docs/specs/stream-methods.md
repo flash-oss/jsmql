@@ -153,6 +153,48 @@ Multiple aggregates in either form share **one** `$group` stage. Future work:
 dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`, would
 need `$arrayToObject` + `$push`), and richer per-key body shapes.
 
+### Array-returning reducer wrap → `$match` + `$replaceWith`
+
+A third wrap form handles reducers that build a flat array of projected docs:
+
+```js
+$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])];
+//   → [{ $match: <cond translated> }, { $replaceWith: "$<field>" }]
+
+$$ = [$$.reduce((acc, d) => acc.concat(d.<field>), [])];
+//   → [{ $replaceWith: "$<field>" }]                     // unconditional map
+
+$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), [])];
+//   → [{ $match: <cond translated> }]                    // filter-only (bare `d`)
+```
+
+This form is detected by `detectArrayReducerWrap` and lowered by
+`lowerArrayReducerWrap` in [src/pipeline.ts](../../src/pipeline.ts). The
+lowering lives in pipeline.ts (not in stream-methods.ts) because it reuses
+`lowerStreamFilterPredicate` — the same predicate translator `.filter`
+uses — to handle the condition. `$.<field>` references inside the condition
+are rejected with the standard "use the lambda parameter" hint.
+
+**Supported body shapes:**
+
+| Shape | Lowering |
+|---|---|
+| `acc.concat(d.<path>)` | `[{$replaceWith: "$<path>"}]` |
+| `<cond> ? acc.concat(d.<path>) : acc` | `[{$match: <cond>}, {$replaceWith: "$<path>"}]` |
+| `acc.concat(d)` (bare param) | `[]` (identity — surrounding docs flow through unchanged) |
+| `<cond> ? acc.concat(d) : acc` | `[{$match: <cond>}]` (filter only, no projection) |
+
+**Constraints.** Init must be `[]` (empty array) — non-empty seeds aren't
+representable in MQL accumulator semantics. The ternary's alternate
+branch must be bare `acc` (`<cond> ? <concat> : acc`); other alternates
+break the "this either adds an element or doesn't" pattern. Spread-form
+concat-equivalents (`[...acc, d.<x>]`, `acc.concat([d.<x>, d.<y>]`),
+multi-element wrappers) aren't recognised in v1 — write the explicit
+single-arg `.concat(d.<x>)` shape.
+
+Distinct from the two `$group`-shaped wraps above because the output is a
+doc-shaped stream of projected fields, not a single summary doc.
+
 ## Error wording
 
 Every rejection branch is co-located with the method's `validate` function so

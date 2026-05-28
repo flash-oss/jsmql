@@ -89,10 +89,12 @@ import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
 import {
   collectStreamChain,
+  detectArrayReducerWrap,
   detectReduceWrap,
   lookupStreamMethod,
   lowerReduceWrap,
   streamMethodNames,
+  type ArrayReducerWrap,
   type MethodCallNode,
 } from "./stream-methods.ts";
 
@@ -587,6 +589,15 @@ function lowerReplaceStream(
   if (reduceWrap !== null) {
     return { stages: lowerReduceWrap(reduceWrap), clearLets: true };
   }
+  // `$$ = [$$.reduce((acc, d) => acc.concat(d.<path>), [])];` — the
+  // array-returning reducer wrap. Lowers to `$match` (when the reducer is
+  // a `cond ? concat : acc` ternary) + `$replaceWith` (when the projection
+  // is a field path). Sibling to the `$group`-shaped wrap above; different
+  // lowering family.
+  const arrayReducer = detectArrayReducerWrap(v);
+  if (arrayReducer !== null) {
+    return { stages: lowerArrayReducerWrap(arrayReducer, outerCtx, lowerBlockFn), clearLets: true };
+  }
   const chain = collectStreamChain(v);
   if (chain.root.type === "CollectionRef" && chain.methods.length > 0) {
     return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, allocSlot, v);
@@ -723,10 +734,11 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
   // "stream is always an array of docs" invariant. The user must wrap.
   if (m.method === "reduce") {
     return new CodegenError(
-      `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a single-doc stream:\n` +
-        `  • Scalar reducer:  '$$ = [{ <key>: $$.reduce((acc, d) => …, <literal-init>) }];' — each entry becomes a '$group' accumulator, '$replaceWith' projects to just your named keys.\n` +
-        `  • Object reducer:  '$$ = [$$.reduce((acc, d) => ({ ...acc, <key1>: <expr1>, <key2>: <expr2> }), { <key1>: <init1>, <key2>: <init2> })];' — same MQL output (one '$group' across all keys, then '$replaceWith'), but the reducer body declares the keyed accumulators inline.\n` +
-        `Multiple aggregates can share either wrap; pick the shape that reads best at the call site.`,
+      `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS:\n` +
+        `  • Scalar reducer:  '$$ = [{ <key>: $$.reduce((acc, d) => …, <literal-init>) }];' — each entry becomes a '$group' accumulator; output is a single-doc stream of your named keys.\n` +
+        `  • Object reducer:  '$$ = [$$.reduce((acc, d) => ({ ...acc, <key1>: <expr1>, <key2>: <expr2> }), { <key1>: <init1>, <key2>: <init2> })];' — same MQL output as the scalar form, keyed accumulators declared inline.\n` +
+        `  • Array reducer:   '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])];' — lowers to '$match' (when the body is a ternary) + '$replaceWith: "$<field>"'. Each input doc that passes <cond> becomes its <field> sub-doc.\n` +
+        `Pick the wrap shape that matches what your reducer would return in plain JS.`,
       m.pos,
     );
   }
@@ -739,6 +751,35 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       `The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.`,
     m.pos,
   );
+}
+
+/**
+ * Lower a detected `$$ = [$$.reduce((acc, d) => …, [])]` array-returning
+ * reducer wrap into `$match` (when the body is `cond ? acc.concat(...) : acc`)
+ * + `$replaceWith` (when the projection is `d.<path>`; omitted when the
+ * reducer concats bare `d` — the docs flow through unchanged).
+ *
+ * The condition translates through the same `lowerStreamFilterPredicate`
+ * engine `.filter` uses; the condition's `$.<field>` refs are rejected
+ * with the standard "use the lambda parameter" hint.
+ */
+function lowerArrayReducerWrap(
+  wrap: ArrayReducerWrap,
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+): object[] {
+  const stages: object[] = [];
+  if (wrap.condition !== null) {
+    // Synthesise a single-param Lambda from (dParam, condition) so the
+    // existing predicate-translation engine handles the body unchanged.
+    // `pos` carries the lambda's original pos for error reporting.
+    const fakeLambda: LambdaNode = { type: "Lambda", params: [wrap.dParam], body: wrap.condition, pos: wrap.lambdaPos };
+    stages.push(...lowerStreamFilterPredicate(fakeLambda, outerCtx, lowerBlockFn));
+  }
+  if (wrap.project.kind === "field") {
+    stages.push({ $replaceWith: `$${wrap.project.path}` });
+  }
+  return stages;
 }
 
 function lowerStreamFilterPredicate(
@@ -793,12 +834,16 @@ function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
         value.pos,
       );
     }
-    // The only ArrayLiteral RHS we accept today is the reduce-wrap pattern
-    // (`$$ = [{ <key>: $$.reduce(…), … }]`), and that's already detected
-    // upstream — so reaching here means the user wrote something else.
-    // Point at the wrap pattern explicitly so they don't have to guess.
+    // The only ArrayLiteral RHSes we accept today are the reduce-wrap
+    // patterns — already detected upstream — so reaching here means the user
+    // wrote something else. Point at all three wrap forms explicitly so they
+    // don't have to guess.
     throw new CodegenError(
-      `'$$ = [<expr>]' is only supported as the reduce-wrap pattern '$$ = [{ <key>: $$.reduce((acc, d) => …, <init>), … }]' — the JS-faithful way to fold a stream into a single-doc summary. Other ArrayLiteral RHSes (literal doc lists, multi-element arrays, non-reduce single docs) aren't yet supported. If you wanted to seed the stream from a literal doc list, use '$$.push({...}, {...}, …)' instead.`,
+      `'$$ = [<expr>]' is only supported as one of the three reduce-wrap patterns: ` +
+        `'$$ = [{ <key>: $$.reduce(…, <literal-init>), … }]' (scalar accumulators → '$group' + '$replaceWith'), ` +
+        `'$$ = [$$.reduce((acc, d) => ({ ...acc, <key>: <expr>, … }), { <key>: <init>, … })]' (object-returning reducer, same lowering), ` +
+        `or '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])]' (array-returning reducer → '$match' + '$replaceWith'). ` +
+        `Other ArrayLiteral RHSes (literal doc lists, multi-element arrays, non-reduce single docs) aren't yet supported — for a literal-doc seeder, use '$$.push({...}, {...}, …)' instead.`,
       value.pos,
     );
   }
