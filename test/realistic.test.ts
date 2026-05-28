@@ -1328,3 +1328,354 @@ describe("archive expired users via $out (inline filter)", { features: ["Pipelin
     },
   );
 });
+
+// ── Stream-method chains on the RHS of `$$ = …` ──────────────────────────────
+//
+// Chainable JS array-method vocabulary that extends a `$$ = $$.<chain>;` (or
+// `$$ = $$$.<coll>.<chain>;`) RHS into one or more pipeline stages. Each
+// chained method appends stages to the surrounding pipeline; the result is
+// the same MQL you'd write by hand, expressed as a JS expression you can
+// copy-paste.
+//
+// See [docs/specs/stream-methods.md] for the full registry and
+// [docs/LANGUAGE.md#stream-methods-chained-after-the-rhs] for the
+// user-facing reference.
+
+describe("paginate shipped orders newest-first (`.toSorted` + `.slice`)", { features: ["Pipelines"] }, () => {
+  it(
+    "compiles a sort+page chain into $sort + $skip + $limit",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // After narrowing to shipped orders, page-25 (offsets 25..50) sorted
+      // newest-first. The descending sort comes from `b.placedAt - a.placedAt`;
+      // `.slice(25, 50)` lowers to `$skip: 25` + `$limit: 25` (end - start).
+      expect(
+        jsmql`
+$match($.status === "shipped");
+$$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
+        `,
+      ).toEqual([{ $match: { status: "shipped" } }, { $sort: { placedAt: -1 } }, { $skip: 25 }, { $limit: 25 }]);
+    },
+  );
+});
+
+describe("denormalise order line items for analytics (`.map`)", { features: ["Pipelines"] }, () => {
+  it(
+    "reshapes each shipped order doc into an analytics-friendly summary",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // `.map(o => ({...}))` lowers to `$replaceWith` — the chain-form of the
+      // existing `$ = <expr>` statement sugar. The lambda parameter IS the
+      // current document, so `o.qty` rewrites to the bare field path `$qty`.
+      expect(
+        jsmql`
+$match($.shipped === true);
+$$ = $$.map(o => ({
+  orderId:  o._id,
+  customer: o.userId,
+  total:    o.qty * o.unitPrice,
+  shippedAt: o.shippedAt
+}));
+        `,
+      ).toEqual([
+        { $match: { shipped: true } },
+        {
+          $replaceWith: {
+            orderId: "$_id",
+            customer: "$userId",
+            total: { $multiply: ["$qty", "$unitPrice"] },
+            shippedAt: "$shippedAt",
+          },
+        },
+      ]);
+    },
+  );
+});
+
+describe("top-10 revenue leaderboard (`.toSorted` + `.slice`)", { features: ["Pipelines"] }, () => {
+  it("groups, sorts, and slices into one chain", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // Classic top-N over an aggregated stream. The leaderboard is the
+    // canonical `.toSorted(desc).slice(0, N)` shape.
+    expect(
+      jsmql`
+$group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
+$$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 10);
+        `,
+    ).toEqual([
+      { $group: { _id: "$userId", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
+      { $sort: { revenue: -1 } },
+      { $limit: 10 },
+    ]);
+  });
+});
+
+describe("most expensive line items across shipped orders (`.flatMap` + `.map`)", { features: ["Pipelines"] }, () => {
+  it(
+    "flatten order items, project to the item itself, then sort by price",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // `.flatMap(o => o.items)` lowers to `$unwind: "$items"` — MQL-natural,
+      // surrounding fields preserved. The follow-up `.map(o => o.items)`
+      // replaces each doc with just the item (so the next `$sort` indexes
+      // into the item directly).
+      expect(
+        jsmql`
+$$ = $$.filter(o => o.status === "shipped").flatMap(o => o.items).map(o => o.items);
+$sort({ price: -1 });
+$limit(50);
+        `,
+      ).toEqual([
+        { $match: { status: "shipped" } },
+        { $unwind: "$items" },
+        { $replaceWith: "$items" },
+        { $sort: { price: -1 } },
+        { $limit: 50 },
+      ]);
+    },
+  );
+});
+
+describe("merge live transactions with the archive stream (`.concat`)", { features: ["Pipelines"] }, () => {
+  it(
+    "narrow then append a foreign collection in one chain",
+    { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" },
+    () => {
+      // `.concat(...$$$.<coll>)` is the chain-form alias for `$$.push(...)`
+      // — same `$unionWith` lowering, expressed where the next chain method
+      // would naturally go. Useful when querying a partitioned dataset where
+      // recent docs live in one collection and older docs in another.
+      expect(
+        jsmql`
+$match($.region === "AU");
+$$ = $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);
+        `,
+      ).toEqual([
+        { $match: { region: "AU" } },
+        { $match: { amount: { $gt: 100 } } },
+        { $unionWith: "archive_transactions" },
+      ]);
+    },
+  );
+});
+
+describe("daily revenue summary (`$$ = [{ … : $$.reduce(…) }]` scalar wrap)", { features: ["Pipelines"] }, () => {
+  it(
+    "fold the stream into a single-doc summary via the scalar reduce wrap",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // `.reduce` isn't a chain method on `$$` — in JS it collapses an array
+      // to a single value, which would break the "stream is always an array"
+      // invariant. Instead, wrap the result(s) in a single-doc array literal.
+      // Each entry becomes one `$group` accumulator; the trailing
+      // `$replaceWith` drops `_id: null` so the output stream is exactly the
+      // named-keys shape the user wrote.
+      expect(
+        jsmql`
+$match($.placedAt >= "2026-05-01" && $.placedAt < "2026-06-01");
+$$ = [{
+  orders:    $$.reduce((acc, o) => acc + 1, 0),
+  revenue:   $$.reduce((acc, o) => acc + o.total, 0),
+  biggest:   $$.reduce((acc, o) => Math.max(acc, o.total), 0),
+  smallest:  $$.reduce((acc, o) => Math.min(acc, o.total), 0)
+}];
+        `,
+      ).toEqual([
+        { $match: { $and: [{ placedAt: { $gte: "2026-05-01" } }, { placedAt: { $lt: "2026-06-01" } }] } },
+        {
+          $group: {
+            _id: null,
+            orders: { $sum: 1 },
+            revenue: { $sum: "$total" },
+            biggest: { $max: "$total" },
+            smallest: { $min: "$total" },
+          },
+        },
+        { $replaceWith: { orders: "$orders", revenue: "$revenue", biggest: "$biggest", smallest: "$smallest" } },
+      ]);
+    },
+  );
+});
+
+describe(
+  "daily revenue summary, inline reducer body (`$$ = [$$.reduce(… => ({…}), {…})]`)",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "same MQL as the scalar wrap above, expressed as one object-returning reducer",
+      { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+      () => {
+        // The object-returning reducer wrap and the scalar wrap lower to the
+        // same `$group` + `$replaceWith` pair — pick whichever reads best at
+        // the call site. The reducer body names every accumulator inline;
+        // each `acc.<key> + …` / `Math.max(acc.<key>, …)` becomes one
+        // accumulator on the `$group`.
+        expect(
+          jsmql`
+$match($.placedAt >= "2026-05-01" && $.placedAt < "2026-06-01");
+$$ = [$$.reduce(
+  (acc, o) => ({
+    ...acc,
+    orders:   acc.orders + 1,
+    revenue:  acc.revenue + o.total,
+    biggest:  Math.max(acc.biggest, o.total),
+    smallest: Math.min(acc.smallest, o.total)
+  }),
+  { orders: 0, revenue: 0, biggest: 0, smallest: 0 }
+)];
+        `,
+        ).toEqual([
+          { $match: { $and: [{ placedAt: { $gte: "2026-05-01" } }, { placedAt: { $lt: "2026-06-01" } }] } },
+          {
+            $group: {
+              _id: null,
+              orders: { $sum: 1 },
+              revenue: { $sum: "$total" },
+              biggest: { $max: "$total" },
+              smallest: { $min: "$total" },
+            },
+          },
+          { $replaceWith: { orders: "$orders", revenue: "$revenue", biggest: "$biggest", smallest: "$smallest" } },
+        ]);
+      },
+    );
+  },
+);
+
+describe(
+  "export contact details of active users (`$$ = [$$.reduce(… => acc.concat(…), [])]`)",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "filter + project as a single array-returning reducer",
+      { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+      () => {
+        // The array-returning reducer wrap is the JS-faithful shape for
+        // "build a flat array by conditionally appending one projection per
+        // doc". Lowers to `$match` (the ternary condition) + `$replaceWith`
+        // (the field path concatenated). The condition translates through the
+        // same engine `.filter` uses — `d.active && d.contactDetails.email`
+        // becomes an `$expr` with the JS-faithful `&&` short-circuit.
+        //
+        // This is the same shape as `.filter(d => …).map(d => d.contactDetails)`
+        // — pick whichever reads better at the call site.
+        expect(
+          jsmql`
+$$ = [$$.reduce(
+  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
+  []
+)];
+$$$$.exports.email_contacts = $$;
+        `,
+        ).toEqual([
+          {
+            $match: {
+              $expr: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$active", null] },
+                      { $ne: ["$active", false] },
+                      { $ne: ["$active", ""] },
+                      { $ne: ["$active", 0] },
+                    ],
+                  },
+                  "$contactDetails.email",
+                  "$active",
+                ],
+              },
+            },
+          },
+          { $replaceWith: "$contactDetails" },
+          { $out: { db: "exports", coll: "email_contacts" } },
+        ]);
+      },
+    );
+  },
+);
+
+// 🌟 The flagship combination: source-switch on a foreign collection, filter,
+// and *enrich each surviving doc with a lookup from yet another collection*
+// — all in one chain. The outer `$$ = $$$.<coll>.<chain>` lowers to
+// `$limit: 0` + `$unionWith` with the chain stages making up the union's
+// sub-pipeline. The embedded `$$$.<other>.find(...)` inside `.map`'s body
+// materialises as a nested `$lookup` (basic-form `localField` / `foreignField`
+// when the predicate is a single `===`) followed by a `$set { $first }` so
+// the slot holds the matched doc (or null) rather than an array. The final
+// `$replaceWith` projects each user-side doc to the call-site-friendly shape.
+//
+// One JS expression compiles to a 6-stage pipeline that touches three
+// collections and would otherwise require careful by-hand `$lookup` /
+// `$unionWith` plumbing.
+describe(
+  "daily active-user engagement digest (source-switch + filter + map-with-embedded-lookup)",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "pivots onto users, narrows to active accounts, and enriches each with their most recent order",
+      { kind: "pipeline", usage: "db.daily_jobs.aggregate(jsmql(...))" },
+      () => {
+        // Real-world flow: a nightly job runs `db.daily_jobs.aggregate(...)`
+        // and produces one row per active user, enriched with their most
+        // recent order. The pipeline starts on `daily_jobs` (an orchestrator
+        // collection) and pivots its source onto `users` — same result as
+        // running on `users` from the start, but the call site keeps its
+        // original collection so the same job runner can host pipelines for
+        // multiple downstream collections.
+        expect(
+          jsmql`
+$$ = $$$.users.filter(u => u.active === true).map(u => ({
+  user:      u._id,
+  name:      u.name,
+  email:     u.contactDetails.email,
+  signupAt:  u.createdAt,
+  lastOrder: $$$.orders.find(o => o.userId === u._id)
+}));
+          `,
+        ).toEqual([
+          { $limit: 0 },
+          {
+            $unionWith: {
+              coll: "users",
+              pipeline: [
+                { $match: { active: true } },
+                { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
+                { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+                {
+                  $replaceWith: {
+                    user: "$_id",
+                    name: "$name",
+                    email: "$contactDetails.email",
+                    signupAt: "$createdAt",
+                    lastOrder: "$__jsmql.__lookup1",
+                  },
+                },
+              ],
+            },
+          },
+          { $unset: "__jsmql" },
+        ]);
+      },
+    );
+  },
+);
+
+describe("invalid reduce on $$ — validate() catches the wrap-pattern omission", { features: ["Pipelines"] }, () => {
+  it(
+    "the bare chain form is rejected at compile time with an actionable wrap-pattern hint",
+    { kind: "validate" },
+    () => {
+      // A user might reach for `$$ = $$.reduce(...)` expecting it to "just
+      // work" the way `arr.reduce(...)` does in JS — but assigning the
+      // scalar result to `$$` would break the "stream is always an array of
+      // docs" invariant. `validate()` surfaces the rejection with a real
+      // `.pos` and an actionable message pointing at the three wrap shapes.
+      const r = jsmql.validate(`$$ = $$.reduce((acc, o) => acc + o.total, 0);`);
+      expect(r.valid).toBe(false);
+      expect(r.errors).toHaveLength(1);
+      expect(r.errors[0].code).toBe("CODEGEN_ERROR");
+      expect(r.errors[0].pos).toBeGreaterThan(0);
+      expect(r.errors[0].message).toMatch(/'\.reduce\(\.\.\.\)' is not a chain method/);
+      expect(r.errors[0].message).toMatch(/Scalar reducer.*Object reducer.*Array reducer/s);
+    },
+  );
+});
