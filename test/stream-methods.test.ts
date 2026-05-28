@@ -243,10 +243,54 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     ]);
   });
 
-  it("lookup inside .map body of a `$$$.<coll>.<chain>` RHS is rejected (would emit a nested $lookup)", () => {
-    expect(() =>
+  it("lookup inside .map body of a `$$$.<coll>.<chain>` RHS lands as a nested $lookup inside the $unionWith.pipeline", () => {
+    expect(
       jsmql("$$ = $$$.users.filter(u => u.active === true).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));"),
-    ).toThrow(/nested.*\$unionWith\.pipeline.*hoist/i);
+    ).toEqual([
+      { $limit: 0 },
+      {
+        $unionWith: {
+          coll: "users",
+          pipeline: [
+            { $match: { active: true } },
+            { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
+            { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+            { $replaceWith: { a: "$__jsmql.__lookup1" } },
+          ],
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("pipeline-form predicate (correlates against outer-doc fields via $lookup.let) works nested inside $unionWith.pipeline", () => {
+    expect(
+      jsmql(
+        "$$ = $$$.users.filter(u => u.active === true).map(d => ({ archives: $$$.archive.filter(x => x.userId === d._id && x.tier === d.tier) }));",
+      ),
+    ).toEqual([
+      { $limit: 0 },
+      {
+        $unionWith: {
+          coll: "users",
+          pipeline: [
+            { $match: { active: true } },
+            {
+              $lookup: {
+                from: "archive",
+                let: { _id: "$_id", tier: "$tier" },
+                pipeline: [
+                  { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $eq: ["$tier", "$$tier"] }] } } },
+                ],
+                as: "__jsmql.__lookup1",
+              },
+            },
+            { $replaceWith: { archives: "$__jsmql.__lookup1" } },
+          ],
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
   });
 });
 

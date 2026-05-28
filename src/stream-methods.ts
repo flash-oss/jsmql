@@ -10,7 +10,6 @@
 import type { CallArg, Expr } from "./ast.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
-  containsLookupCall,
   extractLetsFromExpr,
   extractLookupCalls,
   type SlotAllocator,
@@ -169,7 +168,7 @@ const CONCAT: StreamMethodDef = {
 // fit inside an expression-position lambda).
 //
 // `$$$.<coll>.find/filter(...)` lookups inside the body ARE supported in
-// the top-level `$$` chain context: the body is post-processed through
+// both stream contexts. The body is post-processed through
 // `extractLookupCalls` to materialise each lookup into an
 // `__jsmql.__lookup<N>` slot ahead of the `$replaceWith`. References to
 // the outer doc (`d.<field>`) get rewritten to bare field paths via
@@ -178,10 +177,10 @@ const CONCAT: StreamMethodDef = {
 // `translatePredicate`) sees those as `$.<field>` and hoists them to
 // `$lookup.let` slots — basic-form is preferred when the predicate is a
 // single `===` between matching paths. In the lookup-body context
-// (`$$$.<coll>.filter(p).map(...)`), an embedded lookup would land inside
-// a `$unionWith.pipeline` — a nested lookup, which jsmql defers to v2
-// across the codebase. That case is rejected with the standard
-// "hoist to sibling stage" message.
+// (`$$$.<coll>.filter(p).map(...)`), the materialised `$lookup` lands as
+// a nested stage inside the outer `$unionWith.pipeline` — valid MQL,
+// since the lookup correlates against the sub-pipeline's local doc (the
+// foreign collection), not any outer-pipeline `let` binding.
 const MAP: StreamMethodDef = {
   name: "map",
   validate(args, callPos) {
@@ -214,7 +213,7 @@ const MAP: StreamMethodDef = {
       );
     }
   },
-  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, inSubPipeline) {
+  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const body = lambda.body as Expr;
@@ -224,12 +223,14 @@ const MAP: StreamMethodDef = {
         lambda.pos,
       );
     }
-    if (inSubPipeline && containsLookupCall(body, ctx)) {
-      throw new CodegenError(
-        `'$$$.<coll>.find/filter(...)' inside a '.map(d => …)' body of a '$$$.<coll>.<chain>' RHS would emit a nested '$lookup' inside a '$unionWith.pipeline' — nested lookups are deferred to v2. Hoist the inner lookup to a sibling stage in the outer pipeline.`,
-        lambda.pos,
-      );
-    }
+    // Lookups inside the body are supported in both the top-level `$$` chain
+    // and the lookup-body context (`$$$.<coll>.<chain>`). In the latter,
+    // they land as a `$lookup` nested inside the outer `$unionWith.pipeline`
+    // — valid MQL; the basic-form / pipeline-form translation in
+    // `lookup-translation.ts` correlates against the sub-pipeline's local
+    // doc (the foreign collection from the outer `$unionWith`), not any
+    // outer-pipeline `let` bindings, so the v2-deferred let-coordination
+    // case doesn't apply here.
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
     if (Object.keys(letVars).length > 0) {
       const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");

@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — Lookups inside `.map(d => …)` body — supported in lookup-body context too
+
+Removes the `inSubPipeline` rejection branch introduced one commit earlier. `$$ = $$$.users.filter(p).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));` now lowers to a `$unionWith.pipeline` containing a nested `$lookup`:
+
+```js
+[
+  { $limit: 0 },
+  { $unionWith: { coll: "users", pipeline: [
+    { $match: { active: true } },
+    { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
+    { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+    { $replaceWith: { a: "$__jsmql.__lookup1" } },
+  ] } },
+  { $unset: "__jsmql" },
+]
+```
+
+**Why the original rejection was conservative.** The project-wide "nested lookup deferred to v2" rule (still in force for `$lookup.pipeline` and `$facet.*` containing inner lookups) is about *let-binding coordination* — outer-pipeline `let` slots can't be threaded across the sub-pipeline boundary because `$unionWith` has no `let:` slot, and `$lookup.pipeline` does have one but threading the outer scope through it gets complex. For our case the lookup inside `.map` doesn't reference any outer-pipeline let-bindings — it correlates only against the foreign collection's current doc (the user's doc inside the `$unionWith.pipeline`), which is the *local* doc of that sub-pipeline. Both basic-form (`{localField, foreignField}`) and pipeline-form (`{let: {field: "$field"}, pipeline: [...]}`) correlate correctly: the field paths are resolved against the sub-pipeline's stream.
+
+Pipeline-form also works: `.map(d => ({ archives: $$$.archive.filter(x => x.userId === d._id && x.tier === d.tier) }))` hoists `d._id` / `d.tier` to `$lookup.let` slots, and the resulting `$lookup` (with `let: { _id: "$_id", tier: "$tier" }`) sits inside the outer `$unionWith.pipeline` with its `let:` slots correctly referencing the users-doc fields.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — Lookups inside `.map(d => …)` body — supported in top-level `$$` chain
 
 The original `.map` commit deferred lookups in the body (`.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }))`) because the chain walker didn't thread a slot allocator into per-method `lower` functions. This commit threads `allocSlot` (and an `inSubPipeline: boolean` flag) through `lowerReplaceStream` → `lowerChainOnStream` / `lowerChainOnCollection` → `def.lower`, and rewrites `MAP.lower` to run the rewritten body through `extractLookupCalls` after the `extractLetsFromExpr` pass.
