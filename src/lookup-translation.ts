@@ -1336,11 +1336,14 @@ function rewriteCallArgs(args: CallArg[], rewrite: (e: Expr) => Expr): CallArg[]
 }
 
 /**
- * v1 deliberately rejects nested lookups (a `$$$.coll2.find/filter` whose
- * eventual stage would live inside another lookup's sub-pipeline). The
- * outer lookup's predicate translator catches this when its sub-pipeline
- * lowering encounters a lookup call inside the block-body or the
- * generated `$match $expr` body — at which point we throw the targeted
+ * Nested lookups (a `$$$.coll2.find/filter` whose eventual stage would
+ * live inside another lookup's sub-pipeline) are planned future work —
+ * see `docs/specs/lookup-stage.md` "Future work". The blocker is
+ * auto-`let` extraction across two binding scopes (outer-doc `$.x` AND
+ * outer-foreign-doc `u.x`); until that lands, the outer lookup's
+ * predicate translator catches this case when its sub-pipeline lowering
+ * encounters a lookup call inside the block-body or the generated
+ * `$match $expr` body — at which point we throw the targeted
  * "not yet supported, hoist to sibling stage" error.
  *
  * Detection is purely structural: at the point we're materialising a
@@ -1354,8 +1357,8 @@ function rejectNestedLookup(call: LookupCall, ctx: GenerateCtx): void {
   // (`$$$$[boundDb].coll.find(...)` inside another lookup's predicate)
   // detects correctly. Without the ctx, the binding wouldn't resolve and
   // the inner lookup would silently slip past this gate, then get
-  // materialised as an actual nested $lookup later — the exact case we
-  // explicitly defer to v2.
+  // materialised as an actual nested $lookup later — the exact case the
+  // nested-lookup future-work item is planned to handle.
   if (containsLookupCall(inner, ctx)) {
     // Find the inner lookup's pos for a precise error
     const innerPos = findFirstLookupPos(inner) ?? call.lambda.pos;

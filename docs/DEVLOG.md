@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — Drop "v2" framing on nested lookups (planned future work, not forbidden)
+
+Three internal comments and one `docs/CLAUDE.md` cell described the nested-lookup rejection as "deferred to v2" — but per the file-header convention there is no v2 ([docs/DEVLOG.md:1357](DEVLOG.md#2026-04-…)), the project is pre-`0.1.0`, and the framing wrongly suggested the feature is forbidden rather than planned. Rewording: "deferred to v2" → "planned future work" everywhere it appeared, with a pointer to the lookup-stage spec's existing "Future work" section.
+
+**Files touched.**
+- [src/lookup-translation.ts:1231-1262](../src/lookup-translation.ts) — block comment over `rejectNestedLookup` now says the work is planned and names the blocker (auto-`let` extraction across two binding scopes); the closing reference to "the exact case we explicitly defer to v2" is now "the exact case the nested-lookup future-work item is planned to handle".
+- [src/pipeline.ts:991-996](../src/pipeline.ts) — sub-pipeline guard's comment now says "not yet implemented … tracked as planned future work" with a pointer to the spec.
+- [src/pipeline.ts:1009](../src/pipeline.ts) — adjacent `$$.push(...)` reject-comment lost its trailing "Reject for v1." → just "Reject."
+- [src/stream-methods.ts:226-233](../src/stream-methods.ts) — explanatory comment in `.map` body lowering now references "the let-coordination problem that blocks the general nested-lookup case" instead of "the v2-deferred let-coordination case".
+- [docs/CLAUDE.md:41](CLAUDE.md) — spec table cell: "nested-lookup-deferred-to-v2 boundary" → "nested-lookup rejection (planned future work — see the spec's "Future work" section)".
+- [docs/LANGUAGE.md:556-557](LANGUAGE.md) — user-facing caveat reworded from "not yet supported in this release" / "deferred" to "planned but not yet implemented" / "also planned (see `$$$` schema-threading work)", and now names the design problem (extracting outer-doc + outer-foreign-doc binding sources).
+
+**Runtime behaviour unchanged.** The two reject sites — `rejectNestedLookup` in `lookup-translation.ts` and the pre-walker in `generatePipelineWithCtx` in `pipeline.ts` — still throw the same error text ("not yet supported in this release. Hoist the inner lookup to a sibling stage in the outer pipeline."). Only internal comments and the doc-facing prose changed.
+
+**Why this matters.** The library is pre-1.0 and the rule from the project-wide CLAUDE.md and from the earlier "drop v1..v4 labels" entry is that phase markers are noise — they read as released-versioning that doesn't exist here. The nested-lookup rejection is the most architecturally weighty item on the deferred list; framing it as "future work, here's why it's hard, here's the spec section" invites someone to pick it up. Framing it as "deferred to v2" invites the wrong question ("when does v2 ship?").
+
+---
+
 ## 2026-05-28 — `.concat(...others)` chain method on `$$` (alias for `$$.push`)
 
 JS-idiomatic alias for `$$.push(...)` in the chain context. `.concat` accepts the same arg shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` docs, `$$$.<coll>.find(p)`) and routes through `lowerUnionPush` — no second copy of the spread / inline-doc / `.find` validation logic. `$$.push(...)` remains the statement-only form; `.concat` is purely chainable, so `$$ = $$.filter(p).concat(...$$$.archive);` lowers to `[{$match}, {$unionWith: "archive"}]`.
