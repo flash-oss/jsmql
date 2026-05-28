@@ -1807,6 +1807,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
 | `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
 | `.map(d => <expr>)` | Single-param expression-body arrow; the param is the current document (write `d.x`, not `$.x`) | `$replaceWith: <expr>` — the chain-form of the existing `$ = <expr>` statement sugar |
+| `.toSorted((a, b) => <cmp>)` | Two-param arrow; comparator body built from `a.<field> - b.<field>` (asc), `b.<field> - a.<field>` (desc), combined with `\|\|` for compound sort | `$sort: { … }` — key order preserved from source. Zero-arg `.toSorted()` is rejected (MongoDB streams have no natural document ordering) |
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 

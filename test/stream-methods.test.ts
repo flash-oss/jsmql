@@ -219,6 +219,64 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
   });
 });
 
+describe(".toSorted((a, b) => …) — comparator → $sort", () => {
+  it("ascending: a.x - b.x → { x: 1 }", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.age - b.age);")).toEqual([{ $sort: { age: 1 } }]);
+  });
+
+  it("descending: b.x - a.x → { x: -1 }", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => b.score - a.score);")).toEqual([{ $sort: { score: -1 } }]);
+  });
+
+  it("compound: a.x - b.x || b.y - a.y → { x: 1, y: -1 }", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.x - b.x || b.y - a.y);")).toEqual([{ $sort: { x: 1, y: -1 } }]);
+  });
+
+  it("three-term compound sort preserves source order", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.x - b.x || a.y - b.y || b.z - a.z);")).toEqual([
+      { $sort: { x: 1, y: 1, z: -1 } },
+    ]);
+  });
+
+  it("nested field path: a.profile.age - b.profile.age", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => a.profile.age - b.profile.age);")).toEqual([
+      { $sort: { "profile.age": 1 } },
+    ]);
+  });
+
+  it("composes after .filter — $match + $sort", () => {
+    expect(jsmql("$$ = $$.filter(o => o.active === true).toSorted((a, b) => a.age - b.age);")).toEqual([
+      { $match: { active: true } },
+      { $sort: { age: 1 } },
+    ]);
+  });
+
+  it("composes with .slice — $sort + $skip + $limit (a top-N pattern)", () => {
+    expect(jsmql("$$ = $$.toSorted((a, b) => b.score - a.score).slice(0, 10);")).toEqual([
+      { $sort: { score: -1 } },
+      { $limit: 10 },
+    ]);
+  });
+
+  it("zero-arg .toSorted() is rejected with a 'no natural ordering' hint", () => {
+    expect(() => jsmql("$$ = $$.toSorted();")).toThrow(/no natural document ordering/);
+  });
+
+  it("one-param arrow is rejected with a 'two-parameter' hint", () => {
+    expect(() => jsmql("$$ = $$.toSorted(x => x.age);")).toThrow(/two-parameter arrow/);
+  });
+
+  it("non-comparator body is rejected", () => {
+    expect(() => jsmql("$$ = $$.toSorted((a, b) => a.x + b.x);")).toThrow(
+      /accepts only.*ascending.*descending.*compound/s,
+    );
+  });
+
+  it("mismatched paths in subtraction are rejected", () => {
+    expect(() => jsmql("$$ = $$.toSorted((a, b) => a.x - b.y);")).toThrow(/accepts only/);
+  });
+});
+
 describe("unknown chain method on $$ → registry error with hint", () => {
   it("typo like .slise is corrected via 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);

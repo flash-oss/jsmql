@@ -193,9 +193,102 @@ const MAP: StreamMethodDef = {
   },
 };
 
+// ── .toSorted((a, b) => …) → $sort ────────────────────────────────────────────
+//
+// Accepts a comparator-shape expression body built from `a.<path> - b.<path>`
+// terms (ascending), `b.<path> - a.<path>` terms (descending), and `||`
+// combining multiple terms (compound sort, source order preserved). Anything
+// else is rejected — bare `.toSorted()` (default JS string compare) included,
+// because MongoDB streams of documents have no natural ordering.
+type ComparatorPath = { param: "a" | "b"; path: string };
+
+function classifyComparatorPath(expr: Expr, paramA: string, paramB: string): ComparatorPath | null {
+  let cur: Expr = expr;
+  const segments: string[] = [];
+  while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
+    if (cur.type === "MemberAccess") {
+      segments.unshift(cur.member);
+      cur = cur.object;
+      continue;
+    }
+    if (cur.type === "IndexAccess" && cur.index.type === "StringLiteral") {
+      segments.unshift(cur.index.value);
+      cur = cur.object;
+      continue;
+    }
+    return null;
+  }
+  if (cur.type !== "ParamRef") return null;
+  const which: "a" | "b" | null = cur.name === paramA ? "a" : cur.name === paramB ? "b" : null;
+  if (which === null) return null;
+  if (segments.length === 0) return null;
+  return { param: which, path: segments.join(".") };
+}
+
+function parseComparatorBody(body: Expr, paramA: string, paramB: string, callPos: number): Record<string, 1 | -1> {
+  if (body.type === "BinaryExpr" && body.op === "||") {
+    const left = parseComparatorBody(body.left, paramA, paramB, callPos);
+    const right = parseComparatorBody(body.right, paramA, paramB, callPos);
+    return { ...left, ...right };
+  }
+  if (body.type === "BinaryExpr" && body.op === "-") {
+    const leftPath = classifyComparatorPath(body.left, paramA, paramB);
+    const rightPath = classifyComparatorPath(body.right, paramA, paramB);
+    if (leftPath !== null && rightPath !== null && leftPath.path === rightPath.path) {
+      if (leftPath.param === "a" && rightPath.param === "b") return { [leftPath.path]: 1 };
+      if (leftPath.param === "b" && rightPath.param === "a") return { [leftPath.path]: -1 };
+    }
+  }
+  throw new CodegenError(
+    `.toSorted((${paramA}, ${paramB}) => …) accepts only '${paramA}.<field> - ${paramB}.<field>' (ascending) or '${paramB}.<field> - ${paramA}.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.`,
+    body.pos ?? callPos,
+  );
+}
+
+const TO_SORTED: StreamMethodDef = {
+  name: "toSorted",
+  validate(args, callPos) {
+    if (args.length === 0) {
+      throw new CodegenError(
+        `.toSorted(<comparator>) requires a comparator arrow — MongoDB streams have no natural document ordering. Write '.toSorted((a, b) => a.<field> - b.<field>)' for ascending, 'b.<field> - a.<field>' for descending.`,
+        callPos,
+      );
+    }
+    if (args.length > 1) {
+      throw new CodegenError(`.toSorted(<comparator>) takes exactly one argument, got ${args.length}.`, callPos);
+    }
+    const arg = args[0];
+    if (arg.type === "SpreadElement") {
+      throw new CodegenError(`.toSorted(...) does not accept a spread argument.`, arg.pos);
+    }
+    if (arg.type !== "Lambda") {
+      throw new CodegenError(
+        `.toSorted(<comparator>) requires an arrow function, e.g. '.toSorted((a, b) => a.age - b.age)'.`,
+        arg.pos,
+      );
+    }
+    if (arg.params.length !== 2) {
+      throw new CodegenError(
+        `.toSorted(<comparator>) requires a two-parameter arrow '(a, b) => …' (got ${arg.params.length} params).`,
+        arg.pos,
+      );
+    }
+    if (arg.body === undefined) {
+      throw new CodegenError(`.toSorted(<comparator>) requires an expression body, not a block.`, arg.pos);
+    }
+  },
+  lower(args, _ctx, callPos, _lowerBlock) {
+    const lambda = args[0] as LambdaNode;
+    const [paramA, paramB] = lambda.params;
+    const body = lambda.body as Expr;
+    const spec = parseComparatorBody(body, paramA, paramB, callPos);
+    return { stages: [{ $sort: spec }] };
+  },
+};
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
-const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE, concat: CONCAT, map: MAP };
+const STREAM_METHODS: Record<string, StreamMethodDef> = { slice: SLICE, concat: CONCAT, map: MAP, toSorted: TO_SORTED };
 
 /** Look up a registered stream method by name; null if not registered. */
 export function lookupStreamMethod(name: string): StreamMethodDef | null {

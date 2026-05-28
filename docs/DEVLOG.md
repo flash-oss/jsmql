@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-28 — `.toSorted((a, b) => …)` chain method → `$sort`
+
+The first ES2023 immutable-array method to land. Accepts a comparator-shape expression body built from `a.<path> - b.<path>` (ascending), `b.<path> - a.<path>` (descending), and `||` combining multiple terms (compound sort). Source order of `||` branches becomes the key order of the emitted `$sort` document — `(a, b) => a.x - b.x || b.y - a.y` lowers to `{ $sort: { x: 1, y: -1 } }`.
+
+A small recursive parser (`parseComparatorBody` in [src/stream-methods.ts](../src/stream-methods.ts)) walks the body. Each subtraction is classified via `classifyComparatorPath`, which walks `MemberAccess` / string-literal `IndexAccess` back to the originating param ref and reports the dotted path. Mismatched paths (`a.x - b.y`), non-subtraction terms (`a.x + b.x`), and bare `.toSorted()` (default JS string compare — MongoDB has no natural document ordering) all error with actionable messages.
+
+Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
 ## 2026-05-28 — `.map(d => <expr>)` chain method → `$replaceWith`
 
 Chain-form of the existing `$ = <expr>` statement sugar. `$$ = $$.filter(p).map(d => ({ id: d._id, n: d.name }));` lowers to `[{$match: …}, {$replaceWith: { id: "$_id", n: "$name" }}]`. The lambda parameter IS the current document — `d.x` rewrites to the bare field path `$x` via `extractLetsFromExpr`, and `$.<field>` references are rejected with the standard "use the lambda parameter" hint.

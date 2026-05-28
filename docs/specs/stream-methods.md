@@ -76,6 +76,7 @@ export type StreamMethodResult = {
 | `.slice(start, end?)` | 1-2 non-negative integer literals; `end >= start` if both present | `$skip` + `$limit` | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
 | `.concat(...others)` | 1+ args matching the `$$.push(...)` shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, `$$$.<coll>.find(p)`) | `lowerUnionPush` (shared with `$$.push`) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents`-form stage |
 | `.map(d => <expr>)` | One single-param expression-body arrow; `$.<field>` and lookups in body rejected | `extractLetsFromExpr` (param rewrite) + `generateWithCtx` | One `{ $replaceWith: <expr> }` stage; clears the let scope (reshape stage) |
+| `.toSorted((a, b) => <cmp>)` | Two-param expression-body arrow; body built from `a.<path> - b.<path>` / `b.<path> - a.<path>` terms combined with `\|\|` | `parseComparatorBody` walks the expression, classifies each subtraction's paths, emits a `$sort` spec | One `{ $sort: { … } }` stage; key order preserved from source for compound sorts |
 
 Future methods (per the planning notes) extend this table — see
 [docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.
