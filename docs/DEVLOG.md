@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-29 — docs: showcase the "narrow + snapshot + `let` + pivot" idiom
+
+The outer-`let`-into-`$lookup.let` work that landed earlier today is more than a one-off feature — composed with `.filter(...).slice(0, 1)` and a correlated source-switch, it gives users the JS-natural way to write "look up one doc, hold onto a scalar, fetch correlated rows from another collection". This is the shape every web app needs ("look up the logged-in user, then fetch their recent orders"), and historically has been a 20-30-line hand-written MQL recipe that even experienced MongoDB users get wrong (the `$unionWith`-has-no-`let:` trap).
+
+The compiler already handled this idiom — but it wasn't called out as a recommended pattern. Three small docs/test additions fix that:
+
+- **`test/realistic.test.ts`** — new `describe` block "snapshot one user, then pivot to their 5 most-recent orders". Three statements (`$$ = $$.filter(...).slice(0, 1)`, `let userId = $._id`, `$$ = $$$.orders.filter(o => o.userId === userId).toSorted(...).toReversed().slice(0, 5)`) compile to the expected `$match` + `$limit:1` + `$set` + `$lookup`-pivot + `$unwind` + `$replaceWith` + `$unset` chain. The playground sync hook surfaces it as an example automatically.
+- **`README.md`** — new code block in the Tour with the same example side-by-side with its MQL output, plus a one-line "why $unionWith can't do this" note so readers see the DX value at the contrast point.
+- **`docs/LANGUAGE.md`** — extended the "Replace stream via `$$ = <expr>`" section with a "Putting it all together — narrow, snapshot, pivot" subsection that names the idiom and shows the full lowering.
+
+No code changes. This is a documentation-only commit — the underlying support for the idiom shipped in the preceding outer-`let` and chain-extension commits.
+
+---
+
 ## 2026-05-29 — Playground: GitHub links + compile-mode toggle
 
 Several playground UX changes, all confined to `playground.html` (outside the two generated regions):

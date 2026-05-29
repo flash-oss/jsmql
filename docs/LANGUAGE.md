@@ -1891,6 +1891,40 @@ $$ = $$$.users.filter(u => u._id === uid);
 
 Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist together into the `$lookup.let` slot of the pipeline-form lookup.
 
+**Putting it all together — narrow, snapshot, pivot.** The full idiom is three statements: narrow the current stream down to one doc, snapshot a scalar via `let`, then pivot to another collection with the snapshot as the correlated value. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
+
+```js
+jsmql(`
+  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
+  let userId = $._id;
+  $$ = $$$.orders
+    .filter(o => o.userId === userId)
+    .toSorted((a, b) => a.placedAt - b.placedAt)
+    .toReversed()
+    .slice(0, 5);
+`);
+// → [
+//   { $match: { email: "me@example.com" } },
+//   { $limit: 1 },
+//   { $set: { "__jsmql.userId": "$_id" } },
+//   { $lookup: {
+//       from: "orders",
+//       let: { userId: "$__jsmql.userId" },
+//       pipeline: [
+//         { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+//         { $sort: { placedAt: -1 } },
+//         { $limit: 5 },
+//       ],
+//       as: "__jsmql.__lookup1",
+//   } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the snapshotted `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name. The three statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline.
+
 Compile-time rejections:
 
 | RHS | Why it's rejected |
