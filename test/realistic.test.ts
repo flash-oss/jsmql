@@ -25,7 +25,7 @@ describe("top-orders report by department", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     expect(
       jsmql`
-$match($.status === "shipped" && $.placedAt >= "2026-01-01");
+$match($.status === "shipped" && $.placedAt >= new Date("2026-01-01"));
 $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
 $unwind($.buyer);
 $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
@@ -34,7 +34,7 @@ $sort({ revenue: -1 });
 $limit(3);
       `,
     ).toEqual([
-      { $match: { status: "shipped", placedAt: { $gte: "2026-01-01" } } },
+      { $match: { status: "shipped", placedAt: { $gte: new Date("2026-01-01") } } },
       { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
       { $unwind: "$buyer" },
       { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
@@ -112,7 +112,7 @@ describe("orders summary via $facet (`$ = { k: $$.filter(...) }`)", { features: 
       jsmql(`$match($.status === "shipped");
 $ = {
   topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
-  recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
+  recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
   byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
 };`),
     ).toEqual([
@@ -120,7 +120,7 @@ $ = {
       {
         $facet: {
           topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
-          recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
+          recent: [{ $match: { createdAt: { $gte: new Date("2026-01-01") } } }],
           byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
         },
       },
@@ -288,11 +288,9 @@ $project({ sku: 1, subtotal, withTax, final: withShip });
 
 describe("active premium subscribers", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.subscribers.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > "2026-05-01"`)).toEqual({
-      "subscription.tier": "premium",
-      status: "active",
-      expiresAt: { $gt: "2026-05-01" },
-    });
+    expect(
+      jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > new Date("2026-05-01")`),
+    ).toEqual({ "subscription.tier": "premium", status: "active", expiresAt: { $gt: new Date("2026-05-01") } });
   });
 });
 
@@ -301,12 +299,12 @@ describe("recent shipped orders for a customer", { features: ["Filters"] }, () =
     expect(
       jsmql`
 $.customerId === "cust_42" &&
-$.placedAt >= "2026-01-01" && $.placedAt < "2026-02-01" &&
+$.placedAt >= new Date("2026-01-01") && $.placedAt < new Date("2026-02-01") &&
 $.status === "shipped"
       `,
     ).toEqual({
       customerId: "cust_42",
-      $and: [{ placedAt: { $gte: "2026-01-01" } }, { placedAt: { $lt: "2026-02-01" } }],
+      $and: [{ placedAt: { $gte: new Date("2026-01-01") } }, { placedAt: { $lt: new Date("2026-02-01") } }],
       status: "shipped",
     });
   });
@@ -320,9 +318,9 @@ describe("posts pinned or by trusted author", { features: ["Filters"] }, () => {
 
 describe("archivable docs (not pinned, untouched since)", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.pinned !== true && $.lastModifiedAt < "2025-01-01"`)).toEqual({
+    expect(jsmql(`$.pinned !== true && $.lastModifiedAt < new Date("2025-01-01")`)).toEqual({
       pinned: { $ne: true },
-      lastModifiedAt: { $lt: "2025-01-01" },
+      lastModifiedAt: { $lt: new Date("2025-01-01") },
     });
   });
 });
@@ -1305,11 +1303,11 @@ describe("archive inactive users to a warehouse via $out (multi-stage)", { featu
     () => {
       expect(
         jsmql`
-$match($.active === false && $.lastSeen < "2025-01-01");
+$match($.active === false && $.lastSeen < new Date("2025-01-01"));
 $$$$.dw.archive_users = $$;
       `,
       ).toEqual([
-        { $match: { active: false, lastSeen: { $lt: "2025-01-01" } } },
+        { $match: { active: false, lastSeen: { $lt: new Date("2025-01-01") } } },
         { $out: { db: "dw", coll: "archive_users" } },
       ]);
     },
@@ -1471,7 +1469,7 @@ describe("daily revenue summary (`$$ = [{ … : $$.reduce(…) }]` scalar wrap)"
       // named-keys shape the user wrote.
       expect(
         jsmql`
-$match($.placedAt >= "2026-05-01" && $.placedAt < "2026-06-01");
+$match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01"));
 $$ = [{
   orders:    $$.reduce((acc, o) => acc + 1, 0),
   revenue:   $$.reduce((acc, o) => acc + o.total, 0),
@@ -1480,7 +1478,11 @@ $$ = [{
 }];
         `,
       ).toEqual([
-        { $match: { $and: [{ placedAt: { $gte: "2026-05-01" } }, { placedAt: { $lt: "2026-06-01" } }] } },
+        {
+          $match: {
+            $and: [{ placedAt: { $gte: new Date("2026-05-01") } }, { placedAt: { $lt: new Date("2026-06-01") } }],
+          },
+        },
         {
           $group: {
             _id: null,
@@ -1511,7 +1513,7 @@ describe(
         // accumulator on the `$group`.
         expect(
           jsmql`
-$match($.placedAt >= "2026-05-01" && $.placedAt < "2026-06-01");
+$match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01"));
 $$ = [$$.reduce(
   (acc, o) => ({
     ...acc,
@@ -1524,7 +1526,11 @@ $$ = [$$.reduce(
 )];
         `,
         ).toEqual([
-          { $match: { $and: [{ placedAt: { $gte: "2026-05-01" } }, { placedAt: { $lt: "2026-06-01" } }] } },
+          {
+            $match: {
+              $and: [{ placedAt: { $gte: new Date("2026-05-01") } }, { placedAt: { $lt: new Date("2026-06-01") } }],
+            },
+          },
           {
             $group: {
               _id: null,

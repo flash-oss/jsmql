@@ -31,12 +31,15 @@
         --accent-soft-strong: rgba(42, 109, 244, 0.16);
         --expr: #2a6df4;
         --expr-soft: rgba(42, 109, 244, 0.1);
+        --expr-strong: rgba(42, 109, 244, 0.22);
         --pipe: #b45309;
         --pipe-soft: rgba(217, 119, 6, 0.12);
         --pipe-strong: rgba(217, 119, 6, 0.22);
         --filter: #047857;
         --filter-soft: rgba(4, 120, 87, 0.12);
         --filter-strong: rgba(4, 120, 87, 0.22);
+        --update: #7c3aed;
+        --update-soft: rgba(124, 58, 237, 0.12);
         --error: #c0392b;
         --error-bg: #fdf3f2;
         --mono:
@@ -63,6 +66,9 @@
 
       header {
         padding: 10px 16px;
+        /* Reserve room on the right so the 48px GitHub corner ribbon never
+           overlaps the "Hide examples" toggle. */
+        padding-right: 60px;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
         font-size: 13px;
@@ -119,6 +125,58 @@
         border: 1px solid var(--border);
         border-radius: 3px;
         background: var(--bg);
+      }
+
+      /* Classic GitHub corner ribbon, pinned top-right. The fill is the
+         accent colour so the octocat reads against the white header. */
+      .github-corner {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 10;
+        color: var(--accent);
+      }
+
+      /* The folded ribbon (the first, attribute-less path) takes the accent
+         fill; the octocat itself must be the page background colour so it
+         reads as a white silhouette against the blue triangle. */
+      .github-corner svg {
+        display: block;
+        fill: currentColor;
+      }
+
+      .github-corner .octo-arm,
+      .github-corner .octo-body {
+        fill: var(--panel);
+      }
+
+      .github-corner .octo-arm {
+        transform-origin: 130px 106px;
+      }
+
+      .github-corner:hover .octo-arm {
+        animation: octocat-wave 560ms ease-in-out;
+      }
+
+      @keyframes octocat-wave {
+        0%,
+        100% {
+          transform: rotate(0);
+        }
+        20%,
+        60% {
+          transform: rotate(-25deg);
+        }
+        40%,
+        80% {
+          transform: rotate(10deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .github-corner:hover .octo-arm {
+          animation: none;
+        }
       }
 
       main {
@@ -488,6 +546,11 @@
         border-bottom-color: var(--filter-strong);
       }
 
+      .panel.input-panel.expression .label {
+        background: linear-gradient(180deg, var(--expr-soft), var(--bg));
+        border-bottom-color: var(--expr-strong);
+      }
+
       /* "MongoDB call" hint shown above the editor, directly below the grey
          "jsmql input" label. The kind-coloured strip on the left mirrors the
          example's kind so a user scanning the playground can connect the
@@ -512,10 +575,6 @@
 
       .panel.input-panel.filter .usage-bar {
         border-left-color: var(--filter);
-      }
-
-      .usage-bar[hidden] {
-        display: none;
       }
 
       .usage-bar .usage-label {
@@ -575,30 +634,100 @@
         min-width: 0;
       }
 
-      .kind-pill {
+      /* The compile-mode toggle sits in its own bar directly above the
+         "MongoDB call" hint (and stays visible even when that hint is
+         hidden). The 3px transparent left border keeps its contents aligned
+         with the colour-stripped usage-bar below it. */
+      .mode-bar {
+        display: flex;
+        align-items: center;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        border-left: 3px solid transparent;
+        background: var(--sidebar-bg);
+        flex-shrink: 0;
+      }
+
+      /* Compile-mode toggle: one button per jsmql entry point, styled like
+         the kind badges (same mono pill look) but rendered as a segmented
+         control where exactly one is active. Buttons share a fixed width so
+         the band reads as a uniform switch rather than ragged chips. */
+      .mode-toggle {
+        display: inline-flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .mode-toggle button {
         font-family: var(--mono);
         font-size: 9px;
         font-weight: 700;
         letter-spacing: 0.5px;
-        padding: 2px 6px;
+        text-transform: uppercase;
+        width: 56px;
+        padding: 3px 0;
+        text-align: center;
+        border: 1px solid var(--border);
         border-radius: 3px;
-        flex-shrink: 0;
+        background: var(--panel);
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .mode-toggle button:hover {
+        border-color: currentColor;
+        background: var(--bg);
+      }
+
+      /* Each button always carries its kind colour (like the badges) so the
+         band reads as a colour-coded switch; the active one fills in with the
+         soft tint + a solid current-colour border. AUTO stays neutral. */
+      .mode-toggle button[data-mode="filter"] {
+        color: var(--filter);
+      }
+
+      .mode-toggle button[data-mode="update"] {
+        color: var(--update);
+      }
+
+      .mode-toggle button[data-mode="expression"] {
         color: var(--expr);
-        background: var(--expr-soft);
       }
 
-      .kind-pill.pipeline {
+      .mode-toggle button[data-mode="pipeline"] {
         color: var(--pipe);
-        background: var(--pipe-soft);
       }
 
-      .kind-pill.filter {
+      .mode-toggle button.active {
+        border-color: currentColor;
+      }
+
+      .mode-toggle button.active[data-mode="filter"] {
         color: var(--filter);
         background: var(--filter-soft);
       }
 
-      .kind-pill[hidden] {
-        display: none;
+      .mode-toggle button.active[data-mode="update"] {
+        color: var(--update);
+        background: var(--update-soft);
+      }
+
+      .mode-toggle button.active[data-mode="expression"] {
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .mode-toggle button.active[data-mode="pipeline"] {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      /* AUTO is the neutral, colourless default — it dispatches through the
+         plain `jsmql()` entry point that auto-detects the output shape. */
+      .mode-toggle button.active[data-mode="auto"] {
+        color: var(--fg);
+        background: var(--border);
+        border-color: var(--border-strong);
       }
 
       .label label {
@@ -696,7 +825,7 @@
     <header>
       <strong>jsmql playground</strong>
       <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
-      <a href="docs/LANGUAGE.md">syntax reference</a>
+      <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">syntax reference</a>
       <span class="spacer"></span>
       <button
         type="button"
@@ -708,6 +837,27 @@
         <span class="kbd">⌘B</span>
       </button>
     </header>
+    <a
+      href="https://github.com/flash-oss/jsmql"
+      class="github-corner"
+      aria-label="View source on GitHub"
+      title="View source on GitHub"
+    >
+      <svg width="48" height="48" viewBox="0 0 250 250" aria-hidden="true">
+        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
+        <path
+          d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
+          fill="currentColor"
+          style="transform-origin: 130px 106px"
+          class="octo-arm"
+        ></path>
+        <path
+          d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.6 141.8,141.5 Z"
+          fill="currentColor"
+          class="octo-body"
+        ></path>
+      </svg>
+    </a>
     <main id="main">
       <aside id="sidebar" aria-label="Examples">
         <div class="sidebar-top">
@@ -763,10 +913,23 @@
           <span class="label-main">
             <span class="label-tag">jsmql input</span>
             <span class="current-title" id="current-title"></span>
-            <span class="kind-pill" id="current-kind" hidden></span>
           </span>
         </div>
-        <div class="usage-bar" id="usage-bar" hidden>
+        <div class="mode-bar">
+          <span
+            class="mode-toggle"
+            id="mode-toggle"
+            role="group"
+            aria-label="Compile mode"
+          >
+            <button type="button" data-mode="filter" title="jsmql.filter(...)">filter</button>
+            <button type="button" data-mode="update" title="jsmql.update(...)">update</button>
+            <button type="button" data-mode="expression" title="jsmql.expr(...)">expr</button>
+            <button type="button" data-mode="pipeline" title="jsmql.pipeline(...)">pipeline</button>
+            <button type="button" data-mode="auto" title="jsmql(...)">auto</button>
+          </span>
+        </div>
+        <div class="usage-bar" id="usage-bar">
           <span class="usage-label">MongoDB call:</span>
           <code class="usage-code" id="usage-code"></code>
         </div>
@@ -781,7 +944,7 @@
       </section>
       <section class="panel" id="output-panel">
         <div class="label">
-          <span>MQL output (JSON)</span>
+          <span>MQL output (Node/Deno/Bun)</span>
           <span class="controls">
             <label><input type="checkbox" id="prettify" checked /> Prettify</label>
             <button type="button" id="copy">Copy</button>
@@ -811,7 +974,7 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
     <!-- jsmql-bundle:end -->
 
     <!-- jsmql-examples:start (generated by scripts/sync-playground.mjs — do not edit) -->
-    <script type="application/json" id="examples-data">[{"slug":"top-orders-report-by-department","title":"top-orders report by department","features":["Pipelines"],"its":[{"slug":"top-orders-report-by-department-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.status === \"shipped\" && $.placedAt >= \"2026-01-01\");\n$lookup({ from: \"users\", localField: \"userId\", foreignField: \"_id\", as: \"buyer\" });\n$unwind($.buyer);\n$group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });\n$set({ avgOrder: $.revenue / $.orders });\n$sort({ revenue: -1 });\n$limit(3);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"count-orders-by-status-per-shop-accumulator-replacement","title":"count orders by status per shop ($accumulator replacement)","features":["Pipelines"],"its":[{"slug":"count-orders-by-status-per-shop-accumulator-replacement-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$group({ _id: $.shopId, statuses: $push($.status) });\n$project({\n  counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})\n});","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"alternative-bracketed-array-form","title":"alternative bracketed array form","features":["Pipelines"],"its":[{"slug":"alternative-bracketed-array-form-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"[\n  $match($.status === 'pending' && $.paidAt != null),\n  $.lineTotal = $.qty * $.unitPrice,\n  $.invoiceCount += 1,\n  delete $.tempToken,\n  delete $._processingState,\n  $.status = 'complete'\n]","usage":null}]},{"slug":"filter","title":"orders summary via $facet (`$ = { k: $$.filter(...) }`)","features":["Pipelines"],"its":[{"slug":"filter-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.status === \"shipped\");\n$ = {\n  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),\n  recent:     $$.filter(o => o.createdAt >= \"2026-01-01\"),\n  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),\n};","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"switch-source-to-another-collection-coll-filter","title":"switch source to another collection (`$$ = $$$.<coll>.filter(...)`)","features":["Pipelines"],"its":[{"slug":"switch-source-to-another-collection-coll-filter-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$$ = $$$.transactions.filter(t => t.createdAt >= new Date(\"2026-01-01\") && t.client === 156);","usage":"db.clients.aggregate(jsmql(...))"}]},{"slug":"narrow-the-current-stream-filter","title":"narrow the current stream (`$$ = $$.filter(...)`)","features":["Pipelines"],"its":[{"slug":"narrow-the-current-stream-filter-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$$ = $$.filter(t => t.createdAt >= new Date(\"2026-01-01\") && t.client === 156);","usage":"db.transactions.aggregate(jsmql(...))"}]},{"slug":"lift-the-embedded-profile-to-the-top-level","title":"lift the embedded profile to the top level (`$ = …`)","features":["Pipelines"],"its":[{"slug":"lift-the-embedded-profile-to-the-top-level-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.profile != null);\n$ = $.profile;\n$ = { ...$, computedScore: $.points * 1.1 };","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"invoice-finalisation-pipeline","title":"invoice finalisation pipeline","features":["Update filters"],"its":[{"slug":"invoice-finalisation-pipeline-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.status === 'pending' && $.paidAt != null);\n$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;\ndelete $.tempToken, delete $._processingState;\n$.status = 'complete'","usage":"db.invoices.aggregate(jsmql(...))"}]},{"slug":"uppercase-a-user-s-name-via-updateone","title":"uppercase a user's name via updateOne","features":["Update filters"],"its":[{"slug":"uppercase-a-user-s-name-via-updateone-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$.name = $.name.toUpperCase()","usage":"db.users.updateOne({ _id: 123 }, jsmql(...))"}]},{"slug":"keep-the-user-s-last-10-events-in-chronological-order","title":"keep the user's last 10 events in chronological order","features":["Update filters"],"its":[{"slug":"keep-the-user-s-last-10-events-in-chronological-order-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$.events.push($.newEvent);\n$.events.sort(e => e.timestamp);\n$.events = $.events.slice(-10);","usage":"db.users.updateOne({ _id: 123 }, jsmql(...))"}]},{"slug":"stamp-login-activity-multi-field-update","title":"stamp login activity (multi-field update)","features":["Update filters"],"its":[{"slug":"stamp-login-activity-multi-field-update-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$.loginCount += 1, $.lastSeenAt = new Date()","usage":"db.users.updateOne({ _id: 123 }, jsmql(...))"}]},{"slug":"order-pricing-with-derived-helpers-commentary","title":"order pricing with derived helpers + commentary","features":["Let bindings"],"its":[{"slug":"order-pricing-with-derived-helpers-commentary-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"let subtotal = $.price * $.qty;       // sub-total before tax/shipping\nlet withTax  = subtotal * 1.2;        // with tax\nlet withShip = withTax + $.shipping;  // with tax and shipping\n$project({ sku: 1, subtotal, withTax, final: withShip });","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"active-premium-subscribers","title":"active premium subscribers","features":["Filters"],"its":[{"slug":"active-premium-subscribers-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.subscription.tier === \"premium\" && $.status === \"active\" && $.expiresAt > \"2026-05-01\"","usage":"db.subscribers.find(jsmql(...))"}]},{"slug":"recent-shipped-orders-for-a-customer","title":"recent shipped orders for a customer","features":["Filters"],"its":[{"slug":"recent-shipped-orders-for-a-customer-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.customerId === \"cust_42\" &&\n$.placedAt >= \"2026-01-01\" && $.placedAt < \"2026-02-01\" &&\n$.status === \"shipped\"","usage":"db.orders.find(jsmql(...))"}]},{"slug":"posts-pinned-or-by-trusted-author","title":"posts pinned or by trusted author","features":["Filters"],"its":[{"slug":"posts-pinned-or-by-trusted-author-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.pinned === true || $.author === \"ada\"","usage":"db.posts.find(jsmql(...))"}]},{"slug":"archivable-docs-not-pinned-untouched-since","title":"archivable docs (not pinned, untouched since)","features":["Filters"],"its":[{"slug":"archivable-docs-not-pinned-untouched-since-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.pinned !== true && $.lastModifiedAt < \"2025-01-01\"","usage":"db.documents.find(jsmql(...))"}]},{"slug":"in-stock-products-within-a-price-range","title":"in-stock products within a price range","features":["Filters"],"its":[{"slug":"in-stock-products-within-a-price-range-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.inStock === true && $.price >= 50 && $.price <= 200","usage":"db.products.find(jsmql(...))"}]},{"slug":"users-with-a-non-null-email","title":"users with a non-null email","features":["Filters"],"its":[{"slug":"users-with-a-non-null-email-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.email != null && $.status === \"active\"","usage":"db.users.find(jsmql(...))"}]},{"slug":"payments-since-a-cutoff-date-folded-into-query-doc","title":"payments since a cutoff (Date folded into query doc)","features":["Filters"],"its":[{"slug":"payments-since-a-cutoff-date-folded-into-query-doc-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.method === \"postalDelivery\" && $.createdAt >= new Date(\"2026-01-01\")","usage":"db.payments.find(jsmql(...))"}]},{"slug":"typeof-check-for-documents-with-an-object-profile","title":"typeof check for documents with an object profile","features":["Filters"],"its":[{"slug":"typeof-check-for-documents-with-an-object-profile-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"typeof $.profile === \"object\" && $.status === \"active\"","usage":"db.users.find(jsmql(...))"}]},{"slug":"lookup-by-id-and-tenant","title":"lookup by `_id` and tenant","features":["Filters"],"its":[{"slug":"lookup-by-id-and-tenant-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$._id === \"doc_42\" && $.tenantId === \"acme\"","usage":"db.documents.find(jsmql(...))"}]},{"slug":"exclude-deleted-and-archived","title":"exclude deleted and archived","features":["Filters"],"its":[{"slug":"exclude-deleted-and-archived-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.deleted !== true && $.archived !== true","usage":"db.posts.find(jsmql(...))"}]},{"slug":"top-level-posts-no-parent-that-are-published","title":"top-level posts (no parent) that are published","features":["Filters"],"its":[{"slug":"top-level-posts-no-parent-that-are-published-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.parent === null && $.published === true","usage":"db.comments.find(jsmql(...))"}]},{"slug":"parameterised-lookup-via-the-template-tag","title":"parameterised lookup via the template tag","features":["Filters"],"its":[{"slug":"parameterised-lookup-via-the-template-tag-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.tier === \"gold\" && $.country === \"AU\"","usage":"db.users.find(jsmql(...))"}]},{"slug":"order-eligibility-for-free-shipping","title":"order eligibility for free shipping","features":["Comparisons and boolean logic"],"its":[{"slug":"order-eligibility-for-free-shipping-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.cart.total >= 50 &&\n$.customer.status in [\"premium\", \"gold\", \"platinum\"] &&\n$.cart.items.length < 20 &&\n$.customer.region.trim().toLowerCase() === \"us\"","usage":"db.carts.find(jsmql(...))"}]},{"slug":"admin-permission-with-operand-preserving","title":"admin permission with operand-preserving &&","features":["Comparisons and boolean logic"],"its":[{"slug":"admin-permission-with-operand-preserving-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.active && $.role.toLowerCase().includes(\"admin\") && $.name.trim().length > 0","usage":"db.users.aggregate([{ $addFields: { value: jsmql.expr(...) } }])"}]},{"slug":"tiered-loyalty-discount-price","title":"tiered loyalty discount price","features":["Ternaries"],"its":[{"slug":"tiered-loyalty-discount-price-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$round(\n  $.price * (\n    $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :\n    $.loyalty.years >= 2 ? 0.92 : 1\n  ),\n  2\n)","usage":"db.orders.aggregate([{ $addFields: { loyaltyPrice: jsmql.expr(...) } }])"}]},{"slug":"stock-status-label","title":"stock status label","features":["Ternaries"],"its":[{"slug":"stock-status-label-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.stock >= $.reorderPoint ? \"ok\" : $.stock > 0 ? \"low\" : \"out-of-stock\"","usage":"db.products.aggregate([{ $addFields: { stockLabel: jsmql.expr(...) } }])"}]},{"slug":"seasonal-discount-with-eligibility-check","title":"seasonal discount with eligibility check","features":["Ternaries"],"its":[{"slug":"seasonal-discount-with-eligibility-check-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.quantity > 1 && $.price >= 10 && $.category in [\"sale\", \"clearance\"]\n  ? $.price * 0.8\n  : $.price","usage":"db.products.aggregate([{ $addFields: { salePrice: jsmql.expr(...) } }])"}]},{"slug":"scientific-projection-hypot-log2-log10-sign-cbrt-pi-e","title":"scientific projection (hypot, log2/log10, sign, cbrt, PI, E)","features":["Arithmetic and Math"],"its":[{"slug":"scientific-projection-hypot-log2-log10-sign-cbrt-pi-e-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}","usage":"db.measurements.aggregate([{ $addFields: { metrics: jsmql.expr(...) } }])"}]},{"slug":"reorder-alert-with-and-unary","title":"reorder alert with ** and unary !","features":["Arithmetic and Math"],"its":[{"slug":"reorder-alert-with-and-unary-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel","usage":"db.products.find(jsmql(...))"}]},{"slug":"score-normalisation-with-grouping","title":"score normalisation with grouping","features":["Arithmetic and Math"],"its":[{"slug":"score-normalisation-with-grouping-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"($.score - $.minScore) / ($.maxScore - $.minScore) * 100","usage":"db.scores.aggregate([{ $addFields: { normalised: jsmql.expr(...) } }])"}]},{"slug":"age-decade-bucket-via-math-floor","title":"age decade bucket via Math.floor","features":["Arithmetic and Math"],"its":[{"slug":"age-decade-bucket-via-math-floor-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.floor($.age / 10) * 10","usage":"db.users.aggregate([{ $addFields: { ageDecade: jsmql.expr(...) } }])"}]},{"slug":"invoice-line-total-with-compound-tax","title":"invoice line total with compound tax","features":["Arithmetic and Math"],"its":[{"slug":"invoice-line-total-with-compound-tax-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)","usage":"db.invoices.aggregate([{ $addFields: { lineTotal: jsmql.expr(...) } }])"}]},{"slug":"url-slug-via-tolowercase-trim-replaceall","title":"URL slug via .toLowerCase().trim().replaceAll()","features":["String methods"],"its":[{"slug":"url-slug-via-tolowercase-trim-replaceall-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"String($.articleId) + \"-\" + $.title.toLowerCase().trim().replaceAll(\" \", \"-\")","usage":"db.articles.aggregate([{ $addFields: { slug: jsmql.expr(...) } }])"}]},{"slug":"email-domain-via-split-at-tolowercase","title":"email domain via .split().at().toLowerCase()","features":["String methods"],"its":[{"slug":"email-domain-via-split-at-tolowercase-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.email.split(\"@\").at(1).toLowerCase()","usage":"db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])"}]},{"slug":"csv-field-word-count","title":"CSV field word count","features":["String methods"],"its":[{"slug":"csv-field-word-count-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.tags.split(\",\").length","usage":"db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])"}]},{"slug":"invoice-line-greeting-with-and-startswith","title":"invoice line greeting with ?., ??, and .startsWith","features":["Template literals"],"its":[{"slug":"invoice-line-greeting-with-and-startswith-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"`Hi ${$.customer?.firstName ?? 'there'} — your ${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`","usage":"db.invoices.aggregate([{ $addFields: { greeting: jsmql.expr(...) } }])"}]},{"slug":"audit-log-line-with-toisostring-and-charat-0-touppercase","title":"audit log line with .toISOString and .charAt(0).toUpperCase","features":["Template literals"],"its":[{"slug":"audit-log-line-with-toisostring-and-charat-0-touppercase-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"`${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`","usage":"db.events.aggregate([{ $addFields: { logLine: jsmql.expr(...) } }])"}]},{"slug":"most-recent-event-timestamp-via-flatmap-map-reduce","title":"most-recent event timestamp via .flatMap.map.reduce","features":["Array methods"],"its":[{"slug":"most-recent-event-timestamp-via-flatmap-map-reduce-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.sessions\n  .flatMap(s => s.events)\n  .map(e => e.ts.getTime())\n  .reduce((acc, t) => Math.max(acc, t), 0)","usage":"db.sessions.aggregate([{ $addFields: { latestEvent: jsmql.expr(...) } }])"}]},{"slug":"cart-subtotal-via-map-reduce","title":"cart subtotal via .map.reduce","features":["Array methods"],"its":[{"slug":"cart-subtotal-via-map-reduce-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)","usage":"db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])"}]},{"slug":"full-display-name-via-filter-boolean-join","title":"full display name via .filter(Boolean).join","features":["Array methods"],"its":[{"slug":"full-display-name-via-filter-boolean-join-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")","usage":"db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])"}]},{"slug":"full-address-with-conditional-inclusion-filter-join","title":"full address with conditional inclusion + filter + join","features":["Array methods"],"its":[{"slug":"full-address-with-conditional-inclusion-filter-join-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")","usage":"db.addresses.aggregate([{ $addFields: { addressLine: jsmql.expr(...) } }])"}]},{"slug":"tag-aggregation-via-map-flat-join","title":"tag aggregation via .map.flat.join","features":["Array methods"],"its":[{"slug":"tag-aggregation-via-map-flat-join-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.posts.map(p => p.tags).flat().join(\", \")","usage":"db.posts.aggregate([{ $addFields: { tagsCSV: jsmql.expr(...) } }])"}]},{"slug":"immutable-replace-and-indexed-map-via-with-x-i","title":"immutable replace and indexed map via .with / (x, i)","features":["Array methods"],"its":[{"slug":"immutable-replace-and-indexed-map-via-with-x-i-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"{\n  lineup: $.roster.with($.swap.slot, $.swap.in),\n  labelled: $.roster.map((p, i) => ({ slot: i, name: p.name })),\n}","usage":"db.rosters.aggregate([{ $addFields: { rosterUpdate: jsmql.expr(...) } }])"}]},{"slug":"file-upload-validation-with-literal-includes-endswith","title":"file upload validation with [literal].includes + .endsWith","features":["Array methods"],"its":[{"slug":"file-upload-validation-with-literal-includes-endswith-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"[\".jpg\", \".png\", \".pdf\", \".docx\"].includes($.file.ext.toLowerCase()) &&\n$.file.name.endsWith($.file.ext) &&\n$.file.size <= 25_000_000","usage":"db.uploads.find(jsmql(...))"}]},{"slug":"chat-moderation-with-inside-an-array-spread","title":"chat moderation with ?. inside an array spread","features":["Optional chaining"],"its":[{"slug":"chat-moderation-with-inside-an-array-spread-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"[...$.moderators, ...$.room?.mods, \"root\"].includes($.userId)","usage":"db.chatRooms.find(jsmql(...))"}]},{"slug":"inside-a-template-literal","title":"?. inside a template literal","features":["Optional chaining"],"its":[{"slug":"inside-a-template-literal-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"`${$.name?.first} ${$.name?.last}`.trim()","usage":"db.users.aggregate([{ $addFields: { label: jsmql.expr(...) } }])"}]},{"slug":"full-name-with-three-step-fallback-chain","title":"full name with three-step ?? fallback chain","features":["Nullish coalescing"],"its":[{"slug":"full-name-with-three-step-fallback-chain-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.firstName ?? $.aliases.at(0) ?? \"anonymous\"","usage":"db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])"}]},{"slug":"formatted-date-label-with-chain","title":"formatted date label with ?? chain","features":["Nullish coalescing"],"its":[{"slug":"formatted-date-label-with-chain-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$dateToString({ date: $.publishedAt, format: \"%Y-%m-%d\" }) ??\n$dateToString({ date: $.createdAt, format: \"%Y-%m-%d\" }) ??\n\"unknown\"","usage":"db.articles.aggregate([{ $addFields: { dateLabel: jsmql.expr(...) } }])"}]},{"slug":"moderator-membership-check-via-a-b","title":"moderator membership check via [...a, ...b]","features":["Array spread"],"its":[{"slug":"moderator-membership-check-via-a-b-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"[...$.moderators, ...$.room.mods, \"root\"].includes($.userId)","usage":"db.threads.find(jsmql(...))"}]},{"slug":"math-max-arr-math-min-arr-with-array-isarray-guard","title":"Math.max(...arr) - Math.min(...arr) with Array.isArray guard","features":["Array spread"],"its":[{"slug":"math-max-arr-math-min-arr-with-array-isarray-guard-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0","usage":"db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])"}]},{"slug":"dynamic-pivot-row-with-computed-key-shorthand-property","title":"dynamic pivot row with computed key + shorthand property","features":["Object literals"],"its":[{"slug":"dynamic-pivot-row-with-computed-key-shorthand-property-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.products.map(p => ({ [p.category]: p.price, p }))","usage":"db.products.aggregate([{ $addFields: { byCategory: jsmql.expr(...) } }])"}]},{"slug":"pivot-table-row-via-object-fromentries-map","title":"pivot table row via Object.fromEntries(.map(...))","features":["Object literals"],"its":[{"slug":"pivot-table-row-via-object-fromentries-map-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Object.fromEntries($.metrics.map(m => [m.name, m.value]))","usage":"db.metrics.aggregate([{ $addFields: { row: jsmql.expr(...) } }])"}]},{"slug":"shopping-cart-total-with-10-000-cap","title":"shopping cart total with 10_000 cap","features":["Numeric separators"],"its":[{"slug":"shopping-cart-total-with-10-000-cap-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))","usage":"db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])"}]},{"slug":"normalise-a-string-or-number-field-with-typeof","title":"normalise a string-or-number field with typeof","features":["Type checks and casts"],"its":[{"slug":"normalise-a-string-or-number-field-with-typeof-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"typeof $.value === \"string\" ? $.value.trim() : String($.value)","usage":"db.items.aggregate([{ $addFields: { trimmed: jsmql.expr(...) } }])"}]},{"slug":"days-since-last-login-math-abs-datediff-new-date","title":"days since last login (Math.abs + $dateDiff + ?? + new Date)","features":["Date and time"],"its":[{"slug":"days-since-last-login-math-abs-datediff-new-date-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)","usage":"db.users.aggregate([{ $addFields: { daysSinceLogin: jsmql.expr(...) } }])"}]},{"slug":"days-since-document-was-created","title":"days since document was created","features":["Date and time"],"its":[{"slug":"days-since-document-was-created-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: \"day\" })","usage":"db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])"}]},{"slug":"days-since-event-date-now-gettime-86-400-000","title":"days since event (Date.now + .getTime + 86_400_000)","features":["Date and time"],"its":[{"slug":"days-since-event-date-now-gettime-86-400-000-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)","usage":"db.events.aggregate([{ $addFields: { daysSinceEvent: jsmql.expr(...) } }])"}]},{"slug":"annotated-insurance-underwriting-rule-with-and","title":"annotated insurance underwriting rule with // and /* */","features":["Comments"],"its":[{"slug":"annotated-insurance-underwriting-rule-with-and-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"// age window: 25 to 70 inclusive\n$.driver.age >= 25 && $.driver.age <= 70 &&\n\n/* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */\n$.policy.kmPerYear <= 30_000 &&\n\n// hard-list occupations that bump the applicant to the high-risk tier\n!($.driver.occupation in [\"stunt-double\", \"test-pilot\", \"demolition-engineer\"])","usage":"db.applicants.find(jsmql(...))"}]},{"slug":"discount-breakdown-bind-once-reuse-across-fields","title":"discount breakdown — bind once, reuse across fields","features":["IIFE"],"its":[{"slug":"discount-breakdown-bind-once-reuse-across-fields-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"((discount) => ({\n  finalPrice: $.price - discount,\n  savings: discount,\n  savingsPercent: Math.round((discount / $.price) * 100),\n}))($.price * (1 - $.loyalty.multiplier))","usage":"db.orders.aggregate([{ $addFields: { discount: jsmql.expr(...) } }])"}]},{"slug":"round-of-sum-as-a-plain-expression","title":"$round of $sum as a plain expression","features":["Escape hatch"],"its":[{"slug":"round-of-sum-as-a-plain-expression-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$round($sum($.lineTotal), 2)","usage":"db.invoices.aggregate([{ $addFields: { result: jsmql.expr(...) } }])"}]},{"slug":"tolower-wrapping-a-string-context","title":"$toLower wrapping a string-context +","features":["Escape hatch"],"its":[{"slug":"tolower-wrapping-a-string-context-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$toLower($.firstName + \" \" + $.lastName)","usage":"db.users.aggregate([{ $addFields: { handle: jsmql.expr(...) } }])"}]},{"slug":"parameterised-threshold-query","title":"parameterised threshold query","features":["Template tag"],"its":[{"slug":"parameterised-threshold-query-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.score >= 75 &&\n$.grade in [\"A\", \"B\"] &&\n$.submitted === true","usage":"db.students.find(jsmql(...))"}]},{"slug":"user-with-orders-join-via-lookup","title":"user-with-orders join via $$$ lookup","features":["Pipelines"],"its":[{"slug":"user-with-orders-join-via-lookup-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.active === true);\n$.recentOrders = $$$.orders.filter(o => {\n  $match(o.userId === $._id);\n  $sort({ createdAt: -1 });\n  $limit(5);\n});\nlet nOrders = $$$.orders.filter(o => o.userId === $._id).length;\n$project({ name: 1, recentOrders: 1, nOrders });","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"union-live-archive-users-with-placeholders-via-push","title":"union live + archive users with placeholders via $$.push","features":["Pipelines"],"its":[{"slug":"union-live-archive-users-with-placeholders-via-push-compiles-to-a-series-of-unionwith-stages-with-batched-documents","title":"compiles to a series of $unionWith stages with batched $documents","kind":"pipeline","call":"jsmql","query":"$match($.active === true);\n$$.push(\n  { _id: \"system\", name: \"System\", role: \"synthetic\" },\n  { _id: \"anon\",   name: \"Anonymous\", role: \"synthetic\" },\n  ...$$$.archive_users.filter(u => u.deleted === true)\n);\n$sort({ name: 1 });\n$limit(50);","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"archive-inactive-users-to-a-warehouse-via-out-multi-stage","title":"archive inactive users to a warehouse via $out (multi-stage)","features":["Pipelines"],"its":[{"slug":"archive-inactive-users-to-a-warehouse-via-out-multi-stage-filters-then-writes-to-a-cross-database-out-destination","title":"filters then writes to a cross-database $out destination","kind":"pipeline","call":"jsmql","query":"$match($.active === false && $.lastSeen < \"2025-01-01\");\n$$$$.dw.archive_users = $$;","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"archive-expired-users-via-out-inline-filter","title":"archive expired users via $out (inline filter)","features":["Pipelines"],"its":[{"slug":"archive-expired-users-via-out-inline-filter-the-whole-pipeline-is-one-db-coll-filter-statement","title":"the whole pipeline is one $$$$.<db>.<coll> = $$.filter(...) statement","kind":"pipeline","call":"jsmql","query":"$$$$.dw.archive = $$.filter(u => u.status === \"expired\");","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"paginate-shipped-orders-newest-first-tosorted-slice","title":"paginate shipped orders newest-first (`.toSorted` + `.slice`)","features":["Pipelines"],"its":[{"slug":"paginate-shipped-orders-newest-first-tosorted-slice-compiles-a-sort-page-chain-into-sort-skip-limit","title":"compiles a sort+page chain into $sort + $skip + $limit","kind":"pipeline","call":"jsmql","query":"$match($.status === \"shipped\");\n$$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"denormalise-order-line-items-for-analytics-map","title":"denormalise order line items for analytics (`.map`)","features":["Pipelines"],"its":[{"slug":"denormalise-order-line-items-for-analytics-map-reshapes-each-shipped-order-doc-into-an-analytics-friendly-summary","title":"reshapes each shipped order doc into an analytics-friendly summary","kind":"pipeline","call":"jsmql","query":"$match($.shipped === true);\n$$ = $$.map(o => ({\n  orderId:  o._id,\n  customer: o.userId,\n  total:    o.qty * o.unitPrice,\n  shippedAt: o.shippedAt\n}));","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"top-10-revenue-leaderboard-tosorted-slice","title":"top-10 revenue leaderboard (`.toSorted` + `.slice`)","features":["Pipelines"],"its":[{"slug":"top-10-revenue-leaderboard-tosorted-slice-groups-sorts-and-slices-into-one-chain","title":"groups, sorts, and slices into one chain","kind":"pipeline","call":"jsmql","query":"$group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });\n$$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 10);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"most-expensive-line-items-across-shipped-orders-flatmap-map","title":"most expensive line items across shipped orders (`.flatMap` + `.map`)","features":["Pipelines"],"its":[{"slug":"most-expensive-line-items-across-shipped-orders-flatmap-map-flatten-order-items-project-to-the-item-itself-then-sort-by-price","title":"flatten order items, project to the item itself, then sort by price","kind":"pipeline","call":"jsmql","query":"$$ = $$.filter(o => o.status === \"shipped\").flatMap(o => o.items).map(o => o.items);\n$sort({ price: -1 });\n$limit(50);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"merge-live-transactions-with-the-archive-stream-concat","title":"merge live transactions with the archive stream (`.concat`)","features":["Pipelines"],"its":[{"slug":"merge-live-transactions-with-the-archive-stream-concat-narrow-then-append-a-foreign-collection-in-one-chain","title":"narrow then append a foreign collection in one chain","kind":"pipeline","call":"jsmql","query":"$match($.region === \"AU\");\n$$ = $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);","usage":"db.transactions.aggregate(jsmql(...))"}]},{"slug":"reduce-scalar-wrap","title":"daily revenue summary (`$$ = [{ … : $$.reduce(…) }]` scalar wrap)","features":["Pipelines"],"its":[{"slug":"reduce-scalar-wrap-fold-the-stream-into-a-single-doc-summary-via-the-scalar-reduce-wrap","title":"fold the stream into a single-doc summary via the scalar reduce wrap","kind":"pipeline","call":"jsmql","query":"$match($.placedAt >= \"2026-05-01\" && $.placedAt < \"2026-06-01\");\n$$ = [{\n  orders:    $$.reduce((acc, o) => acc + 1, 0),\n  revenue:   $$.reduce((acc, o) => acc + o.total, 0),\n  biggest:   $$.reduce((acc, o) => Math.max(acc, o.total), 0),\n  smallest:  $$.reduce((acc, o) => Math.min(acc, o.total), 0)\n}];","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"daily-revenue-summary-inline-reducer-body-reduce","title":"daily revenue summary, inline reducer body (`$$ = [$$.reduce(… => ({…}), {…})]`)","features":["Pipelines"],"its":[{"slug":"daily-revenue-summary-inline-reducer-body-reduce-same-mql-as-the-scalar-wrap-above-expressed-as-one-object-returning-reducer","title":"same MQL as the scalar wrap above, expressed as one object-returning reducer","kind":"pipeline","call":"jsmql","query":"$match($.placedAt >= \"2026-05-01\" && $.placedAt < \"2026-06-01\");\n$$ = [$$.reduce(\n  (acc, o) => ({\n    ...acc,\n    orders:   acc.orders + 1,\n    revenue:  acc.revenue + o.total,\n    biggest:  Math.max(acc.biggest, o.total),\n    smallest: Math.min(acc.smallest, o.total)\n  }),\n  { orders: 0, revenue: 0, biggest: 0, smallest: 0 }\n)];","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"export-contact-details-of-active-users-reduce-acc-concat","title":"export contact details of active users (`$$ = [$$.reduce(… => acc.concat(…), [])]`)","features":["Pipelines"],"its":[{"slug":"export-contact-details-of-active-users-reduce-acc-concat-filter-project-as-a-single-array-returning-reducer","title":"filter + project as a single array-returning reducer","kind":"pipeline","call":"jsmql","query":"$$ = [$$.reduce(\n  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),\n  []\n)];\n$$$$.exports.email_contacts = $$;","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"daily-active-user-engagement-digest-source-switch-filter-map-with-embedded-lookup","title":"daily active-user engagement digest (source-switch + filter + map-with-embedded-lookup)","features":["Pipelines"],"its":[{"slug":"daily-active-user-engagement-digest-source-switch-filter-map-with-embedded-lookup-pivots-onto-users-narrows-to-active-accounts-and-enriches-each-with-their-most-recent-order","title":"pivots onto users, narrows to active accounts, and enriches each with their most recent order","kind":"pipeline","call":"jsmql","query":"$$ = $$$.users.filter(u => u.active === true).map(u => ({\n  user:      u._id,\n  name:      u.name,\n  email:     u.contactDetails.email,\n  signupAt:  u.createdAt,\n  lastOrder: $$$.orders.find(o => o.userId === u._id)\n}));","usage":"db.daily_jobs.aggregate(jsmql(...))"}]},{"slug":"denormalise-a-user-with-their-top-5-most-recent-orders-chain-extension-inside-lookup","title":"denormalise a user with their top-5 most recent orders (chain extension inside $lookup)","features":["Pipelines"],"its":[{"slug":"denormalise-a-user-with-their-top-5-most-recent-orders-chain-extension-inside-lookup-the-chain-after-coll-filter-becomes-the-lookup-s-pipeline-body","title":"the chain after $$$.coll.filter(...) becomes the $lookup's pipeline body","kind":"pipeline","call":"jsmql","query":"$.recentOrders = $$$.orders\n  .filter(o => o.userId === $._id)\n  .toSorted((a, b) => a.placedAt - b.placedAt)\n  .toReversed()\n  .slice(0, 5)\n  .map(o => ({ id: o._id, total: o.total, placedAt: o.placedAt }));","usage":"db.users.aggregate(jsmql(...))"}]}]</script>
+    <script type="application/json" id="examples-data">[{"slug":"top-orders-report-by-department","title":"top-orders report by department","features":["Pipelines"],"its":[{"slug":"top-orders-report-by-department-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.status === \"shipped\" && $.placedAt >= new Date(\"2026-01-01\"));\n$lookup({ from: \"users\", localField: \"userId\", foreignField: \"_id\", as: \"buyer\" });\n$unwind($.buyer);\n$group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });\n$set({ avgOrder: $.revenue / $.orders });\n$sort({ revenue: -1 });\n$limit(3);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"count-orders-by-status-per-shop-accumulator-replacement","title":"count orders by status per shop ($accumulator replacement)","features":["Pipelines"],"its":[{"slug":"count-orders-by-status-per-shop-accumulator-replacement-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$group({ _id: $.shopId, statuses: $push($.status) });\n$project({\n  counts: $.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})\n});","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"alternative-bracketed-array-form","title":"alternative bracketed array form","features":["Pipelines"],"its":[{"slug":"alternative-bracketed-array-form-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"[\n  $match($.status === 'pending' && $.paidAt != null),\n  $.lineTotal = $.qty * $.unitPrice,\n  $.invoiceCount += 1,\n  delete $.tempToken,\n  delete $._processingState,\n  $.status = 'complete'\n]","usage":null}]},{"slug":"filter","title":"orders summary via $facet (`$ = { k: $$.filter(...) }`)","features":["Pipelines"],"its":[{"slug":"filter-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.status === \"shipped\");\n$ = {\n  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),\n  recent:     $$.filter(o => o.createdAt >= new Date(\"2026-01-01\")),\n  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),\n};","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"switch-source-to-another-collection-coll-filter","title":"switch source to another collection (`$$ = $$$.<coll>.filter(...)`)","features":["Pipelines"],"its":[{"slug":"switch-source-to-another-collection-coll-filter-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$$ = $$$.transactions.filter(t => t.createdAt >= new Date(\"2026-01-01\") && t.client === 156);","usage":"db.clients.aggregate(jsmql(...))"}]},{"slug":"narrow-the-current-stream-filter","title":"narrow the current stream (`$$ = $$.filter(...)`)","features":["Pipelines"],"its":[{"slug":"narrow-the-current-stream-filter-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$$ = $$.filter(t => t.createdAt >= new Date(\"2026-01-01\") && t.client === 156);","usage":"db.transactions.aggregate(jsmql(...))"}]},{"slug":"lift-the-embedded-profile-to-the-top-level","title":"lift the embedded profile to the top level (`$ = …`)","features":["Pipelines"],"its":[{"slug":"lift-the-embedded-profile-to-the-top-level-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.profile != null);\n$ = $.profile;\n$ = { ...$, computedScore: $.points * 1.1 };","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"invoice-finalisation-pipeline","title":"invoice finalisation pipeline","features":["Update filters"],"its":[{"slug":"invoice-finalisation-pipeline-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.status === 'pending' && $.paidAt != null);\n$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1;\ndelete $.tempToken, delete $._processingState;\n$.status = 'complete'","usage":"db.invoices.aggregate(jsmql(...))"}]},{"slug":"uppercase-a-user-s-name-via-updateone","title":"uppercase a user's name via updateOne","features":["Update filters"],"its":[{"slug":"uppercase-a-user-s-name-via-updateone-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$.name = $.name.toUpperCase()","usage":"db.users.updateOne({ _id: 123 }, jsmql(...))"}]},{"slug":"keep-the-user-s-last-10-events-in-chronological-order","title":"keep the user's last 10 events in chronological order","features":["Update filters"],"its":[{"slug":"keep-the-user-s-last-10-events-in-chronological-order-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$.events.push($.newEvent);\n$.events.sort(e => e.timestamp);\n$.events = $.events.slice(-10);","usage":"db.users.updateOne({ _id: 123 }, jsmql(...))"}]},{"slug":"stamp-login-activity-multi-field-update","title":"stamp login activity (multi-field update)","features":["Update filters"],"its":[{"slug":"stamp-login-activity-multi-field-update-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$.loginCount += 1, $.lastSeenAt = new Date()","usage":"db.users.updateOne({ _id: 123 }, jsmql(...))"}]},{"slug":"order-pricing-with-derived-helpers-commentary","title":"order pricing with derived helpers + commentary","features":["Let bindings"],"its":[{"slug":"order-pricing-with-derived-helpers-commentary-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"let subtotal = $.price * $.qty;       // sub-total before tax/shipping\nlet withTax  = subtotal * 1.2;        // with tax\nlet withShip = withTax + $.shipping;  // with tax and shipping\n$project({ sku: 1, subtotal, withTax, final: withShip });","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"active-premium-subscribers","title":"active premium subscribers","features":["Filters"],"its":[{"slug":"active-premium-subscribers-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.subscription.tier === \"premium\" && $.status === \"active\" && $.expiresAt > new Date(\"2026-05-01\")","usage":"db.subscribers.find(jsmql(...))"}]},{"slug":"recent-shipped-orders-for-a-customer","title":"recent shipped orders for a customer","features":["Filters"],"its":[{"slug":"recent-shipped-orders-for-a-customer-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.customerId === \"cust_42\" &&\n$.placedAt >= new Date(\"2026-01-01\") && $.placedAt < new Date(\"2026-02-01\") &&\n$.status === \"shipped\"","usage":"db.orders.find(jsmql(...))"}]},{"slug":"posts-pinned-or-by-trusted-author","title":"posts pinned or by trusted author","features":["Filters"],"its":[{"slug":"posts-pinned-or-by-trusted-author-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.pinned === true || $.author === \"ada\"","usage":"db.posts.find(jsmql(...))"}]},{"slug":"archivable-docs-not-pinned-untouched-since","title":"archivable docs (not pinned, untouched since)","features":["Filters"],"its":[{"slug":"archivable-docs-not-pinned-untouched-since-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.pinned !== true && $.lastModifiedAt < new Date(\"2025-01-01\")","usage":"db.documents.find(jsmql(...))"}]},{"slug":"in-stock-products-within-a-price-range","title":"in-stock products within a price range","features":["Filters"],"its":[{"slug":"in-stock-products-within-a-price-range-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.inStock === true && $.price >= 50 && $.price <= 200","usage":"db.products.find(jsmql(...))"}]},{"slug":"users-with-a-non-null-email","title":"users with a non-null email","features":["Filters"],"its":[{"slug":"users-with-a-non-null-email-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.email != null && $.status === \"active\"","usage":"db.users.find(jsmql(...))"}]},{"slug":"payments-since-a-cutoff-date-folded-into-query-doc","title":"payments since a cutoff (Date folded into query doc)","features":["Filters"],"its":[{"slug":"payments-since-a-cutoff-date-folded-into-query-doc-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.method === \"postalDelivery\" && $.createdAt >= new Date(\"2026-01-01\")","usage":"db.payments.find(jsmql(...))"}]},{"slug":"typeof-check-for-documents-with-an-object-profile","title":"typeof check for documents with an object profile","features":["Filters"],"its":[{"slug":"typeof-check-for-documents-with-an-object-profile-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"typeof $.profile === \"object\" && $.status === \"active\"","usage":"db.users.find(jsmql(...))"}]},{"slug":"lookup-by-id-and-tenant","title":"lookup by `_id` and tenant","features":["Filters"],"its":[{"slug":"lookup-by-id-and-tenant-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$._id === \"doc_42\" && $.tenantId === \"acme\"","usage":"db.documents.find(jsmql(...))"}]},{"slug":"exclude-deleted-and-archived","title":"exclude deleted and archived","features":["Filters"],"its":[{"slug":"exclude-deleted-and-archived-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.deleted !== true && $.archived !== true","usage":"db.posts.find(jsmql(...))"}]},{"slug":"top-level-posts-no-parent-that-are-published","title":"top-level posts (no parent) that are published","features":["Filters"],"its":[{"slug":"top-level-posts-no-parent-that-are-published-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.parent === null && $.published === true","usage":"db.comments.find(jsmql(...))"}]},{"slug":"parameterised-lookup-via-the-template-tag","title":"parameterised lookup via the template tag","features":["Filters"],"its":[{"slug":"parameterised-lookup-via-the-template-tag-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.tier === \"gold\" && $.country === \"AU\"","usage":"db.users.find(jsmql(...))"}]},{"slug":"order-eligibility-for-free-shipping","title":"order eligibility for free shipping","features":["Comparisons and boolean logic"],"its":[{"slug":"order-eligibility-for-free-shipping-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.cart.total >= 50 &&\n$.customer.status in [\"premium\", \"gold\", \"platinum\"] &&\n$.cart.items.length < 20 &&\n$.customer.region.trim().toLowerCase() === \"us\"","usage":"db.carts.find(jsmql(...))"}]},{"slug":"admin-permission-with-operand-preserving","title":"admin permission with operand-preserving &&","features":["Comparisons and boolean logic"],"its":[{"slug":"admin-permission-with-operand-preserving-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.active && $.role.toLowerCase().includes(\"admin\") && $.name.trim().length > 0","usage":"db.users.aggregate([{ $addFields: { value: jsmql.expr(...) } }])"}]},{"slug":"tiered-loyalty-discount-price","title":"tiered loyalty discount price","features":["Ternaries"],"its":[{"slug":"tiered-loyalty-discount-price-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$round(\n  $.price * (\n    $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :\n    $.loyalty.years >= 2 ? 0.92 : 1\n  ),\n  2\n)","usage":"db.orders.aggregate([{ $addFields: { loyaltyPrice: jsmql.expr(...) } }])"}]},{"slug":"stock-status-label","title":"stock status label","features":["Ternaries"],"its":[{"slug":"stock-status-label-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.stock >= $.reorderPoint ? \"ok\" : $.stock > 0 ? \"low\" : \"out-of-stock\"","usage":"db.products.aggregate([{ $addFields: { stockLabel: jsmql.expr(...) } }])"}]},{"slug":"seasonal-discount-with-eligibility-check","title":"seasonal discount with eligibility check","features":["Ternaries"],"its":[{"slug":"seasonal-discount-with-eligibility-check-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.quantity > 1 && $.price >= 10 && $.category in [\"sale\", \"clearance\"]\n  ? $.price * 0.8\n  : $.price","usage":"db.products.aggregate([{ $addFields: { salePrice: jsmql.expr(...) } }])"}]},{"slug":"scientific-projection-hypot-log2-log10-sign-cbrt-pi-e","title":"scientific projection (hypot, log2/log10, sign, cbrt, PI, E)","features":["Arithmetic and Math"],"its":[{"slug":"scientific-projection-hypot-log2-log10-sign-cbrt-pi-e-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}","usage":"db.measurements.aggregate([{ $addFields: { metrics: jsmql.expr(...) } }])"}]},{"slug":"reorder-alert-with-and-unary","title":"reorder alert with ** and unary !","features":["Arithmetic and Math"],"its":[{"slug":"reorder-alert-with-and-unary-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"!$.discontinued && $.stock < $.baseReorder * 2 ** $.urgencyLevel","usage":"db.products.find(jsmql(...))"}]},{"slug":"score-normalisation-with-grouping","title":"score normalisation with grouping","features":["Arithmetic and Math"],"its":[{"slug":"score-normalisation-with-grouping-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"($.score - $.minScore) / ($.maxScore - $.minScore) * 100","usage":"db.scores.aggregate([{ $addFields: { normalised: jsmql.expr(...) } }])"}]},{"slug":"age-decade-bucket-via-math-floor","title":"age decade bucket via Math.floor","features":["Arithmetic and Math"],"its":[{"slug":"age-decade-bucket-via-math-floor-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.floor($.age / 10) * 10","usage":"db.users.aggregate([{ $addFields: { ageDecade: jsmql.expr(...) } }])"}]},{"slug":"invoice-line-total-with-compound-tax","title":"invoice line total with compound tax","features":["Arithmetic and Math"],"its":[{"slug":"invoice-line-total-with-compound-tax-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)","usage":"db.invoices.aggregate([{ $addFields: { lineTotal: jsmql.expr(...) } }])"}]},{"slug":"url-slug-via-tolowercase-trim-replaceall","title":"URL slug via .toLowerCase().trim().replaceAll()","features":["String methods"],"its":[{"slug":"url-slug-via-tolowercase-trim-replaceall-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"String($.articleId) + \"-\" + $.title.toLowerCase().trim().replaceAll(\" \", \"-\")","usage":"db.articles.aggregate([{ $addFields: { slug: jsmql.expr(...) } }])"}]},{"slug":"email-domain-via-split-at-tolowercase","title":"email domain via .split().at().toLowerCase()","features":["String methods"],"its":[{"slug":"email-domain-via-split-at-tolowercase-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.email.split(\"@\").at(1).toLowerCase()","usage":"db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])"}]},{"slug":"csv-field-word-count","title":"CSV field word count","features":["String methods"],"its":[{"slug":"csv-field-word-count-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.tags.split(\",\").length","usage":"db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])"}]},{"slug":"invoice-line-greeting-with-and-startswith","title":"invoice line greeting with ?., ??, and .startsWith","features":["Template literals"],"its":[{"slug":"invoice-line-greeting-with-and-startswith-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"`Hi ${$.customer?.firstName ?? 'there'} — your ${$.invoice.id.startsWith('INV-VIP-') ? 'VIP ' : ''}invoice ${$.invoice.id} is ready`","usage":"db.invoices.aggregate([{ $addFields: { greeting: jsmql.expr(...) } }])"}]},{"slug":"audit-log-line-with-toisostring-and-charat-0-touppercase","title":"audit log line with .toISOString and .charAt(0).toUpperCase","features":["Template literals"],"its":[{"slug":"audit-log-line-with-toisostring-and-charat-0-touppercase-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"`${$.event.ts.toISOString()} [${$.event.level.charAt(0).toUpperCase()}] ${$.event.message}`","usage":"db.events.aggregate([{ $addFields: { logLine: jsmql.expr(...) } }])"}]},{"slug":"most-recent-event-timestamp-via-flatmap-map-reduce","title":"most-recent event timestamp via .flatMap.map.reduce","features":["Array methods"],"its":[{"slug":"most-recent-event-timestamp-via-flatmap-map-reduce-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.sessions\n  .flatMap(s => s.events)\n  .map(e => e.ts.getTime())\n  .reduce((acc, t) => Math.max(acc, t), 0)","usage":"db.sessions.aggregate([{ $addFields: { latestEvent: jsmql.expr(...) } }])"}]},{"slug":"cart-subtotal-via-map-reduce","title":"cart subtotal via .map.reduce","features":["Array methods"],"its":[{"slug":"cart-subtotal-via-map-reduce-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)","usage":"db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])"}]},{"slug":"full-display-name-via-filter-boolean-join","title":"full display name via .filter(Boolean).join","features":["Array methods"],"its":[{"slug":"full-display-name-via-filter-boolean-join-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")","usage":"db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])"}]},{"slug":"full-address-with-conditional-inclusion-filter-join","title":"full address with conditional inclusion + filter + join","features":["Array methods"],"its":[{"slug":"full-address-with-conditional-inclusion-filter-join-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")","usage":"db.addresses.aggregate([{ $addFields: { addressLine: jsmql.expr(...) } }])"}]},{"slug":"tag-aggregation-via-map-flat-join","title":"tag aggregation via .map.flat.join","features":["Array methods"],"its":[{"slug":"tag-aggregation-via-map-flat-join-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.posts.map(p => p.tags).flat().join(\", \")","usage":"db.posts.aggregate([{ $addFields: { tagsCSV: jsmql.expr(...) } }])"}]},{"slug":"immutable-replace-and-indexed-map-via-with-x-i","title":"immutable replace and indexed map via .with / (x, i)","features":["Array methods"],"its":[{"slug":"immutable-replace-and-indexed-map-via-with-x-i-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"{\n  lineup: $.roster.with($.swap.slot, $.swap.in),\n  labelled: $.roster.map((p, i) => ({ slot: i, name: p.name })),\n}","usage":"db.rosters.aggregate([{ $addFields: { rosterUpdate: jsmql.expr(...) } }])"}]},{"slug":"file-upload-validation-with-literal-includes-endswith","title":"file upload validation with [literal].includes + .endsWith","features":["Array methods"],"its":[{"slug":"file-upload-validation-with-literal-includes-endswith-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"[\".jpg\", \".png\", \".pdf\", \".docx\"].includes($.file.ext.toLowerCase()) &&\n$.file.name.endsWith($.file.ext) &&\n$.file.size <= 25_000_000","usage":"db.uploads.find(jsmql(...))"}]},{"slug":"chat-moderation-with-inside-an-array-spread","title":"chat moderation with ?. inside an array spread","features":["Optional chaining"],"its":[{"slug":"chat-moderation-with-inside-an-array-spread-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"[...$.moderators, ...$.room?.mods, \"root\"].includes($.userId)","usage":"db.chatRooms.find(jsmql(...))"}]},{"slug":"inside-a-template-literal","title":"?. inside a template literal","features":["Optional chaining"],"its":[{"slug":"inside-a-template-literal-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"`${$.name?.first} ${$.name?.last}`.trim()","usage":"db.users.aggregate([{ $addFields: { label: jsmql.expr(...) } }])"}]},{"slug":"full-name-with-three-step-fallback-chain","title":"full name with three-step ?? fallback chain","features":["Nullish coalescing"],"its":[{"slug":"full-name-with-three-step-fallback-chain-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.firstName ?? $.aliases.at(0) ?? \"anonymous\"","usage":"db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])"}]},{"slug":"formatted-date-label-with-chain","title":"formatted date label with ?? chain","features":["Nullish coalescing"],"its":[{"slug":"formatted-date-label-with-chain-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$dateToString({ date: $.publishedAt, format: \"%Y-%m-%d\" }) ??\n$dateToString({ date: $.createdAt, format: \"%Y-%m-%d\" }) ??\n\"unknown\"","usage":"db.articles.aggregate([{ $addFields: { dateLabel: jsmql.expr(...) } }])"}]},{"slug":"moderator-membership-check-via-a-b","title":"moderator membership check via [...a, ...b]","features":["Array spread"],"its":[{"slug":"moderator-membership-check-via-a-b-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"[...$.moderators, ...$.room.mods, \"root\"].includes($.userId)","usage":"db.threads.find(jsmql(...))"}]},{"slug":"math-max-arr-math-min-arr-with-array-isarray-guard","title":"Math.max(...arr) - Math.min(...arr) with Array.isArray guard","features":["Array spread"],"its":[{"slug":"math-max-arr-math-min-arr-with-array-isarray-guard-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0","usage":"db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])"}]},{"slug":"dynamic-pivot-row-with-computed-key-shorthand-property","title":"dynamic pivot row with computed key + shorthand property","features":["Object literals"],"its":[{"slug":"dynamic-pivot-row-with-computed-key-shorthand-property-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$.products.map(p => ({ [p.category]: p.price, p }))","usage":"db.products.aggregate([{ $addFields: { byCategory: jsmql.expr(...) } }])"}]},{"slug":"pivot-table-row-via-object-fromentries-map","title":"pivot table row via Object.fromEntries(.map(...))","features":["Object literals"],"its":[{"slug":"pivot-table-row-via-object-fromentries-map-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Object.fromEntries($.metrics.map(m => [m.name, m.value]))","usage":"db.metrics.aggregate([{ $addFields: { row: jsmql.expr(...) } }])"}]},{"slug":"shopping-cart-total-with-10-000-cap","title":"shopping cart total with 10_000 cap","features":["Numeric separators"],"its":[{"slug":"shopping-cart-total-with-10-000-cap-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))","usage":"db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])"}]},{"slug":"normalise-a-string-or-number-field-with-typeof","title":"normalise a string-or-number field with typeof","features":["Type checks and casts"],"its":[{"slug":"normalise-a-string-or-number-field-with-typeof-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"typeof $.value === \"string\" ? $.value.trim() : String($.value)","usage":"db.items.aggregate([{ $addFields: { trimmed: jsmql.expr(...) } }])"}]},{"slug":"days-since-last-login-math-abs-datediff-new-date","title":"days since last login (Math.abs + $dateDiff + ?? + new Date)","features":["Date and time"],"its":[{"slug":"days-since-last-login-math-abs-datediff-new-date-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)","usage":"db.users.aggregate([{ $addFields: { daysSinceLogin: jsmql.expr(...) } }])"}]},{"slug":"days-since-document-was-created","title":"days since document was created","features":["Date and time"],"its":[{"slug":"days-since-document-was-created-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: \"day\" })","usage":"db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])"}]},{"slug":"days-since-event-date-now-gettime-86-400-000","title":"days since event (Date.now + .getTime + 86_400_000)","features":["Date and time"],"its":[{"slug":"days-since-event-date-now-gettime-86-400-000-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)","usage":"db.events.aggregate([{ $addFields: { daysSinceEvent: jsmql.expr(...) } }])"}]},{"slug":"annotated-insurance-underwriting-rule-with-and","title":"annotated insurance underwriting rule with // and /* */","features":["Comments"],"its":[{"slug":"annotated-insurance-underwriting-rule-with-and-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"// age window: 25 to 70 inclusive\n$.driver.age >= 25 && $.driver.age <= 70 &&\n\n/* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */\n$.policy.kmPerYear <= 30_000 &&\n\n// hard-list occupations that bump the applicant to the high-risk tier\n!($.driver.occupation in [\"stunt-double\", \"test-pilot\", \"demolition-engineer\"])","usage":"db.applicants.find(jsmql(...))"}]},{"slug":"discount-breakdown-bind-once-reuse-across-fields","title":"discount breakdown — bind once, reuse across fields","features":["IIFE"],"its":[{"slug":"discount-breakdown-bind-once-reuse-across-fields-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"((discount) => ({\n  finalPrice: $.price - discount,\n  savings: discount,\n  savingsPercent: Math.round((discount / $.price) * 100),\n}))($.price * (1 - $.loyalty.multiplier))","usage":"db.orders.aggregate([{ $addFields: { discount: jsmql.expr(...) } }])"}]},{"slug":"round-of-sum-as-a-plain-expression","title":"$round of $sum as a plain expression","features":["Escape hatch"],"its":[{"slug":"round-of-sum-as-a-plain-expression-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$round($sum($.lineTotal), 2)","usage":"db.invoices.aggregate([{ $addFields: { result: jsmql.expr(...) } }])"}]},{"slug":"tolower-wrapping-a-string-context","title":"$toLower wrapping a string-context +","features":["Escape hatch"],"its":[{"slug":"tolower-wrapping-a-string-context-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"expression","call":"jsmql.expr","query":"$toLower($.firstName + \" \" + $.lastName)","usage":"db.users.aggregate([{ $addFields: { handle: jsmql.expr(...) } }])"}]},{"slug":"parameterised-threshold-query","title":"parameterised threshold query","features":["Template tag"],"its":[{"slug":"parameterised-threshold-query-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"filter","call":"jsmql","query":"$.score >= 75 &&\n$.grade in [\"A\", \"B\"] &&\n$.submitted === true","usage":"db.students.find(jsmql(...))"}]},{"slug":"user-with-orders-join-via-lookup","title":"user-with-orders join via $$$ lookup","features":["Pipelines"],"its":[{"slug":"user-with-orders-join-via-lookup-compiles-to-the-expected-mql","title":"compiles to the expected MQL","kind":"pipeline","call":"jsmql","query":"$match($.active === true);\n$.recentOrders = $$$.orders.filter(o => {\n  $match(o.userId === $._id);\n  $sort({ createdAt: -1 });\n  $limit(5);\n});\nlet nOrders = $$$.orders.filter(o => o.userId === $._id).length;\n$project({ name: 1, recentOrders: 1, nOrders });","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"union-live-archive-users-with-placeholders-via-push","title":"union live + archive users with placeholders via $$.push","features":["Pipelines"],"its":[{"slug":"union-live-archive-users-with-placeholders-via-push-compiles-to-a-series-of-unionwith-stages-with-batched-documents","title":"compiles to a series of $unionWith stages with batched $documents","kind":"pipeline","call":"jsmql","query":"$match($.active === true);\n$$.push(\n  { _id: \"system\", name: \"System\", role: \"synthetic\" },\n  { _id: \"anon\",   name: \"Anonymous\", role: \"synthetic\" },\n  ...$$$.archive_users.filter(u => u.deleted === true)\n);\n$sort({ name: 1 });\n$limit(50);","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"archive-inactive-users-to-a-warehouse-via-out-multi-stage","title":"archive inactive users to a warehouse via $out (multi-stage)","features":["Pipelines"],"its":[{"slug":"archive-inactive-users-to-a-warehouse-via-out-multi-stage-filters-then-writes-to-a-cross-database-out-destination","title":"filters then writes to a cross-database $out destination","kind":"pipeline","call":"jsmql","query":"$match($.active === false && $.lastSeen < new Date(\"2025-01-01\"));\n$$$$.dw.archive_users = $$;","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"archive-expired-users-via-out-inline-filter","title":"archive expired users via $out (inline filter)","features":["Pipelines"],"its":[{"slug":"archive-expired-users-via-out-inline-filter-the-whole-pipeline-is-one-db-coll-filter-statement","title":"the whole pipeline is one $$$$.<db>.<coll> = $$.filter(...) statement","kind":"pipeline","call":"jsmql","query":"$$$$.dw.archive = $$.filter(u => u.status === \"expired\");","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"paginate-shipped-orders-newest-first-tosorted-slice","title":"paginate shipped orders newest-first (`.toSorted` + `.slice`)","features":["Pipelines"],"its":[{"slug":"paginate-shipped-orders-newest-first-tosorted-slice-compiles-a-sort-page-chain-into-sort-skip-limit","title":"compiles a sort+page chain into $sort + $skip + $limit","kind":"pipeline","call":"jsmql","query":"$match($.status === \"shipped\");\n$$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"denormalise-order-line-items-for-analytics-map","title":"denormalise order line items for analytics (`.map`)","features":["Pipelines"],"its":[{"slug":"denormalise-order-line-items-for-analytics-map-reshapes-each-shipped-order-doc-into-an-analytics-friendly-summary","title":"reshapes each shipped order doc into an analytics-friendly summary","kind":"pipeline","call":"jsmql","query":"$match($.shipped === true);\n$$ = $$.map(o => ({\n  orderId:  o._id,\n  customer: o.userId,\n  total:    o.qty * o.unitPrice,\n  shippedAt: o.shippedAt\n}));","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"top-10-revenue-leaderboard-tosorted-slice","title":"top-10 revenue leaderboard (`.toSorted` + `.slice`)","features":["Pipelines"],"its":[{"slug":"top-10-revenue-leaderboard-tosorted-slice-groups-sorts-and-slices-into-one-chain","title":"groups, sorts, and slices into one chain","kind":"pipeline","call":"jsmql","query":"$group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });\n$$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 10);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"most-expensive-line-items-across-shipped-orders-flatmap-map","title":"most expensive line items across shipped orders (`.flatMap` + `.map`)","features":["Pipelines"],"its":[{"slug":"most-expensive-line-items-across-shipped-orders-flatmap-map-flatten-order-items-project-to-the-item-itself-then-sort-by-price","title":"flatten order items, project to the item itself, then sort by price","kind":"pipeline","call":"jsmql","query":"$$ = $$.filter(o => o.status === \"shipped\").flatMap(o => o.items).map(o => o.items);\n$sort({ price: -1 });\n$limit(50);","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"merge-live-transactions-with-the-archive-stream-concat","title":"merge live transactions with the archive stream (`.concat`)","features":["Pipelines"],"its":[{"slug":"merge-live-transactions-with-the-archive-stream-concat-narrow-then-append-a-foreign-collection-in-one-chain","title":"narrow then append a foreign collection in one chain","kind":"pipeline","call":"jsmql","query":"$match($.region === \"AU\");\n$$ = $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);","usage":"db.transactions.aggregate(jsmql(...))"}]},{"slug":"reduce-scalar-wrap","title":"daily revenue summary (`$$ = [{ … : $$.reduce(…) }]` scalar wrap)","features":["Pipelines"],"its":[{"slug":"reduce-scalar-wrap-fold-the-stream-into-a-single-doc-summary-via-the-scalar-reduce-wrap","title":"fold the stream into a single-doc summary via the scalar reduce wrap","kind":"pipeline","call":"jsmql","query":"$match($.placedAt >= new Date(\"2026-05-01\") && $.placedAt < new Date(\"2026-06-01\"));\n$$ = [{\n  orders:    $$.reduce((acc, o) => acc + 1, 0),\n  revenue:   $$.reduce((acc, o) => acc + o.total, 0),\n  biggest:   $$.reduce((acc, o) => Math.max(acc, o.total), 0),\n  smallest:  $$.reduce((acc, o) => Math.min(acc, o.total), 0)\n}];","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"daily-revenue-summary-inline-reducer-body-reduce","title":"daily revenue summary, inline reducer body (`$$ = [$$.reduce(… => ({…}), {…})]`)","features":["Pipelines"],"its":[{"slug":"daily-revenue-summary-inline-reducer-body-reduce-same-mql-as-the-scalar-wrap-above-expressed-as-one-object-returning-reducer","title":"same MQL as the scalar wrap above, expressed as one object-returning reducer","kind":"pipeline","call":"jsmql","query":"$match($.placedAt >= new Date(\"2026-05-01\") && $.placedAt < new Date(\"2026-06-01\"));\n$$ = [$$.reduce(\n  (acc, o) => ({\n    ...acc,\n    orders:   acc.orders + 1,\n    revenue:  acc.revenue + o.total,\n    biggest:  Math.max(acc.biggest, o.total),\n    smallest: Math.min(acc.smallest, o.total)\n  }),\n  { orders: 0, revenue: 0, biggest: 0, smallest: 0 }\n)];","usage":"db.orders.aggregate(jsmql(...))"}]},{"slug":"export-contact-details-of-active-users-reduce-acc-concat","title":"export contact details of active users (`$$ = [$$.reduce(… => acc.concat(…), [])]`)","features":["Pipelines"],"its":[{"slug":"export-contact-details-of-active-users-reduce-acc-concat-filter-project-as-a-single-array-returning-reducer","title":"filter + project as a single array-returning reducer","kind":"pipeline","call":"jsmql","query":"$$ = [$$.reduce(\n  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),\n  []\n)];\n$$$$.exports.email_contacts = $$;","usage":"db.users.aggregate(jsmql(...))"}]},{"slug":"daily-active-user-engagement-digest-source-switch-filter-map-with-embedded-lookup","title":"daily active-user engagement digest (source-switch + filter + map-with-embedded-lookup)","features":["Pipelines"],"its":[{"slug":"daily-active-user-engagement-digest-source-switch-filter-map-with-embedded-lookup-pivots-onto-users-narrows-to-active-accounts-and-enriches-each-with-their-most-recent-order","title":"pivots onto users, narrows to active accounts, and enriches each with their most recent order","kind":"pipeline","call":"jsmql","query":"$$ = $$$.users.filter(u => u.active === true).map(u => ({\n  user:      u._id,\n  name:      u.name,\n  email:     u.contactDetails.email,\n  signupAt:  u.createdAt,\n  lastOrder: $$$.orders.find(o => o.userId === u._id)\n}));","usage":"db.daily_jobs.aggregate(jsmql(...))"}]},{"slug":"denormalise-a-user-with-their-top-5-most-recent-orders-chain-extension-inside-lookup","title":"denormalise a user with their top-5 most recent orders (chain extension inside $lookup)","features":["Pipelines"],"its":[{"slug":"denormalise-a-user-with-their-top-5-most-recent-orders-chain-extension-inside-lookup-the-chain-after-coll-filter-becomes-the-lookup-s-pipeline-body","title":"the chain after $$$.coll.filter(...) becomes the $lookup's pipeline body","kind":"pipeline","call":"jsmql","query":"$.recentOrders = $$$.orders\n  .filter(o => o.userId === $._id)\n  .toSorted((a, b) => a.placedAt - b.placedAt)\n  .toReversed()\n  .slice(0, 5)\n  .map(o => ({ id: o._id, total: o.total, placedAt: o.placedAt }));","usage":"db.users.aggregate(jsmql(...))"}]}]</script>
     <!-- jsmql-examples:end -->
 
     <script type="module">
@@ -830,7 +993,6 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       const toggleSidebarLabel = document.getElementById("toggle-sidebar-label");
       const mainEl = document.getElementById("main");
       const currentTitleEl = document.getElementById("current-title");
-      const currentKindEl = document.getElementById("current-kind");
       const countEl = document.getElementById("example-count");
       const usageEl = document.getElementById("usage-bar");
       const usageCodeEl = document.getElementById("usage-code");
@@ -873,7 +1035,84 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       // Compile mode is the ONLY playground state that influences the
       // generated MQL — the output itself is recomputed from the input on
       // every `change` event and never cached.
-      let currentCall = "jsmql";
+      //
+      // Each mode maps to a jsmql entry point. "auto" is the plain `jsmql()`
+      // that auto-detects Filter vs Pipeline shape; the other four force a
+      // strict-shape entry point so the user can see exactly what each one
+      // emits (and the actionable error when the input lowers to the wrong
+      // shape). The compile-mode toggle in the input band drives this.
+      const MODE_FNS = {
+        auto: jsmql,
+        filter: jsmql.filter,
+        update: jsmql.update,
+        expression: jsmql.expr,
+        pipeline: jsmql.pipeline,
+      };
+      const modeToggleEl = document.getElementById("mode-toggle");
+      const modeButtons = modeToggleEl.querySelectorAll("button");
+      let currentMode = "auto";
+
+      // Drives the always-on "MONGODB CALL" hint. `currentColl` is the
+      // collection name parsed from the active example's call site (or the
+      // generic `collection` when typing freely). `lastOutputIsPipeline` is
+      // set by `render()` from the actual MQL OUTPUT shape so the AUTO hint
+      // can pick the right driver method (a Pipeline array → `aggregate`, a
+      // Filter document → `find`).
+      let currentColl = "collection";
+      let lastOutputIsPipeline = false;
+
+      // The example manifest only records the `jsmql` / `jsmql.expr` call
+      // each example was authored with; map that to a toggle mode.
+      function modeForCall(call) {
+        return call === "jsmql.expr" ? "expression" : "auto";
+      }
+
+      // Build the "MONGODB CALL" hint for the active compile mode: the exact
+      // driver call you'd write to get the MQL shown in the output panel. The
+      // four strict-shape modes have a fixed call site; AUTO picks `find` vs
+      // `aggregate` from the actual output shape.
+      function usageForMode(mode) {
+        const c = currentColl;
+        switch (mode) {
+          case "filter":
+            return `db.${c}.find(jsmql.filter(...))`;
+          case "update":
+            return `db.${c}.updateOne(filter, jsmql.update(...))`;
+          case "expression":
+            return `db.${c}.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`;
+          case "pipeline":
+            return `db.${c}.aggregate(jsmql.pipeline(...))`;
+          default:
+            return lastOutputIsPipeline
+              ? `db.${c}.aggregate(jsmql(...))`
+              : `db.${c}.find(jsmql(...))`;
+        }
+      }
+
+      // The call-site hint is always present and always reflects the active
+      // compile mode (and, for AUTO, the current output shape).
+      function updateUsageBar() {
+        if (!usageEl) return;
+        usageCodeEl.textContent = usageForMode(currentMode);
+      }
+
+      // Set the active compile mode: update the toggle UI, the call-site hint,
+      // and re-render. When called as part of loading an example
+      // (`rerender: false`) the caller re-renders itself after `setValue`, so
+      // we skip the extra render here.
+      function setMode(mode, { rerender = true } = {}) {
+        if (!MODE_FNS[mode]) mode = "auto";
+        currentMode = mode;
+        for (const btn of modeButtons) {
+          btn.classList.toggle("active", btn.dataset.mode === mode);
+        }
+        updateUsageBar();
+        if (rerender) render();
+      }
+
+      for (const btn of modeButtons) {
+        btn.addEventListener("click", () => setMode(btn.dataset.mode));
+      }
 
       function populateExamples() {
         // Manifest is now an array of describes, each with its own `features`
@@ -995,12 +1234,18 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         const ex = examples.get(slug);
         if (!ex) return;
         activeSlug = slug;
+        // The "MONGODB CALL" hint is mode-driven (see `usageForMode`). Parse
+        // the example's collection name out of its authored call so every
+        // toggle mode can rebuild the call site for the same collection.
+        const collMatch = ex.usage && ex.usage.match(/^db\.([A-Za-z0-9_$]+)\./);
+        currentColl = collMatch ? collMatch[1] : "collection";
         // Update the compile mode BEFORE `setValue` — the change-event-driven
         // `render()` fires synchronously inside `setValue`, so any state it
-        // reads (compile mode, anything else that would change per-example)
-        // must be in place first or the output panel renders the new input
-        // with the OLD example's compile mode.
-        currentCall = ex.call || "jsmql";
+        // reads (compile mode, the call-site hint, anything else that changes
+        // per-example) must be in place first or the output panel renders the
+        // new input with the OLD example's compile mode. `setMode` also
+        // refreshes the call-site hint via `updateUsageBar`.
+        setMode(modeForCall(ex.call), { rerender: false });
         loadingFromList = true;
         inputCm.setValue(ex.query);
         loadingFromList = false;
@@ -1011,27 +1256,8 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         render();
 
         currentTitleEl.textContent = ex.displayTitle;
-        currentKindEl.hidden = false;
-        currentKindEl.className = "kind-pill " + ex.kind;
-        currentKindEl.textContent =
-          ex.kind === "pipeline" ? "PIPELINE" : ex.kind === "filter" ? "FILTER" : "EXPRESSION";
         inputPanel.classList.remove("pipeline", "filter", "expression");
         inputPanel.classList.add(ex.kind);
-        // Render the "how to call jsmql from MongoDB" hint below the editor
-        // label. Pulled straight from the test's `// → db.<coll>.<method>(...)`
-        // annotation so the playground always shows the example's real call
-        // site — `db.users.find(jsmql(...))`, `db.orders.aggregate(jsmql(...))`,
-        // or `db.users.updateOne({ _id: 123 }, jsmql.expr(...))` for the
-        // Update Filter case.
-        if (usageEl) {
-          if (ex.usage) {
-            usageEl.hidden = false;
-            usageCodeEl.textContent = ex.usage;
-          } else {
-            usageEl.hidden = true;
-            usageCodeEl.textContent = "";
-          }
-        }
 
         for (const [s, el] of itemEls) {
           el.classList.toggle("active", s === slug);
@@ -1053,12 +1279,11 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         activeSlug = null;
         for (const el of itemEls.values()) el.classList.remove("active");
         currentTitleEl.textContent = "";
-        currentKindEl.hidden = true;
         inputPanel.classList.remove("pipeline", "filter", "expression");
-        if (usageEl) {
-          usageEl.hidden = true;
-          usageCodeEl.textContent = "";
-        }
+        // No example loaded → fall back to the generic collection name so the
+        // (always-visible) call-site hint stays sensible while typing freely.
+        currentColl = "collection";
+        updateUsageBar();
         writeHash(null);
       }
 
@@ -1209,22 +1434,40 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         errorMarker = inputCm.markText(from, to, { className: "cm-error-marker" });
       }
 
-      // Fit-or-break JSON pretty-printer: keep nodes on one line up to 80
+      // Encode one scalar as pasteable JavaScript source — not JSON. A BSON
+      // Date must round-trip as `new Date(...)` so output copied from this
+      // panel runs as-is in a Node.js mongodb call. Plain JSON.stringify turns
+      // a Date into an ISO *string* (minified) or `{}` (the pretty-printer
+      // walks its empty own-keys) — neither reads back as a BSON date.
+      function encodeScalar(x) {
+        if (x instanceof Date) return "new Date(" + JSON.stringify(x.toISOString()) + ")";
+        return JSON.stringify(x);
+      }
+
+      // Single-line JS-source form of any value. Shared by both output modes
+      // (prettify off renders this directly; prettify on uses it for nodes
+      // that fit on one line) so dates serialise identically in both.
+      function compact(x) {
+        if (x instanceof Date) return encodeScalar(x);
+        if (Array.isArray(x)) return "[" + x.map(compact).join(", ") + "]";
+        if (x && typeof x === "object")
+          return Object.keys(x).length
+            ? "{ " +
+              Object.keys(x)
+                .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
+                .join(", ") +
+              " }"
+            : "{}";
+        return encodeScalar(x);
+      }
+
+      // Fit-or-break JS pretty-printer: keep nodes on one line up to 80
       // cols, only expanding when the compact form would overflow.
       function pretty(root) {
-        const compact = (x) =>
-          Array.isArray(x)
-            ? "[" + x.map(compact).join(", ") + "]"
-            : x && typeof x === "object"
-              ? Object.keys(x).length
-                ? "{ " +
-                  Object.keys(x)
-                    .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
-                    .join(", ") +
-                  " }"
-                : "{}"
-              : JSON.stringify(x);
         const go = (v, i, c) => {
+          // A Date never expands — keep it on one line regardless of column
+          // budget, else the object branch below would walk its empty keys.
+          if (v instanceof Date) return compact(v);
           const s = compact(v);
           if (c + s.length <= 80) return s;
           const pad = " ".repeat(i + 2);
@@ -1254,25 +1497,58 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
           outputCm.setValue("");
           outputCm.setOption("mode", { name: "javascript", json: true });
           outputPanel.classList.remove("error");
-          // Empty editor is a fresh start — drop the sticky `jsmql.expr`
-          // mode so the next thing the user types compiles as a Filter /
-          // Pipeline by default, not a partial expression.
-          currentCall = "jsmql";
+          // Empty editor is a fresh start — drop any sticky strict-shape
+          // mode back to AUTO so the next thing the user types compiles
+          // through the shape-detecting `jsmql()`. `rerender: false` avoids
+          // recursing into render() (we're already inside it); `setMode`
+          // still refreshes the (always-on) call-site hint.
+          currentColl = "collection";
+          lastOutputIsPipeline = false;
+          setMode("auto", { rerender: false });
           return;
         }
         const result = jsmql.validate(src);
         if (result.valid) {
           clearErrorMarker();
-          // Dispatch to the same entry point the active example used. Without
-          // this the Expression examples (jsmql.expr-authored) would render
-          // their output through `jsmql()` and pick up the find-filter wrap —
-          // `{ $expr: <agg> }` instead of the bare aggregation expression the
-          // test asserts. See docs/specs/filter-mode.md for the dispatch.
-          const compile = currentCall === "jsmql.expr" ? jsmql.expr : jsmql;
-          const out = compile(src);
+          // Dispatch through the entry point the compile-mode toggle selects.
+          // AUTO is the plain `jsmql()` shape-detector; the others force a
+          // strict-shape entry point. This is also why Expression examples
+          // (jsmql.expr-authored) render correctly — without the strict
+          // dispatch they would go through `jsmql()` and pick up the find-
+          // filter wrap (`{ $expr: <agg> }`) instead of the bare aggregation
+          // expression. See docs/specs/filter-mode.md for the dispatch.
+          const compile = MODE_FNS[currentMode] || jsmql;
+          // `jsmql.validate` checks the source against the shape-detecting
+          // `jsmql()` semantics, so a strict-shape entry point (filter /
+          // update / pipeline) can still throw here when the input would
+          // lower to the OTHER shape — e.g. forcing `pipeline` on a bare
+          // predicate. Those throws carry the same actionable wording the
+          // library shows at the call site, so surface them in the error
+          // panel rather than letting the exception strand stale output.
+          let out;
+          try {
+            out = compile(src);
+          } catch (err) {
+            const pos = typeof err.pos === "number" ? err.pos : 0;
+            if (typeof err.pos === "number" && err.code === "SYNTAX_ERROR") {
+              highlightErrorAt(pos);
+            } else {
+              clearErrorMarker();
+            }
+            outputCm.setOption("mode", null);
+            outputCm.setValue(`${err.name || "Error"} at position ${pos}\n\n${err.message}`);
+            outputPanel.classList.add("error");
+            updateUsageBar();
+            return;
+          }
           outputCm.setOption("mode", { name: "javascript", json: true });
-          outputCm.setValue(prettify.checked ? pretty(out) : JSON.stringify(out));
+          outputCm.setValue(prettify.checked ? pretty(out) : compact(out));
           outputPanel.classList.remove("error");
+          // The call-site hint must name the API that produces THIS output —
+          // for AUTO that means `aggregate` for a Pipeline array vs `find`
+          // for a Filter document.
+          lastOutputIsPipeline = Array.isArray(out);
+          updateUsageBar();
         } else {
           const e = result.errors[0];
           // CODEGEN_ERROR carries pos: 0 as a placeholder, not a real
@@ -1282,6 +1558,7 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
           outputCm.setOption("mode", null);
           outputCm.setValue(`${e.code} at position ${e.pos}\n\n${e.message}`);
           outputPanel.classList.add("error");
+          updateUsageBar();
         }
       }
 
@@ -1304,6 +1581,7 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         }, 1200);
       });
 
+      setMode("auto", { rerender: false });
       populateExamples();
       filterList("");
       window.addEventListener("hashchange", () => {

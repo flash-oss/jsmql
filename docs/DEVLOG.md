@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-29 — Playground: output panel renders BSON dates as `new Date(...)`
+
+The output panel is meant to be copy-paste source for a Node.js mongodb call, but Filter-mode dates broke that. `$.createdAt > new Date("2000-01-01")` lowers (via the match translator) to a query document holding a **real JS `Date` instance** — `{ createdAt: { $gt: <Date> } }`. The panel then serialised it two different, both-wrong ways depending on the prettify checkbox:
+
+- **prettify off** used `JSON.stringify`, which turns a `Date` into an ISO **string** (`"2000-01-01T00:00:00.000Z"`) — pasteable, but the driver reads it back as a string, not a BSON date.
+- **prettify on** used the custom fit-to-80 printer, which hit the `Date` via the generic-object branch and walked its (empty) own-keys into `{}` — pasteable but meaningless.
+
+Fix (all in `playground.html`, outside the two generated regions): both modes now share one date-aware serialiser. Extracted the formerly-nested `compact()` to a sibling of `pretty()`, added an `encodeScalar()` leaf that emits `new Date(<ISO>)` for `Date` instances (and falls back to `JSON.stringify` otherwise), and pointed the prettify-off branch at `compact()` instead of raw `JSON.stringify`. `pretty()`'s recursion also gained a `Date` guard so a deeply-nested date that overflows the column budget can't fall into the object-expand path and re-emit `{}`. Result: both checkbox states emit identical, runnable `new Date("2000-01-01T00:00:00.000Z")` source. Verified in-browser by driving the two CodeMirror editors and `eval`-ing the output back to a real `Date`.
+
+Only `Date` can reach the panel today — regex always lowers to `$regexMatch` strings, and the other opaque BSON values (`ObjectId`, `Uint8Array`) only arrive via template-tag interpolation, which the string-input playground can't produce.
+
+Also relabelled the panel header `MQL output (JSON)` → `MQL output (Node/Deno/Bun)`: now that a `Date` renders as `new Date(...)`, the output is JS source for a driver call, not strict JSON, and the old label was a false promise.
+
+Follow-up: swept `test/realistic.test.ts` for date fields compared against string literals (`$.placedAt >= "2026-01-01"`, `expiresAt`, `lastModifiedAt`, `lastSeen`, `createdAt`) and converted both the source and the expected MQL to `new Date(...)`. Modelling a timestamp as a bare string was a misleading example — MongoDB stores these as BSON dates, and a string comparison would silently never match. The playground examples island re-synced off these edits, so the live examples now show the date-typed form.
+
+---
+
+## 2026-05-29 — Playground: GitHub links + compile-mode toggle
+
+Three playground UX changes, all confined to `playground.html` (outside the two generated regions):
+
+1. **"syntax reference" now points to GitHub** — `docs/LANGUAGE.md` (a relative path that 404s on the deployed playground) → `https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md`.
+2. **Classic GitHub corner ribbon**, pinned top-right, linking to the repo home (`https://github.com/flash-oss/jsmql`). The header reserves 84px of right padding so the 72px octocat never overlaps the "Hide examples" toggle; the arm waves on hover and is stilled under `prefers-reduced-motion`.
+3. **The input band's passive kind indicator became an active compile-mode toggle**, sitting in its own bar directly above the "MONGODB CALL" hint. Five mutually-exclusive, equal-width buttons — `filter` / `update` / `expr` / `pipeline` / `auto` — each dispatch the editor source through a different entry point (`jsmql.filter`, `jsmql.update`, `jsmql.expr`, `jsmql.pipeline`, and plain `jsmql()` for AUTO). Each button always carries its kind colour (like the badges); AUTO is deliberately colourless (neutral grey), matching the request that the auto/shape-detecting path read as "no opinion". Selecting an example resets the toggle to the mode it was authored with (`jsmql` → AUTO, `jsmql.expr` → expr); emptying the editor resets to AUTO. The "MONGODB CALL" hint is now always visible and mode-driven: clicking a button rewrites it to the exact driver call that produces the MQL shown in the output panel — `db.<coll>.find(jsmql.filter(...))`, `db.<coll>.aggregate(jsmql.pipeline(...))`, `db.<coll>.updateOne(filter, jsmql.update(...))`, `db.<coll>.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`. For AUTO the method is chosen from the actual output shape (a Pipeline array → `aggregate`, a Filter document → `find`). The collection name is parsed from the active example's call site, falling back to a generic `collection` while typing freely.
+
+**Why the error-handling change matters.** `jsmql.validate()` checks source against the shape-detecting `jsmql()` semantics, so a strict-shape entry point can still *throw* at compile time even when validate reports valid — e.g. forcing `pipeline` mode on a bare predicate. The old `render()` only handled `validate` errors, so those throws stranded stale output. `render()` now wraps the `compile(src)` call in try/catch and routes the thrown `CodegenError` (with its actionable "Call jsmql.filter() … or wrap as `$match(...)`" wording) into the error panel.
+
+The previously-passive `#current-kind` pill was removed (the toggle now communicates compile mode, and the sidebar badge + "MONGODB CALL" bar still show the example's kind), reclaiming horizontal room for the example title in the band.
+
+---
+
 ## 2026-05-28 — Drop "v2" framing on nested lookups (planned future work, not forbidden)
 
 Three internal comments and one `docs/CLAUDE.md` cell described the nested-lookup rejection as "deferred to v2" — but per the file-header convention there is no v2 ([docs/DEVLOG.md:1357](DEVLOG.md#2026-04-…)), the project is pre-`0.1.0`, and the framing wrongly suggested the feature is forbidden rather than planned. Rewording: "deferred to v2" → "planned future work" everywhere it appeared, with a pointer to the lookup-stage spec's existing "Future work" section.
