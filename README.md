@@ -11,24 +11,24 @@ let filter = jsmql`$.age > ${age} && $.status === "active"`
 // → { age: { $gt: 18 }, status: "active" }   ← index-friendly query doc
 
 // Pipeline — for db.coll.aggregate(pipeline). Any `;` flips to stage mode.
-let pipeline = jsmql(($) => {
-    $match($.status === "active");
-    let subtotal = $.price * $.qty; // sub-total before tax/shipping
-    let withTax  = subtotal * 1.2; // with tax
-    $project({ sku: 1, subtotal, final: withTax });
-});
+// Top 3 departments by revenue across this year's shipped orders.
+let pipeline = jsmql`
+  $match($.status === "shipped" && $.placedAt >= new Date("2026-01-01"));
+  $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
+  $unwind($.buyer);
+  $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
+  $set({ avgOrder: $.revenue / $.orders });
+  $sort({ revenue: -1 });
+  $limit(3);
+`;
 // → [
-//     { "$match": { "status": "active" } }
-//     { "$set": { "__jsmql.subtotal": { "$multiply": ["$price", "$qty"] } } },
-//     { "$set": { "__jsmql.withTax": { "$multiply": ["$__jsmql.subtotal", 1.2] } } },
-//     {
-//         "$project": {
-//             "sku": 1,
-//             "subtotal": "$__jsmql.subtotal",
-//             "final": "$__jsmql.withTax"
-//         }
-//     },
-//     { "$unset": "__jsmql" }
+//   { $match: { status: "shipped", placedAt: { $gte: new Date("2026-01-01") } } },
+//   { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
+//   { $unwind: "$buyer" },
+//   { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
+//   { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
+//   { $sort: { revenue: -1 } },
+//   { $limit: 3 }
 // ]
 
 // Raw expression — for inside a stage body, or db.coll.updateOne(filter, update).
