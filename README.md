@@ -11,24 +11,28 @@ let filter = jsmql`$.age > ${age} && $.status === "active"`
 // → { age: { $gt: 18 }, status: "active" }   ← index-friendly query doc
 
 // Pipeline — for db.coll.aggregate(pipeline). Any `;` flips to stage mode.
-// Top 3 departments by revenue across this year's shipped orders.
+// Snapshot one user, then pivot the stream onto their 5 most-recent orders.
 let pipeline = jsmql`
-  $match($.status === "shipped" && $.placedAt >= new Date("2026-01-01"));
-  $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
-  $unwind($.buyer);
-  $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
-  $set({ avgOrder: $.revenue / $.orders });
-  $sort({ revenue: -1 });
-  $limit(3);
+  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
+  let userId = $._id;
+  $$ = $$$.orders
+    .filter(o => o.userId === userId)
+    .toSorted((a, b) => a.placedAt - b.placedAt)
+    .toReversed()
+    .slice(0, 5);
 `;
 // → [
-//   { $match: { status: "shipped", placedAt: { $gte: new Date("2026-01-01") } } },
-//   { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
-//   { $unwind: "$buyer" },
-//   { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
-//   { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
-//   { $sort: { revenue: -1 } },
-//   { $limit: 3 }
+//   { $match: { email: "me@example.com" } },
+//   { $limit: 1 },
+//   { $set: { "__jsmql.userId": "$_id" } },
+//   { $lookup: { from: "orders", let: { userId: "$__jsmql.userId" }, pipeline: [
+//       { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+//       { $sort: { placedAt: -1 } },
+//       { $limit: 5 },
+//   ], as: "__jsmql.__lookup1" } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" }
 // ]
 
 // Raw expression — for inside a stage body, or db.coll.updateOne(filter, update).
