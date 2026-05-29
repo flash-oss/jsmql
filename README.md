@@ -118,6 +118,38 @@ jsmql(`$ = {
 //       "byStatus":   [{ "$group": { "_id": "$status", "n": { "$sum": 1 } } }]
 //   } }]
 
+// "Look up me, then pivot to my 5 most-recent orders." 3 jsmql statements that would be ~30 lines of hand-written MQL.
+jsmql(`
+  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
+  let userId = $._id;
+  $$ = $$$.orders
+    .filter(o => o.userId === userId)
+    .toSorted((a, b) => a.placedAt - b.placedAt)
+    .toReversed()
+    .slice(0, 5);
+`);
+// → [
+//   { $match: { email: "me@example.com" } },
+//   { $limit: 1 },
+//   { $set: { "__jsmql.userId": "$_id" } },
+//   { $lookup: {
+//       from: "orders",
+//       let: { userId: "$__jsmql.userId" },
+//       pipeline: [
+//         { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+//         { $sort: { placedAt: -1 } },
+//         { $limit: 5 }
+//       ],
+//       as: "__jsmql.__lookup1"
+//   } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" }
+// ]
+// Why this is hard in hand-written MQL: $unionWith has no `let:` slot, so you can't
+// carry the snapshotted _id across a source-switch — only $lookup can. jsmql picks
+// the right shape automatically when the foreign predicate references an outer name.
+
 // `jsmql()` returns an UpdateFilter as a pipeline, to avoid common footgun of wiping out the whole collection.
 db.users.updateMany({}, jsmql(($) => $.name = $.name.toUpperCase()))
 // → [{ "$set": { "name": { "$toUpper": "$name" } } }] -> will upper-case all names in the collection
