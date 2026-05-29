@@ -39,7 +39,7 @@ describe("snapshot one user, then pivot to their 5 most-recent orders", { featur
         jsmql`
 $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
 let userId = $._id;
-$$ = $$$.orders
+$$ = $$$$.archive.orders
   .filter(o => o.userId === userId)
   .toSorted((a, b) => a.placedAt - b.placedAt)
   .toReversed()
@@ -51,7 +51,7 @@ $$ = $$$.orders
         { $set: { "__jsmql.userId": "$_id" } },
         {
           $lookup: {
-            from: "orders",
+            from: { db: "archive", coll: "orders" },
             let: { userId: "$__jsmql.userId" },
             pipeline: [
               { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
