@@ -15,7 +15,7 @@ let filter = jsmql`$.age > ${age} && $.status === "active"`
 let pipeline = jsmql`
   $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
   let userId = $._id;
-  $$ = $$$.orders
+  $$ = $$$$.archive.orders
     .filter(o => o.userId === userId)
     .toSorted((a, b) => a.placedAt - b.placedAt)
     .toReversed()
@@ -25,7 +25,7 @@ let pipeline = jsmql`
 //   { $match: { email: "me@example.com" } },
 //   { $limit: 1 },
 //   { $set: { "__jsmql.userId": "$_id" } },
-//   { $lookup: { from: "orders", let: { userId: "$__jsmql.userId" }, pipeline: [
+//   { $lookup: { from: { db: "archive", coll: "orders" }, let: { userId: "$__jsmql.userId" }, pipeline: [
 //       { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
 //       { $sort: { placedAt: -1 } },
 //       { $limit: 5 },
