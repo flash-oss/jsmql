@@ -944,7 +944,7 @@
       </section>
       <section class="panel" id="output-panel">
         <div class="label">
-          <span>MQL output (JSON)</span>
+          <span>MQL output (Node/Deno/Bun)</span>
           <span class="controls">
             <label><input type="checkbox" id="prettify" checked /> Prettify</label>
             <button type="button" id="copy">Copy</button>
@@ -1434,22 +1434,40 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         errorMarker = inputCm.markText(from, to, { className: "cm-error-marker" });
       }
 
-      // Fit-or-break JSON pretty-printer: keep nodes on one line up to 80
+      // Encode one scalar as pasteable JavaScript source — not JSON. A BSON
+      // Date must round-trip as `new Date(...)` so output copied from this
+      // panel runs as-is in a Node.js mongodb call. Plain JSON.stringify turns
+      // a Date into an ISO *string* (minified) or `{}` (the pretty-printer
+      // walks its empty own-keys) — neither reads back as a BSON date.
+      function encodeScalar(x) {
+        if (x instanceof Date) return "new Date(" + JSON.stringify(x.toISOString()) + ")";
+        return JSON.stringify(x);
+      }
+
+      // Single-line JS-source form of any value. Shared by both output modes
+      // (prettify off renders this directly; prettify on uses it for nodes
+      // that fit on one line) so dates serialise identically in both.
+      function compact(x) {
+        if (x instanceof Date) return encodeScalar(x);
+        if (Array.isArray(x)) return "[" + x.map(compact).join(", ") + "]";
+        if (x && typeof x === "object")
+          return Object.keys(x).length
+            ? "{ " +
+              Object.keys(x)
+                .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
+                .join(", ") +
+              " }"
+            : "{}";
+        return encodeScalar(x);
+      }
+
+      // Fit-or-break JS pretty-printer: keep nodes on one line up to 80
       // cols, only expanding when the compact form would overflow.
       function pretty(root) {
-        const compact = (x) =>
-          Array.isArray(x)
-            ? "[" + x.map(compact).join(", ") + "]"
-            : x && typeof x === "object"
-              ? Object.keys(x).length
-                ? "{ " +
-                  Object.keys(x)
-                    .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
-                    .join(", ") +
-                  " }"
-                : "{}"
-              : JSON.stringify(x);
         const go = (v, i, c) => {
+          // A Date never expands — keep it on one line regardless of column
+          // budget, else the object branch below would walk its empty keys.
+          if (v instanceof Date) return compact(v);
           const s = compact(v);
           if (c + s.length <= 80) return s;
           const pad = " ".repeat(i + 2);
@@ -1524,7 +1542,7 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
             return;
           }
           outputCm.setOption("mode", { name: "javascript", json: true });
-          outputCm.setValue(prettify.checked ? pretty(out) : JSON.stringify(out));
+          outputCm.setValue(prettify.checked ? pretty(out) : compact(out));
           outputPanel.classList.remove("error");
           // The call-site hint must name the API that produces THIS output —
           // for AUTO that means `aggregate` for a Pipeline array vs `find`
