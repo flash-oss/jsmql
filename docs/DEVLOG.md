@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-29 — Playground: GitHub links + compile-mode toggle
+
+Several playground UX changes, all confined to `playground.html` (outside the two generated regions):
+
+1. **"syntax reference" now points to GitHub** — `docs/LANGUAGE.md` (a relative path that 404s on the deployed playground) → `https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md`.
+2. **Classic GitHub corner ribbon**, pinned top-right, linking to the repo home (`https://github.com/flash-oss/jsmql`). Sized at 48px so it matches the header height; the header reserves 60px of right padding so the ribbon never overlaps the "Hide examples" toggle. The octocat fills with the page background colour (white) so it reads against the accent-blue triangle; the arm waves on hover and is stilled under `prefers-reduced-motion`.
+3. **The input band's passive kind indicator became an active compile-mode toggle**, sitting in its own bar directly above the "MONGODB CALL" hint. Five mutually-exclusive, equal-width buttons — `filter` / `update` / `expr` / `pipeline` / `auto` — each dispatch the editor source through a different entry point (`jsmql.filter`, `jsmql.update`, `jsmql.expr`, `jsmql.pipeline`, and plain `jsmql()` for AUTO). Each button always carries its kind colour (like the badges); AUTO is deliberately colourless (neutral grey). Selecting an example resets the toggle to the mode it was authored with (`jsmql` → AUTO, `jsmql.expr` → expr); emptying the editor resets to AUTO.
+4. **The "MONGODB CALL" hint is always visible and mode-driven**: it shows the exact driver call that produces the MQL in the output panel — `db.<coll>.find(jsmql.filter(...))`, `db.<coll>.aggregate(jsmql.pipeline(...))`, `db.<coll>.updateOne(filter, jsmql.update(...))`, `db.<coll>.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`. For AUTO the method is chosen from the actual output shape (a Pipeline array → `aggregate`, a Filter document → `find`). The collection name is parsed from the active example's call site, falling back to a generic `collection` while typing freely.
+5. **The expression-kind input label now gets its gradient** — only `pipeline` and `filter` had `.panel.input-panel.<kind> .label` gradient rules; added the `expression` variant (plus the missing `--expr-strong` border colour).
+
+**Why the error-handling change matters.** `jsmql.validate()` checks source against the shape-detecting `jsmql()` semantics, so a strict-shape entry point can still *throw* at compile time even when validate reports valid — e.g. forcing `pipeline` mode on a bare predicate. `render()` now wraps the `compile(src)` call in try/catch and routes the thrown `CodegenError` (with its actionable "Call jsmql.filter() … or wrap as `$match(...)`" wording) into the error panel instead of stranding stale output.
+
+The previously-passive `#current-kind` pill was removed (the toggle now communicates compile mode, and the sidebar badge + "MONGODB CALL" bar still show the example's kind).
+
+---
+
 ## 2026-05-29 — feat: outer `let` bindings cross the source-switch boundary as `$lookup.let` vars
 
 The previous `$lookup`-pivot commit detected `$.<field>` refs in the predicate and routed them through `$lookup.let`, but **outer `let` bindings** weren't recognised — `let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);` errored with "Unknown identifier 'uid'". The user had to inline the path (`u._id === $.userId`) or pre-stash via `$.x = uid` before the source-switch, defeating the point of the `let` binding.

@@ -31,12 +31,15 @@
         --accent-soft-strong: rgba(42, 109, 244, 0.16);
         --expr: #2a6df4;
         --expr-soft: rgba(42, 109, 244, 0.1);
+        --expr-strong: rgba(42, 109, 244, 0.22);
         --pipe: #b45309;
         --pipe-soft: rgba(217, 119, 6, 0.12);
         --pipe-strong: rgba(217, 119, 6, 0.22);
         --filter: #047857;
         --filter-soft: rgba(4, 120, 87, 0.12);
         --filter-strong: rgba(4, 120, 87, 0.22);
+        --update: #7c3aed;
+        --update-soft: rgba(124, 58, 237, 0.12);
         --error: #c0392b;
         --error-bg: #fdf3f2;
         --mono:
@@ -63,6 +66,9 @@
 
       header {
         padding: 10px 16px;
+        /* Reserve room on the right so the 48px GitHub corner ribbon never
+           overlaps the "Hide examples" toggle. */
+        padding-right: 60px;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
         font-size: 13px;
@@ -119,6 +125,58 @@
         border: 1px solid var(--border);
         border-radius: 3px;
         background: var(--bg);
+      }
+
+      /* Classic GitHub corner ribbon, pinned top-right. The fill is the
+         accent colour so the octocat reads against the white header. */
+      .github-corner {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 10;
+        color: var(--accent);
+      }
+
+      /* The folded ribbon (the first, attribute-less path) takes the accent
+         fill; the octocat itself must be the page background colour so it
+         reads as a white silhouette against the blue triangle. */
+      .github-corner svg {
+        display: block;
+        fill: currentColor;
+      }
+
+      .github-corner .octo-arm,
+      .github-corner .octo-body {
+        fill: var(--panel);
+      }
+
+      .github-corner .octo-arm {
+        transform-origin: 130px 106px;
+      }
+
+      .github-corner:hover .octo-arm {
+        animation: octocat-wave 560ms ease-in-out;
+      }
+
+      @keyframes octocat-wave {
+        0%,
+        100% {
+          transform: rotate(0);
+        }
+        20%,
+        60% {
+          transform: rotate(-25deg);
+        }
+        40%,
+        80% {
+          transform: rotate(10deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .github-corner:hover .octo-arm {
+          animation: none;
+        }
       }
 
       main {
@@ -488,6 +546,11 @@
         border-bottom-color: var(--filter-strong);
       }
 
+      .panel.input-panel.expression .label {
+        background: linear-gradient(180deg, var(--expr-soft), var(--bg));
+        border-bottom-color: var(--expr-strong);
+      }
+
       /* "MongoDB call" hint shown above the editor, directly below the grey
          "jsmql input" label. The kind-coloured strip on the left mirrors the
          example's kind so a user scanning the playground can connect the
@@ -512,10 +575,6 @@
 
       .panel.input-panel.filter .usage-bar {
         border-left-color: var(--filter);
-      }
-
-      .usage-bar[hidden] {
-        display: none;
       }
 
       .usage-bar .usage-label {
@@ -575,30 +634,100 @@
         min-width: 0;
       }
 
-      .kind-pill {
+      /* The compile-mode toggle sits in its own bar directly above the
+         "MongoDB call" hint (and stays visible even when that hint is
+         hidden). The 3px transparent left border keeps its contents aligned
+         with the colour-stripped usage-bar below it. */
+      .mode-bar {
+        display: flex;
+        align-items: center;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        border-left: 3px solid transparent;
+        background: var(--sidebar-bg);
+        flex-shrink: 0;
+      }
+
+      /* Compile-mode toggle: one button per jsmql entry point, styled like
+         the kind badges (same mono pill look) but rendered as a segmented
+         control where exactly one is active. Buttons share a fixed width so
+         the band reads as a uniform switch rather than ragged chips. */
+      .mode-toggle {
+        display: inline-flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .mode-toggle button {
         font-family: var(--mono);
         font-size: 9px;
         font-weight: 700;
         letter-spacing: 0.5px;
-        padding: 2px 6px;
+        text-transform: uppercase;
+        width: 56px;
+        padding: 3px 0;
+        text-align: center;
+        border: 1px solid var(--border);
         border-radius: 3px;
-        flex-shrink: 0;
+        background: var(--panel);
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .mode-toggle button:hover {
+        border-color: currentColor;
+        background: var(--bg);
+      }
+
+      /* Each button always carries its kind colour (like the badges) so the
+         band reads as a colour-coded switch; the active one fills in with the
+         soft tint + a solid current-colour border. AUTO stays neutral. */
+      .mode-toggle button[data-mode="filter"] {
+        color: var(--filter);
+      }
+
+      .mode-toggle button[data-mode="update"] {
+        color: var(--update);
+      }
+
+      .mode-toggle button[data-mode="expression"] {
         color: var(--expr);
-        background: var(--expr-soft);
       }
 
-      .kind-pill.pipeline {
+      .mode-toggle button[data-mode="pipeline"] {
         color: var(--pipe);
-        background: var(--pipe-soft);
       }
 
-      .kind-pill.filter {
+      .mode-toggle button.active {
+        border-color: currentColor;
+      }
+
+      .mode-toggle button.active[data-mode="filter"] {
         color: var(--filter);
         background: var(--filter-soft);
       }
 
-      .kind-pill[hidden] {
-        display: none;
+      .mode-toggle button.active[data-mode="update"] {
+        color: var(--update);
+        background: var(--update-soft);
+      }
+
+      .mode-toggle button.active[data-mode="expression"] {
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .mode-toggle button.active[data-mode="pipeline"] {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      /* AUTO is the neutral, colourless default — it dispatches through the
+         plain `jsmql()` entry point that auto-detects the output shape. */
+      .mode-toggle button.active[data-mode="auto"] {
+        color: var(--fg);
+        background: var(--border);
+        border-color: var(--border-strong);
       }
 
       .label label {
@@ -696,7 +825,7 @@
     <header>
       <strong>jsmql playground</strong>
       <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
-      <a href="docs/LANGUAGE.md">syntax reference</a>
+      <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">syntax reference</a>
       <span class="spacer"></span>
       <button
         type="button"
@@ -708,6 +837,27 @@
         <span class="kbd">⌘B</span>
       </button>
     </header>
+    <a
+      href="https://github.com/flash-oss/jsmql"
+      class="github-corner"
+      aria-label="View source on GitHub"
+      title="View source on GitHub"
+    >
+      <svg width="48" height="48" viewBox="0 0 250 250" aria-hidden="true">
+        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
+        <path
+          d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
+          fill="currentColor"
+          style="transform-origin: 130px 106px"
+          class="octo-arm"
+        ></path>
+        <path
+          d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.6 141.8,141.5 Z"
+          fill="currentColor"
+          class="octo-body"
+        ></path>
+      </svg>
+    </a>
     <main id="main">
       <aside id="sidebar" aria-label="Examples">
         <div class="sidebar-top">
@@ -763,10 +913,23 @@
           <span class="label-main">
             <span class="label-tag">jsmql input</span>
             <span class="current-title" id="current-title"></span>
-            <span class="kind-pill" id="current-kind" hidden></span>
           </span>
         </div>
-        <div class="usage-bar" id="usage-bar" hidden>
+        <div class="mode-bar">
+          <span
+            class="mode-toggle"
+            id="mode-toggle"
+            role="group"
+            aria-label="Compile mode"
+          >
+            <button type="button" data-mode="filter" title="jsmql.filter(...)">filter</button>
+            <button type="button" data-mode="update" title="jsmql.update(...)">update</button>
+            <button type="button" data-mode="expression" title="jsmql.expr(...)">expr</button>
+            <button type="button" data-mode="pipeline" title="jsmql.pipeline(...)">pipeline</button>
+            <button type="button" data-mode="auto" title="jsmql(...)">auto</button>
+          </span>
+        </div>
+        <div class="usage-bar" id="usage-bar">
           <span class="usage-label">MongoDB call:</span>
           <code class="usage-code" id="usage-code"></code>
         </div>
@@ -830,7 +993,6 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       const toggleSidebarLabel = document.getElementById("toggle-sidebar-label");
       const mainEl = document.getElementById("main");
       const currentTitleEl = document.getElementById("current-title");
-      const currentKindEl = document.getElementById("current-kind");
       const countEl = document.getElementById("example-count");
       const usageEl = document.getElementById("usage-bar");
       const usageCodeEl = document.getElementById("usage-code");
@@ -873,7 +1035,84 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
       // Compile mode is the ONLY playground state that influences the
       // generated MQL — the output itself is recomputed from the input on
       // every `change` event and never cached.
-      let currentCall = "jsmql";
+      //
+      // Each mode maps to a jsmql entry point. "auto" is the plain `jsmql()`
+      // that auto-detects Filter vs Pipeline shape; the other four force a
+      // strict-shape entry point so the user can see exactly what each one
+      // emits (and the actionable error when the input lowers to the wrong
+      // shape). The compile-mode toggle in the input band drives this.
+      const MODE_FNS = {
+        auto: jsmql,
+        filter: jsmql.filter,
+        update: jsmql.update,
+        expression: jsmql.expr,
+        pipeline: jsmql.pipeline,
+      };
+      const modeToggleEl = document.getElementById("mode-toggle");
+      const modeButtons = modeToggleEl.querySelectorAll("button");
+      let currentMode = "auto";
+
+      // Drives the always-on "MONGODB CALL" hint. `currentColl` is the
+      // collection name parsed from the active example's call site (or the
+      // generic `collection` when typing freely). `lastOutputIsPipeline` is
+      // set by `render()` from the actual MQL OUTPUT shape so the AUTO hint
+      // can pick the right driver method (a Pipeline array → `aggregate`, a
+      // Filter document → `find`).
+      let currentColl = "collection";
+      let lastOutputIsPipeline = false;
+
+      // The example manifest only records the `jsmql` / `jsmql.expr` call
+      // each example was authored with; map that to a toggle mode.
+      function modeForCall(call) {
+        return call === "jsmql.expr" ? "expression" : "auto";
+      }
+
+      // Build the "MONGODB CALL" hint for the active compile mode: the exact
+      // driver call you'd write to get the MQL shown in the output panel. The
+      // four strict-shape modes have a fixed call site; AUTO picks `find` vs
+      // `aggregate` from the actual output shape.
+      function usageForMode(mode) {
+        const c = currentColl;
+        switch (mode) {
+          case "filter":
+            return `db.${c}.find(jsmql.filter(...))`;
+          case "update":
+            return `db.${c}.updateOne(filter, jsmql.update(...))`;
+          case "expression":
+            return `db.${c}.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`;
+          case "pipeline":
+            return `db.${c}.aggregate(jsmql.pipeline(...))`;
+          default:
+            return lastOutputIsPipeline
+              ? `db.${c}.aggregate(jsmql(...))`
+              : `db.${c}.find(jsmql(...))`;
+        }
+      }
+
+      // The call-site hint is always present and always reflects the active
+      // compile mode (and, for AUTO, the current output shape).
+      function updateUsageBar() {
+        if (!usageEl) return;
+        usageCodeEl.textContent = usageForMode(currentMode);
+      }
+
+      // Set the active compile mode: update the toggle UI, the call-site hint,
+      // and re-render. When called as part of loading an example
+      // (`rerender: false`) the caller re-renders itself after `setValue`, so
+      // we skip the extra render here.
+      function setMode(mode, { rerender = true } = {}) {
+        if (!MODE_FNS[mode]) mode = "auto";
+        currentMode = mode;
+        for (const btn of modeButtons) {
+          btn.classList.toggle("active", btn.dataset.mode === mode);
+        }
+        updateUsageBar();
+        if (rerender) render();
+      }
+
+      for (const btn of modeButtons) {
+        btn.addEventListener("click", () => setMode(btn.dataset.mode));
+      }
 
       function populateExamples() {
         // Manifest is now an array of describes, each with its own `features`
@@ -995,12 +1234,18 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         const ex = examples.get(slug);
         if (!ex) return;
         activeSlug = slug;
+        // The "MONGODB CALL" hint is mode-driven (see `usageForMode`). Parse
+        // the example's collection name out of its authored call so every
+        // toggle mode can rebuild the call site for the same collection.
+        const collMatch = ex.usage && ex.usage.match(/^db\.([A-Za-z0-9_$]+)\./);
+        currentColl = collMatch ? collMatch[1] : "collection";
         // Update the compile mode BEFORE `setValue` — the change-event-driven
         // `render()` fires synchronously inside `setValue`, so any state it
-        // reads (compile mode, anything else that would change per-example)
-        // must be in place first or the output panel renders the new input
-        // with the OLD example's compile mode.
-        currentCall = ex.call || "jsmql";
+        // reads (compile mode, the call-site hint, anything else that changes
+        // per-example) must be in place first or the output panel renders the
+        // new input with the OLD example's compile mode. `setMode` also
+        // refreshes the call-site hint via `updateUsageBar`.
+        setMode(modeForCall(ex.call), { rerender: false });
         loadingFromList = true;
         inputCm.setValue(ex.query);
         loadingFromList = false;
@@ -1011,27 +1256,8 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         render();
 
         currentTitleEl.textContent = ex.displayTitle;
-        currentKindEl.hidden = false;
-        currentKindEl.className = "kind-pill " + ex.kind;
-        currentKindEl.textContent =
-          ex.kind === "pipeline" ? "PIPELINE" : ex.kind === "filter" ? "FILTER" : "EXPRESSION";
         inputPanel.classList.remove("pipeline", "filter", "expression");
         inputPanel.classList.add(ex.kind);
-        // Render the "how to call jsmql from MongoDB" hint below the editor
-        // label. Pulled straight from the test's `// → db.<coll>.<method>(...)`
-        // annotation so the playground always shows the example's real call
-        // site — `db.users.find(jsmql(...))`, `db.orders.aggregate(jsmql(...))`,
-        // or `db.users.updateOne({ _id: 123 }, jsmql.expr(...))` for the
-        // Update Filter case.
-        if (usageEl) {
-          if (ex.usage) {
-            usageEl.hidden = false;
-            usageCodeEl.textContent = ex.usage;
-          } else {
-            usageEl.hidden = true;
-            usageCodeEl.textContent = "";
-          }
-        }
 
         for (const [s, el] of itemEls) {
           el.classList.toggle("active", s === slug);
@@ -1053,12 +1279,11 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         activeSlug = null;
         for (const el of itemEls.values()) el.classList.remove("active");
         currentTitleEl.textContent = "";
-        currentKindEl.hidden = true;
         inputPanel.classList.remove("pipeline", "filter", "expression");
-        if (usageEl) {
-          usageEl.hidden = true;
-          usageCodeEl.textContent = "";
-        }
+        // No example loaded → fall back to the generic collection name so the
+        // (always-visible) call-site hint stays sensible while typing freely.
+        currentColl = "collection";
+        updateUsageBar();
         writeHash(null);
       }
 
@@ -1254,25 +1479,58 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
           outputCm.setValue("");
           outputCm.setOption("mode", { name: "javascript", json: true });
           outputPanel.classList.remove("error");
-          // Empty editor is a fresh start — drop the sticky `jsmql.expr`
-          // mode so the next thing the user types compiles as a Filter /
-          // Pipeline by default, not a partial expression.
-          currentCall = "jsmql";
+          // Empty editor is a fresh start — drop any sticky strict-shape
+          // mode back to AUTO so the next thing the user types compiles
+          // through the shape-detecting `jsmql()`. `rerender: false` avoids
+          // recursing into render() (we're already inside it); `setMode`
+          // still refreshes the (always-on) call-site hint.
+          currentColl = "collection";
+          lastOutputIsPipeline = false;
+          setMode("auto", { rerender: false });
           return;
         }
         const result = jsmql.validate(src);
         if (result.valid) {
           clearErrorMarker();
-          // Dispatch to the same entry point the active example used. Without
-          // this the Expression examples (jsmql.expr-authored) would render
-          // their output through `jsmql()` and pick up the find-filter wrap —
-          // `{ $expr: <agg> }` instead of the bare aggregation expression the
-          // test asserts. See docs/specs/filter-mode.md for the dispatch.
-          const compile = currentCall === "jsmql.expr" ? jsmql.expr : jsmql;
-          const out = compile(src);
+          // Dispatch through the entry point the compile-mode toggle selects.
+          // AUTO is the plain `jsmql()` shape-detector; the others force a
+          // strict-shape entry point. This is also why Expression examples
+          // (jsmql.expr-authored) render correctly — without the strict
+          // dispatch they would go through `jsmql()` and pick up the find-
+          // filter wrap (`{ $expr: <agg> }`) instead of the bare aggregation
+          // expression. See docs/specs/filter-mode.md for the dispatch.
+          const compile = MODE_FNS[currentMode] || jsmql;
+          // `jsmql.validate` checks the source against the shape-detecting
+          // `jsmql()` semantics, so a strict-shape entry point (filter /
+          // update / pipeline) can still throw here when the input would
+          // lower to the OTHER shape — e.g. forcing `pipeline` on a bare
+          // predicate. Those throws carry the same actionable wording the
+          // library shows at the call site, so surface them in the error
+          // panel rather than letting the exception strand stale output.
+          let out;
+          try {
+            out = compile(src);
+          } catch (err) {
+            const pos = typeof err.pos === "number" ? err.pos : 0;
+            if (typeof err.pos === "number" && err.code === "SYNTAX_ERROR") {
+              highlightErrorAt(pos);
+            } else {
+              clearErrorMarker();
+            }
+            outputCm.setOption("mode", null);
+            outputCm.setValue(`${err.name || "Error"} at position ${pos}\n\n${err.message}`);
+            outputPanel.classList.add("error");
+            updateUsageBar();
+            return;
+          }
           outputCm.setOption("mode", { name: "javascript", json: true });
           outputCm.setValue(prettify.checked ? pretty(out) : JSON.stringify(out));
           outputPanel.classList.remove("error");
+          // The call-site hint must name the API that produces THIS output —
+          // for AUTO that means `aggregate` for a Pipeline array vs `find`
+          // for a Filter document.
+          lastOutputIsPipeline = Array.isArray(out);
+          updateUsageBar();
         } else {
           const e = result.errors[0];
           // CODEGEN_ERROR carries pos: 0 as a placeholder, not a real
@@ -1282,6 +1540,7 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
           outputCm.setOption("mode", null);
           outputCm.setValue(`${e.code} at position ${e.pos}\n\n${e.message}`);
           outputPanel.classList.add("error");
+          updateUsageBar();
         }
       }
 
@@ -1304,6 +1563,7 @@ If '${e.identifier}' is a value from outer scope, use the jsmql\`\` template tag
         }, 1200);
       });
 
+      setMode("auto", { rerender: false });
       populateExamples();
       filterList("");
       window.addEventListener("hashchange", () => {
