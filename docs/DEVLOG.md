@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-29 — feat: `$$ = $$$.<coll>.filter(<correlatedPred>)` auto-rewrites to `$lookup` + `$unwind` + `$replaceWith`
+
+`$$ = $$$.<coll>.filter(p)` previously rejected predicates that referenced the outer document (`$.<field>`) because the lowering used `$unionWith`, and MongoDB's `$unionWith` has no `let:` slot to thread outer-doc context into its sub-pipeline. The user was forced into the explicit `$.matched = $$$.coll.filter(p); $unwind($.matched); $ = $.matched;` chain — which works but reads like manual MQL plumbing.
+
+This commit teaches `lowerChainOnCollection` to detect when the head's `.filter(p)` predicate is *correlated* (i.e. `extractLetsFromExpr` would hoist any `$.<field>` paths into `$lookup.let` vars) and auto-rewrite to a `$lookup` + `$unwind` + `$replaceWith` triple. The result is a stream of foreign docs correlated per outer doc — one output row per (outer × matching-foreign) pair, with the foreign doc as the new root.
+
+```js
+// Before: rejected with "$.<field> inside .filter of $$ = … is not supported"
+$$ = $$$.users.filter(u => u._id === $.userId);
+
+// After:
+[
+  { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+  { $unwind: "$__jsmql.__lookup1" },
+  { $replaceWith: "$__jsmql.__lookup1" },
+  { $unset: "__jsmql" },
+]
+```
+
+**Lowering family dispatch.** `predicateReferencesOuterDoc(lambda)` (new export from `lookup-translation.ts`) runs `extractLetsFromExpr` and reports whether any `$.<field>` paths would be hoisted. If yes → `$lookup`-pivot; if no → the existing `$limit:0 + $unionWith` form. Two lowerings, same JS syntax — the predicate's shape decides.
+
+**Form choice within the pivot.** When the predicate is a single `===` between a foreign-path and a `$.<path>` AND there are no chain methods after `.filter`, `translatePredicate`'s basic form fires (`{ localField, foreignField }`) — same index-friendliness as a hand-written `$lookup`. With chain methods (`.toSorted` / `.slice` / `.map` / etc.) or richer predicates, pipeline-form with auto-hoisted `let` vars takes over so the chain stages can extend the sub-pipeline body — for example:
+
+```js
+$$ = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5);
+// → $lookup { let: { _id: "$_id" }, pipeline: [$match, $sort, $limit], as: … }
+//   + $unwind + $replaceWith
+```
+
+**Trade-offs.** `$unwind` drops outer docs with no matches by default. Users who need `preserveNullAndEmptyArrays` keep using the explicit `$.matched = $$$.coll.filter(p); $unwind($.matched, true); $ = $.matched;` chain. Outer-doc `let` bindings (a name bound via `let foo = …` then referenced inside the predicate) aren't yet recognised by `predicateReferencesOuterDoc` — that's a follow-up. The pivot always uses an internal `__jsmql.__lookup<N>` slot followed by `$unwind` + `$replaceWith`; a future micro-optimisation could detect when the chain is the entire RHS and skip the cleanup stages.
+
+**Refactor.** Factored `tryExtractChainedLookup`'s pipeline-form predicate translation into a new exported `buildPipelineFormPredicate` helper in `lookup-translation.ts`, so the new pivot path and the existing chain-extension path share one translator (no second copy of the `extractLetsFromExpr` + `makeSubPipelineCtx` + `generateWithCtx` choreography).
+
+User-facing reference: [docs/LANGUAGE.md → Replace stream](LANGUAGE.md#replace-stream-via--expr).
+
+---
+
 ## 2026-05-28 — Drop "v2" framing on nested lookups (planned future work, not forbidden)
 
 Three internal comments and one `docs/CLAUDE.md` cell described the nested-lookup rejection as "deferred to v2" — but per the file-header convention there is no v2 ([docs/DEVLOG.md:1357](DEVLOG.md#2026-04-…)), the project is pre-`0.1.0`, and the framing wrongly suggested the feature is forbidden rather than planned. Rewording: "deferred to v2" → "planned future work" everywhere it appeared, with a pointer to the lookup-stage spec's existing "Future work" section.

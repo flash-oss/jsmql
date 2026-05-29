@@ -535,3 +535,118 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     expect(r.errors[0].message).toMatch(/not supported/);
   });
 });
+
+describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dispatch", () => {
+  it("predicate referencing $.<field> + single === → basic-form $lookup + $unwind + $replaceWith", () => {
+    // The simplest correlated-source-switch shape. Predicate
+    // `u._id === $.userId` is a single `===` between a foreign-path and a
+    // local-path, so the lookup goes basic-form (`localField` /
+    // `foreignField`). `$unwind` + `$replaceWith` turn the per-outer-doc
+    // array of matches into the new stream.
+    expect(jsmql(`$$ = $$$.users.filter(u => u._id === $.userId);`)).toEqual([
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("predicate with chain methods → pipeline-form $lookup with chain extending the body", () => {
+    // The chain methods (.slice here) need a pipeline-form lookup so they
+    // can extend the sub-pipeline body. The $.<field> ref gets hoisted to
+    // a `$lookup.let` var.
+    expect(jsmql(`$$ = $$$.users.filter(u => u._id === $.userId).slice(0, 1);`)).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          let: { userId: "$userId" },
+          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$userId"] } } }, { $limit: 1 }],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".toSorted + .slice top-N pivot — chain extends the pipeline body, then $unwind/$replaceWith", () => {
+    // The killer DX case: "for each outer doc, give me the foreign coll
+    // filtered + sorted + top-N as the new stream root". One JS chain.
+    expect(
+      jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).toSorted((a, b) => b.placedAt - a.placedAt).slice(0, 5);`),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { _id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$_id"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("multi-field correlated predicate → pipeline-form $lookup with multiple let vars", () => {
+    expect(jsmql(`$$ = $$$.events.filter(e => e.userId === $._id && e.region === $.region);`)).toEqual([
+      {
+        $lookup: {
+          from: "events",
+          let: { _id: "$_id", region: "$region" },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $eq: ["$region", "$$region"] }] } } },
+          ],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("cross-database pivot ($$$$.<db>.<coll>) emits `from: { db, coll }`", () => {
+    expect(jsmql(`$$ = $$$$.analytics.events.filter(e => e.userId === $._id);`)).toEqual([
+      {
+        $lookup: {
+          from: { db: "analytics", coll: "events" },
+          localField: "_id",
+          foreignField: "userId",
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("non-correlated predicate keeps using $unionWith (no regression)", () => {
+    // No `$.<field>` ref — the predicate is a flat scan, so the existing
+    // `$limit:0 + $unionWith` lowering is correct.
+    expect(jsmql(`$$ = $$$.users.filter(u => u.active === true);`)).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "users", pipeline: [{ $match: { active: true } }] } },
+    ]);
+  });
+
+  it("non-correlated predicate + chain keeps using $unionWith", () => {
+    expect(jsmql(`$$ = $$$.users.filter(u => u.active === true).slice(0, 10);`)).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "users", pipeline: [{ $match: { active: true } }, { $limit: 10 }] } },
+    ]);
+  });
+
+  it("chain without a .filter head keeps using $unionWith", () => {
+    // No `.filter` head means no predicate, so no per-outer-doc correlation
+    // to detect. The chain just runs against the foreign collection as a
+    // standalone source.
+    expect(jsmql(`$$ = $$$.users.slice(0, 5);`)).toEqual([
+      { $limit: 0 },
+      { $unionWith: { coll: "users", pipeline: [{ $limit: 5 }] } },
+    ]);
+  });
+});

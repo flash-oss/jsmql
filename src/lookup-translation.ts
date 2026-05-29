@@ -498,6 +498,66 @@ function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): Gener
 }
 
 /**
+ * Translate a `.filter(<lambda>)` predicate into the pipeline-form
+ * components — `{ letVars, pipelineBody }` — usable as a `$lookup.let` +
+ * `$lookup.pipeline` payload OR as the seed of a longer sub-pipeline that
+ * chain methods will extend. Exported so callers outside this module
+ * (`pipeline.ts`'s lookup-pivot and chain-extension paths) can build
+ * pipeline-form lookups without re-implementing the predicate translation.
+ *
+ * Same algorithm as `translatePredicate`'s pipeline branch — expression
+ * bodies route through `extractLetsFromExpr` (auto-`let` extraction +
+ * foreign-path rewriting) and emit a `$match: { $expr: <translated> }`;
+ * block bodies route through `extractLetsFromPipeline` + the caller-
+ * supplied `lowerBlock` for the full sub-pipeline shape.
+ */
+export function buildPipelineFormPredicate(
+  lambda: Lambda,
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+): { letVars: Record<string, string>; pipelineBody: object[] } {
+  const foreignParam = lambda.params[0];
+  if (lambda.body !== undefined) {
+    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, foreignParam);
+    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
+    return { letVars, pipelineBody: [{ $match: { $expr: generateWithCtx(rewritten, subCtx) } }] };
+  }
+  if (lambda.block !== undefined) {
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam);
+    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
+    return { letVars, pipelineBody: lowerBlock(rewritten, subCtx) };
+  }
+  throw new CodegenError(`Predicate lambda is missing a body — internal parser bug; please report.`, lambda.pos);
+}
+
+/**
+ * Does the predicate reference any outer-doc field via `$.<field>`? Used by
+ * `pipeline.ts` to decide whether a `$$ = $$$.<coll>.filter(<pred>)` source-
+ * switch needs the `$lookup`-pivot lowering (when the predicate correlates
+ * per-outer-doc) vs the `$limit:0 + $unionWith` lowering (when it's a flat
+ * source-collection scan).
+ *
+ * Detection mirrors what `extractLetsFromExpr` would produce — if there are
+ * any `$.<field>` paths in the body that would be hoisted into `$lookup.let`
+ * vars, this returns true. Outer `let` bindings (a name bound via
+ * `let foo = …` and referenced inside the predicate) aren't currently
+ * detected by this helper — that's a follow-up.
+ */
+export function predicateReferencesOuterDoc(lambda: Lambda): boolean {
+  if (lambda.params.length !== 1) return false;
+  const foreignParam = lambda.params[0];
+  if (lambda.body !== undefined) {
+    const { letVars } = extractLetsFromExpr(lambda.body, foreignParam);
+    return Object.keys(letVars).length > 0;
+  }
+  if (lambda.block !== undefined) {
+    const { letVars } = extractLetsFromPipeline(lambda.block, foreignParam);
+    return Object.keys(letVars).length > 0;
+  }
+  return false;
+}
+
+/**
  * Detect the basic-form predicate shape: body is `===` with one side a
  * foreign-path and the other a `$.` local path. Returns null for any
  * richer shape so the caller falls back to pipeline form.
@@ -1069,21 +1129,7 @@ function tryExtractChainedLookup(
   // (the existing v2-deferred rule) before building any stages.
   rejectNestedLookup(direct, outerCtx);
   // Force pipeline form for the lookup so the chain stages can extend it.
-  const lambda = direct.lambda;
-  const foreignParam = lambda.params[0];
-  let letVars: Record<string, string> = {};
-  const pipelineBody: object[] = [];
-  if (lambda.body !== undefined) {
-    const ext = extractLetsFromExpr(lambda.body, foreignParam);
-    letVars = ext.letVars;
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    pipelineBody.push({ $match: { $expr: generateWithCtx(ext.rewritten, subCtx) } });
-  } else if (lambda.block !== undefined) {
-    const ext = extractLetsFromPipeline(lambda.block, foreignParam);
-    letVars = ext.letVars;
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    pipelineBody.push(...lowerBlock(ext.rewritten, subCtx));
-  }
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock);
   // Apply each chain method through the stream-methods registry. `inSubPipeline`
   // is true so methods know they're emitting inside a sub-pipeline body.
   const innerCtx = freshSubPipelineCtx(outerCtx);
