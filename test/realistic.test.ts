@@ -1807,11 +1807,13 @@ describe(
         // body, so the top-5-most-recent shaping runs *inside* the lookup
         // (no need to sort the unwound flat stream afterward).
         expect(
-          jsmql`$$ = $$$.orders
-            .filter(o => o.userId === $._id)
-            .toSorted((a, b) => a.placedAt - b.placedAt)
-            .toReversed()
-            .slice(0, 5);`,
+          jsmql`
+$$ = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5);
+          `,
         ).toEqual([
           {
             $lookup: {

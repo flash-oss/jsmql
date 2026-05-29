@@ -121,34 +121,16 @@ jsmql(`$ = {
 //       "byStatus":   [{ "$group": { "_id": "$status", "n": { "$sum": 1 } } }]
 //   } }]
 
-// "Look up the logged-in user, then fetch their 5 most-recent orders."
-// Three statements — `let userId = $._id` carries the snapshot into the next lookup.
+// export contact details of active users (`$$ = [$$.reduce(… => acc.concat(…), [])]`)
+// to a different collection in the 'exports' database
 jsmql(`
-  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
-  let userId = $._id;
-  $$ = $$$.orders
-    .filter(o => o.userId === userId)
-    .toSorted((a, b) => a.placedAt - b.placedAt)
-    .toReversed()
-    .slice(0, 5);
+$group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
+$$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 10);
 `);
-// → [
-//   { $match: { email: "me@example.com" } },
-//   { $limit: 1 },
-//   { $set: { "__jsmql.userId": "$_id" } },
-//   { $lookup: {
-//       from: "orders",
-//       let: { userId: "$__jsmql.userId" },
-//       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
-//         { $sort: { placedAt: -1 } },
-//         { $limit: 5 }
-//       ],
-//       as: "__jsmql.__lookup1"
-//   } },
-//   { $unwind: "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
-//   { $unset: "__jsmql" }
+// [
+//     { "$group": { "_id": "$userId", "revenue": { "$sum": "$total" }, "orders": { "$sum": 1 } } },
+//     { "$sort": { "revenue": -1 } },
+//     { "$limit": 10 }
 // ]
 
 // `jsmql()` returns an UpdateFilter as a pipeline, to avoid common footgun of wiping out the whole collection.
