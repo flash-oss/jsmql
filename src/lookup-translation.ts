@@ -416,19 +416,61 @@ export function createSlotAllocator(): SlotAllocator {
  * with a static string is folded into the path; non-static indices break
  * the classification (the sub-tree is not a foldable path).
  */
-type ClassifiedPath = { kind: "local"; segments: string[] } | { kind: "foreign"; segments: string[] };
+type ClassifiedPath =
+  | { kind: "local"; segments: string[] }
+  | { kind: "foreign"; segments: string[] }
+  | {
+      // An outer pipeline-scoped `let` binding referenced inside the predicate
+      // (optionally with member access on it). The let materialises under
+      // `__jsmql.<bindingName>` on each outer doc; `fieldPath` is the full
+      // resolved path including any `.member` chain (e.g.
+      // `__jsmql.user._id` for `user._id` where `user` is the binding).
+      // `segments` is the access chain starting at the binding name —
+      // used for letVar-naming via `segments[last]`, mirroring the
+      // local-path convention.
+      kind: "outerLet";
+      segments: string[];
+      fieldPath: string;
+    };
 
-function classifyPath(expr: Expr, foreignParam: string): ClassifiedPath | null {
+function classifyPath(
+  expr: Expr,
+  foreignParam: string,
+  outerLets?: ReadonlyMap<string, string>,
+): ClassifiedPath | null {
   if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
-  if (expr.type === "ParamRef" && expr.name === foreignParam) return { kind: "foreign", segments: [] };
+  if (expr.type === "ParamRef") {
+    if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
+    if (outerLets !== undefined && outerLets.has(expr.name)) {
+      const fieldPath = outerLets.get(expr.name);
+      if (fieldPath !== undefined) {
+        return { kind: "outerLet", segments: [expr.name], fieldPath };
+      }
+    }
+    return null;
+  }
   if (expr.type === "MemberAccess") {
-    const inner = classifyPath(expr.object, foreignParam);
+    const inner = classifyPath(expr.object, foreignParam, outerLets);
     if (inner === null) return null;
+    if (inner.kind === "outerLet") {
+      return {
+        kind: "outerLet",
+        segments: [...inner.segments, expr.member],
+        fieldPath: `${inner.fieldPath}.${expr.member}`,
+      };
+    }
     return { kind: inner.kind, segments: [...inner.segments, expr.member] };
   }
   if (expr.type === "IndexAccess" && expr.index.type === "StringLiteral") {
-    const inner = classifyPath(expr.object, foreignParam);
+    const inner = classifyPath(expr.object, foreignParam, outerLets);
     if (inner === null) return null;
+    if (inner.kind === "outerLet") {
+      return {
+        kind: "outerLet",
+        segments: [...inner.segments, expr.index.value],
+        fieldPath: `${inner.fieldPath}.${expr.index.value}`,
+      };
+    }
     return { kind: inner.kind, segments: [...inner.segments, expr.index.value] };
   }
   return null;
@@ -463,15 +505,19 @@ export function translatePredicate(
 ): BasicFormPredicate | PipelineFormPredicate {
   const { lambda } = call;
   const foreignParam = lambda.params[0];
+  const outerLets = outerCtx.pipelineLets;
 
   // ── Expression body ────────────────────────────────────────────────
   if (lambda.body !== undefined) {
-    // Try the basic-form fast path.
-    const basic = tryBasicForm(lambda.body, foreignParam);
+    // Try the basic-form fast path. The outer-let map is threaded in so a
+    // predicate like `u._id === uid` (where `uid` is `let uid = $.userId`)
+    // can still match basic form — the `localField` becomes the let's
+    // materialised path (`__jsmql.uid`).
+    const basic = tryBasicForm(lambda.body, foreignParam, outerLets);
     if (basic !== null) return basic;
 
     // Fall back to pipeline-form with auto-`let` extraction.
-    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, foreignParam);
+    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, foreignParam, outerLets);
     const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
     const matchBody = generateWithCtx(rewritten, subCtx);
     return { kind: "pipeline", letVars, pipeline: [{ $match: { $expr: matchBody } }] };
@@ -479,7 +525,7 @@ export function translatePredicate(
 
   // ── Block body ─────────────────────────────────────────────────────
   if (lambda.block !== undefined) {
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam);
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
     const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
     const stages = lowerBlock(rewritten, subCtx);
     return { kind: "pipeline", letVars, pipeline: stages };
@@ -517,13 +563,14 @@ export function buildPipelineFormPredicate(
   lowerBlock: SubPipelineLowerer,
 ): { letVars: Record<string, string>; pipelineBody: object[] } {
   const foreignParam = lambda.params[0];
+  const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== undefined) {
-    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, foreignParam);
+    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, foreignParam, outerLets);
     const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
     return { letVars, pipelineBody: [{ $match: { $expr: generateWithCtx(rewritten, subCtx) } }] };
   }
   if (lambda.block !== undefined) {
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam);
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
     const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
     return { letVars, pipelineBody: lowerBlock(rewritten, subCtx) };
   }
@@ -531,27 +578,28 @@ export function buildPipelineFormPredicate(
 }
 
 /**
- * Does the predicate reference any outer-doc field via `$.<field>`? Used by
- * `pipeline.ts` to decide whether a `$$ = $$$.<coll>.filter(<pred>)` source-
- * switch needs the `$lookup`-pivot lowering (when the predicate correlates
- * per-outer-doc) vs the `$limit:0 + $unionWith` lowering (when it's a flat
- * source-collection scan).
+ * Does the predicate reference any outer-doc context — either a `$.<field>`
+ * path on the current document, or an in-scope `let` binding (a name bound
+ * via `let foo = …` in the surrounding pipeline)? Used by `pipeline.ts` to
+ * decide whether a `$$ = $$$.<coll>.filter(<pred>)` source-switch needs the
+ * `$lookup`-pivot lowering (when the predicate correlates per-outer-doc) vs
+ * the `$limit:0 + $unionWith` lowering (when it's a flat source-collection
+ * scan).
  *
  * Detection mirrors what `extractLetsFromExpr` would produce — if there are
- * any `$.<field>` paths in the body that would be hoisted into `$lookup.let`
- * vars, this returns true. Outer `let` bindings (a name bound via
- * `let foo = …` and referenced inside the predicate) aren't currently
- * detected by this helper — that's a follow-up.
+ * any `$.<field>` paths OR outer-let references in the body that would be
+ * hoisted into `$lookup.let` vars, this returns true.
  */
-export function predicateReferencesOuterDoc(lambda: Lambda): boolean {
+export function predicateReferencesOuterDoc(lambda: Lambda, outerCtx: GenerateCtx): boolean {
   if (lambda.params.length !== 1) return false;
   const foreignParam = lambda.params[0];
+  const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== undefined) {
-    const { letVars } = extractLetsFromExpr(lambda.body, foreignParam);
+    const { letVars } = extractLetsFromExpr(lambda.body, foreignParam, outerLets);
     return Object.keys(letVars).length > 0;
   }
   if (lambda.block !== undefined) {
-    const { letVars } = extractLetsFromPipeline(lambda.block, foreignParam);
+    const { letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
     return Object.keys(letVars).length > 0;
   }
   return false;
@@ -572,27 +620,35 @@ export function predicateReferencesOuterDoc(lambda: Lambda): boolean {
  * against-null check and throws the same error the user would get
  * anywhere else in jsmql.
  */
-function tryBasicForm(body: Expr, foreignParam: string): BasicFormPredicate | null {
+function tryBasicForm(
+  body: Expr,
+  foreignParam: string,
+  outerLets?: ReadonlyMap<string, string>,
+): BasicFormPredicate | null {
   if (body.type !== "BinaryExpr") return null;
   if (body.op !== "===") return null;
-  const leftPath = classifyPath(body.left, foreignParam);
-  const rightPath = classifyPath(body.right, foreignParam);
+  const leftPath = classifyPath(body.left, foreignParam, outerLets);
+  const rightPath = classifyPath(body.right, foreignParam, outerLets);
   if (leftPath === null || rightPath === null) return null;
-  if (
-    leftPath.kind === "foreign" &&
-    rightPath.kind === "local" &&
-    leftPath.segments.length > 0 &&
-    rightPath.segments.length > 0
-  ) {
-    return { kind: "basic", foreignField: leftPath.segments.join("."), localField: rightPath.segments.join(".") };
+  // "Local" for basic-form purposes means anything that resolves to a field
+  // path on the OUTER doc — either a `$.<field>` ref OR an outer-let ref
+  // (whose materialised path lives at `__jsmql.<binding>` on each outer doc).
+  function localFieldFor(p: ClassifiedPath): string | null {
+    if (p.kind === "local" && p.segments.length > 0) return p.segments.join(".");
+    if (p.kind === "outerLet") return p.fieldPath;
+    return null;
   }
-  if (
-    rightPath.kind === "foreign" &&
-    leftPath.kind === "local" &&
-    rightPath.segments.length > 0 &&
-    leftPath.segments.length > 0
-  ) {
-    return { kind: "basic", foreignField: rightPath.segments.join("."), localField: leftPath.segments.join(".") };
+  if (leftPath.kind === "foreign" && leftPath.segments.length > 0) {
+    const local = localFieldFor(rightPath);
+    if (local !== null) {
+      return { kind: "basic", foreignField: leftPath.segments.join("."), localField: local };
+    }
+  }
+  if (rightPath.kind === "foreign" && rightPath.segments.length > 0) {
+    const local = localFieldFor(leftPath);
+    if (local !== null) {
+      return { kind: "basic", foreignField: rightPath.segments.join("."), localField: local };
+    }
   }
   return null;
 }
@@ -602,6 +658,15 @@ function tryBasicForm(body: Expr, foreignParam: string): BasicFormPredicate | nu
 type LetAllocator = {
   /** Records "userId" → "$userId"; on second call with same path, returns the existing name. */
   allocateForLocalPath: (segments: string[]) => string;
+  /**
+   * Outer pipeline-scoped `let` binding referenced inside the predicate.
+   * `segments` is the access chain rooted at the binding name (e.g.
+   * `["user", "_id"]` for `user._id`); `fieldPath` is the full materialised
+   * path on the outer doc (e.g. `"__jsmql.user._id"`). The allocated letVar
+   * name is `segments[last]` — same convention as `allocateForLocalPath` —
+   * uniquified on collision.
+   */
+  allocateForOuterLet: (segments: string[], fieldPath: string) => string;
   /** Final mapping for emit into `$lookup.let`. */
   letVars: () => Record<string, string>;
 };
@@ -610,21 +675,36 @@ function createLetAllocator(): LetAllocator {
   const byPath = new Map<string, string>();
   const used = new Set<string>();
   const out: Record<string, string> = {};
+  function uniqueName(preferred: string): string {
+    if (!used.has(preferred)) return preferred;
+    let n = 2;
+    let candidate = `${preferred}_${n}`;
+    while (used.has(candidate)) {
+      n += 1;
+      candidate = `${preferred}_${n}`;
+    }
+    return candidate;
+  }
   return {
     allocateForLocalPath(segments: string[]): string {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== undefined) return existing;
       const base = segments[segments.length - 1];
-      let name = base;
-      let n = 2;
-      while (used.has(name)) {
-        name = `${base}_${n}`;
-        n += 1;
-      }
+      const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
       out[name] = `$${dotted}`;
+      return name;
+    },
+    allocateForOuterLet(segments: string[], fieldPath: string): string {
+      const existing = byPath.get(fieldPath);
+      if (existing !== undefined) return existing;
+      const base = segments[segments.length - 1];
+      const name = uniqueName(base);
+      used.add(name);
+      byPath.set(fieldPath, name);
+      out[name] = `$${fieldPath}`;
       return name;
     },
     letVars: () => out,
@@ -634,27 +714,34 @@ function createLetAllocator(): LetAllocator {
 export function extractLetsFromExpr(
   body: Expr,
   foreignParam: string,
+  outerLets?: ReadonlyMap<string, string>,
 ): { rewritten: Expr; letVars: Record<string, string> } {
   const allocator = createLetAllocator();
-  const rewritten = transformExpr(body, foreignParam, allocator);
+  const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
 
 export function extractLetsFromPipeline(
   block: Pipeline,
   foreignParam: string,
+  outerLets?: ReadonlyMap<string, string>,
 ): { rewritten: Pipeline; letVars: Record<string, string> } {
   const allocator = createLetAllocator();
-  const stmts: PipelineStmt[] = block.stmts.map((s) => transformStmt(s, foreignParam, allocator));
+  const stmts: PipelineStmt[] = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }
 
-function transformStmt(stmt: PipelineStmt, foreignParam: string, allocator: LetAllocator): PipelineStmt {
+function transformStmt(
+  stmt: PipelineStmt,
+  foreignParam: string,
+  allocator: LetAllocator,
+  outerLets: ReadonlyMap<string, string> | undefined,
+): PipelineStmt {
   if (stmt.type === "LetDecl") {
     return {
       type: "LetDecl",
       name: stmt.name,
-      value: transformExpr(stmt.value, foreignParam, allocator),
+      value: transformExpr(stmt.value, foreignParam, allocator, outerLets),
       pos: stmt.pos,
     };
   }
@@ -663,17 +750,17 @@ function transformStmt(stmt: PipelineStmt, foreignParam: string, allocator: LetA
       if (op.type === "AssignExpr") {
         return {
           type: "AssignExpr",
-          target: transformExpr(op.target, foreignParam, allocator),
-          value: transformExpr(op.value, foreignParam, allocator),
+          target: transformExpr(op.target, foreignParam, allocator, outerLets),
+          value: transformExpr(op.value, foreignParam, allocator, outerLets),
           pos: op.pos,
         };
       }
       // DeleteStmt
-      return { type: "DeleteStmt", target: transformExpr(op.target, foreignParam, allocator), pos: op.pos };
+      return { type: "DeleteStmt", target: transformExpr(op.target, foreignParam, allocator, outerLets), pos: op.pos };
     });
     return { type: "UpdateFilter", ops, pos: stmt.pos };
   }
-  return transformExpr(stmt as Expr, foreignParam, allocator);
+  return transformExpr(stmt as Expr, foreignParam, allocator, outerLets);
 }
 
 /**
@@ -693,11 +780,20 @@ function transformStmt(stmt: PipelineStmt, foreignParam: string, allocator: LetA
  * nested `$$$.x.find/filter(...)` is detected separately by the
  * pipeline integration, which rejects it in v1 — see plan §5.)
  */
-function transformExpr(expr: Expr, foreignParam: string, allocator: LetAllocator): Expr {
-  const classified = classifyPath(expr, foreignParam);
+function transformExpr(
+  expr: Expr,
+  foreignParam: string,
+  allocator: LetAllocator,
+  outerLets: ReadonlyMap<string, string> | undefined,
+): Expr {
+  const classified = classifyPath(expr, foreignParam, outerLets);
   if (classified !== null) {
     if (classified.kind === "local") {
       const letVar = allocator.allocateForLocalPath(classified.segments);
+      return { type: "ParamRef", name: letVar, pos: expr.pos } as ParamRef;
+    }
+    if (classified.kind === "outerLet") {
+      const letVar = allocator.allocateForOuterLet(classified.segments, classified.fieldPath);
       return { type: "ParamRef", name: letVar, pos: expr.pos } as ParamRef;
     }
     // Foreign path. Bare `o` alone is not yet supported (no $$ROOT lowering).
@@ -709,10 +805,15 @@ function transformExpr(expr: Expr, foreignParam: string, allocator: LetAllocator
     }
     return { type: "FieldRef", path: classified.segments.join("."), pos: expr.pos } as FieldRef;
   }
-  return mapChildren(expr, foreignParam, allocator);
+  return mapChildren(expr, foreignParam, allocator, outerLets);
 }
 
-function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator): Expr {
+function mapChildren(
+  expr: Expr,
+  foreignParam: string,
+  allocator: LetAllocator,
+  outerLets: ReadonlyMap<string, string> | undefined,
+): Expr {
   switch (expr.type) {
     case "FieldRef":
     case "CollectionRef":
@@ -733,29 +834,29 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
       return {
         type: "BinaryExpr",
         op: expr.op,
-        left: transformExpr(expr.left, foreignParam, allocator),
-        right: transformExpr(expr.right, foreignParam, allocator),
+        left: transformExpr(expr.left, foreignParam, allocator, outerLets),
+        right: transformExpr(expr.right, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "UnaryExpr":
       return {
         type: "UnaryExpr",
         op: expr.op,
-        operand: transformExpr(expr.operand, foreignParam, allocator),
+        operand: transformExpr(expr.operand, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "TernaryExpr":
       return {
         type: "TernaryExpr",
-        condition: transformExpr(expr.condition, foreignParam, allocator),
-        consequent: transformExpr(expr.consequent, foreignParam, allocator),
-        alternate: transformExpr(expr.alternate, foreignParam, allocator),
+        condition: transformExpr(expr.condition, foreignParam, allocator, outerLets),
+        consequent: transformExpr(expr.consequent, foreignParam, allocator, outerLets),
+        alternate: transformExpr(expr.alternate, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "MemberAccess":
       return {
         type: "MemberAccess",
-        object: transformExpr(expr.object, foreignParam, allocator),
+        object: transformExpr(expr.object, foreignParam, allocator, outerLets),
         member: expr.member,
         pos: expr.pos,
         ...(expr.optional && { optional: true }),
@@ -763,25 +864,25 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
     case "IndexAccess":
       return {
         type: "IndexAccess",
-        object: transformExpr(expr.object, foreignParam, allocator),
-        index: transformExpr(expr.index, foreignParam, allocator),
+        object: transformExpr(expr.object, foreignParam, allocator, outerLets),
+        index: transformExpr(expr.index, foreignParam, allocator, outerLets),
         pos: expr.pos,
         ...(expr.optional && { optional: true }),
       };
     case "MethodCall":
       return {
         type: "MethodCall",
-        object: transformExpr(expr.object, foreignParam, allocator),
+        object: transformExpr(expr.object, foreignParam, allocator, outerLets),
         method: expr.method,
-        args: transformCallArgs(expr.args, foreignParam, allocator),
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
         pos: expr.pos,
         ...(expr.optional && { optional: true }),
       };
     case "CallExpression":
       return {
         type: "CallExpression",
-        callee: transformExpr(expr.callee, foreignParam, allocator),
-        args: transformCallArgs(expr.args, foreignParam, allocator),
+        callee: transformExpr(expr.callee, foreignParam, allocator, outerLets),
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "OperatorCall":
@@ -789,7 +890,7 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
         type: "OperatorCall",
         name: expr.name,
         style: expr.style,
-        args: transformCallArgs(expr.args, foreignParam, allocator),
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "Lambda":
@@ -800,7 +901,7 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
         return {
           type: "Lambda",
           params: expr.params,
-          body: transformExpr(expr.body, foreignParam, allocator),
+          body: transformExpr(expr.body, foreignParam, allocator, outerLets),
           pos: expr.pos,
         };
       }
@@ -814,30 +915,34 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
           if (el.type === "SpreadElement") {
             return {
               type: "SpreadElement",
-              argument: transformExpr(el.argument, foreignParam, allocator),
+              argument: transformExpr(el.argument, foreignParam, allocator, outerLets),
               pos: el.pos,
             };
           }
           if (el.type === "AssignExpr") {
             return {
               type: "AssignExpr",
-              target: transformExpr(el.target, foreignParam, allocator),
-              value: transformExpr(el.value, foreignParam, allocator),
+              target: transformExpr(el.target, foreignParam, allocator, outerLets),
+              value: transformExpr(el.value, foreignParam, allocator, outerLets),
               pos: el.pos,
             };
           }
           if (el.type === "DeleteStmt") {
-            return { type: "DeleteStmt", target: transformExpr(el.target, foreignParam, allocator), pos: el.pos };
+            return {
+              type: "DeleteStmt",
+              target: transformExpr(el.target, foreignParam, allocator, outerLets),
+              pos: el.pos,
+            };
           }
           if (el.type === "LetDecl") {
             return {
               type: "LetDecl",
               name: el.name,
-              value: transformExpr(el.value, foreignParam, allocator),
+              value: transformExpr(el.value, foreignParam, allocator, outerLets),
               pos: el.pos,
             };
           }
-          return transformExpr(el as Expr, foreignParam, allocator);
+          return transformExpr(el as Expr, foreignParam, allocator, outerLets);
         }),
         pos: expr.pos,
       };
@@ -848,7 +953,7 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
           if (entry.type === "SpreadElement") {
             return {
               type: "SpreadElement",
-              argument: transformExpr(entry.argument, foreignParam, allocator),
+              argument: transformExpr(entry.argument, foreignParam, allocator, outerLets),
               pos: entry.pos,
             };
           }
@@ -856,9 +961,9 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
             type: "KeyValueEntry",
             key:
               entry.key.kind === "computed"
-                ? { kind: "computed", expr: transformExpr(entry.key.expr, foreignParam, allocator) }
+                ? { kind: "computed", expr: transformExpr(entry.key.expr, foreignParam, allocator, outerLets) }
                 : entry.key,
-            value: transformExpr(entry.value, foreignParam, allocator),
+            value: transformExpr(entry.value, foreignParam, allocator, outerLets),
             pos: entry.pos,
           };
           return kv;
@@ -869,65 +974,86 @@ function mapChildren(expr: Expr, foreignParam: string, allocator: LetAllocator):
       return {
         type: "TemplateLiteral",
         quasis: expr.quasis,
-        expressions: expr.expressions.map((e) => transformExpr(e, foreignParam, allocator)),
+        expressions: expr.expressions.map((e) => transformExpr(e, foreignParam, allocator, outerLets)),
         pos: expr.pos,
       };
     case "TypeofExpr":
-      return { type: "TypeofExpr", operand: transformExpr(expr.operand, foreignParam, allocator), pos: expr.pos };
+      return {
+        type: "TypeofExpr",
+        operand: transformExpr(expr.operand, foreignParam, allocator, outerLets),
+        pos: expr.pos,
+      };
     case "NewDate":
-      return { type: "NewDate", args: expr.args.map((a) => transformExpr(a, foreignParam, allocator)), pos: expr.pos };
+      return {
+        type: "NewDate",
+        args: expr.args.map((a) => transformExpr(a, foreignParam, allocator, outerLets)),
+        pos: expr.pos,
+      };
     case "NewSet":
       return {
         type: "NewSet",
-        arg: expr.arg !== null ? transformExpr(expr.arg, foreignParam, allocator) : null,
+        arg: expr.arg !== null ? transformExpr(expr.arg, foreignParam, allocator, outerLets) : null,
         pos: expr.pos,
       };
     case "TypeCast":
       return {
         type: "TypeCast",
         cast: expr.cast,
-        arg: transformExpr(expr.arg, foreignParam, allocator),
+        arg: transformExpr(expr.arg, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "MathCall":
       return {
         type: "MathCall",
         method: expr.method,
-        args: transformCallArgs(expr.args, foreignParam, allocator),
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "ObjectCall":
       return {
         type: "ObjectCall",
         method: expr.method,
-        args: transformCallArgs(expr.args, foreignParam, allocator),
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "ArrayFrom":
       return {
         type: "ArrayFrom",
-        input: transformExpr(expr.input, foreignParam, allocator),
-        mapFn: expr.mapFn !== null ? transformExpr(expr.mapFn, foreignParam, allocator) : null,
+        input: transformExpr(expr.input, foreignParam, allocator, outerLets),
+        mapFn: expr.mapFn !== null ? transformExpr(expr.mapFn, foreignParam, allocator, outerLets) : null,
         pos: expr.pos,
       };
     case "NumberStatic":
       return {
         type: "NumberStatic",
         method: expr.method,
-        arg: transformExpr(expr.arg, foreignParam, allocator),
+        arg: transformExpr(expr.arg, foreignParam, allocator, outerLets),
         pos: expr.pos,
       };
     case "DateUTC":
-      return { type: "DateUTC", args: expr.args.map((a) => transformExpr(a, foreignParam, allocator)), pos: expr.pos };
+      return {
+        type: "DateUTC",
+        args: expr.args.map((a) => transformExpr(a, foreignParam, allocator, outerLets)),
+        pos: expr.pos,
+      };
   }
 }
 
-function transformCallArgs(args: CallArg[], foreignParam: string, allocator: LetAllocator): CallArg[] {
+function transformCallArgs(
+  args: CallArg[],
+  foreignParam: string,
+  allocator: LetAllocator,
+  outerLets: ReadonlyMap<string, string> | undefined,
+): CallArg[] {
   return args.map((a): CallArg => {
     if (a.type === "SpreadElement") {
-      return { type: "SpreadElement", argument: transformExpr(a.argument, foreignParam, allocator), pos: a.pos };
+      return {
+        type: "SpreadElement",
+        argument: transformExpr(a.argument, foreignParam, allocator, outerLets),
+        pos: a.pos,
+      };
     }
-    return transformExpr(a, foreignParam, allocator);
+    return transformExpr(a, foreignParam, allocator, outerLets);
   });
 }
 

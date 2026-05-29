@@ -1873,6 +1873,24 @@ When the predicate is a single `===` between a foreign-path and a `$.<path>` (an
 
 The `$unwind` drops outer docs with no matches by default — if you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
+**`let` bindings cross the source-switch boundary too.** A name bound via `let foo = …` in the surrounding pipeline can be referenced directly inside a correlated `.filter` predicate — jsmql hoists it as a `$lookup.let` var the same way it does `$.<field>` refs. Member access on a `let`-bound object (`user._id` when `let user = $.user`) works too: the resolved path becomes the materialised `__jsmql.user._id` and basic-form `$lookup` continues to fire when the predicate is a single `===`:
+
+```js
+jsmql`
+let uid = $.userId;
+$$ = $$$.users.filter(u => u._id === uid);
+`
+// → [
+//   { $set: { "__jsmql.uid": "$userId" } },
+//   { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "__jsmql.__lookup1" } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist together into the `$lookup.let` slot of the pipeline-form lookup.
+
 Compile-time rejections:
 
 | RHS | Why it's rejected |

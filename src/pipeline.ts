@@ -724,7 +724,7 @@ function lowerChainOnCollection(
     methods[0].method === "filter" &&
     methods[0].args.length === 1 &&
     methods[0].args[0].type === "Lambda" &&
-    predicateReferencesOuterDoc(methods[0].args[0] as LambdaNode)
+    predicateReferencesOuterDoc(methods[0].args[0] as LambdaNode, outerCtx)
   ) {
     return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
   }

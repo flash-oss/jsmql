@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-29 — feat: outer `let` bindings cross the source-switch boundary as `$lookup.let` vars
+
+The previous `$lookup`-pivot commit detected `$.<field>` refs in the predicate and routed them through `$lookup.let`, but **outer `let` bindings** weren't recognised — `let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);` errored with "Unknown identifier 'uid'". The user had to inline the path (`u._id === $.userId`) or pre-stash via `$.x = uid` before the source-switch, defeating the point of the `let` binding.
+
+This commit extends `classifyPath` (in `lookup-translation.ts`) to recognise a `ParamRef` whose name is in `outerCtx.pipelineLets` as a new `outerLet` kind — and threads the outer-lets map through `tryBasicForm`, `extractLetsFromExpr`, `extractLetsFromPipeline`, and the `transformExpr` / `mapChildren` / `transformCallArgs` recursive walkers. `MemberAccess` chains on outer-let refs are also handled (`let user = $.user; … === user._id` resolves to the materialised path `__jsmql.user._id`).
+
+```js
+let uid = $.userId;
+$$ = $$$.users.filter(u => u._id === uid);
+// → [
+//   { $set: { "__jsmql.uid": "$userId" } },
+//   { $lookup: { from: "users", localField: "__jsmql.uid",
+//                foreignField: "_id", as: "__jsmql.__lookup1" } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+**Basic vs pipeline form.** Outer-let refs DO qualify for the basic-form `$lookup` fast path when the predicate is a single `===` between a foreign-path and the outer-let — the `localField` becomes the let's materialised path (`__jsmql.<name>` or `__jsmql.<name>.<member>` for member-access chains). For richer predicates (multi-field correlations, mixed `$.<field>` + outer-let refs), pipeline-form with auto-hoisted `let` vars kicks in. `predicateReferencesOuterDoc` now picks up both kinds, so the source-switch dispatch in `lowerChainOnCollection` routes correlated predicates to `lowerLookupPivot` whether the correlation came from `$.<field>` or an outer `let`.
+
+**Naming.** The `let`-var name in pipeline-form output is `segments[last]` of the access chain — same convention as local-path letVars. For bare `uid` → letVar `uid`; for `user._id` → letVar `_id`; collisions get the `_2` / `_3` / … uniquification suffix.
+
+**Allocator.** `createLetAllocator` gains an `allocateForOuterLet(segments, fieldPath)` method that mirrors `allocateForLocalPath` but takes the materialised field path explicitly. `byPath` deduplication uses the field path as the dedup key so the same outer-let referenced twice in a predicate (e.g. `u.from === uid || u.to === uid`) produces one letVar.
+
+**API.** `predicateReferencesOuterDoc(lambda, outerCtx)` now takes the ctx (was just the lambda). Callers update accordingly — only one in-tree caller (in `pipeline.ts`).
+
+Spec note: the [docs/specs/lookup-stage.md](specs/lookup-stage.md) update is pending. User-facing reference: [docs/LANGUAGE.md → Correlated source-switch](LANGUAGE.md#replace-stream-via--expr).
+
+---
+
 ## 2026-05-29 — feat: `$$ = $$$.<coll>.filter(<correlatedPred>)` auto-rewrites to `$lookup` + `$unwind` + `$replaceWith`
 
 `$$ = $$$.<coll>.filter(p)` previously rejected predicates that referenced the outer document (`$.<field>`) because the lowering used `$unionWith`, and MongoDB's `$unionWith` has no `let:` slot to thread outer-doc context into its sub-pipeline. The user was forced into the explicit `$.matched = $$$.coll.filter(p); $unwind($.matched); $ = $.matched;` chain — which works but reads like manual MQL plumbing.

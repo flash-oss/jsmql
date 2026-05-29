@@ -649,4 +649,80 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       { $unionWith: { coll: "users", pipeline: [{ $limit: 5 }] } },
     ]);
   });
+
+  it("outer `let` binding referenced in the predicate triggers basic-form pivot", () => {
+    // `uid` is a let binding stored at `__jsmql.uid` on each outer doc.
+    // `u._id === uid` is a single ===, so basic form fires — `localField`
+    // uses the materialised `__jsmql.uid` path directly. Index-friendly.
+    expect(jsmql(`let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);`)).toEqual([
+      { $set: { "__jsmql.uid": "$userId" } },
+      { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "__jsmql.__lookup1" } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("outer `let` binding works in expression-position lookup too", () => {
+    expect(jsmql(`let uid = $.userId; $.matched = $$$.users.filter(u => u._id === uid);`)).toEqual([
+      { $set: { "__jsmql.uid": "$userId" } },
+      { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "matched" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("member access on an outer `let` binding (`user._id`) still picks basic form", () => {
+    // `user` is a let-binding (the whole user object). `user._id` resolves
+    // to the materialised path `__jsmql.user._id`. Still a single ===, so
+    // basic form fires.
+    expect(jsmql(`let user = $.user; $$ = $$$.events.filter(e => e.userId === user._id);`)).toEqual([
+      { $set: { "__jsmql.user": "$user" } },
+      { $lookup: { from: "events", localField: "__jsmql.user._id", foreignField: "userId", as: "__jsmql.__lookup1" } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("mixed `$.<field>` + outer-let predicate → pipeline-form with both hoisted as $lookup.let vars", () => {
+    expect(
+      jsmql(`let region = $.region; $$ = $$$.events.filter(e => e.userId === $._id && e.region === region);`),
+    ).toEqual([
+      { $set: { "__jsmql.region": "$region" } },
+      {
+        $lookup: {
+          from: "events",
+          let: { _id: "$_id", region: "$__jsmql.region" },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $eq: ["$region", "$$region"] }] } } },
+          ],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("outer let + chain methods → pipeline-form $lookup with chain in the body", () => {
+    expect(
+      jsmql(
+        `let uid = $.userId; $$ = $$$.orders.filter(o => o.userId === uid).toSorted((a, b) => b.placedAt - a.placedAt).slice(0, 5);`,
+      ),
+    ).toEqual([
+      { $set: { "__jsmql.uid": "$userId" } },
+      {
+        $lookup: {
+          from: "orders",
+          let: { uid: "$__jsmql.uid" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$uid"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
+          as: "__jsmql.__lookup1",
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
 });
