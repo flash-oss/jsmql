@@ -1730,3 +1730,58 @@ $.recentOrders = $$$.orders
     );
   },
 );
+
+// 🌟 The crown jewel of stream-method composition: pivot the stream onto a
+// foreign collection *per outer doc*. When the predicate of
+// `$$ = $$$.<coll>.filter(<pred>)` references the current document (via
+// `$.<field>`), jsmql can't use `$unionWith` — that MongoDB stage has no
+// `let:` slot to thread outer-doc context into its sub-pipeline. So jsmql
+// auto-rewrites the chain to `$lookup` (basic-form when the predicate is a
+// single `===`, pipeline-form otherwise) + `$unwind` + `$replaceWith`.
+// Result: a stream of foreign docs *correlated* to each input.
+//
+// The non-correlated case (no `$.<field>` in the predicate) continues to
+// use `$limit:0 + $unionWith` — the flat foreign-collection scan, no
+// per-outer-doc correlation. The dispatch happens at the predicate level.
+describe(
+  "explode the stream into each user's top 5 orders ($lookup-pivot via correlated filter)",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "one JS chain compiles to $lookup + $unwind + $replaceWith — pivots from users onto their per-user order list",
+      { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+      () => {
+        // Read this as plain JS: "set the stream to each user's orders,
+        // sorted newest-first, take the top 5". The `$.userId` ref inside
+        // the filter is what flips the lowering from $unionWith to $lookup
+        // — every output row is correlated to the user it came from. The
+        // trailing `.toSorted` and `.slice` extend the lookup's pipeline
+        // body, so the top-5-most-recent shaping runs *inside* the lookup
+        // (no need to sort the unwound flat stream afterward).
+        expect(
+          jsmql`$$ = $$$.orders
+            .filter(o => o.userId === $._id)
+            .toSorted((a, b) => a.placedAt - b.placedAt)
+            .toReversed()
+            .slice(0, 5);`,
+        ).toEqual([
+          {
+            $lookup: {
+              from: "orders",
+              let: { _id: "$_id" },
+              pipeline: [
+                { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+                { $sort: { placedAt: -1 } },
+                { $limit: 5 },
+              ],
+              as: "__jsmql.__lookup1",
+            },
+          },
+          { $unwind: "$__jsmql.__lookup1" },
+          { $replaceWith: "$__jsmql.__lookup1" },
+          { $unset: "__jsmql" },
+        ]);
+      },
+    );
+  },
+);

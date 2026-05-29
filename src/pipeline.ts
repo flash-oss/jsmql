@@ -73,15 +73,18 @@ import { closestNameTo } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 import { translateMatchBody } from "./match-translation.ts";
 import {
+  buildPipelineFormPredicate,
   detectLookupCall,
   lowerLookup,
   extractLookupCalls,
   createSlotAllocator,
+  predicateReferencesOuterDoc,
   validateLookupShape,
   translatePredicate,
   extractLookupTarget,
   extractLetsFromExpr,
   extractLetsFromPipeline,
+  type LookupCall,
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
@@ -677,16 +680,35 @@ function lowerChainOnStream(
 }
 
 /**
- * Lower a chain `$$$.<coll>.<m1>(...).<m2>(...)…` into a `$limit: 0` +
- * `$unionWith` pair, with the chained stages making up the `$unionWith`
- * sub-pipeline body. Predicate / lowering runs in a fresh sub-pipeline
- * ctx — outer lets don't cross `$unionWith.pipeline` boundaries (the
- * stage has no `let:` slot).
+ * Lower a chain `$$$.<coll>.<m1>(...).<m2>(...)…` on the RHS of `$$ = …`.
  *
- * When the chain is just `.filter(o => true)` (vacuous predicate, no
- * additional methods) the inner pipeline is empty and the short-form
- * `$unionWith` shape is emitted — same as before this chain walker
- * existed.
+ * **Two lowering families** depending on whether the chain head's
+ * `.filter(<pred>)` correlates against the outer document:
+ *
+ *   - **Source switch (`$limit:0` + `$unionWith`).** When the predicate is
+ *     a flat foreign-collection scan — no `$.<field>` references — the
+ *     chain runs as an independent sub-pipeline. The outer stream is
+ *     dropped (`$limit:0`) and replaced by docs flowing out of the
+ *     `$unionWith.pipeline:` body. Default behaviour.
+ *
+ *   - **`$lookup`-pivot (`$lookup` + `$unwind` + `$replaceWith`).** When
+ *     the predicate references the outer doc (`$.<field>`) — i.e. the
+ *     match is *per-outer-doc* — jsmql can't use `$unionWith` because that
+ *     stage has no `let:` slot. Instead the chain lowers to a `$lookup`
+ *     (basic-form when the predicate is a single `===`, pipeline-form
+ *     otherwise) that joins each outer doc to its matching foreign docs,
+ *     followed by `$unwind` to explode the array and `$replaceWith` to
+ *     make the matched doc the new root. Subsequent chain methods extend
+ *     the lookup's pipeline body (so `.toSorted` / `.slice` / etc. apply
+ *     before `$unwind`).
+ *
+ * The dispatch happens at the predicate level: `predicateReferencesOuterDoc`
+ * runs `extractLetsFromExpr` to see whether any `$.<field>` paths would be
+ * hoisted as `$lookup.let` vars; if any, the pivot path takes over.
+ *
+ * When the chain is just `.filter(o => true)` (vacuous, no outer refs and
+ * no chain methods) the inner pipeline is empty and the short-form
+ * `$unionWith` shape is emitted — same as before this chain walker existed.
  */
 function lowerChainOnCollection(
   methods: MethodCallNode[],
@@ -696,6 +718,16 @@ function lowerChainOnCollection(
   allocSlot: SlotAllocator,
   rhs: Expr,
 ): { stages: object[]; clearLets: boolean } {
+  // $lookup-pivot dispatch: when the head's `.filter(<pred>)` references
+  // outer-doc fields, switch lowering families.
+  if (
+    methods[0].method === "filter" &&
+    methods[0].args.length === 1 &&
+    methods[0].args[0].type === "Lambda" &&
+    predicateReferencesOuterDoc(methods[0].args[0] as LambdaNode)
+  ) {
+    return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
+  }
   const innerCtx = freshSubPipelineCtx(outerCtx);
   const inner: object[] = [];
   let i = 0;
@@ -732,6 +764,82 @@ function lowerChainOnCollection(
     stages.push({ $unionWith: { coll: from, pipeline: inner } });
   }
   return { stages, clearLets: true };
+}
+
+/**
+ * Lower a `$$ = $$$.<coll>.filter(<correlatedPred>).<chain>;` source-switch
+ * whose predicate references the outer document. Emits:
+ *
+ *   1. `$lookup` joining each outer doc to its matching foreign docs.
+ *      - Basic form (`{ from, localField, foreignField, as }`) when the
+ *        predicate is a single `===` between a foreign-path and a
+ *        `$.<path>` and there are no chain methods after `.filter`.
+ *      - Pipeline form (`{ from, let, pipeline, as }`) otherwise — `let`
+ *        threads the outer-doc fields through, and chain methods extend
+ *        the pipeline body before the array is returned.
+ *   2. `$unwind` to explode the per-outer-doc array of matches.
+ *   3. `$replaceWith` to make each matched foreign doc the new stream root.
+ *
+ * The result is a stream pivoted onto the foreign collection, where every
+ * row was *correlated* against an outer doc (vs `$unionWith`, which would
+ * just append a flat scan). Outer docs with no match are dropped by
+ * `$unwind`'s default behaviour — the user can keep them by writing the
+ * explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched`
+ * chain when they need `preserveNullAndEmptyArrays`.
+ *
+ * `clearLets: true` because the trailing `$replaceWith` reshapes the doc,
+ * dropping any outer `let` bindings the surrounding pipeline had.
+ */
+function lowerLookupPivot(
+  methods: MethodCallNode[],
+  target: { db?: string; collection: string },
+  outerCtx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+): { stages: object[]; clearLets: boolean } {
+  const filterMethod = methods[0];
+  const restMethods = methods.slice(1);
+  const lambda = filterMethod.args[0] as LambdaNode;
+  const slot = allocSlot();
+  const from: string | { db: string; coll: string } =
+    target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
+  let lookupStage: object;
+  if (restMethods.length === 0) {
+    // No chain methods after `.filter` — basic form is fine when the
+    // predicate qualifies. `translatePredicate` handles both basic and
+    // pipeline forms; we just write whichever it returns.
+    const fakeCall: LookupCall = {
+      pos: filterMethod.pos,
+      callPos: filterMethod.pos,
+      db: target.db,
+      collection: target.collection,
+      method: "filter",
+      lambda,
+    };
+    const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
+    if (pred.kind === "basic") {
+      lookupStage = { $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } };
+    } else {
+      lookupStage = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
+    }
+  } else {
+    // Chain methods need a pipeline-form lookup so their stages can extend
+    // the sub-pipeline body.
+    const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
+    const innerCtx = freshSubPipelineCtx(outerCtx);
+    for (const m of restMethods) {
+      const def = lookupStreamMethod(m.method);
+      if (def === null) {
+        throw unknownStreamMethod(m, "$$$.<coll>");
+      }
+      def.validate(m.args, m.pos);
+      const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
+      if (result.replacesPreviousStage) pipelineBody.pop();
+      pipelineBody.push(...result.stages);
+    }
+    lookupStage = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
+  }
+  return { stages: [lookupStage, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }
 
 function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError {

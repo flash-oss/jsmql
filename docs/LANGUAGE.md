@@ -1841,7 +1841,37 @@ jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new 
 //   ]
 ```
 
-The lambda param IS the document being matched — write `t.client`, not `$.client`. Same convention as the facet form: `$.<field>` inside the predicate is rejected with a "use the lambda parameter" hint. Block-body predicates (`o => { $sort(...); $limit(...); }`) work in the source-switch form just like in lookups.
+The lambda param IS the document being matched — write `t.client`, not `$.client`. Same convention as the facet form: `$.<field>` inside the predicate of a flat (non-correlated) source-switch is rejected with a "use the lambda parameter" hint. Block-body predicates (`o => { $sort(...); $limit(...); }`) work in the source-switch form just like in lookups.
+
+**Correlated source-switch — per-outer-doc pivot via `$lookup`.** When the predicate *does* reference outer-doc fields (`$.<field>`), jsmql auto-rewrites the chain to `$lookup` + `$unwind` + `$replaceWith`. The result is a stream of foreign docs *correlated* to each input — one row per (outer × matching-foreign) pair, with the foreign doc as the new root. MongoDB's `$unionWith` doesn't have a `let:` slot to thread outer-doc context into its sub-pipeline, so this is the only way to express "per-outer-doc source switch" in MQL; jsmql picks the right lowering family automatically based on the predicate shape:
+
+```js
+// "For each user, pivot the stream onto their orders, top-5 most-recent."
+jsmql`$$ = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5);`
+// → [
+//   { $lookup: {
+//       from: "orders",
+//       let: { _id: "$_id" },
+//       pipeline: [
+//         { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+//         { $sort: { placedAt: -1 } },
+//         { $limit: 5 },
+//       ],
+//       as: "__jsmql.__lookup1",
+//   } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+When the predicate is a single `===` between a foreign-path and a `$.<path>` (and there are no chain methods after `.filter`), the lookup uses **basic form** (`localField` / `foreignField`) instead of `let` + `$match $expr` — same index-friendliness as a hand-written `$lookup`. With chain methods or richer predicates, pipeline-form with auto-hoisted `let` vars kicks in.
+
+The `$unwind` drops outer docs with no matches by default — if you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
 Compile-time rejections:
 

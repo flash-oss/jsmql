@@ -10,20 +10,44 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-05-29 — Playground: output panel renders BSON dates as `new Date(...)`
+## 2026-05-29 — feat: `$$ = $$$.<coll>.filter(<correlatedPred>)` auto-rewrites to `$lookup` + `$unwind` + `$replaceWith`
 
-The output panel is meant to be copy-paste source for a Node.js mongodb call, but Filter-mode dates broke that. `$.createdAt > new Date("2000-01-01")` lowers (via the match translator) to a query document holding a **real JS `Date` instance** — `{ createdAt: { $gt: <Date> } }`. The panel then serialised it two different, both-wrong ways depending on the prettify checkbox:
+`$$ = $$$.<coll>.filter(p)` previously rejected predicates that referenced the outer document (`$.<field>`) because the lowering used `$unionWith`, and MongoDB's `$unionWith` has no `let:` slot to thread outer-doc context into its sub-pipeline. The user was forced into the explicit `$.matched = $$$.coll.filter(p); $unwind($.matched); $ = $.matched;` chain — which works but reads like manual MQL plumbing.
 
-- **prettify off** used `JSON.stringify`, which turns a `Date` into an ISO **string** (`"2000-01-01T00:00:00.000Z"`) — pasteable, but the driver reads it back as a string, not a BSON date.
-- **prettify on** used the custom fit-to-80 printer, which hit the `Date` via the generic-object branch and walked its (empty) own-keys into `{}` — pasteable but meaningless.
+This commit teaches `lowerChainOnCollection` to detect when the head's `.filter(p)` predicate is *correlated* (i.e. `extractLetsFromExpr` would hoist any `$.<field>` paths into `$lookup.let` vars) and auto-rewrite to a `$lookup` + `$unwind` + `$replaceWith` triple. The result is a stream of foreign docs correlated per outer doc — one output row per (outer × matching-foreign) pair, with the foreign doc as the new root.
 
-Fix (all in `playground.html`, outside the two generated regions): both modes now share one date-aware serialiser. Extracted the formerly-nested `compact()` to a sibling of `pretty()`, added an `encodeScalar()` leaf that emits `new Date(<ISO>)` for `Date` instances (and falls back to `JSON.stringify` otherwise), and pointed the prettify-off branch at `compact()` instead of raw `JSON.stringify`. `pretty()`'s recursion also gained a `Date` guard so a deeply-nested date that overflows the column budget can't fall into the object-expand path and re-emit `{}`. Result: both checkbox states emit identical, runnable `new Date("2000-01-01T00:00:00.000Z")` source. Verified in-browser by driving the two CodeMirror editors and `eval`-ing the output back to a real `Date`.
+```js
+// Before: rejected with "$.<field> inside .filter of $$ = … is not supported"
+$$ = $$$.users.filter(u => u._id === $.userId);
 
-Only `Date` can reach the panel today — regex always lowers to `$regexMatch` strings, and the other opaque BSON values (`ObjectId`, `Uint8Array`) only arrive via template-tag interpolation, which the string-input playground can't produce.
+// After:
+[
+  { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
+  { $unwind: "$__jsmql.__lookup1" },
+  { $replaceWith: "$__jsmql.__lookup1" },
+  { $unset: "__jsmql" },
+]
+```
 
-Also relabelled the panel header `MQL output (JSON)` → `MQL output (Node/Deno/Bun)`: now that a `Date` renders as `new Date(...)`, the output is JS source for a driver call, not strict JSON, and the old label was a false promise.
+**Lowering family dispatch.** `predicateReferencesOuterDoc(lambda)` (new export from `lookup-translation.ts`) runs `extractLetsFromExpr` and reports whether any `$.<field>` paths would be hoisted. If yes → `$lookup`-pivot; if no → the existing `$limit:0 + $unionWith` form. Two lowerings, same JS syntax — the predicate's shape decides.
 
-Follow-up: swept `test/realistic.test.ts` for date fields compared against string literals (`$.placedAt >= "2026-01-01"`, `expiresAt`, `lastModifiedAt`, `lastSeen`, `createdAt`) and converted both the source and the expected MQL to `new Date(...)`. Modelling a timestamp as a bare string was a misleading example — MongoDB stores these as BSON dates, and a string comparison would silently never match. The playground examples island re-synced off these edits, so the live examples now show the date-typed form.
+**Form choice within the pivot.** When the predicate is a single `===` between a foreign-path and a `$.<path>` AND there are no chain methods after `.filter`, `translatePredicate`'s basic form fires (`{ localField, foreignField }`) — same index-friendliness as a hand-written `$lookup`. With chain methods (`.toSorted` / `.slice` / `.map` / etc.) or richer predicates, pipeline-form with auto-hoisted `let` vars takes over so the chain stages can extend the sub-pipeline body — for example:
+
+```js
+$$ = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5);
+// → $lookup { let: { _id: "$_id" }, pipeline: [$match, $sort, $limit], as: … }
+//   + $unwind + $replaceWith
+```
+
+**Trade-offs.** `$unwind` drops outer docs with no matches by default. Users who need `preserveNullAndEmptyArrays` keep using the explicit `$.matched = $$$.coll.filter(p); $unwind($.matched, true); $ = $.matched;` chain. Outer-doc `let` bindings (a name bound via `let foo = …` then referenced inside the predicate) aren't yet recognised by `predicateReferencesOuterDoc` — that's a follow-up. The pivot always uses an internal `__jsmql.__lookup<N>` slot followed by `$unwind` + `$replaceWith`; a future micro-optimisation could detect when the chain is the entire RHS and skip the cleanup stages.
+
+**Refactor.** Factored `tryExtractChainedLookup`'s pipeline-form predicate translation into a new exported `buildPipelineFormPredicate` helper in `lookup-translation.ts`, so the new pivot path and the existing chain-extension path share one translator (no second copy of the `extractLetsFromExpr` + `makeSubPipelineCtx` + `generateWithCtx` choreography).
+
+User-facing reference: [docs/LANGUAGE.md → Replace stream](LANGUAGE.md#replace-stream-via--expr).
 
 ---
 
@@ -41,21 +65,20 @@ The previously-passive `#current-kind` pill was removed (the toggle now communic
 
 ---
 
-## 2026-05-28 — Drop "v2" framing on nested lookups (planned future work, not forbidden)
+## 2026-05-29 — Playground: output panel renders BSON dates as `new Date(...)`
 
-Three internal comments and one `docs/CLAUDE.md` cell described the nested-lookup rejection as "deferred to v2" — but per the file-header convention there is no v2 ([docs/DEVLOG.md:1357](DEVLOG.md#2026-04-…)), the project is pre-`0.1.0`, and the framing wrongly suggested the feature is forbidden rather than planned. Rewording: "deferred to v2" → "planned future work" everywhere it appeared, with a pointer to the lookup-stage spec's existing "Future work" section.
+The output panel is meant to be copy-paste source for a Node.js mongodb call, but Filter-mode dates broke that. `$.createdAt > new Date("2000-01-01")` lowers (via the match translator) to a query document holding a **real JS `Date` instance** — `{ createdAt: { $gt: <Date> } }`. The panel then serialised it two different, both-wrong ways depending on the prettify checkbox:
 
-**Files touched.**
-- [src/lookup-translation.ts:1231-1262](../src/lookup-translation.ts) — block comment over `rejectNestedLookup` now says the work is planned and names the blocker (auto-`let` extraction across two binding scopes); the closing reference to "the exact case we explicitly defer to v2" is now "the exact case the nested-lookup future-work item is planned to handle".
-- [src/pipeline.ts:991-996](../src/pipeline.ts) — sub-pipeline guard's comment now says "not yet implemented … tracked as planned future work" with a pointer to the spec.
-- [src/pipeline.ts:1009](../src/pipeline.ts) — adjacent `$$.push(...)` reject-comment lost its trailing "Reject for v1." → just "Reject."
-- [src/stream-methods.ts:226-233](../src/stream-methods.ts) — explanatory comment in `.map` body lowering now references "the let-coordination problem that blocks the general nested-lookup case" instead of "the v2-deferred let-coordination case".
-- [docs/CLAUDE.md:41](CLAUDE.md) — spec table cell: "nested-lookup-deferred-to-v2 boundary" → "nested-lookup rejection (planned future work — see the spec's "Future work" section)".
-- [docs/LANGUAGE.md:556-557](LANGUAGE.md) — user-facing caveat reworded from "not yet supported in this release" / "deferred" to "planned but not yet implemented" / "also planned (see `$$$` schema-threading work)", and now names the design problem (extracting outer-doc + outer-foreign-doc binding sources).
+- **prettify off** used `JSON.stringify`, which turns a `Date` into an ISO **string** (`"2000-01-01T00:00:00.000Z"`) — pasteable, but the driver reads it back as a string, not a BSON date.
+- **prettify on** used the custom fit-to-80 printer, which hit the `Date` via the generic-object branch and walked its (empty) own-keys into `{}` — pasteable but meaningless.
 
-**Runtime behaviour unchanged.** The two reject sites — `rejectNestedLookup` in `lookup-translation.ts` and the pre-walker in `generatePipelineWithCtx` in `pipeline.ts` — still throw the same error text ("not yet supported in this release. Hoist the inner lookup to a sibling stage in the outer pipeline."). Only internal comments and the doc-facing prose changed.
+Fix (all in `playground.html`, outside the two generated regions): both modes now share one date-aware serialiser. Extracted the formerly-nested `compact()` to a sibling of `pretty()`, added an `encodeScalar()` leaf that emits `new Date(<ISO>)` for `Date` instances (and falls back to `JSON.stringify` otherwise), and pointed the prettify-off branch at `compact()` instead of raw `JSON.stringify`. `pretty()`'s recursion also gained a `Date` guard so a deeply-nested date that overflows the column budget can't fall into the object-expand path and re-emit `{}`. Result: both checkbox states emit identical, runnable `new Date("2000-01-01T00:00:00.000Z")` source. Verified in-browser by driving the two CodeMirror editors and `eval`-ing the output back to a real `Date`.
 
-**Why this matters.** The library is pre-1.0 and the rule from the project-wide CLAUDE.md and from the earlier "drop v1..v4 labels" entry is that phase markers are noise — they read as released-versioning that doesn't exist here. The nested-lookup rejection is the most architecturally weighty item on the deferred list; framing it as "future work, here's why it's hard, here's the spec section" invites someone to pick it up. Framing it as "deferred to v2" invites the wrong question ("when does v2 ship?").
+Only `Date` can reach the panel today — regex always lowers to `$regexMatch` strings, and the other opaque BSON values (`ObjectId`, `Uint8Array`) only arrive via template-tag interpolation, which the string-input playground can't produce.
+
+Also relabelled the panel header `MQL output (JSON)` → `MQL output (Node/Deno/Bun)`: now that a `Date` renders as `new Date(...)`, the output is JS source for a driver call, not strict JSON, and the old label was a false promise.
+
+Follow-up: swept `test/realistic.test.ts` for date fields compared against string literals (`$.placedAt >= "2026-01-01"`, `expiresAt`, `lastModifiedAt`, `lastSeen`, `createdAt`) and converted both the source and the expected MQL to `new Date(...)`. Modelling a timestamp as a bare string was a misleading example — MongoDB stores these as BSON dates, and a string comparison would silently never match. The playground examples island re-synced off these edits, so the live examples now show the date-typed form.
 
 ---
 
@@ -150,43 +173,21 @@ Spec: [docs/specs/method-dispatch.md § Mutators at statement position](specs/me
 
 ---
 
-## 2026-05-28 — feat: stream-method chains push into the `$lookup.pipeline` body
+## 2026-05-28 — Drop "v2" framing on nested lookups (planned future work, not forbidden)
 
-Before this commit, `$.<field> = $$$.<coll>.filter(p).<chain>` in expression position materialised the lookup into an internal slot first and applied each chain method via the **expression-form** of its operator — `$map` for `.map`, `$filter` for `.filter`, `$slice` (wrapped in `$cond` + `$isArray` guards) for `.slice`. That mostly worked but failed for methods without a clean expression form: `.toSorted((a, b) => a.x - b.x)` errored out (no `$sortArray` comparator form), and `.flatMap` had no expression-form equivalent at all.
+Three internal comments and one `docs/CLAUDE.md` cell described the nested-lookup rejection as "deferred to v2" — but per the file-header convention there is no v2 ([docs/DEVLOG.md:1357](DEVLOG.md#2026-04-…)), the project is pre-`0.1.0`, and the framing wrongly suggested the feature is forbidden rather than planned. Rewording: "deferred to v2" → "planned future work" everywhere it appeared, with a pointer to the lookup-stage spec's existing "Future work" section.
 
-This commit pushes any chain of registered stream methods after `$$$.<coll>.filter(<pred>)` into the `$lookup.pipeline:` body. The slot then holds the already-transformed array, and methods get their proper stage-form lowering:
+**Files touched.**
+- [src/lookup-translation.ts:1231-1262](../src/lookup-translation.ts) — block comment over `rejectNestedLookup` now says the work is planned and names the blocker (auto-`let` extraction across two binding scopes); the closing reference to "the exact case we explicitly defer to v2" is now "the exact case the nested-lookup future-work item is planned to handle".
+- [src/pipeline.ts:991-996](../src/pipeline.ts) — sub-pipeline guard's comment now says "not yet implemented … tracked as planned future work" with a pointer to the spec.
+- [src/pipeline.ts:1009](../src/pipeline.ts) — adjacent `$$.push(...)` reject-comment lost its trailing "Reject for v1." → just "Reject."
+- [src/stream-methods.ts:226-233](../src/stream-methods.ts) — explanatory comment in `.map` body lowering now references "the let-coordination problem that blocks the general nested-lookup case" instead of "the v2-deferred let-coordination case".
+- [docs/CLAUDE.md:41](CLAUDE.md) — spec table cell: "nested-lookup-deferred-to-v2 boundary" → "nested-lookup rejection (planned future work — see the spec's "Future work" section)".
+- [docs/LANGUAGE.md:556-557](LANGUAGE.md) — user-facing caveat reworded from "not yet supported in this release" / "deferred" to "planned but not yet implemented" / "also planned (see `$$$` schema-threading work)", and now names the design problem (extracting outer-doc + outer-foreign-doc binding sources).
 
-```js
-$.recentOrders = $$$.orders
-  .filter(o => o.userId === $._id)
-  .toSorted((a, b) => a.placedAt - b.placedAt)
-  .toReversed()
-  .slice(0, 5)
-  .map(o => ({ id: o._id, total: o.total }));
-// →
-[
-  { $lookup: { from: "orders", let: { _id: "$_id" },
-    pipeline: [
-      { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
-      { $sort: { placedAt: -1 } },
-      { $limit: 5 },
-      { $replaceWith: { id: "$_id", total: "$total" } },
-    ],
-    as: "__jsmql.__lookup1" } },
-  { $set: { recentOrders: "$__jsmql.__lookup1" } },
-  { $unset: "__jsmql" },
-]
-```
+**Runtime behaviour unchanged.** The two reject sites — `rejectNestedLookup` in `lookup-translation.ts` and the pre-walker in `generatePipelineWithCtx` in `pipeline.ts` — still throw the same error text ("not yet supported in this release. Hoist the inner lookup to a sibling stage in the outer pipeline."). Only internal comments and the doc-facing prose changed.
 
-**Implementation.** A new `tryExtractChainedLookup` in [`src/lookup-translation.ts`](../src/lookup-translation.ts) walks the chain back to its innermost receiver, checks for a `.filter` lookup head + a tail of registered stream methods (via `lookupStreamMethod` from [`src/stream-methods.ts`](../src/stream-methods.ts) — a cycle-safe runtime import), forces pipeline-form predicate translation, and runs the chain methods through the registry's `lower(... inSubPipeline = true)` path. The result substitutes a `FieldRef(slot)` for the entire chain; the surrounding expression's codegen reads the slot as `"$<slot>"`.
-
-The check fires AFTER the existing `.length` / `.reduce` / direct-lookup checks so those terminals keep their precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing `descendAndExtract` expression-form path, so unrelated string / array operators on lookup results are unaffected.
-
-`.find` heads are deliberately not eligible — they return scalar-or-null after the `$first` wrap; chain methods don't have a stream-shape to extend in that case.
-
-**Future optimisation.** When the chain is the entire RHS of a `$.<field> = <chain>` assignment, the `as` slot could be the field path directly — collapsing the trailing `$set` + `$unset` cleanup and producing a single-stage lookup. Detection at the AssignExpr level (mirroring the existing direct-lookup branch in `lowerUpdateFilterWithLookups`) is a follow-up.
-
-Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md) — needs an update. User-facing: [docs/LANGUAGE.md → Cross-collection lookups](LANGUAGE.md#cross-collection-lookups-collfind--filter).
+**Why this matters.** The library is pre-1.0 and the rule from the project-wide CLAUDE.md and from the earlier "drop v1..v4 labels" entry is that phase markers are noise — they read as released-versioning that doesn't exist here. The nested-lookup rejection is the most architecturally weighty item on the deferred list; framing it as "future work, here's why it's hard, here's the spec section" invites someone to pick it up. Framing it as "deferred to v2" invites the wrong question ("when does v2 ship?").
 
 ---
 
@@ -254,6 +255,46 @@ The `unknownStreamMethod` rejection for the bare `.reduce` chain form now lists 
 **Out of scope (v1).** Dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`) would need `$arrayToObject` + `$push` (push `{ k, v }` pairs in `$group`, convert in `$replaceWith`) — a different lowering family. Richer per-key body shapes (multiplicative accumulators, `$avg`, `$first`/`$last`, …) are also future work.
 
 Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). User-facing reference: [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs).
+
+---
+
+## 2026-05-28 — feat: stream-method chains push into the `$lookup.pipeline` body
+
+Before this commit, `$.<field> = $$$.<coll>.filter(p).<chain>` in expression position materialised the lookup into an internal slot first and applied each chain method via the **expression-form** of its operator — `$map` for `.map`, `$filter` for `.filter`, `$slice` (wrapped in `$cond` + `$isArray` guards) for `.slice`. That mostly worked but failed for methods without a clean expression form: `.toSorted((a, b) => a.x - b.x)` errored out (no `$sortArray` comparator form), and `.flatMap` had no expression-form equivalent at all.
+
+This commit pushes any chain of registered stream methods after `$$$.<coll>.filter(<pred>)` into the `$lookup.pipeline:` body. The slot then holds the already-transformed array, and methods get their proper stage-form lowering:
+
+```js
+$.recentOrders = $$$.orders
+  .filter(o => o.userId === $._id)
+  .toSorted((a, b) => a.placedAt - b.placedAt)
+  .toReversed()
+  .slice(0, 5)
+  .map(o => ({ id: o._id, total: o.total }));
+// →
+[
+  { $lookup: { from: "orders", let: { _id: "$_id" },
+    pipeline: [
+      { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+      { $sort: { placedAt: -1 } },
+      { $limit: 5 },
+      { $replaceWith: { id: "$_id", total: "$total" } },
+    ],
+    as: "__jsmql.__lookup1" } },
+  { $set: { recentOrders: "$__jsmql.__lookup1" } },
+  { $unset: "__jsmql" },
+]
+```
+
+**Implementation.** A new `tryExtractChainedLookup` in [`src/lookup-translation.ts`](../src/lookup-translation.ts) walks the chain back to its innermost receiver, checks for a `.filter` lookup head + a tail of registered stream methods (via `lookupStreamMethod` from [`src/stream-methods.ts`](../src/stream-methods.ts) — a cycle-safe runtime import), forces pipeline-form predicate translation, and runs the chain methods through the registry's `lower(... inSubPipeline = true)` path. The result substitutes a `FieldRef(slot)` for the entire chain; the surrounding expression's codegen reads the slot as `"$<slot>"`.
+
+The check fires AFTER the existing `.length` / `.reduce` / direct-lookup checks so those terminals keep their precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing `descendAndExtract` expression-form path, so unrelated string / array operators on lookup results are unaffected.
+
+`.find` heads are deliberately not eligible — they return scalar-or-null after the `$first` wrap; chain methods don't have a stream-shape to extend in that case.
+
+**Future optimisation.** When the chain is the entire RHS of a `$.<field> = <chain>` assignment, the `as` slot could be the field path directly — collapsing the trailing `$set` + `$unset` cleanup and producing a single-stage lookup. Detection at the AssignExpr level (mirroring the existing direct-lookup branch in `lowerUpdateFilterWithLookups`) is a follow-up.
+
+Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md) — needs an update. User-facing: [docs/LANGUAGE.md → Cross-collection lookups](LANGUAGE.md#cross-collection-lookups-collfind--filter).
 
 ---
 
