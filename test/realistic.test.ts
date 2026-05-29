@@ -1779,3 +1779,48 @@ describe(
     );
   },
 );
+
+describe(
+  "pre-compute a cutoff via `let`, then pivot with a correlated foreign predicate",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "outer `let` bindings cross the source-switch boundary as $lookup.let vars",
+      { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+      () => {
+        // Compute a per-user cutoff once, then pivot the stream onto each
+        // user's *big* orders. Both the outer-doc field (`$._id`) and the
+        // local `let cutoff` are correlated into the foreign sub-pipeline
+        // via `$lookup.let`. MongoDB's `$unionWith` couldn't carry the
+        // outer-doc context across the source-switch — only the
+        // $lookup-pivot lowering can express this shape in MQL.
+        expect(
+          jsmql`
+let minSpend = $.tier === "gold" ? 500 : 100;
+$$ = $$$.orders
+  .filter(o => o.userId === $._id && o.total > minSpend)
+  .toSorted((a, b) => b.placedAt - a.placedAt)
+  .slice(0, 10);
+          `,
+        ).toEqual([
+          { $set: { "__jsmql.minSpend": { $cond: [{ $eq: ["$tier", "gold"] }, 500, 100] } } },
+          {
+            $lookup: {
+              from: "orders",
+              let: { _id: "$_id", minSpend: "$__jsmql.minSpend" },
+              pipeline: [
+                { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $gt: ["$total", "$$minSpend"] }] } } },
+                { $sort: { placedAt: -1 } },
+                { $limit: 10 },
+              ],
+              as: "__jsmql.__lookup1",
+            },
+          },
+          { $unwind: "$__jsmql.__lookup1" },
+          { $replaceWith: "$__jsmql.__lookup1" },
+          { $unset: "__jsmql" },
+        ]);
+      },
+    );
+  },
+);
