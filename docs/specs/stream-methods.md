@@ -86,12 +86,16 @@ Future methods (per the planning notes) extend this table — see
 ### `.reduce` is intentionally NOT in the registry
 
 In JS, `arr.reduce(...)` returns a single value — scalar, object, or array
-depending on the reducer. Assigning a non-array result directly to `$$`
-would violate the project-wide invariant that the stream is always an array
-of documents. So `.reduce` is rejected as a chain method (with an actionable
-wrap-pattern hint in `unknownStreamMethod`) and instead consumed via one of
-two wrap forms — both lowering to the same `$group` + `$replaceWith` pair
-through `lowerReduceWrap`:
+depending on the reducer. So `.reduce` is rejected as a chain method (with an
+actionable wrap-pattern hint in `unknownStreamMethod`), and what the reducer
+returns decides how it's assigned:
+
+- **scalar / object reducer** (one value) — must be **wrapped** into a
+  stream-shaped RHS; both wrap forms lower to the same `$group` +
+  `$replaceWith` pair through `lowerReduceWrap`.
+- **array-returning reducer** (`acc.concat(...)`, seed `[]`) — already an
+  array, i.e. a stream, so it's assigned **directly** (unbracketed); see the
+  next section. Wrapping it in `[ ]` is rejected.
 
 **Scalar wrap** — one `$$.reduce(...)` per named field:
 
@@ -153,18 +157,20 @@ Multiple aggregates in either form share **one** `$group` stage. Future work:
 dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`, would
 need `$arrayToObject` + `$push`), and richer per-key body shapes.
 
-### Array-returning reducer wrap → `$match` + `$replaceWith`
+### Array-returning reducer (unbracketed) → `$match` + `$replaceWith`
 
-A third wrap form handles reducers that build a flat array of projected docs:
+The third reduce form handles reducers that build a flat array of projected
+docs. The reducer is seeded with `[]` and returns an array — a stream — so it
+is assigned **directly**, with no surrounding `[ ]`:
 
 ```js
-$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])];
+$$ = $$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), []);
 //   → [{ $match: <cond translated> }, { $replaceWith: "$<field>" }]
 
-$$ = [$$.reduce((acc, d) => acc.concat(d.<field>), [])];
+$$ = $$.reduce((acc, d) => acc.concat(d.<field>), []);
 //   → [{ $replaceWith: "$<field>" }]                     // unconditional map
 
-$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), [])];
+$$ = $$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), []);
 //   → [{ $match: <cond translated> }]                    // filter-only (bare `d`)
 ```
 
@@ -191,6 +197,14 @@ break the "this either adds an element or doesn't" pattern. Spread-form
 concat-equivalents (`[...acc, d.<x>]`, `acc.concat([d.<x>, d.<y>]`),
 multi-element wrappers) aren't recognised in v1 — write the explicit
 single-arg `.concat(d.<x>)` shape.
+
+**Bracketed form is rejected.** `$$ = [$$.reduce(…, [])]` throws — a reducer
+seeded with `[]` already produces a stream, so wrapping it in `[ ]` would
+yield `[[…]]` (a stream whose single document is an array). `detectArrayReducerWrap`
+detects that exact `ArrayLiteral`-of-one-`[]`-seeded-reduce shape and throws a
+"drop the `[ ]`" hint. (The scalar/object wraps keep their `[ ]` because those
+reducers return a single document — `[ <doc> ]` is a valid one-doc stream
+literal, not a wrapped stream.)
 
 Distinct from the two `$group`-shaped wraps above because the output is a
 doc-shaped stream of projected fields, not a single summary doc.

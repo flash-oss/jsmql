@@ -614,11 +614,13 @@ function lowerReplaceStream(
   if (reduceWrap !== null) {
     return { stages: lowerReduceWrap(reduceWrap), clearLets: true };
   }
-  // `$$ = [$$.reduce((acc, d) => acc.concat(d.<path>), [])];` — the
-  // array-returning reducer wrap. Lowers to `$match` (when the reducer is
-  // a `cond ? concat : acc` ternary) + `$replaceWith` (when the projection
-  // is a field path). Sibling to the `$group`-shaped wrap above; different
-  // lowering family.
+  // `$$ = $$.reduce((acc, d) => acc.concat(d.<path>), []);` — the
+  // array-returning reducer form. A `[]`-seeded reducer already returns an
+  // array (a stream), so it's assigned unbracketed. Lowers to `$match` (when
+  // the reducer is a `cond ? concat : acc` ternary) + `$replaceWith` (when the
+  // projection is a field path). Sibling to the `$group`-shaped wrap above;
+  // different lowering family. The legacy bracketed form throws (see
+  // `detectArrayReducerWrap`).
   const arrayReducer = detectArrayReducerWrap(v);
   if (arrayReducer !== null) {
     return { stages: lowerArrayReducerWrap(arrayReducer, outerCtx, lowerBlockFn), clearLets: true };
@@ -867,7 +869,7 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       `'.reduce(...)' is not a chain method on '${receiver}' — in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS:\n` +
         `  • Scalar reducer:  '$$ = [{ <key>: $$.reduce((acc, d) => …, <literal-init>) }];' — each entry becomes a '$group' accumulator; output is a single-doc stream of your named keys.\n` +
         `  • Object reducer:  '$$ = [$$.reduce((acc, d) => ({ ...acc, <key1>: <expr1>, <key2>: <expr2> }), { <key1>: <init1>, <key2>: <init2> })];' — same MQL output as the scalar form, keyed accumulators declared inline.\n` +
-        `  • Array reducer:   '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])];' — lowers to '$match' (when the body is a ternary) + '$replaceWith: "$<field>"'. Each input doc that passes <cond> becomes its <field> sub-doc.\n` +
+        `  • Array reducer:   '$$ = $$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), []);' — a '[]'-seeded reducer already returns a stream, so assign it directly (no '[ ]'); lowers to '$match' (when the body is a ternary) + '$replaceWith: "$<field>"'. Each input doc that passes <cond> becomes its <field> sub-doc.\n` +
         `Pick the wrap shape that matches what your reducer would return in plain JS.`,
       m.pos,
     );
@@ -884,8 +886,8 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
 }
 
 /**
- * Lower a detected `$$ = [$$.reduce((acc, d) => …, [])]` array-returning
- * reducer wrap into `$match` (when the body is `cond ? acc.concat(...) : acc`)
+ * Lower a detected `$$ = $$.reduce((acc, d) => …, [])` array-returning
+ * reducer into `$match` (when the body is `cond ? acc.concat(...) : acc`)
  * + `$replaceWith` (when the projection is `d.<path>`; omitted when the
  * reducer concats bare `d` — the docs flow through unchanged).
  *

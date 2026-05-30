@@ -7,7 +7,7 @@
 // See docs/specs/stream-methods.md for the design and the per-method
 // shape/lowering/error table.
 
-import type { CallArg, Expr } from "./ast.ts";
+import type { ArrayElement, CallArg, Expr } from "./ast.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
   extractLetsFromExpr,
@@ -862,27 +862,45 @@ export type ArrayReducerWrap = {
   lambdaPos: number;
 };
 
+/** `$$.reduce(<reducer>, [<...>])` — a reduce on the stream seeded with an array literal. */
+function isArrayInitReduce(el: ArrayElement): el is Extract<Expr, { type: "MethodCall" }> {
+  return (
+    el.type === "MethodCall" &&
+    el.method === "reduce" &&
+    el.object.type === "CollectionRef" &&
+    el.args.length === 2 &&
+    el.args[1].type === "ArrayLiteral"
+  );
+}
+
 /**
- * Detect `$$ = [$$.reduce(<reducer>, [])]` — the array-returning reducer wrap.
- * Returns the classified `ArrayReducerWrap` or null for non-matching shapes
- * (the caller falls through to other handlers). Throws for matching-but-
- * malformed shapes (init is array-but-non-empty, body shape not recognised,
- * etc.) so the user sees a precise error.
+ * Detect `$$ = $$.reduce(<reducer>, [])` — the array-returning reducer form.
+ * A reducer seeded with `[]` already returns an array, i.e. a stream, so it is
+ * assigned **unbracketed**. Returns the classified `ArrayReducerWrap`, or null
+ * for non-matching shapes (the caller falls through to other handlers).
+ *
+ * Throws for: the legacy **bracketed** form `$$ = [$$.reduce(…, [])]` (wrapping
+ * a stream in `[ ]` yields `[[…]]` — nonsense; the throw points at the
+ * unbracketed form); a non-empty seed array; and unrecognised reducer bodies.
  */
 export function detectArrayReducerWrap(value: Expr): ArrayReducerWrap | null {
-  if (value.type !== "ArrayLiteral") return null;
-  if (value.elements.length !== 1) return null;
-  const el = value.elements[0];
-  if (el.type !== "MethodCall") return null;
-  if (el.method !== "reduce") return null;
-  if (el.object.type !== "CollectionRef") return null;
-  if (el.args.length !== 2) return null;
-  const initArg = el.args[1];
-  if (initArg.type !== "ArrayLiteral") return null;
-  // Past this point we commit — throw for malformed shapes.
-  if (initArg.elements.length !== 0) {
+  // Legacy bracketed shape: detect it precisely and reject with a fix-it hint.
+  // Everything else inside an array literal falls through to `null`.
+  if (value.type === "ArrayLiteral") {
+    if (value.elements.length !== 1) return null;
+    if (!isArrayInitReduce(value.elements[0])) return null;
     throw new CodegenError(
-      `'$$ = [$$.reduce(<reducer>, <init>)]' with an array-returning reducer requires the init to be '[]' — a non-empty seed array isn't supported (no MQL accumulator preserves the JS-faithful "start with these elements" semantic).`,
+      `A reducer seeded with '[]' already produces a stream, so don't wrap it in '[ ]' — assign it directly: '$$ = $$.reduce((acc, d) => …, [])'.`,
+      value.pos,
+    );
+  }
+  if (!isArrayInitReduce(value)) return null;
+  const el = value;
+  const initArg = el.args[1];
+  // Past this point we commit — throw for malformed shapes.
+  if (initArg.type === "ArrayLiteral" && initArg.elements.length !== 0) {
+    throw new CodegenError(
+      `'$$ = $$.reduce(<reducer>, <init>)' with an array-returning reducer requires the init to be '[]' — a non-empty seed array isn't supported (no MQL accumulator preserves the JS-faithful "start with these elements" semantic).`,
       initArg.pos,
     );
   }
@@ -947,13 +965,13 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toReversed: TO_REVERSED,
   flatMap: FLAT_MAP,
   // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
-  // returns a scalar / object / array in JS depending on the reducer;
-  // assigning a non-array result directly to `$$` would break the "stream
-  // is always an array of docs" invariant. The chain walker's
-  // `unknownStreamMethod` helper special-cases `.reduce` with an actionable
-  // wrap-pattern hint, and three wrap forms are implemented above:
-  //   • `detectReduceWrap`         — scalar-into-object & object-returning ($group + $replaceWith)
-  //   • `detectArrayReducerWrap`   — array-returning ($match + $replaceWith)
+  // returns a scalar / object / array in JS depending on the reducer. A
+  // scalar/object result must be wrapped into a stream-shaped RHS; an
+  // array-returning reducer already IS a stream and is assigned unbracketed.
+  // The chain walker's `unknownStreamMethod` helper special-cases `.reduce`
+  // with an actionable hint, and the forms are implemented above:
+  //   • `detectReduceWrap`         — scalar-into-object `$$ = [{ k: $$.reduce(…) }]` & object-returning `$$ = [$$.reduce(…, {})]` ($group + $replaceWith)
+  //   • `detectArrayReducerWrap`   — array-returning `$$ = $$.reduce(…, [])`, unbracketed ($match + $replaceWith); the bracketed form throws
 };
 
 /** Look up a registered stream method by name; null if not registered. */

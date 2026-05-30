@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-30 — fix: array-returning reducer assigns unbracketed; bracketed wrap now throws
+
+The array-returning reducer form was shipped requiring a bracket wrap — `$$ = [$$.reduce((acc, d) => acc.concat(d.<f>), [])]`. That's backwards: a reducer seeded with `[]` already *returns* an array, i.e. a stream, so wrapping it in `[ ]` yields `[[…]]` — a stream whose single document is itself an array. The correct surface is the **unbracketed** `$$ = $$.reduce((acc, d) => acc.concat(d.<f>), [])`, and that's now what's supported; the bracketed form throws an actionable `CodegenError` ("a reducer seeded with `[]` already produces a stream, so don't wrap it in `[ ]` — assign it directly").
+
+This is **distinct** from the scalar wrap `$$ = [{ total: $$.reduce(…) }]` and the object-returning wrap `$$ = [$$.reduce(…, {})]`, both unchanged: those reducers return a single value/document, so `[ <doc> ]` is a legitimate one-document **stream literal**, not a wrapped stream. Only the array-returning form moved.
+
+Mechanics ([src/stream-methods.ts](../src/stream-methods.ts) `detectArrayReducerWrap`): the detector now accepts the bare `MethodCall` shape (`$$.reduce` on a `CollectionRef` with an `[]` init) via a new `isArrayInitReduce` predicate, runs the same `classifyArrayReducerBody` path, and — when it instead sees the `ArrayLiteral`-of-one-such-reduce — throws the drop-brackets hint at the array literal's `pos`. The dispatch order in [src/pipeline.ts](../src/pipeline.ts) is unchanged: `detectReduceWrap` (scalar/object) still runs first and returns `null` for array-init reduces, then `detectArrayReducerWrap` fires before the chain walker would reject `.reduce` as an unknown method. The `.reduce`-not-a-chain-method hint in `unknownStreamMethod` now points the array case at the unbracketed form.
+
+Updated: [docs/specs/stream-methods.md](specs/stream-methods.md), [docs/LANGUAGE.md](LANGUAGE.md#stream-methods-chained-after-the-rhs), the array-returning `describe` in `test/stream-methods.test.ts` (+ a new bracketed-throws case), and the "export contact details" scenario in `test/realistic.test.ts` (which the playground example island re-syncs from).
+
+## 2026-05-30 — docs(README): replace-stream + stream-method highlights, fix stale Tour comment
+
+The README's Highlights list had no bullet for `$$ = <expr>` (replace stream — narrow / source-switch / correlated `$lookup`-pivot) or for RHS stream-method chains (`.slice` / `.toSorted` / `.toReversed` / `.map` / `.flatMap` / `.concat` + reduce), even though both shipped over the past week and appear in the headline example. Added two bullets covering them. Also extended the "Filter vs Pipeline picked automatically" bullet to note statement-position array mutators (using `$.tags.sort()` / `$.events.reverse()` rather than `.push()`, which is ambiguous with the `$$.push(...)` stream-union form). And fixed a stale comment introduced by `93ad8b3`: it described an export-to-`$out` reduce example over what is actually a top-10-by-revenue `$group`/`$sort`/`$limit` pipeline. The reduce example shown in the new stream-method bullet uses the corrected unbracketed `$$ = $$.reduce(…, [])` form (see the entry above).
+
 ## 2026-05-29 — docs: showcase the "narrow + snapshot + `let` + pivot" idiom
 
 The outer-`let`-into-`$lookup.let` work that landed earlier today is more than a one-off feature — composed with `.filter(...).slice(0, 1)` and a correlated source-switch, it gives users the JS-natural way to write "look up one doc, hold onto a scalar, fetch correlated rows from another collection". This is the shape every web app needs ("look up the logged-in user, then fetch their recent orders"), and historically has been a 20-30-line hand-written MQL recipe that even experienced MongoDB users get wrong (the `$unionWith`-has-no-`let:` trap).

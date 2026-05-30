@@ -1968,7 +1968,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 
-**`.reduce` is not a chain method either** — `arr.reduce(...)` returns a scalar / object in JS, not an array, so assigning it directly to `$$` (which must stay a stream of docs) would violate the array invariant. Instead jsmql provides two **explicit reduce wraps** — both lower to the same `$group` + `$replaceWith` pair, pick whichever reads best at the call site:
+**`.reduce` is not a chain method either** — what a reducer returns in JS decides how it's assigned. A reducer that returns a **scalar or object** (one value) must be **wrapped** into a stream-shaped RHS; a reducer that returns an **array** is already a stream and is assigned directly (see the array-returning form below). The two scalar/object wraps both lower to the same `$group` + `$replaceWith` pair — pick whichever reads best at the call site:
 
 **Scalar wrap** — one `$$.reduce(...)` per named field:
 
@@ -2007,22 +2007,24 @@ Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<
 
 The `init` value is required for JS-faithfulness but the MQL accumulators have their own neutral elements, so its actual value doesn't matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
 
-**Array-returning reducer** — for "flatten the stream by projecting each doc to a sub-doc, optionally filtered":
+**Array-returning reducer** — for "flatten the stream by projecting each doc to a sub-doc, optionally filtered". A reducer seeded with `[]` already returns an array — a stream — so it's assigned **directly**, without the surrounding `[ ]`:
 
 ```js
 // Filter active users with an email, project to their contactDetails sub-doc.
-jsmql(`$$ = [$$.reduce(
+jsmql(`$$ = $$.reduce(
   (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
   []
-)];`)
+);`)
 // → [{ $match: <translated condition> }, { $replaceWith: "$contactDetails" }]
 
 // Unconditional projection (just the map).
-jsmql(`$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [])];`)
+jsmql(`$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), []);`)
 // → [{ $replaceWith: "$contactDetails" }]
 ```
 
 This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) + `$replaceWith` (when the projection is a field path on `d`). Equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer — pick whichever reads better at the call site. Init must be `[]`; the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers) aren't recognised in v1.
+
+Wrapping it in `[ ]` (`$$ = [$$.reduce(…, [])]`) is **rejected** — that would make a stream whose single document is itself an array. (The scalar and object reducer wraps above keep their `[ ]` because those reducers return a single document, so `[ <doc> ]` is a legitimate one-document stream literal.)
 
 ---
 

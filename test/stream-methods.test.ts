@@ -587,7 +587,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
   });
 });
 
-describe("$$ = [$$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), [])] — array-returning reducer wrap", () => {
+describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) — array-returning reducer (unbracketed)", () => {
   it("filter + map (the user's example): truthy-and-truthy ternary → $match($expr) + $replaceWith", () => {
     // The condition `d.active && d.contactDetails.email` goes through the
     // same JS-faithful `&&` short-circuit translation `.filter` uses — `a &&
@@ -595,7 +595,7 @@ describe("$$ = [$$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), [])] 
     // the four-way truthy guard on `a`.
     expect(
       jsmql(
-        "$$ = [$$.reduce((acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc), [])];",
+        "$$ = $$.reduce((acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc), []);",
       ),
     ).toEqual([
       {
@@ -621,54 +621,60 @@ describe("$$ = [$$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), [])] 
   });
 
   it("query-form predicate (translatable to query doc) → $match + $replaceWith", () => {
-    expect(jsmql("$$ = [$$.reduce((acc, d) => (d.tier === 'gold' ? acc.concat(d.profile) : acc), [])];")).toEqual([
+    expect(jsmql("$$ = $$.reduce((acc, d) => (d.tier === 'gold' ? acc.concat(d.profile) : acc), []);")).toEqual([
       { $match: { tier: "gold" } },
       { $replaceWith: "$profile" },
     ]);
   });
 
   it("unconditional map (no ternary): just $replaceWith", () => {
-    expect(jsmql("$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [])];")).toEqual([
+    expect(jsmql("$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), []);")).toEqual([
       { $replaceWith: "$contactDetails" },
     ]);
   });
 
   it("filter-only via bare `d` projection (identity): just $match, no $replaceWith", () => {
-    expect(jsmql("$$ = [$$.reduce((acc, d) => (d.active === true ? acc.concat(d) : acc), [])];")).toEqual([
+    expect(jsmql("$$ = $$.reduce((acc, d) => (d.active === true ? acc.concat(d) : acc), []);")).toEqual([
       { $match: { active: true } },
     ]);
   });
 
   it("unconditional identity: zero stages (no-op)", () => {
-    expect(jsmql("$$ = [$$.reduce((acc, d) => acc.concat(d), [])];")).toEqual([]);
+    expect(jsmql("$$ = $$.reduce((acc, d) => acc.concat(d), []);")).toEqual([]);
+  });
+
+  it("the legacy bracketed form is rejected — a stream needn't be wrapped in `[ ]`", () => {
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [])];")).toThrow(
+      /already produces a stream.*don't wrap it in '\[ \]'.*\$\$ = \$\$\.reduce/s,
+    );
   });
 
   it("non-empty init array is rejected", () => {
-    expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [1, 2])];")).toThrow(
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), [1, 2]);")).toThrow(
       /init to be '\[\]'.*no MQL accumulator preserves/,
     );
   });
 
   it("body alternate must be bare `acc` — `cond ? concat : <other>` is rejected", () => {
-    expect(() => jsmql("$$ = [$$.reduce((acc, d) => (d.active ? acc.concat(d.contactDetails) : []), [])];")).toThrow(
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => (d.active ? acc.concat(d.contactDetails) : []), []);")).toThrow(
       /Array-returning reducer body.*v1 supports only/s,
     );
   });
 
   it("non-concat body is rejected with the v1-shapes list", () => {
-    expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc.push(d.contactDetails), [])];")).toThrow(
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.push(d.contactDetails), []);")).toThrow(
       /Array-returning reducer body.*\.concat\(/s,
     );
   });
 
   it("concat with multi-element wrapper is rejected (v1 wants a bare path or `d`)", () => {
-    expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc.concat([d.x, d.y]), [])];")).toThrow(
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat([d.x, d.y]), []);")).toThrow(
       /Array-returning reducer body.*v1 supports only/s,
     );
   });
 
   it("`$.<field>` inside the condition is rejected — must use the lambda parameter", () => {
-    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ($.active ? acc.concat(d.contactDetails) : acc), [])];")).toThrow(
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => ($.active ? acc.concat(d.contactDetails) : acc), []);")).toThrow(
       /'\$\.<field>'.*use the lambda parameter/,
     );
   });

@@ -1596,28 +1596,30 @@ $$ = [$$.reduce(
 );
 
 describe(
-  "export contact details of active users (`$$ = [$$.reduce(… => acc.concat(…), [])]`)",
+  "export contact details of active users (`$$ = $$.reduce(… => acc.concat(…), [])`)",
   { features: ["Pipelines"] },
   () => {
     it(
       "filter + project as a single array-returning reducer",
       { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
       () => {
-        // The array-returning reducer wrap is the JS-faithful shape for
+        // An array-returning reducer (seed `[]`) is the JS-faithful shape for
         // "build a flat array by conditionally appending one projection per
-        // doc". Lowers to `$match` (the ternary condition) + `$replaceWith`
-        // (the field path concatenated). The condition translates through the
-        // same engine `.filter` uses — `d.active && d.contactDetails.email`
-        // becomes an `$expr` with the JS-faithful `&&` short-circuit.
+        // doc". Because it already yields an array — a stream — it's assigned
+        // directly to `$$`, no surrounding `[ ]`. Lowers to `$match` (the
+        // ternary condition) + `$replaceWith` (the field path concatenated).
+        // The condition translates through the same engine `.filter` uses —
+        // `d.active && d.contactDetails.email` becomes an `$expr` with the
+        // JS-faithful `&&` short-circuit.
         //
         // This is the same shape as `.filter(d => …).map(d => d.contactDetails)`
         // — pick whichever reads better at the call site.
         expect(
           jsmql`
-$$ = [$$.reduce(
+$$ = $$.reduce(
   (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
   []
-)];
+);
 $$$$.exports.email_contacts = $$;
         `,
         ).toEqual([
