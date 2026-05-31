@@ -627,7 +627,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   // precise "$$ only supports .push" error from the pipeline-level
   // `validateUnionPushShape` hook. `isSystemStageCall` extends the same
   // auto-wrap to the diagnostic source-stage sugar on every ref level —
-  // `$$.indexStats()`, `$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`
+  // `$$.indexStats()`, `$$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`
   // — which `isCollectionMethodCall` (CollectionRef only) doesn't cover. In
   // every case: auto-wrap as a one-stage Pipeline so the user doesn't have to
   // add a trailing `;` to flip into Pipeline mode and doesn't see the generic
@@ -908,7 +908,7 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
   }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx) as object[];
   // A bare stage call (`$match(...)`) or a diagnostic source-stage sugar
-  // (`$$.indexStats()`, `$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`)
+  // (`$$.indexStats()`, `$$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`)
   // is a one-stage Pipeline — wrap it so the user needn't add a trailing `;`.
   if (detectStageIntent(ast) !== null || isSystemStageCall(ast as Expr)) {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };

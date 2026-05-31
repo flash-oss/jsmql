@@ -23,10 +23,13 @@ export type StageDef = {
    * `$currentOp`, …). These don't transform an incoming stream — they produce
    * one — so they must be the pipeline's first stage, and they differ by
    * *where* they legally run. jsmql surfaces a scope-encoding sugar
-   * (`$$.indexStats()` collection, `$$$.currentOp()` database,
-   * `$$$$.shardedDataDistribution()` cluster) driven entirely off this field;
-   * see src/system-stage-translation.ts. `options: false` marks the stages
-   * that take no options object (`{ $indexStats: {} }`).
+   * (`$$.indexStats()` collection, `$$$$.currentOp()` / `$$$$.shardedDataDistribution()`
+   * cluster/server) driven entirely off this field; see
+   * src/system-stage-translation.ts. Two tiers are in use — collection (`$$`)
+   * and cluster/server (`$$$$`); the `currentOp` family runs on the admin
+   * database, not the current one, so it's cluster-scoped, not `database`.
+   * `options: false` marks the stages that take no options object
+   * (`{ $indexStats: {} }`).
    */
   diagnostic?: { scope: "collection" | "database" | "cluster"; options: boolean };
 };
@@ -69,7 +72,9 @@ export const STAGES: Record<string, StageDef> = {
   $currentOp: {
     description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
     subPipelineFields: [],
-    diagnostic: { scope: "database", options: true },
+    // Server/deployment-level: must be run on the admin database
+    // (`db.getSiblingDB("admin").aggregate(...)`), not the current database.
+    diagnostic: { scope: "cluster", options: true },
   },
   $densify: {
     description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
@@ -110,12 +115,14 @@ export const STAGES: Record<string, StageDef> = {
   $listLocalSessions: {
     description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
     subPipelineFields: [],
-    diagnostic: { scope: "database", options: true },
+    // Server-level: run on the admin database (`db.aggregate(...)`).
+    diagnostic: { scope: "cluster", options: true },
   },
   $listSampledQueries: {
     description: "Lists sampled queries for all collections or a specific collection.",
     subPipelineFields: [],
-    diagnostic: { scope: "database", options: true },
+    // Cluster-level: run on the admin database.
+    diagnostic: { scope: "cluster", options: true },
   },
   $listSearchIndexes: {
     description: "Returns information about existing Atlas Search indexes on a specified collection.",
@@ -125,7 +132,8 @@ export const STAGES: Record<string, StageDef> = {
   $listSessions: {
     description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
     subPipelineFields: [],
-    diagnostic: { scope: "database", options: true },
+    // Cluster-level: reads the cluster-wide config.system.sessions collection.
+    diagnostic: { scope: "cluster", options: true },
   },
   $lookup: {
     description:

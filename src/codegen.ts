@@ -627,9 +627,9 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       // recognise.
       throw new CodegenError(
         `'$$$.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a $lookup read), ` +
-          `or assigned to as a destination ('$$$.<coll> = $$' → $out write). A direct call on '$$$' is a database-scoped diagnostic source stage ` +
-          `(\`$$$.currentOp({...})\`, \`$$$.listSessions({...})\`, \`$$$.listLocalSessions({...})\`, \`$$$.listSampledQueries({...})\`) as the first Pipeline stage. ` +
-          `Bare '$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
+          `or assigned to as a destination ('$$$.<coll> = $$' → $out write). ` +
+          `Bare '$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()). ` +
+          `(System diagnostics aren't database-scoped: collection ones are on '$$', server/cluster ones on '$$$$'.)`,
         expr.pos,
       );
     case "ClusterRef":
@@ -640,8 +640,8 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       // wrong depth, dynamic db/coll names, etc.).
       throw new CodegenError(
         `'$$$$.<db>.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a cross-database $lookup), ` +
-          `or assigned to as a destination ('$$$$.<db>.<coll> = $$' → cross-database $out). A direct call on '$$$$' is a cluster-scoped diagnostic source stage ` +
-          `(\`$$$$.shardedDataDistribution()\`) as the first Pipeline stage. ` +
+          `or assigned to as a destination ('$$$$.<db>.<coll> = $$' → cross-database $out). A direct call on '$$$$' is a server/cluster-scoped diagnostic source stage ` +
+          `(\`$$$$.currentOp({...})\`, \`$$$$.listSessions({...})\`, \`$$$$.listLocalSessions({...})\`, \`$$$$.listSampledQueries({...})\`, \`$$$$.shardedDataDistribution()\`) as the first Pipeline stage. ` +
           `Bare '$$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos,
       );

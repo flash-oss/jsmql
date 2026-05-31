@@ -455,8 +455,8 @@ jsmql provides three further prefix levels, parallel to `$.`, for cross-collecti
 | ------ | ------------------------------ | ----------------------------------------------------------------------- |
 | `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
 | `$$`   | Current collection             | **live for `.push(...)` → `$unionWith`** ([Collection union](#collection-union-push)) and collection-scoped **diagnostics** (`$$.indexStats()`, … — [System stages](#system--diagnostic-stages-indexstats-currentop-)). `.find` / `.filter` data reads on `$$` still need schema/driver binding (deferred). |
-| `$$$`  | Current database               | **live for `.find/.filter` joins** ([below](#cross-collection-lookups-coll-find--filter)) and database-scoped **diagnostics** (`$$$.currentOp()`, …) |
-| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (Atlas Data Federation; below) and cluster-scoped **diagnostics** (`$$$$.shardedDataDistribution()`) |
+| `$$$`  | Current database               | **live for `.find/.filter` joins** ([below](#cross-collection-lookups-coll-find--filter)) and the `$$$.<coll> = …` `$out` write. No diagnostics — they're collection- or server-scoped. |
+| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (Atlas Data Federation; below) and server/cluster-scoped **diagnostics** (`$$$$.currentOp()`, `$$$$.shardedDataDistribution()`, …) |
 
 Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
 
@@ -738,9 +738,9 @@ Other chain methods (`.map`, `.sort`, `.slice`, etc.) are not yet wired — the 
 
 ---
 
-### System / diagnostic stages: `$$.indexStats()`, `$$$.currentOp()`, …
+### System / diagnostic stages: `$$.indexStats()`, `$$$$.currentOp()`, …
 
-A handful of MongoDB stages don't transform the stream — they *produce* it (index metadata, collection stats, running ops, …), so each must be the pipeline's **first** stage. They also differ by *where* they run, and jsmql encodes that scope in the context-ref prefix: call the stage as a method on the ref whose scope matches.
+A handful of MongoDB stages don't transform the stream — they *produce* it (index metadata, collection stats, running ops, …), so each must be the pipeline's **first** stage. They also differ by *where* they run, and jsmql encodes that scope in the context-ref prefix: call the stage as a method on the ref whose scope matches. There are two tiers — the stages either run on **your collection** (`$$`) or on the **deployment/admin** (`$$$$`); none target the *current* database, so `$$$` carries no diagnostics.
 
 ```js
 // Collection-scoped — run on db.coll.aggregate().
@@ -749,13 +749,11 @@ jsmql("$$.collStats({ storageStats: {} })");       // → [{ $collStats: { stora
 jsmql("$$.planCacheStats()");                      // → [{ $planCacheStats: {} }]
 jsmql('$$.listSearchIndexes({ name: "default" })');// → [{ $listSearchIndexes: { name: "default" } }]
 
-// Database-scoped — run on db.aggregate().
-jsmql("$$$.currentOp({ allUsers: true })");        // → [{ $currentOp: { allUsers: true } }]
-jsmql("$$$.listSessions({ allUsers: true })");     // → [{ $listSessions: { allUsers: true } }]
-jsmql("$$$.listLocalSessions()");                  // → [{ $listLocalSessions: {} }]
-jsmql('$$$.listSampledQueries({ namespace: "db.coll" })');
-
-// Cluster-scoped — run on the admin database.
+// Server / cluster-scoped — run on the admin (or config) database, not the current one.
+jsmql("$$$$.currentOp({ allUsers: true })");       // → [{ $currentOp: { allUsers: true } }]
+jsmql("$$$$.listSessions({ allUsers: true })");    // → [{ $listSessions: { allUsers: true } }]
+jsmql("$$$$.listLocalSessions()");                 // → [{ $listLocalSessions: {} }]
+jsmql('$$$$.listSampledQueries({ namespace: "db.coll" })');
 jsmql("$$$$.shardedDataDistribution()");           // → [{ $shardedDataDistribution: {} }]
 
 // Compose with following stages like any source:
@@ -763,22 +761,24 @@ jsmql("$$.indexStats(); $sort({ accesses: -1 });");
 // → [{ $indexStats: {} }, { $sort: { accesses: -1 } }]
 ```
 
-The method name is the stage name minus the leading `$`; the optional argument is the stage's options object (omit it for an empty `{}`). The three no-option stages — `$$.indexStats()`, `$$.planCacheStats()`, `$$$$.shardedDataDistribution()` — take no argument.
+The method name is the stage name minus the leading `$`; the optional argument is the stage's options object (omit it for an empty `{}`). The two no-option stages — `$$.indexStats()`, `$$.planCacheStats()`, plus `$$$$.shardedDataDistribution()` — take no argument.
 
 | Prefix | Scope | Driver | Stages |
 | ------ | ----- | ------ | ------ |
 | `$$`   | collection | `db.coll.aggregate()` | `.indexStats()`, `.collStats({…})`, `.planCacheStats()`, `.listSearchIndexes({…})` |
-| `$$$`  | database   | `db.aggregate()`       | `.currentOp({…})`, `.listSessions({…})`, `.listLocalSessions({…})`, `.listSampledQueries({…})` |
-| `$$$$` | cluster    | admin                  | `.shardedDataDistribution()` |
+| `$$$`  | database   | —                      | *(none — diagnostics are collection- or server-scoped)* |
+| `$$$$` | cluster/server | admin / config DB  | `.currentOp({…})`, `.listSessions({…})`, `.listLocalSessions({…})`, `.listSampledQueries({…})`, `.shardedDataDistribution()` |
 
-Because the prefix *is* the scope, using a stage at the wrong scope is a **compile-time** error that names the right prefix — jsmql catches the classic "ran `$currentOp` against a collection" mistake before it reaches the driver:
+Why `$$$$` and not `$$$` for `currentOp` & friends? MongoDB requires them to run on the **admin** database (`$listSessions` reads the cluster-wide `config.system.sessions`) — never your current application database — and they report deployment-wide state. `$$$` means "current database" (the DB `$$$.<coll>.find()` joins into), so `$$$.currentOp()` would read as "ops in *this* database", which you physically can't run. `$$$$` (cluster/server) is the honest home.
+
+Because the prefix *is* the scope, using a stage at the wrong scope is a **compile-time** error that names the right prefix — jsmql catches the classic "ran `$currentOp` against a collection / against the wrong database" mistake before it reaches the driver:
 
 ```js
 jsmql("$$.currentOp()");
-// ❌ 'currentOp' is a database-scoped system stage — write '$$$.currentOp(...)' (the '$$$' database reference, run on db.aggregate()), not '$$'.
+// ❌ 'currentOp' is a cluster-scoped system stage — write '$$$$.currentOp(...)' (the '$$$$' cluster reference, run on the admin database), not '$$'.
 
 jsmql("$$.indexStat()");
-// ❌ '$$.indexStat(...)' is not a known diagnostic stage. … Did you mean 'indexStats'?
+// ❌ '$$.indexStat(...)' is not a known diagnostic stage. … Did you mean '$$.indexStats(...)'?
 
 jsmql("$match($.x > 1); $$.indexStats();");
 // ❌ '$$.indexStats(...)' produces the pipeline's source documents ($indexStats), so it must be the first stage.

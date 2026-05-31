@@ -3,20 +3,22 @@
 //
 //   $$.indexStats()                          → { $indexStats: {} }
 //   $$.collStats({ storageStats: {} })       → { $collStats: { storageStats: {} } }
-//   $$$.currentOp({ allUsers: true })        → { $currentOp: { allUsers: true } }
+//   $$$$.currentOp({ allUsers: true })       → { $currentOp: { allUsers: true } }
 //   $$$$.shardedDataDistribution()           → { $shardedDataDistribution: {} }
 //
 // These stages don't transform an incoming stream — they *produce* one (index
 // metadata, collection stats, running ops, …) — so each must be the pipeline's
 // first stage. They also differ by *where* they legally run, and the
-// context-ref prefix encodes exactly that scope:
+// context-ref prefix encodes exactly that scope. Two tiers are in use:
 //
-//   $$    current collection  → db.coll.aggregate()  ($indexStats, $collStats, …)
-//   $$$   current database     → db.aggregate()       ($currentOp, $listSessions, …)
-//   $$$$  current cluster      → admin                ($shardedDataDistribution)
+//   $$    current collection   → db.coll.aggregate()  ($indexStats, $collStats, …)
+//   $$$$  cluster / server      → admin (or config) DB ($currentOp, $listSessions,
+//                                                        $shardedDataDistribution, …)
 //
-// Because the prefix *is* the scope, a stage used at the wrong scope is a
-// compile-time error (`$$.currentOp()` → "write '$$$.currentOp(...)'").
+// $$$ (current database) carries NO diagnostics: $currentOp & friends run on the
+// admin database, never the current one, so they're cluster-scoped, not
+// database-scoped. Because the prefix *is* the scope, a stage used at the wrong
+// scope is a compile-time error (`$$.currentOp()` → "write '$$$$.currentOp(...)'").
 //
 // Disambiguation vs `$lookup` (`$$$.<coll>.find(...)`): a diagnostic call is a
 // *direct* MethodCall on a bare ref node (`object` is `DatabaseRef`), whereas a
@@ -131,13 +133,18 @@ export function resolveSystemStageCall(expr: Expr): SystemStageCall {
 
   const def = DIAGNOSTICS_BY_METHOD.get(method);
   if (def === undefined) {
-    const suggestion = closestNameTo(method, METHODS_BY_SCOPE.get(scope)!);
-    const hint = suggestion !== null ? ` Did you mean '${suggestion}'?` : "";
-    throw new CodegenError(
-      `'${prefix}.${method}(...)' is not a known diagnostic stage. ` +
-        `'${prefix}' (${scope} reference) supports the ${scope}-scoped system stages: ${formatList(METHODS_BY_SCOPE.get(scope)!)}.${hint}`,
-      refPos,
-    );
+    // Suggest across *all* scopes (with the right prefix) so a typo of a
+    // wrong-scope stage still lands — and so a scope with no diagnostics of its
+    // own (e.g. `$$$`) still gives an actionable pointer.
+    const near = closestNameTo(method, DIAGNOSTICS_BY_METHOD.keys());
+    const hint =
+      near !== null ? ` Did you mean '${SCOPE_PREFIX[DIAGNOSTICS_BY_METHOD.get(near)!.scope]}.${near}(...)'?` : "";
+    const here = METHODS_BY_SCOPE.get(scope)!;
+    const base =
+      here.length > 0
+        ? `'${prefix}' (${scope} reference) supports the ${scope}-scoped system stages: ${formatList(here)}.`
+        : `'${prefix}' (${scope} reference) has no diagnostic source stages — collection diagnostics use '$$', server/cluster diagnostics use '$$$$'.`;
+    throw new CodegenError(`'${prefix}.${method}(...)' is not a known diagnostic stage. ${base}${hint}`, refPos);
   }
   if (def.scope !== scope) {
     throw new CodegenError(

@@ -1,4 +1,4 @@
-# System / diagnostic stages (`$$.indexStats()`, `$$$.currentOp()`, …)
+# System / diagnostic stages (`$$.indexStats()`, `$$$$.currentOp()`, …)
 
 Scope-encoding method-call sugar for MongoDB's *diagnostic / system* source
 stages. Implementation: [`src/system-stage-translation.ts`](../../src/system-stage-translation.ts);
@@ -18,15 +18,26 @@ context-ref prefixes already encode:
 | Prefix | Scope | Driver | Stages |
 | --- | --- | --- | --- |
 | `$$` | current collection | `db.coll.aggregate()` | `$indexStats`, `$collStats`, `$planCacheStats`, `$listSearchIndexes` |
-| `$$$` | current database | `db.aggregate()` | `$currentOp`, `$listSessions`, `$listLocalSessions`, `$listSampledQueries` |
-| `$$$$` | current cluster | admin | `$shardedDataDistribution` |
+| `$$$` | current database | — | *(none)* |
+| `$$$$` | cluster / server | admin (or `config`) DB | `$currentOp`, `$listSessions`, `$listLocalSessions`, `$listSampledQueries`, `$shardedDataDistribution` |
 
-So `$$.indexStats()` reads "this collection's index stats", `$$$.currentOp()`
-reads "this database's current ops". The method name is the stage name minus the
+So `$$.indexStats()` reads "this collection's index stats"; `$$$$.currentOp()`
+reads "the deployment's current ops". The method name is the stage name minus the
 leading `$`. Each lowers to `{ $<stage>: <options-or-{}> }`. Because the prefix
 *is* the scope, a stage used at the wrong scope is a **compile-time** error —
 the classic "ran `$indexStats` through `db.aggregate()`" / "ran `$currentOp`
 through `db.coll.aggregate()`" mistake is caught before it reaches the driver.
+
+**Two tiers, not three.** An earlier draft put `$currentOp` & friends under `$$$`
+(current database). That was wrong: MongoDB requires them to run on the **admin**
+database (`$listSessions` reads the cluster-wide `config.system.sessions`), never
+your current application database, and they report deployment-wide state. `$$$`
+means "current database" (the DB `$$$.<coll>.find()` joins into), so
+`$$$.currentOp()` would read as "ops in *this* database" — which you physically
+cannot run. They're server/cluster-level, so they live on `$$$$`. `$$$` therefore
+carries **no** diagnostics (it keeps `$$$.<coll>.find()` lookups and the
+`$$$.<coll> = …` `$out` write); the real split is collection (`$$`) vs
+deployment (`$$$$`).
 
 This fits the **"source visible after the prefix"** convention (CLAUDE.md): a
 diagnostic is a *read* from a source, like `$$$.<coll>.find(...)` is — the prefix
@@ -41,10 +52,10 @@ $$.indexStats()                          → [{ $indexStats: {} }]
 $$.collStats({ storageStats: {} })       → [{ $collStats: { storageStats: {} } }]
 $$.planCacheStats()                      → [{ $planCacheStats: {} }]
 $$.listSearchIndexes({ name: "idx" })    → [{ $listSearchIndexes: { name: "idx" } }]
-$$$.currentOp({ allUsers: true })        → [{ $currentOp: { allUsers: true } }]
-$$$.listSessions({ allUsers: true })     → [{ $listSessions: { allUsers: true } }]
-$$$.listLocalSessions({ users: [...] })  → [{ $listLocalSessions: { users: [...] } }]
-$$$.listSampledQueries({ namespace:"x" })→ [{ $listSampledQueries: { namespace: "x" } }]
+$$$$.currentOp({ allUsers: true })       → [{ $currentOp: { allUsers: true } }]
+$$$$.listSessions({ allUsers: true })    → [{ $listSessions: { allUsers: true } }]
+$$$$.listLocalSessions({ users: [...] }) → [{ $listLocalSessions: { users: [...] } }]
+$$$$.listSampledQueries({ namespace:"x" })→ [{ $listSampledQueries: { namespace: "x" } }]
 $$$$.shardedDataDistribution()           → [{ $shardedDataDistribution: {} }]
 ```
 
@@ -64,7 +75,7 @@ A diagnostic call is a **direct** `MethodCall` whose `object` is a *bare* ref
 node:
 
 ```
-$$$.currentOp()   → MethodCall { object: DatabaseRef,                       method: "currentOp" }
+$$$$.currentOp()  → MethodCall { object: ClusterRef,                        method: "currentOp" }
 $$$.orders.find() → MethodCall { object: MemberAccess { object: DatabaseRef }, method: "find" }   // a $lookup
 ```
 
@@ -75,14 +86,17 @@ lookup still ends in `.find`/`.filter` on a member access.
 - On `$$`, the method namespace is **shared** with `.push` (union) and `.filter`
   (facet). `isSystemStageCall` only claims a `$$` method that is an actual
   diagnostic *or a near-typo of one* (so `$$.indexStat()` → "did you mean
-  indexStats", but `$$.pop()` falls through to the union validator's
+  `$$.indexStats(...)`", but `$$.pop()` falls through to the union validator's
   `.push`/`.filter` guidance untouched).
 - On `$$$` / `$$$$`, a direct call is a **diagnostic-only** namespace, so every
-  direct call routes through the resolver to get a precise error.
+  direct call routes through the resolver to get a precise error — including
+  `$$$` (which has no diagnostics of its own): `$$$.currentOp()` resolves to the
+  wrong-scope hint pointing at `$$$$`, and `$$$.foobar()` to a "no diagnostics
+  here, they're on `$$` / `$$$$`" message.
 
 `detectSystemStageCall` work is split the same way the union/lookup translators
 split theirs: `isSystemStageCall(expr)` is the cheap boolean gate (also used by
-the `index.ts` auto-wrap so a bare top-level `$$$.currentOp()` flips into
+the `index.ts` auto-wrap so a bare top-level `$$$$.currentOp()` flips into
 Pipeline mode without a trailing `;`), and `resolveSystemStageCall(expr)` does
 the validation and returns the descriptor.
 
@@ -98,10 +112,11 @@ so it must be the first stage.` at the call-site position.
 
 | Input | Error |
 | --- | --- |
-| `$$.currentOp()` | wrong scope → `'currentOp' is a database-scoped system stage — write '$$$.currentOp(...)' (the '$$$' database reference, run on db.aggregate()), not '$$'.` |
-| `$$$.indexStats()` | wrong scope → points at `$$.indexStats(...)` |
-| `$$.indexStat()` | `Did you mean 'indexStats'?` (nearest diagnostic at that scope) |
-| `$$$.foobar()` | `'$$$.foobar(...)' is not a known diagnostic stage. '$$$' (database reference) supports the database-scoped system stages: .currentOp(), .listLocalSessions(), .listSampledQueries(), .listSessions().` |
+| `$$.currentOp()` | wrong scope → `'currentOp' is a cluster-scoped system stage — write '$$$$.currentOp(...)' (the '$$$$' cluster reference, run on the admin database), not '$$'.` |
+| `$$$.currentOp()` | wrong scope → same, points at `$$$$.currentOp(...)` |
+| `$$$$.indexStats()` | wrong scope → points at `$$.indexStats(...)` |
+| `$$.indexStat()` | `Did you mean '$$.indexStats(...)'?` (nearest diagnostic, with its correct prefix) |
+| `$$$.foobar()` | `'$$$.foobar(...)' is not a known diagnostic stage. '$$$' (database reference) has no diagnostic source stages — collection diagnostics use '$$', server/cluster diagnostics use '$$$$'.` |
 | `$$.indexStats({})` | `'$$.indexStats()' takes no options — call it with no arguments.` |
 | `$$.collStats(true)` | `'$$.collStats(...)' expects an options object literal …, not a boolean literal.` |
 | `$$.collStats({}, {})` | `'$$.collStats(...)' takes at most one options object, but got 2 arguments.` |

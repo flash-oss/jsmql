@@ -157,7 +157,7 @@ function isStageCandidate(el: ArrayElement): boolean {
   // a push (e.g. `$facet.*`) routes through the sub-pipeline path that
   // pre-rejects it with a precise hoist-to-outer hint.
   if (el.type === "MethodCall" && detectUnionPush(el as Expr) !== null) return true;
-  // `$$.indexStats()` / `$$$.currentOp()` / `$$$$.shardedDataDistribution()` —
+  // `$$.indexStats()` / `$$$$.currentOp()` / `$$$$.shardedDataDistribution()` —
   // a diagnostic source stage. Direct method call on a bare context-ref node;
   // it lowers to a `$<stage>` source. Recognising it here flips a bracketed
   // `[$$.indexStats(), $sort(...)]` into pipeline mode (same pattern as the
@@ -335,7 +335,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
         for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
         return;
       }
-      // `$$.indexStats()` / `$$$.currentOp()` / `$$$$.shardedDataDistribution()`
+      // `$$.indexStats()` / `$$$$.currentOp()` / `$$$$.shardedDataDistribution()`
       // → a diagnostic source stage. First-stage-only: a source produces the
       // stream, so anything emitted before it is a contradiction.
       if (el.type === "MethodCall" && isSystemStageCall(el)) {
@@ -434,7 +434,7 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
       for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
       return;
     }
-    // `$$.indexStats()` / `$$$.currentOp()` / `$$$$.shardedDataDistribution()`
+    // `$$.indexStats()` / `$$$$.currentOp()` / `$$$$.shardedDataDistribution()`
     // → a diagnostic source stage. First-stage-only.
     if (stmt.type === "MethodCall" && isSystemStageCall(stmt as Expr)) {
       const sys = resolveSystemStageCall(stmt as Expr);
@@ -1043,7 +1043,7 @@ function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
 }
 
 /**
- * Emit the single source stage for a `$$.indexStats()` / `$$$.currentOp(...)` /
+ * Emit the single source stage for a `$$.indexStats()` / `$$$$.currentOp(...)` /
  * `$$$$.shardedDataDistribution()` diagnostic call. The options object (when
  * present) lowers through the same `generateStageBody` path every other stage
  * body uses — all nine diagnostics declare `subPipelineFields: []`, so it's a

@@ -31,32 +31,33 @@ describe("system stages — collection-scoped ($$)", () => {
   });
 });
 
-describe("system stages — database-scoped ($$$)", () => {
-  it("$$$.currentOp(options) lowers to a $currentOp source stage", () => {
-    expect(jsmql("$$$.currentOp({ allUsers: true, idleConnections: false })")).toEqual([
+describe("system stages — server/cluster-scoped ($$$$)", () => {
+  // $currentOp / $listSessions / $listLocalSessions / $listSampledQueries all
+  // run against the admin (or config) database, not the current one, so they
+  // live on $$$$ (cluster/server), not $$$ (current database).
+  it("$$$$.currentOp(options) lowers to a $currentOp source stage", () => {
+    expect(jsmql("$$$$.currentOp({ allUsers: true, idleConnections: false })")).toEqual([
       { $currentOp: { allUsers: true, idleConnections: false } },
     ]);
   });
 
-  it("$$$.currentOp() with no options lowers to an empty body", () => {
-    expect(jsmql("$$$.currentOp()")).toEqual([{ $currentOp: {} }]);
+  it("$$$$.currentOp() with no options lowers to an empty body", () => {
+    expect(jsmql("$$$$.currentOp()")).toEqual([{ $currentOp: {} }]);
   });
 
-  it("$$$.listSessions(options) and $$$.listLocalSessions(options) lower to their stages", () => {
-    expect(jsmql("$$$.listSessions({ allUsers: true })")).toEqual([{ $listSessions: { allUsers: true } }]);
-    expect(jsmql('$$$.listLocalSessions({ users: [{ user: "r", db: "test" }] })')).toEqual([
+  it("$$$$.listSessions(options) and $$$$.listLocalSessions(options) lower to their stages", () => {
+    expect(jsmql("$$$$.listSessions({ allUsers: true })")).toEqual([{ $listSessions: { allUsers: true } }]);
+    expect(jsmql('$$$$.listLocalSessions({ users: [{ user: "r", db: "test" }] })')).toEqual([
       { $listLocalSessions: { users: [{ user: "r", db: "test" }] } },
     ]);
   });
 
-  it("$$$.listSampledQueries(options) passes the namespace through", () => {
-    expect(jsmql('$$$.listSampledQueries({ namespace: "db.coll" })')).toEqual([
+  it("$$$$.listSampledQueries(options) passes the namespace through", () => {
+    expect(jsmql('$$$$.listSampledQueries({ namespace: "db.coll" })')).toEqual([
       { $listSampledQueries: { namespace: "db.coll" } },
     ]);
   });
-});
 
-describe("system stages — cluster-scoped ($$$$)", () => {
   it("$$$$.shardedDataDistribution() lowers to a no-option source stage", () => {
     expect(jsmql("$$$$.shardedDataDistribution()")).toEqual([{ $shardedDataDistribution: {} }]);
   });
@@ -78,7 +79,7 @@ describe("system stages — pipeline composition", () => {
   });
 
   it("a bare single statement (no `;`, no brackets) auto-wraps into Pipeline mode", () => {
-    expect(jsmql("$$$.currentOp()")).toEqual([{ $currentOp: {} }]);
+    expect(jsmql("$$$$.currentOp()")).toEqual([{ $currentOp: {} }]);
     expect(jsmql("$$$$.shardedDataDistribution()")).toEqual([{ $shardedDataDistribution: {} }]);
   });
 
@@ -100,14 +101,20 @@ describe("system stages — first-stage-only enforcement", () => {
 });
 
 describe("system stages — error messages", () => {
-  it("wrong scope: a database stage on $$ points at the $$$ prefix", () => {
+  it("wrong scope: a server stage on $$ points at the $$$$ prefix", () => {
     expect(() => jsmql("$$.currentOp()")).toThrow(
-      /'currentOp' is a database-scoped system stage — write '\$\$\$\.currentOp\(\.\.\.\)'/,
+      /'currentOp' is a cluster-scoped system stage — write '\$\$\$\$\.currentOp\(\.\.\.\)'/,
     );
   });
 
-  it("wrong scope: a collection stage on $$$ points at the $$ prefix", () => {
-    expect(() => jsmql("$$$.indexStats()")).toThrow(
+  it("wrong scope: a server stage on $$$ (database) points at the $$$$ prefix", () => {
+    expect(() => jsmql("$$$.currentOp()")).toThrow(
+      /'currentOp' is a cluster-scoped system stage — write '\$\$\$\$\.currentOp\(\.\.\.\)'/,
+    );
+  });
+
+  it("wrong scope: a collection stage on $$$$ points at the $$ prefix", () => {
+    expect(() => jsmql("$$$$.indexStats()")).toThrow(
       /'indexStats' is a collection-scoped system stage — write '\$\$\.indexStats\(\.\.\.\)'/,
     );
   });
@@ -118,8 +125,12 @@ describe("system stages — error messages", () => {
     );
   });
 
-  it("unknown method suggests the nearest diagnostic at that scope", () => {
-    expect(() => jsmql("$$.indexStat()")).toThrow(/Did you mean 'indexStats'\?/);
+  it("$$$ (database) has no diagnostics of its own — unknown method points elsewhere", () => {
+    expect(() => jsmql("$$$.fooBar()")).toThrow(/'\$\$\$' \(database reference\) has no diagnostic source stages/);
+  });
+
+  it("unknown method suggests the nearest diagnostic with its correct prefix", () => {
+    expect(() => jsmql("$$.indexStat()")).toThrow(/Did you mean '\$\$\.indexStats\(\.\.\.\)'\?/);
   });
 
   it("no-option stage given an argument is rejected", () => {
