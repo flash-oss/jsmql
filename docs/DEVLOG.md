@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-31 — Wave 1 of the deferred-features push: eight `$match` query-translator additions
+
+Eight JS shapes that previously fell through to `$expr` (silently disabling MongoDB indexes) now translate to indexable query-document form. From the [deferred-features catalog](/Users/vasyl/.claude/plans/suggest-syntax-for-all-cheerful-meerkat.md) §A, items #15, #16, #19a–f and the `typeof === "boolean"` polish on #19c:
+
+| jsmql source | MQL output (in `$match` position) |
+|---|---|
+| `$.tags.includes("vip")` | `{ tags: "vip" }` (implicit array-element / scalar-equality match) |
+| `["a","b"].includes($.status)` | `{ status: { $in: ["a","b"] } }` |
+| `$.name.match(/^a/i)` | `{ name: /^a/i }` (real `RegExp`) |
+| `$.items.some(it => it.qty > 5)` | `{ items: { $elemMatch: { qty: { $gt: 5 } } } }` |
+| `$.field === undefined` / `!== undefined` | `{ field: { $exists: false } }` / `$exists: true` |
+| `typeof $.x === "boolean"` | `{ x: { $type: "bool" } }` (JS-form `"boolean"` mapped to BSON `"bool"`) |
+| `$.items.length === 3` | `{ items: { $size: 3 } }` |
+| `$.x % 5 === 0` | `{ x: { $mod: [5, 0] } }` |
+| `$.tags.includes("a") && $.tags.includes("b")` | `{ tags: { $all: ["a","b"] } }` (folded from `&&`-chain on same field) |
+
+**`undefined` is a new AST node**, parser-recognised keyword, lexer token. In aggregation expression position it throws an actionable `CodegenError` ("'undefined' is only meaningful in '$match' position …") — MongoDB's aggregation `$eq` can't distinguish missing from null cleanly, so we surface the ambiguity instead of silently mapping to `null`. In `$match` position the field-form translation emits `$exists: false` / `$exists: true`, which lines up with JS's "value is undefined / property is missing" semantics (BSON treats missing fields as undefined-like).
+
+**Length-collapse fix.** `$.items.length === 3.5` (non-integer RHS) used to compile to `{ "items.length": 3.5 }` — a literal dotted-key match against a real (but unintended) MongoDB path. The translator now refuses to lower `.length`-bearing equalities except via the `$size` peephole; non-integer RHS falls through to `$expr` instead of producing the misleading dotted key.
+
+**`.includes()` divergence is documented.** Expression-form `.includes()` is type-polymorphic (arrays via `$in`, strings via `$indexOfCP`-substring). Query-form on a field receiver emits the bare `{ field: value }` shape — array-element match or scalar equality, but NOT string substring. The divergence is documented in [docs/specs/match-query-translation.md](specs/match-query-translation.md) and [docs/LANGUAGE.md](LANGUAGE.md); users who want substring match in `$match` reach for `.match(/value/)`.
+
+**`$all` folding is narrow on purpose.** Only when the *entire* `&&`-chain is `.includes(<lit>)` on the *same* field does it fold. Mixed chains (`.includes("a") && .age > 18`) emit each clause separately — the un-folded form has identical semantics on array-valued fields, so users can reorder to trigger the fold if they want it. The implementation walks the `BinaryExpr("&&", …)` tree before the generic `combineAnd` path sees it.
+
+**Items 14 (`!expr` via De Morgan), 24 ($let-as-optimisation), 31 (spread-form concat-equivalent) were rejected as bad DX** and won't be implemented. Memory: `feedback_no_silent_output_drift.md` — "same input must produce same MQL output; an optimiser whose decision the user can't predict from the source is pure surprise".
+
+Files: [src/match-translation.ts](../src/match-translation.ts), [src/lexer.ts](../src/lexer.ts), [src/ast.ts](../src/ast.ts), [src/parser.ts](../src/parser.ts), [src/codegen.ts](../src/codegen.ts), [src/lookup-translation.ts](../src/lookup-translation.ts) (UndefinedLiteral in the leaf-case switch). Tests: [test/match-translation.test.ts](../test/match-translation.test.ts) (38 new cases across 8 describe blocks).
+
+Six more waves remain in the deferred-features push — see the plan file for the full schedule. Wave 2 lands stream-methods extensions (`$$.length`, dict-build reducers, registry integration with the lookup chain walker).
+
+---
+
 ## 2026-05-30 — fix: array-returning reducer assigns unbracketed; bracketed wrap now throws
 
 The array-returning reducer form was shipped requiring a bracket wrap — `$$ = [$$.reduce((acc, d) => acc.concat(d.<f>), [])]`. That's backwards: a reducer seeded with `[]` already *returns* an array, i.e. a stream, so wrapping it in `[ ]` yields `[[…]]` — a stream whose single document is itself an array. The correct surface is the **unbracketed** `$$ = $$.reduce((acc, d) => acc.concat(d.<f>), [])`, and that's now what's supported; the bracketed form throws an actionable `CodegenError` ("a reducer seeded with `[]` already produces a stream, so don't wrap it in `[ ]` — assign it directly").

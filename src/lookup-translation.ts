@@ -824,6 +824,7 @@ function mapChildren(
     case "StringLiteral":
     case "BooleanLiteral":
     case "NullLiteral":
+    case "UndefinedLiteral":
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
@@ -1303,6 +1304,7 @@ function descendAndExtract(
     case "StringLiteral":
     case "BooleanLiteral":
     case "NullLiteral":
+    case "UndefinedLiteral":
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":

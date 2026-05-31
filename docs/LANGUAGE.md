@@ -2136,6 +2136,38 @@ jsmql("[{ $match: { age: { $gt: 18 } } }]");
 // → [{ $match: { age: { $gt: 18 } } }]
 ```
 
+**Index-friendly JS patterns that translate to MongoDB query operators.** Several common JS shapes have direct query-language equivalents — the translator recognises them and emits the indexable form:
+
+```js
+// Array-element / set-membership tests
+jsmql(`[{ $match: $.tags.includes("vip") }]`);
+// → [{ $match: { tags: "vip" } }]                          // implicit array-element match
+jsmql(`[{ $match: ["active", "trial"].includes($.status) }]`);
+// → [{ $match: { status: { $in: ["active", "trial"] } } }]
+jsmql(`[{ $match: $.tags.includes("a") && $.tags.includes("b") }]`);
+// → [{ $match: { tags: { $all: ["a", "b"] } } }]           // folded $all
+
+// Regex match — receiver field, regex-literal arg
+jsmql(`[{ $match: $.name.match(/^a/i) }]`);
+// → [{ $match: { name: /^a/i } }]
+
+// Nested-array predicate
+jsmql(`[{ $match: $.items.some(it => it.qty > 5 && it.tag === "vip") }]`);
+// → [{ $match: { items: { $elemMatch: { qty: { $gt: 5 }, tag: "vip" } } } }]
+
+// Existence / type / size / modulo
+jsmql(`[{ $match: $.deletedAt === undefined }]`);
+// → [{ $match: { deletedAt: { $exists: false } } }]
+jsmql(`[{ $match: typeof $.x === "boolean" }]`);
+// → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
+jsmql(`[{ $match: $.items.length === 3 }]`);
+// → [{ $match: { items: { $size: 3 } } }]
+jsmql(`[{ $match: $.x % 5 === 0 }]`);
+// → [{ $match: { x: { $mod: [5, 0] } } }]
+```
+
+`.includes(<literal>)` on a field receiver diverges from the expression-form translation — in `$match` position it emits the bare `{ field: value }` shape (which matches arrays-containing-value or scalar equality, but NOT string substring). Use `.match(/value/)` if you want substring match in `$match`.
+
 **Known semantic divergences.** Query-language equality differs from aggregation `$eq` in three ways: array fields (query mode matches array elements), `$ne` with missing fields (the `!== <value>` shape excludes missing docs), and field-to-field comparison (not done; stays in `$expr`). For null/missing handling, `===` / `!==` and `==` / `!=` translate to two distinct index-friendly shapes — see the [strict vs loose null table](#-vs--null-and-missing-fields).
 
 ```js

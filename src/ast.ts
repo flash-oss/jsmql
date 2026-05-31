@@ -112,6 +112,7 @@ export type Expr =
   | { type: "StringLiteral"; value: string; pos: number }
   | { type: "BooleanLiteral"; value: boolean; pos: number }
   | { type: "NullLiteral"; pos: number }
+  | { type: "UndefinedLiteral"; pos: number }
   | { type: "ArrayLiteral"; elements: ArrayElement[]; pos: number }
   | { type: "ObjectLiteral"; entries: ObjectEntry[]; pos: number }
   | { type: "TemplateLiteral"; quasis: string[]; expressions: Expr[]; pos: number }

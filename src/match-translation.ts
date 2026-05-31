@@ -42,6 +42,17 @@ export function translateMatchBody(body: Expr, ctx: TranslateCtx = {}): MatchTra
 
 function translate(expr: Expr, ctx: TranslateCtx): MatchTranslation {
   if (expr.type === "BinaryExpr" && expr.op === "&&") {
+    // Pre-pass: when the entire &&-chain is `field.includes(<lit>)` calls on
+    // the same field, fold to `{ field: { $all: [<lits>] } }`. Strictly a
+    // compactness optimisation — `$and: [{ f: a }, { f: b }]` matches the
+    // same array-valued docs as `$all: [a, b]` — so it doesn't change
+    // semantics; just emits the shorter MQL the user almost certainly meant.
+    // Mixed chains (one .includes plus other predicates) fall through to the
+    // normal combineAnd path; the user can rearrange to enable the fold.
+    const allFold = extractIncludesChain(expr);
+    if (allFold !== null) {
+      return { query: { [allFold.field]: { $all: allFold.values } }, residual: null };
+    }
     return combineAnd(translate(expr.left, ctx), translate(expr.right, ctx));
   }
   if (expr.type === "BinaryExpr" && expr.op === "||") {
@@ -153,15 +164,34 @@ function combineResidualsAnd(a: Expr | null, b: Expr | null): Expr | null {
 }
 
 function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> | null {
+  // Bare boolean method calls — `.includes(x)`, `.match(/re/)`, `.some(p)` —
+  // can be the entire predicate body (no `=== true` wrapper), so they're
+  // tried before the BinaryExpr machinery.
+  if (expr.type === "MethodCall") {
+    const m = translateBooleanMethodCall(expr, ctx);
+    if (m !== null) return m;
+  }
   if (expr.type !== "BinaryExpr") return null;
   const op = expr.op;
   if (isEqualityOp(op)) {
-    // Peephole: `typeof $.field === "<alias>"` → `{ field: { $type: "<alias>" } }`.
-    // Tried before the generic equality path so the field-path-and-literal
-    // orientation logic doesn't see the `typeof` wrapper.
+    // Each peephole is tried before the generic equality path so the field-
+    // path-and-literal orientation logic doesn't see the wrapping construct
+    // (typeof, member access for `.length`, BinaryExpr `%`, …).
     if (op === "===" || op === "!==") {
       const typed = translateTypeofPredicate(expr.left, expr.right, op);
       if (typed !== null) return typed;
+      const undef = translateUndefinedPredicate(expr.left, expr.right, op);
+      if (undef !== null) return undef;
+      const sz = translateLengthSize(expr.left, expr.right, op);
+      if (sz !== null) return sz;
+      // If either side IS a `.length` access but we couldn't fold to `$size`
+      // (non-integer or negative RHS), don't let the generic field-path walker
+      // collapse it into a literal dotted key like `"items.length"` — that's a
+      // real path in MongoDB but never what the user meant. Fall through to
+      // `$expr` instead.
+      if (asLengthFieldPath(expr.left) !== null || asLengthFieldPath(expr.right) !== null) return null;
+      const md = translateModulo(expr.left, expr.right, op);
+      if (md !== null) return md;
     }
     return translateEquality(expr.left, expr.right, op, ctx);
   }
@@ -169,6 +199,285 @@ function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> |
     return translateOrderedCompare(expr.left, expr.right, op, ctx);
   }
   return null;
+}
+
+/**
+ * Bare boolean method calls in `$match` body — `.includes(lit)`, `.match(/re/)`,
+ * `.some(p)`. Each produces an index-friendly query-doc shape when the receiver
+ * and the argument are compatible; otherwise returns null and the body falls
+ * through to `$expr`.
+ */
+function translateBooleanMethodCall(
+  expr: Expr & { type: "MethodCall" },
+  ctx: TranslateCtx,
+): Record<string, unknown> | null {
+  if (expr.method === "includes") return translateIncludesCall(expr, ctx);
+  if (expr.method === "match") return translateMatchCall(expr);
+  if (expr.method === "some") return translateSomeCall(expr, ctx);
+  return null;
+}
+
+/**
+ * `.includes()` — two query-position forms:
+ *   - `$.tags.includes("vip")` → `{ tags: "vip" }` (implicit array-element /
+ *     scalar-equality match — MongoDB's "value or array-containing-value"
+ *     semantics line up with JS-on-arrays exactly).
+ *   - `["a","b"].includes($.status)` → `{ status: { $in: ["a","b"] } }`
+ *     (set membership).
+ *
+ * Form 1 diverges from jsmql's expression-position `.includes()` translation
+ * (which handles both array and string substring via `$cond` + `$indexOfCP`):
+ * here we only emit the array-element form. For string-substring queries,
+ * users reach for `.match(/.../)` (or the explicit `$op($indexOfCP, …)`).
+ * Documented in `docs/specs/match-query-translation.md`.
+ */
+function translateIncludesCall(expr: Expr & { type: "MethodCall" }, ctx: TranslateCtx): Record<string, unknown> | null {
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") return null;
+  // Form 1: field.includes(<literal>)
+  const recvField = asFieldPath(expr.object);
+  if (recvField !== null) {
+    const lit = anyEqualityLiteral(arg, ctx);
+    if (lit !== null) return { [recvField]: lit.value };
+  }
+  // Form 2: <array-literal-of-literals>.includes(<field>)
+  if (expr.object.type === "ArrayLiteral") {
+    const argField = asFieldPath(arg);
+    if (argField === null) return null;
+    const values: unknown[] = [];
+    for (const el of expr.object.elements) {
+      // ArrayElement is wider than Expr — it allows update-op shapes inside
+      // pipeline arrays. None of those are valid in an `.includes()`-arg
+      // literal, so we reject and fall through to the expression-form
+      // translation, which produces the precise error if needed.
+      if (el.type === "SpreadElement") return null;
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") return null;
+      const lit = anyEqualityLiteral(el, ctx);
+      if (lit === null) return null;
+      values.push(lit.value);
+    }
+    return { [argField]: { $in: values } };
+  }
+  return null;
+}
+
+/**
+ * Walk a `&&`-tree and, if **every** leaf is `field.includes(<lit>)` on the
+ * **same** field, return `{ field, values: [...lits] }`. Returns null on any
+ * deviation — a different op, a different field, a non-literal arg, anything.
+ *
+ * Used by `translate()` to fold the chain into `$all` before the generic
+ * `combineAnd` path sees it. Mixed chains (some leaves are `.includes`, others
+ * aren't) deliberately fall through; the user can reorder if they want the
+ * fold, and the un-folded `$and` of identical-shape clauses is identical
+ * in semantics anyway.
+ */
+function extractIncludesChain(expr: Expr): { field: string; values: unknown[] } | null {
+  if (expr.type === "BinaryExpr" && expr.op === "&&") {
+    const left = extractIncludesChain(expr.left);
+    if (left === null) return null;
+    const right = extractIncludesChain(expr.right);
+    if (right === null) return null;
+    if (left.field !== right.field) return null;
+    return { field: left.field, values: [...left.values, ...right.values] };
+  }
+  if (expr.type !== "MethodCall" || expr.method !== "includes") return null;
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath(expr.object);
+  if (field === null) return null;
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") return null;
+  const lit = anyEqualityLiteral(arg, /*ctx*/ {});
+  if (lit === null) return null;
+  return { field, values: [lit.value] };
+}
+
+/**
+ * `$.name.match(/^a/i)` → `{ name: /^a/i }`. Only the field-receiver,
+ * regex-literal-arg form translates; anything else (string arg, computed
+ * regex, non-field receiver) falls through to `$expr` where the existing
+ * `$regexMatch` translation handles it.
+ */
+function translateMatchCall(expr: Expr & { type: "MethodCall" }): Record<string, unknown> | null {
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath(expr.object);
+  if (field === null) return null;
+  const arg = expr.args[0];
+  if (arg.type !== "RegexLiteral") return null;
+  // Reconstruct the regex literal as a real JS RegExp so the driver
+  // serialises it as BSON regex (rather than a plain object).
+  const re = new RegExp(arg.pattern, arg.flags);
+  return { [field]: re };
+}
+
+/**
+ * `$.items.some(item => <predicate>)` → `{ items: { $elemMatch: <translated-body> } }`
+ * — but only when the lambda body itself translates entirely (no residual).
+ * If the body has anything index-unfriendly, the whole `.some` falls through
+ * to the expression-form `$anyElementTrue` path so we don't mix index-friendly
+ * and `$expr` semantics inside one `$elemMatch`.
+ */
+function translateSomeCall(expr: Expr & { type: "MethodCall" }, ctx: TranslateCtx): Record<string, unknown> | null {
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath(expr.object);
+  if (field === null) return null;
+  const lam = expr.args[0];
+  if (lam.type !== "Lambda" || lam.params.length !== 1) return null;
+  if (lam.body === undefined) return null;
+  const param = lam.params[0];
+  // Rewrite `<param>.x` → `$.x` in the body so the inner translator (which
+  // treats `$.` as the doc-relative field path) gets a recognisable shape.
+  // `$elemMatch`'s query document is matched against each array element as if
+  // *it* were the root doc, so the rewrite is faithful.
+  const rewritten = rewriteParamAsRoot(lam.body, param);
+  if (rewritten === null) return null;
+  const inner = translate(rewritten, ctx);
+  if (inner.residual !== null) return null;
+  if (isEmpty(inner.query)) return null;
+  return { [field]: { $elemMatch: inner.query } };
+}
+
+/**
+ * Inside `.some(item => …)` the lambda parameter (`item`) plays the role of
+ * the current element. `$elemMatch` evaluates its query doc against the
+ * element as if it were the root, so `item.qty` should translate the same
+ * way `$.qty` would. This rewriter walks the body, swapping every
+ * `MemberAccess { object: ParamRef(<param>) }` chain into the equivalent
+ * `FieldRef` / dotted-`FieldRef` shape; bare `ParamRef(<param>)` (no access)
+ * isn't representable as a field path, so we bail.
+ */
+function rewriteParamAsRoot(expr: Expr, param: string): Expr | null {
+  if (expr.type === "ParamRef" && expr.name === param) return null;
+  if (expr.type === "MemberAccess") {
+    const innerField = paramMemberAsField(expr, param);
+    if (innerField !== null) return { type: "FieldRef", path: innerField, pos: expr.pos };
+    const newObj = rewriteParamAsRoot(expr.object, param);
+    if (newObj === null) return null;
+    return { ...expr, object: newObj };
+  }
+  if (expr.type === "BinaryExpr") {
+    const left = rewriteParamAsRoot(expr.left, param);
+    if (left === null) return null;
+    const right = rewriteParamAsRoot(expr.right, param);
+    if (right === null) return null;
+    return { ...expr, left, right };
+  }
+  if (expr.type === "UnaryExpr") {
+    const operand = rewriteParamAsRoot(expr.operand, param);
+    if (operand === null) return null;
+    return { ...expr, operand };
+  }
+  if (expr.type === "MethodCall") {
+    const obj = rewriteParamAsRoot(expr.object, param);
+    if (obj === null) return null;
+    return { ...expr, object: obj };
+  }
+  if (expr.type === "TypeofExpr") {
+    const operand = rewriteParamAsRoot(expr.operand, param);
+    if (operand === null) return null;
+    return { ...expr, operand };
+  }
+  // Literals and unrelated FieldRefs pass through unchanged.
+  return expr;
+}
+
+function paramMemberAsField(expr: Expr & { type: "MemberAccess" }, param: string): string | null {
+  if (expr.object.type === "ParamRef" && expr.object.name === param) return expr.member;
+  if (expr.object.type === "MemberAccess") {
+    const base = paramMemberAsField(expr.object, param);
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+
+/**
+ * `$.field === undefined` → `{ field: { $exists: false } }`;
+ * `$.field !== undefined` → `{ field: { $exists: true } }`. Mirrors JS's
+ * "value is undefined / missing" semantics — both branches of MongoDB's
+ * `$exists` line up. (Distinct from `=== null`, which lowers to
+ * `$type: "null"` — present-and-null only.)
+ */
+function translateUndefinedPredicate(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
+  const undefSide = left.type === "UndefinedLiteral" ? right : right.type === "UndefinedLiteral" ? left : null;
+  if (undefSide === null) return null;
+  const field = asFieldPath(undefSide);
+  if (field === null) return null;
+  if (op === "===") return { [field]: { $exists: false } };
+  return { [field]: { $exists: true } };
+}
+
+/**
+ * `$.items.length === N` / `$.items.length !== N` → `{ items: { $size: N } }`
+ * / `{ items: { $not: { $size: N } } }`. Integer-literal RHS only; non-integer
+ * or non-literal falls through to `$expr`. Must be tried before the generic
+ * field-path equality, otherwise `$.items.length` flattens into a literal
+ * dotted-key `"items.length"` (a real but unintended path).
+ */
+function translateLengthSize(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
+  const oriented = orientLengthAndInt(left, right);
+  if (oriented === null) return null;
+  if (op === "===") return { [oriented.field]: { $size: oriented.size } };
+  return { [oriented.field]: { $not: { $size: oriented.size } } };
+}
+
+function orientLengthAndInt(left: Expr, right: Expr): { field: string; size: number } | null {
+  const lf = asLengthFieldPath(left);
+  if (lf !== null && isIntegerLiteral(right))
+    return { field: lf, size: (right as { type: "NumberLiteral"; value: number }).value };
+  const rf = asLengthFieldPath(right);
+  if (rf !== null && isIntegerLiteral(left))
+    return { field: rf, size: (left as { type: "NumberLiteral"; value: number }).value };
+  return null;
+}
+
+function asLengthFieldPath(expr: Expr): string | null {
+  if (expr.type !== "MemberAccess" || expr.member !== "length") return null;
+  return asFieldPath(expr.object);
+}
+
+function isIntegerLiteral(expr: Expr): boolean {
+  return expr.type === "NumberLiteral" && Number.isInteger(expr.value) && expr.value >= 0;
+}
+
+/**
+ * `$.x % N === M` → `{ x: { $mod: [N, M] } }`. Both `N` (divisor) and `M`
+ * (remainder) must be integer literals; the field path must be a clean
+ * `$.<path>` (no method calls, no further arithmetic).
+ */
+function translateModulo(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
+  const oriented = orientModuloAndInt(left, right);
+  if (oriented === null) return null;
+  if (op === "===") return { [oriented.field]: { $mod: [oriented.divisor, oriented.remainder] } };
+  return { [oriented.field]: { $not: { $mod: [oriented.divisor, oriented.remainder] } } };
+}
+
+function orientModuloAndInt(left: Expr, right: Expr): { field: string; divisor: number; remainder: number } | null {
+  const lm = asModuloFieldAndDivisor(left);
+  if (lm !== null && isIntegerLiteral(right)) {
+    return {
+      field: lm.field,
+      divisor: lm.divisor,
+      remainder: (right as { type: "NumberLiteral"; value: number }).value,
+    };
+  }
+  const rm = asModuloFieldAndDivisor(right);
+  if (rm !== null && isIntegerLiteral(left)) {
+    return {
+      field: rm.field,
+      divisor: rm.divisor,
+      remainder: (left as { type: "NumberLiteral"; value: number }).value,
+    };
+  }
+  return null;
+}
+
+function asModuloFieldAndDivisor(expr: Expr): { field: string; divisor: number } | null {
+  if (expr.type !== "BinaryExpr" || expr.op !== "%") return null;
+  const field = asFieldPath(expr.left);
+  if (field === null) return null;
+  if (!isIntegerLiteral(expr.right)) return null;
+  return { field, divisor: (expr.right as { type: "NumberLiteral"; value: number }).value };
 }
 
 /**
@@ -203,10 +512,19 @@ const BSON_TYPE_ALIASES: ReadonlySet<string> = new Set([
   "number",
 ]);
 
+/**
+ * JS's `typeof` returns `"boolean"`, but MongoDB's `$type` query operator uses
+ * `"bool"` — so accept either spelling and emit the BSON form. Other JS-only
+ * typeof returns (`"function"`, `"symbol"`, `"bigint"`) have no clean BSON
+ * analogue and fall through to `$expr`.
+ */
+const JS_TO_BSON_TYPE: ReadonlyMap<string, string> = new Map([["boolean", "bool"]]);
+
 function translateTypeofPredicate(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
   const oriented = orientTypeofAndString(left, right);
   if (oriented === null) return null;
-  const { field, alias } = oriented;
+  const { field, alias: rawAlias } = oriented;
+  const alias = JS_TO_BSON_TYPE.get(rawAlias) ?? rawAlias;
   if (!BSON_TYPE_ALIASES.has(alias)) return null;
   if (op === "===") return { [field]: { $type: alias } };
   return { [field]: { $not: { $type: alias } } };

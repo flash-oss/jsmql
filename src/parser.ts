@@ -1352,6 +1352,9 @@ export class Parser {
       case TokenType.Null:
         this.lexer.next();
         return { type: "NullLiteral", pos: t.pos };
+      case TokenType.Undefined:
+        this.lexer.next();
+        return { type: "UndefinedLiteral", pos: t.pos };
       case TokenType.LBracket:
         return this.parseArrayLiteral();
       case TokenType.LBrace:

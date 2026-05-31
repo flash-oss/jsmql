@@ -590,6 +590,18 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return expr.value;
     case "NullLiteral":
       return null;
+    case "UndefinedLiteral":
+      // MongoDB's aggregation expression language has no way to distinguish
+      // "missing field" from "field present with null value" — `$eq` against
+      // missing returns true for both. `undefined` only carries non-redundant
+      // meaning in `$match` position (where it lowers to `$exists`); in any
+      // expression position it's ambiguous, so we surface an actionable error
+      // rather than silently lowering to `null`.
+      throw new CodegenError(
+        `'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). ` +
+          `In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.`,
+        expr.pos,
+      );
     case "FieldRef":
       // Bare `$` (empty path) is the current document — MQL spells it `$$ROOT`.
       // Nested paths (`$.a.b`) lower verbatim to `"$a.b"`.
@@ -3528,6 +3540,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "StringLiteral":
     case "BooleanLiteral":
     case "NullLiteral":
+    case "UndefinedLiteral":
     case "RegexLiteral":
     case "ParamRef":
     case "MathConst":

@@ -75,6 +75,7 @@ export const TokenType = {
   True: "True",
   False: "False",
   Null: "Null",
+  Undefined: "Undefined",
   RegexLiteral: "RegexLiteral", // /pattern/flags
 
   // Template literals
@@ -160,6 +161,7 @@ export const TOKEN_DISPLAY: Record<TokenType, string> = {
   True: "'true'",
   False: "'false'",
   Null: "'null'",
+  Undefined: "'undefined'",
   RegexLiteral: "a regex literal",
   TemplateStart: "a template literal",
   TemplateChars: "template-literal text",
@@ -220,6 +222,7 @@ const VALUE_ENDING_TYPES = new Set<TokenType>([
   TokenType.True,
   TokenType.False,
   TokenType.Null,
+  TokenType.Undefined,
   TokenType.Ident,
   TokenType.RParen,
   TokenType.RBracket,
@@ -874,6 +877,8 @@ export class Lexer {
         return { type: TokenType.False, value: "false", pos };
       case "null":
         return { type: TokenType.Null, value: "null", pos };
+      case "undefined":
+        return { type: TokenType.Undefined, value: "undefined", pos };
       case "in":
         return { type: TokenType.In, value: "in", pos };
       case "new":
