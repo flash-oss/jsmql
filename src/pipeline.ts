@@ -94,8 +94,10 @@ import { detectOutAssign, lowerOut } from "./out-translation.ts";
 import {
   collectStreamChain,
   detectArrayReducerWrap,
+  detectDictBuildWrap,
   detectReduceWrap,
   lookupStreamMethod,
+  lowerDictBuildWrap,
   lowerReduceWrap,
   streamMethodNames,
   type ArrayReducerWrap,
@@ -610,6 +612,13 @@ function lowerReplaceStream(
   // method on `$$` (would break the "stream is always an array" invariant);
   // this wrap is the only legal way to consume a reduce result back into
   // the stream. See docs/specs/stream-methods.md.
+  // Dict-build runs FIRST because its shape (single computed key on `d.<path>`)
+  // overlaps with the object-reducer detector below, which would otherwise
+  // throw "computed keys not supported" before we get a chance.
+  const dictBuild = detectDictBuildWrap(v);
+  if (dictBuild !== null) {
+    return { stages: lowerDictBuildWrap(dictBuild), clearLets: true };
+  }
   const reduceWrap = detectReduceWrap(v);
   if (reduceWrap !== null) {
     return { stages: lowerReduceWrap(reduceWrap), clearLets: true };

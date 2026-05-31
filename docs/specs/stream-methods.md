@@ -153,9 +153,44 @@ scalar form it must be a literal so a stray `$.<field>` can't sneak through;
 in the object-reducer form it's a literal object whose keys define the
 accumulator namespace.
 
-Multiple aggregates in either form share **one** `$group` stage. Future work:
-dictionary-build reducers (`(acc, d) => ({ ...acc, [d.k]: d.v })`, would
-need `$arrayToObject` + `$push`), and richer per-key body shapes.
+Multiple aggregates in either form share **one** `$group` stage. Richer
+per-key body shapes (`$avg` paired with a running count, cross-key references,
+multiplicative accumulators) are not yet recognised — write the `$group` stage
+by hand for those.
+
+### Dictionary-build reducer wrap → `$group` + `$arrayToObject`
+
+`$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<keyPath>]: <d.<valPath>|d> }), {})];`
+
+The single-computed-key form of the object-returning reducer. Distinct from
+the static-key object-reducer above (where the user names every accumulator at
+compile time) because here the **keys come from runtime data** — one input
+doc, one output entry, both key and value read off the doc. Lowers to:
+
+```js
+[
+  { $group: { _id: null, __jsmqlDict: { $push: { k: "$<keyPath>", v: "$<valPath>"|"$$ROOT" } } } },
+  { $replaceWith: { $arrayToObject: "$__jsmqlDict" } }
+]
+```
+
+Supported body shapes:
+
+| jsmql | MQL output |
+|---|---|
+| `(acc, d) => ({ ...acc, [d.id]: d.name })` | `{ k: "$id", v: "$name" }` |
+| `(acc, d) => ({ ...acc, [d.user.email]: d.score })` | `{ k: "$user.email", v: "$score" }` (nested paths) |
+| `(acc, d) => ({ ...acc, [d.id]: d })` | `{ k: "$id", v: "$$ROOT" }` (bare-doc value) |
+| `(acc, d) => ({ [d.id]: d.name })` | same as the spread form (the `...acc` is optional, JS-faithful boilerplate) |
+
+The init MUST be `{}` (empty object). Mixed shapes (computed key + static keys
+in the same body) fall through to the static-key object-reducer detector,
+which surfaces the precise "computed keys aren't supported" error pointing
+at the offending entry. Multiple computed-key entries are not supported.
+
+Detection: `detectDictBuildWrap(value)` runs **before** `detectReduceWrap` in
+`pipeline.ts` because the two detectors' inputs overlap — the dict-build shape
+would otherwise hit the static-key error first.
 
 ### Array-returning reducer (unbracketed) → `$match` + `$replaceWith`
 

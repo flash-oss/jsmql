@@ -587,6 +587,69 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
   });
 });
 
+describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-build reducer wrap", () => {
+  // The single-computed-key form of the object-returning reducer. Lowers to
+  // $group + $arrayToObject — the runtime keys come from `d.<keyPath>`, the
+  // values from `d.<valPath>` or `d` itself.
+
+  it("basic shape: `{...acc, [d.id]: d.name}` → $arrayToObject", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})];")).toEqual([
+      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$name" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+    ]);
+  });
+
+  it("nested key path: `{...acc, [d.user.email]: d.score}`", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.user.email]: d.score }), {})];")).toEqual([
+      { $group: { _id: null, __jsmqlDict: { $push: { k: "$user.email", v: "$score" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+    ]);
+  });
+
+  it("bare-doc value (`[d.id]: d`) uses $$ROOT", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d }), {})];")).toEqual([
+      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$$ROOT" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+    ]);
+  });
+
+  it("optional leading `...acc` spread", () => {
+    // The user might write `{ [d.id]: d.name }` without the spread — same
+    // shape, same lowering. (In JS this would discard prior keys per
+    // iteration, which is fine because the $group accumulator does the
+    // accumulation; the spread is JS-faithful boilerplate.)
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ [d.id]: d.name }), {})];")).toEqual([
+      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$name" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+    ]);
+  });
+
+  it("composes with a preceding $match", () => {
+    expect(jsmql("$match($.active === true); $$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})]")).toEqual([
+      { $match: { active: true } },
+      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$name" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+    ]);
+  });
+
+  it("falls through to the static-key object-reducer when keys mix computed + static (existing error path)", () => {
+    // `({ ...acc, [d.id]: d.name, count: acc.count + 1 })` is no longer pure
+    // dict-build; the existing object-reducer path picks it up and reports
+    // "computed keys aren't supported" with the precise error.
+    expect(() =>
+      jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name, count: acc.count + 1 }), { count: 0 })];"),
+    ).toThrow(/Object-reducer body entry must have a static key/);
+  });
+
+  it("rejects non-empty init via the object-reducer's missing-keys check", () => {
+    // Non-empty init falls through to the object-reducer detector, which
+    // expects body and init to declare the same keys.
+    expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), { fallback: null })];")).toThrow(
+      /Object-reducer body entry must have a static key/,
+    );
+  });
+});
+
 describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) — array-returning reducer (unbracketed)", () => {
   it("filter + map (the user's example): truthy-and-truthy ternary → $match($expr) + $replaceWith", () => {
     // The condition `d.active && d.contactDetails.email` goes through the

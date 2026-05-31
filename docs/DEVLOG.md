@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-31 — Wave 2 (partial): dict-build reducer wrap → `$group` + `$arrayToObject`
+
+Item #30 from the deferred-features catalog: `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <d.<v>|d> }), {})]` now lowers to the canonical pair `$group: { _id: null, __jsmqlDict: { $push: { k: "$<k>", v: "$<v>"|"$$ROOT" } } }` + `$replaceWith: { $arrayToObject: "$__jsmqlDict" }`.
+
+**Why this is its own detector.** The shape overlaps with the existing object-reducer form (both look like `$$ = [$$.reduce(<2-arg lambda>, {<obj>})]`), but the lowering is different: object-reducer collects N named accumulators per the static keys in the body, dict-build collects ONE pair-array via `$push` and folds it via `$arrayToObject`. They can't share the same classification path because the existing one rejects computed keys outright. The new detector runs **before** `detectReduceWrap` in `pipeline.ts` to pre-empt the static-key error path; if the shape doesn't match (mixed static + computed, multiple computed entries, non-`{}` init, non-`d`-rooted key path), it returns null and the existing object-reducer handler picks up — emitting the same "computed keys aren't supported" error users would have seen before. Same error wording, same DX, just one more shape recognised.
+
+**Supported body shapes.** Spread is optional (`{ ...acc, [d.k]: d.v }` and `{ [d.k]: d.v }` both work — the `...acc` is JS-faithful boilerplate). Keys and values both walk `d.<path>` chains, so nested paths work in both slots. Bare-doc value (`{ ...acc, [d.id]: d }`) lowers to `v: "$$ROOT"`. Anything else (computed key referencing `acc`, multiple computed entries, etc.) doesn't match and surfaces the existing error from the static-key path.
+
+Files: [src/stream-methods.ts](../src/stream-methods.ts) (new `DictBuildWrap` type, `detectDictBuildWrap`, `lowerDictBuildWrap`, `paramFieldOrBareParam` helper), [src/pipeline.ts](../src/pipeline.ts) (one import + one branch in the chain dispatch). Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). Tests: [test/stream-methods.test.ts](../test/stream-methods.test.ts) (6 new cases).
+
+1533 tests pass. The richer-per-key-body-shapes item (#32) and `$$.length` terminal (#6) are queued behind this; they need their own design passes before lowering.
+
+---
+
 ## 2026-05-31 — Wave 1 of the deferred-features push: eight `$match` query-translator additions
 
 Eight JS shapes that previously fell through to `$expr` (silently disabling MongoDB indexes) now translate to indexable query-document form. From the [deferred-features catalog](/Users/vasyl/.claude/plans/suggest-syntax-for-all-cheerful-meerkat.md) §A, items #15, #16, #19a–f and the `typeof === "boolean"` polish on #19c:
