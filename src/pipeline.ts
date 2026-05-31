@@ -92,6 +92,12 @@ import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
 import {
+  isSystemStageCall,
+  notFirstStageMessage,
+  resolveSystemStageCall,
+  type SystemStageCall,
+} from "./system-stage-translation.ts";
+import {
   collectStreamChain,
   detectArrayReducerWrap,
   detectReduceWrap,
@@ -151,6 +157,12 @@ function isStageCandidate(el: ArrayElement): boolean {
   // a push (e.g. `$facet.*`) routes through the sub-pipeline path that
   // pre-rejects it with a precise hoist-to-outer hint.
   if (el.type === "MethodCall" && detectUnionPush(el as Expr) !== null) return true;
+  // `$$.indexStats()` / `$$$.currentOp()` / `$$$$.shardedDataDistribution()` —
+  // a diagnostic source stage. Direct method call on a bare context-ref node;
+  // it lowers to a `$<stage>` source. Recognising it here flips a bracketed
+  // `[$$.indexStats(), $sort(...)]` into pipeline mode (same pattern as the
+  // `detectUnionPush` line above).
+  if (el.type === "MethodCall" && isSystemStageCall(el as Expr)) return true;
   return false;
 }
 
@@ -323,6 +335,15 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
         for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
         return;
       }
+      // `$$.indexStats()` / `$$$.currentOp()` / `$$$$.shardedDataDistribution()`
+      // → a diagnostic source stage. First-stage-only: a source produces the
+      // stream, so anything emitted before it is a contradiction.
+      if (el.type === "MethodCall" && isSystemStageCall(el)) {
+        const sys = resolveSystemStageCall(el);
+        if (out.length > 0) throw new CodegenError(notFirstStageMessage(sys), sys.callPos);
+        out.push(lowerSystemStageStmt(sys, ctx));
+        return;
+      }
       validateUnionPushShape(el as Expr);
     }
     const rewrittenEl = extractFromStageElement(el, ctx, tracking.alloc, lowerBlock, out);
@@ -411,6 +432,14 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
     const pushCall = detectUnionPush(stmt as Expr);
     if (pushCall !== null) {
       for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
+      return;
+    }
+    // `$$.indexStats()` / `$$$.currentOp()` / `$$$$.shardedDataDistribution()`
+    // → a diagnostic source stage. First-stage-only.
+    if (stmt.type === "MethodCall" && isSystemStageCall(stmt as Expr)) {
+      const sys = resolveSystemStageCall(stmt as Expr);
+      if (out.length > 0) throw new CodegenError(notFirstStageMessage(sys), sys.callPos);
+      out.push(lowerSystemStageStmt(sys, ctx));
       return;
     }
     validateUnionPushShape(stmt as Expr);
@@ -1011,6 +1040,18 @@ function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
     `'$$ = …' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
     value.pos,
   );
+}
+
+/**
+ * Emit the single source stage for a `$$.indexStats()` / `$$$.currentOp(...)` /
+ * `$$$$.shardedDataDistribution()` diagnostic call. The options object (when
+ * present) lowers through the same `generateStageBody` path every other stage
+ * body uses — all nine diagnostics declare `subPipelineFields: []`, so it's a
+ * plain recursive object codegen. No options → an empty `{}` body.
+ */
+function lowerSystemStageStmt(call: SystemStageCall, ctx: GenerateCtx): object {
+  const body = call.optionsExpr === null ? {} : generateStageBody(call.stageName, call.optionsExpr, ctx);
+  return { [call.stageName]: body };
 }
 
 type StageLowering = { stage: Record<string, unknown>; ctx: GenerateCtx };

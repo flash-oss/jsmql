@@ -454,9 +454,9 @@ jsmql provides three further prefix levels, parallel to `$.`, for cross-collecti
 | Prefix | Scope                          | Status                                                                  |
 | ------ | ------------------------------ | ----------------------------------------------------------------------- |
 | `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
-| `$$`   | Current collection             | **live for `.push(...)` → `$unionWith`** — see [Collection union](#collection-union-push) below. `.find` / `.filter` on `$$` still need schema/driver binding (deferred). |
-| `$$$`  | Current database               | **live for `.find/.filter` joins** — see below                          |
-| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (requires Atlas Data Federation; see below) |
+| `$$`   | Current collection             | **live for `.push(...)` → `$unionWith`** ([Collection union](#collection-union-push)) and collection-scoped **diagnostics** (`$$.indexStats()`, … — [System stages](#system--diagnostic-stages-indexstats-currentop-)). `.find` / `.filter` data reads on `$$` still need schema/driver binding (deferred). |
+| `$$$`  | Current database               | **live for `.find/.filter` joins** ([below](#cross-collection-lookups-coll-find--filter)) and database-scoped **diagnostics** (`$$$.currentOp()`, …) |
+| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (Atlas Data Federation; below) and cluster-scoped **diagnostics** (`$$$$.shardedDataDistribution()`) |
 
 Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
 
@@ -735,6 +735,58 @@ Other chain methods (`.map`, `.sort`, `.slice`, etc.) are not yet wired — the 
 **Pipeline-mode only.** Like `$$.push(...)` and `$$$.<coll>.find(...)`, the `$out` sugar can't appear in Filter (`jsmql.filter`), expression (`jsmql.expr`), or update-pipeline (`jsmql.update`) modes — `$out` writes are a Pipeline-only concept and MongoDB itself rejects them inside `db.coll.updateOne(filter, update)`.
 
 **Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** jsmql reserves `$ = …` for *root-replacing* sugar (see [Replace root via `$ = <expr>`](#replace-root-via---expr)). `$out` writes elsewhere — it doesn't replace the current document — so the LHS makes the destination visible on the left, mirroring `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`).
+
+---
+
+### System / diagnostic stages: `$$.indexStats()`, `$$$.currentOp()`, …
+
+A handful of MongoDB stages don't transform the stream — they *produce* it (index metadata, collection stats, running ops, …), so each must be the pipeline's **first** stage. They also differ by *where* they run, and jsmql encodes that scope in the context-ref prefix: call the stage as a method on the ref whose scope matches.
+
+```js
+// Collection-scoped — run on db.coll.aggregate().
+jsmql("$$.indexStats()");                          // → [{ $indexStats: {} }]
+jsmql("$$.collStats({ storageStats: {} })");       // → [{ $collStats: { storageStats: {} } }]
+jsmql("$$.planCacheStats()");                      // → [{ $planCacheStats: {} }]
+jsmql('$$.listSearchIndexes({ name: "default" })');// → [{ $listSearchIndexes: { name: "default" } }]
+
+// Database-scoped — run on db.aggregate().
+jsmql("$$$.currentOp({ allUsers: true })");        // → [{ $currentOp: { allUsers: true } }]
+jsmql("$$$.listSessions({ allUsers: true })");     // → [{ $listSessions: { allUsers: true } }]
+jsmql("$$$.listLocalSessions()");                  // → [{ $listLocalSessions: {} }]
+jsmql('$$$.listSampledQueries({ namespace: "db.coll" })');
+
+// Cluster-scoped — run on the admin database.
+jsmql("$$$$.shardedDataDistribution()");           // → [{ $shardedDataDistribution: {} }]
+
+// Compose with following stages like any source:
+jsmql("$$.indexStats(); $sort({ accesses: -1 });");
+// → [{ $indexStats: {} }, { $sort: { accesses: -1 } }]
+```
+
+The method name is the stage name minus the leading `$`; the optional argument is the stage's options object (omit it for an empty `{}`). The three no-option stages — `$$.indexStats()`, `$$.planCacheStats()`, `$$$$.shardedDataDistribution()` — take no argument.
+
+| Prefix | Scope | Driver | Stages |
+| ------ | ----- | ------ | ------ |
+| `$$`   | collection | `db.coll.aggregate()` | `.indexStats()`, `.collStats({…})`, `.planCacheStats()`, `.listSearchIndexes({…})` |
+| `$$$`  | database   | `db.aggregate()`       | `.currentOp({…})`, `.listSessions({…})`, `.listLocalSessions({…})`, `.listSampledQueries({…})` |
+| `$$$$` | cluster    | admin                  | `.shardedDataDistribution()` |
+
+Because the prefix *is* the scope, using a stage at the wrong scope is a **compile-time** error that names the right prefix — jsmql catches the classic "ran `$currentOp` against a collection" mistake before it reaches the driver:
+
+```js
+jsmql("$$.currentOp()");
+// ❌ 'currentOp' is a database-scoped system stage — write '$$$.currentOp(...)' (the '$$$' database reference, run on db.aggregate()), not '$$'.
+
+jsmql("$$.indexStat()");
+// ❌ '$$.indexStat(...)' is not a known diagnostic stage. … Did you mean 'indexStats'?
+
+jsmql("$match($.x > 1); $$.indexStats();");
+// ❌ '$$.indexStats(...)' produces the pipeline's source documents ($indexStats), so it must be the first stage.
+```
+
+**Pipeline-mode only**, like `$$.push(...)` and the lookup/`$out` sugars — these are source stages, not Filter predicates.
+
+> The plain stage forms (`jsmql("[{ $indexStats: {} }]")` and `jsmql("$indexStats({})")`) still work; the `$$`/`$$$`/`$$$$` sugar adds discoverability and scope-checking.
 
 ---
 

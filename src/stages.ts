@@ -18,6 +18,17 @@ export type StageDef = {
    * sub-pipeline (used for `$facet`).
    */
   subPipelineFields: readonly string[];
+  /**
+   * Set on the *diagnostic / system* source stages (`$indexStats`,
+   * `$currentOp`, …). These don't transform an incoming stream — they produce
+   * one — so they must be the pipeline's first stage, and they differ by
+   * *where* they legally run. jsmql surfaces a scope-encoding sugar
+   * (`$$.indexStats()` collection, `$$$.currentOp()` database,
+   * `$$$$.shardedDataDistribution()` cluster) driven entirely off this field;
+   * see src/system-stage-translation.ts. `options: false` marks the stages
+   * that take no options object (`{ $indexStats: {} }`).
+   */
+  diagnostic?: { scope: "collection" | "database" | "cluster"; options: boolean };
 };
 
 export const STAGES: Record<string, StageDef> = {
@@ -46,7 +57,11 @@ export const STAGES: Record<string, StageDef> = {
       "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
     subPipelineFields: [],
   },
-  $collStats: { description: "Returns statistics regarding a collection or view.", subPipelineFields: [] },
+  $collStats: {
+    description: "Returns statistics regarding a collection or view.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true },
+  },
   $count: {
     description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
     subPipelineFields: [],
@@ -54,6 +69,7 @@ export const STAGES: Record<string, StageDef> = {
   $currentOp: {
     description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
     subPipelineFields: [],
+    diagnostic: { scope: "database", options: true },
   },
   $densify: {
     description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
@@ -85,6 +101,7 @@ export const STAGES: Record<string, StageDef> = {
   $indexStats: {
     description: "Returns statistics regarding the use of each index for the collection.",
     subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
   },
   $limit: {
     description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
@@ -93,18 +110,22 @@ export const STAGES: Record<string, StageDef> = {
   $listLocalSessions: {
     description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
     subPipelineFields: [],
+    diagnostic: { scope: "database", options: true },
   },
   $listSampledQueries: {
     description: "Lists sampled queries for all collections or a specific collection.",
     subPipelineFields: [],
+    diagnostic: { scope: "database", options: true },
   },
   $listSearchIndexes: {
     description: "Returns information about existing Atlas Search indexes on a specified collection.",
     subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true },
   },
   $listSessions: {
     description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
     subPipelineFields: [],
+    diagnostic: { scope: "database", options: true },
   },
   $lookup: {
     description:
@@ -126,7 +147,11 @@ export const STAGES: Record<string, StageDef> = {
       "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     subPipelineFields: [],
   },
-  $planCacheStats: { description: "Returns plan cache information for a collection.", subPipelineFields: [] },
+  $planCacheStats: {
+    description: "Returns plan cache information for a collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+  },
   $project: {
     description:
       "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
@@ -177,6 +202,7 @@ export const STAGES: Record<string, StageDef> = {
   $shardedDataDistribution: {
     description: "Provides data and size distribution information on sharded collections.",
     subPipelineFields: [],
+    diagnostic: { scope: "cluster", options: false },
   },
   $skip: {
     description:
