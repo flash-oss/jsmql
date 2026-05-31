@@ -829,6 +829,7 @@ function mapChildren(
     case "ParamRef":
     case "TypeCastRef":
     case "MathConst":
+    case "MathCallRef":
     case "DateNow":
       return expr;
     case "BinaryExpr":
@@ -1309,6 +1310,7 @@ function descendAndExtract(
     case "ParamRef":
     case "TypeCastRef":
     case "MathConst":
+    case "MathCallRef":
     case "DateNow":
       return { stages, rewritten: expr };
     case "BinaryExpr":

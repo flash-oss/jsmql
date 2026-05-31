@@ -241,7 +241,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     if (el.type === "AssignExpr") {
       if (isReplaceStreamAssign(el)) {
         flushUpdateOps();
-        const result = lowerReplaceStream(el, ctx, lowerBlock, tracking.alloc);
+        const result = lowerReplaceStream(el, ctx, lowerBlock, tracking.alloc, out.length === 0);
         for (const s of result.stages) out.push(s);
         if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
         return;
@@ -399,7 +399,7 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
       // the returned ctx may differ from `ctx`. A `$$$.<coll> = …` op flips
       // the `sawOut` flag — once tripped, the next pipeline statement
       // produces the "must be last stage" error.
-      const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock);
+      const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock, out.length);
       for (const s of result.stages) out.push(s);
       ctx = result.ctx;
       if (result.sawOut) {
@@ -599,6 +599,7 @@ function lowerReplaceStream(
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
   allocSlot: SlotAllocator,
+  isFirstStage: boolean,
 ): { stages: object[]; clearLets: boolean } {
   if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
     throw new CodegenError(
@@ -644,7 +645,50 @@ function lowerReplaceStream(
       return lowerChainOnCollection(chain.methods, target, outerCtx, lowerBlockFn, allocSlot, v);
     }
   }
+  // Array-literal RHSes that aren't reduce-wraps:
+  //   - `$$ = []` → `[{ $limit: 0 }]` (drop all docs; pre-1.0 sugar item #2)
+  //   - `$$ = [{...}, {...}]` at stage 0 → `[{ $documents: [...] }]`
+  //     (literal-doc seed; MongoDB requires $documents to be the first stage)
+  //   - `$$ = [{...}, {...}]` mid-pipeline → throw, naming `$$.push(...)` as
+  //     the right tool for appending docs to an existing stream.
+  if (v.type === "ArrayLiteral") {
+    if (v.elements.length === 0) {
+      return { stages: [{ $limit: 0 }], clearLets: false };
+    }
+    if (isFirstStage) {
+      const docs = extractDocumentsLiteral(v);
+      if (docs !== null) {
+        return { stages: [{ $documents: docs }], clearLets: true };
+      }
+    } else if (isAllObjectLiteralElements(v)) {
+      throw new CodegenError(
+        `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, …)' instead, which lowers to '$unionWith'.`,
+        v.pos,
+      );
+    }
+  }
   rejectInvalidReplaceStream(v, outerCtx);
+}
+
+/**
+ * Extract a literal-document list for the `$$ = [{...}, {...}]` →
+ * `$documents` sugar. Returns null if any element isn't a literal object —
+ * then the caller falls through to the reduce-wrap / "use push" error path.
+ */
+function extractDocumentsLiteral(arr: Extract<Expr, { type: "ArrayLiteral" }>): unknown[] | null {
+  const out: unknown[] = [];
+  for (const el of arr.elements) {
+    if (el.type !== "ObjectLiteral") return null;
+    out.push(generateWithCtx(el, EMPTY_CTX));
+  }
+  return out;
+}
+
+function isAllObjectLiteralElements(arr: Extract<Expr, { type: "ArrayLiteral" }>): boolean {
+  for (const el of arr.elements) {
+    if (el.type !== "ObjectLiteral") return false;
+  }
+  return true;
 }
 
 /**
@@ -969,22 +1013,19 @@ function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: st
 
 function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
   if (value.type === "ArrayLiteral") {
-    if (value.elements.length === 0) {
-      throw new CodegenError(
-        `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.`,
-        value.pos,
-      );
-    }
-    // The only ArrayLiteral RHSes we accept today are the reduce-wrap
-    // patterns — already detected upstream — so reaching here means the user
-    // wrote something else. Point at all three wrap forms explicitly so they
-    // don't have to guess.
+    // ArrayLiteral handling has moved up into `lowerReplaceStream` (empty → $limit:0,
+    // first-stage literal-doc list → $documents, non-first-stage rejection). The
+    // only ArrayLiteral RHSes that reach this rejection branch are ones that
+    // pass the reduce-wrap detectors *and* fall outside the new sugar — i.e.
+    // a single-doc-shaped array element that didn't match any wrap form. Point
+    // at the three reduce-wrap patterns explicitly.
     throw new CodegenError(
-      `'$$ = [<expr>]' is only supported as one of the three reduce-wrap patterns: ` +
+      `'$$ = [<expr>]' didn't match any supported wrap pattern. Recognised shapes: ` +
         `'$$ = [{ <key>: $$.reduce(…, <literal-init>), … }]' (scalar accumulators → '$group' + '$replaceWith'), ` +
         `'$$ = [$$.reduce((acc, d) => ({ ...acc, <key>: <expr>, … }), { <key>: <init>, … })]' (object-returning reducer, same lowering), ` +
+        `'$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <expr>, … }), {})]' (dict-build reducer → '$group' + '\$arrayToObject'), ` +
         `or '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])]' (array-returning reducer → '$match' + '$replaceWith'). ` +
-        `Other ArrayLiteral RHSes (literal doc lists, multi-element arrays, non-reduce single docs) aren't yet supported — for a literal-doc seeder, use '$$.push({...}, {...}, …)' instead.`,
+        `For a literal-doc seeder at stage 0, use '$$ = [{...}, {...}]' (lowers to '$documents'). To append docs mid-pipeline, use '$$.push({...}, {...}, …)'.`,
       value.pos,
     );
   }
@@ -1326,6 +1367,7 @@ function lowerUpdateFilterWithLookups(
   startCtx: GenerateCtx,
   allocSlot: SlotAllocator,
   lowerBlockFn: SubPipelineLowerer,
+  globalStageIndex: number = 0,
 ): { stages: object[]; ctx: GenerateCtx; sawOut: boolean; outPos: number } {
   const out: object[] = [];
   let buffer: UpdateOp[] = [];
@@ -1342,7 +1384,7 @@ function lowerUpdateFilterWithLookups(
     if (op.type === "AssignExpr") {
       if (isReplaceStreamAssign(op)) {
         flush();
-        const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot);
+        const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot, globalStageIndex + out.length === 0);
         for (const s of result.stages) out.push(s);
         if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
         continue;

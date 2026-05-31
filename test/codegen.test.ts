@@ -1536,6 +1536,49 @@ describe("Math.*", () => {
   });
 });
 
+describe("Math.* as bare callable in array methods", () => {
+  // Unary Math methods can be passed without parens to .map / .filter /
+  // similar — desugars to `(v) => Math.<method>(v)`. Mirrors the existing
+  // Boolean/Number/String bare-callable shape.
+  it("$.scores.map(Math.floor)", () => {
+    expect(jsmql.expr("$.scores.map(Math.floor)")).toEqual({
+      $map: { input: "$scores", as: "v", in: { $floor: "$$v" } },
+    });
+  });
+  it("$.scores.map(Math.round) adds the 0 precision arg", () => {
+    expect(jsmql.expr("$.scores.map(Math.round)")).toEqual({
+      $map: { input: "$scores", as: "v", in: { $round: ["$$v", 0] } },
+    });
+  });
+  it("$.scores.map(Math.abs)", () => {
+    expect(jsmql.expr("$.scores.map(Math.abs)")).toEqual({ $map: { input: "$scores", as: "v", in: { $abs: "$$v" } } });
+  });
+  it("$.scores.map(Math.ceil)", () => {
+    expect(jsmql.expr("$.scores.map(Math.ceil)")).toEqual({
+      $map: { input: "$scores", as: "v", in: { $ceil: "$$v" } },
+    });
+  });
+  it("$.scores.map(Math.sqrt)", () => {
+    expect(jsmql.expr("$.scores.map(Math.sqrt)")).toEqual({
+      $map: { input: "$scores", as: "v", in: { $sqrt: "$$v" } },
+    });
+  });
+  it("$.scores.map(Math.trunc)", () => {
+    expect(jsmql.expr("$.scores.map(Math.trunc)")).toEqual({
+      $map: { input: "$scores", as: "v", in: { $trunc: "$$v" } },
+    });
+  });
+  it("rejects binary Math methods as bare (Math.pow)", () => {
+    expect(() => jsmql.expr("$.scores.map(Math.pow)")).toThrow(/Math\.pow requires '\(\.\.\.\)'/);
+  });
+  it("rejects binary Math methods as bare (Math.min)", () => {
+    expect(() => jsmql.expr("$.scores.map(Math.min)")).toThrow(/Math\.min requires '\(\.\.\.\)'/);
+  });
+  it("rejects bare Math reference used as a value", () => {
+    expect(() => jsmql.expr("$.x = Math.floor")).toThrow(/'Math\.floor' used as a value is only valid as a callback/);
+  });
+});
+
 describe("Math trigonometry", () => {
   it("Math.sin", () => {
     expect(jsmql.expr("Math.sin($.angle)")).toEqual({ $sin: "$angle" });

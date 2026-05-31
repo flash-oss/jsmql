@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-31 — Waves 5 + 6: stream-RHS sugar (`$$ = []`, `$$ = [docs]`) + `Math.<fn>` bare callbacks
+
+Three more items from the deferred-features catalog, all small and isolated:
+
+**#2 `$$ = []` → `[{ $limit: 0 }]`.** Previously rejected with a "use `$match($expr(false))` or `$limit(0)`" hint. The hint was always the wrong thing to type at the call site — empty-array assignment is the natural JS shape for "drop everything". Lowers in `lowerReplaceStream` ([src/pipeline.ts](../src/pipeline.ts)) via a new `ArrayLiteral` branch that runs *after* the reduce-wrap detectors (so the wrap forms still win their shape).
+
+**#5 `$$ = [{...}, {...}]` at stage 0 → `[{ $documents: [...] }]`.** Sibling sugar to #2 for the literal-doc seeder case. Constrained to stage 0 because MongoDB requires `$documents` at the head — mid-pipeline use throws an actionable error that names `$$.push({...})` (`$unionWith`) as the right tool for appending. Stage-index threading: `lowerReplaceStream` now takes an `isFirstStage: boolean`, and `lowerUpdateFilterWithLookups` takes a `globalStageIndex: number` so its inner `out.length` checks reflect the surrounding pipeline's running count.
+
+**#39 `Math.<unary>` as a bare `.map` callback.** `arr.map(Math.floor)` now parses and lowers to `{ $map: { input: "$arr", as: "v", in: { $floor: "$$v" } } }`. Mirrors the existing `Number` / `Boolean` / `String` bare-callable pattern via a new `MathCallRef` AST node. Restricted to the unary Math methods (floor, ceil, round, abs, sqrt, trunc, sign, exp, log/log2/log10, cbrt, all trig methods) so the arity matches the JS callback contract — binary methods (`pow`, `min`, `max`, `hypot`, `atan2`) require explicit parens and surface a precise "Math.X requires '(...)'" error if reached as a bare ref. `Math.floor` used in non-callable value position throws an actionable "use as a callback" error.
+
+**#36 (trailing `$unset:__jsmql` elision) is queued.** The peephole is straightforward — when the previous stage is in `RESHAPE_CLEARING_STAGES`, the trailing `$unset` is redundant — but landing it as-is would invalidate ~18 existing tests that hard-coded the `$unset` stage in their expected output. The optimisation is purely cosmetic (a `$unset` against an already-missing path is a no-op), so deferring it to a dedicated test-snapshot refresh.
+
+Files touched: [src/pipeline.ts](../src/pipeline.ts), [src/parser.ts](../src/parser.ts) (`MathCallRef` parsing, new `UNARY_MATH_CALLABLES` set), [src/ast.ts](../src/ast.ts) (`MathCallRef` node), [src/codegen.ts](../src/codegen.ts) (`MathCallRef` desugar in `requireLambda`, error-case in main switch, scanner entry), [src/lookup-translation.ts](../src/lookup-translation.ts) (leaf-case for `MathCallRef`). Tests: [test/codegen.test.ts](../test/codegen.test.ts) (9 new Math.* bare-callable cases), [test/pipeline.test.ts](../test/pipeline.test.ts) (3 cases for `$$ = []` / `$$ = [docs]` / mid-pipeline rejection), [test/stream-methods.test.ts](../test/stream-methods.test.ts) (3 updated cases swapping the old "use wrap" error for the new `$documents` lowering).
+
+1545 tests pass.
+
+---
+
 ## 2026-05-31 — Wave 2 (partial): dict-build reducer wrap → `$group` + `$arrayToObject`
 
 Item #30 from the deferred-features catalog: `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <d.<v>|d> }), {})]` now lowers to the canonical pair `$group: { _id: null, __jsmqlDict: { $push: { k: "$<k>", v: "$<v>"|"$$ROOT" } } }` + `$replaceWith: { $arrayToObject: "$__jsmqlDict" }`.

@@ -840,6 +840,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "MathCall":
       return generateMathCall(expr.method, expr.args, ctx, expr.pos);
 
+    case "MathCallRef":
+      // A bare `Math.floor` / `Math.round` / … outside callback position.
+      // In `.map(Math.floor)` etc. this node is desugared away in
+      // requireLambda(); reaching this case means the user wrote it as a
+      // value (e.g. `Math.floor + 5`), which has no MQL counterpart.
+      throw new CodegenError(
+        `'Math.${expr.method}' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.map(Math.${expr.method})). To compute on a single value, write Math.${expr.method}(value).`,
+        expr.pos,
+      );
+
     case "MathConst":
       return generateMathConst(expr.name);
 
@@ -2844,6 +2854,20 @@ function requireLambda(
       pos: first.pos,
     };
   }
+  // Bare unary-Math callback: `.map(Math.floor)` desugars to `.map(v => Math.floor(v))`.
+  if (first?.type === "MathCallRef") {
+    return {
+      type: "Lambda",
+      params: ["v"],
+      body: {
+        type: "MathCall",
+        method: first.method,
+        args: [{ type: "ParamRef", name: "v", pos: first.pos }],
+        pos: first.pos,
+      },
+      pos: first.pos,
+    };
+  }
   if (!first || first.type !== "Lambda") {
     throw new CodegenError(
       `.${method}() requires a lambda as its first argument, e.g. x => x > 0`,
@@ -3544,6 +3568,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "RegexLiteral":
     case "ParamRef":
     case "MathConst":
+    case "MathCallRef":
     case "DateNow":
     case "TypeCastRef":
       return;

@@ -756,12 +756,16 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
     );
   });
 
-  it("non-reduce ArrayLiteral RHS points the user at the wrap pattern", () => {
-    expect(() => jsmql("$$ = [{ x: 1 }];")).toThrow(/reduce-wrap pattern.*\$\$\.reduce/s);
+  it("single-doc ArrayLiteral at stage 0 lowers to `$documents` (seeder sugar)", () => {
+    expect(jsmql("$$ = [{ x: 1 }];")).toEqual([{ $documents: [{ x: 1 }] }]);
   });
 
-  it("multi-element ArrayLiteral RHS points at $$.push as the seeder alternative", () => {
-    expect(() => jsmql("$$ = [{ a: 1 }, { b: 2 }];")).toThrow(/\$\$\.push\(\{\.\.\.\}/);
+  it("multi-element ArrayLiteral at stage 0 lowers to `$documents`", () => {
+    expect(jsmql("$$ = [{ a: 1 }, { b: 2 }];")).toEqual([{ $documents: [{ a: 1 }, { b: 2 }] }]);
+  });
+
+  it("multi-element ArrayLiteral mid-pipeline points at `$$.push` as the seeder alternative", () => {
+    expect(() => jsmql("$match($.active === true); $$ = [{ a: 1 }, { b: 2 }];")).toThrow(/\$\$\.push\(\{\.\.\.\}/);
   });
 });
 

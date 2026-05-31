@@ -132,6 +132,7 @@ export type Expr =
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr; pos: number }
   | { type: "TypeCastRef"; cast: BareCastOp; pos: number }
   | { type: "MathCall"; method: MathMethod; args: CallArg[]; pos: number }
+  | { type: "MathCallRef"; method: MathMethod; pos: number }
   | { type: "MathConst"; name: MathConstant; pos: number }
   | { type: "ObjectCall"; method: ObjectMethod; args: CallArg[]; pos: number }
   | { type: "ArrayFrom"; input: Expr; mapFn: Expr | null; pos: number }
