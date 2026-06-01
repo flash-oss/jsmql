@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-01 — feat: docs/DEFERRED.md + drift-protection test, the "I keep forgetting" antidote
+
+Before this commit, "what's left to do?" had no single answer. Deferred items lived in 106 places — spec "Future work" sections, `## Out of scope` headers, code-comment asides, throw-string parentheticals, DEVLOG entries, and the user's head. Adding a new `// not yet supported` was a single keystroke that no test caught. The user said it plainly: "I keep forgetting about them. We need a system."
+
+The system is a tag (`[DEF-NNN]`) + a row (in [`docs/DEFERRED.md`](DEFERRED.md)) + a test ([`test/deferred-coverage.test.ts`](../test/deferred-coverage.test.ts)) with four gates that run on every `npm test`:
+
+- **FORWARD** — every `[DEF-NNN]` tag in the live surface must have a matching row in `DEFERRED.md`.
+- **REVERSE** — every row in `DEFERRED.md` must be referenced by at least one tag (unless `status: design-only` — for unstarted design work that hasn't produced a rejection site yet).
+- **UNTAGGED** — every "not yet supported" / "future work" / "deferred" / "out of scope" phrase must carry a `[DEF-NNN]` tag OR appear in [`test/deferred-allowlist.txt`](../test/deferred-allowlist.txt) with a one-line reason.
+- **STALE-ALLOWLIST** — every entry in the allowlist must match at least one phrase in the live surface. The allowlist can only shrink — entries cannot accumulate dead weight that masks new untagged additions.
+
+**Outcome.** New deferrals cannot be added silently. Shipping a deferred item requires deleting both the row and the tag in the same commit (REVERSE gate fires otherwise). Decisions to NOT implement go in `DEFERRED.md` §B so future-us doesn't blindly reconsider them — the "I forgot we already decided against this" failure mode in the other direction.
+
+**Initial seeding.** 22 open items in §A and 6 won't-implement decisions in §B, drawn from a re-scan of the live surface on master. Items currently in flight by the parallel fork session (`claude/charming-hofstadter-c6a6a9`, 11 of its original 23 items still pending) are deliberately **not** in `DEFERRED.md` — their rejection sites are in the allowlist instead, with `# Fork-in-flight` annotations. As each fork wave lands, the allowlist entries it makes stale get removed (the STALE-ALLOWLIST gate forces this). Once the fork finishes, the allowlist's fork section is empty; any items the fork didn't ship get rolled into §A.
+
+Tags retrofitted in this commit (low fork-conflict risk): DEF-001 (stream ternary in `pipeline.ts:1063`, `LANGUAGE.md`, `replace-stream-stage.md`), DEF-009 / DEF-010 / DEF-012 (let-bindings spec), DEF-011 (`||` partial extraction in `match-query-translation.md`), DEF-008 (`function` keyword future), DEF-020 (mongoose `Query.prototype` in spec + `mongoose.ts`), DEF-022 (`Number.isFinite` in `codegen.ts`). The other 14 open rows are `status: design-only` (no live rejection site yet — design work tracked here as a TODO before the first code lands).
+
+**Convention rule.** Added [root `CLAUDE.md` § Maintain docs/DEFERRED.md](../CLAUDE.md#maintain-docsdeferredmd). Added a row to `docs/CLAUDE.md`'s file-tree table. One-line pointer at top of `LANGUAGE.md`. `README.md` deliberately untouched (per the user's explicit "Don't touch README" instruction during plan review).
+
+**Coordination caveat.** This intentionally lands while the fork is still running. The user's "I keep forgetting" urgency outweighed the cleaner "wait for fork to settle" sequencing. The allowlist absorbs the in-flight mess; the STALE-ALLOWLIST gate makes the cleanup self-driving.
+
+---
+
 ## 2026-05-31 — feat: scope-encoding sugar for diagnostic / system source stages
 
 MongoDB's diagnostic stages (`$indexStats`, `$collStats`, `$planCacheStats`, `$listSearchIndexes`, `$currentOp`, `$listSessions`, `$listLocalSessions`, `$listSampledQueries`, `$shardedDataDistribution`) were already in the STAGES registry and already compiled via the generic dispatch (`{ $indexStats: {} }` / `$indexStats({})`). What they lacked was a discoverable, *scope-aware* surface. They're **source** stages (must be first), and they differ by *where* they run, which the context-ref prefix now encodes — call the stage as a method on the ref whose scope matches: `$$.indexStats()`, `$$$$.currentOp({ allUsers: true })`, `$$$$.shardedDataDistribution()`. The method name is the stage name minus the `$`; the optional argument is the options object (omit → `{}`).

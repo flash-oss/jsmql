@@ -99,7 +99,7 @@ $.status === "active" && $.a > $.b && $.c < $.d
 $match($.status === "active" || $.score > $.threshold)
 ```
 
-We cannot emit `{ $or: [{ status: "active" }, { $expr: ... }] }` and preserve the index-using guarantee of the disjunction. If any branch under `||` has a residual or empty query, the **whole** `||` becomes a residual and the entire expression falls back to `$expr`. The current implementation prefers correctness over partial gain here; future work could detect specific safe rewrites.
+We cannot emit `{ $or: [{ status: "active" }, { $expr: ... }] }` and preserve the index-using guarantee of the disjunction. If any branch under `||` has a residual or empty query, the **whole** `||` becomes a residual and the entire expression falls back to `$expr`. The current implementation prefers correctness over partial gain here; future work could detect specific safe rewrites [DEF-011].
 
 ## Key collision under `&&`
 
@@ -166,6 +166,6 @@ A few patterns translate differently in `$match` position than they would in an 
 ## Out of scope — future work
 
 - **`in` operator** (jsmql's `BinaryExpr(in)`) — distinct from query-language `$in` and rarely the right translation. Stays rejected; `.includes()` covers the common case.
-- **Partial extraction under `||`** for the case where every branch has a translatable AND an untranslatable factor with matching shape — only useful in narrow cases.
-- **Server-side JS predicates (`$where`)** — covered by the planned `function` keyword for `$function` / `$accumulator` / `$where` (its own design session).
+- **Partial extraction under `||`** [DEF-011] for the case where every branch has a translatable AND an untranslatable factor with matching shape — only useful in narrow cases.
+- **Server-side JS predicates (`$where`)** [DEF-008] — covered by the planned `function` keyword for `$function` / `$accumulator` / `$where` (its own design session).
 - **`$jsonSchema`, `$geoWithin`, `$near`, `$text`** — query-only operators that have no idiomatic JS shape. Continue to use `$op($jsonSchema, …)` etc. as the escape hatch.

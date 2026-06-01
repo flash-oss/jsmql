@@ -6,6 +6,7 @@
 |---|---|---|
 | `docs/LANGUAGE.md` | Users of jsmql | User-visible behaviour changes |
 | `docs/DEVLOG.md` | Future-self / contributors asking "why?" | Every observable change — feature, refactor, naming, doc decision |
+| `docs/DEFERRED.md` | Anyone wanting "what's left to do?" / "what did we decide against?" | Adding a new "not yet supported" throw, shipping a deferred item, or recording a "won't implement" decision. See root `CLAUDE.md` § Maintain docs/DEFERRED.md. |
 | `docs/specs/*.md` | Claude / contributors implementing jsmql | Code structure or internal behaviour changes |
 
 Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples in the specs.

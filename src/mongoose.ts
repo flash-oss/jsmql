@@ -34,7 +34,7 @@
  * `findOneAndReplace` / `replaceOne` take a full *replacement document* at
  * argument 1, not an update spec — so we patch their filter slot only.
  * `findById` and `findByIdAndDelete` are id-only and aren't patched at all.
- * `Query.prototype.*` builder methods are out of scope.
+ * `Query.prototype.*` builder methods are out of scope today [DEF-020]; see docs/DEFERRED.md.
  */
 
 import { jsmql, type JsmqlInput } from "./index.ts";

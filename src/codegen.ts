@@ -3306,11 +3306,11 @@ function generateNumberStatic(method: "isInteger" | "isNaN" | "isFinite", arg: E
       // Lifting this needs a literal-Infinity/literal-NaN escape hatch — track
       // separately. Until then, give users a concrete workaround in the error.
       throw new CodegenError(
-        `Number.isFinite($.x) is not yet supported in jsmql — there is no syntax for Infinity/NaN literals to compare against. ` +
+        `Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. ` +
           `Workarounds: ` +
           `(1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, ` +
           `(2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, ` +
-          `(3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it.`,
+          `(3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.`,
         pos,
       );
   }

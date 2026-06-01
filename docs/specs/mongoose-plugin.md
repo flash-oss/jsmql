@@ -101,7 +101,7 @@ The set mirrors the static methods exported by `mongoose/lib/model.js` (mongoose
 
 - **`findOneAndReplace(filter, replacement, …)` and `replaceOne(filter, replacement, …)`** — the second argument is a complete *replacement document*, not an update spec. A jsmql expression at that slot would silently land as a literal object (the same footgun `jsmql.update()` exists to prevent at the update slot). The filter slot is patched; the replacement slot is not.
 - **`findById`, `findByIdAndDelete`** — id-only methods. No jsmql-eligible slot.
-- **`Query.prototype.*` (`.where()`, `.gt()`, `.sort()`, …)** — out of scope. The plugin is a `Model`-static layer; the Query builder is a separate surface that the user composes after calling `Model.find()` (etc.) and isn't part of the call site where the shape is fixed by a driver method name.
+- **`Query.prototype.*` (`.where()`, `.gt()`, `.sort()`, …)** — out of scope today [DEF-020]. The plugin is a `Model`-static layer; the Query builder is a separate surface that the user composes after calling `Model.find()` (etc.) and isn't part of the call site where the shape is fixed by a driver method name.
 - **`Model.create`, `insertOne`, `insertMany`, `Document#save`** — these take whole documents, not query filters.
 
 ## Subclass propagation

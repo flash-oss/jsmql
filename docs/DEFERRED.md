@@ -1,0 +1,338 @@
+# DEFERRED — open work items
+
+The single source of truth for everything jsmql currently **refuses, defers, or hasn't built**. Newest-thinking on top; rows deleted when the item ships.
+
+This file is the antidote to "I keep forgetting about them". Every "not yet supported" / "future work" / "deferred" / "out of scope" marker in the live surface of jsmql (excluding historical `DEVLOG.md` entries) MUST carry a `[DEF-NNN]` tag and have a row below. The drift-protection test in [`test/deferred-coverage.test.ts`](../test/deferred-coverage.test.ts) enforces this both ways:
+
+- Forward gate: every `[DEF-NNN]` tag → must have a matching row here.
+- Reverse gate: every row here → must be referenced by at least one `[DEF-NNN]` tag in the live surface OR have `status: design-only`.
+- Untagged-marker gate: every occurrence of a deferral phrase in the live surface → must carry a tag, OR be listed in `test/deferred-allowlist.txt` (with a one-line reason). Allowlist entries that no longer match any phrase fail the test — so the allowlist shrinks over time and cannot grow stale.
+
+**Conventions.**
+- Tag format: `[DEF-NNN]` — literal. Optional human label inside: `[DEF-007: projection]`. Match regex is `\[DEF-\d{3}\]`.
+- When you ship an item: delete its row AND strip every `[DEF-NNN]` tag in the same commit.
+- When you reject a feature with a "not yet" error: add the row AND a tag in the same commit.
+- When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
+- Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
+
+**Counts.** Open: 22. Decided-against: 6. As of 2026-06-01.
+
+---
+
+## §A. Open — to implement
+
+### DEF-001 — `$$ = cond ? A : B` (stream-level ternary)
+
+- **What's blocked.** Conditional stream branching like `$$ = isAdmin ? $$ : $$.filter(d => d.public)` is rejected at codegen.
+- **Target lowering.** `$$ = cond ? $$ : $$$.other` → either `[{ $match: { $expr: cond } }]` for narrow-branch or `[{ $limit: 0 }, { $unionWith: { coll: "other" } }]` for source-switch — depending on which side of the ternary picks.
+- **Why blocked.** Needs outer-`let` threading into `$unionWith.pipeline` (no `let:` slot in MongoDB's current `$unionWith`), which is the same blocker as DEF-013 schema threading.
+- **Attempted approaches.** None — design-stage only. Outer-let threading is the hard pre-req.
+- **Success criteria.** `$$ = isAdmin ? $$ : $$.filter(d => d.public);` lowers to the narrow form. `let id = $.userId; $$ = isAdmin ? $$ : $$$.children.filter(c => c.parentId === id);` lowers to source-switch with `id` available inside the sub-pipeline. Tests in `test/pipeline.test.ts`.
+- **Rejection site(s).** `src/pipeline.ts` `lowerReplaceStream` ternary branch (search for `not yet supported`).
+- **Spec.** `docs/specs/replace-stream-stage.md` § Deferred.
+- **Status.** open
+- **Effort.** M (1–3 days)
+
+### DEF-002 — `$$.find(p)` self-join on the current collection
+
+- **What's blocked.** `$$.find(u => u.parentId === $._id)` — a `$lookup` against the *same* collection — has nowhere to resolve the collection name from.
+- **Target lowering.** `[{ $lookup: { from: <current-coll>, localField: "_id", foreignField: "parentId", as: "..." } }]`.
+- **Why blocked.** jsmql compiles statelessly; it doesn't know its own collection name. Blocked on DEF-013 (schema/metadata threading).
+- **Attempted approaches.** None.
+- **Success criteria.** Once DEF-013 lands: `jsmql.bind({ collection: "users" })("$$.find(u => u.parentId === $._id);")` lowers correctly.
+- **Rejection site(s).** No specific code rejection today — the `$$.find` parse path falls through to the generic codegen error. Will add a targeted message when DEF-013 lands.
+- **Spec.** `docs/specs/context-references.md` § Future work bullet 1.
+- **Status.** design-only — blocked by DEF-013
+- **Effort.** S once DEF-013 lands.
+
+### DEF-003 — Bare-statement `$$.<chain>;` (no `$$ =` head)
+
+- **What's blocked.** A statement like `$$.filter(d => d.active);` (no LHS) at top level. Currently rejected as "not a recognised stage".
+- **Target lowering.** Probably identical to `$$ = $$.filter(d => d.active);` — but the explicit form is the documented convention and we've held the bare form back to keep the surface narrow.
+- **Why blocked.** Design choice, not technical. The explicit assignment form is more readable and matches the `$$$.coll = $$;` $out convention.
+- **Attempted approaches.** None.
+- **Success criteria.** TBD — first decide whether we want this at all. May stay decided-against.
+- **Rejection site(s).** Generic "not a recognised stage" error from the pipeline lowerer.
+- **Spec.** `docs/specs/stream-methods.md` "Out of scope" bullet 1.
+- **Status.** design-only (may be promoted to "won't implement")
+- **Effort.** S
+
+### DEF-004 — `$$$.coll.concat(arrow)` → `$unionWith`
+
+- **What's blocked.** `$$ = $$.concat($$$.archive.filter(d => d.archived));` works (`.concat` is registered). The bare statement form `$$$.archive.concat(d => …);` doesn't.
+- **Target lowering.** `[{ $unionWith: { coll: "archive", pipeline: [{ $match: … }] } }]` as a statement (not an assignment).
+- **Why blocked.** `$unionWith` has no `as` slot — needs a statement-only sugar surface separate from the existing `$$ = $$.concat(…)` chain.
+- **Attempted approaches.** None — listed as "Future work" in lookup-stage.md.
+- **Success criteria.** `$$$.archive.concat(d => d.userId === $._id);` lowers to a one-stage `$unionWith` (no assignment required).
+- **Rejection site(s).** Lives in spec only — no live throw site today.
+- **Spec.** `docs/specs/lookup-stage.md` § Future work bullet 3.
+- **Status.** design-only
+- **Effort.** S
+
+### DEF-005 — `$merge` sugar (`$$$.coll += $$;`)
+
+- **What's blocked.** Writing the result of a pipeline to a collection with merge semantics (upsert / merge into existing docs) rather than `$out`'s full replace.
+- **Target lowering.** Default: `$$$.metrics += $$;` → `[{ $merge: "metrics" }]`. With pre-filter: `$$$.metrics += $$.filter(d => d.active);` → `[{ $match: { active: true } }, { $merge: "metrics" }]`.
+- **Why blocked.** Default semantics are easy (whole-doc merge into `_id`). The four merge-control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a syntax-design pass — should they be a config-bearing assignment (`$$$.metrics += { source: $$, on: "_id" }`), method chains (`$$.mergeInto($$$.metrics, { on: … })`), or stay only available via `$op($merge, …)`?
+- **Attempted approaches.** Surveyed in fork plan §B2: rejected `$$$.coll <<= $$` (opaque sigil), `$$.mergeInto($$$.coll)` (reverses destination-on-left), `$$$.coll += { source: $$, on: … }` (overloads `+=` with config object).
+- **Success criteria.** `$$$.metrics += $$;` lowers to `[{ $merge: "metrics" }]`. `$op($merge, {…})` remains the recommended path for non-default options.
+- **Rejection site(s).** Spec only.
+- **Spec.** `docs/specs/out-stage.md` § Deferred bullet 2.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-006 — `jsmql.updateDoc()` — classic-form update operators
+
+- **What's blocked.** The classic-form update operators (`$inc`, `$push`, `$rename`, `$pull`, `$pullAll`, `$pop`, `$min`, `$max`, `$mul`, `$currentDate`). `jsmql.update()` already emits the pipeline-form (`$set`/`$unset` array) — this is the *other* update shape.
+- **Target lowering.** New entry point `jsmql.updateDoc(input)` returns a single object: `{ $inc: { count: 1 } }`, `{ $push: { tags: "vip" } }`, etc. Pattern table in fork plan §B3.
+- **Why blocked.** Whole new entry point + ~10 operator pattern matchers + the decision about `$bit` / `$addToSet` (no idiomatic JS shape — keep as `$op($bit, …)`).
+- **Attempted approaches.** None — full design in fork plan §B3 but no code.
+- **Success criteria.** `jsmql.updateDoc("$.count += 1")` → `{ $inc: { count: 1 } }`. Multi-statement combinations work: `"$.count += 1, $.tags.push('vip'), delete $.tmp"` → `{ $inc: …, $push: …, $unset: { tmp: "" } }`. Same target with conflicting operators throws.
+- **Rejection site(s).** No code — the API just doesn't exist. `docs/CLAUDE.md` "Future work areas" paragraph mentions update operators.
+- **Spec.** Will need `docs/specs/update-doc.md` when work begins.
+- **Status.** design-only
+- **Effort.** L (full new entry point + 10 pattern matchers + tests)
+
+### DEF-007 — Projection-aware translation in `$project` body
+
+- **What's blocked.** Inside `$project({ … })`, methods like `.slice()` and `.some()` should lower to projection-form `$slice` (single-arg) and `$elemMatch` instead of expression-form `$slice` / aggregation `$filter`. Today they lower to the expression form regardless of context.
+- **Target lowering.** `$project({ recent: $.items.slice(0, 3) })` → `{ $project: { recent: { $slice: ["$items", 3] } } }` (single-arg, projection form). `$project({ matchingItems: $.items.some(item => item.x > 5) })` → `{ $project: { matchingItems: { $elemMatch: { x: { $gt: 5 } } } } }`.
+- **Why blocked.** Translator doesn't track `inProjectionBody`. Needs a context flag threaded through codegen.
+- **Attempted approaches.** None.
+- **Success criteria.** Three method/operator switches: `.slice`, `.some`, `$meta`. Existing expression-context lowerings unchanged. The positional `$` projection (`{ "items.$": 1 }`) stays accessible only via raw passthrough.
+- **Rejection site(s).** `docs/CLAUDE.md` "Future work areas" paragraph (projection operators).
+- **Spec.** Will need `docs/specs/projection.md`.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-008 — `function` keyword → `$function` / `$accumulator` / `$where`
+
+- **What's blocked.** Server-side JavaScript expressions are not callable from jsmql today (only via `$op($function, …)`).
+- **Target lowering.** A JS `function` expression in jsmql source becomes a `$function: { body: "...", args: [...], lang: "js" }`. Sketched in fork plan §B5.
+- **Why blocked.** (1) Security: server-side JS is off by default on Atlas and a risk in self-managed deployments. We need a compile-time opt-in flag or warning channel. (2) Reserving the `function` keyword needs parser work that's substantial enough for its own session.
+- **Attempted approaches.** None.
+- **Success criteria.** TBD with the security posture (opt-in flag? default-warning? same for `$where`?).
+- **Rejection site(s).** No live throw — the `function` keyword is unreserved today; using it produces a parse error.
+- **Spec.** Will need `docs/specs/function-keyword.md`.
+- **Status.** design-only — security review required
+- **Effort.** L
+
+### DEF-009 — `const` keyword as alias for `let`
+
+- **What's blocked.** `const x = $.foo;` is a parse error. Forces `let` for everything.
+- **Target lowering.** Identical to `let` — pre-1.0, `let` bindings aren't reassignable from jsmql source anyway, so `const` is purely surface sugar.
+- **Why blocked.** Trivially easy (one keyword token, one parser branch). Not yet picked up.
+- **Attempted approaches.** None.
+- **Success criteria.** `const x = $.foo; $match($.parent === x);` lowers identically to `let x = …;`. Reassignment to a `const`-bound name throws the same target-validation error a `let` target would.
+- **Rejection site(s).** No live throw — parse error.
+- **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 2.
+- **Status.** design-only
+- **Effort.** S
+
+### DEF-010 — Multi-binding `let a = …, b = …;`
+
+- **What's blocked.** Comma-separated bindings inside one `let` statement.
+- **Target lowering.** Single `$set` stage with both bindings: `let a = $.x, b = a + 1;` → `{ $set: { "__jsmql.a": "$x", "__jsmql.b": { $add: ["$__jsmql.a", 1] } } }`. Left-to-right evaluation order matches JS.
+- **Why blocked.** Comma disambiguation against the update-filter `,` separator (`$.a = 1, $.b = 2`). The two are syntactically distinguishable (let-binding follows `let <Ident>`, update follows `=`/`+=`/etc.) but the parser doesn't currently route on that.
+- **Attempted approaches.** None.
+- **Success criteria.** `let userId = $.userId, total = $.amount * 1.1; $match(...);` lowers to one combined `$set` + `$match`. `let a = …; let b = …;` continues to work and produces equivalent (two `$set` stages, slightly worse).
+- **Rejection site(s).** `docs/specs/let-bindings.md:199`.
+- **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 3.
+- **Status.** open
+- **Effort.** S
+
+### DEF-011 — Partial extraction under `||` in `$match`
+
+- **What's blocked.** `($.status === "active" && cond) || ($.status === "trial" && cond)` — if both `||` branches have a translatable factor that shares a field, we could lift the OR over the field-equality match, but today any residual under `||` makes the whole `||` fall through to `$expr`.
+- **Target lowering.** Lift shared-prefix translatable conjuncts. Narrow safe rewrites only; correctness over partial gain.
+- **Why blocked.** The disjunction translator currently prefers correctness — if any branch has a residual or empty query, the whole `||` becomes residual. Adding partial extraction needs a careful set of safe-rewrite rules.
+- **Attempted approaches.** None.
+- **Success criteria.** Narrow test cases land cleanly; the index-using guarantee of the `$or` translation is preserved.
+- **Rejection site(s).** `docs/specs/match-query-translation.md:102, 169`.
+- **Spec.** `docs/specs/match-query-translation.md` § Out of scope — future work bullet 2.
+- **Status.** open
+- **Effort.** M
+
+### DEF-012 — Index-pitfall warning channel via `validate()`
+
+- **What's blocked.** A `let` binding before an indexable `$match` blocks the match from using the index. The compiler could surface a warning, but `validate()` has no warning channel — only errors.
+- **Target lowering.** No MQL output change. `validate()` gains a `warnings` array alongside `errors`; each warning carries `.pos`, `.severity: "warning"`, and a message naming the binding and the index that would otherwise be hit.
+- **Why blocked.** Needs a new `warnings` array on the `ValidationResult` shape. Pre-1.0 the API isn't committed, so it's safe to add — but the wider question of "what other warnings do we want?" should be answered alongside (unused bindings? unreachable stages? deprecated patterns?).
+- **Attempted approaches.** None.
+- **Success criteria.** `jsmql.validate("let id = $.userId; $match($.x > 5);")` returns `{ valid: true, errors: [], warnings: [{ severity: "warning", pos: …, message: "let 'id' before $match blocks index usage on …" }] }`.
+- **Rejection site(s).** Design only.
+- **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 4.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-013 — Schema / metadata threading (`jsmql.bind({ db, collection })`)
+
+- **What's blocked.** jsmql compiles statelessly — it doesn't know the current collection's name, so `$$.find()` / `$$.filter()` (self-join) can't resolve their `$lookup.from`. Same gap blocks `$$ = cond ? … : $$.find(…)` (DEF-001 ternary's source-switch branch).
+- **Target lowering.** New entry point `jsmql.bind({ collection, db })` returns a new callable shaped like `jsmql` (callable + `.compile` + `.validate` + `.expr` + `.filter` + `.pipeline` + `.update` + `.updateDoc`), with `boundCollection` / `boundDb` threaded into `GenerateCtx`. Mongoose plugin uses it automatically with the model's `collection.name`.
+- **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering. Force multiplier — unblocks DEF-002 (self-join) and the source-switch half of DEF-001.
+- **Attempted approaches.** None — design in fork plan §B8.
+- **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
+- **Rejection site(s).** `docs/specs/context-references.md:131-132` (allowlisted as a spec future-work bullet).
+- **Spec.** `docs/specs/context-references.md` § Future work bullet 1–2. Will need its own `docs/specs/bind.md`.
+- **Status.** design-only — force multiplier (unblocks DEF-002, half of DEF-001)
+- **Effort.** L
+
+### DEF-014 — Optimised chained terminals on lookups
+
+- **What's blocked.** Chains like `.map`, `.at`, second `.filter` after a lookup terminal currently fall through the generic path and emit one extra `$set` stage. Could be collapsed to a single specialised stage.
+- **Target lowering.** Pattern recogniser in `extractLookupCalls` that emits single-stage variants for specific chain shapes.
+- **Why blocked.** Performance optimisation, not correctness. Needs careful pattern enumeration so we don't break the generic path.
+- **Attempted approaches.** None.
+- **Success criteria.** `$$$.users.filter(u => …).map(u => u.name).at(0)` emits one `$lookup` + one `$set` (combined), not `$lookup` + `$set` + `$set` + `$set`.
+- **Rejection site(s).** `docs/specs/lookup-stage.md:168`.
+- **Spec.** `docs/specs/lookup-stage.md` § Future work bullet 5.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-015 — Ambient TS types for `$$` / `$$$` / `$$$$`
+
+- **What's blocked.** The arrow-form lookup (`($) => $$$.coll.find(...)`) doesn't type-check under TypeScript — `$$$` isn't declared as an ambient global. String form works fully.
+- **Target lowering.** No MQL change. `src/ops.ts` (or a parallel `globals.ts`) declares `$$`, `$$$`, `$$$$` so the arrow-form syntax type-checks.
+- **Why blocked.** Type design needs to cover all three prefixes consistently, and the type shape interacts with diagnostic stages (DEF-008 / system-stages) plus DEF-013 schema threading.
+- **Attempted approaches.** None.
+- **Success criteria.** `jsmql(($) => $$$.users.find(u => u.id === $._id))` type-checks without `any`.
+- **Rejection site(s).** `docs/specs/context-references.md:133`, `lookup-stage.md:167`, `system-stages.md:138`.
+- **Spec.** `docs/specs/ops-generation.md` will host the type generation.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-016 — Per-operator return-type narrowing in `ops.ts`
+
+- **What's blocked.** Every generated operator in `src/ops.ts` returns `any`. `$abs($.x)` could return `number`, but doing so interferes with method-chain inference on field refs (`$.foo` is `any`, but `$abs($.foo)` shouldn't suddenly become `number` and reject `.toString()`).
+- **Target lowering.** No MQL change. Types only. Need to design the field-ref vs concrete-value boundary carefully.
+- **Why blocked.** The interaction with `$.foo : any` is the open problem. Pre-1.0 the types churn freely, so we'd want to land this once.
+- **Attempted approaches.** None.
+- **Success criteria.** `$abs($.foo)` is `number` in TS but field-ref chains still work.
+- **Rejection site(s).** `docs/specs/ops-generation.md:73`.
+- **Spec.** `docs/specs/ops-generation.md`.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-017 — Drift-protection test for `STAGES` vs vendor MQL spec
+
+- **What's blocked.** `OPERATORS` has a drift-protection test (`test/operator-spec-coverage.test.ts`) against `vendor/mql-specifications/`. `STAGES` has none — new MongoDB stages would be silently missed.
+- **Target lowering.** No MQL change. New `test/stage-spec-coverage.test.ts` mirroring the existing operator one.
+- **Why blocked.** Just hasn't been built. Copy-paste of the operator test with a path change.
+- **Attempted approaches.** None.
+- **Success criteria.** Test passes today; fails when a new stage is added to the vendor spec without a `STAGES` entry.
+- **Rejection site(s).** `docs/specs/aggregation-stages.md:100` (allowlisted as a categorical "Out of scope (future work)" header).
+- **Spec.** `docs/specs/aggregation-stages.md` § Out of scope bullet 1.
+- **Status.** design-only — small win
+- **Effort.** S
+
+### DEF-018 — Type-level overloads of `jsmql()` for literal pipeline input
+
+- **What's blocked.** `jsmql([{ $match: ... }])` returns the widened union of all output shapes. With overloads, a literal pipeline array input could narrow the return to `object[]`.
+- **Target lowering.** No MQL change. TS overload signatures only.
+- **Why blocked.** Pre-1.0 churn; not pulling its weight yet.
+- **Attempted approaches.** None.
+- **Success criteria.** `jsmql([{ $match: ... }])` is `object[]` in TS.
+- **Rejection site(s).** `docs/specs/aggregation-stages.md:100`.
+- **Spec.** `docs/specs/aggregation-stages.md` § Out of scope bullet 4.
+- **Status.** design-only
+- **Effort.** S
+
+### DEF-019 — `.toSorted(comparator)` two-param arrow recognition
+
+- **What's blocked.** `.toSorted()` accepts a key-function arrow today (`e => e.distance`) but rejects a comparator-style two-param arrow (`(a, b) => a - b`).
+- **Target lowering.** `(a, b) => a - b` → `sortBy: 1`; `(a, b) => b - a` → `sortBy: -1`; `(a, b) => a.x - b.x` → `sortBy: { x: 1 }`. Everything else continues to throw with the `$op($sortArray, …)` hint.
+- **Why blocked.** Pattern recogniser for the three shapes. Easy.
+- **Attempted approaches.** None.
+- **Success criteria.** The three shapes lower as above; non-matching shapes throw the existing hint.
+- **Rejection site(s).** `DEVLOG.md:1428` (historical, no live throw — the runtime rejection happens in codegen with a generic comparator-not-supported message that doesn't carry the tag).
+- **Spec.** `docs/specs/method-dispatch.md` (`.toSorted` section, no spec line today).
+- **Status.** design-only — small win
+- **Effort.** S
+
+### DEF-020 — Mongoose `Query.prototype.*` builder methods
+
+- **What's blocked.** `Model.find().where("…").gt(…).sort("…").limit(10)` — the mongoose Query builder. Today only `Model`-static methods accept jsmql source; the Query builder doesn't.
+- **Target lowering.** Same as the Model statics — patch `Query.prototype.where` / `.sort` / `.gt` / `.lt` / `.eq` / `.skip` / `.limit` with the same string-or-function detection.
+- **Why blocked.** The plugin is Model-static-only by design ("the Query builder is a separate composition surface that the user reaches *after* a static call"). Whether to expand is a DX call: builder use is widespread and the impedance mismatch is real.
+- **Attempted approaches.** None.
+- **Success criteria.** `Model.find().where(($) => $.x > 5).sort("…").limit(10)` works through the existing detection. Plain object/string slots still pass through.
+- **Rejection site(s).** `docs/specs/mongoose-plugin.md:104`, `src/mongoose.ts:37`.
+- **Spec.** `docs/specs/mongoose-plugin.md`.
+- **Status.** open
+- **Effort.** M
+
+### DEF-021 — src-watching playground hook
+
+- **What's blocked.** Edits to `src/*.ts` outside Claude Code need a manual `npm run sync:playground` (or `npm run build`) to re-embed the bundle. The PostToolUse hook only fires on `test/realistic.test.ts` edits.
+- **Target lowering.** No code change in jsmql itself. Add a watcher (chokidar or similar) in `scripts/` and a `npm run watch:playground` script.
+- **Why blocked.** Tooling concern, not core. Easy.
+- **Attempted approaches.** None.
+- **Success criteria.** `npm run watch:playground` re-runs the sync on every `src/*.ts` change.
+- **Rejection site(s).** `DEVLOG.md:830` (historical).
+- **Spec.** None.
+- **Status.** design-only — tooling
+- **Effort.** S
+
+### DEF-022 — `Number.isFinite($.x)` (Infinity / NaN comparison)
+
+- **What's blocked.** `Number.isFinite($.x)` is rejected because jsmql has no syntax for `Infinity` / `NaN` literals to compare against.
+- **Target lowering.** Would need both literal-Infinity / literal-NaN escape hatches in the parser and a translation table for the resulting comparisons.
+- **Why blocked.** Three-way blocker: no Infinity/NaN literal in jsmql source; MongoDB's `$eq` treats `NaN == NaN` as true (unlike JS); the lowering would touch every numeric comparison helper.
+- **Attempted approaches.** None — the existing error message names three workarounds (`$type`, `$convert` sentinel, range guard).
+- **Success criteria.** TBD with the literal-escape design.
+- **Rejection site(s).** `src/codegen.ts:3309`.
+- **Spec.** None — would need `docs/specs/numeric-edges.md` or similar.
+- **Status.** open
+- **Effort.** M
+
+---
+
+## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
+
+This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.
+
+### `!expr` via De Morgan in `$match`
+
+Negation has subtle null/missing interactions in MongoDB. A silent index/non-index flip driven by data shape is exactly the surprise jsmql exists to prevent. `$op($not, …)` stays as the explicit escape. Documented in `docs/specs/match-query-translation.md:162-164`. See `feedback_no_silent_output_drift.md` in user memory for the broader principle.
+
+### `$let`-as-optimisation (peephole)
+
+When a `let` is read in exactly one downstream expression with no reshape between, the compiler *could* emit a single `$let` instead of `$set`/`$unset`. Rejected: the same input producing a different stage shape because of a downstream-reshape heuristic is the surprise jsmql avoids. Users who need `$let` write `$op($let, …)` explicitly.
+
+### Spread-form concat-equivalent `[...acc, d.x]` in array-returning reducers
+
+`acc.concat(d.x)` already lowers to `$replaceWith`. Adding `[...acc, d.x]` as a second spelling for the same lowering creates "which one does my codebase use?" friction. The explicit `.concat` shape stays canonical.
+
+### `in` operator query translation
+
+JS `in` checks **property existence**; reusing it for array-membership would be a semantic mismatch. `.includes()` covers the common case and translates to `$in` cleanly. Documented in `docs/specs/match-query-translation.md:168`.
+
+### Bare foreign-param ref (`o` alone) in a `$lookup` predicate
+
+Not enough signal to choose between "all foreign docs" and "use foreign doc as key". User must write `o.<field>` or `o => true` explicitly. Rejected in `src/lookup-translation.ts:799-802`; tested in `test/lookup.test.ts:228-230`.
+
+### `$replaceRoot` verbose-form knob on `$ = …`
+
+The lean `$replaceWith` shape is correct for the `$ = …` sugar. Adding a knob to opt into the verbose 4.0-compatible `$replaceRoot({ newRoot: … })` form adds API surface for no gain — users who need that shape write the stage call directly.
+
+---
+
+## §C. Fork-coordination notes
+
+A parallel session (`v2 deferral features (fork)`, branch `claude/charming-hofstadter-c6a6a9`) is implementing ~23 deferred items in waves. As of 2026-06-01, 12 have landed. The remaining 11 are tracked **only in the fork plan** (`~/.claude/plans/suggest-syntax-for-all-cheerful-meerkat.md`), not here, to avoid constant merge conflicts on this file as each fork wave lands.
+
+The drift test's allowlist file (`test/deferred-allowlist.txt`) names the specific source/spec lines the fork is still working on — once each lands, the allowlist entry is removed (the test fails if a removed entry's phrase no longer matches anything in the surface). If the fork stalls before completing all 11, the remaining items get rolled into §A in a follow-up commit.
+
+Fork-in-flight items (will not have rows here):
+
+- Nested lookups (`$$$.coll2.find/filter` inside another lookup or sub-pipeline)
+- `$$.length` top-level terminal
+- `$$$.coll.filter(p).<chain>` in expression position
+- `$out` multi-method RHS chains
+- `$out` with `jsmql.compile`-bound destination
+- `.copyWithin()` array method at statement position
+- `$group` / `$setWindowFields` accumulator-category validation
+- Outer-let bindings crossing into `$facet.*` sub-pipelines
+- Richer per-key body shapes in object-returning reducers
+- Trailing `$unset: "__jsmql"` elision peephole
+- `$setWindowFields` static validation of window-only ops

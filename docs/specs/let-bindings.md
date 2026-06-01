@@ -192,12 +192,12 @@ materialises `__jsmql.<name>` from that slot in the standard way. See
   expression and no reshape stage intervenes, the compiler could emit a
   single MongoDB `$let` wrapping that expression instead of `$addFields`/
   `$unset`. Worthwhile for index-preserving `$match`es; not v1.
-- **`const` keyword.** Pre-1.0 there is no semantic difference from `let`,
+- **`const` keyword [DEF-009].** Pre-1.0 there is no semantic difference from `let`,
   so adding the keyword is pure surface-area cost.
-- **Multi-binding `let a = …, b = …;`.** Comma-separated bindings inside one
+- **Multi-binding `let a = …, b = …;` [DEF-010].** Comma-separated bindings inside one
   `let`. Doesn't compose well with the existing `,`-as-update op-separator
   rule; punt to a follow-up that picks a clear disambiguation.
-- **Index-pitfall warning.** A `let` before an indexable `$match` blocks the
+- **Index-pitfall warning [DEF-012].** A `let` before an indexable `$match` blocks the
   match from using the index. The compiler could surface a warning through
   `validate()`, but that requires a warning channel which doesn't exist yet.
   Documented in `LANGUAGE.md` instead.
