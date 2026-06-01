@@ -1,6 +1,6 @@
 # jsmql Language Reference
 
-> This is the **user-facing language reference** for jsmql. For implementation details, see `specs/`.
+> This is the **user-facing language reference** for jsmql. For implementation details, see `specs/`. For the list of features not yet implemented or rejected as bad DX, see [DEFERRED.md](DEFERRED.md).
 
 ---
 
@@ -1982,7 +1982,7 @@ Compile-time rejections:
 | RHS | Why it's rejected |
 |---|---|
 | `$$ = []` | Empty stream not yet supported. Use `$limit(0)` or `$match($expr(false))` directly. |
-| `$$ = cond ? A : B` | Stream-level ternary not yet supported. |
+| `$$ = cond ? A : B` | Stream-level ternary not yet supported [DEF-001]. |
 | `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS but pipelines are arrays. For "first match", write `.filter(p).slice(0, 1)`. For replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
 | `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |

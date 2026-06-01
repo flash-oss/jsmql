@@ -107,6 +107,13 @@ Every code change that affects observable behaviour must also update the relevan
 ### Maintain README.md
 Every change to library behaviour visible at the call site — new entry point, changed output shape, new operator surface, new error wording, dropped/renamed feature — must update [README.md](README.md) in the same commit. Cross-check the headline example block, the Tour section, and the Highlights bullets; if a feature you touched would no longer match what those three sections claim, fix them. The README is the first thing a new user reads and is part of the public contract, not optional reference material. When in doubt, write a short probe script that imports from `src/index.ts` and run it with `node tmp/probe.mjs` (Node 22.18+ / 24.3+ strips TS natively — no flag) — or test against the built dist — to confirm the shown output still matches what the library produces.
 
+### Maintain docs/DEFERRED.md
+**Every** "not yet supported" / "future work" / "deferred" / "out of scope" marker in source code, specs, or `LANGUAGE.md` MUST carry a `[DEF-NNN]` tag and a matching row in [docs/DEFERRED.md](docs/DEFERRED.md). When you ship a deferred item, delete its row AND strip the tag in the same commit. When you reject a feature with a "not yet" error, add the row in the same commit. New phrases without a tag (and without an explicit entry in `test/deferred-allowlist.txt` with a one-line reason) make `npm test` fail.
+
+Tag format: `[DEF-NNN]` — literal three-digit ID, e.g. `[DEF-001]`. Optional human label inside: `[DEF-007: projection]`. The drift test ([test/deferred-coverage.test.ts](test/deferred-coverage.test.ts)) enforces forward (tag→row), reverse (row→tag), untagged-marker (phrase→tag-or-allowlist), and stale-allowlist (allowlist entry must match at least one phrase) gates on every `npm test`.
+
+Decisions that are "won't implement" go in §B of DEFERRED.md, not §A — no `[DEF-NNN]` tag in code, just a row recording the rationale so it isn't blindly reconsidered later.
+
 ### Commit conventions
 Use [Conventional Commits](https://www.conventionalcommits.org/):
 - `feat:` — new behaviour visible to users

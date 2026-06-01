@@ -110,7 +110,7 @@ user's intent is recoverable:
 | Trigger | Message excerpt |
 |---|---|
 | `ArrayLiteral` RHS (e.g. `$$ = []`) | `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.` |
-| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not yet supported. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
+| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not yet supported [DEF-001]. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection). See docs/DEFERRED.md.` |
 | `MethodCall` on `$$` / `$$$.<coll>` with method other than `filter` | `'$$ = …' RHS supports only '<recv>.filter(<predicate>)' — '.<method>(...)' is not allowed here.[ Did you mean '.filter'?] Use '<recv>.filter(<predicate>)' to <intent>, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.` |
 | Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source.` |
 | Anything else | `'$$ = …' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |

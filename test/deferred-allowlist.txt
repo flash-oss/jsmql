@@ -1,0 +1,110 @@
+# Allowlist for the deferred-coverage drift test.
+#
+# Format: each non-blank, non-comment line is `<filepath>::<phrase-substring>`.
+# The drift test matches a "not yet supported" / "future work" / "deferred"
+# phrase in <filepath> against <phrase-substring> (case-sensitive substring).
+# If a phrase line matches an allowlist entry AND has no [DEF-NNN] tag within
+# ±2 lines, the test skips it (i.e. treats it as known).
+#
+# Why allowlist at all? Three reasons:
+#   (1) A parallel "fork" session is implementing 11 of the original 23-item
+#       batch; tagging those rejection sites would conflict with the fork
+#       deleting them. Allowlist instead — entries are removed as each fork
+#       wave lands.
+#   (2) A handful of spec-section headers (`## Out of scope`, `## Future
+#       work`) are *categorical* — their children may individually carry
+#       [DEF-NNN] tags, but the header itself doesn't need one.
+#   (3) The deferred-system meta-documentation itself describes the
+#       deferral phrases — those lines mention the words but aren't
+#       deferrals. Allowlist.
+#
+# CRITICAL RULE: the test fails if an allowlist entry no longer matches any
+# phrase. So the allowlist can only shrink — it can never accumulate stale
+# entries that mask new untagged phrases.
+#
+# When you remove an entry: you've either (a) tagged the phrase, (b) shipped
+# the feature and the phrase is gone, or (c) cleaned up stale doc wording.
+
+# -----------------------------------------------------------------------------
+# Meta-documentation about the deferral system itself.
+# -----------------------------------------------------------------------------
+CLAUDE.md::out of scope for the current task
+CLAUDE.md::are still future work — flagged in
+CLAUDE.md::carry a `[DEF-NNN]` tag
+docs/CLAUDE.md::"what did we decide against?"
+docs/CLAUDE.md::nested-lookup rejection (planned future work
+docs/LANGUAGE.md::features not yet implemented or rejected
+
+# -----------------------------------------------------------------------------
+# Fork-in-flight: nested lookups (#1 from fork plan)
+# -----------------------------------------------------------------------------
+src/lookup-translation.ts::"nested lookup not yet supported" error
+src/lookup-translation.ts::"not yet supported, hoist to sibling stage" error
+src/lookup-translation.ts::is not yet supported in this release
+src/lookup-translation.ts::planned future work
+src/lookup-translation.ts::"Future work". The blocker is
+src/pipeline.ts::not yet supported in this release.
+src/pipeline.ts::planned future work in docs/specs/lookup-stage.md
+src/stream-methods.ts::"nested lookup not yet supported"
+docs/LANGUAGE.md::Nested lookups are planned but not yet implemented
+docs/specs/lookup-stage.md::throws a precise "nested lookup not yet supported"
+docs/specs/lookup-stage.md::predicate or pipeline) is not yet supported
+docs/specs/lookup-stage.md::## Future work
+test/lookup.test.ts::Nested lookup .* not yet supported in this release
+
+# -----------------------------------------------------------------------------
+# Fork-in-flight: .copyWithin (#13)
+# -----------------------------------------------------------------------------
+docs/specs/method-dispatch.md::`.copyWithin()` is deferred
+
+# -----------------------------------------------------------------------------
+# Fork-in-flight: $out multi-method RHS (#11) + bound dest (#12) + $merge (DEF-005)
+# -----------------------------------------------------------------------------
+docs/specs/out-stage.md::deferred to follow-ups
+docs/specs/out-stage.md::Out of scope for this release
+docs/specs/out-stage.md::is deferred until there's a real use case
+src/out-translation.ts::methods are deferred
+
+# -----------------------------------------------------------------------------
+# Fork-in-flight: richer per-key reducer bodies (#32) + dict-build (landed but
+# the comment still mentions "future work" pending source cleanup)
+# -----------------------------------------------------------------------------
+src/stream-methods.ts::deferred to a follow-up
+src/stream-methods.ts::future work — needs object-returning reducer patterns
+
+# -----------------------------------------------------------------------------
+# Spec-section headers (categorical — their child bullets carry the tags)
+# -----------------------------------------------------------------------------
+docs/specs/stream-methods.md::## Out of scope (v1)
+docs/specs/union-stage.md::Out of scope for v1
+docs/specs/context-references.md::## Future work
+docs/specs/aggregation-stages.md::## Out of scope (future work)
+docs/specs/match-query-translation.md::## Out of scope — rejected as bad DX
+docs/specs/match-query-translation.md::## Out of scope — future work
+docs/specs/system-stages.md::## Out of scope
+docs/specs/system-stages.md::context-references.md → Future work
+
+# -----------------------------------------------------------------------------
+# Decisions section in DEFERRED.md is referenced via §B headers in specs.
+# These specs cite the rejection reasoning without needing a [DEF-NNN] tag.
+# -----------------------------------------------------------------------------
+docs/specs/lookup-stage.md::Bare lambda parameter 'o' in a $lookup predicate is not yet supported
+src/lookup-translation.ts::Bare lambda parameter '${foreignParam}' in a $lookup predicate is not yet supported
+src/lookup-translation.ts::Bare `o` alone is not yet supported (no $$ROOT lowering)
+test/lookup.test.ts::Bare lambda parameter 'o' in a \$lookup predicate is not yet supported
+test/lookup.test.ts::out of scope for v1
+
+# -----------------------------------------------------------------------------
+# Stale doc references (fork landed the feature but didn't clean up wording).
+# Drop these entries when the fork settles and we do a doc cleanup pass.
+# -----------------------------------------------------------------------------
+docs/LANGUAGE.md::other richer body shapes are future work
+docs/CLAUDE.md::Future work areas — not yet implemented and not yet specified
+docs/specs/aggregation-stages.md::Will get its own spec when work begins
+
+# -----------------------------------------------------------------------------
+# Test-file phrase fragments (tests assert against rejection wording; the
+# rejection itself is tagged or allowlisted above).
+# -----------------------------------------------------------------------------
+test/pipeline.test.ts::not yet supported
+test/operator-spec-coverage.test.ts::not yet implemented in the
