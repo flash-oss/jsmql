@@ -42,6 +42,14 @@ The caller in `src/pipeline.ts:generateStageBody` emits:
 | `BinaryExpr(==\|!=, …, non-null …)` | **not translated** — codegen rejects with a "use ===" error when the body ultimately falls back to `$expr` |
 | `BinaryExpr(>\|>=\|<\|<=, FieldRef f, Num/Str literal)` (and order-flipped, with operator flipped accordingly) | `{ [f.path]: { $gt: <value> } }` (etc.) |
 | `BinaryExpr(=== \| !== \| >\|>=\|<\|<=, FieldRef f, NewDate)` where all `NewDate` (and any nested `DateUTC`) args are number/string literals | `{ [f.path]: { $gte: <Date instance> } }` (etc.) — folded at translate time |
+| `BinaryExpr(=== \| !==, FieldRef f, UndefinedLiteral)` (and order-flipped) | `{ [f.path]: { $exists: false } }` / `{ ... $exists: true }` |
+| `BinaryExpr(=== \| !==, MemberAccess(FieldRef f, "length"), NumberLiteral n)` where `n` is a non-negative integer (and order-flipped) | `{ [f.path]: { $size: n } }` / `{ ... { $not: { $size: n } } }` |
+| `BinaryExpr(=== \| !==, BinaryExpr("%", FieldRef f, IntLit d), IntLit m)` (and order-flipped) | `{ [f.path]: { $mod: [d, m] } }` / `{ ... { $not: { $mod: [d, m] } } }` |
+| `MethodCall(FieldRef f, "includes", [Literal v])` (boolean predicate) | `{ [f.path]: <v> }` — implicit array-element / scalar-equality match |
+| `MethodCall(ArrayLiteral [Literal …], "includes", [FieldRef f])` (boolean predicate) | `{ [f.path]: { $in: [<lits…>] } }` |
+| `MethodCall(FieldRef f, "match", [RegexLiteral r])` (boolean predicate) | `{ [f.path]: <real-RegExp(r)> }` |
+| `MethodCall(FieldRef f, "some", [Lambda([p], body)])` where `body` translates with no residual against `p`-as-root | `{ [f.path]: { $elemMatch: <translated-body> } }` |
+| `&&`-chain where **every** leaf is `FieldRef(f).includes(Literal)` on the **same** `f` | `{ [f.path]: { $all: [<lits…>] } }` |
 | `BinaryExpr(&&, A, B)` | recurse; merge query docs (object-merge if disjoint; `$and` array if keys collide); concat residuals into a synthetic `A && B` residual |
 | `BinaryExpr(\|\|, A, B)` | recurse; both branches must fully translate (no residual, non-empty query); emit `{ $or: [<A>, <B>] }`. Otherwise the whole `\|\|` becomes a residual. |
 | Everything else | residual (caller wraps in `$expr`) |
@@ -143,11 +151,21 @@ $match({ status: "active", $expr: $.score > $.threshold })
 
 [test/match-translation.test.ts](../../test/match-translation.test.ts) covers every translation rule, every partial-extraction case, every documented divergence, and the escape hatch. The high-level `test/pipeline.test.ts` cases were updated to the new output shape; the realistic-pipeline tests in [test/realistic.test.ts](../../test/realistic.test.ts) now show indexable query-document output.
 
-## Out of scope (future work)
+## Query-position-only divergences
 
-- **`!expr` via De Morgan.** Negation has subtle null/missing interactions in MongoDB; user-written positive forms or the `$expr` escape are safer for v1.
-- **`.includes()` / `Array.prototype.includes` → `$in`.** Method-dispatch translation; coordinate with `method-dispatch.md`.
-- **Regex match (`$.name.match(/^a/)`) → `{ name: /^a/ }`.** Requires regex-flag preservation and a clear story for global/multiline flags.
-- **`in` operator** (jsmql's `BinaryExpr(in)`) — distinct from query-language `$in` and rarely the right translation.
+A few patterns translate differently in `$match` position than they would in an arbitrary expression. The translator's job is to emit index-friendly MQL; the expression-form codegen's job is to mirror JS semantics on values. When the two differ, we document the divergence here:
+
+- **`.includes(<literal>)` on a field receiver.** Expression form is type-polymorphic (`$cond` over `$isArray` to choose `$in` vs `$indexOfCP`-substring). Query form emits the bare `{ field: <value> }` — which matches arrays-containing-value *and* scalar equality (MongoDB's "value or array-of-value" semantics), but NOT string substring. Users who want substring match in `$match` reach for `.match(/value/)`.
+- **`typeof === "boolean"` / `typeof === "bool"`.** JS's `typeof` returns `"boolean"`; MongoDB's `$type` accepts `"bool"`. The translator accepts either spelling and emits the BSON form.
+- **`.length === N` collapse guard.** `$.items.length` *as a generic dotted field path* would lower to the literal key `"items.length"` (a real but unintended access). The translator refuses to lower any `.length`-bearing equality except via the `$size` peephole — if `N` isn't a non-negative integer, the whole equality falls through to `$expr` rather than collapsing into a misleading dotted key.
+
+## Out of scope — rejected as bad DX
+
+- **`!expr` via De Morgan.** Negation has subtle null/missing interactions in MongoDB — silent index/non-index flips driven by data shape are exactly the surprise jsmql aims to avoid. Users write positive forms or `$op($not, …)` explicitly. See `feedback_no_silent_output_drift.md` in user memory for the rationale.
+
+## Out of scope — future work
+
+- **`in` operator** (jsmql's `BinaryExpr(in)`) — distinct from query-language `$in` and rarely the right translation. Stays rejected; `.includes()` covers the common case.
 - **Partial extraction under `||`** for the case where every branch has a translatable AND an untranslatable factor with matching shape — only useful in narrow cases.
-- **`$elemMatch`, `$exists`, `$type`, `$size`, etc.** — query-only operators that have no aggregation analogue. Would require their own jsmql surface.
+- **Server-side JS predicates (`$where`)** — covered by the planned `function` keyword for `$function` / `$accumulator` / `$where` (its own design session).
+- **`$jsonSchema`, `$geoWithin`, `$near`, `$text`** — query-only operators that have no idiomatic JS shape. Continue to use `$op($jsonSchema, …)` etc. as the escape hatch.

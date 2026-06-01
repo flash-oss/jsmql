@@ -495,8 +495,20 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("rejects `$$ = []` with a 'not supported' hint", () => {
-    expect(() => jsmql(`$$ = [];`)).toThrow(/'\$\$ = \[\]'.*not supported.*\$match.*\$limit\(0\)/);
+  it("`$$ = []` lowers to `$limit(0)` (drop all docs)", () => {
+    // Previously rejected; landed in the deferred-features Wave 5 push as
+    // the natural sugar for "empty the stream".
+    expect(jsmql(`$$ = [];`)).toEqual([{ $limit: 0 }]);
+  });
+
+  it("`$$ = [{...}, {...}]` at stage 0 lowers to `$documents`", () => {
+    expect(jsmql(`$$ = [{ _id: 1 }, { _id: 2 }];`)).toEqual([{ $documents: [{ _id: 1 }, { _id: 2 }] }]);
+  });
+
+  it("rejects `$$ = [docs]` mid-pipeline — `$documents` must be at stage 0", () => {
+    expect(() => jsmql(`$match($.active === true); $$ = [{ _id: 1 }];`)).toThrow(
+      /\$\$ = \[<docs>\]'.*first stage.*\$documents.*\$\$\.push/s,
+    );
   });
 
   it("rejects `$$ = <ternary>` as 'not yet supported'", () => {
@@ -527,12 +539,10 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("validate() surfaces a real .pos for `$$ = []`", () => {
+  it("validate() reports `$$ = []` as valid (now lowers cleanly to $limit:0)", () => {
     const r = jsmql.validate(`$$ = [];`);
-    expect(r.valid).toBe(false);
-    expect(r.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(r.errors[0].pos).toBeGreaterThan(0);
-    expect(r.errors[0].message).toMatch(/not supported/);
+    expect(r.valid).toBe(true);
+    expect(r.errors).toEqual([]);
   });
 });
 

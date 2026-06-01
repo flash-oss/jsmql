@@ -22,6 +22,72 @@ MongoDB's diagnostic stages (`$indexStats`, `$collStats`, `$planCacheStats`, `$l
 
 Mechanics: scope metadata lives in a new `diagnostic: { scope, options }` field on the nine STAGES entries (single source of truth); [src/system-stage-translation.ts](../src/system-stage-translation.ts) derives the method↔stage map and the per-scope suggestion lists from it (`isSystemStageCall` / `resolveSystemStageCall` / `notFirstStageMessage`); [src/pipeline.ts](../src/pipeline.ts) detects + first-stage-enforces in both `generatePipeline` and `generateImplicitPipeline` and adds the shape to `isStageCandidate`; [src/index.ts](../src/index.ts) broadens the bare-call auto-wrap (and the `jsmql.pipeline()` strict path) so a top-level `$$$$.currentOp()` flips into Pipeline mode without a trailing `;`; the three bare-ref codegen errors now list the diagnostic forms. New spec [docs/specs/system-stages.md](specs/system-stages.md); status updates in [docs/specs/context-references.md](specs/context-references.md); user reference in [docs/LANGUAGE.md](LANGUAGE.md#system--diagnostic-stages-indexstats-currentop-); 27 cases in [test/system-stages.test.ts](../test/system-stages.test.ts). Arrow-form TS types wait on the ambient-globals work (same as the existing `.push`/`.find` sugar).
 
+---
+
+## 2026-05-31 — Waves 5 + 6: stream-RHS sugar (`$$ = []`, `$$ = [docs]`) + `Math.<fn>` bare callbacks
+
+Three more items from the deferred-features catalog, all small and isolated:
+
+**#2 `$$ = []` → `[{ $limit: 0 }]`.** Previously rejected with a "use `$match($expr(false))` or `$limit(0)`" hint. The hint was always the wrong thing to type at the call site — empty-array assignment is the natural JS shape for "drop everything". Lowers in `lowerReplaceStream` ([src/pipeline.ts](../src/pipeline.ts)) via a new `ArrayLiteral` branch that runs *after* the reduce-wrap detectors (so the wrap forms still win their shape).
+
+**#5 `$$ = [{...}, {...}]` at stage 0 → `[{ $documents: [...] }]`.** Sibling sugar to #2 for the literal-doc seeder case. Constrained to stage 0 because MongoDB requires `$documents` at the head — mid-pipeline use throws an actionable error that names `$$.push({...})` (`$unionWith`) as the right tool for appending. Stage-index threading: `lowerReplaceStream` now takes an `isFirstStage: boolean`, and `lowerUpdateFilterWithLookups` takes a `globalStageIndex: number` so its inner `out.length` checks reflect the surrounding pipeline's running count.
+
+**#39 `Math.<unary>` as a bare `.map` callback.** `arr.map(Math.floor)` now parses and lowers to `{ $map: { input: "$arr", as: "v", in: { $floor: "$$v" } } }`. Mirrors the existing `Number` / `Boolean` / `String` bare-callable pattern via a new `MathCallRef` AST node. Restricted to the unary Math methods (floor, ceil, round, abs, sqrt, trunc, sign, exp, log/log2/log10, cbrt, all trig methods) so the arity matches the JS callback contract — binary methods (`pow`, `min`, `max`, `hypot`, `atan2`) require explicit parens and surface a precise "Math.X requires '(...)'" error if reached as a bare ref. `Math.floor` used in non-callable value position throws an actionable "use as a callback" error.
+
+**#36 (trailing `$unset:__jsmql` elision) is queued.** The peephole is straightforward — when the previous stage is in `RESHAPE_CLEARING_STAGES`, the trailing `$unset` is redundant — but landing it as-is would invalidate ~18 existing tests that hard-coded the `$unset` stage in their expected output. The optimisation is purely cosmetic (a `$unset` against an already-missing path is a no-op), so deferring it to a dedicated test-snapshot refresh.
+
+Files touched: [src/pipeline.ts](../src/pipeline.ts), [src/parser.ts](../src/parser.ts) (`MathCallRef` parsing, new `UNARY_MATH_CALLABLES` set), [src/ast.ts](../src/ast.ts) (`MathCallRef` node), [src/codegen.ts](../src/codegen.ts) (`MathCallRef` desugar in `requireLambda`, error-case in main switch, scanner entry), [src/lookup-translation.ts](../src/lookup-translation.ts) (leaf-case for `MathCallRef`). Tests: [test/codegen.test.ts](../test/codegen.test.ts) (9 new Math.* bare-callable cases), [test/pipeline.test.ts](../test/pipeline.test.ts) (3 cases for `$$ = []` / `$$ = [docs]` / mid-pipeline rejection), [test/stream-methods.test.ts](../test/stream-methods.test.ts) (3 updated cases swapping the old "use wrap" error for the new `$documents` lowering).
+
+1545 tests pass.
+
+---
+
+## 2026-05-31 — Wave 2 (partial): dict-build reducer wrap → `$group` + `$arrayToObject`
+
+Item #30 from the deferred-features catalog: `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <d.<v>|d> }), {})]` now lowers to the canonical pair `$group: { _id: null, __jsmqlDict: { $push: { k: "$<k>", v: "$<v>"|"$$ROOT" } } }` + `$replaceWith: { $arrayToObject: "$__jsmqlDict" }`.
+
+**Why this is its own detector.** The shape overlaps with the existing object-reducer form (both look like `$$ = [$$.reduce(<2-arg lambda>, {<obj>})]`), but the lowering is different: object-reducer collects N named accumulators per the static keys in the body, dict-build collects ONE pair-array via `$push` and folds it via `$arrayToObject`. They can't share the same classification path because the existing one rejects computed keys outright. The new detector runs **before** `detectReduceWrap` in `pipeline.ts` to pre-empt the static-key error path; if the shape doesn't match (mixed static + computed, multiple computed entries, non-`{}` init, non-`d`-rooted key path), it returns null and the existing object-reducer handler picks up — emitting the same "computed keys aren't supported" error users would have seen before. Same error wording, same DX, just one more shape recognised.
+
+**Supported body shapes.** Spread is optional (`{ ...acc, [d.k]: d.v }` and `{ [d.k]: d.v }` both work — the `...acc` is JS-faithful boilerplate). Keys and values both walk `d.<path>` chains, so nested paths work in both slots. Bare-doc value (`{ ...acc, [d.id]: d }`) lowers to `v: "$$ROOT"`. Anything else (computed key referencing `acc`, multiple computed entries, etc.) doesn't match and surfaces the existing error from the static-key path.
+
+Files: [src/stream-methods.ts](../src/stream-methods.ts) (new `DictBuildWrap` type, `detectDictBuildWrap`, `lowerDictBuildWrap`, `paramFieldOrBareParam` helper), [src/pipeline.ts](../src/pipeline.ts) (one import + one branch in the chain dispatch). Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). Tests: [test/stream-methods.test.ts](../test/stream-methods.test.ts) (6 new cases).
+
+1533 tests pass. The richer-per-key-body-shapes item (#32) and `$$.length` terminal (#6) are queued behind this; they need their own design passes before lowering.
+
+---
+
+## 2026-05-31 — Wave 1 of the deferred-features push: eight `$match` query-translator additions
+
+Eight JS shapes that previously fell through to `$expr` (silently disabling MongoDB indexes) now translate to indexable query-document form. From the [deferred-features catalog](/Users/vasyl/.claude/plans/suggest-syntax-for-all-cheerful-meerkat.md) §A, items #15, #16, #19a–f and the `typeof === "boolean"` polish on #19c:
+
+| jsmql source | MQL output (in `$match` position) |
+|---|---|
+| `$.tags.includes("vip")` | `{ tags: "vip" }` (implicit array-element / scalar-equality match) |
+| `["a","b"].includes($.status)` | `{ status: { $in: ["a","b"] } }` |
+| `$.name.match(/^a/i)` | `{ name: /^a/i }` (real `RegExp`) |
+| `$.items.some(it => it.qty > 5)` | `{ items: { $elemMatch: { qty: { $gt: 5 } } } }` |
+| `$.field === undefined` / `!== undefined` | `{ field: { $exists: false } }` / `$exists: true` |
+| `typeof $.x === "boolean"` | `{ x: { $type: "bool" } }` (JS-form `"boolean"` mapped to BSON `"bool"`) |
+| `$.items.length === 3` | `{ items: { $size: 3 } }` |
+| `$.x % 5 === 0` | `{ x: { $mod: [5, 0] } }` |
+| `$.tags.includes("a") && $.tags.includes("b")` | `{ tags: { $all: ["a","b"] } }` (folded from `&&`-chain on same field) |
+
+**`undefined` is a new AST node**, parser-recognised keyword, lexer token. In aggregation expression position it throws an actionable `CodegenError` ("'undefined' is only meaningful in '$match' position …") — MongoDB's aggregation `$eq` can't distinguish missing from null cleanly, so we surface the ambiguity instead of silently mapping to `null`. In `$match` position the field-form translation emits `$exists: false` / `$exists: true`, which lines up with JS's "value is undefined / property is missing" semantics (BSON treats missing fields as undefined-like).
+
+**Length-collapse fix.** `$.items.length === 3.5` (non-integer RHS) used to compile to `{ "items.length": 3.5 }` — a literal dotted-key match against a real (but unintended) MongoDB path. The translator now refuses to lower `.length`-bearing equalities except via the `$size` peephole; non-integer RHS falls through to `$expr` instead of producing the misleading dotted key.
+
+**`.includes()` divergence is documented.** Expression-form `.includes()` is type-polymorphic (arrays via `$in`, strings via `$indexOfCP`-substring). Query-form on a field receiver emits the bare `{ field: value }` shape — array-element match or scalar equality, but NOT string substring. The divergence is documented in [docs/specs/match-query-translation.md](specs/match-query-translation.md) and [docs/LANGUAGE.md](LANGUAGE.md); users who want substring match in `$match` reach for `.match(/value/)`.
+
+**`$all` folding is narrow on purpose.** Only when the *entire* `&&`-chain is `.includes(<lit>)` on the *same* field does it fold. Mixed chains (`.includes("a") && .age > 18`) emit each clause separately — the un-folded form has identical semantics on array-valued fields, so users can reorder to trigger the fold if they want it. The implementation walks the `BinaryExpr("&&", …)` tree before the generic `combineAnd` path sees it.
+
+**Items 14 (`!expr` via De Morgan), 24 ($let-as-optimisation), 31 (spread-form concat-equivalent) were rejected as bad DX** and won't be implemented. Memory: `feedback_no_silent_output_drift.md` — "same input must produce same MQL output; an optimiser whose decision the user can't predict from the source is pure surprise".
+
+Files: [src/match-translation.ts](../src/match-translation.ts), [src/lexer.ts](../src/lexer.ts), [src/ast.ts](../src/ast.ts), [src/parser.ts](../src/parser.ts), [src/codegen.ts](../src/codegen.ts), [src/lookup-translation.ts](../src/lookup-translation.ts) (UndefinedLiteral in the leaf-case switch). Tests: [test/match-translation.test.ts](../test/match-translation.test.ts) (38 new cases across 8 describe blocks).
+
+Six more waves remain in the deferred-features push — see the plan file for the full schedule. Wave 2 lands stream-methods extensions (`$$.length`, dict-build reducers, registry integration with the lookup chain walker).
+
+---
+
 ## 2026-05-30 — fix: array-returning reducer assigns unbracketed; bracketed wrap now throws
 
 The array-returning reducer form was shipped requiring a bracket wrap — `$$ = [$$.reduce((acc, d) => acc.concat(d.<f>), [])]`. That's backwards: a reducer seeded with `[]` already *returns* an array, i.e. a stream, so wrapping it in `[ ]` yields `[[…]]` — a stream whose single document is itself an array. The correct surface is the **unbracketed** `$$ = $$.reduce((acc, d) => acc.concat(d.<f>), [])`, and that's now what's supported; the bracketed form throws an actionable `CodegenError` ("a reducer seeded with `[]` already produces a stream, so don't wrap it in `[ ]` — assign it directly").

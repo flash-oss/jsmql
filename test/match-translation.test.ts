@@ -303,3 +303,262 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     ]);
   });
 });
+
+describe("$match translation — .includes() → $in / array-element", () => {
+  // Two query-position forms; both index-friendly. The first leans on
+  // MongoDB's "field value or array containing value" semantics; the second
+  // is straightforward set-membership.
+
+  it("translates `field.includes(<literal>)` to an implicit array-element match", () => {
+    expect(jsmql('[$match($.tags.includes("vip"))]')).toEqual([{ $match: { tags: "vip" } }]);
+  });
+
+  it("translates `[lit,lit,…].includes(field)` to `$in`", () => {
+    expect(jsmql('[$match(["active", "trial"].includes($.status))]')).toEqual([
+      { $match: { status: { $in: ["active", "trial"] } } },
+    ]);
+  });
+
+  it("uses dotted paths for nested receivers", () => {
+    expect(jsmql('[$match($.user.roles.includes("admin"))]')).toEqual([{ $match: { "user.roles": "admin" } }]);
+  });
+
+  it("falls through to $expr when both sides are field paths", () => {
+    expect(jsmql("[$match($.tags.includes($.target))]")).toEqual([
+      {
+        $match: {
+          $expr: {
+            $cond: [
+              { $isArray: "$tags" },
+              { $in: ["$target", "$tags"] },
+              { $gte: [{ $indexOfCP: ["$tags", "$target"] }, 0] },
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("falls through to $expr when the array contains a non-literal", () => {
+    expect(jsmql('[$match(["active", $.fallback].includes($.status))]')).toEqual([
+      { $match: { $expr: { $in: ["$status", ["active", "$fallback"]] } } },
+    ]);
+  });
+});
+
+describe("$match translation — .match(regex) → BSON regex", () => {
+  it("translates `$.field.match(/regex/)` to a query-doc regex value", () => {
+    const out = jsmql("[$match($.name.match(/^a/i))]") as Array<{ $match: { name: RegExp } }>;
+    expect(out[0].$match.name).toBeInstanceOf(RegExp);
+    expect(out[0].$match.name.source).toBe("^a");
+    expect(out[0].$match.name.flags).toBe("i");
+  });
+
+  it("works on dotted paths", () => {
+    const out = jsmql("[$match($.user.email.match(/@example\\.com$/))]") as Array<{ $match: Record<string, RegExp> }>;
+    expect(out[0].$match["user.email"]).toBeInstanceOf(RegExp);
+  });
+
+  it("falls through to $expr when the argument is non-literal", () => {
+    // A computed regex (or string arg) can't go in the query-doc slot, so the
+    // existing $regexMatch translation handles it.
+    expect(jsmql('[$match($.name.match("^a"))]')).toEqual([
+      { $match: { $expr: { $regexMatch: { input: "$name", regex: "^a" } } } },
+    ]);
+  });
+});
+
+describe("$match translation — .some(p) → $elemMatch", () => {
+  it("translates `.some(item => item.field === lit)` to $elemMatch", () => {
+    expect(jsmql("[$match($.items.some(item => item.tag === 'vip'))]")).toEqual([
+      { $match: { items: { $elemMatch: { tag: "vip" } } } },
+    ]);
+  });
+
+  it("translates compound predicates inside the lambda", () => {
+    expect(jsmql("[$match($.items.some(i => i.qty > 5 && i.tag === 'vip'))]")).toEqual([
+      { $match: { items: { $elemMatch: { qty: { $gt: 5 }, tag: "vip" } } } },
+    ]);
+  });
+
+  it("handles nested member paths on the lambda param", () => {
+    expect(jsmql("[$match($.line.some(it => it.product.price > 100))]")).toEqual([
+      { $match: { line: { $elemMatch: { "product.price": { $gt: 100 } } } } },
+    ]);
+  });
+
+  it("falls through to $expr when the lambda body is index-unfriendly", () => {
+    // A method call inside the body has no clean query-doc form — fall through
+    // to the expression-level $anyElementTrue translation.
+    expect(jsmql("[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]")).toEqual([
+      {
+        $match: {
+          $expr: {
+            $anyElementTrue: { $map: { input: "$items", as: "it", in: { $eq: [{ $toLower: "$$it.tag" }, "vip"] } } },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("falls through to $expr when the body references the bare param (would need $$ROOT)", () => {
+    // The bare-param body forces the expression-form `.some`, which wraps in
+    // the jsBool truthiness-shim (matches JS, not MQL, semantics).
+    expect(jsmql("[$match($.items.some(it => it))]")).toEqual([
+      {
+        $match: {
+          $expr: {
+            $anyElementTrue: {
+              $map: {
+                input: "$items",
+                as: "it",
+                in: {
+                  $and: [
+                    { $ne: ["$$it", null] },
+                    { $ne: ["$$it", false] },
+                    { $ne: ["$$it", ""] },
+                    { $ne: ["$$it", 0] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
+describe("$match translation — === undefined / !== undefined → $exists", () => {
+  // `undefined` in match position lowers to MongoDB's $exists check —
+  // matches "field present" vs "field missing", which lines up with JS
+  // `=== undefined` semantics (treats missing-property as undefined).
+
+  it("translates `=== undefined` to `$exists: false`", () => {
+    expect(jsmql("[$match($.field === undefined)]")).toEqual([{ $match: { field: { $exists: false } } }]);
+  });
+
+  it("translates `!== undefined` to `$exists: true`", () => {
+    expect(jsmql("[$match($.field !== undefined)]")).toEqual([{ $match: { field: { $exists: true } } }]);
+  });
+
+  it("works on dotted paths", () => {
+    expect(jsmql("[$match($.user.deletedAt === undefined)]")).toEqual([
+      { $match: { "user.deletedAt": { $exists: false } } },
+    ]);
+  });
+
+  it("accepts undefined on the left side", () => {
+    expect(jsmql("[$match(undefined === $.field)]")).toEqual([{ $match: { field: { $exists: false } } }]);
+  });
+
+  it("rejects `undefined` in expression position with an actionable error", () => {
+    expect(() => jsmql.expr("$.x === undefined ? 1 : 2")).toThrow(
+      /'undefined' is only meaningful in '\$match' position/,
+    );
+  });
+});
+
+describe("$match translation — typeof: 'boolean' → 'bool' mapping", () => {
+  it("translates JS-form `typeof === 'boolean'` to BSON `bool`", () => {
+    // JS's typeof returns "boolean"; MongoDB's $type uses "bool". The
+    // translator accepts either spelling and emits the BSON form.
+    expect(jsmql("[$match(typeof $.flag === 'boolean')]")).toEqual([{ $match: { flag: { $type: "bool" } } }]);
+  });
+
+  it("still accepts the raw BSON alias `bool`", () => {
+    expect(jsmql("[$match(typeof $.flag === 'bool')]")).toEqual([{ $match: { flag: { $type: "bool" } } }]);
+  });
+});
+
+describe("$match translation — .length === N → $size", () => {
+  it("translates `$.arr.length === N` to `$size`", () => {
+    expect(jsmql("[$match($.items.length === 3)]")).toEqual([{ $match: { items: { $size: 3 } } }]);
+  });
+
+  it("translates `!==` via $not", () => {
+    expect(jsmql("[$match($.items.length !== 0)]")).toEqual([{ $match: { items: { $not: { $size: 0 } } } }]);
+  });
+
+  it("accepts the literal on either side", () => {
+    expect(jsmql("[$match(3 === $.items.length)]")).toEqual([{ $match: { items: { $size: 3 } } }]);
+  });
+
+  it("works on dotted paths", () => {
+    expect(jsmql("[$match($.order.items.length === 1)]")).toEqual([{ $match: { "order.items": { $size: 1 } } }]);
+  });
+
+  it("falls through to $expr for non-integer RHS (and skips the buggy dotted-key collapse)", () => {
+    // The expression-form `.length` codegen is type-polymorphic: arrays → $size,
+    // strings → $strLenCP. The translator never collapses `$.items.length`
+    // into a literal field key `"items.length"` even though that path notation
+    // is grammatically valid in MongoDB — that's never what the user meant.
+    expect(jsmql("[$match($.items.length === 3.5)]")).toEqual([
+      {
+        $match: {
+          $expr: { $eq: [{ $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }] }, 3.5] },
+        },
+      },
+    ]);
+  });
+
+  it("falls through to $expr for negative integer RHS", () => {
+    expect(jsmql("[$match($.items.length === -1)]")).toEqual([
+      {
+        $match: {
+          $expr: { $eq: [{ $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }] }, -1] },
+        },
+      },
+    ]);
+  });
+});
+
+describe("$match translation — % N === M → $mod", () => {
+  it("translates `$.x % N === M` to `$mod: [N, M]`", () => {
+    expect(jsmql("[$match($.x % 5 === 0)]")).toEqual([{ $match: { x: { $mod: [5, 0] } } }]);
+  });
+
+  it("translates `!==` via $not", () => {
+    expect(jsmql("[$match($.x % 7 !== 3)]")).toEqual([{ $match: { x: { $not: { $mod: [7, 3] } } } }]);
+  });
+
+  it("accepts the literal on either side", () => {
+    expect(jsmql("[$match(0 === $.x % 5)]")).toEqual([{ $match: { x: { $mod: [5, 0] } } }]);
+  });
+
+  it("works on dotted paths", () => {
+    expect(jsmql("[$match($.user.score % 10 === 0)]")).toEqual([{ $match: { "user.score": { $mod: [10, 0] } } }]);
+  });
+
+  it("falls through to $expr for non-integer divisor or remainder", () => {
+    expect(jsmql("[$match($.x % 1.5 === 0)]")).toEqual([{ $match: { $expr: { $eq: [{ $mod: ["$x", 1.5] }, 0] } } }]);
+  });
+});
+
+describe("$match translation — $all folding from .includes && .includes", () => {
+  it("folds two `.includes` on the same field into `$all`", () => {
+    expect(jsmql('[$match($.tags.includes("a") && $.tags.includes("b"))]')).toEqual([
+      { $match: { tags: { $all: ["a", "b"] } } },
+    ]);
+  });
+
+  it("folds three-or-more includes", () => {
+    expect(jsmql('[$match($.tags.includes("a") && $.tags.includes("b") && $.tags.includes("c"))]')).toEqual([
+      { $match: { tags: { $all: ["a", "b", "c"] } } },
+    ]);
+  });
+
+  it("does NOT fold when fields differ — each .includes lands as its own clause", () => {
+    expect(jsmql('[$match($.tags.includes("a") && $.colors.includes("red"))]')).toEqual([
+      { $match: { tags: "a", colors: "red" } },
+    ]);
+  });
+
+  it("does NOT fold mixed chains (.includes + other predicates)", () => {
+    // The user can reorder to enable the fold; the un-folded form has
+    // identical semantics on array-valued fields, so this isn't a footgun.
+    expect(jsmql('[$match($.tags.includes("a") && $.age > 18)]')).toEqual([
+      { $match: { tags: "a", age: { $gt: 18 } } },
+    ]);
+  });
+});

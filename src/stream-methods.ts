@@ -800,6 +800,109 @@ function ensureLiteralInit(call: Extract<Expr, { type: "MethodCall" }>): void {
   }
 }
 
+// ── Dictionary-build reducer wrap → $group + $replaceWith ────────────────────
+//
+// `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<keyPath>]: <d.<valPath>|d> }), {})];`
+//
+// The single-computed-key form of the object-returning reducer. Distinct from
+// the static-key object-reducer (which the user names every accumulator at
+// compile time) because here the *keys come from runtime data* — one input
+// doc, one output entry, key/value both read off the doc. Lowers to:
+//
+//   [{ $group:       { _id: null, __jsmqlDict: { $push: { k: "$<keyPath>", v: "$<valPath>"|"$$ROOT" } } } },
+//    { $replaceWith: { $arrayToObject: "$__jsmqlDict" } }]
+//
+// The leading `...acc` spread is supported (JS-faithful — that's how `{ ...acc, [k]: v }`
+// is conventionally spelled in JS) but optional: `(acc, d) => ({ [d.k]: d.v })`
+// works equally well. The init MUST be `{}` (empty object) — non-empty seeds
+// have no MQL accumulator analogue. Mixed shapes (computed key + static key in
+// the same body, e.g. `({ ...acc, [d.k]: d.v, count: acc.count + 1 })`) fall
+// through to the existing object-reducer path, which will report the
+// computed-key error there.
+
+export type DictBuildWrap = {
+  /** Path on `d` for the dict-entry key (e.g. "id" or "user.email"). */
+  keyPath: string;
+  /** Path on `d` for the dict-entry value, OR null when the value is the bare doc. */
+  valuePath: string | null;
+  /** Lambda position for actionable errors. */
+  lambdaPos: number;
+};
+
+/**
+ * Detect the dict-build wrap form. Returns null if the shape doesn't match
+ * (so `detectReduceWrap` / `detectArrayReducerWrap` can have a turn);
+ * returns a `DictBuildWrap` when it does match cleanly.
+ *
+ * Deliberately narrow: requires exactly one computed-key entry (plus optional
+ * leading `...acc` spread), key path rooted on the `d` param, value path or
+ * bare `d`, and `{}` init. Anything richer (multiple computed keys, mixed
+ * static + computed, computed key reading from `acc`) is not this pattern
+ * and either lands in the existing object-reducer path or surfaces a clear
+ * error there.
+ */
+export function detectDictBuildWrap(value: Expr): DictBuildWrap | null {
+  if (value.type !== "ArrayLiteral") return null;
+  if (value.elements.length !== 1) return null;
+  const el = value.elements[0];
+  if (el.type !== "MethodCall" || el.method !== "reduce" || el.object.type !== "CollectionRef") return null;
+  if (el.args.length !== 2) return null;
+  const lambda = el.args[0];
+  const init = el.args[1];
+  if (lambda.type === "SpreadElement" || init.type === "SpreadElement") return null;
+  if (lambda.type !== "Lambda" || lambda.params.length !== 2 || lambda.body === undefined) return null;
+  if (init.type !== "ObjectLiteral" || init.entries.length !== 0) return null;
+  const body = lambda.body;
+  if (body.type !== "ObjectLiteral") return null;
+  const [accParam, dParam] = lambda.params;
+  // Walk entries: optional leading `...acc` spread, then exactly one
+  // computed-key entry. Any other shape (static keys, second computed entry,
+  // bare-value spreads) is not dict-build.
+  let seenComputed = false;
+  let result: DictBuildWrap | null = null;
+  for (const entry of body.entries) {
+    if (entry.type === "SpreadElement") {
+      if (seenComputed) return null;
+      if (entry.argument.type !== "ParamRef" || entry.argument.name !== accParam) return null;
+      continue;
+    }
+    // KeyValueEntry
+    if (seenComputed) return null;
+    if (entry.key.kind !== "computed") return null;
+    const keyPath = paramFieldPath(entry.key.expr, dParam);
+    if (keyPath === null) return null;
+    const valuePath = paramFieldOrBareParam(entry.value, dParam);
+    if (valuePath === undefined) return null;
+    result = { keyPath, valuePath, lambdaPos: lambda.pos };
+    seenComputed = true;
+  }
+  return result;
+}
+
+/**
+ * Bare `d` → null (lowering uses `$$ROOT`); `d.<path>` → "<path>".
+ * Anything else returns `undefined` (caller bails to "not dict-build").
+ */
+function paramFieldOrBareParam(expr: Expr, param: string): string | null | undefined {
+  if (expr.type === "ParamRef" && expr.name === param) return null;
+  const path = paramFieldPath(expr, param);
+  if (path !== null) return path;
+  return undefined;
+}
+
+/**
+ * Lower a detected dict-build wrap to the `$group` + `$replaceWith` pair.
+ * One internal-namespace slot (`__jsmqlDict`) collects the `{k, v}` pairs;
+ * `$arrayToObject` folds the pair-array into the final dict.
+ */
+export function lowerDictBuildWrap(wrap: DictBuildWrap): object[] {
+  const v: string = wrap.valuePath === null ? "$$ROOT" : `$${wrap.valuePath}`;
+  return [
+    { $group: { _id: null, __jsmqlDict: { $push: { k: `$${wrap.keyPath}`, v } } } },
+    { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+  ];
+}
+
 /**
  * Emit the `$group` + `$replaceWith` pair for a detected `[{key: $$.reduce(…), …}]`
  * wrap. The `$group` collects every keyed accumulator under `_id: null`; the

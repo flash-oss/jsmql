@@ -824,10 +824,12 @@ function mapChildren(
     case "StringLiteral":
     case "BooleanLiteral":
     case "NullLiteral":
+    case "UndefinedLiteral":
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
     case "MathConst":
+    case "MathCallRef":
     case "DateNow":
       return expr;
     case "BinaryExpr":
@@ -1303,10 +1305,12 @@ function descendAndExtract(
     case "StringLiteral":
     case "BooleanLiteral":
     case "NullLiteral":
+    case "UndefinedLiteral":
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
     case "MathConst":
+    case "MathCallRef":
     case "DateNow":
       return { stages, rewritten: expr };
     case "BinaryExpr":

@@ -72,6 +72,37 @@ export type ParamBinding = { key: string; name: string };
  */
 export type FunctionInputResult = { program: Program; bindings: ParamBinding[] };
 
+/**
+ * Math methods that take exactly one argument — the only subset that can be
+ * passed as a bare callable (e.g. `arr.map(Math.floor)`). Mirrors the JS
+ * unary signatures. Binary methods (`pow`, `min`, `max`, `hypot`, `atan2`)
+ * and the zero-arg `random` require explicit parens to avoid arity
+ * ambiguity when used as callbacks.
+ */
+const UNARY_MATH_CALLABLES = new Set<string>([
+  "abs",
+  "ceil",
+  "floor",
+  "round",
+  "sqrt",
+  "exp",
+  "log",
+  "log2",
+  "log10",
+  "trunc",
+  "sign",
+  "cbrt",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "sinh",
+  "cosh",
+  "tanh",
+]);
+
 const MATH_METHODS = new Set<string>([
   "abs",
   "ceil",
@@ -1352,6 +1383,9 @@ export class Parser {
       case TokenType.Null:
         this.lexer.next();
         return { type: "NullLiteral", pos: t.pos };
+      case TokenType.Undefined:
+        this.lexer.next();
+        return { type: "UndefinedLiteral", pos: t.pos };
       case TokenType.LBracket:
         return this.parseArrayLiteral();
       case TokenType.LBrace:
@@ -1815,6 +1849,19 @@ export class Parser {
     }
     this.lexer.next(); // consume method name
     const method = ident.value as MathMethod;
+    // Bare callable form (no parens) — `.map(Math.floor)` desugars to
+    // `.map(v => Math.floor(v))`. Restricted to unary methods so the bare
+    // reference's arity matches the JS callback contract. Binary methods
+    // (pow, min, max, hypot, atan2) require explicit parens.
+    if (this.lexer.peek().type !== TokenType.LParen) {
+      if (!UNARY_MATH_CALLABLES.has(method)) {
+        throw new ParseError(
+          `Math.${method} requires '(...)'. Only the unary Math methods (Math.floor / .ceil / .round / .abs / …) can be passed as bare callbacks (e.g. \`arr.map(Math.floor)\`).`,
+          mathTok.pos,
+        );
+      }
+      return { type: "MathCallRef", method, pos: mathTok.pos };
+    }
     this.lexer.expect(TokenType.LParen);
     const args: CallArg[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
@@ -2131,6 +2178,8 @@ function describeUpdateTarget(target: Expr): string {
       return `the result of ${target.name}(…)`;
     case "MathCall":
       return `the result of Math.${target.method}(…)`;
+    case "MathCallRef":
+      return `a bare 'Math.${target.method}' reference`;
     case "MathConst":
       return `the Math.${target.name} constant`;
     case "ObjectCall":
