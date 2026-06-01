@@ -509,7 +509,10 @@ const FLAT_MAP: StreamMethodDef = {
 type ReduceAccumulator =
   | { kind: "sum"; value: string | number }
   | { kind: "max"; value: string }
-  | { kind: "min"; value: string };
+  | { kind: "min"; value: string }
+  | { kind: "first"; value: string }
+  | { kind: "last"; value: string }
+  | { kind: "push"; value: string };
 
 export type ReduceWrapEntry = { key: string; accumulator: ReduceAccumulator; pos: number };
 
@@ -518,10 +521,20 @@ export type ReduceWrapEntry = { key: string; accumulator: ReduceAccumulator; pos
  * what counts as the accumulator reference — for scalar reducers it's
  * `ParamRef(accParam)`; for object reducers (one accumulator per key) it's
  * `MemberAccess { object: ParamRef(accParam), member: key }`. Reusing one
- * matcher keeps the supported reducer shapes ($sum / $max / $min) in lock-step
- * across both forms.
+ * matcher keeps the supported reducer shapes in lock-step across both forms.
+ *
+ * Recognised body shapes:
+ *   - `<acc> + d.<path>`        →  $sum: "$<path>"
+ *   - `<acc> + 1`                →  $sum: 1 (count)
+ *   - `Math.max(<acc>, d.<path>)`→  $max: "$<path>"
+ *   - `Math.min(<acc>, d.<path>)`→  $min: "$<path>"
+ *   - `<acc> ?? d.<path>`        →  $first: "$<path>" (first non-null value)
+ *   - `d.<path>` (acc-ignoring)  →  $last: "$<path>" (always-overwrite ⇒ last value)
+ *   - `[...<acc>, d.<path>]`     →  $push: "$<path>"
+ *   - `<acc>.concat(d.<path>)`   →  $push: "$<path>" (alt spelling)
  */
 function classifyAccumulatorExpr(body: Expr, isAccRef: (e: Expr) => boolean, dParam: string): ReduceAccumulator | null {
+  // $sum / count via `acc + ...`
   if (body.type === "BinaryExpr" && body.op === "+") {
     const otherSide = isAccRef(body.left) ? body.right : isAccRef(body.right) ? body.left : null;
     if (otherSide !== null) {
@@ -532,6 +545,7 @@ function classifyAccumulatorExpr(body: Expr, isAccRef: (e: Expr) => boolean, dPa
       if (path !== null) return { kind: "sum", value: `$${path}` };
     }
   }
+  // $max / $min via Math.max(acc, d.<path>) / Math.min(acc, d.<path>)
   if (body.type === "MathCall" && (body.method === "max" || body.method === "min") && body.args.length === 2) {
     const [a0, a1] = body.args;
     if (a0.type === "SpreadElement" || a1.type === "SpreadElement") return null;
@@ -541,6 +555,43 @@ function classifyAccumulatorExpr(body: Expr, isAccRef: (e: Expr) => boolean, dPa
     if (otherSide !== null) {
       const path = paramFieldPath(otherSide, dParam);
       if (path !== null) return { kind: body.method, value: path };
+    }
+  }
+  // $first via `acc ?? d.<path>` (or `acc.<key> ?? d.<path>` for object form).
+  // JS-faithful: ?? returns LHS if LHS is non-null, else RHS. Across the
+  // group, the accumulator stays at its initial value (null) until the first
+  // non-null d.<path> arrives — exactly $first semantics.
+  if (body.type === "BinaryExpr" && body.op === "??") {
+    if (isAccRef(body.left)) {
+      const path = paramFieldPath(body.right, dParam);
+      if (path !== null) return { kind: "first", value: path };
+    }
+  }
+  // $last via bare `d.<path>` — body doesn't reference acc at all, so every
+  // doc overwrites; the final value wins, matching $last in MongoDB.
+  {
+    const path = paramFieldPath(body, dParam);
+    if (path !== null) return { kind: "last", value: path };
+  }
+  // $push via `[...acc, d.<path>]` (single-element spread + push) OR
+  // `acc.concat(d.<path>)` (method form).
+  if (body.type === "ArrayLiteral" && body.elements.length === 2) {
+    const [first, second] = body.elements;
+    if (first.type === "SpreadElement" && isAccRef(first.argument) && second.type !== "SpreadElement") {
+      // Reject update-op array elements (AssignExpr/DeleteStmt/LetDecl); only
+      // Expr second elements are valid here.
+      if (second.type === "AssignExpr" || second.type === "DeleteStmt" || second.type === "LetDecl") return null;
+      const path = paramFieldPath(second, dParam);
+      if (path !== null) return { kind: "push", value: path };
+    }
+  }
+  if (body.type === "MethodCall" && body.method === "concat" && body.args.length === 1) {
+    if (isAccRef(body.object)) {
+      const arg = body.args[0];
+      if (arg.type !== "SpreadElement") {
+        const path = paramFieldPath(arg, dParam);
+        if (path !== null) return { kind: "push", value: path };
+      }
     }
   }
   return null;
@@ -913,9 +964,23 @@ export function lowerReduceWrap(entries: readonly ReduceWrapEntry[]): object[] {
   const groupBody: Record<string, unknown> = { _id: null };
   const replaceBody: Record<string, unknown> = {};
   for (const entry of entries) {
-    const op = entry.accumulator.kind === "sum" ? "$sum" : entry.accumulator.kind === "max" ? "$max" : "$min";
-    const v: string | number =
-      entry.accumulator.kind === "sum" ? entry.accumulator.value : `$${entry.accumulator.value}`;
+    const acc = entry.accumulator;
+    // Map accumulator kind to MQL operator and value form. `sum` is the only
+    // kind that takes a non-`$<path>` value (`1` for the count form); every
+    // other kind takes a `$<path>` field reference.
+    const op =
+      acc.kind === "sum"
+        ? "$sum"
+        : acc.kind === "max"
+          ? "$max"
+          : acc.kind === "min"
+            ? "$min"
+            : acc.kind === "first"
+              ? "$first"
+              : acc.kind === "last"
+                ? "$last"
+                : "$push";
+    const v: string | number = acc.kind === "sum" ? acc.value : `$${acc.value}`;
     groupBody[entry.key] = { [op]: v };
     replaceBody[entry.key] = `$${entry.key}`;
   }

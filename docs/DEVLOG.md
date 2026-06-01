@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-31 — feat: reducer body shapes — $first / $last / $push (Wave 2 #32)
+
+`classifyAccumulatorExpr` in `src/stream-methods.ts` recognises three new
+per-key body shapes, on top of the existing `$sum` / `$max` / `$min`:
+
+| jsmql body | MQL operator |
+|---|---|
+| `acc ?? d.<path>` (or `acc.<key> ?? d.<path>`) | `$first: "$<path>"` — JS's `??` returns the LHS when non-null, else the RHS; the accumulator stays at the initial value until the first non-null arrival, exactly `$first`'s semantics across a group |
+| `d.<path>` (body ignores acc) | `$last: "$<path>"` — body just returns the per-doc value, so every doc overwrites the accumulator; the final value wins |
+| `[...acc, d.<path>]` or `acc.concat(d.<path>)` | `$push: "$<path>"` — single-element spread/concat. Multi-element spreads aren't recognised; the user can fall through to manual `$group`. |
+
+Works in both wrap forms — the scalar `$$ = [{ <key>: $$.reduce(…, init) }]`
+and the object-reducer `$$ = [$$.reduce((acc, d) => ({ ...acc, … }), { … })]`.
+`lowerReduceWrap` maps the new accumulator kinds to their MQL operators.
+
+`$avg`, multiplicative accumulators, and `$stdDevPop`/`$stdDevSamp` are still
+not recognised — see `docs/specs/stream-methods.md`.
+
+5 new cases in `test/stream-methods.test.ts`; 1583 tests pass.
+
+---
+
 ## 2026-05-31 — feat: nested lookups at any depth (the "v2 deferral" lands)
 
 The deferred-features catalog's #1 — nested `$$$.<coll>.find/.filter(...)` inside another lookup's predicate — now works for expression-body lambdas at any depth. The previous `rejectNestedLookup` guards in `lowerLookup` / `tryExtractChainedLookup` and the `findFirstLookupInElement` walker in `pipeline.ts:generatePipelineWithCtx` are gone. Block-body nested lookups stay rejected with a precise message ("…not yet supported. Use an expression-body lambda…") — they need ctx-threading through `lowerBlock` that the expression-body path doesn't.
