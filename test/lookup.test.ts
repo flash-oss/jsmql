@@ -231,7 +231,10 @@ describe("$$$.coll.find/filter — error cases", () => {
     );
   });
 
-  it("nested lookup inside a block-body predicate is rejected with a clear message", () => {
+  it("nested lookup inside a BLOCK-body predicate is still rejected (separate slice of work)", () => {
+    // Block-body nested lookups need ctx-threading through `lowerBlock` that
+    // the expression-body path doesn't — kept rejected with an actionable
+    // hint until the block-body slice lands.
     expect(() =>
       jsmql(`
         $.usersWithOrders = $$$.users.filter(u => {
@@ -239,18 +242,7 @@ describe("$$$.coll.find/filter — error cases", () => {
           $.orders = $$$.orders.filter(o => o.userId === u._id);
         });
       `),
-    ).toThrow(/Nested lookup .* not yet supported in this release/);
-  });
-
-  it("nested lookup inside an expression-body predicate (e.g. && side) is rejected", () => {
-    // Contrived but possible: an inner lookup expression used as a side of the outer predicate.
-    // The outer predicate is hoisted to pipeline-form; the inner lookup is detected during
-    // materialisation and rejected.
-    expect(() =>
-      jsmql(`
-        $.x = $$$.users.find(u => u._id === ($$$.profiles.find(p => p.userId === u._id).id));
-      `),
-    ).toThrow(/Nested lookup/);
+    ).toThrow(/Nested lookup inside another lookup's block-body lambda is not yet supported/);
   });
 
   it(".pos points at the offending construct on errors", () => {
@@ -258,6 +250,137 @@ describe("$$$.coll.find/filter — error cases", () => {
     expect(r.valid).toBe(false);
     expect(r.errors[0].message).toMatch(/exactly one argument/);
     expect(r.errors[0].pos).toBeGreaterThan(0);
+  });
+});
+
+describe("$$$.coll.find/filter — nested lookups (expression body, any depth)", () => {
+  // Nested lookups materialise as prologue `$lookup` stages inside the outer's
+  // `$lookup.pipeline` body. The inner lookup's `let:` clause auto-captures
+  // references to the outer's foreign-doc param (`o.x`) as path-on-local-doc
+  // bindings. Outer-pipeline `let` vars stay accessible via lexical `$$<name>`
+  // scoping — no need for the inner to re-let them.
+
+  it("2-level filter/filter with outer-foreign-doc cross-reference", () => {
+    expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x).length > 0)")).toEqual([
+      {
+        $lookup: {
+          from: "a",
+          let: {},
+          pipeline: [
+            {
+              $lookup: {
+                from: "b",
+                let: { x: "$x" },
+                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$x"] } } }],
+                as: "__jsmql.__lookup1",
+              },
+            },
+            { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+            { $match: { $expr: { $gt: ["$__jsmql.__lookup1", 0] } } },
+          ],
+          as: "x",
+        },
+      },
+    ]);
+  });
+
+  it("2-level find/find — both with $first follow-ups", () => {
+    expect(jsmql("$.x = $$$.a.find(a => $$$.b.find(b => b.x === a.x))")).toEqual([
+      {
+        $lookup: {
+          from: "a",
+          let: {},
+          pipeline: [
+            {
+              $lookup: {
+                from: "b",
+                let: { x: "$x" },
+                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$x"] } } }],
+                as: "__jsmql.__lookup1",
+              },
+            },
+            { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+            { $match: { $expr: "$__jsmql.__lookup1" } },
+          ],
+          as: "x",
+        },
+      },
+      { $set: { x: { $first: "$x" } } },
+    ]);
+  });
+
+  it("outer-outer doc ref ($._id) flows through outer.let and is visible inside the inner via lexical $$ scope", () => {
+    // The user's `$._id` is captured by the OUTER lookup's `let: { _id: "$_id" }`.
+    // Inside the outer's pipeline, the post's `_id` is the local-doc field;
+    // the inner's `let: { _id: "$_id" }` captures that POST id (shadowing the
+    // outer's `_id` for the duration of the inner's pipeline).
+    expect(
+      jsmql(
+        "$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "posts",
+          let: { _id: "$_id" },
+          pipeline: [
+            {
+              $lookup: {
+                from: "tags",
+                let: { _id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$_id"] } } }],
+                as: "__jsmql.__lookup1",
+              },
+            },
+            { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } },
+          ],
+          as: "posts",
+        },
+      },
+    ]);
+  });
+
+  it("3-level deep nesting works", () => {
+    const out = jsmql(
+      "$.x = $$$.a.filter(a => $$$.b.filter(b => $$$.c.filter(c => c.x === b.x).length > 0).length > 0)",
+    ) as Array<Record<string, unknown>>;
+    // Drill into the structure rather than spelling out the whole thing.
+    const outer = out[0].$lookup as { pipeline: Array<Record<string, unknown>> };
+    expect(outer.pipeline[0].$lookup).toBeDefined();
+    const middle = outer.pipeline[0].$lookup as { pipeline: Array<Record<string, unknown>> };
+    expect(middle.pipeline[0].$lookup).toBeDefined();
+    const innermost = middle.pipeline[0].$lookup as { from: string; let: Record<string, string>; pipeline: object[] };
+    expect(innermost.from).toBe("c");
+    expect(innermost.let).toEqual({ x: "$x" });
+  });
+
+  it("cross-database outer with same-database inner", () => {
+    const out = jsmql("$.x = $$$$.dw.archive.filter(a => $$$.local.filter(l => l.x === a.x).length > 0)") as Array<
+      Record<string, unknown>
+    >;
+    const outer = out[0].$lookup as { from: { db: string; coll: string }; pipeline: Array<Record<string, unknown>> };
+    expect(outer.from).toEqual({ db: "dw", coll: "archive" });
+    const inner = outer.pipeline[0].$lookup as { from: string };
+    expect(inner.from).toBe("local");
+  });
+
+  it("inner lookup with a non-trivial predicate (compound &&) still extracts let-vars correctly", () => {
+    const out = jsmql(
+      "$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).length > 0)",
+    ) as Array<Record<string, unknown>>;
+    const outer = out[0].$lookup as { pipeline: Array<Record<string, unknown>> };
+    const inner = outer.pipeline[0].$lookup as { let: Record<string, string> };
+    expect(inner.let).toEqual({ x: "$x" });
+  });
+
+  it("bare enclosing-foreign-param ref (no member access) is rejected", () => {
+    // Hits the existing "bare lambda param" check during the outer's let-
+    // extraction walk — `a` matches the outer's foreign param with zero
+    // segments, which has no `$$ROOT`-equivalent lowering.
+    expect(() => jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).length > 0)")).toThrow(
+      /Bare lambda parameter 'a' in a \$lookup predicate is not yet supported/,
+    );
   });
 });
 

@@ -159,9 +159,26 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 | `jsmql.update()` lookup                                 | `jsmql.update() does not allow lookup syntax …: MongoDB's aggregation-pipeline update form only accepts …`     | `lowerUpdateStrict`                |
 | Bare expression with lookup (no `;`, no stage call)     | `Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. …`                                      | `lowerWithCtx`                     |
 
+## Nested lookups (expression-body, any depth)
+
+Nested lookups inside another lookup's **expression-body** predicate (`.find/.filter(o => ... $$$.<coll2>.find/filter(...) ...)`) work to any depth. The inner lookup materialises as a prologue `$lookup` (+ `$set $first` for `.find`) stage inside the outer's `$lookup.pipeline` body, with its result substituted into the surrounding predicate as a `FieldRef(<slot>)`.
+
+**How let-coordination works:**
+
+- Refs to the outer lambda's foreign param (`o.x` inside the inner's predicate) classify as `foreign` of the outer during the outer's let-extraction walk → get rewritten to bare `FieldRef("x")`. The inner's classifyPath later sees these as `local`-kind paths and auto-lets them into `inner.let = { x: "$x" }` (capturing from the outer's pipeline-local doc).
+- Refs to the outermost doc (`$.x`) classify as `local` of the outer → extracted into `outer.let = { x: "$x" }`. The inner predicate sees them as `ParamRef("x")` after rewrite; lexical `$$<name>` scoping makes them accessible without re-letting in the inner. The inner's codegen ctx adds the outer's letVar names to `lambdaParams` so `$$x` resolves correctly.
+- Refs to the inner's own foreign param (`t.x` for `t => …`) classify as `foreign` of the inner — rewritten to bare `FieldRef("x")` inside the inner's pipeline.
+
+**Threaded state.** `EnclosingLookupContext` (`foreignParams`, `inScopeLetNames`) flows through `lowerLookup` / `translatePredicate` / `buildPipelineFormPredicate` / `extractLookupCalls` / `tryExtractChainedLookup` / `descendAndExtract` so the recursion knows what's in scope from above.
+
+**Known limitation: cross-level field-name collision.** When the same field name (e.g. `_id`) is referenced at two different enclosing levels (`u._id` for level 1 *and* `p._id` for level 2 in the deepest predicate), both rewrite to `FieldRef("_id")` and the deepest level's let-allocator dedupes them into a single binding — semantically wrong but `MQL`-valid. Workaround: pick distinct field names at each level (e.g. compare against `u.userId` vs `p.postId`). A future pass could track let-allocator scope per enclosing level to avoid the collision.
+
+**Block-body nested lookups are still rejected.** A nested lookup inside a *block-body* lambda (`o => { $match(...); $.x = $$$.coll.find(...); }`) throws an actionable error. The block-body path needs ctx-threading through `lowerBlock` to materialise nested lookups correctly — tracked as the next slice of the nested-lookup work.
+
 ## Future work
 
-- **Nested lookups.** Auto-extract two binding sources (outer-doc `$.x` + outer-foreign-doc `u.x`) when an inner `$$$.coll.find/filter(...)` appears inside another lookup's lambda body. Currently rejected with a clear message.
+- **Block-body nested lookups** (see limitation above).
+- **Cross-level field-name collision** in 3+-level nesting (see limitation above).
 - **`$$.find(...)` self-join.** Needs collection-name binding from a schema/driver — see [`context-references.md`](./context-references.md) future-work list.
 - **`$$$.coll.concat(arrow)` → `$unionWith`.** Plausible candidate, but `$unionWith` has no `as` slot — needs a statement form (not an assignment) to lower cleanly.
 - **Ambient TS types for `$$$`** so the function-form lookup (`($) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).

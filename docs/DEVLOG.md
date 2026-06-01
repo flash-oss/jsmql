@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-05-31 — feat: nested lookups at any depth (the "v2 deferral" lands)
+
+The deferred-features catalog's #1 — nested `$$$.<coll>.find/.filter(...)` inside another lookup's predicate — now works for expression-body lambdas at any depth. The previous `rejectNestedLookup` guards in `lowerLookup` / `tryExtractChainedLookup` and the `findFirstLookupInElement` walker in `pipeline.ts:generatePipelineWithCtx` are gone. Block-body nested lookups stay rejected with a precise message ("…not yet supported. Use an expression-body lambda…") — they need ctx-threading through `lowerBlock` that the expression-body path doesn't.
+
+**How it works.** A new `EnclosingLookupContext` ({`foreignParams`, `inScopeLetNames`}) threads through `lowerLookup` → `translatePredicate` → `buildPipelineFormPredicate` → `extractLookupCalls` → `tryExtractChainedLookup` → `descendAndExtract`. Each recursive level grows `foreignParams` with the current lookup's lambda param, and grows `inScopeLetNames` with the letVar names it allocates. The outer lookup's `extractLetsFromExpr` walks down through nested lookup lambda bodies (via `mapChildren`'s MethodCall case, which the original code already did), rewriting `outerForeign.x` refs to `FieldRef("x")` in the inner body — exactly the shape the inner's classifyPath needs to auto-let them into the inner's `$lookup.let`.
+
+**Worked example:**
+
+```js
+$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0);
+
+// →
+// [{
+//   $lookup: {
+//     from: "posts",
+//     let: { _id: "$_id" },                       // outermost doc's _id
+//     pipeline: [
+//       { $lookup: {
+//           from: "tags",
+//           let: { _id: "$_id" },                 // post's _id (post is the local doc here)
+//           pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$_id"] } } }],
+//           as: "__jsmql.__lookup1"
+//       } },
+//       { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+//       { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } }
+//     ],
+//     as: "posts"
+//   }
+// }]
+```
+
+The outer's `$$_id` resolves to the outer-most doc's `_id`. The inner's `$$_id` shadows that (its `let` declares `_id` again) and resolves to the post's `_id` while inside the inner's pipeline. The codegen ctx threads `inScopeLetNames` into `lambdaParams` so `$$<name>` references at each level resolve without throwing `UnknownIdentifier`.
+
+**3-level (any depth) works the same way** — each level captures its own letVars; deeper levels inherit via lexical `$$` scope. See `test/lookup.test.ts` → "nested lookups (expression body, any depth)".
+
+**Known limitation: cross-level field-name collision.** When the same field name (e.g. `_id`) is referenced at two different enclosing levels in the deepest predicate, both rewrite to `FieldRef("_id")` and the deepest level's let-allocator dedupes them into a single binding — `MQL`-valid but semantically wrong. Workaround: pick distinct field names per level. A future pass could allocate let-scope per enclosing level. Documented in `docs/specs/lookup-stage.md`.
+
+**Removed dead code:** `rejectNestedLookup` and its `findFirstLookupPos`/`findFirstInArgs` helpers (lookup-translation.ts), the pre-walker rejection loop in `pipeline.ts:generatePipelineWithCtx`. Bare lambda-param refs in nested predicates (`o => o` — no member access) still throw the existing "Bare lambda parameter 'o' in a `$lookup` predicate is not yet supported" message during the outer's extraction, before nested materialisation runs — message wording unchanged, just reached via the new path.
+
+Files: [src/lookup-translation.ts](../src/lookup-translation.ts) (`EnclosingLookupContext`, `rewriteEnclosingForeignParams` defensive helper, threaded recursion), [src/pipeline.ts](../src/pipeline.ts) (drop the sub-pipeline rejection loop). Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md) "Nested lookups" + "Future work". User docs: [docs/LANGUAGE.md](LANGUAGE.md). Tests: [test/lookup.test.ts](../test/lookup.test.ts) (6 new cases — 2-level filter/filter & find/find, outer-outer + outer-foreign refs, 3-level deep, cross-DB outer, compound predicates, bare-param rejection). 1578 tests pass.
+
+---
+
 ## 2026-05-31 — feat: scope-encoding sugar for diagnostic / system source stages
 
 MongoDB's diagnostic stages (`$indexStats`, `$collStats`, `$planCacheStats`, `$listSearchIndexes`, `$currentOp`, `$listSessions`, `$listLocalSessions`, `$listSampledQueries`, `$shardedDataDistribution`) were already in the STAGES registry and already compiled via the generic dispatch (`{ $indexStats: {} }` / `$indexStats({})`). What they lacked was a discoverable, *scope-aware* surface. They're **source** stages (must be first), and they differ by *where* they run, which the context-ref prefix now encodes — call the stage as a method on the ref whose scope matches: `$$.indexStats()`, `$$$$.currentOp({ allUsers: true })`, `$$$$.shardedDataDistribution()`. The method name is the stage name minus the `$`; the optional argument is the options object (omit → `{}`).

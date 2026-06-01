@@ -1189,22 +1189,14 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
   if (ast.type !== "ArrayLiteral") {
     internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
   }
-  // Nested lookups: a sub-pipeline (`$lookup.pipeline`, `$unionWith.pipeline`,
-  // `$facet.*`) that contains its own `$$$.<coll>.find/filter(...)` is not
-  // yet implemented. The pre-materialisation walker would emit stages
-  // *inside* the sub-pipeline, but coordinating the outer-pipeline's
-  // let-bindings across the nesting is the open problem — tracked as
-  // planned future work in docs/specs/lookup-stage.md. Surface a targeted
-  // error here instead of producing wrong MQL.
+  // Nested lookups inside expression-body predicates are now materialised by
+  // `extractLookupCalls` with an `EnclosingLookupContext` thread-through (see
+  // lookup-translation.ts). Block-body and `$facet`/`$unionWith` sub-pipelines
+  // still walk through this path; those forms are caught at the per-statement
+  // level when `extractLookupCalls` runs over each stage body. (Block-body
+  // nested lookups themselves are still rejected upstream in
+  // `translatePredicate` — they need ctx threading through `lowerBlock`.)
   for (const el of ast.elements) {
-    const inner = findFirstLookupInElement(el);
-    if (inner !== null) {
-      throw new CodegenError(
-        `Nested lookup ('$$$.<coll>.find/filter' inside another sub-pipeline) is not yet supported in this release. ` +
-          `Hoist the inner lookup to a sibling stage in the outer pipeline.`,
-        inner,
-      );
-    }
     // `$$.push(...)` inside a sub-pipeline targets the *outer* collection but
     // emits stages that would live inside the inner pipeline — the semantics are
     // ambiguous and the MongoDB server has no equivalent shape. Reject.
