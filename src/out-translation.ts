@@ -28,8 +28,14 @@
 
 import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
 import { CodegenError, freshSubPipelineCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
-import { extractLetsFromExpr, extractLetsFromPipeline, type SubPipelineLowerer } from "./lookup-translation.ts";
+import {
+  extractLetsFromExpr,
+  extractLetsFromPipeline,
+  type SubPipelineLowerer,
+  type SlotAllocator,
+} from "./lookup-translation.ts";
 import { translateMatchBody } from "./match-translation.ts";
+import { lookupStreamMethod } from "./stream-methods.ts";
 
 // ── Detection ─────────────────────────────────────────────────────────────────
 
@@ -47,15 +53,27 @@ export type OutTarget =
  * Returns `{ ok: false, indexPos }` for a computed bracket — the caller
  * surfaces the precise "literal collection name" error using that pos.
  */
-type AccessStep = { ok: true; name: string; object: Expr } | { ok: false; indexPos: number };
+type AccessStep =
+  | { ok: true; name: string; object: Expr }
+  | { ok: false; indexPos: number; reason: "computed" | "non-string-binding" };
 
-function classifyStep(node: Expr): AccessStep | null {
+function classifyStep(node: Expr, ctx?: GenerateCtx): AccessStep | null {
   if (node.type === "MemberAccess") return { ok: true, name: node.member, object: node.object };
   if (node.type === "IndexAccess") {
     if (node.index.type === "StringLiteral") {
       return { ok: true, name: node.index.value, object: node.object };
     }
-    return { ok: false, indexPos: node.index.pos };
+    // `jsmql.compile` parameter binding — resolve at compile time when the
+    // value is a string. Anything else (number, array, missing binding) falls
+    // through to the standard "must be literal / runtime expression" error.
+    if (node.index.type === "ParamRef" && ctx?.bindings?.has(node.index.name)) {
+      const value = ctx.bindings.get(node.index.name);
+      if (typeof value === "string") {
+        return { ok: true, name: value, object: node.object };
+      }
+      return { ok: false, indexPos: node.index.pos, reason: "non-string-binding" };
+    }
+    return { ok: false, indexPos: node.index.pos, reason: "computed" };
   }
   return null;
 }
@@ -71,7 +89,7 @@ function classifyStep(node: Expr): AccessStep | null {
  * want, because the user clearly meant to address a collection but the
  * shape doesn't quite parse as one.
  */
-export function detectOutAssign(op: AssignExpr): OutTarget | null {
+export function detectOutAssign(op: AssignExpr, ctx?: GenerateCtx): OutTarget | null {
   const t = op.target;
   // Cheap pre-filter: must be a member/index chain ending in `DatabaseRef` or
   // `ClusterRef`. Anything else (FieldRef paths, bare CollectionRef, etc.) is
@@ -81,7 +99,7 @@ export function detectOutAssign(op: AssignExpr): OutTarget | null {
 
   if (leaf.type === "DatabaseRef") {
     // Expect exactly one access step: `$$$.<coll>` or `$$$["<coll>"]`.
-    const step = classifyStep(t);
+    const step = classifyStep(t, ctx);
     if (step === null) {
       // Bare `$$$` on the LHS (no segment) — `$$$ = $$;` would never reach this
       // branch (parser rejects assignment-to-non-path), but defend.
@@ -91,8 +109,12 @@ export function detectOutAssign(op: AssignExpr): OutTarget | null {
       );
     }
     if (!step.ok) {
+      const why =
+        step.reason === "non-string-binding"
+          ? `the parameter binding must be a string (collection name is statically determined at compile time)`
+          : `not a runtime expression`;
       throw new CodegenError(
-        `'$out' target must be a literal collection name — use '$$$.<coll>' or '$$$["<coll>"]', not a runtime expression. ` +
+        `'$out' target must be a literal collection name — use '$$$.<coll>' or '$$$["<coll>"]', ${why}. ` +
           `If you need a parameterised target, use 'jsmql.compile' and pass the name in.`,
         step.indexPos,
       );
@@ -111,7 +133,7 @@ export function detectOutAssign(op: AssignExpr): OutTarget | null {
   }
 
   // leaf is ClusterRef — expect exactly two access steps.
-  const outer = classifyStep(t);
+  const outer = classifyStep(t, ctx);
   if (outer === null) {
     // Bare `$$$$` on LHS — unreachable through the parser, but defend.
     throw new CodegenError(
@@ -120,13 +142,17 @@ export function detectOutAssign(op: AssignExpr): OutTarget | null {
     );
   }
   if (!outer.ok) {
+    const why =
+      outer.reason === "non-string-binding"
+        ? `the parameter binding must be a string (collection name is statically determined at compile time)`
+        : `not a runtime expression`;
     throw new CodegenError(
-      `'$out' target must be a literal collection name — use '$$$$.<db>.<coll>' or bracketed equivalents, not a runtime expression. ` +
+      `'$out' target must be a literal collection name — use '$$$$.<db>.<coll>' or bracketed equivalents, ${why}. ` +
         `If you need a parameterised target, use 'jsmql.compile' and pass the name in.`,
       outer.indexPos,
     );
   }
-  const inner = classifyStep(outer.object);
+  const inner = classifyStep(outer.object, ctx);
   if (inner === null) {
     // Only one segment after `$$$$` — `$$$$.<x> = …`. Missing the collection.
     throw new CodegenError(
@@ -136,8 +162,12 @@ export function detectOutAssign(op: AssignExpr): OutTarget | null {
     );
   }
   if (!inner.ok) {
+    const why =
+      inner.reason === "non-string-binding"
+        ? `the parameter binding must be a string (database name is statically determined at compile time)`
+        : `not a runtime expression`;
     throw new CodegenError(
-      `'$out' target must be a literal database name — use '$$$$.<db>.<coll>' or bracketed equivalents, not a runtime expression. ` +
+      `'$out' target must be a literal database name — use '$$$$.<db>.<coll>' or bracketed equivalents, ${why}. ` +
         `If you need a parameterised target, use 'jsmql.compile' and pass the name in.`,
       inner.indexPos,
     );
@@ -178,22 +208,28 @@ function findContextRefLeaf(node: Expr): { type: "DatabaseRef" | "ClusterRef" } 
  * pipeline stages, left-to-right. Returns the (possibly empty) stage list;
  * the caller appends the final `$out` stage.
  *
- * v1 supports:
- *   - bare `$$`                          → []
- *   - `$$.filter(<predicate>)`           → [{ $match: ... }]   (one method)
+ * Supported RHS shapes:
+ *   - bare `$$`                                    → []
+ *   - `$$.filter(<predicate>)`                     → [{ $match: ... }]
+ *   - chained stream-methods registry methods
+ *     (`.slice`, `.map`, `.toSorted`, `.toReversed`,
+ *     `.flatMap`, `.concat`) compose freely        → [<their stages>...]
  *
- * Multi-method chains (`$$.filter(p).sort(...).slice(...)`) and other
- * methods are deferred — the walker throws an actionable error naming the
- * method and pointing at the stage-call alternative. The dispatch shape
- * is structured so adding a method is a single new branch.
+ * Unrecognised methods throw an actionable error naming the
+ * stage-call alternative.
  */
-export function lowerOutChain(rhs: Expr, outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object[] {
+export function lowerOutChain(
+  rhs: Expr,
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+): object[] {
   // Bare `$$` — no extra stages.
   if (rhs.type === "CollectionRef") return [];
 
   // A method-call chain — walk it inside-out, then emit stages in source order.
   if (rhs.type === "MethodCall") {
-    return walkChain(rhs, outerCtx, lowerBlock);
+    return walkChain(rhs, outerCtx, lowerBlock, allocSlot);
   }
 
   // Anything else — the RHS isn't rooted at `$$`. Diagnose.
@@ -211,7 +247,12 @@ export function lowerOutChain(rhs: Expr, outerCtx: GenerateCtx, lowerBlock: SubP
  * hint. The bottom of the chain must be a bare `$$` — anything else means
  * the chain isn't actually rooted at the current pipeline.
  */
-function walkChain(call: Expr, outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object[] {
+function walkChain(
+  call: Expr,
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+): object[] {
   if (call.type !== "MethodCall") {
     // Bottomed out somewhere other than `$$` — the chain isn't rooted at the
     // current pipeline.
@@ -229,36 +270,52 @@ function walkChain(call: Expr, outerCtx: GenerateCtx, lowerBlock: SubPipelineLow
 
   // First lower the receiver (the prefix of the chain), then append this
   // method's stage(s) so source order is preserved.
-  const prefix: object[] = call.object.type === "CollectionRef" ? [] : walkChain(call.object, outerCtx, lowerBlock);
+  const prefix: object[] =
+    call.object.type === "CollectionRef" ? [] : walkChain(call.object, outerCtx, lowerBlock, allocSlot);
 
-  const here = lowerChainMethod(call, outerCtx, lowerBlock);
-  prefix.push(...here);
+  const here = lowerChainMethod(call, outerCtx, lowerBlock, prefix, allocSlot);
+  if (here.replacesPreviousStage) prefix.pop();
+  prefix.push(...here.stages);
   return prefix;
 }
 
 /**
  * Lower one method-call layer of a `$$.…` chain into one or more pipeline
- * stages. v1: only `.filter(<predicate>)` → `$match`.
+ * stages. `.filter(<predicate>)` → `$match` is special-cased so it can
+ * compose with the existing query-translator (and emit `$expr` residuals);
+ * every other method is routed through the shared `STREAM_METHODS` registry
+ * (`.slice`, `.map`, `.toSorted`, `.toReversed`, `.flatMap`, `.concat`).
+ *
+ * Returns `{ stages, replacesPreviousStage? }` — `.toReversed()` reads
+ * `prevStages` and may flip the preceding `$sort`, in which case it asks
+ * the caller to drop the last emitted stage before appending its own.
  */
 function lowerChainMethod(
   call: Expr & { type: "MethodCall" },
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
-): object[] {
+  prevStages: readonly object[],
+  allocSlot: SlotAllocator,
+): { stages: object[]; replacesPreviousStage?: boolean } {
   if (call.method === "filter") {
-    return lowerFilterAsMatch(call, outerCtx, lowerBlock);
+    return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock) };
   }
-  // Unsupported method. Mention the equivalent stage call so the user has an
-  // immediate workaround.
+  const def = lookupStreamMethod(call.method);
+  if (def !== null) {
+    def.validate(call.args, call.pos);
+    // `inSubPipeline = false` — `$out` chains live at the outer pipeline level,
+    // not inside a `$unionWith.pipeline` body.
+    const result = def.lower(call.args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
+    return { stages: result.stages, replacesPreviousStage: result.replacesPreviousStage };
+  }
+  // Method not in the stream-methods registry either. Mention the stage-call
+  // alternative so the user has an immediate workaround.
   const equivalent = STAGE_EQUIVALENT_HINT[call.method];
   const hint =
     equivalent !== undefined
       ? ` Use '${equivalent}' as a separate stage before the '$out' instead.`
       : ` Add the equivalent stage call (e.g. '$sort({ … })', '$skip(N)', '$limit(N)') before the '$out' instead.`;
-  throw new CodegenError(
-    `'$$.${call.method}(...)' isn't supported in a '$out' chain yet — only '.filter(<predicate>)' is wired in v1.${hint}`,
-    call.pos,
-  );
+  throw new CodegenError(`'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${hint}`, call.pos);
 }
 
 const STAGE_EQUIVALENT_HINT: Record<string, string> = {
@@ -369,8 +426,9 @@ export function lowerOut(
   target: OutTarget,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
 ): object[] {
-  const prefix = lowerOutChain(op.value, outerCtx, lowerBlock);
+  const prefix = lowerOutChain(op.value, outerCtx, lowerBlock, allocSlot);
   const body: string | { db: string; coll: string } =
     target.kind === "same-db" ? target.coll : { db: target.db, coll: target.coll };
   prefix.push({ $out: body });

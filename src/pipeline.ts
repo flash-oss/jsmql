@@ -271,10 +271,10 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
         ctx = clearCtxLets(ctx, "$replaceWith");
         return;
       }
-      const outTarget = detectOutAssign(el);
+      const outTarget = detectOutAssign(el, ctx);
       if (outTarget !== null) {
         flushUpdateOps();
-        for (const s of lowerOut(el, outTarget, ctx, lowerBlock)) out.push(s);
+        for (const s of lowerOut(el, outTarget, ctx, lowerBlock, tracking.alloc)) out.push(s);
         sawOut = true;
         outPos = el.pos;
         return;
@@ -1435,10 +1435,10 @@ function lowerUpdateFilterWithLookups(
         ctx = clearCtxLets(ctx, "$replaceWith");
         continue;
       }
-      const outTarget = detectOutAssign(op);
+      const outTarget = detectOutAssign(op, ctx);
       if (outTarget !== null) {
         flush();
-        for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn)) out.push(s);
+        for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn, allocSlot)) out.push(s);
         sawOut = true;
         outPos = op.pos;
         continue;

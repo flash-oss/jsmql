@@ -118,10 +118,11 @@ describe("$out — LHS shape errors", () => {
 });
 
 describe("$out — RHS shape errors", () => {
-  it("unsupported chain method names the equivalent stage call", () => {
-    expect(() => jsmql("$$$.coll = $$.map(d => d.x);")).toThrow(
-      /'\$\$\.map\(\.\.\.\)' isn't supported.*\$project|\$addFields/,
-    );
+  it("unrecognised chain method (not in the stream-methods registry) names the workaround", () => {
+    // `.map` / `.filter` / `.slice` / `.toSorted` / `.toReversed` / `.flatMap` /
+    // `.concat` all flow through the stream-methods registry now (Wave 4 #11).
+    // Methods OUTSIDE the registry still get the "use a separate stage" hint.
+    expect(() => jsmql("$$$.coll = $$.unknownMethod();")).toThrow(/isn't a recognised chain method for a '\$out' RHS/);
   });
 
   it("RHS not rooted at $$ throws with the supported shapes", () => {
@@ -132,6 +133,52 @@ describe("$out — RHS shape errors", () => {
     expect(() => jsmql("$$$.coll = $$.filter(o => o.x === $.threshold);")).toThrow(
       /lambda's parameter `o` IS the current document/,
     );
+  });
+});
+
+describe("$out — multi-method RHS chains (Wave 4 #11)", () => {
+  // Stream-methods registry methods compose freely before the $out: filter,
+  // map, slice, toSorted, toReversed, flatMap, concat.
+  it(".filter + .slice — $match + $limit + $out", () => {
+    expect(jsmql("$$$.archive = $$.filter(d => d.active === false).slice(0, 100);")).toEqual([
+      { $match: { active: false } },
+      { $limit: 100 },
+      { $out: "archive" },
+    ]);
+  });
+
+  it(".filter + .toSorted + .slice — $match + $sort + $limit + $out", () => {
+    expect(
+      jsmql("$$$.top = $$.filter(d => d.active === true).toSorted((a, b) => b.score - a.score).slice(0, 10);"),
+    ).toEqual([{ $match: { active: true } }, { $sort: { score: -1 } }, { $limit: 10 }, { $out: "top" }]);
+  });
+
+  it(".map — $replaceWith + $out", () => {
+    expect(jsmql("$$$.report = $$.map(d => ({ id: d._id, total: d.amount * 2 }));")).toEqual([
+      { $replaceWith: { id: "$_id", total: { $multiply: ["$amount", 2] } } },
+      { $out: "report" },
+    ]);
+  });
+
+  it(".flatMap — $unwind + $out", () => {
+    expect(jsmql("$$$.flat = $$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }, { $out: "flat" }]);
+  });
+});
+
+describe("$out — ParamRef in bracket-LHS (Wave 4 #12, jsmql.compile binding)", () => {
+  it("$$$[boundColl] resolves the bracket via the compile-time binding", () => {
+    const fn = jsmql.compile(({ destColl }) => ($$$[destColl] = $$));
+    expect(fn({ destColl: "archive" })).toEqual([{ $out: "archive" }]);
+  });
+
+  it("$$$$[dbName][collName] resolves both segments", () => {
+    const fn = jsmql.compile(({ dbName, collName }) => ($$$$[dbName][collName] = $$));
+    expect(fn({ dbName: "warehouse", collName: "users" })).toEqual([{ $out: { db: "warehouse", coll: "users" } }]);
+  });
+
+  it("non-string binding is rejected with a 'must be a string' hint", () => {
+    const fn = jsmql.compile(({ n }) => ($$$[n] = $$));
+    expect(() => fn({ n: 42 })).toThrow(/the parameter binding must be a string/);
   });
 });
 
