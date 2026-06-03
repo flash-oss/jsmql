@@ -37,3 +37,22 @@ export function closestNameTo(name: string, candidates: Iterable<string>): strin
   if (best.dist <= 2 && best.dist < name.length) return best.name;
   return null;
 }
+
+/**
+ * Build the trailing " Did you mean 'X'?" hint for a rejection against a closed
+ * set of names — the canonical way to satisfy the closest-name DX mandate (see
+ * the error-consistency rules in CLAUDE.md). Returns "" when no candidate is
+ * close enough, so the call site can interpolate the result unconditionally.
+ *
+ * `format` renders the suggestion the way the surrounding message spells the
+ * name: the default is the instance-method form (`.foo()`); pass
+ * `(s) => \`Class.\${s}\`` for statics, or `(s) => s` for bare names (stages).
+ */
+export function didYouMean(
+  name: string,
+  candidates: Iterable<string>,
+  format: (s: string) => string = (s) => `.${s}()`,
+): string {
+  const suggestion = closestNameTo(name, candidates);
+  return suggestion ? ` Did you mean '${format(suggestion)}'?` : "";
+}

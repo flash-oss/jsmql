@@ -1,5 +1,5 @@
 import { lookupOperator } from "./operators.ts";
-import { closestNameTo } from "./levenshtein.ts";
+import { didYouMean } from "./levenshtein.ts";
 import type {
   BinaryOp,
   Expr,
@@ -2499,8 +2499,7 @@ function generateMethodCall(
       );
 
     default: {
-      const suggestion = closestNameTo(method, KNOWN_METHODS);
-      const hint = suggestion ? ` Did you mean '.${suggestion}()'?` : "";
+      const hint = didYouMean(method, KNOWN_METHODS);
       throw new CodegenError(`Unknown method '.${method}()'.${hint}`, callPos);
     }
   }
@@ -3531,8 +3530,7 @@ function generateSetMethodCall(
       );
     default: {
       const setMethods = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"];
-      const setSuggestion = closestNameTo(method, setMethods);
-      const setHint = setSuggestion ? ` Did you mean '.${setSuggestion}()'?` : "";
+      const setHint = didYouMean(method, setMethods);
       throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${setMethods.join(", ")}.`, pos);
     }
   }
@@ -3558,8 +3556,7 @@ function generateRegexMethodCall(
   const input = _generate(exprArgs[0], ctx);
   const opName = method === "test" ? "$regexMatch" : method === "exec" ? "$regexFind" : null;
   if (!opName) {
-    const regexSuggestion = closestNameTo(method, ["test", "exec"]);
-    const regexHint = regexSuggestion ? ` Did you mean '.${regexSuggestion}()'?` : "";
+    const regexHint = didYouMean(method, ["test", "exec"]);
     throw new CodegenError(
       `Unknown regex method '.${method}()'.${regexHint} Supported: regex.test(str), regex.exec(str).`,
       pos,

@@ -69,7 +69,7 @@ import {
   internalError,
   type GenerateCtx,
 } from "./codegen.ts";
-import { closestNameTo } from "./levenshtein.ts";
+import { didYouMean } from "./levenshtein.ts";
 import { lookupStage, STAGES } from "./stages.ts";
 import { translateMatchBody } from "./match-translation.ts";
 import {
@@ -979,8 +979,7 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
     );
   }
   const names = streamMethodNames();
-  const suggestion = closestNameTo(m.method, ["filter", ...names]);
-  const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
+  const hint = didYouMean(m.method, ["filter", ...names], (s) => `.${s}`);
   const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
   return new CodegenError(
     `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} ` +
@@ -1090,8 +1089,7 @@ function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
     const onCollection = value.object.type === "CollectionRef";
     const onDatabase = extractLookupTarget(value.object, ctx) !== null;
     if (onCollection || onDatabase) {
-      const suggestion = closestNameTo(value.method, ["filter"]);
-      const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
+      const hint = didYouMean(value.method, ["filter"], (s) => `.${s}`);
       const recv = onCollection ? "$$" : "$$$.<coll>";
       const intent = onCollection ? "narrow the current stream" : "switch source to another collection";
       throw new CodegenError(
@@ -1404,13 +1402,8 @@ function looksLikePredicate(el: ArrayElement): boolean {
 }
 
 function formatUnknownStage(name: string, index: number): string {
-  const suggestion = closestStage(name);
-  const suffix = suggestion ? ` Did you mean '${suggestion}'?` : "";
+  const suffix = didYouMean(name, Object.keys(STAGES), (s) => s);
   return `Element ${index} of pipeline: '${name}' is not a known aggregation stage.${suffix}`;
-}
-
-function closestStage(name: string): string | null {
-  return closestNameTo(name, Object.keys(STAGES));
 }
 
 function formatStageList(): string {

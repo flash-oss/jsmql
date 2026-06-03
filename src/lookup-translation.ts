@@ -52,7 +52,7 @@ import type {
   KeyValueEntry,
 } from "./ast.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
-import { closestNameTo } from "./levenshtein.ts";
+import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
@@ -507,8 +507,7 @@ export function validateLookupShape(expr: Expr): void {
   // We're on a `$$$.<coll>.<method>(...)` or `$$$$.<db>.<coll>.<method>(...)` chain.
   const spell = shape.spelling;
   if (expr.method !== "find" && expr.method !== "filter") {
-    const suggestion = closestNameTo(expr.method, ["find", "filter"]);
-    const hint = suggestion ? ` Did you mean '.${suggestion}'?` : "";
+    const hint = didYouMean(expr.method, ["find", "filter"], (s) => `.${s}`);
     throw new CodegenError(
       `'${spell}' supports .find(pred) and .filter(pred), not .${expr.method}().${hint} ` +
         `For richer queries, use a block-body lambda: ` +

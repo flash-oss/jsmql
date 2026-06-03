@@ -35,7 +35,7 @@
 
 import type { Expr } from "./ast.ts";
 import { CodegenError } from "./codegen.ts";
-import { closestNameTo } from "./levenshtein.ts";
+import { closestNameTo, didYouMean } from "./levenshtein.ts";
 import { STAGES } from "./stages.ts";
 
 type Scope = "collection" | "database" | "cluster";
@@ -136,9 +136,11 @@ export function resolveSystemStageCall(expr: Expr): SystemStageCall {
     // Suggest across *all* scopes (with the right prefix) so a typo of a
     // wrong-scope stage still lands — and so a scope with no diagnostics of its
     // own (e.g. `$$$`) still gives an actionable pointer.
-    const near = closestNameTo(method, DIAGNOSTICS_BY_METHOD.keys());
-    const hint =
-      near !== null ? ` Did you mean '${SCOPE_PREFIX[DIAGNOSTICS_BY_METHOD.get(near)!.scope]}.${near}(...)'?` : "";
+    const hint = didYouMean(
+      method,
+      DIAGNOSTICS_BY_METHOD.keys(),
+      (s) => `${SCOPE_PREFIX[DIAGNOSTICS_BY_METHOD.get(s)!.scope]}.${s}(...)`,
+    );
     const here = METHODS_BY_SCOPE.get(scope)!;
     const base =
       here.length > 0

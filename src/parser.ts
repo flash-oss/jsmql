@@ -1,5 +1,5 @@
 import { Lexer, TokenType, type Token } from "./lexer.ts";
-import { closestNameTo } from "./levenshtein.ts";
+import { didYouMean } from "./levenshtein.ts";
 import type {
   Expr,
   BinaryOp,
@@ -1795,8 +1795,7 @@ export class Parser {
       this.lexer.expect(TokenType.RParen);
       return { type: "ArrayFrom", input, mapFn, pos: arrayTok.pos };
     }
-    const arraySuggestion = closestNameTo(methodTok.value, ["isArray", "from"]);
-    const arrayHint = arraySuggestion ? ` Did you mean 'Array.${arraySuggestion}'?` : "";
+    const arrayHint = didYouMean(methodTok.value, ["isArray", "from"], (s) => `Array.${s}`);
     throw new ParseError(
       `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}.${arrayHint} Supported: Array.isArray(), Array.from().`,
       arrayTok.pos,
@@ -1812,8 +1811,7 @@ export class Parser {
       methodTok.type !== TokenType.Ident ||
       (methodTok.value !== "isInteger" && methodTok.value !== "isNaN" && methodTok.value !== "isFinite")
     ) {
-      const numberSuggestion = closestNameTo(methodTok.value, ["isInteger", "isNaN", "isFinite"]);
-      const numberHint = numberSuggestion ? ` Did you mean 'Number.${numberSuggestion}'?` : "";
+      const numberHint = didYouMean(methodTok.value, ["isInteger", "isNaN", "isFinite"], (s) => `Number.${s}`);
       throw new ParseError(
         `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}.${numberHint} Supported: Number.isInteger, Number.isNaN, Number.isFinite.`,
         numberTok.pos,
@@ -1840,8 +1838,7 @@ export class Parser {
       return { type: "MathConst", name: ident.value as MathConstant, pos: mathTok.pos };
     }
     if (!MATH_METHODS.has(ident.value)) {
-      const suggestion = closestNameTo(ident.value, [...MATH_METHODS, ...MATH_CONSTANTS]);
-      const hint = suggestion ? ` Did you mean 'Math.${suggestion}'?` : "";
+      const hint = didYouMean(ident.value, [...MATH_METHODS, ...MATH_CONSTANTS], (s) => `Math.${s}`);
       throw new ParseError(
         `Unknown Math member '${ident.value}' at position ${ident.pos}.${hint} See docs/LANGUAGE.md for the full list of supported Math methods and constants.`,
         mathTok.pos,
@@ -1881,8 +1878,7 @@ export class Parser {
     this.lexer.expect(TokenType.Dot);
     const methodTok = this.lexer.peek();
     if (methodTok.type !== TokenType.Ident || !OBJECT_METHODS.has(methodTok.value)) {
-      const objectSuggestion = closestNameTo(methodTok.value, [...OBJECT_METHODS]);
-      const objectHint = objectSuggestion ? ` Did you mean 'Object.${objectSuggestion}'?` : "";
+      const objectHint = didYouMean(methodTok.value, [...OBJECT_METHODS], (s) => `Object.${s}`);
       throw new ParseError(
         `Unknown Object method '${methodTok.value}' at position ${methodTok.pos}.${objectHint} Supported: ${[...OBJECT_METHODS].join(", ")}.`,
         objectTok.pos,

@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: one `didYouMean` helper for every closed-set rejection
+
+Prefactoring, behaviour-preserving. The `closestNameTo(name, set) ? \` Did you mean '…'?\` : ""` snippet had been hand-rolled at 13 throw sites (codegen ×3, parser ×4, pipeline ×3, lookup/system translation), each with its own variable name (`suggestion`, `setSuggestion`, `regexSuggestion`, `near`, …) and its own spelling of the suggestion. Adding a new throw site — something nearly every feature does — meant copying three lines and getting the format right by hand. That is exactly the kind of friction this pass targets: *make the change easy, then make the easy change.*
+
+The fix is `didYouMean(name, candidates, format?)` in [src/levenshtein.ts](../src/levenshtein.ts), next to `closestNameTo`. It returns the whole `" Did you mean 'X'?"` tail (or `""` when nothing is close), so call sites interpolate unconditionally and never branch. The optional `format` callback renders the suggestion to match the surrounding message — default `.foo()`, `(s) => \`Class.${s}\`` for statics, `(s) => s` for bare stage names. Because `format` receives the *matched* candidate, even the scope-aware diagnostic-stage message (`$$$$.currentOp` vs `$$.indexStats`) collapses cleanly: the prefix is looked up from the candidate inside the callback. Every message is byte-identical to before (full suite green); the only `closestNameTo` call left is the boolean gate in `isSystemStageCall`, which wants the name, not a hint. `closestStage` folded away into the one call in `formatUnknownStage`. The DX mandate in [CLAUDE.md](../CLAUDE.md) now points at `didYouMean` as the canonical way to satisfy it.
+
+---
+
 ## 2026-06-03 — decision: bracket access is always raw; only dot access is interpreted
 
 A language rule, settling the `["length"]` question that flip-flopped over the previous two entries. **Dot access (`.member`) may carry compiler meaning** — most prominently `.length`, which folds to the string-or-array length operator (`$size`/`$strLenCP`/`$cond`). **Bracket access (`[...]`) never does.** Whatever the user spells inside the brackets is the property they get — `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all direct property access, with no interpretation of the key.
