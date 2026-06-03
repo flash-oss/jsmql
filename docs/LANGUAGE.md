@@ -361,6 +361,8 @@ $.in               // field literally named "in" (no conflict with operator)
 
 ### Bracket Access
 
+> **Dot access is interpreted; bracket access is raw.** A `.member` access can carry compiler meaning — most notably `.length`, which folds to the string-or-array length operator. Square brackets never do: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. jsmql does not interpret what's inside the brackets — whatever you spell is the property you get. So when you mean "the data at this key, verbatim" (including a field literally named `length`), reach for brackets.
+
 Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
 ```js
@@ -389,6 +391,14 @@ $.config["host"]
 ```
 
 If you want compact output, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
+
+A string-literal key on the **bare root** `$` is the simplest case: the root document is never an array, so there's nothing to dispatch on and it lowers to a plain field reference. `$["x"]` is just `$.x`. This is how you name a field that isn't a bare identifier — a name containing a dot, dash, space, etc. — and how you read a nested `length` field without `.length` folding to the string-or-array length operator:
+
+```js
+$["cart.field.length"]              // → "$cart.field.length"   — the nested `length` field, raw
+$["weird-name"]                     // → "$weird-name"
+$["cart.field.length"] * $.cart.field.width   // → { $multiply: ["$cart.field.length", "$cart.field.width"] }
+```
 
 ### Optional Chaining
 
@@ -960,11 +970,13 @@ $.note.padEnd(10)                  // (default pad char is space)
 /^[a-z]/.test($.s)                 // { $regexMatch: { input: "$s", regex: "^[a-z]" } }
 /word/i.exec($.s)                  // { $regexFind: { input: "$s", regex: "word", options: "i" } }
 
-// Property access — type-aware dispatch
+// Property access — DOT access is interpreted, BRACKET access is raw
 $.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
 $.csv.split(",").length             // { $size: ... }           — known array  → $size
 $.field.length                      // { $cond: [{ $isArray: "$field" }, { $size: ... }, { $strLenCP: ... }] }
                                     //                          — unknown type → runtime dispatch
+$.field["length"]                   // RAW access — a property called "length", NOT the length operator
+                                    //   (only dot .length is interpreted; see Bracket Access)
 
 // Chaining
 $.name.trim().toLowerCase()         // { $toLower: { $trim: { input: "$name" } } }
@@ -2213,7 +2225,11 @@ jsmql(`[{ $match: $.deletedAt === undefined }]`);
 jsmql(`[{ $match: typeof $.x === "boolean" }]`);
 // → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
 jsmql(`[{ $match: $.items.length === 3 }]`);
-// → [{ $match: { items: { $size: 3 } } }]
+// → [{ $match: { $expr: { $eq: [{ $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }] }, 3] } } }]
+//   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).
+//   Compared against a non-natural value (=== 3.5, === "x"), `.length` reads as a literal field
+//   path instead → { "items.length": 3.5 }. To read a field literally named `length` against a
+//   natural number, use $getField($.items, "length").
 jsmql(`[{ $match: $.x % 5 === 0 }]`);
 // → [{ $match: { x: { $mod: [5, 0] } } }]
 ```

@@ -43,7 +43,7 @@ The caller in `src/pipeline.ts:generateStageBody` emits:
 | `BinaryExpr(>\|>=\|<\|<=, FieldRef f, Num/Str literal)` (and order-flipped, with operator flipped accordingly) | `{ [f.path]: { $gt: <value> } }` (etc.) |
 | `BinaryExpr(=== \| !== \| >\|>=\|<\|<=, FieldRef f, NewDate)` where all `NewDate` (and any nested `DateUTC`) args are number/string literals | `{ [f.path]: { $gte: <Date instance> } }` (etc.) — folded at translate time |
 | `BinaryExpr(=== \| !==, FieldRef f, UndefinedLiteral)` (and order-flipped) | `{ [f.path]: { $exists: false } }` / `{ ... $exists: true }` |
-| `BinaryExpr(=== \| !==, MemberAccess(FieldRef f, "length"), NumberLiteral n)` where `n` is a non-negative integer (and order-flipped) | `{ [f.path]: { $size: n } }` / `{ ... { $not: { $size: n } } }` |
+| `BinaryExpr(=== \| !== \| >\|>=\|<\|<=, MemberAccess(…, "length"), NumberLiteral n)` where `n` is a non-negative integer (and order-flipped) | **not translated** — residualises to `$expr` so codegen emits the string-or-array `$cond` (see the natural-number rule below). Dot `.length` only; bracket `["length"]` is raw access. |
 | `BinaryExpr(=== \| !==, BinaryExpr("%", FieldRef f, IntLit d), IntLit m)` (and order-flipped) | `{ [f.path]: { $mod: [d, m] } }` / `{ ... { $not: { $mod: [d, m] } } }` |
 | `MethodCall(FieldRef f, "includes", [Literal v])` (boolean predicate) | `{ [f.path]: <v> }` — implicit array-element / scalar-equality match |
 | `MethodCall(ArrayLiteral [Literal …], "includes", [FieldRef f])` (boolean predicate) | `{ [f.path]: { $in: [<lits…>] } }` |
@@ -157,7 +157,11 @@ A few patterns translate differently in `$match` position than they would in an 
 
 - **`.includes(<literal>)` on a field receiver.** Expression form is type-polymorphic (`$cond` over `$isArray` to choose `$in` vs `$indexOfCP`-substring). Query form emits the bare `{ field: <value> }` — which matches arrays-containing-value *and* scalar equality (MongoDB's "value or array-of-value" semantics), but NOT string substring. Users who want substring match in `$match` reach for `.match(/value/)`.
 - **`typeof === "boolean"` / `typeof === "bool"`.** JS's `typeof` returns `"boolean"`; MongoDB's `$type` accepts `"bool"`. The translator accepts either spelling and emits the BSON form.
-- **`.length === N` collapse guard.** `$.items.length` *as a generic dotted field path* would lower to the literal key `"items.length"` (a real but unintended access). The translator refuses to lower any `.length`-bearing equality except via the `$size` peephole — if `N` isn't a non-negative integer, the whole equality falls through to `$expr` rather than collapsing into a misleading dotted key.
+- **`.length` natural-number test.** Only the **dot** form `.length` is interpreted as a length — bracket access (`["length"]`) is raw data access and is never folded here (see [method-dispatch.md](method-dispatch.md) for the language rule). The dot form is read one of two ways depending on the other operand:
+  - **vs a natural-number literal** (non-negative integer): it's the *length of a string or array*. The comparison residualises into `$expr` so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch. This applies to **all** comparison operators — `===`, `!==`, `<`, `<=`, `>`, `>=`. (The old array-only `$size` peephole was removed: `$size` silently fails on strings, so it didn't honour the "string or array" contract.)
+  - **vs anything else** (`3.5`, a string, etc.): a length can't sensibly equal a non-natural value, so `.length` is read as a *literal field path* and collapses into the dotted key `{ "items.length": <value> }` via the generic field-path translation. This is the documented way the dotted-key path is reached intentionally.
+
+  **Boundary:** a `.length` compared against a *non-literal* (another field or expression) has no natural-number literal to test, so it residualises to the `$expr` length form rather than a literal field path — `$expr` position can't express "the field literally named length" without `$getField`. To read such a field, use raw bracket access: `$["items.length"]` (a plain field reference on the root) or `$getField($.items, "length")`.
 
 ## Out of scope — rejected as bad DX
 

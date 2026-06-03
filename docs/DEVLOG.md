@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-03 — decision: bracket access is always raw; only dot access is interpreted
+
+A language rule, settling the `["length"]` question that flip-flopped over the previous two entries. **Dot access (`.member`) may carry compiler meaning** — most prominently `.length`, which folds to the string-or-array length operator (`$size`/`$strLenCP`/`$cond`). **Bracket access (`[...]`) never does.** Whatever the user spells inside the brackets is the property they get — `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all direct property access, with no interpretation of the key.
+
+This reverses the earlier "`x["length"]` === `x.length`, same as JS" stance (entry below). The new rule deviates from JS — in JS `arr["length"]` *is* the array length — but the user chose teachability and a clean escape hatch over strict JS fidelity: brackets are the unambiguous "give me the raw data at this key" syntax, including for a field literally named `length`. The mental model is one sentence: *dots are interpreted, brackets are raw.*
+
+Implementation: removed the `["length"] → generateLengthAccess` short-circuit from the `IndexAccess` codegen ([src/codegen.ts](../src/codegen.ts)) and the matching `isLengthAccess`/`asFieldPath` bracket handling from [src/match-translation.ts](../src/match-translation.ts). `isLengthAccess` is back to dot-only. The bare-root string-literal → field-reference rule (entry below) stays — it's the canonical raw-access escape (`$["cart.field.length"]` → `"$cart.field.length"`). Consequences: `$.field["length"]` → the runtime array-or-object `$cond` (reads a property "length"); `$.csv.split(",")["length"]` → `$arrayElemAt[…, "length"]` (raw, not `$size`). Tests in [test/codegen.test.ts](../test/codegen.test.ts), [test/match-translation.test.ts](../test/match-translation.test.ts), [test/realistic.test.ts](../test/realistic.test.ts) (rectangle-area + dynamic-key); docs across [LANGUAGE.md](../LANGUAGE.md) (Bracket Access + Property access), [method-dispatch.md](specs/method-dispatch.md), [match-query-translation.md](specs/match-query-translation.md).
+
+---
+
+## 2026-06-03 — feat: `$["any.field"]` on the bare root is a plain field reference
+
+Follow-up to the `.length` change below. Since `$.field.length` now folds to the string-or-array length operator, a doc with a *genuine* nested `length` dimension (`{ field: { length: 10, width: 5 } }`) needed an escape. The answer: spell the whole path inside one bracket key on the root — `$["field.length"]` lowers to a plain field reference `"$field.length"`, not the runtime array/object `$cond`.
+
+The rule is narrow and principled: a **string-literal** key on the **bare root** `$` (parser shape `IndexAccess(FieldRef "", StringLiteral)`). The root document is never an array, so the `$arrayElemAt` branch of the general dispatch is dead weight there. This doubles as the way to name a field that isn't a bare identifier — dots, dashes, spaces: `$["dash-name"]` → `"$dash-name"`. Non-root string-literal bracket access (`$.config["host"]`) is unchanged — that receiver *can* be an array at query time, so it keeps the documented `$isArray` `$cond`. The `["length"]` length-operator special case still runs first, so `$["length"]` on root stays the (admittedly odd) length-of-root form, consistent with the prior turn's `["length"] === .length` rule.
+
+Implementation: one guard in the `IndexAccess` case of [src/codegen.ts](../src/codegen.ts). Realistic test (rectangle area) in [test/realistic.test.ts](../test/realistic.test.ts); unit test in [test/codegen.test.ts](../test/codegen.test.ts); docs in [LANGUAGE.md](../LANGUAGE.md) (Bracket Access) and [method-dispatch.md](specs/method-dispatch.md).
+
+---
+
+## 2026-06-03 — fix: `.length` in filters is string-or-array, gated on a natural-number RHS
+
+`$.cart.items.length < 20` in a filter compiled to the literal dotted key `{ "cart.items.length": { $lt: 20 } }` — treating `.length` as a real nested field, which is almost never what the user meant. The `===`/`!==` path already had a guard, but it folded to an array-only `$size` peephole that *silently fails on strings*, and the ordered-comparison path (`<`, `>`, `<=`, `>=`) had no guard at all and leaked the dotted key.
+
+New model (filter context), per the user: `.length` (and the JS-identical `["length"]` — `x["length"] === x.length`) is read against the RHS. **Vs a natural-number literal** (non-negative integer) → it's a string-or-array length; the whole comparison residualises into `$expr` so codegen emits the `$isArray`/`$size`/`$strLenCP` `$cond` (works on both types, unlike the removed `$size` peephole). **Vs anything else** (`3.5`, `"x"`, …) → a length can't equal a non-natural value, so `.length` reads as a literal field path and collapses into `{ "items.length": <value> }`. The natural-number test is the sole discriminator — there is intentionally no separate escape hatch; to read a field literally named `length` against a natural number, use `$getField($.x, "length")`.
+
+Implementation: [src/match-translation.ts](../src/match-translation.ts) — replaced `translateLengthSize`/`orientLengthAndInt`/`asLengthFieldPath` with `isLengthAccess` + `isLengthVsNatural`, intercepting in both the equality and ordered branches of `translateLeaf`; extended `asFieldPath` to collapse `["length"]` like `.length`. [src/codegen.ts](../src/codegen.ts) — extracted `generateLengthAccess` and called it from both the `MemberAccess("length")` and `IndexAccess(StringLiteral "length")` cases so bracket and dot lower identically. Boundary: a `.length` compared against a non-literal residualises to the `$expr` length form (can't express a literal `length` field in `$expr` without `$getField`). Supersedes the old `$size` peephole documented in [match-query-translation.md](specs/match-query-translation.md).
+
+---
+
 ## 2026-06-01 — feat: docs/DEFERRED.md + drift-protection test, the "I keep forgetting" antidote
 
 Before this commit, "what's left to do?" had no single answer. Deferred items lived in 106 places — spec "Future work" sections, `## Out of scope` headers, code-comment asides, throw-string parentheticals, DEVLOG entries, and the user's head. Adding a new `// not yet supported` was a single keystroke that no test caught. The user said it plainly: "I keep forgetting about them. We need a system."

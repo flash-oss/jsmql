@@ -471,45 +471,75 @@ describe("$match translation — typeof: 'boolean' → 'bool' mapping", () => {
   });
 });
 
-describe("$match translation — .length === N → $size", () => {
-  it("translates `$.arr.length === N` to `$size`", () => {
-    expect(jsmql("[$match($.items.length === 3)]")).toEqual([{ $match: { items: { $size: 3 } } }]);
+describe("$match translation — .length vs natural number → string-or-array $expr", () => {
+  // `.length` (and the JS-identical `["length"]`) compared against a natural
+  // number is the *length* of a string-or-array. It residualises into `$expr`
+  // so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch — which,
+  // unlike the old array-only `$size` peephole, also matches strings.
+  const lenCond = (path: string) => ({
+    $cond: [{ $isArray: `$${path}` }, { $size: `$${path}` }, { $strLenCP: `$${path}` }],
   });
 
-  it("translates `!==` via $not", () => {
-    expect(jsmql("[$match($.items.length !== 0)]")).toEqual([{ $match: { items: { $not: { $size: 0 } } } }]);
+  it("translates `$.arr.length === N` to the string-or-array $cond", () => {
+    expect(jsmql("[$match($.items.length === 3)]")).toEqual([{ $match: { $expr: { $eq: [lenCond("items"), 3] } } }]);
+  });
+
+  it("translates `!== N` the same way", () => {
+    expect(jsmql("[$match($.items.length !== 0)]")).toEqual([{ $match: { $expr: { $ne: [lenCond("items"), 0] } } }]);
   });
 
   it("accepts the literal on either side", () => {
-    expect(jsmql("[$match(3 === $.items.length)]")).toEqual([{ $match: { items: { $size: 3 } } }]);
+    expect(jsmql("[$match(3 === $.items.length)]")).toEqual([{ $match: { $expr: { $eq: [3, lenCond("items")] } } }]);
   });
 
   it("works on dotted paths", () => {
-    expect(jsmql("[$match($.order.items.length === 1)]")).toEqual([{ $match: { "order.items": { $size: 1 } } }]);
-  });
-
-  it("falls through to $expr for non-integer RHS (and skips the buggy dotted-key collapse)", () => {
-    // The expression-form `.length` codegen is type-polymorphic: arrays → $size,
-    // strings → $strLenCP. The translator never collapses `$.items.length`
-    // into a literal field key `"items.length"` even though that path notation
-    // is grammatically valid in MongoDB — that's never what the user meant.
-    expect(jsmql("[$match($.items.length === 3.5)]")).toEqual([
-      {
-        $match: {
-          $expr: { $eq: [{ $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }] }, 3.5] },
-        },
-      },
+    expect(jsmql("[$match($.order.items.length === 1)]")).toEqual([
+      { $match: { $expr: { $eq: [lenCond("order.items"), 1] } } },
     ]);
   });
 
-  it("falls through to $expr for negative integer RHS", () => {
-    expect(jsmql("[$match($.items.length === -1)]")).toEqual([
+  it("handles ordered comparisons (the bug: no more `items.length` dotted-key collapse)", () => {
+    expect(jsmql("[$match($.items.length < 20)]")).toEqual([{ $match: { $expr: { $lt: [lenCond("items"), 20] } } }]);
+    expect(jsmql("[$match($.items.length >= 2)]")).toEqual([{ $match: { $expr: { $gte: [lenCond("items"), 2] } } }]);
+    expect(jsmql("[$match(0 < $.items.length)]")).toEqual([{ $match: { $expr: { $lt: [0, lenCond("items")] } } }]);
+  });
+
+  it("reads `.length` as a literal field path when the RHS is NOT a natural number", () => {
+    // A length can't equal 3.5 / "x" — so the user meant a field named `length`.
+    expect(jsmql("[$match($.items.length === 3.5)]")).toEqual([{ $match: { "items.length": 3.5 } }]);
+    expect(jsmql("[$match($.items.length < 3.5)]")).toEqual([{ $match: { "items.length": { $lt: 3.5 } } }]);
+    expect(jsmql('[$match($.items.length === "x")]')).toEqual([{ $match: { "items.length": "x" } }]);
+  });
+
+  it('`["length"]` is RAW access — never folded to a length (only dot .length is)', () => {
+    // Bracket access reads a property called "length", so it can't be a $size
+    // peephole; it residualises to $expr with the runtime array-or-object dispatch.
+    expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
       {
         $match: {
-          $expr: { $eq: [{ $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }] }, -1] },
+          $expr: {
+            $eq: [
+              {
+                $cond: [
+                  { $isArray: "$items" },
+                  { $arrayElemAt: ["$items", "length"] },
+                  { $getField: { field: "length", input: "$items" } },
+                ],
+              },
+              3,
+            ],
+          },
         },
       },
     ]);
+    // A string-literal key on the bare root is a plain field reference.
+    expect(jsmql('[$match($["cart.field.length"] === 5)]')).toEqual([
+      { $match: { $expr: { $eq: ["$cart.field.length", 5] } } },
+    ]);
+  });
+
+  it("falls through to $expr for negative integer RHS (unary minus isn't a natural-number literal)", () => {
+    expect(jsmql("[$match($.items.length === -1)]")).toEqual([{ $match: { $expr: { $eq: [lenCond("items"), -1] } } }]);
   });
 });
 
