@@ -90,6 +90,7 @@ import {
 } from "./lookup-translation.ts";
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
+import { validateStageBody } from "./stage-validation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
 import {
   isSystemStageCall,
@@ -1243,6 +1244,9 @@ function lowerStageElement(el: ArrayElement, index: number, ctx: GenerateCtx): S
 }
 
 function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
+  // Body-shape validation (literal-gated; see stage-validation.ts). Runs for
+  // every user-written stage body before lowering.
+  validateStageBody(stageName, body);
   // $match: ObjectLiteral body → raw query document (also the `$expr` escape
   // hatch). Expression body → query-language translation with $expr fallback
   // for residual sub-expressions. Residual lowering re-enters codegen with the
