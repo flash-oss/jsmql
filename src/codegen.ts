@@ -2368,7 +2368,7 @@ function generateMethodCall(
       );
     case "copyWithin":
       throw new CodegenError(
-        `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. No direct immutable replacement — compose '.slice()' calls with '$concatArrays' instead.`,
+        `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. Call it at statement position (top-level on a '$.<field>' receiver) to copy-within the field in place, or compose '.slice()' calls with '$concatArrays' for an inline expression.`,
         callPos,
       );
 
@@ -2559,6 +2559,7 @@ const MUTATING_ARRAY_METHODS: ReadonlySet<string> = new Set([
   "unshift",
   "splice",
   "fill",
+  "copyWithin",
 ]);
 
 /**
@@ -2639,8 +2640,68 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
     }
     case "fill":
       return buildFillRhs(object, args, pos);
+    case "copyWithin":
+      return buildCopyWithinRhs(object, args, pos);
   }
   return internalError(`tryRewriteMutatorCall: unhandled method '${method}'`, pos);
+}
+
+/**
+ * `arr.copyWithin(target, start, end?)` — JS in-place sequence copy. We lower
+ * to a recomposition: take the prefix [0, target), splice in arr[start, end),
+ * then the suffix starting at target + len. The suffix len is the original
+ * size minus (target + len), clamped to non-negative.
+ *
+ * We accept non-negative integer literals only (no JS negative-indexing or
+ * runtime values) — consistent with `.slice` / `.toSpliced` / `.fill` on
+ * statement-position mutators. Two-arg form (`target, start`) treats `end`
+ * as the array's `$size` at runtime.
+ */
+function buildCopyWithinRhs(object: Expr, args: CallArg[], pos: number): Expr {
+  if (args.length < 2 || args.length > 3) {
+    throw new CodegenError(`.copyWithin(target, start[, end]) takes 2 or 3 arguments, got ${args.length}.`, pos);
+  }
+  const lits = args.map((a) => {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`.copyWithin(target, start[, end]) does not accept spread arguments.`, a.pos);
+    }
+    if (a.type !== "NumberLiteral" || !Number.isInteger(a.value) || a.value < 0) {
+      throw new CodegenError(
+        `.copyWithin(target, start[, end]) requires non-negative integer literals; got '${a.type}'. ` +
+          `Computed or negative arguments aren't supported — JS's negative-indexing isn't representable here.`,
+        a.pos,
+      );
+    }
+    return a.value;
+  });
+  const target = lits[0];
+  const start = lits[1];
+  const endLit: number | null = lits.length === 3 ? lits[2] : null;
+  // len = end - start (constant if end is literal; $subtract: [size, start] otherwise)
+  const lenExpr: Expr =
+    endLit !== null
+      ? mkNumber(Math.max(0, endLit - start), pos)
+      : mkOpCall(
+          "$max",
+          [mkNumber(0, pos), mkOpCall("$subtract", [mkOpCall("$size", [object], pos), mkNumber(start, pos)], pos)],
+          pos,
+        );
+  // Suffix start position: target + len (constant if literal-end, else $add)
+  const suffixStartExpr: Expr =
+    endLit !== null
+      ? mkNumber(target + Math.max(0, endLit - start), pos)
+      : mkOpCall("$add", [mkNumber(target, pos), lenExpr], pos);
+  // Suffix length: $max(0, $size(arr) - suffixStart)
+  const suffixLenExpr: Expr = mkOpCall(
+    "$max",
+    [mkNumber(0, pos), mkOpCall("$subtract", [mkOpCall("$size", [object], pos), suffixStartExpr], pos)],
+    pos,
+  );
+  // $concatArrays: [prefix, copied, suffix]
+  const prefix = mkOpCall("$slice", [object, mkNumber(0, pos), mkNumber(target, pos)], pos);
+  const copied = mkOpCall("$slice", [object, mkNumber(start, pos), lenExpr], pos);
+  const suffix = mkOpCall("$slice", [object, suffixStartExpr, suffixLenExpr], pos);
+  return mkOpCall("$concatArrays", [prefix, copied, suffix], pos);
 }
 
 function mkOpCall(name: string, args: Expr[], pos: number): Expr {

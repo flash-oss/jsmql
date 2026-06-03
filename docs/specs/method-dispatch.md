@@ -117,7 +117,7 @@ Per-method shape under 2 params:
 
 ### Mutators at statement position
 
-The in-place JS array mutators — `.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()` — work at **statement position** on a writable field-path receiver, lowering to a `$set` stage that re-assigns the field. At **expression position** they keep throwing the tailored DX errors (which also mention the statement-position option). `.copyWithin()` is deferred — its rejection still names `.slice()` + `$concatArrays` as the workaround.
+The in-place JS array mutators — `.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`, `.copyWithin()` — work at **statement position** on a writable field-path receiver, lowering to a `$set` stage that re-assigns the field. At **expression position** they keep throwing the tailored DX errors (which also mention the statement-position option). `.copyWithin(target, start[, end])` accepts non-negative integer literals (no negative-indexing); the two-arg form treats `end` as the array's `$size` at runtime.
 
 The mechanism is a pre-pass on the statement list:
 

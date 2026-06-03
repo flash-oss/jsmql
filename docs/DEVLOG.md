@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-01 — Wave 4: `$out` multi-method RHS + bound destination + `.copyWithin` (Wave 4 items #11, #12, #13)
+
+Three independent items, all stage-position sugar around an existing surface:
+
+**#11 multi-method `$out` RHS chain.** `$$$.archive = $$.filter(d => d.active).toSorted((a, b) => b.score - a.score).slice(0, 100);` now lowers to `[$match, $sort, $limit, $out]`. The chain dispatch in `lowerChainMethod` (out-translation.ts) routes every non-`.filter` method through the shared `STREAM_METHODS` registry — `.slice`, `.map`, `.toSorted`, `.toReversed`, `.flatMap`, `.concat` all flow through. `.filter` stays inline because it composes with the index-friendly `$match` translator. Methods *outside* the registry still throw an actionable "use a separate stage" error.
+
+**#12 ParamRef bracket-LHS for `$out`.** `jsmql.compile(({ destColl }) => $$$[destColl] = $$)` now resolves the bracket-index at compile time when `destColl` is a string-typed parameter binding. `classifyStep` (out-translation.ts) gained ctx awareness — `ctx.bindings.has(name)` ⇒ resolve to the bound value; non-string bindings surface "parameter binding must be a string"; missing bindings keep the original "not a runtime expression" error.
+
+**#13 `.copyWithin()` statement-position mutator.** `$.tags.copyWithin(2, 0, 2);` now lowers to a `$set` whose body is `$concatArrays: [prefix-slice, copied-slice, suffix-slice]`. Non-negative integer literals only (consistent with `.slice` / `.toSpliced` / `.fill`); the two-arg form treats `end` as the array's `$size` at runtime via `$max(0, $size - start)`. The expression-position rejection message now points at the statement-position alternative.
+
+Files: [src/out-translation.ts](../src/out-translation.ts) (chain dispatch + ctx threading + ParamRef step), [src/pipeline.ts](../src/pipeline.ts) (two `lowerOut` / `detectOutAssign` call sites updated), [src/codegen.ts](../src/codegen.ts) (`.copyWithin` in `MUTATING_ARRAY_METHODS` + `buildCopyWithinRhs`). Specs: [docs/specs/out-stage.md](specs/out-stage.md), [docs/specs/method-dispatch.md](specs/method-dispatch.md). Tests: [test/out.test.ts](../test/out.test.ts) (7 new cases). 1594 tests pass.
+
+---
+
 ## 2026-06-01 — feat: docs/DEFERRED.md + drift-protection test, the "I keep forgetting" antidote
 
 Before this commit, "what's left to do?" had no single answer. Deferred items lived in 106 places — spec "Future work" sections, `## Out of scope` headers, code-comment asides, throw-string parentheticals, DEVLOG entries, and the user's head. Adding a new `// not yet supported` was a single keystroke that no test caught. The user said it plainly: "I keep forgetting about them. We need a system."

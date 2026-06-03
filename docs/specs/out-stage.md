@@ -131,12 +131,18 @@ All errors carry a meaningful `.pos` (target node's `pos` for LHS shape
 errors, RHS node's `pos` for chain errors, offending later statement's
 `pos` for the trailing-stage guard).
 
-## RHS chain methods (v1: `.filter`)
+## RHS chain methods
 
-The v1 chain dispatch supports exactly one method: `.filter(<predicate>)`
-→ `$match`. The chain walker in `lowerOutChain` recurses into
-`MethodCall.object` first, then emits the current layer's stage, so
-source order is preserved when more methods are added.
+The chain dispatch in `lowerChainMethod` handles `.filter(<predicate>)`
+inline (it reuses the index-friendly `$match` translator), and routes every
+other method through the shared `STREAM_METHODS` registry from
+[`src/stream-methods.ts`](../../src/stream-methods.ts): `.slice`, `.map`,
+`.toSorted`, `.toReversed`, `.flatMap`, `.concat`. The chain walker in
+`lowerOutChain` recurses into `MethodCall.object` first, then emits the
+current layer's stage, so source order is preserved. A method's `lower`
+function may return `replacesPreviousStage: true` (as `.toReversed` does
+to flip the preceding `$sort`); the walker pops the previous stage before
+appending the new one.
 
 `.filter` reuses the same predicate translator that `$match`, the
 `$facet` variant of `$ = { … }`, and the union-form sub-pipelines all
@@ -238,22 +244,24 @@ src/
 
 ## Deferred
 
-- **Multi-method RHS chains.** v1 supports `$$` alone or one `.filter`.
-  `.map`, `.sort`, `.slice`, `.reduce`, `.flatMap`, `.flat` are each one
-  branch in `lowerChainMethod` — deferred to follow-ups so each method's
-  semantics can be designed deliberately.
 - **`$merge` sugar.** MongoDB has both `$out` (full replace) and
   `$merge` (upsert / merge into existing docs). The corresponding sugar
   might look like `$$$.coll += $$;` (compound assign — "merge into") to
   preserve the destination-on-the-left mental model, but the four merge-
   control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a
   more careful design pass. Out of scope for this release.
-- **Out-of-band destination via `jsmql.compile` bindings.** Today the
-  destination must be a literal in the source. A bound bracket
-  `$$$[boundColl] = $$` could resolve at compile time via `ctx.bindings`
-  (the same path lookup uses), but pulling the binding plumbing into
-  `out-translation` is deferred until there's a real use case — the
-  current "use `jsmql.compile`" hint already names the workaround.
+
+## Landed
+
+- **Multi-method RHS chains** (Wave 4 #11). The chain dispatch in
+  `lowerChainMethod` routes every non-`.filter` method through the
+  shared `STREAM_METHODS` registry. `.map`, `.slice`, `.toSorted`,
+  `.toReversed`, `.flatMap`, `.concat` all compose freely before the
+  trailing `$out`.
+- **Bound destination via `jsmql.compile`** (Wave 4 #12). `$$$[boundColl] = $$`
+  resolves the bracket-index at compile time when `boundColl` is a string-typed
+  parameter binding (via `ctx.bindings`). Non-string bindings surface a
+  "parameter binding must be a string" error.
 - **Pre-emit "is this a stage-clearing stage?" classification.**
   `$out` is terminal, so the in-pipeline let scope is irrelevant after
   emission. The `sawOut` guard ensures no subsequent statement runs;
