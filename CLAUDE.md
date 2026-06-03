@@ -108,11 +108,27 @@ Every code change that affects observable behaviour must also update the relevan
 Every change to library behaviour visible at the call site — new entry point, changed output shape, new operator surface, new error wording, dropped/renamed feature — must update [README.md](README.md) in the same commit. Cross-check the headline example block, the Tour section, and the Highlights bullets; if a feature you touched would no longer match what those three sections claim, fix them. The README is the first thing a new user reads and is part of the public contract, not optional reference material. When in doubt, write a short probe script that imports from `src/index.ts` and run it with `node tmp/probe.mjs` (Node 22.18+ / 24.3+ strips TS natively — no flag) — or test against the built dist — to confirm the shown output still matches what the library produces.
 
 ### Maintain docs/DEFERRED.md
-**Every** "not yet supported" / "future work" / "deferred" / "out of scope" marker in source code, specs, or `LANGUAGE.md` MUST carry a `[DEF-NNN]` tag and a matching row in [docs/DEFERRED.md](docs/DEFERRED.md). When you ship a deferred item, delete its row AND strip the tag in the same commit. When you reject a feature with a "not yet" error, add the row in the same commit. New phrases without a tag (and without an explicit entry in `test/deferred-allowlist.txt` with a one-line reason) make `npm test` fail.
+[docs/DEFERRED.md](docs/DEFERRED.md) is the single source of truth for every open "not yet" / "future work" / "deferred" / "out of scope" item plus every "won't implement" decision. Four triggers, in the order they typically arise:
+
+**1. Before designing or planning a feature / change — read DEFERRED.md first.**
+Open [docs/DEFERRED.md](docs/DEFERRED.md) and scan §A (open items) and §B (won't-implement decisions) for anything the proposed work touches. Four outcomes:
+  - **Exact match in §A**: you're implementing this row. Plan the work as "ship DEF-NNN"; the row's *Why blocked* / *Success criteria* / *Effort* fields are your starting brief. Re-read the linked spec section.
+  - **Adjacent match in §A**: your work overlaps with a known row but isn't exactly it. Decide whether to (a) expand scope and close the row, (b) keep them separate, or (c) split the row. Say so in the plan.
+  - **Match in §B**: this was considered and decided against. Re-read the rationale before proceeding — if you still want to do the work, the plan must address why the §B reasoning no longer applies, otherwise drop the idea.
+  - **No match**: you're net-new. Continue, and if the design includes any "not yet" wording (rejection sites, spec future-work bullets), allocate a fresh `DEF-NNN` ID for it in the same plan.
+
+**2. When you add a "not yet" rejection or spec future-work bullet** — add a row to §A in the same commit. Tag every site with `[DEF-NNN]`. New phrases without a tag (and without an explicit entry in `test/deferred-allowlist.txt` with a one-line reason) make `npm test` fail.
+
+**3. After each feature implementation — update DEFERRED.md.** This is non-optional. Before committing the feature work, walk DEFERRED.md and do whichever apply:
+  - **Shipped a deferred item.** Delete the row from §A AND strip every `[DEF-NNN]` tag in the codebase in the same commit. The REVERSE / STALE-ALLOWLIST drift gates will fire if you miss either side.
+  - **Partial progress on a deferred item.** Update the row's *Status* / *Attempted approaches* / *Success criteria* to reflect the new state. If you split off a sub-feature into a new row, allocate a fresh ID and reference the parent.
+  - **Discovered a new rejection while implementing.** Add a new §A row with the next free `DEF-NNN` ID and tag the rejection site, same commit.
+  - **Decided against a related idea during implementation.** Add a §B row capturing the rationale so future-us doesn't reconsider it blindly.
+  - **Cleaned up stale doc wording.** Drop the corresponding allowlist entry from `test/deferred-allowlist.txt` in the same commit (the STALE gate forces this).
+
+**4. When you reject a feature as "won't implement"** — add a row to §B with the rationale. No `[DEF-NNN]` tag in the codebase — §B rows are decisions, not deferred work.
 
 Tag format: `[DEF-NNN]` — literal three-digit ID, e.g. `[DEF-001]`. Optional human label inside: `[DEF-007: projection]`. The drift test ([test/deferred-coverage.test.ts](test/deferred-coverage.test.ts)) enforces forward (tag→row), reverse (row→tag), untagged-marker (phrase→tag-or-allowlist), and stale-allowlist (allowlist entry must match at least one phrase) gates on every `npm test`.
-
-Decisions that are "won't implement" go in §B of DEFERRED.md, not §A — no `[DEF-NNN]` tag in code, just a row recording the rationale so it isn't blindly reconsidered later.
 
 ### Commit conventions
 Use [Conventional Commits](https://www.conventionalcommits.org/):
