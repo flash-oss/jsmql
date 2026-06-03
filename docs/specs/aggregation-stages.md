@@ -55,6 +55,8 @@ The presence of `;` is also the top-level dispatch signal: any `;` flips `jsmql(
 
 For other stages, the body is generated with the existing `generate()` infrastructure, so accumulators (`$sum`, `$avg`, …), expression operators, field refs, and method chains all compose naturally inside stage bodies.
 
+Before lowering, every stage body passes through `validateStageBody` ([src/stage-validation.ts](../../src/stage-validation.ts)) and every stage's placement is checked by the per-pipeline validator in [src/pipeline.ts](../../src/pipeline.ts). This pre-flight pass rejects the structural and shape violations the MongoDB server would otherwise reject — see [pipeline-validation.md](pipeline-validation.md).
+
 `generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` translation rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so update ops on either side of a `;` never combine.
 
 ## Sub-pipeline recursion

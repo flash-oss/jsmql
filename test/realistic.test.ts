@@ -1918,3 +1918,22 @@ $$ = $$$.orders
     );
   },
 );
+
+describe("invalid stage placement — validate() catches a misplaced $merge", { features: ["Pipelines"] }, () => {
+  it("a materialised-view pipeline that sorts after $merge is rejected at compile time", { kind: "validate" }, () => {
+    // Real-world slip: roll daily orders into a summary, write it to a
+    // reporting collection, then "sort the result" — but $merge must be the
+    // pipeline's last stage, so MongoDB would reject this at run time.
+    // jsmql catches it as you compile, with a real `.pos`.
+    const r = jsmql.validate(`
+        $group({ _id: $.day, revenue: $sum($.total) });
+        $merge({ into: "dailyRevenue" });
+        $sort({ revenue: -1 });
+      `);
+    expect(r.valid).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0].code).toBe("CODEGEN_ERROR");
+    expect(r.errors[0].pos).toBeGreaterThan(0);
+    expect(r.errors[0].message).toMatch(/must be the last stage/);
+  });
+});

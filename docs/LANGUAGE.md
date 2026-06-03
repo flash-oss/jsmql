@@ -47,7 +47,8 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 3. [Literals](#literals)
 4. [Comments](#comments)
 5. [Field References](#field-references)
-6. [Operators](#operators)
+6. [Mistakes caught at compile time](#mistakes-caught-at-compile-time)
+7. [Operators](#operators)
 7. [String Methods](#string-methods)
 8. [Array Methods](#array-methods)
 9. [Lambda Functions](#lambda-functions)
@@ -797,6 +798,48 @@ jsmql("$match($.x > 1); $$.indexStats();");
 **Pipeline-mode only**, like `$$.push(...)` and the lookup/`$out` sugars — these are source stages, not Filter predicates.
 
 > The plain stage forms (`jsmql("[{ $indexStats: {} }]")` and `jsmql("$indexStats({})")`) still work; the `$$`/`$$$`/`$$$$` sugar adds discoverability and scope-checking.
+
+---
+
+## Mistakes caught at compile time
+
+The MongoDB server validates your pipeline before running it and rejects malformed
+ones with terse errors. jsmql is a compiler, so it catches these *as you compile* —
+you get an actionable message with a position instead of a runtime surprise:
+
+```js
+jsmql("[ { $merge: 'archive' }, $sort({ date: -1 }) ]")
+// ✗ '$merge' must be the last stage in a pipeline — nothing can run after it.
+
+jsmql("[ $match($.active), { $collStats: {} } ]")
+// ✗ '$collStats' must be the first stage in a pipeline — it produces the source documents.
+
+jsmql("[ { $facet: { recent: [ { $out: 'tmp' } ] } } ]")
+// ✗ '$out' is not allowed inside a '$facet' sub-pipeline.
+
+jsmql("[ $project({ name: 1, ssn: 0 }) ]")
+// ✗ '$project' cannot mix field inclusion ('name: 1') and exclusion ('ssn: 0') —
+//   only '_id' may be excluded in an inclusion projection.
+
+jsmql("[ $limit(-5) ]")
+// ✗ '$limit' must be a positive integer, but got -5.
+
+jsmql("[ $sort({ x: 1 }), $match({ $text: { $search: 'mongo' } }) ]")
+// ✗ A '$match' that uses '$text' must be the first stage in a pipeline.
+```
+
+What's checked: stage **placement** (source stages like `$collStats`/`$geoNear`/`$changeStream`
+must be first; `$out`/`$merge` must be last; stages forbidden inside `$facet`/`$lookup`/`$unionWith`
+sub-pipelines), stage **body shape** (literal type/range/enum/required-key/mutual-exclusivity
+rules — e.g. `$count('')`, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo),
+and `$match` query operators (`$text` placement; `$near`/`$where` bans). Use `jsmql.validate(...)`
+to get these as a list of `{ message, pos }` instead of a throw.
+
+**Only certain mistakes throw.** If the offending value is a field reference or expression
+jsmql can't evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`), the MQL is
+emitted as-is — jsmql never blocks a query it can't *prove* is wrong. Constraints that depend
+on your deployment (sharding, transactions, memory limits, Atlas availability) are also left to
+the server.
 
 ---
 
