@@ -93,6 +93,16 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
       expect(result.errors[0].code).toBe("CODEGEN_ERROR");
       assertPosInRange(src, result.errors[0].pos);
     });
+
+    it("a must-be-last stage that isn't last points at the offending trailing stage", () => {
+      const src = "[ { $merge: 'a' }, $sort({ x: 1 }) ]";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe("CODEGEN_ERROR");
+      assertPosInRange(src, result.errors[0].pos);
+      // Points at the stage that illegally follows the terminal `$merge`.
+      expect(src.slice(result.errors[0].pos)).toMatch(/^\$sort/);
+    });
   });
 
   describe("function-input errors", () => {

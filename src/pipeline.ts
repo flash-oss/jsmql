@@ -70,7 +70,7 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { closestNameTo } from "./levenshtein.ts";
-import { lookupStage, STAGES } from "./stages.ts";
+import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
 import { translateMatchBody } from "./match-translation.ts";
 import {
   buildPipelineFormPredicate,
@@ -226,6 +226,107 @@ export function isPipelineAst(ast: Expr): boolean {
   return isStageCandidate(ast.elements[0]);
 }
 
+// ── Structural stage-placement validation ──────────────────────────────────────
+//
+// MongoDB rejects a pipeline at build time when a stage sits in an illegal
+// position: a source stage ($geoNear, $collStats, $changeStream, …) anywhere
+// but first; a write stage ($out, $merge) anywhere but last; a stage forbidden
+// inside a $facet / $lookup / $unionWith sub-pipeline. We catch all of these at
+// compile time. The rules live declaratively in the STAGES registry (`position`
+// / `forbiddenIn`, read via stageMustBeFirst / stageMustBeLast / stageForbiddenIn);
+// this validator only applies them. See docs/specs/pipeline-validation.md.
+//
+// The sugar forms ($out via `$$$.<coll> = …`, system stages via
+// `$$.indexStats()`) keep their own dedicated, sugar-aware messages and feed
+// this validator through `markSugarOut` for the must-be-last "after" error.
+
+type ContainerKind = "top" | "facet" | "lookup" | "unionWith";
+
+type TerminalState = { stageName: string; pos: number; viaSugar: boolean };
+
+type PipelineValidator = {
+  /** Call at the top of every element/statement iteration, before lowering it. */
+  checkBeforeElement: (pos: number) => void;
+  /**
+   * Call for a literal stage (resolved by asStageShape) BEFORE pushing it.
+   * `userIndex` is the loop index — the user-authored position in THIS pipeline.
+   * Order: forbidden-in-context → must-be-first → record must-be-last.
+   */
+  checkStage: (name: string, pos: number, userIndex: number) => void;
+  /** The sugar `$out` paths call this so the unified "after terminal" check fires. */
+  markSugarOut: (pos: number) => void;
+};
+
+function makePipelineValidator(container: ContainerKind): PipelineValidator {
+  let terminal: TerminalState | null = null;
+  return {
+    checkBeforeElement(pos: number): void {
+      if (terminal !== null) throw makeAfterTerminalError(terminal, pos);
+    },
+    checkStage(name: string, pos: number, userIndex: number): void {
+      const def = lookupStage(name);
+      if (def === undefined) return; // asStageShape already guaranteed it; defensive
+      if (container !== "top" && stageForbiddenIn(def, container)) {
+        throw new CodegenError(forbiddenInContextMessage(name, container), pos);
+      }
+      // Key on the user-authored index, NOT out.length: prologue $lookup/$set
+      // stages (from prior `let`/lookup statements or this stage's own buried
+      // lookups) inflate out.length, but every prior user element emits ≥1
+      // stage, so `userIndex > 0` ⟺ a real preceding stage exists.
+      if (stageMustBeFirst(def) && userIndex > 0) {
+        throw new CodegenError(mustBeFirstLiteralMessage(name), pos);
+      }
+      if (stageMustBeLast(def)) terminal = { stageName: name, pos, viaSugar: false };
+    },
+    markSugarOut(pos: number): void {
+      terminal = { stageName: "$out", pos, viaSugar: true };
+    },
+  };
+}
+
+/**
+ * Error raised when any stage appears after a must-be-last (terminal) stage.
+ * The sugar `$out` form keeps its original `'$$$.<coll> = …'` wording; literal
+ * terminal stages ($out / $merge / $changeStreamSplitLargeEvent) name the stage.
+ */
+function makeAfterTerminalError(terminal: TerminalState, afterPos: number): CodegenError {
+  if (terminal.viaSugar) {
+    return new CodegenError(
+      `'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position ${terminal.pos}), ` +
+        `or remove it.`,
+      afterPos,
+    );
+  }
+  return new CodegenError(
+    `'${terminal.stageName}' must be the last stage in a pipeline — nothing can run after it. ` +
+      `Move it to the end of the pipeline, or remove the stage(s) that follow it.`,
+    afterPos,
+  );
+}
+
+/** Message for a source stage (must-be-first) used in a non-first position, literal form. */
+function mustBeFirstLiteralMessage(stageName: string): string {
+  return (
+    `'${stageName}' must be the first stage in a pipeline — it produces the pipeline's source documents, ` +
+    `so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`
+  );
+}
+
+/** Message for a stage used inside a sub-pipeline container that forbids it. */
+function forbiddenInContextMessage(stageName: string, container: "facet" | "lookup" | "unionWith"): string {
+  const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
+  return (
+    `'${stageName}' is not allowed inside a '${owner}' sub-pipeline. ` + `Move it to the outer (top-level) pipeline.`
+  );
+}
+
+/** Maps a sub-pipeline-owning stage to its container kind. */
+function containerKindFor(stageName: string): "facet" | "lookup" | "unionWith" {
+  if (stageName === "$facet") return "facet";
+  if (stageName === "$unionWith") return "unionWith";
+  return "lookup";
+}
+
 /**
  * Compile a pipeline-shaped ArrayLiteral AST to an MQL pipeline (stage array).
  *
@@ -250,8 +351,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   let updateBuffer: UpdateOp[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
-  let sawOut = false;
-  let outPos = 0;
+  const validator = makePipelineValidator("top");
   const tracking = makeSlotTracking();
 
   const flushUpdateOps = () => {
@@ -261,7 +361,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   };
 
   ast.elements.forEach((rawEl, i) => {
-    if (sawOut) throw makeAfterOutError(rawEl, outPos);
+    validator.checkBeforeElement(rawEl.pos);
     let el: ArrayElement = rawEl;
     // Statement-position mutator rewrite: a `$.<field>.sort(...)` / `.push(...)`
     // / … call becomes a synthetic `$.<field> = <immutable RHS>` assignment so
@@ -297,8 +397,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       if (outTarget !== null) {
         flushUpdateOps();
         for (const s of lowerOut(el, outTarget, ctx, lowerBlock, tracking.alloc)) out.push(s);
-        sawOut = true;
-        outPos = el.pos;
+        validator.markSugarOut(el.pos);
         return;
       }
       const direct = detectLookupCall(el.value, ctx);
@@ -371,6 +470,8 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       validateUnionPushShape(el as Expr);
     }
     const rewrittenEl = extractFromStageElement(el, ctx, tracking.alloc, lowerBlock, out);
+    const shape = asStageShape(rewrittenEl);
+    if (shape !== null) validator.checkStage(shape.name, rewrittenEl.pos ?? el.pos, i);
     const result = lowerStageElement(rewrittenEl, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
@@ -395,16 +496,19 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
  * `let` declarations contribute one `$set` stage each and extend the let
  * scope visible to subsequent statements.
  */
-export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EMPTY_CTX): unknown[] {
+export function generateImplicitPipeline(
+  p: Pipeline,
+  startCtx: GenerateCtx = EMPTY_CTX,
+  container: ContainerKind = "top",
+): unknown[] {
   const out: unknown[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = false;
-  let sawOut = false;
-  let outPos = 0;
+  const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking();
 
   p.stmts.forEach((rawStmt, i) => {
-    if (sawOut) throw makeAfterOutError(rawStmt, outPos);
+    validator.checkBeforeElement(rawStmt.pos);
     let stmt: PipelineStmt = rawStmt;
     // Statement-position mutator rewrite: same logic as `generatePipeline`,
     // wrapped in a single-op `UpdateFilter` so it routes through the existing
@@ -439,16 +543,13 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
       // Process each op in order, splitting at lookup-bearing ops so the
       // lookup stages can sit between coalesced $set groups. A `$ = <expr>`
       // op within the chain clears the let scope (it's a reshape stage), so
-      // the returned ctx may differ from `ctx`. A `$$$.<coll> = …` op flips
-      // the `sawOut` flag — once tripped, the next pipeline statement
-      // produces the "must be last stage" error.
+      // the returned ctx may differ from `ctx`. A `$$$.<coll> = …` op records
+      // the terminal `$out` — once set, the next pipeline statement produces
+      // the "must be last stage" error.
       const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock, out.length);
       for (const s of result.stages) out.push(s);
       ctx = result.ctx;
-      if (result.sawOut) {
-        sawOut = true;
-        outPos = result.outPos;
-      }
+      if (result.terminal !== null) validator.markSugarOut(result.terminal.pos);
       return;
     }
     // `$$.push(...)` statement → one or more `$unionWith` stages (with
@@ -469,6 +570,8 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
     validateUnionPushShape(stmt as Expr);
     // Stage call statement (Expr that resolves to a stage shape).
     const rewrittenStmt = extractFromStageElement(stmt as Expr, ctx, tracking.alloc, lowerBlock, out);
+    const shape = asStageShape(rewrittenStmt as ArrayElement);
+    if (shape !== null) validator.checkStage(shape.name, (rewrittenStmt as Expr).pos, i);
     const result = lowerStageElement(rewrittenStmt as ArrayElement, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
@@ -1193,7 +1296,7 @@ function generateBodyObject(
     if (isPipelineSlot && isPipelineAst(entry.value)) {
       // Sub-pipelines run in a fresh scope. Outer lets do not cross; function-
       // form parameter bindings do (they're compile-time constants).
-      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx));
+      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx), containerKindFor(stageName));
       continue;
     }
     // Accumulator-context gate (Wave 5 #22 + #41).
@@ -1264,11 +1367,13 @@ function generateNestedAccumulatorObject(
 
 /**
  * Sub-pipeline entry point. Same as `generatePipeline` but starts from a
- * caller-supplied ctx. Currently used only for sub-pipeline slots (where the
- * ctx is fresh-empty); the top-level entry stays parameter-less for API
- * stability.
+ * caller-supplied ctx. Used for literal sub-pipeline slots (`$facet.*`,
+ * `$lookup.pipeline`, `$unionWith.pipeline`); `container` names which owning
+ * stage so structural validation can enforce the forbidden-in-context bans
+ * (e.g. `$out`/`$merge` inside any sub-pipeline) and the per-sub-pipeline
+ * position rules.
  */
-function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
+function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: ContainerKind): unknown[] {
   if (ast.type !== "ArrayLiteral") {
     internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
   }
@@ -1301,6 +1406,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
   let updateBuffer: UpdateOp[] = [];
   let ctx: GenerateCtx = startCtx;
   let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
+  const validator = makePipelineValidator(container);
 
   const flushUpdateOps = () => {
     if (updateBuffer.length === 0) return;
@@ -1309,6 +1415,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
   };
 
   ast.elements.forEach((el, i) => {
+    validator.checkBeforeElement(el.pos);
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
       updateBuffer.push(el);
       return;
@@ -1322,6 +1429,8 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
       return;
     }
     flushUpdateOps();
+    const shape = asStageShape(el);
+    if (shape !== null) validator.checkStage(shape.name, el.pos, i);
     const result = lowerStageElement(el, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
@@ -1484,19 +1593,18 @@ function lowerUpdateFilterWithLookups(
   allocSlot: SlotAllocator,
   lowerBlockFn: SubPipelineLowerer,
   globalStageIndex: number = 0,
-): { stages: object[]; ctx: GenerateCtx; sawOut: boolean; outPos: number } {
+): { stages: object[]; ctx: GenerateCtx; terminal: TerminalState | null } {
   const out: object[] = [];
   let buffer: UpdateOp[] = [];
   let ctx = startCtx;
-  let sawOut = false;
-  let outPos = 0;
+  let terminal: TerminalState | null = null;
   const flush = () => {
     if (buffer.length === 0) return;
     for (const stage of generateUpdateOpGroups(buffer, ctx)) out.push(stage);
     buffer = [];
   };
   for (const op of stmt.ops) {
-    if (sawOut) throw makeAfterOutError(op, outPos);
+    if (terminal !== null) throw makeAfterTerminalError(terminal, op.pos);
     if (op.type === "AssignExpr") {
       if (isReplaceStreamAssign(op)) {
         flush();
@@ -1522,8 +1630,7 @@ function lowerUpdateFilterWithLookups(
       if (outTarget !== null) {
         flush();
         for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn, allocSlot)) out.push(s);
-        sawOut = true;
-        outPos = op.pos;
+        terminal = { stageName: "$out", pos: op.pos, viaSugar: true };
         continue;
       }
       const direct = detectLookupCall(op.value, ctx);
@@ -1553,23 +1660,7 @@ function lowerUpdateFilterWithLookups(
     buffer.push(op);
   }
   flush();
-  return { stages: out, ctx, sawOut, outPos };
-}
-
-/**
- * Build the "trailing-stage" error raised when a pipeline statement appears
- * after an `$out` sugar emitted its stage. The error names the offending
- * statement's `pos` and points back at the `$out` write that should be last.
- * Used by both `generatePipeline` (bracket form) and `generateImplicitPipeline`
- * (`;`-separated form), and also by `lowerUpdateFilterWithLookups` for the
- * `,`-chained intra-statement case.
- */
-function makeAfterOutError(after: { pos: number; type?: string }, outPos: number): CodegenError {
-  return new CodegenError(
-    `'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position ${outPos}), ` +
-      `or remove it.`,
-    after.pos ?? outPos,
-  );
+  return { stages: out, ctx, terminal };
 }
 
 /**

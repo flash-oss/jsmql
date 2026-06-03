@@ -726,3 +726,102 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 });
+
+describe("pipeline — structural stage placement (pre-flight validation)", () => {
+  // Must-be-first (literal forms; the sugar forms are covered in system-stages.test.ts).
+  it("rejects a diagnostic source stage that isn't first", () => {
+    expect(() => jsmql("[ $match($.x > 1), { $collStats: {} } ]")).toThrow(/'\$collStats' must be the first stage/);
+  });
+  it("rejects $geoNear that isn't first", () => {
+    expect(() => jsmql("[ $sort({ x: 1 }), { $geoNear: { near: [0, 0], distanceField: 'd' } } ]")).toThrow(
+      /'\$geoNear' must be the first stage/,
+    );
+  });
+  it("rejects $changeStream that isn't first (;-form)", () => {
+    expect(() => jsmql("$match($.x > 1); { $changeStream: {} }")).toThrow(/'\$changeStream' must be the first stage/);
+  });
+  it("accepts a source stage as the first stage", () => {
+    expect(jsmql("[ { $collStats: {} }, $sort({ x: 1 }) ]")).toEqual([{ $collStats: {} }, { $sort: { x: 1 } }]);
+    expect(jsmql("[ { $documents: [{ a: 1 }] }, $sort({ a: 1 }) ]")).toEqual([
+      { $documents: [{ a: 1 }] },
+      { $sort: { a: 1 } },
+    ]);
+  });
+
+  // Must-be-last (literal forms; the $out sugar form is covered in out.test.ts).
+  it("rejects $merge that isn't last (the headline case)", () => {
+    expect(() => jsmql("[ { $merge: 'archive' }, $sort({ x: 1 }) ]")).toThrow(/'\$merge' must be the last stage/);
+  });
+  it("rejects $out (literal) that isn't last", () => {
+    expect(() => jsmql("[ { $out: 'c' }, $count('n') ]")).toThrow(/'\$out' must be the last stage/);
+  });
+  it("rejects $changeStreamSplitLargeEvent that isn't last", () => {
+    expect(() => jsmql("[ { $changeStreamSplitLargeEvent: {} }, $sort({ x: 1 }) ]")).toThrow(
+      /'\$changeStreamSplitLargeEvent' must be the last stage/,
+    );
+  });
+  it("accepts $merge as the last stage", () => {
+    expect(jsmql("[ $sort({ x: 1 }), { $merge: 'archive' } ]")).toEqual([{ $sort: { x: 1 } }, { $merge: "archive" }]);
+  });
+
+  // Uniqueness falls out of must-first / must-last.
+  it("rejects two terminal stages (the first isn't last)", () => {
+    expect(() => jsmql("[ { $out: 'a' }, { $merge: 'b' } ]")).toThrow(/'\$out' must be the last stage/);
+  });
+  it("rejects two source stages (the second isn't first)", () => {
+    expect(() => jsmql("[ { $collStats: {} }, { $indexStats: {} } ]")).toThrow(
+      /'\$indexStats' must be the first stage/,
+    );
+  });
+
+  // Forbidden-in-sub-pipeline (literal sub-pipeline arrays).
+  it("rejects $out inside a $facet sub-pipeline", () => {
+    expect(() => jsmql("[ { $facet: { a: [ { $out: 'x' } ] } } ]")).toThrow(
+      /'\$out' is not allowed inside a '\$facet' sub-pipeline/,
+    );
+  });
+  it("rejects $merge inside a $lookup sub-pipeline", () => {
+    expect(() => jsmql("[ { $lookup: { from: 'c', as: 'r', pipeline: [ { $merge: 'x' } ] } } ]")).toThrow(
+      /'\$merge' is not allowed inside a '\$lookup' sub-pipeline/,
+    );
+  });
+  it("rejects $merge inside a $unionWith sub-pipeline", () => {
+    expect(() => jsmql("[ { $unionWith: { coll: 'c', pipeline: [ { $merge: 'x' } ] } } ]")).toThrow(
+      /'\$merge' is not allowed inside a '\$unionWith' sub-pipeline/,
+    );
+  });
+  it("rejects a nested $facet", () => {
+    expect(() => jsmql("[ { $facet: { a: [ { $facet: { b: [ $count('n') ] } } ] } } ]")).toThrow(
+      /'\$facet' is not allowed inside a '\$facet' sub-pipeline/,
+    );
+  });
+  it("rejects $geoNear inside a $facet sub-pipeline", () => {
+    expect(() => jsmql("[ { $facet: { a: [ { $geoNear: { near: [0, 0], distanceField: 'd' } } ] } } ]")).toThrow(
+      /'\$geoNear' is not allowed inside a '\$facet' sub-pipeline/,
+    );
+  });
+  it("accepts $geoNear as the FIRST stage of a $lookup sub-pipeline (not over-forbidden)", () => {
+    expect(
+      jsmql(
+        "[ { $lookup: { from: 'c', as: 'r', pipeline: [ { $geoNear: { near: [0, 0], distanceField: 'd' } } ] } } ]",
+      ),
+    ).toEqual([{ $lookup: { from: "c", as: "r", pipeline: [{ $geoNear: { near: [0, 0], distanceField: "d" } }] } }]);
+  });
+  it("rejects $geoNear that isn't first WITHIN a $lookup sub-pipeline", () => {
+    expect(() =>
+      jsmql(
+        "[ { $lookup: { from: 'c', as: 'r', pipeline: [ $match($.a > 0), { $geoNear: { near: [0, 0], distanceField: 'd' } } ] } } ]",
+      ),
+    ).toThrow(/'\$geoNear' must be the first stage/);
+  });
+
+  // .validate() carries a meaningful position.
+  it("surfaces a structural violation through validate() with a meaningful pos", () => {
+    const src = "[ { $facet: { a: [ { $out: 'x' } ] } } ]";
+    const result = jsmql.validate(src);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].code).toBe("CODEGEN_ERROR");
+    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+    expect(result.errors[0].pos).toBeLessThanOrEqual(src.length);
+  });
+});
