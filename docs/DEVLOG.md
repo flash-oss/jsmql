@@ -10,17 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-06-01 — Wave 4: `$out` multi-method RHS + bound destination + `.copyWithin` (Wave 4 items #11, #12, #13)
+## 2026-06-03 — decision: bracket access is always raw; only dot access is interpreted
 
-Three independent items, all stage-position sugar around an existing surface:
+A language rule, settling the `["length"]` question that flip-flopped over the previous two entries. **Dot access (`.member`) may carry compiler meaning** — most prominently `.length`, which folds to the string-or-array length operator (`$size`/`$strLenCP`/`$cond`). **Bracket access (`[...]`) never does.** Whatever the user spells inside the brackets is the property they get — `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all direct property access, with no interpretation of the key.
 
-**#11 multi-method `$out` RHS chain.** `$$$.archive = $$.filter(d => d.active).toSorted((a, b) => b.score - a.score).slice(0, 100);` now lowers to `[$match, $sort, $limit, $out]`. The chain dispatch in `lowerChainMethod` (out-translation.ts) routes every non-`.filter` method through the shared `STREAM_METHODS` registry — `.slice`, `.map`, `.toSorted`, `.toReversed`, `.flatMap`, `.concat` all flow through. `.filter` stays inline because it composes with the index-friendly `$match` translator. Methods *outside* the registry still throw an actionable "use a separate stage" error.
+This reverses the earlier "`x["length"]` === `x.length`, same as JS" stance (entry below). The new rule deviates from JS — in JS `arr["length"]` *is* the array length — but the user chose teachability and a clean escape hatch over strict JS fidelity: brackets are the unambiguous "give me the raw data at this key" syntax, including for a field literally named `length`. The mental model is one sentence: *dots are interpreted, brackets are raw.*
 
-**#12 ParamRef bracket-LHS for `$out`.** `jsmql.compile(({ destColl }) => $$$[destColl] = $$)` now resolves the bracket-index at compile time when `destColl` is a string-typed parameter binding. `classifyStep` (out-translation.ts) gained ctx awareness — `ctx.bindings.has(name)` ⇒ resolve to the bound value; non-string bindings surface "parameter binding must be a string"; missing bindings keep the original "not a runtime expression" error.
+Implementation: removed the `["length"] → generateLengthAccess` short-circuit from the `IndexAccess` codegen ([src/codegen.ts](../src/codegen.ts)) and the matching `isLengthAccess`/`asFieldPath` bracket handling from [src/match-translation.ts](../src/match-translation.ts). `isLengthAccess` is back to dot-only. The bare-root string-literal → field-reference rule (entry below) stays — it's the canonical raw-access escape (`$["cart.field.length"]` → `"$cart.field.length"`). Consequences: `$.field["length"]` → the runtime array-or-object `$cond` (reads a property "length"); `$.csv.split(",")["length"]` → `$arrayElemAt[…, "length"]` (raw, not `$size`). Tests in [test/codegen.test.ts](../test/codegen.test.ts), [test/match-translation.test.ts](../test/match-translation.test.ts), [test/realistic.test.ts](../test/realistic.test.ts) (rectangle-area + dynamic-key); docs across [LANGUAGE.md](../LANGUAGE.md) (Bracket Access + Property access), [method-dispatch.md](specs/method-dispatch.md), [match-query-translation.md](specs/match-query-translation.md).
 
-**#13 `.copyWithin()` statement-position mutator.** `$.tags.copyWithin(2, 0, 2);` now lowers to a `$set` whose body is `$concatArrays: [prefix-slice, copied-slice, suffix-slice]`. Non-negative integer literals only (consistent with `.slice` / `.toSpliced` / `.fill`); the two-arg form treats `end` as the array's `$size` at runtime via `$max(0, $size - start)`. The expression-position rejection message now points at the statement-position alternative.
+---
 
-Files: [src/out-translation.ts](../src/out-translation.ts) (chain dispatch + ctx threading + ParamRef step), [src/pipeline.ts](../src/pipeline.ts) (two `lowerOut` / `detectOutAssign` call sites updated), [src/codegen.ts](../src/codegen.ts) (`.copyWithin` in `MUTATING_ARRAY_METHODS` + `buildCopyWithinRhs`). Specs: [docs/specs/out-stage.md](specs/out-stage.md), [docs/specs/method-dispatch.md](specs/method-dispatch.md). Tests: [test/out.test.ts](../test/out.test.ts) (7 new cases). 1594 tests pass.
+## 2026-06-03 — feat: `$["any.field"]` on the bare root is a plain field reference
+
+Follow-up to the `.length` change below. Since `$.field.length` now folds to the string-or-array length operator, a doc with a *genuine* nested `length` dimension (`{ field: { length: 10, width: 5 } }`) needed an escape. The answer: spell the whole path inside one bracket key on the root — `$["field.length"]` lowers to a plain field reference `"$field.length"`, not the runtime array/object `$cond`.
+
+The rule is narrow and principled: a **string-literal** key on the **bare root** `$` (parser shape `IndexAccess(FieldRef "", StringLiteral)`). The root document is never an array, so the `$arrayElemAt` branch of the general dispatch is dead weight there. This doubles as the way to name a field that isn't a bare identifier — dots, dashes, spaces: `$["dash-name"]` → `"$dash-name"`. Non-root string-literal bracket access (`$.config["host"]`) is unchanged — that receiver *can* be an array at query time, so it keeps the documented `$isArray` `$cond`. The `["length"]` length-operator special case still runs first, so `$["length"]` on root stays the (admittedly odd) length-of-root form, consistent with the prior turn's `["length"] === .length` rule.
+
+Implementation: one guard in the `IndexAccess` case of [src/codegen.ts](../src/codegen.ts). Realistic test (rectangle area) in [test/realistic.test.ts](../test/realistic.test.ts); unit test in [test/codegen.test.ts](../test/codegen.test.ts); docs in [LANGUAGE.md](../LANGUAGE.md) (Bracket Access) and [method-dispatch.md](specs/method-dispatch.md).
+
+---
+
+## 2026-06-03 — fix: `.length` in filters is string-or-array, gated on a natural-number RHS
+
+`$.cart.items.length < 20` in a filter compiled to the literal dotted key `{ "cart.items.length": { $lt: 20 } }` — treating `.length` as a real nested field, which is almost never what the user meant. The `===`/`!==` path already had a guard, but it folded to an array-only `$size` peephole that *silently fails on strings*, and the ordered-comparison path (`<`, `>`, `<=`, `>=`) had no guard at all and leaked the dotted key.
+
+New model (filter context), per the user: `.length` (and the JS-identical `["length"]` — `x["length"] === x.length`) is read against the RHS. **Vs a natural-number literal** (non-negative integer) → it's a string-or-array length; the whole comparison residualises into `$expr` so codegen emits the `$isArray`/`$size`/`$strLenCP` `$cond` (works on both types, unlike the removed `$size` peephole). **Vs anything else** (`3.5`, `"x"`, …) → a length can't equal a non-natural value, so `.length` reads as a literal field path and collapses into `{ "items.length": <value> }`. The natural-number test is the sole discriminator — there is intentionally no separate escape hatch; to read a field literally named `length` against a natural number, use `$getField($.x, "length")`.
+
+Implementation: [src/match-translation.ts](../src/match-translation.ts) — replaced `translateLengthSize`/`orientLengthAndInt`/`asLengthFieldPath` with `isLengthAccess` + `isLengthVsNatural`, intercepting in both the equality and ordered branches of `translateLeaf`; extended `asFieldPath` to collapse `["length"]` like `.length`. [src/codegen.ts](../src/codegen.ts) — extracted `generateLengthAccess` and called it from both the `MemberAccess("length")` and `IndexAccess(StringLiteral "length")` cases so bracket and dot lower identically. Boundary: a `.length` compared against a non-literal residualises to the `$expr` length form (can't express a literal `length` field in `$expr` without `$getField`). Supersedes the old `$size` peephole documented in [match-query-translation.md](specs/match-query-translation.md).
 
 ---
 
@@ -44,6 +60,20 @@ Tags retrofitted in this commit (low fork-conflict risk): DEF-001 (stream ternar
 **Convention rule.** Added [root `CLAUDE.md` § Maintain docs/DEFERRED.md](../CLAUDE.md#maintain-docsdeferredmd). Added a row to `docs/CLAUDE.md`'s file-tree table. One-line pointer at top of `LANGUAGE.md`. `README.md` deliberately untouched (per the user's explicit "Don't touch README" instruction during plan review).
 
 **Coordination caveat.** This intentionally lands while the fork is still running. The user's "I keep forgetting" urgency outweighed the cleaner "wait for fork to settle" sequencing. The allowlist absorbs the in-flight mess; the STALE-ALLOWLIST gate makes the cleanup self-driving.
+
+---
+
+## 2026-06-01 — Wave 4: `$out` multi-method RHS + bound destination + `.copyWithin` (Wave 4 items #11, #12, #13)
+
+Three independent items, all stage-position sugar around an existing surface:
+
+**#11 multi-method `$out` RHS chain.** `$$$.archive = $$.filter(d => d.active).toSorted((a, b) => b.score - a.score).slice(0, 100);` now lowers to `[$match, $sort, $limit, $out]`. The chain dispatch in `lowerChainMethod` (out-translation.ts) routes every non-`.filter` method through the shared `STREAM_METHODS` registry — `.slice`, `.map`, `.toSorted`, `.toReversed`, `.flatMap`, `.concat` all flow through. `.filter` stays inline because it composes with the index-friendly `$match` translator. Methods *outside* the registry still throw an actionable "use a separate stage" error.
+
+**#12 ParamRef bracket-LHS for `$out`.** `jsmql.compile(({ destColl }) => $$$[destColl] = $$)` now resolves the bracket-index at compile time when `destColl` is a string-typed parameter binding. `classifyStep` (out-translation.ts) gained ctx awareness — `ctx.bindings.has(name)` ⇒ resolve to the bound value; non-string bindings surface "parameter binding must be a string"; missing bindings keep the original "not a runtime expression" error.
+
+**#13 `.copyWithin()` statement-position mutator.** `$.tags.copyWithin(2, 0, 2);` now lowers to a `$set` whose body is `$concatArrays: [prefix-slice, copied-slice, suffix-slice]`. Non-negative integer literals only (consistent with `.slice` / `.toSpliced` / `.fill`); the two-arg form treats `end` as the array's `$size` at runtime via `$max(0, $size - start)`. The expression-position rejection message now points at the statement-position alternative.
+
+Files: [src/out-translation.ts](../src/out-translation.ts) (chain dispatch + ctx threading + ParamRef step), [src/pipeline.ts](../src/pipeline.ts) (two `lowerOut` / `detectOutAssign` call sites updated), [src/codegen.ts](../src/codegen.ts) (`.copyWithin` in `MUTATING_ARRAY_METHODS` + `buildCopyWithinRhs`). Specs: [docs/specs/out-stage.md](specs/out-stage.md), [docs/specs/method-dispatch.md](specs/method-dispatch.md). Tests: [test/out.test.ts](../test/out.test.ts) (7 new cases). 1594 tests pass.
 
 ---
 

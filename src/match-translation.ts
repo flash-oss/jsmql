@@ -182,20 +182,20 @@ function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> |
       if (typed !== null) return typed;
       const undef = translateUndefinedPredicate(expr.left, expr.right, op);
       if (undef !== null) return undef;
-      const sz = translateLengthSize(expr.left, expr.right, op);
-      if (sz !== null) return sz;
-      // If either side IS a `.length` access but we couldn't fold to `$size`
-      // (non-integer or negative RHS), don't let the generic field-path walker
-      // collapse it into a literal dotted key like `"items.length"` — that's a
-      // real path in MongoDB but never what the user meant. Fall through to
-      // `$expr` instead.
-      if (asLengthFieldPath(expr.left) !== null || asLengthFieldPath(expr.right) !== null) return null;
+      // `.length` (or the JS-identical `["length"]`) compared against a natural
+      // number is the *length* of a string-or-array, not a field named
+      // `length`. Residualise into `$expr` so codegen emits the runtime
+      // `$isArray`/`$size`/`$strLenCP` dispatch (which, unlike `$size`, also
+      // handles strings). Comparisons against a non-natural value fall through
+      // to the generic path, which treats `.length` as a literal field path.
+      if (isLengthVsNatural(expr.left, expr.right)) return null;
       const md = translateModulo(expr.left, expr.right, op);
       if (md !== null) return md;
     }
     return translateEquality(expr.left, expr.right, op, ctx);
   }
   if (isOrderedOp(op)) {
+    if (isLengthVsNatural(expr.left, expr.right)) return null;
     return translateOrderedCompare(expr.left, expr.right, op, ctx);
   }
   return null;
@@ -408,32 +408,23 @@ function translateUndefinedPredicate(left: Expr, right: Expr, op: "===" | "!==")
 }
 
 /**
- * `$.items.length === N` / `$.items.length !== N` → `{ items: { $size: N } }`
- * / `{ items: { $not: { $size: N } } }`. Integer-literal RHS only; non-integer
- * or non-literal falls through to `$expr`. Must be tried before the generic
- * field-path equality, otherwise `$.items.length` flattens into a literal
- * dotted-key `"items.length"` (a real but unintended path).
+ * A `.length` member access. Only the dot form is interpreted as a length —
+ * bracket access (`["length"]`) is raw data access and is never folded here.
  */
-function translateLengthSize(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
-  const oriented = orientLengthAndInt(left, right);
-  if (oriented === null) return null;
-  if (op === "===") return { [oriented.field]: { $size: oriented.size } };
-  return { [oriented.field]: { $not: { $size: oriented.size } } };
+function isLengthAccess(expr: Expr): boolean {
+  return expr.type === "MemberAccess" && expr.member === "length";
 }
 
-function orientLengthAndInt(left: Expr, right: Expr): { field: string; size: number } | null {
-  const lf = asLengthFieldPath(left);
-  if (lf !== null && isIntegerLiteral(right))
-    return { field: lf, size: (right as { type: "NumberLiteral"; value: number }).value };
-  const rf = asLengthFieldPath(right);
-  if (rf !== null && isIntegerLiteral(left))
-    return { field: rf, size: (left as { type: "NumberLiteral"; value: number }).value };
-  return null;
-}
-
-function asLengthFieldPath(expr: Expr): string | null {
-  if (expr.type !== "MemberAccess" || expr.member !== "length") return null;
-  return asFieldPath(expr.object);
+/**
+ * `<length-access> <cmp> <natural-number-literal>` (either orientation). A
+ * length compared against a natural number (`isIntegerLiteral` = non-negative
+ * integer) is unambiguously a length; when true the comparison residualises to
+ * `$expr` for the string-or-array `$cond`. Against any other RHS (`3.5`,
+ * negative, a string, a non-literal) `.length` is read as a literal field path
+ * instead — a length can't sensibly equal a non-natural value.
+ */
+function isLengthVsNatural(left: Expr, right: Expr): boolean {
+  return (isLengthAccess(left) && isIntegerLiteral(right)) || (isLengthAccess(right) && isIntegerLiteral(left));
 }
 
 function isIntegerLiteral(expr: Expr): boolean {

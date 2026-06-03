@@ -884,6 +884,15 @@ describe("bracket access", () => {
       ],
     });
   });
+  it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
+    // `$["x"]` is just `$.x`; the bracket form is the escape hatch for field
+    // names that aren't bare identifiers (dots, dashes) — and notably for
+    // reaching a nested `length` field without `.length` folding to the
+    // string-or-array length operator.
+    expect(jsmql.expr('$["field.length"]')).toBe("$field.length");
+    expect(jsmql.expr('$["weird-name"]')).toBe("$weird-name");
+    expect(jsmql.expr('$["field.length"] * $.field.width')).toEqual({ $multiply: ["$field.length", "$field.width"] });
+  });
   it("chained bracket access on bare field → nested $cond", () => {
     expect(jsmql.expr("$.m[$.r][$.c]")).toEqual({
       $cond: [
@@ -1080,6 +1089,19 @@ describe("string methods", () => {
     expect(jsmql.expr("$.items.length")).toEqual({
       $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }],
     });
+  });
+  it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
+    // Bracket access never folds to $size/$strLenCP — it reads a property called
+    // "length" like any other key. Bare receiver → runtime $cond dispatch.
+    expect(jsmql.expr('$.items["length"]')).toEqual({
+      $cond: [
+        { $isArray: "$items" },
+        { $arrayElemAt: ["$items", "length"] },
+        { $getField: { field: "length", input: "$items" } },
+      ],
+    });
+    // Known-array receiver → $arrayElemAt with the literal key (not $size).
+    expect(jsmql.expr('$.csv.split(",")["length"]')).toEqual({ $arrayElemAt: [{ $split: ["$csv", ","] }, "length"] });
   });
   it("chained trim then toLowerCase", () => {
     expect(jsmql.expr("$.name.trim().toLowerCase()")).toEqual({ $toLower: { $trim: { input: "$name" } } });

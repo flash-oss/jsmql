@@ -179,6 +179,12 @@ When a lambda is processed, its parameters are added to `lambdaParams` via `exte
 
 `bindingTypes` holds the static type of selected in-scope lambda bindings (currently only `.reduce()` accumulators, see below). It is keyed by the user-facing param name (pre-`reduceRemap`) and read by the `IndexAccess` codegen to skip the runtime `$cond` on `$isArray` when the receiver's type is known. `extendCtx` and every manual ctx-literal in `codegen.ts` forward the field; `freshSubPipelineCtx` deliberately does **not** (lambda-scoped narrowing must not cross into a sub-pipeline that runs against a different document).
 
+**Bracket access is raw; dot access is interpreted.** This is a deliberate language rule (see [LANGUAGE.md → Bracket Access](../LANGUAGE.md#bracket-access)). A `MemberAccess` can carry compiler meaning — most notably `.length`, which `generateLengthAccess` folds to the string-or-array length operator. `IndexAccess` never does: the codegen does **not** interpret the key. `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamic]` are all direct property access. Concretely, the `IndexAccess` codegen has exactly one string-literal short-circuit before its general array-or-object dispatch:
+
+- A string-literal key on the **bare root** (`FieldRef` with `path === ""`) → a plain field reference `` `$${value}` ``. The root document is never an array, so the `$arrayElemAt` branch is dead; this also gives users a way to name fields that aren't bare identifiers (`$["cart.field.length"]` → `"$cart.field.length"`, `$["dash-name"]` → `"$dash-name"`).
+
+Everything else (`$.config["host"]`, `$.items[0]`, `$.cart.field[$.mainSide]`) takes the general dispatch: known-array receiver → `$arrayElemAt`, binding-typed object → `$getField`, otherwise the runtime `$cond` on `$isArray`. Notably there is **no** `["length"]` special case — `$.field["length"]` reads a property called "length" (via the `$cond`), it does not compute a size.
+
 ## `reduce` parameter remapping
 
 MongoDB's `$reduce` uses fixed variable names `$$value` (accumulator) and `$$this` (current element). The user's parameter names are remapped via `ctx.reduceRemap`:

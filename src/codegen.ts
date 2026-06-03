@@ -696,6 +696,20 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       // and body agree on a compound type). The optional-chain `$ifNull`
       // fallback matches the consumer: `[]` for array, `{}` for object so a
       // missing path doesn't poison `$getField` with an array.
+      // Bracket access is *raw* data access — no compiler interpretation of the
+      // key. Unlike dot `.length` (which folds to the string-or-array length
+      // operator), `["length"]` just reads a property called "length". This
+      // makes brackets the deliberate escape hatch: whatever the user spells in
+      // the brackets is the property they get.
+      //
+      // `$["any.field"]` — a string-literal key on the bare root document — is a
+      // plain field reference: the root is never an array, so the `$arrayElemAt`
+      // branch below would be dead, and this lets users reach a field whose name
+      // isn't a bare identifier (a dot, dash, space, …) — e.g.
+      // `$["cart.field.length"]` → `"$cart.field.length"`.
+      if (expr.index.type === "StringLiteral" && expr.object.type === "FieldRef" && expr.object.path === "") {
+        return `$${expr.index.value}`;
+      }
       const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
@@ -766,20 +780,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "MemberAccess": {
       if (expr.member === "length") {
-        const rawObj = _generate(expr.object, ctx);
-        const optional = expr.optional || chainHasOptional(expr.object);
-        if (isStringProducing(expr.object)) {
-          return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
-        }
-        if (isArrayProducing(expr.object)) {
-          return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
-        }
-        // Type unknown at compile time — dispatch at runtime. When the chain is
-        // optional, wrap the receiver with $ifNull(rawObj, []) so `$isArray`
-        // succeeds, the array branch runs, and `$size([])` returns 0 (matching
-        // JS short-circuit: `undefined?.length` is undefined; we surface 0).
-        const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-        return { $cond: [{ $isArray: obj }, { $size: obj }, { $strLenCP: obj }] };
+        return generateLengthAccess(expr.object, expr.optional || chainHasOptional(expr.object), ctx);
       }
       const path = asFieldPath(expr, ctx);
       if (path !== null) return path;
@@ -894,6 +895,19 @@ function chainHasOptional(expr: Expr): boolean {
 
 function wrapIfNull(value: unknown, fallback: unknown): unknown {
   return { $ifNull: [value, fallback] };
+}
+
+// `.length` / `["length"]` of `object`. Known string → `$strLenCP`, known array
+// → `$size`, otherwise dispatch at runtime. When the chain is optional, wrap the
+// receiver with `$ifNull(_, [])` so `$isArray` succeeds, the array branch runs,
+// and `$size([])` returns 0 (matching JS short-circuit: `undefined?.length` is
+// undefined; we surface 0).
+function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx): unknown {
+  const rawObj = _generate(object, ctx);
+  if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
+  if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
+  const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
+  return { $cond: [{ $isArray: obj }, { $size: obj }, { $strLenCP: obj }] };
 }
 
 // Method-name → "neutral input for the operator this method lowers to".

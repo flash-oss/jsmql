@@ -447,16 +447,55 @@ $.customer.region.trim().toLowerCase() === "us"
       `,
     ).toEqual({
       "cart.total": { $gte: 50 },
-      "cart.items.length": { $lt: 20 },
       $expr: {
         $and: [
           { $in: ["$customer.status", ["premium", "gold", "platinum"]] },
+          // `.length < N` against a natural number is a string-or-array length,
+          // not a literal `cart.items.length` field — it rides in $expr.
+          {
+            $lt: [{ $cond: [{ $isArray: "$cart.items" }, { $size: "$cart.items" }, { $strLenCP: "$cart.items" }] }, 20],
+          },
           { $eq: [{ $toLower: { $trim: { input: "$customer.region" } } }, "us"] },
         ],
       },
     });
   });
 });
+
+describe(
+  "rectangle area via raw bracket access (brackets = direct property access)",
+  { features: ["Property access"] },
+  () => {
+    it(
+      "compiles to the expected MQL",
+      { kind: "expression", usage: "db.shapes.aggregate([{ $addFields: { area: jsmql.expr(...) } }])" },
+      () => {
+        // A doc like `{ cart: { field: { length: 10, width: 5 } } }` — `cart.field.length`
+        // is a genuine numeric dimension, NOT an array/string length. Dot `.length`
+        // would fold to the length operator, so reach the field with RAW bracket
+        // access: jsmql interprets nothing inside the brackets — whatever the user
+        // spells is the property they get. `$["cart.field.length"]` on the bare root
+        // is a plain field reference (the root is never an array).
+        expect(jsmql.expr(`$["cart.field.length"] * $.cart.field.width`)).toEqual({
+          $multiply: ["$cart.field.length", "$cart.field.width"],
+        });
+      },
+    );
+
+    it("dynamic bracket key dispatches at runtime, still without interpreting the key", { kind: "expression" }, () => {
+      // `$.cart.field[$.mainSide]` — a computed key. jsmql doesn't guess the key;
+      // it accesses whatever `$mainSide` names, dispatching array-index vs
+      // object-field at query time (a BSON value can be either).
+      expect(jsmql.expr(`$.cart.field[$.mainSide]`)).toEqual({
+        $cond: [
+          { $isArray: "$cart.field" },
+          { $arrayElemAt: ["$cart.field", "$mainSide"] },
+          { $getField: { field: "$mainSide", input: "$cart.field" } },
+        ],
+      });
+    });
+  },
+);
 
 describe("admin permission with operand-preserving &&", { features: ["Comparisons and boolean logic"] }, () => {
   it(
