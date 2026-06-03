@@ -155,3 +155,37 @@ describe("stage body validation — $replaceWith / $documents", () => {
     expect(jsmql("[ $replaceWith($.user) ]")).toEqual([{ $replaceWith: "$user" }]);
   });
 });
+
+describe("$match query-operator placement", () => {
+  it("requires a $match using $text to be the first stage", () => {
+    expect(() => jsmql("$sort({ x: 1 }); $match({ $text: { $search: 'a' } })")).toThrow(
+      /'\$match' that uses '\$text' must be the first stage/,
+    );
+    // also when $text is nested under $and
+    expect(() => jsmql("[ $sort({ x: 1 }), $match({ $and: [ { $text: { $search: 'a' } } ] }) ]")).toThrow(
+      /must be the first stage/,
+    );
+  });
+  it("accepts $text in a first-stage $match", () => {
+    expect(jsmql("[ $match({ $text: { $search: 'a' } }), $sort({ x: 1 }) ]")).toEqual([
+      { $match: { $text: { $search: "a" } } },
+      { $sort: { x: 1 } },
+    ]);
+  });
+  it("rejects $near / $nearSphere / $where in an aggregation $match", () => {
+    expect(() => jsmql("[ $match({ loc: { $near: [0, 0] } }) ]")).toThrow(
+      /'\$near' is not allowed inside an aggregation '\$match'.*\$geoNear/,
+    );
+    expect(() => jsmql("[ $sort({ x: 1 }), $match({ loc: { $nearSphere: [0, 0] } }) ]")).toThrow(
+      /'\$nearSphere' is not allowed.*\$geoNear/,
+    );
+    expect(() => jsmql("[ $match({ $where: 'this.x > 1' }) ]")).toThrow(/'\$where' is not allowed.*\$expr/);
+  });
+  it("leaves an ordinary $match (object or expression body) alone", () => {
+    expect(jsmql("[ $sort({ x: 1 }), $match({ x: { $gt: 1 } }) ]")).toEqual([
+      { $sort: { x: 1 } },
+      { $match: { x: { $gt: 1 } } },
+    ]);
+    expect(jsmql("[ $sort({ x: 1 }), $match($.x > 1) ]")).toEqual([{ $sort: { x: 1 } }, { $match: { x: { $gt: 1 } } }]);
+  });
+});

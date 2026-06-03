@@ -90,7 +90,7 @@ import {
 } from "./lookup-translation.ts";
 import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
-import { validateStageBody } from "./stage-validation.ts";
+import { validateStageBody, validateMatchPlacement } from "./stage-validation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
 import {
   isSystemStageCall,
@@ -251,9 +251,10 @@ type PipelineValidator = {
   /**
    * Call for a literal stage (resolved by asStageShape) BEFORE pushing it.
    * `userIndex` is the loop index — the user-authored position in THIS pipeline.
-   * Order: forbidden-in-context → must-be-first → record must-be-last.
+   * Order: forbidden-in-context → must-be-first → record must-be-last →
+   * (for `$match`) query-operator placement ($text-first, $near/$where bans).
    */
-  checkStage: (name: string, pos: number, userIndex: number) => void;
+  checkStage: (name: string, pos: number, userIndex: number, body: Expr) => void;
   /** The sugar `$out` paths call this so the unified "after terminal" check fires. */
   markSugarOut: (pos: number) => void;
 };
@@ -264,7 +265,7 @@ function makePipelineValidator(container: ContainerKind): PipelineValidator {
     checkBeforeElement(pos: number): void {
       if (terminal !== null) throw makeAfterTerminalError(terminal, pos);
     },
-    checkStage(name: string, pos: number, userIndex: number): void {
+    checkStage(name: string, pos: number, userIndex: number, body: Expr): void {
       const def = lookupStage(name);
       if (def === undefined) return; // asStageShape already guaranteed it; defensive
       if (container !== "top" && stageForbiddenIn(def, container)) {
@@ -278,6 +279,9 @@ function makePipelineValidator(container: ContainerKind): PipelineValidator {
         throw new CodegenError(mustBeFirstLiteralMessage(name), pos);
       }
       if (stageMustBeLast(def)) terminal = { stageName: name, pos, viaSugar: false };
+      if (name === "$match") {
+        validateMatchPlacement(body, { isTopLevel: container === "top", isFirstStage: userIndex === 0 });
+      }
     },
     markSugarOut(pos: number): void {
       terminal = { stageName: "$out", pos, viaSugar: true };
@@ -472,7 +476,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     }
     const rewrittenEl = extractFromStageElement(el, ctx, tracking.alloc, lowerBlock, out);
     const shape = asStageShape(rewrittenEl);
-    if (shape !== null) validator.checkStage(shape.name, rewrittenEl.pos ?? el.pos, i);
+    if (shape !== null) validator.checkStage(shape.name, rewrittenEl.pos ?? el.pos, i, shape.body);
     const result = lowerStageElement(rewrittenEl, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
@@ -572,7 +576,7 @@ export function generateImplicitPipeline(
     // Stage call statement (Expr that resolves to a stage shape).
     const rewrittenStmt = extractFromStageElement(stmt as Expr, ctx, tracking.alloc, lowerBlock, out);
     const shape = asStageShape(rewrittenStmt as ArrayElement);
-    if (shape !== null) validator.checkStage(shape.name, (rewrittenStmt as Expr).pos, i);
+    if (shape !== null) validator.checkStage(shape.name, (rewrittenStmt as Expr).pos, i, shape.body);
     const result = lowerStageElement(rewrittenStmt as ArrayElement, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;
@@ -1434,7 +1438,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
     }
     flushUpdateOps();
     const shape = asStageShape(el);
-    if (shape !== null) validator.checkStage(shape.name, el.pos, i);
+    if (shape !== null) validator.checkStage(shape.name, el.pos, i, shape.body);
     const result = lowerStageElement(el, i, ctx);
     out.push(result.stage);
     ctx = result.ctx;

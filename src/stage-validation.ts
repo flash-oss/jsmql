@@ -160,6 +160,78 @@ function rejectNonDocumentNewRoot(stage: string, value: Expr): void {
   }
 }
 
+// ── $match query-operator placement ─────────────────────────────────────────────
+//
+// A raw `$match` object body passes through verbatim, so query operators are
+// reachable. Some have positional / availability rules the server enforces:
+//   - `$text` may only appear in a `$match` that is the pipeline's FIRST stage.
+//   - `$near` / `$nearSphere` / `$where` are not allowed in an aggregation
+//     `$match` at all (use `$geoNear` / `$geoWithin` / `$expr` instead).
+// We walk the (static) match body for these keys, recursing through nested
+// field-value objects and `$and`/`$or`/`$nor` arrays.
+
+const MATCH_DISALLOWED: Record<string, string> = {
+  $near: "use the '$geoNear' stage (it must be the first stage), or '$geoWithin' with '$center'/'$centerSphere'",
+  $nearSphere: "use the '$geoNear' stage (it must be the first stage), or '$geoWithin' with '$centerSphere'",
+  $where: "use '$expr' with a query expression (or '$function' for server-side JS)",
+};
+
+/** First occurrence of any `names` key in a (static) `$match` body, recursing into objects/arrays. */
+function findMatchOperator(body: Expr, names: ReadonlySet<string>): { name: string; pos: number } | null {
+  if (body.type === "ObjectLiteral") {
+    for (const entry of body.entries) {
+      if (entry.type !== "KeyValueEntry") continue;
+      if (entry.key.kind === "static" && names.has(entry.key.name)) {
+        return { name: entry.key.name, pos: entry.pos };
+      }
+      const found = findMatchOperator(entry.value, names);
+      if (found !== null) return found;
+    }
+  } else if (body.type === "ArrayLiteral") {
+    for (const el of body.elements) {
+      if (
+        el.type === "SpreadElement" ||
+        el.type === "AssignExpr" ||
+        el.type === "DeleteStmt" ||
+        el.type === "LetDecl"
+      ) {
+        continue;
+      }
+      const found = findMatchOperator(el, names);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+
+const DISALLOWED_SET: ReadonlySet<string> = new Set(Object.keys(MATCH_DISALLOWED));
+const TEXT_SET: ReadonlySet<string> = new Set(["$text"]);
+
+/**
+ * Enforce `$match` query-operator placement (only meaningful for a raw object
+ * body — an expression body can't contain these). `isTopLevel`/`isFirstStage`
+ * gate the `$text`-must-be-first rule; the disallowed-operator rule always fires.
+ */
+export function validateMatchPlacement(body: Expr, opts: { isTopLevel: boolean; isFirstStage: boolean }): void {
+  if (body.type !== "ObjectLiteral") return;
+  const disallowed = findMatchOperator(body, DISALLOWED_SET);
+  if (disallowed !== null) {
+    throw new CodegenError(
+      `'${disallowed.name}' is not allowed inside an aggregation '$match' — ${MATCH_DISALLOWED[disallowed.name]}.`,
+      disallowed.pos,
+    );
+  }
+  if (opts.isTopLevel && !opts.isFirstStage) {
+    const text = findMatchOperator(body, TEXT_SET);
+    if (text !== null) {
+      throw new CodegenError(
+        `A '$match' that uses '$text' must be the first stage in a pipeline. Move it to the front.`,
+        text.pos,
+      );
+    }
+  }
+}
+
 // ── Per-stage validators ────────────────────────────────────────────────────────
 
 const MERGE_WHEN_MATCHED = ["replace", "keepExisting", "merge", "fail"] as const;
