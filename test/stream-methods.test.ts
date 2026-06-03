@@ -217,7 +217,6 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
       { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
       { $replaceWith: { a: "$__jsmql.__lookup1" } },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -231,7 +230,6 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
       { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
       { $replaceWith: { id: "$_id", archived: "$__jsmql.__lookup1" } },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -239,7 +237,6 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     expect(jsmql("$$ = $$.map(d => ({ id: d._id, items: $$$.archive.filter(x => x.userId === d._id) }));")).toEqual([
       { $lookup: { from: "archive", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
       { $replaceWith: { id: "$_id", items: "$__jsmql.__lookup1" } },
-      { $unset: "__jsmql" },
     ]);
   });
 

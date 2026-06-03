@@ -25,7 +25,7 @@
 // param IS the current document — there's no separate outer-doc concept.
 
 import type { Expr } from "./ast.ts";
-import { CodegenError, freshSubPipelineCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
+import { CodegenError, freshFacetCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import { extractLetsFromExpr, extractLetsFromPipeline, type SubPipelineLowerer } from "./lookup-translation.ts";
 import { translateMatchBody } from "./match-translation.ts";
 
@@ -137,7 +137,7 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
   if (lambda.body !== undefined) {
     const { rewritten, letVars } = extractLetsFromExpr(lambda.body, param);
     rejectLocalRef(letVars, param, lambda.pos);
-    const subCtx = freshSubPipelineCtx(outerCtx);
+    const subCtx = freshFacetCtx(outerCtx);
     const t = translateMatchBody(rewritten, { bindings: subCtx.bindings });
     const queryEmpty = Object.keys(t.query).length === 0;
     if (queryEmpty && t.residual === null) return [];
@@ -150,7 +150,7 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
   if (lambda.block !== undefined) {
     const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, param);
     rejectLocalRef(letVars, param, lambda.pos);
-    const subCtx = freshSubPipelineCtx(outerCtx);
+    const subCtx = freshFacetCtx(outerCtx);
     return lowerBlock(rewritten, subCtx);
   }
 

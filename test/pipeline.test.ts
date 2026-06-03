@@ -268,7 +268,6 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(jsmql("[ $ = $$$.users.find(u => u._id === $.userId) ]")).toEqual([
       { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
       { $replaceWith: { $first: "$__jsmql.__lookup1" } },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -557,7 +556,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -576,7 +574,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -596,7 +593,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -614,7 +610,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -630,7 +625,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -669,7 +663,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "__jsmql.__lookup1" } },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -690,7 +683,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       { $lookup: { from: "events", localField: "__jsmql.user._id", foreignField: "userId", as: "__jsmql.__lookup1" } },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -711,7 +703,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 
@@ -732,7 +723,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       },
       { $unwind: "$__jsmql.__lookup1" },
       { $replaceWith: "$__jsmql.__lookup1" },
-      { $unset: "__jsmql" },
     ]);
   });
 });

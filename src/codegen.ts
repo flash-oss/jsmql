@@ -94,6 +94,18 @@ export type GenerateCtx = {
    * `extendCtx` so it survives lambda bodies and other ctx-modifying paths.
    */
   insideLiteral?: boolean;
+  /**
+   * Accumulator context — set by `pipeline.ts` when descending into a `$group`
+   * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
+   * slot. Used by the operator-call codegen to gate operators that only make
+   * sense inside one of these contexts:
+   *   - `"group"`: accumulator-only operators ($addToSet, $push, $bottom*, etc.)
+   *     are allowed; window-only operators ($rank, $denseRank, etc.) are NOT.
+   *   - `"window-output"`: BOTH accumulator-only AND window-only operators are
+   *     allowed.
+   *   - unset / undefined: neither — outside any aggregation accumulator scope.
+   */
+  accumulatorContext?: "group" | "window-output";
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -107,6 +119,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
     insideLiteral: ctx.insideLiteral,
+    accumulatorContext: ctx.accumulatorContext,
   };
 }
 
@@ -140,6 +153,19 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
  */
 export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
   return { lambdaParams: new Set(), bindings: outer.bindings };
+}
+
+/**
+ * Construct a sub-pipeline ctx that PRESERVES outer pipeline lets — used by
+ * `$facet` branches. Unlike `$lookup.pipeline` / `$unionWith.pipeline`
+ * (which operate on a different document set), every facet branch operates
+ * on the SAME input docs that arrived at the outer pipeline's $facet stage.
+ * Those docs still carry the `__jsmql.<name>` fields the outer lets
+ * materialised into, so `$__jsmql.<name>` references inside the branch
+ * resolve correctly.
+ */
+export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
+  return { lambdaParams: new Set(), bindings: outer.bindings, pipelineLets: outer.pipelineLets };
 }
 
 /** Return a fresh ctx with the given function-form parameter bindings applied. */
@@ -1446,6 +1472,62 @@ function generateStaticObjectEntries(entries: ObjectEntry[], ctx: GenerateCtx): 
 
 // ── Operator calls ────────────────────────────────────────────────────────────
 
+/**
+ * Operators with no expression-form in MongoDB — they only mean something
+ * inside `$group` field-value slots or `$setWindowFields.output[<key>]`
+ * bodies. Using them outside those contexts produces invalid MQL the
+ * server will reject at runtime; catch it at compile time.
+ *
+ * Distinct from operators that have *both* expression and accumulator
+ * forms ($sum, $avg, $max, $min, $first, $last, $stdDev*) — those stay
+ * unrestricted because the expression form is valid in arbitrary
+ * positions.
+ */
+const ACCUMULATOR_ONLY_OPERATORS: ReadonlySet<string> = new Set([
+  "$accumulator",
+  "$addToSet",
+  "$bottom",
+  "$bottomN",
+  "$top",
+  "$topN",
+  "$push",
+  "$median",
+  "$percentile",
+]);
+
+/**
+ * Validate that an operator call appears in a context that allows it. Throws
+ * a precise `CodegenError` for window-only / accumulator-only operators used
+ * outside `$group` / `$setWindowFields.output`. Permissive by default — any
+ * operator whose category is `window` or whose name is in
+ * `ACCUMULATOR_ONLY_OPERATORS` gets gated; everything else passes through.
+ */
+function checkOperatorContext(name: string, ctx: GenerateCtx, pos: number): void {
+  const def = lookupOperator(name);
+  // Window-only: category === "window" → require `window-output` context.
+  if (def?.category === "window") {
+    if (ctx.accumulatorContext !== "window-output") {
+      throw new CodegenError(
+        `${name} is a window operator — only valid inside '$setWindowFields' output slots. ` +
+          `Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: ${name}(...) } }) to compute it per-document over a window.`,
+        pos,
+      );
+    }
+    return;
+  }
+  // Accumulator-only: allowed inside `$group` field-value slots and inside
+  // `$setWindowFields.output` slots.
+  if (ACCUMULATOR_ONLY_OPERATORS.has(name)) {
+    if (ctx.accumulatorContext === undefined) {
+      throw new CodegenError(
+        `${name} is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. ` +
+          `Use $group({ _id: ..., <key>: ${name}(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.`,
+        pos,
+      );
+    }
+  }
+}
+
 function generateOperatorCall(
   name: string,
   style: "positional" | "object",
@@ -1453,6 +1535,7 @@ function generateOperatorCall(
   ctx: GenerateCtx,
   pos: number,
 ): Record<string, unknown> {
+  checkOperatorContext(name, ctx, pos);
   // Special case: $literal(value) — the argument is wrapped verbatim and
   // MongoDB does not re-evaluate it at query time. Recurse with the
   // `insideLiteral` flag so nested `"$..."` strings don't get a second

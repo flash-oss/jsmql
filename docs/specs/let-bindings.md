@@ -201,11 +201,23 @@ materialises `__jsmql.<name>` from that slot in the standard way. See
   match from using the index. The compiler could surface a warning through
   `validate()`, but that requires a warning channel which doesn't exist yet.
   Documented in `LANGUAGE.md` instead.
-- **Looser `$facet` semantics.** Right now outer lets do not cross any
-  sub-pipeline boundary. A future version could let `$lookup.pipeline` /
-  `$unionWith.pipeline` see outer lets (they typically run with the outer
-  document still in context); `$facet` is harder because each branch is
-  evaluated against the same input.
+- **Outer lets cross into `$lookup.pipeline` / `$unionWith.pipeline`.** These
+  sub-pipelines run on a *different* document (the foreign collection), so
+  the materialised `__jsmql.<name>` field doesn't exist there — outer lets
+  legitimately don't cross. (The `$lookup.let` clause is the mechanism to
+  thread per-doc values into those sub-pipelines; jsmql already auto-extracts
+  `$.x` refs into it.)
+
+## Landed
+
+- **Outer lets visible inside `$facet` sub-pipelines** (Wave 5 #28). Each
+  facet branch operates on the same input documents that arrived at the
+  outer `$facet` stage — they still carry the `__jsmql.<name>` fields the
+  outer lets materialised into. A new `freshFacetCtx` helper (in
+  `src/codegen.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
+  sub-pipeline ctx that PRESERVES `pipelineLets`; the facet branch lowering
+  in `src/facet-translation.ts` uses it. Tests in
+  `test/let-bindings.test.ts` cover the let-into-facet shape.
 
 ## Tests
 
