@@ -587,6 +587,58 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
   });
 });
 
+describe("reducer body shapes — $first / $last / $push", () => {
+  // Three additional accumulator shapes beyond the original $sum / $max / $min:
+  //   - `<acc> ?? d.<path>`  → $first  (JS nullish-coalesce picks first non-null)
+  //   - `d.<path>`           → $last   (body ignores acc, every doc overwrites)
+  //   - `[...<acc>, d.<path>]` or `<acc>.concat(d.<path>)` → $push
+
+  it("scalar wrap: acc ?? d.<path> → $first", () => {
+    expect(jsmql("$$ = [{ firstName: $$.reduce((acc, d) => acc ?? d.name, null) }];")).toEqual([
+      { $group: { _id: null, firstName: { $first: "$name" } } },
+      { $replaceWith: { firstName: "$firstName" } },
+    ]);
+  });
+
+  it("scalar wrap: bare d.<path> body → $last", () => {
+    expect(jsmql("$$ = [{ latestName: $$.reduce((acc, d) => d.name, null) }];")).toEqual([
+      { $group: { _id: null, latestName: { $last: "$name" } } },
+      { $replaceWith: { latestName: "$latestName" } },
+    ]);
+  });
+
+  it("object-reducer: mix of $first, $last, $push in one body", () => {
+    expect(
+      jsmql(
+        "$$ = [$$.reduce((acc, d) => ({ ...acc, firstName: acc.firstName ?? d.name, latestTs: d.timestamp, allIds: [...acc.allIds, d.id] }), { firstName: null, latestTs: null, allIds: [] })];",
+      ),
+    ).toEqual([
+      {
+        $group: {
+          _id: null,
+          firstName: { $first: "$name" },
+          latestTs: { $last: "$timestamp" },
+          allIds: { $push: "$id" },
+        },
+      },
+      { $replaceWith: { firstName: "$firstName", latestTs: "$latestTs", allIds: "$allIds" } },
+    ]);
+  });
+
+  it("$push via .concat spelling — acc.<key>.concat(d.<path>)", () => {
+    expect(
+      jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, items: acc.items.concat(d.label) }), { items: [] })];"),
+    ).toEqual([{ $group: { _id: null, items: { $push: "$label" } } }, { $replaceWith: { items: "$items" } }]);
+  });
+
+  it("$first works on a nested doc path", () => {
+    expect(jsmql("$$ = [{ firstEmail: $$.reduce((acc, d) => acc ?? d.user.email, null) }];")).toEqual([
+      { $group: { _id: null, firstEmail: { $first: "$user.email" } } },
+      { $replaceWith: { firstEmail: "$firstEmail" } },
+    ]);
+  });
+});
+
 describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-build reducer wrap", () => {
   // The single-computed-key form of the object-returning reducer. Lowers to
   // $group + $arrayToObject — the runtime keys come from `d.<keyPath>`, the

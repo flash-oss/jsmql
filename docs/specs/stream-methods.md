@@ -136,6 +136,10 @@ Supported per-key bodies:
 | `acc + 1` / `acc.<key> + 1` | `$sum: 1` (count documents) |
 | `Math.max(acc, d.<field>)` / `Math.max(acc.<key>, d.<field>)` | `$max: "$<field>"` |
 | `Math.min(acc, d.<field>)` / `Math.min(acc.<key>, d.<field>)` | `$min: "$<field>"` |
+| `acc ?? d.<field>` / `acc.<key> ?? d.<field>` | `$first: "$<field>"` (first non-null value seen) |
+| `d.<field>` (body ignores acc — every doc overwrites) | `$last: "$<field>"` |
+| `[...acc, d.<field>]` / `[...acc.<key>, d.<field>]` | `$push: "$<field>"` |
+| `acc.concat(d.<field>)` / `acc.<key>.concat(d.<field>)` | `$push: "$<field>"` (alt spelling) |
 
 **Object-reducer specifics.** An optional leading `...acc` spread is allowed
 as the first body entry (mirrors the JS-idiomatic carry pattern); subsequent
@@ -153,9 +157,10 @@ scalar form it must be a literal so a stray `$.<field>` can't sneak through;
 in the object-reducer form it's a literal object whose keys define the
 accumulator namespace.
 
-Multiple aggregates in either form share **one** `$group` stage. Richer
-per-key body shapes (`$avg` paired with a running count, cross-key references,
-multiplicative accumulators) are not yet recognised — write the `$group` stage
+Multiple aggregates in either form share **one** `$group` stage. Shapes that
+are still not recognised: `$avg` (would need a two-key sum/count dance with
+cross-key references), multiplicative accumulators (no MQL counterpart),
+`$stdDevPop`/`$stdDevSamp` (no idiomatic JS shape). Write the `$group` stage
 by hand for those.
 
 ### Dictionary-build reducer wrap → `$group` + `$arrayToObject`

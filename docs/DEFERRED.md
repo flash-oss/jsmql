@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 22. Decided-against: 6. As of 2026-06-01.
+**Counts.** Open: 23. Decided-against: 6. As of 2026-06-01.
 
 ---
 
@@ -284,6 +284,18 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** None — would need `docs/specs/numeric-edges.md` or similar.
 - **Status.** open
 - **Effort.** M
+
+### DEF-023 — Nested lookups inside a *block-body* lambda
+
+- **What's blocked.** A `$$$.<coll>.find/filter(...)` inside the *block-body* form of another lookup's lambda — `$.users = $$$.users.filter(u => { $match(u.active); $.orders = $$$.orders.filter(o => o.userId === u._id); })`. Expression-body nested lookups (Wave 3 #1) work; block-body ones still throw.
+- **Target lowering.** Same shape as the expression-body path — the inner lookup materialises as a prologue stage inside the outer's `$lookup.pipeline`, with `u.<field>` refs auto-let'd into `inner.let`.
+- **Why blocked.** The block-body lowering goes through `lowerBlock` (= `generateImplicitPipeline`), which calls `extractLookupCalls` on each stage's body. Threading `EnclosingLookupContext` through those layers is the open work — the expression-body path threads it directly via `translatePredicate`'s recursion, but the block-body path runs through a different dispatch.
+- **Attempted approaches.** Considered passing `enclosing` through the `lowerBlock` signature; deferred because it touches every stage-lowering callsite. Could also be solved with a ctx-borne carrier (`ctx.enclosingLookup`), but that adds a new GenerateCtx field that every pipeline-layer function would need to preserve.
+- **Success criteria.** `$.x = $$$.a.filter(a => { $match(a.active); $.bs = $$$.b.filter(b => b.aId === a._id); })` lowers cleanly. Tests in `test/lookup.test.ts` mirror the expression-body block.
+- **Rejection site(s).** `src/lookup-translation.ts:translatePredicate` block-body branch; `src/lookup-translation.ts:buildPipelineFormPredicate` block-body branch.
+- **Spec.** `docs/specs/lookup-stage.md` "Nested lookups (expression-body, any depth)" section names this as the next slice.
+- **Status.** open
+- **Effort.** M (ctx-threading through `lowerBlock` + tests)
 
 ---
 

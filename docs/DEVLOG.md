@@ -33,6 +33,71 @@ Tags retrofitted in this commit (low fork-conflict risk): DEF-001 (stream ternar
 
 ---
 
+## 2026-05-31 — feat: nested lookups at any depth (the "v2 deferral" lands)
+
+The deferred-features catalog's #1 — nested `$$$.<coll>.find/.filter(...)` inside another lookup's predicate — now works for expression-body lambdas at any depth. The previous `rejectNestedLookup` guards in `lowerLookup` / `tryExtractChainedLookup` and the `findFirstLookupInElement` walker in `pipeline.ts:generatePipelineWithCtx` are gone. Block-body nested lookups stay rejected with a precise message ("…not yet supported. Use an expression-body lambda…") — they need ctx-threading through `lowerBlock` that the expression-body path doesn't.
+
+**How it works.** A new `EnclosingLookupContext` ({`foreignParams`, `inScopeLetNames`}) threads through `lowerLookup` → `translatePredicate` → `buildPipelineFormPredicate` → `extractLookupCalls` → `tryExtractChainedLookup` → `descendAndExtract`. Each recursive level grows `foreignParams` with the current lookup's lambda param, and grows `inScopeLetNames` with the letVar names it allocates. The outer lookup's `extractLetsFromExpr` walks down through nested lookup lambda bodies (via `mapChildren`'s MethodCall case, which the original code already did), rewriting `outerForeign.x` refs to `FieldRef("x")` in the inner body — exactly the shape the inner's classifyPath needs to auto-let them into the inner's `$lookup.let`.
+
+**Worked example:**
+
+```js
+$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0);
+
+// →
+// [{
+//   $lookup: {
+//     from: "posts",
+//     let: { _id: "$_id" },                       // outermost doc's _id
+//     pipeline: [
+//       { $lookup: {
+//           from: "tags",
+//           let: { _id: "$_id" },                 // post's _id (post is the local doc here)
+//           pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$_id"] } } }],
+//           as: "__jsmql.__lookup1"
+//       } },
+//       { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+//       { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } }
+//     ],
+//     as: "posts"
+//   }
+// }]
+```
+
+The outer's `$$_id` resolves to the outer-most doc's `_id`. The inner's `$$_id` shadows that (its `let` declares `_id` again) and resolves to the post's `_id` while inside the inner's pipeline. The codegen ctx threads `inScopeLetNames` into `lambdaParams` so `$$<name>` references at each level resolve without throwing `UnknownIdentifier`.
+
+**3-level (any depth) works the same way** — each level captures its own letVars; deeper levels inherit via lexical `$$` scope. See `test/lookup.test.ts` → "nested lookups (expression body, any depth)".
+
+**Known limitation: cross-level field-name collision.** When the same field name (e.g. `_id`) is referenced at two different enclosing levels in the deepest predicate, both rewrite to `FieldRef("_id")` and the deepest level's let-allocator dedupes them into a single binding — `MQL`-valid but semantically wrong. Workaround: pick distinct field names per level. A future pass could allocate let-scope per enclosing level. Documented in `docs/specs/lookup-stage.md`.
+
+**Removed dead code:** `rejectNestedLookup` and its `findFirstLookupPos`/`findFirstInArgs` helpers (lookup-translation.ts), the pre-walker rejection loop in `pipeline.ts:generatePipelineWithCtx`. Bare lambda-param refs in nested predicates (`o => o` — no member access) still throw the existing "Bare lambda parameter 'o' in a `$lookup` predicate is not yet supported" message during the outer's extraction, before nested materialisation runs — message wording unchanged, just reached via the new path.
+
+Files: [src/lookup-translation.ts](../src/lookup-translation.ts) (`EnclosingLookupContext`, `rewriteEnclosingForeignParams` defensive helper, threaded recursion), [src/pipeline.ts](../src/pipeline.ts) (drop the sub-pipeline rejection loop). Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md) "Nested lookups" + "Future work". User docs: [docs/LANGUAGE.md](LANGUAGE.md). Tests: [test/lookup.test.ts](../test/lookup.test.ts) (6 new cases — 2-level filter/filter & find/find, outer-outer + outer-foreign refs, 3-level deep, cross-DB outer, compound predicates, bare-param rejection). 1578 tests pass.
+
+---
+
+## 2026-05-31 — feat: reducer body shapes — $first / $last / $push (Wave 2 #32)
+
+`classifyAccumulatorExpr` in `src/stream-methods.ts` recognises three new
+per-key body shapes, on top of the existing `$sum` / `$max` / `$min`:
+
+| jsmql body | MQL operator |
+|---|---|
+| `acc ?? d.<path>` (or `acc.<key> ?? d.<path>`) | `$first: "$<path>"` — JS's `??` returns the LHS when non-null, else the RHS; the accumulator stays at the initial value until the first non-null arrival, exactly `$first`'s semantics across a group |
+| `d.<path>` (body ignores acc) | `$last: "$<path>"` — body just returns the per-doc value, so every doc overwrites the accumulator; the final value wins |
+| `[...acc, d.<path>]` or `acc.concat(d.<path>)` | `$push: "$<path>"` — single-element spread/concat. Multi-element spreads aren't recognised; the user can fall through to manual `$group`. |
+
+Works in both wrap forms — the scalar `$$ = [{ <key>: $$.reduce(…, init) }]`
+and the object-reducer `$$ = [$$.reduce((acc, d) => ({ ...acc, … }), { … })]`.
+`lowerReduceWrap` maps the new accumulator kinds to their MQL operators.
+
+`$avg`, multiplicative accumulators, and `$stdDevPop`/`$stdDevSamp` are still
+not recognised — see `docs/specs/stream-methods.md`.
+
+5 new cases in `test/stream-methods.test.ts`; 1583 tests pass.
+
+---
+
 ## 2026-05-31 — feat: scope-encoding sugar for diagnostic / system source stages
 
 MongoDB's diagnostic stages (`$indexStats`, `$collStats`, `$planCacheStats`, `$listSearchIndexes`, `$currentOp`, `$listSessions`, `$listLocalSessions`, `$listSampledQueries`, `$shardedDataDistribution`) were already in the STAGES registry and already compiled via the generic dispatch (`{ $indexStats: {} }` / `$indexStats({})`). What they lacked was a discoverable, *scope-aware* surface. They're **source** stages (must be first), and they differ by *where* they run, which the context-ref prefix now encodes — call the stage as a method on the ref whose scope matches: `$$.indexStats()`, `$$$$.currentOp({ allUsers: true })`, `$$$$.shardedDataDistribution()`. The method name is the stage name minus the `$`; the optional argument is the options object (omit → `{}`).
@@ -44,38 +109,6 @@ MongoDB's diagnostic stages (`$indexStats`, `$collStats`, `$planCacheStats`, `$l
 **Disambiguation vs `$lookup`.** A diagnostic is a *direct* `MethodCall` on a bare ref node (`object: ClusterRef`); a lookup is a call on a `MemberAccess` wrapping the ref (`$$$.orders.find()`). The shapes never collide. On `$$`, `.push`/`.filter` stay owned by union/facet; `isSystemStageCall` only claims a `$$` method that is an actual diagnostic or a near-typo of one, so `$$.pop()` still routes to the union validator's `.push`/`.filter` guidance (and the union/codegen error wording is unchanged).
 
 Mechanics: scope metadata lives in a new `diagnostic: { scope, options }` field on the nine STAGES entries (single source of truth); [src/system-stage-translation.ts](../src/system-stage-translation.ts) derives the method↔stage map and the per-scope suggestion lists from it (`isSystemStageCall` / `resolveSystemStageCall` / `notFirstStageMessage`); [src/pipeline.ts](../src/pipeline.ts) detects + first-stage-enforces in both `generatePipeline` and `generateImplicitPipeline` and adds the shape to `isStageCandidate`; [src/index.ts](../src/index.ts) broadens the bare-call auto-wrap (and the `jsmql.pipeline()` strict path) so a top-level `$$$$.currentOp()` flips into Pipeline mode without a trailing `;`; the three bare-ref codegen errors now list the diagnostic forms. New spec [docs/specs/system-stages.md](specs/system-stages.md); status updates in [docs/specs/context-references.md](specs/context-references.md); user reference in [docs/LANGUAGE.md](LANGUAGE.md#system--diagnostic-stages-indexstats-currentop-); 27 cases in [test/system-stages.test.ts](../test/system-stages.test.ts). Arrow-form TS types wait on the ambient-globals work (same as the existing `.push`/`.find` sugar).
-
----
-
-## 2026-05-31 — Waves 5 + 6: stream-RHS sugar (`$$ = []`, `$$ = [docs]`) + `Math.<fn>` bare callbacks
-
-Three more items from the deferred-features catalog, all small and isolated:
-
-**#2 `$$ = []` → `[{ $limit: 0 }]`.** Previously rejected with a "use `$match($expr(false))` or `$limit(0)`" hint. The hint was always the wrong thing to type at the call site — empty-array assignment is the natural JS shape for "drop everything". Lowers in `lowerReplaceStream` ([src/pipeline.ts](../src/pipeline.ts)) via a new `ArrayLiteral` branch that runs *after* the reduce-wrap detectors (so the wrap forms still win their shape).
-
-**#5 `$$ = [{...}, {...}]` at stage 0 → `[{ $documents: [...] }]`.** Sibling sugar to #2 for the literal-doc seeder case. Constrained to stage 0 because MongoDB requires `$documents` at the head — mid-pipeline use throws an actionable error that names `$$.push({...})` (`$unionWith`) as the right tool for appending. Stage-index threading: `lowerReplaceStream` now takes an `isFirstStage: boolean`, and `lowerUpdateFilterWithLookups` takes a `globalStageIndex: number` so its inner `out.length` checks reflect the surrounding pipeline's running count.
-
-**#39 `Math.<unary>` as a bare `.map` callback.** `arr.map(Math.floor)` now parses and lowers to `{ $map: { input: "$arr", as: "v", in: { $floor: "$$v" } } }`. Mirrors the existing `Number` / `Boolean` / `String` bare-callable pattern via a new `MathCallRef` AST node. Restricted to the unary Math methods (floor, ceil, round, abs, sqrt, trunc, sign, exp, log/log2/log10, cbrt, all trig methods) so the arity matches the JS callback contract — binary methods (`pow`, `min`, `max`, `hypot`, `atan2`) require explicit parens and surface a precise "Math.X requires '(...)'" error if reached as a bare ref. `Math.floor` used in non-callable value position throws an actionable "use as a callback" error.
-
-**#36 (trailing `$unset:__jsmql` elision) is queued.** The peephole is straightforward — when the previous stage is in `RESHAPE_CLEARING_STAGES`, the trailing `$unset` is redundant — but landing it as-is would invalidate ~18 existing tests that hard-coded the `$unset` stage in their expected output. The optimisation is purely cosmetic (a `$unset` against an already-missing path is a no-op), so deferring it to a dedicated test-snapshot refresh.
-
-Files touched: [src/pipeline.ts](../src/pipeline.ts), [src/parser.ts](../src/parser.ts) (`MathCallRef` parsing, new `UNARY_MATH_CALLABLES` set), [src/ast.ts](../src/ast.ts) (`MathCallRef` node), [src/codegen.ts](../src/codegen.ts) (`MathCallRef` desugar in `requireLambda`, error-case in main switch, scanner entry), [src/lookup-translation.ts](../src/lookup-translation.ts) (leaf-case for `MathCallRef`). Tests: [test/codegen.test.ts](../test/codegen.test.ts) (9 new Math.* bare-callable cases), [test/pipeline.test.ts](../test/pipeline.test.ts) (3 cases for `$$ = []` / `$$ = [docs]` / mid-pipeline rejection), [test/stream-methods.test.ts](../test/stream-methods.test.ts) (3 updated cases swapping the old "use wrap" error for the new `$documents` lowering).
-
-1545 tests pass.
-
----
-
-## 2026-05-31 — Wave 2 (partial): dict-build reducer wrap → `$group` + `$arrayToObject`
-
-Item #30 from the deferred-features catalog: `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <d.<v>|d> }), {})]` now lowers to the canonical pair `$group: { _id: null, __jsmqlDict: { $push: { k: "$<k>", v: "$<v>"|"$$ROOT" } } }` + `$replaceWith: { $arrayToObject: "$__jsmqlDict" }`.
-
-**Why this is its own detector.** The shape overlaps with the existing object-reducer form (both look like `$$ = [$$.reduce(<2-arg lambda>, {<obj>})]`), but the lowering is different: object-reducer collects N named accumulators per the static keys in the body, dict-build collects ONE pair-array via `$push` and folds it via `$arrayToObject`. They can't share the same classification path because the existing one rejects computed keys outright. The new detector runs **before** `detectReduceWrap` in `pipeline.ts` to pre-empt the static-key error path; if the shape doesn't match (mixed static + computed, multiple computed entries, non-`{}` init, non-`d`-rooted key path), it returns null and the existing object-reducer handler picks up — emitting the same "computed keys aren't supported" error users would have seen before. Same error wording, same DX, just one more shape recognised.
-
-**Supported body shapes.** Spread is optional (`{ ...acc, [d.k]: d.v }` and `{ [d.k]: d.v }` both work — the `...acc` is JS-faithful boilerplate). Keys and values both walk `d.<path>` chains, so nested paths work in both slots. Bare-doc value (`{ ...acc, [d.id]: d }`) lowers to `v: "$$ROOT"`. Anything else (computed key referencing `acc`, multiple computed entries, etc.) doesn't match and surfaces the existing error from the static-key path.
-
-Files: [src/stream-methods.ts](../src/stream-methods.ts) (new `DictBuildWrap` type, `detectDictBuildWrap`, `lowerDictBuildWrap`, `paramFieldOrBareParam` helper), [src/pipeline.ts](../src/pipeline.ts) (one import + one branch in the chain dispatch). Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). Tests: [test/stream-methods.test.ts](../test/stream-methods.test.ts) (6 new cases).
-
-1533 tests pass. The richer-per-key-body-shapes item (#32) and `$$.length` terminal (#6) are queued behind this; they need their own design passes before lowering.
 
 ---
 
@@ -111,6 +144,38 @@ Six more waves remain in the deferred-features push — see the plan file for th
 
 ---
 
+## 2026-05-31 — Wave 2 (partial): dict-build reducer wrap → `$group` + `$arrayToObject`
+
+Item #30 from the deferred-features catalog: `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <d.<v>|d> }), {})]` now lowers to the canonical pair `$group: { _id: null, __jsmqlDict: { $push: { k: "$<k>", v: "$<v>"|"$$ROOT" } } }` + `$replaceWith: { $arrayToObject: "$__jsmqlDict" }`.
+
+**Why this is its own detector.** The shape overlaps with the existing object-reducer form (both look like `$$ = [$$.reduce(<2-arg lambda>, {<obj>})]`), but the lowering is different: object-reducer collects N named accumulators per the static keys in the body, dict-build collects ONE pair-array via `$push` and folds it via `$arrayToObject`. They can't share the same classification path because the existing one rejects computed keys outright. The new detector runs **before** `detectReduceWrap` in `pipeline.ts` to pre-empt the static-key error path; if the shape doesn't match (mixed static + computed, multiple computed entries, non-`{}` init, non-`d`-rooted key path), it returns null and the existing object-reducer handler picks up — emitting the same "computed keys aren't supported" error users would have seen before. Same error wording, same DX, just one more shape recognised.
+
+**Supported body shapes.** Spread is optional (`{ ...acc, [d.k]: d.v }` and `{ [d.k]: d.v }` both work — the `...acc` is JS-faithful boilerplate). Keys and values both walk `d.<path>` chains, so nested paths work in both slots. Bare-doc value (`{ ...acc, [d.id]: d }`) lowers to `v: "$$ROOT"`. Anything else (computed key referencing `acc`, multiple computed entries, etc.) doesn't match and surfaces the existing error from the static-key path.
+
+Files: [src/stream-methods.ts](../src/stream-methods.ts) (new `DictBuildWrap` type, `detectDictBuildWrap`, `lowerDictBuildWrap`, `paramFieldOrBareParam` helper), [src/pipeline.ts](../src/pipeline.ts) (one import + one branch in the chain dispatch). Spec: [docs/specs/stream-methods.md](specs/stream-methods.md). Tests: [test/stream-methods.test.ts](../test/stream-methods.test.ts) (6 new cases).
+
+1533 tests pass. The richer-per-key-body-shapes item (#32) and `$$.length` terminal (#6) are queued behind this; they need their own design passes before lowering.
+
+---
+
+## 2026-05-31 — Waves 5 + 6: stream-RHS sugar (`$$ = []`, `$$ = [docs]`) + `Math.<fn>` bare callbacks
+
+Three more items from the deferred-features catalog, all small and isolated:
+
+**#2 `$$ = []` → `[{ $limit: 0 }]`.** Previously rejected with a "use `$match($expr(false))` or `$limit(0)`" hint. The hint was always the wrong thing to type at the call site — empty-array assignment is the natural JS shape for "drop everything". Lowers in `lowerReplaceStream` ([src/pipeline.ts](../src/pipeline.ts)) via a new `ArrayLiteral` branch that runs *after* the reduce-wrap detectors (so the wrap forms still win their shape).
+
+**#5 `$$ = [{...}, {...}]` at stage 0 → `[{ $documents: [...] }]`.** Sibling sugar to #2 for the literal-doc seeder case. Constrained to stage 0 because MongoDB requires `$documents` at the head — mid-pipeline use throws an actionable error that names `$$.push({...})` (`$unionWith`) as the right tool for appending. Stage-index threading: `lowerReplaceStream` now takes an `isFirstStage: boolean`, and `lowerUpdateFilterWithLookups` takes a `globalStageIndex: number` so its inner `out.length` checks reflect the surrounding pipeline's running count.
+
+**#39 `Math.<unary>` as a bare `.map` callback.** `arr.map(Math.floor)` now parses and lowers to `{ $map: { input: "$arr", as: "v", in: { $floor: "$$v" } } }`. Mirrors the existing `Number` / `Boolean` / `String` bare-callable pattern via a new `MathCallRef` AST node. Restricted to the unary Math methods (floor, ceil, round, abs, sqrt, trunc, sign, exp, log/log2/log10, cbrt, all trig methods) so the arity matches the JS callback contract — binary methods (`pow`, `min`, `max`, `hypot`, `atan2`) require explicit parens and surface a precise "Math.X requires '(...)'" error if reached as a bare ref. `Math.floor` used in non-callable value position throws an actionable "use as a callback" error.
+
+**#36 (trailing `$unset:__jsmql` elision) is queued.** The peephole is straightforward — when the previous stage is in `RESHAPE_CLEARING_STAGES`, the trailing `$unset` is redundant — but landing it as-is would invalidate ~18 existing tests that hard-coded the `$unset` stage in their expected output. The optimisation is purely cosmetic (a `$unset` against an already-missing path is a no-op), so deferring it to a dedicated test-snapshot refresh.
+
+Files touched: [src/pipeline.ts](../src/pipeline.ts), [src/parser.ts](../src/parser.ts) (`MathCallRef` parsing, new `UNARY_MATH_CALLABLES` set), [src/ast.ts](../src/ast.ts) (`MathCallRef` node), [src/codegen.ts](../src/codegen.ts) (`MathCallRef` desugar in `requireLambda`, error-case in main switch, scanner entry), [src/lookup-translation.ts](../src/lookup-translation.ts) (leaf-case for `MathCallRef`). Tests: [test/codegen.test.ts](../test/codegen.test.ts) (9 new Math.* bare-callable cases), [test/pipeline.test.ts](../test/pipeline.test.ts) (3 cases for `$$ = []` / `$$ = [docs]` / mid-pipeline rejection), [test/stream-methods.test.ts](../test/stream-methods.test.ts) (3 updated cases swapping the old "use wrap" error for the new `$documents` lowering).
+
+1545 tests pass.
+
+---
+
 ## 2026-05-30 — fix: array-returning reducer assigns unbracketed; bracketed wrap now throws
 
 The array-returning reducer form was shipped requiring a bracket wrap — `$$ = [$$.reduce((acc, d) => acc.concat(d.<f>), [])]`. That's backwards: a reducer seeded with `[]` already *returns* an array, i.e. a stream, so wrapping it in `[ ]` yields `[[…]]` — a stream whose single document is itself an array. The correct surface is the **unbracketed** `$$ = $$.reduce((acc, d) => acc.concat(d.<f>), [])`, and that's now what's supported; the bracketed form throws an actionable `CodegenError` ("a reducer seeded with `[]` already produces a stream, so don't wrap it in `[ ]` — assign it directly").
@@ -136,53 +201,6 @@ The compiler already handled this idiom — but it wasn't called out as a recomm
 - **`docs/LANGUAGE.md`** — extended the "Replace stream via `$$ = <expr>`" section with a "Putting it all together — narrow, snapshot, pivot" subsection that names the idiom and shows the full lowering.
 
 No code changes. This is a documentation-only commit — the underlying support for the idiom shipped in the preceding outer-`let` and chain-extension commits.
-
----
-
-## 2026-05-29 — Playground: GitHub links + compile-mode toggle
-
-Several playground UX changes, all confined to `playground.html` (outside the two generated regions):
-
-1. **"syntax reference" now points to GitHub** — `docs/LANGUAGE.md` (a relative path that 404s on the deployed playground) → `https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md`.
-2. **Classic GitHub corner ribbon**, pinned top-right, linking to the repo home (`https://github.com/flash-oss/jsmql`). Sized at 48px so it matches the header height; the header reserves 60px of right padding so the ribbon never overlaps the "Hide examples" toggle. The octocat fills with the page background colour (white) so it reads against the accent-blue triangle; the arm waves on hover and is stilled under `prefers-reduced-motion`.
-3. **The input band's passive kind indicator became an active compile-mode toggle**, sitting in its own bar directly above the "MONGODB CALL" hint. Five mutually-exclusive, equal-width buttons — `filter` / `update` / `expr` / `pipeline` / `auto` — each dispatch the editor source through a different entry point (`jsmql.filter`, `jsmql.update`, `jsmql.expr`, `jsmql.pipeline`, and plain `jsmql()` for AUTO). Each button always carries its kind colour (like the badges); AUTO is deliberately colourless (neutral grey). Selecting an example resets the toggle to the mode it was authored with (`jsmql` → AUTO, `jsmql.expr` → expr); emptying the editor resets to AUTO.
-4. **The "MONGODB CALL" hint is always visible and mode-driven**: it shows the exact driver call that produces the MQL in the output panel — `db.<coll>.find(jsmql.filter(...))`, `db.<coll>.aggregate(jsmql.pipeline(...))`, `db.<coll>.updateOne(filter, jsmql.update(...))`, `db.<coll>.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`. For AUTO the method is chosen from the actual output shape (a Pipeline array → `aggregate`, a Filter document → `find`). The collection name is parsed from the active example's call site, falling back to a generic `collection` while typing freely.
-5. **The expression-kind input label now gets its gradient** — only `pipeline` and `filter` had `.panel.input-panel.<kind> .label` gradient rules; added the `expression` variant (plus the missing `--expr-strong` border colour).
-
-**Why the error-handling change matters.** `jsmql.validate()` checks source against the shape-detecting `jsmql()` semantics, so a strict-shape entry point can still *throw* at compile time even when validate reports valid — e.g. forcing `pipeline` mode on a bare predicate. `render()` now wraps the `compile(src)` call in try/catch and routes the thrown `CodegenError` (with its actionable "Call jsmql.filter() … or wrap as `$match(...)`" wording) into the error panel instead of stranding stale output.
-
-The previously-passive `#current-kind` pill was removed (the toggle now communicates compile mode, and the sidebar badge + "MONGODB CALL" bar still show the example's kind).
-
----
-
-## 2026-05-29 — feat: outer `let` bindings cross the source-switch boundary as `$lookup.let` vars
-
-The previous `$lookup`-pivot commit detected `$.<field>` refs in the predicate and routed them through `$lookup.let`, but **outer `let` bindings** weren't recognised — `let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);` errored with "Unknown identifier 'uid'". The user had to inline the path (`u._id === $.userId`) or pre-stash via `$.x = uid` before the source-switch, defeating the point of the `let` binding.
-
-This commit extends `classifyPath` (in `lookup-translation.ts`) to recognise a `ParamRef` whose name is in `outerCtx.pipelineLets` as a new `outerLet` kind — and threads the outer-lets map through `tryBasicForm`, `extractLetsFromExpr`, `extractLetsFromPipeline`, and the `transformExpr` / `mapChildren` / `transformCallArgs` recursive walkers. `MemberAccess` chains on outer-let refs are also handled (`let user = $.user; … === user._id` resolves to the materialised path `__jsmql.user._id`).
-
-```js
-let uid = $.userId;
-$$ = $$$.users.filter(u => u._id === uid);
-// → [
-//   { $set: { "__jsmql.uid": "$userId" } },
-//   { $lookup: { from: "users", localField: "__jsmql.uid",
-//                foreignField: "_id", as: "__jsmql.__lookup1" } },
-//   { $unwind: "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
-//   { $unset: "__jsmql" },
-// ]
-```
-
-**Basic vs pipeline form.** Outer-let refs DO qualify for the basic-form `$lookup` fast path when the predicate is a single `===` between a foreign-path and the outer-let — the `localField` becomes the let's materialised path (`__jsmql.<name>` or `__jsmql.<name>.<member>` for member-access chains). For richer predicates (multi-field correlations, mixed `$.<field>` + outer-let refs), pipeline-form with auto-hoisted `let` vars kicks in. `predicateReferencesOuterDoc` now picks up both kinds, so the source-switch dispatch in `lowerChainOnCollection` routes correlated predicates to `lowerLookupPivot` whether the correlation came from `$.<field>` or an outer `let`.
-
-**Naming.** The `let`-var name in pipeline-form output is `segments[last]` of the access chain — same convention as local-path letVars. For bare `uid` → letVar `uid`; for `user._id` → letVar `_id`; collisions get the `_2` / `_3` / … uniquification suffix.
-
-**Allocator.** `createLetAllocator` gains an `allocateForOuterLet(segments, fieldPath)` method that mirrors `allocateForLocalPath` but takes the materialised field path explicitly. `byPath` deduplication uses the field path as the dedup key so the same outer-let referenced twice in a predicate (e.g. `u.from === uid || u.to === uid`) produces one letVar.
-
-**API.** `predicateReferencesOuterDoc(lambda, outerCtx)` now takes the ctx (was just the lambda). Callers update accordingly — only one in-tree caller (in `pipeline.ts`).
-
-Spec note: the [docs/specs/lookup-stage.md](specs/lookup-stage.md) update is pending. User-facing reference: [docs/LANGUAGE.md → Correlated source-switch](LANGUAGE.md#replace-stream-via--expr).
 
 ---
 
@@ -224,6 +242,53 @@ $$ = $$$.orders
 **Refactor.** Factored `tryExtractChainedLookup`'s pipeline-form predicate translation into a new exported `buildPipelineFormPredicate` helper in `lookup-translation.ts`, so the new pivot path and the existing chain-extension path share one translator (no second copy of the `extractLetsFromExpr` + `makeSubPipelineCtx` + `generateWithCtx` choreography).
 
 User-facing reference: [docs/LANGUAGE.md → Replace stream](LANGUAGE.md#replace-stream-via--expr).
+
+---
+
+## 2026-05-29 — feat: outer `let` bindings cross the source-switch boundary as `$lookup.let` vars
+
+The previous `$lookup`-pivot commit detected `$.<field>` refs in the predicate and routed them through `$lookup.let`, but **outer `let` bindings** weren't recognised — `let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);` errored with "Unknown identifier 'uid'". The user had to inline the path (`u._id === $.userId`) or pre-stash via `$.x = uid` before the source-switch, defeating the point of the `let` binding.
+
+This commit extends `classifyPath` (in `lookup-translation.ts`) to recognise a `ParamRef` whose name is in `outerCtx.pipelineLets` as a new `outerLet` kind — and threads the outer-lets map through `tryBasicForm`, `extractLetsFromExpr`, `extractLetsFromPipeline`, and the `transformExpr` / `mapChildren` / `transformCallArgs` recursive walkers. `MemberAccess` chains on outer-let refs are also handled (`let user = $.user; … === user._id` resolves to the materialised path `__jsmql.user._id`).
+
+```js
+let uid = $.userId;
+$$ = $$$.users.filter(u => u._id === uid);
+// → [
+//   { $set: { "__jsmql.uid": "$userId" } },
+//   { $lookup: { from: "users", localField: "__jsmql.uid",
+//                foreignField: "_id", as: "__jsmql.__lookup1" } },
+//   { $unwind: "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+**Basic vs pipeline form.** Outer-let refs DO qualify for the basic-form `$lookup` fast path when the predicate is a single `===` between a foreign-path and the outer-let — the `localField` becomes the let's materialised path (`__jsmql.<name>` or `__jsmql.<name>.<member>` for member-access chains). For richer predicates (multi-field correlations, mixed `$.<field>` + outer-let refs), pipeline-form with auto-hoisted `let` vars kicks in. `predicateReferencesOuterDoc` now picks up both kinds, so the source-switch dispatch in `lowerChainOnCollection` routes correlated predicates to `lowerLookupPivot` whether the correlation came from `$.<field>` or an outer `let`.
+
+**Naming.** The `let`-var name in pipeline-form output is `segments[last]` of the access chain — same convention as local-path letVars. For bare `uid` → letVar `uid`; for `user._id` → letVar `_id`; collisions get the `_2` / `_3` / … uniquification suffix.
+
+**Allocator.** `createLetAllocator` gains an `allocateForOuterLet(segments, fieldPath)` method that mirrors `allocateForLocalPath` but takes the materialised field path explicitly. `byPath` deduplication uses the field path as the dedup key so the same outer-let referenced twice in a predicate (e.g. `u.from === uid || u.to === uid`) produces one letVar.
+
+**API.** `predicateReferencesOuterDoc(lambda, outerCtx)` now takes the ctx (was just the lambda). Callers update accordingly — only one in-tree caller (in `pipeline.ts`).
+
+Spec note: the [docs/specs/lookup-stage.md](specs/lookup-stage.md) update is pending. User-facing reference: [docs/LANGUAGE.md → Correlated source-switch](LANGUAGE.md#replace-stream-via--expr).
+
+---
+
+## 2026-05-29 — Playground: GitHub links + compile-mode toggle
+
+Several playground UX changes, all confined to `playground.html` (outside the two generated regions):
+
+1. **"syntax reference" now points to GitHub** — `docs/LANGUAGE.md` (a relative path that 404s on the deployed playground) → `https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md`.
+2. **Classic GitHub corner ribbon**, pinned top-right, linking to the repo home (`https://github.com/flash-oss/jsmql`). Sized at 48px so it matches the header height; the header reserves 60px of right padding so the ribbon never overlaps the "Hide examples" toggle. The octocat fills with the page background colour (white) so it reads against the accent-blue triangle; the arm waves on hover and is stilled under `prefers-reduced-motion`.
+3. **The input band's passive kind indicator became an active compile-mode toggle**, sitting in its own bar directly above the "MONGODB CALL" hint. Five mutually-exclusive, equal-width buttons — `filter` / `update` / `expr` / `pipeline` / `auto` — each dispatch the editor source through a different entry point (`jsmql.filter`, `jsmql.update`, `jsmql.expr`, `jsmql.pipeline`, and plain `jsmql()` for AUTO). Each button always carries its kind colour (like the badges); AUTO is deliberately colourless (neutral grey). Selecting an example resets the toggle to the mode it was authored with (`jsmql` → AUTO, `jsmql.expr` → expr); emptying the editor resets to AUTO.
+4. **The "MONGODB CALL" hint is always visible and mode-driven**: it shows the exact driver call that produces the MQL in the output panel — `db.<coll>.find(jsmql.filter(...))`, `db.<coll>.aggregate(jsmql.pipeline(...))`, `db.<coll>.updateOne(filter, jsmql.update(...))`, `db.<coll>.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`. For AUTO the method is chosen from the actual output shape (a Pipeline array → `aggregate`, a Filter document → `find`). The collection name is parsed from the active example's call site, falling back to a generic `collection` while typing freely.
+5. **The expression-kind input label now gets its gradient** — only `pipeline` and `filter` had `.panel.input-panel.<kind> .label` gradient rules; added the `expression` variant (plus the missing `--expr-strong` border colour).
+
+**Why the error-handling change matters.** `jsmql.validate()` checks source against the shape-detecting `jsmql()` semantics, so a strict-shape entry point can still *throw* at compile time even when validate reports valid — e.g. forcing `pipeline` mode on a bare predicate. `render()` now wraps the `compile(src)` call in try/catch and routes the thrown `CodegenError` (with its actionable "Call jsmql.filter() … or wrap as `$match(...)`" wording) into the error panel instead of stranding stale output.
+
+The previously-passive `#current-kind` pill was removed (the toggle now communicates compile mode, and the sidebar badge + "MONGODB CALL" bar still show the example's kind).
 
 ---
 
