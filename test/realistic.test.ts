@@ -63,7 +63,6 @@ $$ = $$$$.archive.orders
         },
         { $unwind: "$__jsmql.__lookup1" },
         { $replaceWith: "$__jsmql.__lookup1" },
-        { $unset: "__jsmql" },
       ]);
     },
   );
@@ -1831,7 +1830,6 @@ $$ = $$$.orders
           },
           { $unwind: "$__jsmql.__lookup1" },
           { $replaceWith: "$__jsmql.__lookup1" },
-          { $unset: "__jsmql" },
         ]);
       },
     );
@@ -1876,7 +1874,6 @@ $$ = $$$.orders
           },
           { $unwind: "$__jsmql.__lookup1" },
           { $replaceWith: "$__jsmql.__lookup1" },
-          { $unset: "__jsmql" },
         ]);
       },
     );

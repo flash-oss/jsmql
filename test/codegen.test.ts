@@ -3471,12 +3471,11 @@ describe("$accumulator and $function (custom aggregation)", () => {
       $function: { body: "function(x) { return x * 2; }", args: ["$value"], lang: "js" },
     });
   });
-  it("$accumulator object-style with subset of keys", () => {
-    expect(
-      jsmql.expr(
-        '$accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", merge: "function(a, b) { return a + b; }", lang: "js" })',
-      ),
-    ).toEqual({
+  it("$accumulator object-style with subset of keys (Wave 5 #22: requires $group context)", () => {
+    const out = jsmql(
+      '[$group({ _id: null, total: $accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", merge: "function(a, b) { return a + b; }", lang: "js" }) })]',
+    ) as Array<{ $group: { total: unknown } }>;
+    expect(out[0].$group.total).toEqual({
       $accumulator: {
         init: "function() { return 0; }",
         accumulate: "function(s, v) { return s + v; }",
@@ -3485,18 +3484,31 @@ describe("$accumulator and $function (custom aggregation)", () => {
       },
     });
   });
+
+  it("$accumulator outside $group throws an actionable error", () => {
+    expect(() =>
+      jsmql.expr(
+        '$accumulator({ init: "function() {}", accumulate: "function() {}", merge: "function() {}", lang: "js" })',
+      ),
+    ).toThrow(/\$accumulator is an accumulator operator — only valid inside '\$group'/);
+  });
 });
 
-describe("$median and $percentile (statistical accumulators)", () => {
-  it("$median positional", () => {
-    expect(jsmql.expr('$median($.scores, "approximate")')).toEqual({
-      $median: { input: "$scores", method: "approximate" },
-    });
+describe("$median and $percentile (statistical accumulators — Wave 5 #22: $group / $setWindowFields only)", () => {
+  it("$median positional (inside $group)", () => {
+    const out = jsmql('[$group({ _id: null, m: $median($.scores, "approximate") })]') as Array<{
+      $group: { m: unknown };
+    }>;
+    expect(out[0].$group.m).toEqual({ $median: { input: "$scores", method: "approximate" } });
   });
-  it("$percentile positional", () => {
-    expect(jsmql.expr('$percentile($.scores, [0.5, 0.95], "approximate")')).toEqual({
-      $percentile: { input: "$scores", p: [0.5, 0.95], method: "approximate" },
-    });
+  it("$percentile positional (inside $group)", () => {
+    const out = jsmql('[$group({ _id: null, p: $percentile($.scores, [0.5, 0.95], "approximate") })]') as Array<{
+      $group: { p: unknown };
+    }>;
+    expect(out[0].$group.p).toEqual({ $percentile: { input: "$scores", p: [0.5, 0.95], method: "approximate" } });
+  });
+  it("$median outside any accumulator context throws", () => {
+    expect(() => jsmql.expr('$median($.scores, "approximate")')).toThrow(/\$median is an accumulator operator/);
   });
 });
 
@@ -3523,7 +3535,16 @@ describe("encrypted-string operators ($encStr*)", () => {
   });
 });
 
-describe("window operators ($setWindowFields-only)", () => {
+describe("window operators ($setWindowFields-only — Wave 5 #41)", () => {
+  // Window operators are gated to `$setWindowFields.output` slots by
+  // `checkOperatorContext` in codegen.ts. Each test wraps the operator in
+  // a `$setWindowFields` stage and extracts the inner emission.
+  function inWindow(opSrc: string): unknown {
+    const src = `[$setWindowFields({ partitionBy: $.cat, sortBy: { ts: 1 }, output: { x: ${opSrc} } })]`;
+    const out = jsmql(src) as Array<{ $setWindowFields: { output: { x: unknown } } }>;
+    return out[0].$setWindowFields.output.x;
+  }
+
   it.each([
     ["$rank", "$rank()", { $rank: {} }],
     ["$denseRank", "$denseRank()", { $denseRank: {} }],
@@ -3533,35 +3554,39 @@ describe("window operators ($setWindowFields-only)", () => {
     ["$covariancePop", "$covariancePop($.x, $.y)", { $covariancePop: ["$x", "$y"] }],
     ["$covarianceSamp", "$covarianceSamp($.x, $.y)", { $covarianceSamp: ["$x", "$y"] }],
   ])("%s emits the expected MQL", (_name, src, expected) => {
-    expect(jsmql.expr(src)).toEqual(expected);
+    expect(inWindow(src)).toEqual(expected);
   });
 
   it("$shift positional", () => {
-    expect(jsmql.expr("$shift($.price, -1, 0)")).toEqual({ $shift: { output: "$price", by: -1, default: 0 } });
+    expect(inWindow("$shift($.price, -1, 0)")).toEqual({ $shift: { output: "$price", by: -1, default: 0 } });
   });
 
   it("$shift object-style", () => {
-    expect(jsmql.expr("$shift({ output: $.price, by: -1, default: 0 })")).toEqual({
+    expect(inWindow("$shift({ output: $.price, by: -1, default: 0 })")).toEqual({
       $shift: { output: "$price", by: -1, default: 0 },
     });
   });
 
   it("$expMovingAvg with N (positional)", () => {
-    expect(jsmql.expr("$expMovingAvg($.price, 5)")).toEqual({ $expMovingAvg: { input: "$price", N: 5 } });
+    expect(inWindow("$expMovingAvg($.price, 5)")).toEqual({ $expMovingAvg: { input: "$price", N: 5 } });
   });
 
   it("$expMovingAvg with alpha (object-style)", () => {
-    expect(jsmql.expr("$expMovingAvg({ input: $.price, alpha: 0.3 })")).toEqual({
+    expect(inWindow("$expMovingAvg({ input: $.price, alpha: 0.3 })")).toEqual({
       $expMovingAvg: { input: "$price", alpha: 0.3 },
     });
   });
 
   it("$derivative positional", () => {
-    expect(jsmql.expr('$derivative($.value, "hour")')).toEqual({ $derivative: { input: "$value", unit: "hour" } });
+    expect(inWindow('$derivative($.value, "hour")')).toEqual({ $derivative: { input: "$value", unit: "hour" } });
   });
 
   it("$integral positional", () => {
-    expect(jsmql.expr('$integral($.value, "hour")')).toEqual({ $integral: { input: "$value", unit: "hour" } });
+    expect(inWindow('$integral($.value, "hour")')).toEqual({ $integral: { input: "$value", unit: "hour" } });
+  });
+
+  it("window operator outside $setWindowFields throws an actionable error", () => {
+    expect(() => jsmql.expr("$rank()")).toThrow(/\$rank is a window operator — only valid inside '\$setWindowFields'/);
   });
 });
 

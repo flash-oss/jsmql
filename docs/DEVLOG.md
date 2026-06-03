@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-01 — Wave 5 (final batch): facet-let propagation + accumulator/window validation + trailing `$unset` peephole
+
+Four items from the deferred-features catalog land together, finishing Wave 5:
+
+**#28 outer `let` reaches `$facet` sub-pipelines.** Each facet branch operates on the same input docs that arrived at the outer `$facet` stage — those docs still carry the `__jsmql.<name>` fields the outer lets materialised into. A new `freshFacetCtx` helper in `src/codegen.ts` (sibling to `freshSubPipelineCtx`) constructs a fresh sub-pipeline ctx that *preserves* `pipelineLets`; `src/facet-translation.ts` uses it for each facet branch.
+
+```js
+let cutoff = $.threshold;
+$ = { high: $$.filter(d => d.score > cutoff), low: $$.filter(d => d.score <= cutoff) };
+// → [{ $set: { "__jsmql.cutoff": "$threshold" } },
+//    { $facet: { high: [{ $match: { $expr: { $gt: ["$score", "$__jsmql.cutoff"] } } }],
+//                low:  [{ $match: { $expr: { $lte: ["$score", "$__jsmql.cutoff"] } } }] } },
+//    { $unset: "__jsmql" }]
+```
+
+**#22 accumulator-only operator validation.** `$accumulator`, `$addToSet`, `$bottom`/`$bottomN`/`$top`/`$topN`, `$push`, `$median`, `$percentile` now throw a precise compile-time error when used outside `$group` field-value slots or `$setWindowFields.output` slots. A new `accumulatorContext` field on `GenerateCtx` is set by `pipeline.ts:generateBodyObject` when descending into the right slot; `checkOperatorContext` (`src/codegen.ts`) gates accordingly. Operators that have *both* expression and accumulator forms (`$sum`, `$avg`, `$max`, `$min`, `$first`, `$last`, `$stdDev*`) stay unrestricted.
+
+**#41 window-only operator validation.** Operators tagged `category: "window"` in the registry (`$rank`, `$denseRank`, `$documentNumber`, `$shift`, `$derivative`, `$integral`, `$expMovingAvg`, `$linearFill`, `$locf`, `$covariancePop`, `$covarianceSamp`) throw when used outside `$setWindowFields.output` slots. Same `checkOperatorContext` gate, narrower scope. Pipeline.ts handles the nested-output indirection: `$setWindowFields.output[<key>]` and `$bucket(Auto).output[<key>]` are walked via a new `generateNestedAccumulatorObject` helper that sets the right `accumulatorContext` per inner key.
+
+**#36 trailing `$unset:__jsmql` peephole.** After a reshape-clearing stage (`$replaceWith`, `$replaceRoot`, `$group`, `$bucket`, `$bucketAuto`, `$facet`), the `__jsmql` field doesn't exist on the output doc — cleaning up an absent path is just noise. `shouldSkipTrailingNamespaceUnset` in `pipeline.ts` peeks at the last emitted stage and skips the cleanup when it's reshape-clearing. ~17 existing test snapshots had hardcoded the redundant `$unset` and were updated by a one-shot script (`/tmp/fix-unset-tests.mjs`) that drops the line after any reshape-clearing stage; non-clearing tests still emit the cleanup as before.
+
+Files: [src/codegen.ts](../src/codegen.ts) (`accumulatorContext` field, `ACCUMULATOR_ONLY_OPERATORS`, `checkOperatorContext`, `freshFacetCtx`), [src/facet-translation.ts](../src/facet-translation.ts) (use freshFacetCtx), [src/pipeline.ts](../src/pipeline.ts) (`shouldSkipTrailingNamespaceUnset`, `NESTED_ACCUMULATOR_OUTPUT`, `generateNestedAccumulatorObject`, `accumulatorCtxFor`). Spec updates in [docs/specs/let-bindings.md](specs/let-bindings.md) and [docs/specs/aggregation-stages.md](specs/aggregation-stages.md). 1597 tests pass (8 new across codegen / let-bindings tests).
+
+---
+
 ## 2026-06-01 — Wave 4: `$out` multi-method RHS + bound destination + `.copyWithin` (Wave 4 items #11, #12, #13)
 
 Three independent items, all stage-position sugar around an existing surface:

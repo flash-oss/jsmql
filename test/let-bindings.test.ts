@@ -689,7 +689,6 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
     expect(jsmql("let weighted = $.x * $.weight; $group({ _id: $.cat, total: $sum(weighted) })")).toEqual([
       { $set: { "__jsmql.weighted": { $multiply: ["$x", "$weight"] } } },
       { $group: { _id: "$cat", total: { $sum: "$__jsmql.weighted" } } },
-      { $unset: "__jsmql" },
     ]);
   });
 });

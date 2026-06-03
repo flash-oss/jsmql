@@ -119,6 +119,28 @@ const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$r
 const LET_NAMESPACE = "__jsmql";
 
 /**
+ * Peephole: skip the trailing `{ $unset: "__jsmql" }` cleanup when the
+ * previous stage already dropped the document (Wave 5 #36). After
+ * `$replaceWith` / `$replaceRoot` / `$group` / `$bucket*` / `$facet`, the
+ * `__jsmql` field no longer exists on the output doc — cleaning up an
+ * absent path is just noise. One stage saved per pipeline in the common
+ * case.
+ *
+ * Detection mirrors RESHAPE_CLEARING_STAGES: any stage that the
+ * scope-clearing machinery already treats as a reshape boundary also
+ * eats the namespace field, so the cleanup is unconditionally redundant
+ * after it.
+ */
+function shouldSkipTrailingNamespaceUnset(stages: readonly unknown[]): boolean {
+  if (stages.length === 0) return false;
+  const last = stages[stages.length - 1];
+  if (last === null || typeof last !== "object") return false;
+  const keys = Object.keys(last as Record<string, unknown>);
+  if (keys.length !== 1) return false;
+  return RESHAPE_CLEARING_STAGES.has(keys[0]);
+}
+
+/**
  * Loose detection: does `el` look like the user *intended* a pipeline stage?
  * Used only for top-level detection so a typo like `{ $macth: ... }` triggers
  * pipeline mode and surfaces a precise error instead of silently compiling
@@ -354,7 +376,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     ctx = result.ctx;
   });
   flushUpdateOps();
-  if (everHadLet || tracking.used()) out.push({ $unset: LET_NAMESPACE });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
@@ -452,7 +474,7 @@ export function generateImplicitPipeline(p: Pipeline, startCtx: GenerateCtx = EM
     ctx = result.ctx;
   });
 
-  if (everHadLet || tracking.used()) out.push({ $unset: LET_NAMESPACE });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
@@ -1172,9 +1194,70 @@ function generateBodyObject(
       // Sub-pipelines run in a fresh scope. Outer lets do not cross; function-
       // form parameter bindings do (they're compile-time constants).
       out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx));
-    } else {
-      out[key] = generateWithCtx(entry.value, ctx);
+      continue;
     }
+    // Accumulator-context gate (Wave 5 #22 + #41).
+    //
+    // - `$group` field-value slots (every key except `_id`) → "group" ctx,
+    //   so accumulator-only operators ($addToSet, $push, $bottom*, etc.)
+    //   pass the codegen gate; window ops still throw.
+    // - `$setWindowFields.output[<key>]` → "window-output" ctx, both
+    //   accumulator-only AND window-only operators (e.g. $rank,
+    //   $denseRank) pass.
+    // - `$bucket` / `$bucketAuto` `output` key's nested values: same as
+    //   $group field values — accumulator context.
+    const nestedScope = NESTED_ACCUMULATOR_OUTPUT[stageName];
+    if (nestedScope !== undefined && key === "output" && entry.value.type === "ObjectLiteral") {
+      out[key] = generateNestedAccumulatorObject(entry.value, ctx, nestedScope);
+      continue;
+    }
+    const slotCtx = accumulatorCtxFor(stageName, key, ctx);
+    out[key] = generateWithCtx(entry.value, slotCtx);
+  }
+  return out;
+}
+
+/**
+ * Stages whose `output` slot is an object whose VALUES are accumulator (or,
+ * for `$setWindowFields`, window) expressions. The level of indirection
+ * matters: `$bucket({ output: { count: $sum(1) } })` vs `$group({ count:
+ * $sum(1) })` — same accumulator semantics, different nesting depth.
+ */
+const NESTED_ACCUMULATOR_OUTPUT: Record<string, "group" | "window-output"> = {
+  $bucket: "group",
+  $bucketAuto: "group",
+  $setWindowFields: "window-output",
+};
+
+/** For `$group` field-value slots (other than `_id`). */
+function accumulatorCtxFor(stageName: string, key: string, ctx: GenerateCtx): GenerateCtx {
+  if (stageName === "$group" && key !== "_id") {
+    return { ...ctx, accumulatorContext: "group" };
+  }
+  return ctx;
+}
+
+/**
+ * Walk an object whose direct entries are accumulator expressions — used for
+ * `$bucket.output`, `$bucketAuto.output`, and `$setWindowFields.output`. Each
+ * entry's value is generated with the appropriate `accumulatorContext`. The
+ * surrounding object literal preserves order.
+ */
+function generateNestedAccumulatorObject(
+  body: Expr & { type: "ObjectLiteral" },
+  ctx: GenerateCtx,
+  scope: "group" | "window-output",
+): Record<string, unknown> {
+  const scopedCtx: GenerateCtx = { ...ctx, accumulatorContext: scope };
+  const out: Record<string, unknown> = {};
+  for (const entry of body.entries) {
+    if (entry.type !== "KeyValueEntry") {
+      throw new CodegenError(`Spread entries are not allowed in an accumulator-output object`, entry.pos);
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(`Computed keys are not allowed in an accumulator-output object`, entry.pos);
+    }
+    out[entry.key.name] = generateWithCtx(entry.value, scopedCtx);
   }
   return out;
 }
@@ -1244,7 +1327,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx): unknown[] {
     ctx = result.ctx;
   });
   flushUpdateOps();
-  if (everHadLet) out.push({ $unset: LET_NAMESPACE });
+  if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
   return out;
 }
 
