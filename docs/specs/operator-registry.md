@@ -2,13 +2,14 @@
 
 `src/operators.ts` is the single source of truth for how MongoDB operators are mapped to MQL output shapes, and the canonical catalog of every MongoDB expression and accumulator operator jsmql knows about.
 
-Each entry has three fields:
+Each entry has three required fields plus one optional flag:
 
 | Field | Purpose |
 |---|---|
 | `shape` | One of five [shapes](#shapes); decides how the operator's MQL value is structured. |
 | `category` | A label from `OPERATOR_CATEGORIES` (see below). Used for documentation grouping; not consumed by codegen. |
 | `description` | One-sentence summary, lifted verbatim from the official MongoDB spec where possible. Surfaced in editor tooltips and future docs generation. |
+| `accumulatorOnly?` | Set `true` for operators that have **no** expression form — they only mean something inside `$group` field-value slots or `$setWindowFields.output` bodies (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`). Codegen's `checkOperatorContext` gates on this flag, so it is the single source of truth — there is no separate set to keep in sync. Wrap the shape factory with `acc(...)`: `acc(single("array", "…"))`. Operators with *both* forms ($sum, $avg, $max, $min, $stdDev*) leave it unset and stay unrestricted. (Window-only operators are gated separately, by `category === "window"`.) |
 
 The full list of categories — see `OPERATOR_CATEGORIES` in `src/operators.ts`.
 

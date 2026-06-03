@@ -34,7 +34,18 @@ export const OPERATOR_CATEGORIES = [
 ] as const;
 export type OperatorCategory = (typeof OPERATOR_CATEGORIES)[number];
 
-export type OperatorDef = { shape: OperatorShape; category: OperatorCategory; description: string };
+export type OperatorDef = {
+  shape: OperatorShape;
+  category: OperatorCategory;
+  description: string;
+  // Accumulator-only operators (`$push`, `$addToSet`, `$top`, …) are valid only
+  // inside `$group` field-value slots or `$setWindowFields` output slots. Codegen
+  // gates them on this flag — it is the single source of truth, so adding an
+  // accumulator-only operator is one edit here (no shadow set in codegen). Ops
+  // that have *both* expression and accumulator forms ($sum, $avg, $max, …) are
+  // unrestricted and leave this unset.
+  accumulatorOnly?: boolean;
+};
 
 const SINGLE: SingleShape = { kind: "single" };
 const ARRAY: ArrayShape = { kind: "array" };
@@ -55,6 +66,11 @@ function flex(category: OperatorCategory, description: string): OperatorDef {
 }
 function obj(category: OperatorCategory, description: string, ...keys: string[]): OperatorDef {
   return { shape: { kind: "object", keys }, category, description };
+}
+// Mark a built operator def as accumulator-only (valid only inside `$group` /
+// `$setWindowFields` output). Wraps any of the shape factories: `acc(single(...))`.
+function acc(def: OperatorDef): OperatorDef {
+  return { ...def, accumulatorOnly: true };
 }
 
 export const OPERATORS: Record<string, OperatorDef> = {
@@ -413,16 +429,18 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Custom Aggregation ─────────────────────────────────────────────────────
-  $accumulator: obj(
-    "custom-aggregation",
-    "Defines a custom accumulator function. Body fields hold JavaScript source executed by the server.",
-    "init",
-    "initArgs",
-    "accumulate",
-    "accumulateArgs",
-    "merge",
-    "finalize",
-    "lang",
+  $accumulator: acc(
+    obj(
+      "custom-aggregation",
+      "Defines a custom accumulator function. Body fields hold JavaScript source executed by the server.",
+      "init",
+      "initArgs",
+      "accumulate",
+      "accumulateArgs",
+      "merge",
+      "finalize",
+      "lang",
+    ),
   ),
   $function: obj(
     "custom-aggregation",
@@ -464,53 +482,55 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Accumulators (also valid as expression operators in some stages) ──────
-  $addToSet: single("array", "Returns an array of unique expression values for each group."),
+  $addToSet: acc(single("array", "Returns an array of unique expression values for each group.")),
   $avg: flex("arithmetic", "Returns the average for the specified expression."),
   $count: none("array", "Returns the number of documents in the group or window."),
   $max: flex("comparison", "Returns the maximum value that results from applying an expression."),
-  $median: obj(
-    "arithmetic",
-    "Returns an approximation of the median (50th percentile) as a scalar value.",
-    "input",
-    "method",
+  $median: acc(
+    obj("arithmetic", "Returns an approximation of the median (50th percentile) as a scalar value.", "input", "method"),
   ),
   $min: flex("comparison", "Returns the minimum value that results from applying an expression."),
-  $percentile: obj(
-    "arithmetic",
-    "Returns an array of scalar values that correspond to specified percentile values.",
-    "input",
-    "p",
-    "method",
+  $percentile: acc(
+    obj(
+      "arithmetic",
+      "Returns an array of scalar values that correspond to specified percentile values.",
+      "input",
+      "p",
+      "method",
+    ),
   ),
-  $push: single("array", "Returns an array of values that result from applying an expression."),
+  $push: acc(single("array", "Returns an array of values that result from applying an expression.")),
   $stdDevPop: flex("arithmetic", "Calculates the population standard deviation of the input values."),
   $stdDevSamp: flex("arithmetic", "Calculates the sample standard deviation of the input values."),
   $sum: flex("arithmetic", "Returns a sum of numerical values, ignoring non-numeric values."),
-  $bottom: obj(
-    "array",
-    "Returns the bottom element within a group according to the specified sort order.",
-    "output",
-    "sortBy",
+  $bottom: acc(
+    obj(
+      "array",
+      "Returns the bottom element within a group according to the specified sort order.",
+      "output",
+      "sortBy",
+    ),
   ),
-  $bottomN: obj(
-    "array",
-    "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
-    "output",
-    "sortBy",
-    "n",
+  $bottomN: acc(
+    obj(
+      "array",
+      "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
+      "output",
+      "sortBy",
+      "n",
+    ),
   ),
-  $top: obj(
-    "array",
-    "Returns the top element within a group according to the specified sort order.",
-    "output",
-    "sortBy",
+  $top: acc(
+    obj("array", "Returns the top element within a group according to the specified sort order.", "output", "sortBy"),
   ),
-  $topN: obj(
-    "array",
-    "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
-    "output",
-    "sortBy",
-    "n",
+  $topN: acc(
+    obj(
+      "array",
+      "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
+      "output",
+      "sortBy",
+      "n",
+    ),
   ),
 
   // ── Window (only valid inside $setWindowFields) ───────────────────────────

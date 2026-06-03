@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: accumulator-only gate derives from the operator registry
+
+Prefactoring, behaviour-preserving. Codegen's `checkOperatorContext` gated accumulator-only operators (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`) on a hand-maintained `ACCUMULATOR_ONLY_OPERATORS` set that *shadowed* the operator registry. Adding an accumulator operator silently required a second edit there; miss it and the new op would be wrongly accepted in arbitrary expression positions. That violates the project's "operator registry is the single source of truth" rule.
+
+The flag now lives on the registry entry: `OperatorDef` gains an optional `accumulatorOnly?: boolean`, set via a small `acc(...)` wrapper around any shape factory (`acc(single("array", "…"))`), and `checkOperatorContext` reads `lookupOperator(name)?.accumulatorOnly`. The shadow set is deleted. Same nine ops gate, output unchanged, full suite green. The generator doesn't serialize the flag, so `src/ops.ts` is untouched. A new drift assertion in [test/operator-spec-coverage.test.ts](../test/operator-spec-coverage.test.ts) keeps the flag boolean-or-absent, and the "Adding a new MongoDB operator" steps in [CLAUDE.md](../CLAUDE.md) + [operator-registry.md](specs/operator-registry.md) now mention `acc(...)`. (Window-only operators were already registry-derived via `category === "window"`; this brings accumulators to parity.)
+
+---
+
 ## 2026-06-04 — refactor: one `didYouMean` helper for every closed-set rejection
 
 Prefactoring, behaviour-preserving. The `closestNameTo(name, set) ? \` Did you mean '…'?\` : ""` snippet had been hand-rolled at 13 throw sites (codegen ×3, parser ×4, pipeline ×3, lookup/system translation), each with its own variable name (`suggestion`, `setSuggestion`, `regexSuggestion`, `near`, …) and its own spelling of the suggestion. Adding a new throw site — something nearly every feature does — meant copying three lines and getting the format right by hand. That is exactly the kind of friction this pass targets: *make the change easy, then make the easy change.*

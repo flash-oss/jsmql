@@ -143,7 +143,7 @@ Breaking API changes must use `feat!:` or `fix!:` and must bump the major versio
 
 ### Adding a new MongoDB operator
 1. Verify the operator exists in `vendor/mql-specifications/definitions/expression/<name>.yaml` (or `definitions/accumulator/`). If it isn't, bump the pinned commit in `vendor/fetch-mql-specs.mjs` or add the operator to `REGISTRY_ONLY` in `test/operator-spec-coverage.test.ts` with a comment.
-2. Add an entry to `OPERATORS` in `src/operators.ts` with the correct shape, a `category` from `OPERATOR_CATEGORIES`, and a one-sentence `description` lifted from the spec YAML.
+2. Add an entry to `OPERATORS` in `src/operators.ts` with the correct shape, a `category` from `OPERATOR_CATEGORIES`, and a one-sentence `description` lifted from the spec YAML. If the operator is accumulator-only (no expression form — valid only inside `$group` / `$setWindowFields.output`), wrap the shape factory with `acc(...)` so codegen gates it; that flag is the single source of truth, there is no separate set to update.
 3. Add at least one test case in `test/codegen.test.ts`.
 4. If the operator has user-visible syntax (e.g. a named convenience form), update `docs/LANGUAGE.md`.
 5. Update `docs/specs/operator-registry.md` if shape semantics change. The drift-protection test (`test/operator-spec-coverage.test.ts`) will catch missing categories or descriptions.

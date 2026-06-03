@@ -129,6 +129,19 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     expect(bad).toEqual([]);
   });
 
+  it("accumulatorOnly is a boolean when present", () => {
+    // Codegen gates accumulator-only operators on this flag (the single source
+    // of truth, replacing the former hand-maintained ACCUMULATOR_ONLY_OPERATORS
+    // set). A stray truthy non-boolean would silently widen the gate.
+    const bad: Array<[string, unknown]> = [];
+    for (const [name, def] of Object.entries(OPERATORS)) {
+      if (def.accumulatorOnly !== undefined && typeof def.accumulatorOnly !== "boolean") {
+        bad.push([name, def.accumulatorOnly]);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   it("src/ops.ts is byte-equal to the generator output", () => {
     // The committed src/ops.ts is the artifact that ships in the npm package.
     // The generator runs as part of `prebuild` and `pretest`, but a contributor

@@ -1473,34 +1473,19 @@ function generateStaticObjectEntries(entries: ObjectEntry[], ctx: GenerateCtx): 
 // ── Operator calls ────────────────────────────────────────────────────────────
 
 /**
- * Operators with no expression-form in MongoDB — they only mean something
- * inside `$group` field-value slots or `$setWindowFields.output[<key>]`
- * bodies. Using them outside those contexts produces invalid MQL the
- * server will reject at runtime; catch it at compile time.
- *
- * Distinct from operators that have *both* expression and accumulator
- * forms ($sum, $avg, $max, $min, $first, $last, $stdDev*) — those stay
- * unrestricted because the expression form is valid in arbitrary
- * positions.
- */
-const ACCUMULATOR_ONLY_OPERATORS: ReadonlySet<string> = new Set([
-  "$accumulator",
-  "$addToSet",
-  "$bottom",
-  "$bottomN",
-  "$top",
-  "$topN",
-  "$push",
-  "$median",
-  "$percentile",
-]);
-
-/**
  * Validate that an operator call appears in a context that allows it. Throws
  * a precise `CodegenError` for window-only / accumulator-only operators used
  * outside `$group` / `$setWindowFields.output`. Permissive by default — any
- * operator whose category is `window` or whose name is in
- * `ACCUMULATOR_ONLY_OPERATORS` gets gated; everything else passes through.
+ * operator whose category is `window` or whose `accumulatorOnly` flag is set
+ * gets gated; everything else passes through.
+ *
+ * Accumulator-only operators have no expression-form in MongoDB — they only
+ * mean something inside `$group` field-value slots or `$setWindowFields.output`
+ * bodies, so using them elsewhere produces invalid MQL the server would reject
+ * at runtime. The `accumulatorOnly` flag lives on the operator registry entry
+ * ([operators.ts](operators.ts)) — the single source of truth — so it stays
+ * distinct from ops with *both* expression and accumulator forms ($sum, $avg,
+ * $max, $min, $stdDev*), which leave the flag unset and stay unrestricted.
  */
 function checkOperatorContext(name: string, ctx: GenerateCtx, pos: number): void {
   const def = lookupOperator(name);
@@ -1517,7 +1502,7 @@ function checkOperatorContext(name: string, ctx: GenerateCtx, pos: number): void
   }
   // Accumulator-only: allowed inside `$group` field-value slots and inside
   // `$setWindowFields.output` slots.
-  if (ACCUMULATOR_ONLY_OPERATORS.has(name)) {
+  if (def?.accumulatorOnly) {
     if (ctx.accumulatorContext === undefined) {
       throw new CodegenError(
         `${name} is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. ` +
