@@ -95,6 +95,21 @@ export type GenerateCtx = {
    */
   insideLiteral?: boolean;
   /**
+   * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
+   * literals — they pass through verbatim. Set once at every pipeline-generation
+   * entrypoint (`generatePipeline` / `generateImplicitPipeline` /
+   * `generatePipelineWithCtx`) and propagated down through all stage bodies,
+   * sub-pipelines, and nested operator args. This is what makes
+   * `$unwind("$items")`, `$project({ x: "$y" })`, and
+   * `$project({ t: $concat(["$a"]) })` emit field-path strings instead of
+   * `$literal` envelopes — and lets pasted raw MQL round-trip. Distinct from
+   * `insideLiteral` (which marks a `$literal(...)` envelope); the two are OR-ed
+   * in `literalSafeString` / `safeBoundValue`. Left unset by `jsmql.expr`, whose
+   * bare-expression branch keeps the JS-string-literal-means-literal semantics
+   * (`"$y"` is the literal string; `$.y` is the field-ref spelling).
+   */
+  pipelineContext?: boolean;
+  /**
    * Accumulator context — set by `pipeline.ts` when descending into a `$group`
    * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
    * slot. Used by the operator-call codegen to gate operators that only make
@@ -119,6 +134,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
     insideLiteral: ctx.insideLiteral,
+    pipelineContext: ctx.pipelineContext,
     accumulatorContext: ctx.accumulatorContext,
   };
 }
@@ -152,7 +168,7 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
  * the same shape as the user writing the literal there directly.
  */
 export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
-  return { lambdaParams: new Set(), bindings: outer.bindings };
+  return { lambdaParams: new Set(), bindings: outer.bindings, pipelineContext: outer.pipelineContext };
 }
 
 /**
@@ -165,7 +181,12 @@ export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
  * resolve correctly.
  */
 export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
-  return { lambdaParams: new Set(), bindings: outer.bindings, pipelineLets: outer.pipelineLets };
+  return {
+    lambdaParams: new Set(),
+    bindings: outer.bindings,
+    pipelineLets: outer.pipelineLets,
+    pipelineContext: outer.pipelineContext,
+  };
 }
 
 /** Return a fresh ctx with the given function-form parameter bindings applied. */
@@ -489,6 +510,42 @@ function isPureRef(expr: Expr, ctx: GenerateCtx): boolean {
   return asFieldPath(expr, ctx) !== null;
 }
 
+/**
+ * MongoDB user-variable names (a `$let`/`$map`/`$filter` `as` or `vars` key,
+ * referenced as `$$name`) must begin with a lowercase ASCII letter `[a-z]` (or a
+ * non-ASCII character). Names starting with `_`, `$`, a digit, or an uppercase
+ * letter are reserved/invalid and the server rejects the whole pipeline
+ * ("'…' starts with an invalid character for a user variable name"). User lambda
+ * params (the idiomatic throwaway `_` in `(_, i) => …`) and field-derived
+ * `$lookup` let names (`_id` — the most common join key!) routinely hit this.
+ *
+ * Deterministic and idempotent: valid names are returned unchanged (so the
+ * overwhelmingly common case produces identical output), and an invalid name
+ * gets a `v` lead-in (`_id` → `v_id`, `_` → `v_`, `ID` → `vID`). Because it is a
+ * pure function, the emission site (the `as`/`vars` key) and every reference
+ * site (`$$name`) can call it independently and always agree — no remap table
+ * needs threading through the context.
+ */
+export function safeVarName(name: string): string {
+  return /^[a-z]/.test(name) ? name : "v" + name;
+}
+
+/**
+ * Map a JS regex's flags to the subset MongoDB's `$regex*` operators accept as
+ * `options`. MongoDB supports only `i`, `m`, `s`, `x`; the JS-only flags
+ * (`g`, `u`, `y`, `d`, `v`) are not valid `options` and make the server reject
+ * the pipeline ("invalid flag in regex options"). `g` is implied by
+ * `$regexFindAll` and irrelevant to `$regexMatch`/`$regexFind`, so dropping it
+ * preserves semantics; the rarer `u`/`y`/`d`/`v` have no MQL equivalent and are
+ * dropped too. Returns "" when nothing survives (the caller then omits
+ * `options` entirely).
+ */
+function mongoRegexOptions(jsFlags: string): string {
+  let out = "";
+  for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
+  return out;
+}
+
 /** Pick a $let binding name that doesn't shadow any in-scope lambda param. */
 function gensymInScope(ctx: GenerateCtx, base: string): string {
   if (!ctx.lambdaParams.has(base)) return base;
@@ -594,7 +651,7 @@ function negativeLiteralValue(node: Expr): number | null {
  * second wrap would produce a literal-of-a-literal.
  */
 function literalSafeString(value: string, ctx: GenerateCtx): unknown {
-  if (ctx.insideLiteral) return value;
+  if (ctx.insideLiteral || ctx.pipelineContext) return value;
   if (value.length > 0 && value.charCodeAt(0) === 36 /* $ */) {
     return { $literal: value };
   }
@@ -615,7 +672,7 @@ function literalSafeString(value: string, ctx: GenerateCtx): unknown {
  * `Object.entries` would silently strip them to `{}`.
  */
 function safeBoundValue(value: unknown, ctx: GenerateCtx): unknown {
-  if (ctx.insideLiteral) return value;
+  if (ctx.insideLiteral || ctx.pipelineContext) return value;
   if (typeof value === "string") return literalSafeString(value, ctx);
   if (isOpaqueBsonValue(value)) return value;
   if (Array.isArray(value)) return value.map((v) => safeBoundValue(v, ctx));
@@ -866,7 +923,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         return `$$${ctx.reduceRemap.get(expr.name)!}`;
       }
       if (ctx.lambdaParams.has(expr.name)) {
-        return `$$${expr.name}`;
+        return `$$${safeVarName(expr.name)}`;
       }
       const letPath = ctx.pipelineLets?.get(expr.name);
       if (letPath !== undefined) {
@@ -1057,7 +1114,7 @@ function asFieldPath(expr: Expr, ctx: GenerateCtx): string | null {
       return `$$${ctx.reduceRemap.get(expr.name)!}`;
     }
     if (ctx.lambdaParams.has(expr.name)) {
-      return `$$${expr.name}`;
+      return `$$${safeVarName(expr.name)}`;
     }
     const letPath = ctx.pipelineLets?.get(expr.name);
     if (letPath !== undefined) {
@@ -1205,7 +1262,8 @@ function foldLogical(op: "&&" | "||", chain: Expr[], ctx: GenerateCtx): unknown 
     return condForLogical(op, lhsGen, rhsGen, lhs);
   }
   // Bind lhs once so we can both test and return it without re-evaluating.
-  const v = gensymInScope(ctx, "_v");
+  // Base name must be MongoDB-valid (lowercase lead); gensym handles collisions.
+  const v = gensymInScope(ctx, "v");
   const ref = `$$${v}`;
   return {
     $let: {
@@ -1940,7 +1998,8 @@ function generateMethodCall(
       const pattern = exprArgs[0];
       if (pattern.type === "RegexLiteral") {
         const result: Record<string, unknown> = { input: genObj, regex: pattern.pattern };
-        if (pattern.flags) result["options"] = pattern.flags;
+        const opts = mongoRegexOptions(pattern.flags);
+        if (opts) result["options"] = opts;
         return { $regexMatch: result };
       }
       return { $regexMatch: { input: genObj, regex: _generate(pattern, ctx) } };
@@ -1957,7 +2016,10 @@ function generateMethodCall(
           );
         }
         const result: Record<string, unknown> = { input: genObj, regex: pattern.pattern };
-        if (pattern.flags) result["options"] = pattern.flags;
+        // Drop the required `g` (and any other JS-only flag) — `$regexFindAll`
+        // is inherently global, and `g` is not a valid MongoDB option.
+        const opts = mongoRegexOptions(pattern.flags);
+        if (opts) result["options"] = opts;
         return { $regexFindAll: result };
       }
       return { $regexFindAll: { input: genObj, regex: _generate(pattern, ctx) } };
@@ -1969,11 +2031,12 @@ function generateMethodCall(
       // .search returns the index of the first match, or -1. $regexFind returns
       // an object with .idx for matches; null on no match. We surface .idx with
       // an $ifNull fallback to -1 to match JS semantics exactly.
+      const searchOpts = pattern.type === "RegexLiteral" ? mongoRegexOptions(pattern.flags) : "";
       const findCall =
         pattern.type === "RegexLiteral"
           ? {
-              $regexFind: pattern.flags
-                ? { input: genObj, regex: pattern.pattern, options: pattern.flags }
+              $regexFind: searchOpts
+                ? { input: genObj, regex: pattern.pattern, options: searchOpts }
                 : { input: genObj, regex: pattern.pattern },
             }
           : { $regexFind: { input: genObj, regex: _generate(pattern, ctx) } };
@@ -2348,8 +2411,8 @@ function generateMethodCall(
         ? {
             $let: {
               vars: {
-                [lambda.params[1]]: { $arrayElemAt: ["$$this", 1] },
-                [lambda.params[2]]: { $arrayElemAt: ["$$this", 0] },
+                [safeVarName(lambda.params[1])]: { $arrayElemAt: ["$$this", 1] },
+                [safeVarName(lambda.params[2])]: { $arrayElemAt: ["$$this", 0] },
               },
               in: baseBody,
             },
@@ -2524,7 +2587,12 @@ function arrayIterInput(
     );
   }
   if (params.length <= 1) {
-    return { input: genObj, asName: params[0] ?? "v", bodyCtx: extendCtx(ctx, params), wrap: (body) => body };
+    return {
+      input: genObj,
+      asName: params[0] ? safeVarName(params[0]) : "v",
+      bodyCtx: extendCtx(ctx, params),
+      wrap: (body) => body,
+    };
   }
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
@@ -2532,7 +2600,10 @@ function arrayIterInput(
     bodyCtx: extendCtx(ctx, params),
     wrap: (body) => ({
       $let: {
-        vars: { [params[0]]: { $arrayElemAt: ["$$jsmqlPair", 1] }, [params[1]]: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+        vars: {
+          [safeVarName(params[0])]: { $arrayElemAt: ["$$jsmqlPair", 1] },
+          [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] },
+        },
         in: body,
       },
     }),
@@ -2815,7 +2886,7 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
   // Compile-time fast path: when `start` and `end` are both omitted, every
   // element becomes `v`. Skip the IIFE and the index plumbing entirely.
   if (startArg === undefined && endArg === undefined) {
-    const unusedAndV: Expr = { type: "Lambda", params: ["__jsmql_unused"], body: v, pos };
+    const unusedAndV: Expr = { type: "Lambda", params: ["jsmqlFillUnused"], body: v, pos };
     return { type: "MethodCall", object, method: "map", args: [unusedAndV], pos };
   }
 
@@ -2836,9 +2907,9 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
   const s0Init = normalize(startArg, () => zero);
   const e0Init = normalize(endArg, () => sizeOf());
 
-  // Inner map body: `(i >= __jsmql_s0 && i < __jsmql_e0) ? v : x`.
-  const sRef: Expr = { type: "ParamRef", name: "__jsmql_s0", pos };
-  const eRef: Expr = { type: "ParamRef", name: "__jsmql_e0", pos };
+  // Inner map body: `(i >= jsmqlFillStart && i < jsmqlFillEnd) ? v : x`.
+  const sRef: Expr = { type: "ParamRef", name: "jsmqlFillStart", pos };
+  const eRef: Expr = { type: "ParamRef", name: "jsmqlFillEnd", pos };
   const xRef: Expr = { type: "ParamRef", name: "x", pos };
   const iRef: Expr = { type: "ParamRef", name: "i", pos };
   const condition: Expr = {
@@ -2852,7 +2923,7 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
   const mapLambda: Expr = { type: "Lambda", params: ["x", "i"], body: mapBody, pos };
   const mapCall: Expr = { type: "MethodCall", object, method: "map", args: [mapLambda], pos };
 
-  const iifeCallee: Expr = { type: "Lambda", params: ["__jsmql_s0", "__jsmql_e0"], body: mapCall, pos };
+  const iifeCallee: Expr = { type: "Lambda", params: ["jsmqlFillStart", "jsmqlFillEnd"], body: mapCall, pos };
   return { type: "CallExpression", callee: iifeCallee, args: [s0Init, e0Init], pos };
 }
 
@@ -3347,8 +3418,8 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
   return {
     $map: {
       input: { $range: [0, lengthExpr] },
-      as: idxParam,
-      in: { $let: { vars: { [elemParam]: null }, in: _generate(mapFn.body, bodyCtx) } },
+      as: safeVarName(idxParam),
+      in: { $let: { vars: { [safeVarName(elemParam)]: null }, in: _generate(mapFn.body, bodyCtx) } },
     },
   };
 }
@@ -3475,7 +3546,8 @@ function generateRegexMethodCall(
     );
   }
   const obj: Record<string, unknown> = { input, regex: regex.pattern };
-  if (regex.flags) obj["options"] = regex.flags;
+  const opts = mongoRegexOptions(regex.flags);
+  if (opts) obj["options"] = opts;
   return { [opName]: obj };
 }
 

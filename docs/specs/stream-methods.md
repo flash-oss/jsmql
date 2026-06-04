@@ -29,7 +29,7 @@ Two contexts share the same registry. Both currently live in
 | Context | Chain head | Lowering site |
 |---|---|---|
 | **`$$ = $$.<chain>;`** | Bare `$$` (or `$$.filter(<pred>)` as the first method) | Each registry method appends one or more stages to the outer pipeline. |
-| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>` (or with `.filter(<pred>)` as the first method) | Each registry method appends stages inside the `$unionWith.pipeline` body of the emitted `$limit: 0` + `$unionWith` pair. |
+| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>` (or with `.filter(<pred>)` as the first method) | Each registry method appends stages inside the `$unionWith.pipeline` body of the emitted `$match` + `$unionWith` pair. |
 
 The first method of a chain may be `.filter(<lambda>)` — handled by the
 pre-existing `lowerStreamFilterPredicate` (translates the predicate through

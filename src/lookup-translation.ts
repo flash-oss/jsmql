@@ -51,7 +51,14 @@ import type {
   ObjectEntry,
   KeyValueEntry,
 } from "./ast.ts";
-import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
+import {
+  CodegenError,
+  EMPTY_CTX,
+  generateWithCtx,
+  freshSubPipelineCtx,
+  safeVarName,
+  type GenerateCtx,
+} from "./codegen.ts";
 import { translateMatchBody, type MatchTranslation } from "./match-translation.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
@@ -907,7 +914,9 @@ function createLetAllocator(): LetAllocator {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== undefined) return existing;
-      const base = segments[segments.length - 1];
+      // The let-var name is `$$<name>` in the sub-pipeline; sanitize so a field
+      // like `_id` (the most common join key) doesn't yield an invalid `$$_id`.
+      const base = safeVarName(segments[segments.length - 1]);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -917,7 +926,7 @@ function createLetAllocator(): LetAllocator {
     allocateForOuterLet(segments: string[], fieldPath: string): string {
       const existing = byPath.get(fieldPath);
       if (existing !== undefined) return existing;
-      const base = segments[segments.length - 1];
+      const base = safeVarName(segments[segments.length - 1]);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);

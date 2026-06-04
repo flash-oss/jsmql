@@ -754,7 +754,7 @@ describe("logical operators", () => {
   });
   it("&& with non-pure-ref LHS uses $let to bind once", () => {
     expect(jsmql.expr("($.a + $.b) && $.c")).toEqual({
-      $let: { vars: { _v: { $add: ["$a", "$b"] } }, in: { $cond: [truthy("$$_v"), "$c", "$$_v"] } },
+      $let: { vars: { v: { $add: ["$a", "$b"] } }, in: { $cond: [truthy("$$v"), "$c", "$$v"] } },
     });
   });
   it("|| short-circuit chain with default (user's idiom)", () => {
@@ -1731,7 +1731,7 @@ describe("bitwise infix operators", () => {
   it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
     // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
     expect(jsmql.expr("$.a | $.b && $.c")).toEqual({
-      $let: { vars: { _v: { $bitOr: ["$a", "$b"] } }, in: { $cond: [truthy("$$_v"), "$c", "$$_v"] } },
+      $let: { vars: { v: { $bitOr: ["$a", "$b"] } }, in: { $cond: [truthy("$$v"), "$c", "$$v"] } },
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
@@ -2201,13 +2201,13 @@ describe("statement-position mutators", () => {
   });
   it(".fill(v) — every element becomes v via $map", () => {
     expect(jsmql("$.events.fill(0);")).toEqual([
-      { $set: { events: { $map: { input: "$events", as: "__jsmql_unused", in: 0 } } } },
+      { $set: { events: { $map: { input: "$events", as: "jsmqlFillUnused", in: 0 } } } },
     ]);
   });
   it(".fill(v, s, e) with non-negative literals — IIFE bindings inline the literals (no normalisation $cond)", () => {
     const out = jsmql("$.events.fill(0, 1, 3);") as Array<Record<string, unknown>>;
     const setVal = (out[0]?.$set as { events: unknown }).events as { $let: { vars: Record<string, unknown> } };
-    expect(setVal.$let.vars).toEqual({ __jsmql_s0: 1, __jsmql_e0: 3 });
+    expect(setVal.$let.vars).toEqual({ jsmqlFillStart: 1, jsmqlFillEnd: 3 });
   });
   it(".reverse() with extra args is rejected (preserves the existing .toReversed arg-count check)", () => {
     expect(() => jsmql("$.events.reverse(123);")).toThrow();
@@ -2303,9 +2303,7 @@ describe("regex method variants", () => {
     expect(jsmql.expr("/word/.exec($.s)")).toEqual({ $regexFind: { input: "$s", regex: "word" } });
   });
   it("str.matchAll(/re/g)", () => {
-    expect(jsmql.expr("$.s.matchAll(/word/g)")).toEqual({
-      $regexFindAll: { input: "$s", regex: "word", options: "g" },
-    });
+    expect(jsmql.expr("$.s.matchAll(/word/g)")).toEqual({ $regexFindAll: { input: "$s", regex: "word" } });
   });
   it("matchAll without g flag throws", () => {
     expect(() => jsmql.expr("$.s.matchAll(/word/)")).toThrow(/'g' flag/);
@@ -2383,7 +2381,7 @@ describe("Array.from({length, ...})", () => {
   });
   it("with (_, i) => body maps over $range", () => {
     expect(jsmql.expr("Array.from({ length: 3 }, (_, i) => i * 2)")).toEqual({
-      $map: { input: { $range: [0, 3] }, as: "i", in: { $let: { vars: { _: null }, in: { $multiply: ["$$i", 2] } } } },
+      $map: { input: { $range: [0, 3] }, as: "i", in: { $let: { vars: { v_: null }, in: { $multiply: ["$$i", 2] } } } },
     });
   });
   it("with $.length expression", () => {
@@ -2515,7 +2513,7 @@ describe("regex literals (context-sensitive /)", () => {
   });
   it("regex with multiple flags", () => {
     expect(jsmql.expr("$.str.match(/pattern/gi)")).toEqual({
-      $regexMatch: { input: "$str", regex: "pattern", options: "gi" },
+      $regexMatch: { input: "$str", regex: "pattern", options: "i" },
     });
   });
 });

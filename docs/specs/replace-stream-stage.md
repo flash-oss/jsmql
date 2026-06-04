@@ -1,4 +1,4 @@
-# `$$ = <expr>` → `$match` / `$limit:0 + $unionWith` stage
+# `$$ = <expr>` → `$match` / `$match + $unionWith` stage
 
 ## Overview
 
@@ -7,7 +7,7 @@ stream. The LHS is the bare `$$` token — the current collection / stream,
 the same role MQL's `$$ROOT` plays for a single document. Sister shape to
 `$ = <expr>` (which replaces *one* doc → `$replaceWith`); `$$ = <expr>`
 replaces the *stream* and lowers to either a `$match` (narrow) or
-`$limit:0` + `$unionWith` (switch source).
+`$match` + `$unionWith` (switch source).
 
 Statement-only: `$$ = <expr>` appears as a top-level pipeline statement —
 either inside `[ ... ]` array-form or as a `;`-separated implicit-pipeline
@@ -24,10 +24,10 @@ for the user-facing reference.
 |---|---|
 | `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5 } } }]` |
 | `$$ = $$.filter(t => true)` (vacuous) | `[{ $match: { $expr: true } }]` |
-| `$$ = $$$.t.filter(t => t.x > 5)` | `[{ $limit: 0 }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |
-| `$$ = $$$.t.filter(t => true)` (vacuous) | `[{ $limit: 0 }, { $unionWith: "t" }]` (short form) |
+| `$$ = $$$.t.filter(t => t.x > 5)` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |
+| `$$ = $$$.t.filter(t => true)` (vacuous) | `[{ $match: { $expr: false } }, { $unionWith: "t" }]` (short form) |
 | `$$ = $$$$.db.coll.filter(p)` | Same as above but `from: { db, coll }` (Atlas Data Federation form) |
-| `$$ = $$$.t.filter(t => { $match(t.x > 5); $sort({x:-1}); $limit(3); })` | `[{ $limit: 0 }, { $unionWith: { coll: "t", pipeline: [{ $match: {x:{$gt:5}} }, { $sort:{x:-1} }, { $limit:3 }] } }]` (block-body) |
+| `$$ = $$$.t.filter(t => { $match(t.x > 5); $sort({x:-1}); $limit(3); })` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: {x:{$gt:5}} }, { $sort:{x:-1} }, { $limit:3 }] } }]` (block-body) |
 
 The two RHS shapes both reuse `lowerStreamFilterPredicate` for predicate
 translation; only the wrapping differs.
@@ -166,7 +166,7 @@ src/
 
 ## Deferred
 
-- **`$$ = []`** would naturally lower to `{ $limit: 0 }`. Skipped for v1: the
+- **`$$ = []`** would naturally lower to `{ $match: { $expr: false } }`. Skipped for v1: the
   ergonomic win is tiny (`$limit(0)` is one token longer) and the parser path
   needs a small extension to thread an `ArrayLiteral` RHS through.
 - **`$$ = cond ? A : B`** (stream-level ternary). The genuinely hard piece is

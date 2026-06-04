@@ -957,6 +957,11 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   if (t.residual === null) return t.query;
+  // The standalone-Filter `$expr` residual is generated WITHOUT `pipelineContext`,
+  // so `$`-string literals here are still `$literal`-wrapped (a
+  // `db.coll.find(filter)` is neither a pipeline nor `jsmql.expr`). A `$match`
+  // stage's `$expr` *inside a pipeline* passes `$`-strings through.
+  // Unifying the two is deferred [DEF-025] — see docs/DEFERRED.md.
   const exprPart = { $expr: generateWithCtx(t.residual, ctx) };
   if (Object.keys(t.query).length === 0) return exprPart;
   return { ...t.query, ...exprPart };

@@ -186,7 +186,7 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
     expect(
       jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`,
     ).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       {
         $unionWith: {
           coll: "transactions",
@@ -1313,8 +1313,12 @@ $project({ name: 1, recentOrders: 1, nOrders });
       {
         $lookup: {
           from: "orders",
-          let: { _id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$_id"] } } }, { $sort: { createdAt: -1 } }, { $limit: 5 }],
+          let: { v_id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 5 },
+          ],
           as: "recentOrders",
         },
       },
@@ -1726,7 +1730,7 @@ $$ = $$$.users.filter(u => u.active === true).map(u => ({
 }));
           `,
         ).toEqual([
-          { $limit: 0 },
+          { $match: { $expr: false } },
           {
             $unionWith: {
               coll: "users",
@@ -1801,9 +1805,9 @@ $.recentOrders = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { _id: "$_id" },
+              let: { v_id: "$_id" },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+                { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
                 { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
@@ -1858,9 +1862,9 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { _id: "$_id" },
+              let: { v_id: "$_id" },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+                { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
               ],
@@ -1902,9 +1906,9 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { _id: "$_id", minSpend: "$__jsmql.minSpend" },
+              let: { v_id: "$_id", minSpend: "$__jsmql.minSpend" },
               pipeline: [
-                { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $gt: ["$total", "$$minSpend"] }] } } },
+                { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $gt: ["$total", "$$minSpend"] }] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
               ],

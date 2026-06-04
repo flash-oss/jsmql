@@ -153,6 +153,11 @@ function rejectNonDocumentNewRoot(stage: string, value: Expr): void {
   const desc = describeLiteral(value);
   // A literal object is a valid document; everything else literal is not.
   if (desc !== null && value.type !== "ObjectLiteral") {
+    // A `$`-prefixed string is a field path (e.g. `$replaceWith("$subdoc")`)
+    // that resolves to a document at runtime — allow it, same as the field-ref
+    // form `$replaceWith($.subdoc)`. Only non-`$` literals (plain strings,
+    // numbers, booleans) can never be a document.
+    if (value.type === "StringLiteral" && value.value.startsWith("$")) return;
     throw new CodegenError(
       `'${stage}' must resolve to a document, but got ${desc}. ` + `Wrap it, e.g. '{ value: … }'.`,
       value.pos,
@@ -581,6 +586,12 @@ const STAGE_BODY_VALIDATORS: Record<string, BodyValidator> = {
  * Validate a stage's body against the 100%-static-certain shape rules. A no-op
  * for stages with no validator, and (per the literal-gating invariant) a no-op
  * whenever the checked slot isn't a fully-static literal.
+ *
+ * [DEF-027] Constant-only slots given a *non-literal* (a field ref / expression)
+ * are NOT yet caught here — e.g. `$limit($.n)` → `{ $limit: "$n" }`,
+ * `$bucket({ boundaries: $.x })`, `$lookup({ pipeline: $.x })` — and the server
+ * rejects them at parse time. These are statically knowable (the slot holds a
+ * non-constant) but not yet validated. See docs/DEFERRED.md.
  */
 export function validateStageBody(stageName: string, body: Expr): void {
   const validator = STAGE_BODY_VALIDATORS[stageName];

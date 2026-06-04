@@ -241,6 +241,41 @@ Both single and double quotes. Escape sequences: `\\`, `\"`, `\'`, `\n`, `\t`:
 "escaped \"quote\""
 ```
 
+#### `$`-prefixed strings: pipelines pass through, `jsmql.expr` wraps
+
+A string that starts with `$` (like `"$items"`) is special, because MongoDB reads
+such strings as **field references** in aggregation expressions. jsmql treats them
+differently depending on which surface you are on:
+
+- **In a pipeline / stage** (`jsmql(...)`, `jsmql.pipeline(...)`, and stage bodies)
+  a `$`-string **passes through verbatim**. This is the "MongoDB documents you
+  write or paste" surface, so pasted MQL round-trips unchanged:
+
+  ```js
+  jsmql(`$unwind("$items");`)        // → [{ $unwind: "$items" }]
+  jsmql(`[{ $unwind: "$items" }]`)   // → [{ $unwind: "$items" }]  (raw MQL, unchanged)
+  jsmql(`$project({ x: "$y" });`)    // → [{ $project: { x: "$y" } }]
+  jsmql(`$project({ t: $concat("$a", "$b") });`)
+  //    → [{ $project: { t: { $concat: ["$a", "$b"] } } }]   (even nested in an operator)
+  ```
+
+  Writing `$.items` instead of `"$items"` produces the identical output, so use
+  whichever reads better. To force a **literal** string that happens to start with
+  `$` inside a pipeline, use the `$literal(...)` escape hatch:
+
+  ```js
+  jsmql(`$project({ x: $literal("$y") });`)   // → [{ $project: { x: { $literal: "$y" } } }]
+  ```
+
+- **In `jsmql.expr(...)`** — the raw aggregation-expression authoring surface — a
+  `$`-string is a **literal string** and gets wrapped in `$literal` so MongoDB
+  does not mistake it for a field reference. Write `$.y` for a field reference:
+
+  ```js
+  jsmql.expr(`$eq($.x, "$y")`)   // → { $eq: ["$x", { $literal: "$y" }] }
+  jsmql.expr(`$eq($.x, $.y)`)    // → { $eq: ["$x", "$y"] }
+  ```
+
 ### Template Literals
 
 Backtick-delimited strings with `${expr}` interpolation, just like JS. They compile to `$concat`:
@@ -1003,7 +1038,7 @@ $.file.endsWith(".pdf")            // substring-equality at the tail (see below)
 $.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
 $.first.trim().concat(" ", $.last) // { $concat: [{ $trim: ... }, " ", "$last"] }
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
-$.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word", options: "g" } }
+$.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
 $.code.padStart(5, "0")            // padded via $reduce + $range + $concat
 $.note.padEnd(10)                  // (default pad char is space)
@@ -1012,7 +1047,12 @@ $.note.padEnd(10)                  // (default pad char is space)
 // Regex receiver methods — equivalent to .match / .search-style calls
 /^[a-z]/.test($.s)                 // { $regexMatch: { input: "$s", regex: "^[a-z]" } }
 /word/i.exec($.s)                  // { $regexFind: { input: "$s", regex: "word", options: "i" } }
+/word/gi.test($.s)                 // { $regexMatch: { input: "$s", regex: "word", options: "i" } }  — g dropped
+```
 
+**Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent, so jsmql drops them from the emitted `options` (keeping `i`/`m`/`s`). Dropping `g` is harmless: `$regexFindAll` is inherently global, and `g` is irrelevant to `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex (matching JS, which throws without it), but the `g` doesn't appear in the output.
+
+```js
 // Property access — DOT access is interpreted, BRACKET access is raw
 $.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
 $.csv.split(",").length             // { $size: ... }           — known array  → $size
@@ -1942,7 +1982,7 @@ jsmql(`$$ = $$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)
 // The driver call (`db.<original>.aggregate(...)`) keeps its original collection.
 jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new Date("2026-01-01"));`)
 // → [
-//     { $limit: 0 },
+//     { $match: { $expr: false } },
 //     { $unionWith: { coll: "transactions",
 //                     pipeline: [{ $match: { client: 156, createdAt: { $gte: <Date> } } }] } }
 //   ]
@@ -2042,7 +2082,7 @@ Compile-time rejections:
 | `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
 
-**Let scope.** The narrow form (`$$ = $$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after `$limit: 0`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
+**Let scope.** The narrow form (`$$ = $$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after the never-matching `$match`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
 
 #### Stream methods chained after the RHS
 
@@ -2059,7 +2099,7 @@ jsmql(`$$ = $$.filter(o => o.tier === "gold").slice(0, 10);`)
 
 // Source-switch with a slice inside the union body.
 jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
-// → [{ $limit: 0 },
+// → [{ $match: { $expr: false } },
 //    { $unionWith: { coll: "archive",
 //                    pipeline: [{ $match: { tier: "gold" } }, { $limit: 10 }] } }]
 ```
