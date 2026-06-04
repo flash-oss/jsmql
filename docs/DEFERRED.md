@@ -191,15 +191,15 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ### DEF-015 — Ambient TS types for `$$` / `$$$` / `$$$$`
 
-- **What's blocked.** The arrow-form lookup (`($) => $$$.coll.find(...)`) doesn't type-check under TypeScript — `$$$` isn't declared as an ambient global. String form works fully.
-- **Target lowering.** No MQL change. `src/ops.ts` (or a parallel `globals.ts`) declares `$$`, `$$$`, `$$$$` so the arrow-form syntax type-checks.
-- **Why blocked.** Type design needs to cover all three prefixes consistently, and the type shape interacts with diagnostic stages (DEF-008 / system-stages) plus DEF-013 schema threading.
-- **Attempted approaches.** None.
-- **Success criteria.** `jsmql(($) => $$$.users.find(u => u.id === $._id))` type-checks without `any`.
-- **Rejection site(s).** `docs/specs/context-references.md:133`, `lookup-stage.md:167`, `system-stages.md:138`.
-- **Spec.** `docs/specs/ops-generation.md` will host the type generation.
-- **Status.** design-only
-- **Effort.** M
+- **What's blocked.** **Partially shipped.** All three prefixes are now declared as ambient `const`s in `src/ops.ts`, so arrow-form context-ref code (`($) => $$$.coll.find(...)`, `($) => $$.indexStats()`) type-checks instead of erroring on an undeclared identifier. The collection-/cluster-scoped diagnostic source stages (`$$.collStats(...)`, `$$$$.currentOp(...)`, …) are typed precisely with annotated option objects + JSDoc. **Still open:** every non-diagnostic ref form (`.push`, `.filter`, `.coll.find(...)`, `$out`, stream methods, member access) rides a permissive `[key: string]: any` tail and is therefore `any` — narrowing it to real collection/document types is the remaining work.
+- **Target lowering.** No MQL change. The remaining work narrows the permissive `[key: string]: any` tail to schema-aware types.
+- **Why blocked.** Precise typing of the lookup/out/find chains needs collection-name + document-schema threading, which is DEF-013. The diagnostic-ops typing (independently shippable) is done.
+- **Attempted approaches.** Shipped the ambient-globals scaffold + diagnostic-op completion via `contextRefBlock()` in `scripts/generate-ops.mjs`, deriving methods from the `STAGES[…].diagnostic` field and a hardcoded option-shape map.
+- **Success criteria.** ~~`jsmql(($) => $$$.users.find(u => u.id === $._id))` type-checks without `any`.~~ Now type-checks, but the `find` chain is `any` pending DEF-013. Remaining criterion: that chain resolves to the joined collection's document type.
+- **Rejection site(s).** `docs/specs/context-references.md` (Future-work bullet — now "partially shipped"), `lookup-stage.md`, `system-stages.md`.
+- **Spec.** `docs/specs/ops-generation.md` § Context references (hosts the shipped generation); remaining narrowing tracked under DEF-013.
+- **Status.** partial — diagnostic ops typed; lookup/out/find chains permissive `any`, gated on DEF-013.
+- **Effort.** M (remaining)
 
 ### DEF-016 — Per-operator return-type narrowing in `ops.ts`
 

@@ -49,6 +49,62 @@ const SUB_CONSTRUCTS = new Set(["$case"]);
 const TIME_UNIT_LITERAL =
   '"year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond"';
 
+// Options-object shapes for the diagnostic / system source stages reached via
+// the context-ref prefixes (`$$.collStats({...})`, `$$$$.currentOp({...})`, …).
+// These field shapes aren't carried by the STAGES registry or the vendored YAML
+// in a usable form, and matter only to TS completion, so they live here — keyed
+// by stage name. The no-option stages ($indexStats, $planCacheStats,
+// $shardedDataDistribution) are absent: they take zero arguments. Field sets
+// transcribed from the MongoDB manual (URLs below) — keep in sync when the
+// pinned server version changes.
+const DIAGNOSTIC_OPTION_SHAPES = {
+  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/collStats/
+  $collStats:
+    "{ latencyStats?: { histograms?: boolean }; storageStats?: { scale?: number }; count?: Record<string, never>; queryExecStats?: Record<string, never> }",
+  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSearchIndexes/
+  $listSearchIndexes: "{ id?: string; name?: string }",
+  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/currentOp/
+  $currentOp:
+    "{ allUsers?: boolean; idleConnections?: boolean; idleCursors?: boolean; idleSessions?: boolean; localOps?: boolean; targetAllNodes?: boolean }",
+  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSessions/
+  $listSessions: "{ users?: { user: string; db: string }[]; allUsers?: boolean }",
+  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listLocalSessions/
+  $listLocalSessions: "{ users?: { user: string; db: string }[]; allUsers?: boolean }",
+  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSampledQueries/
+  $listSampledQueries: "{ namespace?: string }",
+};
+
+// Context-ref prefixes, in scope order. Each becomes an ambient `const` whose
+// named members are the scope's diagnostic stages (derived from the STAGES
+// `diagnostic` field) and whose `[key: string]: any` tail keeps the rest of the
+// ref's syntax (`$$.push(...)`, `$$$.coll.find(...)`, member access, stream
+// methods) type-checking. Trade-off: TS won't flag a typo of a non-diagnostic
+// method — the jsmql parser still does. See docs/specs/context-references.md.
+const CONTEXT_REFS = {
+  collection: {
+    name: "$$",
+    doc:
+      "jsmql current-collection context reference (`$$`, run on `db.coll.aggregate()`). " +
+      "Names a collection-scoped diagnostic source stage, or heads collection sugar " +
+      "(`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).",
+  },
+  database: {
+    name: "$$$",
+    doc:
+      "jsmql current-database context reference (`$$$`, run on `db.aggregate()`). " +
+      "Heads cross-collection joins (`$$$.coll.find/filter(...)` → `$lookup`) and " +
+      "`$out` writes (`$$$.coll = ...`). Has no diagnostic source stages of its own — " +
+      "`$currentOp` & friends run on the admin database, reached via `$$$$`.",
+  },
+  cluster: {
+    name: "$$$$",
+    doc:
+      "jsmql cluster/server context reference (`$$$$`, run on the admin database). " +
+      "Names a cluster-scoped diagnostic source stage, or heads cross-database joins " +
+      "(`$$$$.db.coll.find/filter(...)` → `$lookup`) and writes (`$$$$.db.coll = ...`).",
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Spec loading. Mirrors the strategy in test/operator-spec-coverage.test.ts:
 // strip the `tests:` block before js-yaml sees it, since the test fixtures
@@ -283,6 +339,38 @@ function emitBlock(name, jsdoc, callableSigs) {
   return `${jsdoc}\n${emitFunctionDecls(name, callableSigs)}`;
 }
 
+// Emit the `const $$ / $$$ / $$$$` ambient declarations. Diagnostic methods are
+// derived from the STAGES `diagnostic` field (the single source of truth, also
+// read by src/system-stage-translation.ts); each method reuses the same JSDoc
+// the stage's own block gets, so descriptions stay consistent.
+function contextRefBlock(spec) {
+  const methodsByScope = { collection: [], database: [], cluster: [] };
+  for (const [stageName, def] of Object.entries(STAGES)) {
+    if (def.diagnostic === undefined) continue;
+    methodsByScope[def.diagnostic.scope].push(stageName);
+  }
+
+  const blocks = [];
+  for (const scope of ["collection", "database", "cluster"]) {
+    const ref = CONTEXT_REFS[scope];
+    const members = [];
+    for (const stageName of methodsByScope[scope].sort()) {
+      const def = STAGES[stageName];
+      const method = stageName.slice(1);
+      const sig = def.diagnostic.options
+        ? `${method}(options?: ${DIAGNOSTIC_OPTION_SHAPES[stageName]}): any;`
+        : `${method}(): any;`;
+      members.push(jsdocFor(stageName, spec.stage.get(stageName), def));
+      members.push(sig);
+    }
+    // The permissive tail — keeps every non-diagnostic ref form type-checking.
+    members.push("[key: string]: any;");
+    const refJsdoc = `/**\n * ${ref.doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
+    blocks.push(`${refJsdoc}\nconst ${ref.name}: {\n${members.join("\n")}\n};`);
+  }
+  return blocks.join("\n");
+}
+
 export function generateOpsSource() {
   const spec = loadSpec();
 
@@ -336,6 +424,8 @@ export function generateOpsSource() {
     "//",
     "// Surfaces every jsmql stage and operator as an ambient global with a",
     "// precise signature, JSDoc description, and link to the MongoDB docs.",
+    "// Also declares the `$$` / `$$$` / `$$$$` context references, with",
+    "// completion for the collection- and cluster-scoped diagnostic stages.",
     "// The compiled module exports nothing at runtime (`export {};`), so the",
     "// import resolves to an empty module — bundlers tree-shake it away. For",
     '// fully zero-runtime use, add `"@koresar/jsmql/ops"` to tsconfig',
@@ -360,6 +450,9 @@ export function generateOpsSource() {
     "",
     "  // ── Expression operators (incl. accumulators and window functions) ────",
     ...opBlocks.map(indent),
+    "",
+    "  // ── Context references ($$, $$$, $$$$) ────────────────────────────────",
+    indent(contextRefBlock(spec)),
   ];
 
   const footer = ["}", "", "export {};", ""];

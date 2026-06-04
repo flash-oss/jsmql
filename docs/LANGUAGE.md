@@ -2756,6 +2756,19 @@ How it works:
 
 The ops-hint destructure (`(…, $, { $match, $project })`) remains supported — `@koresar/jsmql/ops` is the preferred alternative when you don't want to maintain per-callsite lists, but existing code keeps working.
 
+The import also declares the context-reference prefixes `$$`, `$$$`, and `$$$$`, so arrow-form code using them type-checks instead of erroring on an undeclared name. The collection-scoped (`$$`) and cluster-scoped (`$$$$`) **diagnostic source stages** get full completion and hover docs with annotated option objects:
+
+```ts
+import "@koresar/jsmql/ops";
+
+jsmql(($) => $$.collStats({ storageStats: { scale: 1024 } }));
+//                ╰── autocomplete: indexStats, collStats, planCacheStats, listSearchIndexes
+jsmql(($) => $$$$.currentOp({ allUsers: true }));
+//                  ╰── autocomplete: currentOp, listSessions, shardedDataDistribution, …
+```
+
+The other context-ref forms (`$$.push(...)`, `$$$.orders.find(...)`, `$$$.reports = …`, stream methods) type-check too, but as `any` for now — precise per-collection typing is future work `[DEF-015]`.
+
 ---
 
 ## Template-Tag Form (`` jsmql`…` ``)

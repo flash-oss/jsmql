@@ -26,10 +26,11 @@ Exports `generateOpsSource()` so [`test/operator-spec-coverage.test.ts`](../../t
 
 ### Output
 
-A single `src/ops.ts` file containing one `declare global { … } export {};` block, alphabetised within two sections:
+A single `src/ops.ts` file containing one `declare global { … } export {};` block, alphabetised within three sections:
 
 1. **Stages** — every key of `STAGES`.
 2. **Expression operators (incl. accumulators and window functions)** — every key of `OPERATORS`. Accumulators sit in the same registry; the section header reflects that this set covers all non-stage callables.
+3. **Context references (`$$`, `$$$`, `$$$$`)** — three ambient `const` declarations so arrow-form context-ref code type-checks. See § Context references below.
 
 For each operator the generator emits:
 
@@ -74,12 +75,24 @@ Per-operator return-type narrowing (e.g. `$abs(): number`) is **deferred**: it i
 
 Reserved TS keywords used as argument names (e.g. `default` for `$bucket`) are quoted as object-type keys.
 
+### Context references (`$$` / `$$$` / `$$$$`)
+
+`contextRefBlock(spec)` emits one ambient `const` per context-ref prefix, in scope order (collection → database → cluster), so arrow-form code like `jsmql(($) => $$.indexStats())` or `jsmql(($) => $$$.orders.find(...))` type-checks under TypeScript instead of erroring on an undeclared identifier.
+
+Each const is an inline object type:
+
+- **Named diagnostic methods** — derived from the `diagnostic: { scope, options }` field on each entry in `STAGES` (the single source of truth, also read by [`src/system-stage-translation.ts`](../../src/system-stage-translation.ts)). Stages bucket by `diagnostic.scope`: `collection` → `$$`, `cluster` → `$$$$`. `$$$` (database) has no diagnostics by design — `$currentOp` & friends run on the admin DB. The method name is the stage name minus its leading `$`; method names are sorted for byte-stable output. Each method reuses the *same* `jsdocFor(...)` JSDoc the stage's own block gets (description, `@minVersion`, `@see`), so docs stay consistent. The signature is `method(): any;` when `options: false`, else `method(options?: <shape>): any;`.
+- **Options shapes** — the option *field* shapes (`collStats`'s `latencyStats`/`storageStats`/…, `currentOp`'s `allUsers`/`idleCursors`/…) aren't carried by `STAGES` or the vendored YAML in a usable form, and matter only to TS completion, so they live in the generator as a hardcoded `DIAGNOSTIC_OPTION_SHAPES` map keyed by stage name, transcribed from the MongoDB manual (doc URLs inline). The three no-option stages (`$indexStats`, `$planCacheStats`, `$shardedDataDistribution`) are absent from the map — they take zero arguments, matching `options: false` and the runtime arg check in `resolveSystemStageCall`.
+- **Permissive tail** — each const ends with `[key: string]: any;`. The context refs carry far more syntax than the diagnostic stages (`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = …`; `$$$.coll.find/filter(...)` → `$lookup`; `$$$.coll = …` / `$$$$.db.coll = …` → `$out`; member access). Typing all of that precisely needs schema/collection-name threading (DEF-013) that doesn't exist yet, so the index signature keeps every such form type-checking as `any`. **Trade-off:** TS won't flag a typo of a non-diagnostic method (e.g. `$$.pus(...)`); the jsmql parser still catches it at compile time. The named diagnostic methods take precedence over the index signature for known keys, so they keep their precise types and completion.
+
+The methods derive entirely from the registry, so adding a new diagnostic stage (a `diagnostic` field on a `STAGES` entry) surfaces it on the right ref automatically — only a new `DIAGNOSTIC_OPTION_SHAPES` entry is needed if it takes options.
+
 ### Stable ordering
 
 The generator sorts:
 
-- Section order: stages first, then expression operators.
-- Within each section: alphabetical by name (`Object.keys(…).sort()`).
+- Section order: stages, then expression operators, then the context refs (`$$` / `$$$` / `$$$$`, themselves in scope order).
+- Within each section: alphabetical by name (`Object.keys(…).sort()`); the context-ref methods are sorted within each const too.
 - YAML files listed by `readdirSync(…).sort()` so the loader is platform-stable.
 
 This determinism is required for the drift test to byte-compare without spurious failures.

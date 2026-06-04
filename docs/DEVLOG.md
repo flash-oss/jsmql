@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — feat: ambient TS types for the `$$` / `$$$` / `$$$$` context refs
+
+`src/ops.ts` now declares the three context-reference prefixes as ambient `const`s, so arrow-form code that uses them (`jsmql(($) => $$.indexStats())`, `$$$.orders.find(...)`, `$$$$.currentOp({...})`) type-checks under TypeScript instead of erroring on an undeclared identifier. Previously only the string form was usable in typed code — the prefixes existed in the lexer/parser/AST but had no global declaration. This is the diagnostic-ops half of **DEF-015** (the row is now "partial").
+
+The collection-scoped (`$$`) and cluster-scoped (`$$$$`) **diagnostic source stages** are typed precisely: `$$.{indexStats, collStats, planCacheStats, listSearchIndexes}` and `$$$$.{currentOp, listSessions, listLocalSessions, listSampledQueries, shardedDataDistribution}`, each with full JSDoc (reused from the stage's own block) and an annotated `options?` object where the stage takes one. The method lists are *derived* from the `STAGES[…].diagnostic` field — the same single source of truth `src/system-stage-translation.ts` reads — so a new diagnostic stage surfaces on the right ref automatically. Option *field* shapes (which aren't in the registry or vendored YAML) are a small hardcoded `DIAGNOSTIC_OPTION_SHAPES` map in the generator, transcribed from the MongoDB manual.
+
+Each ref const ends with a permissive `[key: string]: any` tail so the non-diagnostic sugar (`.push`, `.filter`, `.coll.find(...)`, `$out`, stream methods, member access) keeps type-checking — narrowing those to real collection/document types needs schema threading (DEF-013) and stays future work. Trade-off: TS won't flag a typo of a non-diagnostic method, but the jsmql parser still does. Implemented as `contextRefBlock()` in [`scripts/generate-ops.mjs`](../scripts/generate-ops.mjs) (the user chose all-three-refs + permissive index signature); `src/ops.ts` is regenerated. Drift test + a new context-ref assertion in `test/operator-spec-coverage.test.ts` cover it; full suite green, `tsc` clean, dist smoke green. Specs: [`ops-generation.md`](specs/ops-generation.md) § Context references, [`context-references.md`](specs/context-references.md).
+
+---
+
 ## 2026-06-04 — refactor: `withFunctionInput` / `fnSource` for the arrow-input paths
 
 Prefactoring, round 4. Three entry points parse arrow-function input — the one-shot `dispatchInput` (function branch), `compileFunction`, and `validateInput` — and each spelled out `new Parser(src).parseFunctionInput()` inside a `try { … } catch (err) { throw augmentForFunctionInput(err); }`, plus `Function.prototype.toString.call(input).trim()` to get the source. Three copies of the same parse-and-augment scaffold, easy to let drift (e.g. one forgetting to route a codegen error through the augment).
