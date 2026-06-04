@@ -1766,20 +1766,16 @@ function generateMethodCall(
       return { $toUpper: genObj };
     case "substr": {
       const exprArgs = exprArgsOnly(args, "substr");
+      checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
       if (exprArgs.length === 1) {
         return { $substrCP: [genObj, _generate(exprArgs[0], ctx), { $strLenCP: genObj }] };
       }
-      if (exprArgs.length === 2) {
-        return { $substrCP: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
-      }
-      throw new CodegenError(`.substr() requires 1 or 2 arguments (start[, count])`, callPos);
+      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
     }
     case "substring": {
       const exprArgs = exprArgsOnly(args, "substring");
+      checkArity("substring", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
       if (exprArgs.length === 0) return genObj;
-      if (exprArgs.length > 2) {
-        throw new CodegenError(`.substring() requires 0, 1, or 2 arguments (start[, end])`, callPos);
-      }
       // JS .substring(s, e) takes end-exclusive; MQL $substrCP takes a length.
       // JS clamps negative indices to 0 (and would also swap if start > end —
       // we model the clamping but not the swap; see docs/specs/string-methods.md).
@@ -1792,30 +1788,22 @@ function generateMethodCall(
     }
     case "charAt": {
       const exprArgs = exprArgsOnly(args, "charAt");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.charAt(index) requires exactly 1 argument`, callPos);
-      }
+      checkArity("charAt", { sig: "index", exact: 1 }, exprArgs.length, callPos);
       return { $substrCP: [genObj, _generate(exprArgs[0], ctx), 1] };
     }
     case "split": {
       const exprArgs = exprArgsOnly(args, "split");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.split() requires exactly 1 argument (separator)`, callPos);
-      }
+      checkArity("split", { sig: "separator", exact: 1 }, exprArgs.length, callPos);
       return { $split: [genObj, _generate(exprArgs[0], ctx)] };
     }
     case "startsWith": {
       const exprArgs = exprArgsOnly(args, "startsWith");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.startsWith(searchString) requires exactly 1 argument`, callPos);
-      }
+      checkArity("startsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
       return { $eq: [{ $indexOfCP: [genObj, _generate(exprArgs[0], ctx)] }, 0] };
     }
     case "endsWith": {
       const exprArgs = exprArgsOnly(args, "endsWith");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.endsWith(searchString) requires exactly 1 argument`, callPos);
-      }
+      checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
       // Compares the last N codepoints of the input with the needle, where N is the needle's length.
       return {
@@ -1827,9 +1815,7 @@ function generateMethodCall(
     }
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.indexOf(searchValue) requires exactly 1 argument`, callPos);
-      }
+      checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
       // unknown → runtime $cond on $isArray so the right form runs at query time.
@@ -1843,9 +1829,7 @@ function generateMethodCall(
     }
     case "lastIndexOf": {
       const exprArgs = exprArgsOnly(args, "lastIndexOf");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.lastIndexOf(searchValue) requires exactly 1 argument`, callPos);
-      }
+      checkArity("lastIndexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
       if (isStringProducing(object)) {
         throw new CodegenError(
           `.lastIndexOf() on strings isn't supported — MongoDB's \$indexOfCP is forward-only. Use \$op($indexOfCP, str, needle) for first-match indexing.`,
@@ -1875,27 +1859,21 @@ function generateMethodCall(
     }
     case "replace": {
       const exprArgs = exprArgsOnly(args, "replace");
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`.replace() requires exactly 2 arguments (find, replacement)`, callPos);
-      }
+      checkArity("replace", { sig: "find, replacement", exact: 2 }, exprArgs.length, callPos);
       return {
         $replaceOne: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) },
       };
     }
     case "replaceAll": {
       const exprArgs = exprArgsOnly(args, "replaceAll");
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`.replaceAll() requires exactly 2 arguments (find, replacement)`, callPos);
-      }
+      checkArity("replaceAll", { sig: "find, replacement", exact: 2 }, exprArgs.length, callPos);
       return {
         $replaceAll: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) },
       };
     }
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.includes(searchValue) requires exactly 1 argument`, callPos);
-      }
+      checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
       // unknown → runtime $cond so a bare $.field works for either type.
@@ -1911,9 +1889,7 @@ function generateMethodCall(
     }
     case "match": {
       const exprArgs = exprArgsOnly(args, "match");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.match(regex) requires exactly 1 argument`, callPos);
-      }
+      checkArity("match", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
       const pattern = exprArgs[0];
       if (pattern.type === "RegexLiteral") {
         const result: Record<string, unknown> = { input: genObj, regex: pattern.pattern };
@@ -1924,9 +1900,7 @@ function generateMethodCall(
     }
     case "matchAll": {
       const exprArgs = exprArgsOnly(args, "matchAll");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.matchAll() requires exactly 1 argument (regex)`, callPos);
-      }
+      checkArity("matchAll", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
       const pattern = exprArgs[0];
       if (pattern.type === "RegexLiteral") {
         if (!pattern.flags.includes("g")) {
@@ -1943,9 +1917,7 @@ function generateMethodCall(
     }
     case "search": {
       const exprArgs = exprArgsOnly(args, "search");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.search() requires exactly 1 argument (regex)`, callPos);
-      }
+      checkArity("search", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
       const pattern = exprArgs[0];
       // .search returns the index of the first match, or -1. $regexFind returns
       // an object with .idx for matches; null on no match. We surface .idx with
@@ -1963,9 +1935,7 @@ function generateMethodCall(
     case "padStart":
     case "padEnd": {
       const exprArgs = exprArgsOnly(args, method);
-      if (exprArgs.length < 1 || exprArgs.length > 2) {
-        throw new CodegenError(`.${method}() takes 1 or 2 arguments (targetLength[, padString])`, callPos);
-      }
+      checkArity(method, { sig: "targetLength[, padString]", allowed: [1, 2] }, exprArgs.length, callPos);
       const target = _generate(exprArgs[0], ctx);
       const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
       // If str length >= target, return str. Otherwise build pad-str of (target - len)
@@ -1987,9 +1957,7 @@ function generateMethodCall(
     }
     case "repeat": {
       const exprArgs = exprArgsOnly(args, "repeat");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.repeat() requires exactly 1 argument (count)`, callPos);
-      }
+      checkArity("repeat", { sig: "count", exact: 1 }, exprArgs.length, callPos);
       const count = _generate(exprArgs[0], ctx);
       return { $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", genObj] } } };
     }
@@ -1997,16 +1965,12 @@ function generateMethodCall(
     // ── Array methods (no lambda) ───────────────────────────────────────────
     case "at": {
       const exprArgs = exprArgsOnly(args, "at");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.at(index) requires exactly 1 argument`, callPos);
-      }
+      checkArity("at", { sig: "index", exact: 1 }, exprArgs.length, callPos);
       return { $arrayElemAt: [genObj, _generate(exprArgs[0], ctx)] };
     }
     case "slice": {
       const exprArgs = exprArgsOnly(args, "slice");
-      if (exprArgs.length > 2) {
-        throw new CodegenError(`.slice() requires 0, 1, or 2 arguments (start[, end])`, callPos);
-      }
+      checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
       // Receiver-type dispatch: known array → $slice (native negative-index support);
       // known string → $substrCP (with compile-time/runtime normalisation of negatives);
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
@@ -2015,9 +1979,7 @@ function generateMethodCall(
       return { $cond: [{ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx)] };
     }
     case "toReversed": {
-      if (args.length !== 0) {
-        throw new CodegenError(`.${method}() takes no arguments`, callPos);
-      }
+      checkArity(method, { sig: "", none: true }, args.length, callPos);
       return { $reverseArray: genObj };
     }
     case "toSorted": {
@@ -2025,17 +1987,13 @@ function generateMethodCall(
         return { $sortArray: { input: genObj, sortBy: 1 } };
       }
       const exprArgs = exprArgsOnly(args, "toSorted");
-      if (exprArgs.length !== 1) {
-        throw new CodegenError(`.toSorted() takes 0 or 1 arguments (an optional key function)`, callPos);
-      }
+      checkArity("toSorted", { sig: "keyFn", allowed: [0, 1] }, exprArgs.length, callPos);
       const sortBy = lambdaToSortBy(exprArgs[0], "toSorted");
       return { $sortArray: { input: genObj, sortBy } };
     }
     case "toSpliced": {
       const exprArgs = exprArgsOnly(args, "toSpliced");
-      if (exprArgs.length < 1) {
-        throw new CodegenError(`.toSpliced() requires at least 1 argument (start[, deleteCount, ...items])`, callPos);
-      }
+      checkArity("toSpliced", { sig: "start[, deleteCount, ...items]", atLeast: 1 }, exprArgs.length, callPos);
       const startArg = exprArgs[0];
       if (isNegativeLiteral(startArg)) {
         throw new CodegenError(
@@ -2084,9 +2042,7 @@ function generateMethodCall(
     }
     case "with": {
       const exprArgs = exprArgsOnly(args, "with");
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`.with() requires exactly 2 arguments (index, value)`, callPos);
-      }
+      checkArity("with", { sig: "index, value", exact: 2 }, exprArgs.length, callPos);
       const idxArg = exprArgs[0];
       if (isNegativeLiteral(idxArg)) {
         throw new CodegenError(
@@ -2156,9 +2112,7 @@ function generateMethodCall(
     case "concat": {
       // Type-aware: known array → $concatArrays; known string → $concat;
       // unknown → runtime $cond on $isArray so the right form runs at query time.
-      if (args.length === 0) {
-        throw new CodegenError(`.concat() requires at least 1 argument`, callPos);
-      }
+      checkArity("concat", { sig: "...items", atLeast: 1 }, args.length, callPos);
       const tail = args.map((a) => (a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx)));
       if (isArrayProducing(object)) {
         return { $concatArrays: [genObj, ...tail] };
@@ -2170,9 +2124,7 @@ function generateMethodCall(
     }
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
-      if (exprArgs.length > 1) {
-        throw new CodegenError(`.join() takes 0 or 1 arguments`, callPos);
-      }
+      checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
       const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
       // Reduce: concatenate elements with the separator, omitting it for the first element.
       // The accumulator carries the running string; an empty start lets us detect "first".
@@ -2191,9 +2143,7 @@ function generateMethodCall(
       };
     }
     case "toString": {
-      if (args.length !== 0) {
-        throw new CodegenError(`.toString() takes no arguments`, callPos);
-      }
+      checkArity("toString", { sig: "", none: true }, args.length, callPos);
       // JS Array.prototype.toString is `.join(",")`. For known string receivers
       // this is a no-op. For other scalars MongoDB's $toString covers it
       // (numbers, dates → ISO string, booleans, ObjectId, etc.).
@@ -2219,9 +2169,7 @@ function generateMethodCall(
     }
     case "flat": {
       const exprArgs = exprArgsOnly(args, "flat");
-      if (exprArgs.length > 1) {
-        throw new CodegenError(`.flat() takes 0 or 1 arguments`, callPos);
-      }
+      checkArity("flat", { sig: "depth", allowed: [0, 1] }, exprArgs.length, callPos);
       // We only support depth=1 (default). MongoDB has no recursive-depth flatten;
       // emulating arbitrary depths would require unbounded $reduce nesting.
       if (exprArgs.length === 1) {
@@ -2308,9 +2256,7 @@ function generateMethodCall(
     case "reduce":
     case "reduceRight": {
       const exprArgs = exprArgsOnly(args, method);
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`.${method}() requires exactly 2 arguments (lambda, initialValue)`, callPos);
-      }
+      checkArity(method, { sig: "lambda, initialValue", exact: 2 }, exprArgs.length, callPos);
       const lambda = requireLambda(exprArgs, method, callPos);
       if (lambda.params.length < 2 || lambda.params.length > 3) {
         throw new CodegenError(
@@ -2977,6 +2923,56 @@ function exprArgsOnly(args: CallArg[], method: string): Expr[] {
     }
     return a;
   });
+}
+
+/**
+ * Argument-count spec for a method/static call. Exactly one of
+ * `exact` / `allowed` / `atLeast` / `none` is set. `sig` is the parameter
+ * signature shown in the error — e.g. `"start[, count]"` renders as
+ * `.substr(start[, count])`; `""` renders the bare `.toReversed()`.
+ */
+type Arity = { sig: string; exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
+
+/**
+ * The single place every argument-count error is worded, so the surface stays
+ * consistent (see the error-consistency rules in CLAUDE.md). Validates `count`
+ * against `spec` and throws `<prefix><method>(<sig>) <quantity-clause>, got <N>`
+ * on mismatch — `.charAt(index) requires exactly 1 argument, got 0`,
+ * `.slice(start[, end]) requires 0, 1, or 2 arguments, got 3`,
+ * `Math.hypot(...values) requires at least 1 argument, got 0`. The trailing
+ * `, got <N>` tells the user exactly what they passed. The caller passes the
+ * count it validates (`exprArgs.length` for most; raw `args.length` for the few
+ * that count spread args). `prefix` is `"."` for instance methods (the default)
+ * or `"Math."` / `"Object."` / `"Set."` / `"regex."` for the static families.
+ */
+function checkArity(method: string, spec: Arity, count: number, callPos: number, prefix: string = "."): void {
+  const ok =
+    spec.none !== undefined
+      ? count === 0
+      : spec.exact !== undefined
+        ? count === spec.exact
+        : spec.allowed !== undefined
+          ? spec.allowed.includes(count)
+          : count >= spec.atLeast!;
+  if (ok) return;
+  let quantity: string;
+  if (spec.none !== undefined) {
+    quantity = "takes no arguments";
+  } else if (spec.exact !== undefined) {
+    quantity = `requires exactly ${spec.exact} argument${spec.exact === 1 ? "" : "s"}`;
+  } else if (spec.allowed !== undefined) {
+    quantity = `requires ${formatCountList(spec.allowed)} arguments`;
+  } else {
+    quantity = `requires at least ${spec.atLeast} argument${spec.atLeast === 1 ? "" : "s"}`;
+  }
+  throw new CodegenError(`${prefix}${method}(${spec.sig}) ${quantity}, got ${count}`, callPos);
+}
+
+/** Render an allowed-count list the way the messages read: `[1,2]` → "1 or 2",
+ *  `[0,1,2]` → "0, 1, or 2". */
+function formatCountList(ns: readonly number[]): string {
+  if (ns.length === 2) return `${ns[0]} or ${ns[1]}`;
+  return `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
 }
 
 function requireLambda(

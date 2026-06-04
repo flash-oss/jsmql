@@ -18,7 +18,18 @@ If `asFieldPath()` returns `null` (non-field-chain expression), the `MemberAcces
 
 ## Method dispatch
 
-Method calls are handled by `generateMethodCall(object, method, args, ctx)` via a large switch statement on `method`. There is no registry — each method is hardcoded. Unknown methods throw `CodegenError`.
+Method calls are handled by `generateMethodCall(object, method, args, ctx)` via a large switch statement on `method`. There is no lowering registry — each method's codegen is hardcoded in its `case`. Unknown methods throw `CodegenError`.
+
+### Argument-count validation — `checkArity`
+
+Every arg-count error is worded by one helper, `checkArity(method, spec, count, callPos, prefix?)`, so the surface stays consistent (per the error-consistency rules in the root `CLAUDE.md`). Each call site supplies an inline `Arity` spec — `{ sig, exact | allowed | atLeast | none }` — and the helper renders `<prefix><method>(<sig>) <quantity-clause>, got <N>` on mismatch:
+
+- `{ sig: "index", exact: 1 }` → `.charAt(index) requires exactly 1 argument, got 0`
+- `{ sig: "start[, end]", allowed: [0, 1, 2] }` → `.slice(start[, end]) requires 0, 1, or 2 arguments, got 3`
+- `{ sig: "...items", atLeast: 1 }` → `.concat(...items) requires at least 1 argument, got 0`
+- `{ sig: "", none: true }` → `.toReversed() takes no arguments, got 1`
+
+The `sig` always shows the intended call shape (parameter names, with optional ones in `[...]`), so the user sees the signature up front rather than having to consult MDN, and the trailing `, got <N>` reports exactly what was passed. The caller passes the count it validates — `exprArgs.length` for most, raw `args.length` for the few that count spread args (`.concat`, `.toReversed`, `.toString`). `prefix` defaults to `"."`; the static families pass `"Math."` / `"Object."` / `"Set."` / `"regex."` when they adopt it. The spec lives next to each method's lowering rather than in a separate table, so adding a method is a `case` plus a one-line `checkArity`.
 
 ### String methods
 

@@ -1111,6 +1111,39 @@ describe("string methods", () => {
   });
 });
 
+describe("method arg-count errors (standardized via checkArity)", () => {
+  // The single `checkArity` formatter words every arg-count error as
+  // `.<method>(<signature>) <quantity-clause>` — the signature shows the
+  // intended call shape, the quantity clause is uniform across methods.
+  it("exact count names the parameters in the signature", () => {
+    expect(() => jsmql.expr("$.s.charAt()")).toThrow(".charAt(index) requires exactly 1 argument");
+    expect(() => jsmql.expr('$.s.split("a", "b")')).toThrow(".split(separator) requires exactly 1 argument");
+    expect(() => jsmql.expr('$.s.replace("a")')).toThrow(".replace(find, replacement) requires exactly 2 arguments");
+    expect(() => jsmql.expr("$.arr.with(1)")).toThrow(".with(index, value) requires exactly 2 arguments");
+  });
+  it("range counts read '1 or 2' / '0, 1, or 2'", () => {
+    expect(() => jsmql.expr("$.s.substr()")).toThrow(".substr(start[, count]) requires 1 or 2 arguments");
+    expect(() => jsmql.expr("$.arr.slice(1, 2, 3)")).toThrow(".slice(start[, end]) requires 0, 1, or 2 arguments");
+    expect(() => jsmql.expr("$.s.padStart()")).toThrow(
+      ".padStart(targetLength[, padString]) requires 1 or 2 arguments",
+    );
+  });
+  it("at-least and no-argument forms", () => {
+    expect(() => jsmql.expr("$.arr.concat()")).toThrow(".concat(...items) requires at least 1 argument");
+    expect(() => jsmql.expr("$.arr.toSpliced()")).toThrow(
+      ".toSpliced(start[, deleteCount, ...items]) requires at least 1 argument",
+    );
+    expect(() => jsmql.expr("$.arr.toReversed(1)")).toThrow(".toReversed() takes no arguments");
+  });
+  it("appends ', got N' with the actual count passed", () => {
+    expect(() => jsmql.expr("$.s.charAt()")).toThrow(".charAt(index) requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("$.arr.slice(1, 2, 3)")).toThrow(
+      ".slice(start[, end]) requires 0, 1, or 2 arguments, got 3",
+    );
+    expect(() => jsmql.expr("$.arr.toReversed(1)")).toThrow(".toReversed() takes no arguments, got 1");
+  });
+});
+
 describe("array methods (no lambda)", () => {
   it("at(n)", () => {
     expect(jsmql.expr("$.items.at(0)")).toEqual({ $arrayElemAt: ["$items", 0] });
