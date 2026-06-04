@@ -18,6 +18,16 @@ The flag now lives on the registry entry: `OperatorDef` gains an optional `accum
 
 ---
 
+## 2026-06-04 — refactor: route the static-call families + array mutators through `checkArity`
+
+Prefactoring, round 2. Last round centralized the 27 instance-method arg-count checks but left the static-call families and the statement-position array-mutator rewrites still hand-rolling their own `if (length …) throw` with bespoke wording. That left the surface half-consistent: `.charAt(index) requires exactly 1 argument, got 0` next to `Math.pow() requires exactly 2 arguments` (no signature, no count) and `.copyWithin(target, start[, end]) takes 2 or 3 arguments, got 2.` (trailing period, "takes" not "requires").
+
+Migrated all ~21 remaining codegen-side checks to `checkArity` with its `prefix` param: `generateMathCall` (incl. the shared `oneArg` helper), `generateObjectCall`, `generateSetMethodCall`, `generateRegexMethodCall`, and the `.reverse`/`.pop`/`.shift`/`.copyWithin`/`.fill` mutator rewrites. Every arg-count error across the method + static surface now reads `<prefix><method>(<sig>) <quantity>, got <N>` — `Math.pow(base, exponent) requires exactly 2 arguments, got 1`, `Object.assign(...sources) requires at least 1 argument, got 0`, `regex.test(str) requires exactly 1 argument, got 0`. The static families gained signatures they never had. Output unchanged (message text only, and these were unasserted save one partial `Math.atan2`/`exactly 2 arguments` match that still holds); full suite green, plus new tests covering the static + mutator formats.
+
+The parser-side constructor checks (`new Set` / `new Date` / `Date.UTC`) stay as-is — they throw `ParseError` (a different class, in a different file) and already carry good `, got N` messages; folding them in would mean a parser-side formatter, out of scope here. Spec: [method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-06-04 — refactor: central `checkArity` for JS-method argument-count errors
 
 Prefactoring. Adding a JS-method alias is one of the most frequent changes, and each method hand-rolled its own `if (exprArgs.length !== N) throw new CodegenError(...)` — 27 such checks in the `generateMethodCall` switch alone, with *inconsistently worded* messages. Param names sometimes sat in the call prefix (`.charAt(index) requires exactly 1 argument`), sometimes trailed (`.split() requires exactly 1 argument (separator)`), sometimes were absent (`.concat() requires at least 1 argument`); quantity clauses mixed "requires"/"takes". Getting a new method's error right meant copying a sibling and hoping the wording matched.

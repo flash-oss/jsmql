@@ -1142,6 +1142,24 @@ describe("method arg-count errors (standardized via checkArity)", () => {
     );
     expect(() => jsmql.expr("$.arr.toReversed(1)")).toThrow(".toReversed() takes no arguments, got 1");
   });
+  it("static-call families (Math./Object./Set./regex.) use the same formatter", () => {
+    expect(() => jsmql.expr("Math.pow(2)")).toThrow("Math.pow(base, exponent) requires exactly 2 arguments, got 1");
+    expect(() => jsmql.expr("Math.hypot()")).toThrow("Math.hypot(...values) requires at least 1 argument, got 0");
+    expect(() => jsmql.expr("Math.random(1)")).toThrow("Math.random() takes no arguments, got 1");
+    expect(() => jsmql.expr("Math.floor()")).toThrow("Math.floor(value) requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("Object.keys()")).toThrow("Object.keys(obj) requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("Object.assign()")).toThrow(
+      "Object.assign(...sources) requires at least 1 argument, got 0",
+    );
+    expect(() => jsmql.expr("/x/.test()")).toThrow("regex.test(str) requires exactly 1 argument, got 0");
+  });
+  it("statement-position array mutators use the same formatter", () => {
+    expect(() => jsmql("$.a.reverse(1);")).toThrow(".reverse() takes no arguments, got 1");
+    expect(() => jsmql("$.a.copyWithin(1);")).toThrow(
+      ".copyWithin(target, start[, end]) requires 2 or 3 arguments, got 1",
+    );
+    expect(() => jsmql("$.a.fill();")).toThrow(".fill(value[, start[, end]]) requires 1, 2, or 3 arguments, got 0");
+  });
 });
 
 describe("array methods (no lambda)", () => {

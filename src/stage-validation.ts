@@ -279,6 +279,18 @@ function validateSort(body: Expr): void {
         value.pos,
       );
     }
+    // SQL habit: `$sort({ createdAt: "desc" })` / `{ x: true }`. A literal
+    // string/bool direction is always wrong (the server takes only 1 / -1, or a
+    // `{ $meta: … }` object — which is not a literal, so it slips past the gate).
+    const str = litString(value);
+    const bool = litBool(value);
+    if (str !== null || bool !== null) {
+      const got = str !== null ? `'${str}'` : String(bool);
+      throw new CodegenError(
+        `'$sort' direction for '${key}' must be 1 (ascending) or -1 (descending), but got ${got}.`,
+        value.pos,
+      );
+    }
   }
 }
 

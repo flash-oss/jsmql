@@ -93,7 +93,7 @@ small, literal-gated validator per stage:
 | `$limit` / `$skip` | literal non-number → type; non-integer → integer; out of bound (`$limit` ≥ 1, `$skip` ≥ 0) |
 | `$sample` | required `size`; literal `size` non-negative integer |
 | `$count` | literal field name: non-empty, no `$` prefix, no `.` |
-| `$sort` | ≤ 32 keys; literal direction ∈ {1, -1} |
+| `$sort` | ≤ 32 keys; literal direction ∈ {1, -1} — a literal string (`"desc"`) or boolean direction is also rejected (a `{ $meta: … }` object is not a literal, so it passes the gate) |
 | `$project` | non-empty; no inclusion/exclusion mixing (except `_id`) |
 | `$unset` | non-empty string / non-empty array of strings |
 | `$unwind` | string-form path starts with `$`; `includeArrayIndex` not `$`-prefixed; `preserveNullAndEmptyArrays` boolean |
