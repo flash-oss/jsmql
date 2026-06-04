@@ -220,7 +220,7 @@ function main(): number {
 
   let source: string;
   try {
-    // [DEF-025] Params (--arg/--argjson) route through jsmql.compile(), which
+    // [DEF-028] Params (--arg/--argjson) route through jsmql.compile(), which
     // the strict-shape entries and the structured validate() path don't expose.
     // Rejecting the combination beats silently ignoring the bound values.
     if (opts.hasParams && opts.mode !== "auto") {

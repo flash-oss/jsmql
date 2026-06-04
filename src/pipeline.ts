@@ -353,7 +353,10 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   }
   const out: unknown[] = [];
   let updateBuffer: UpdateOp[] = [];
-  let ctx: GenerateCtx = startCtx;
+  // Pipeline context: `$`-prefixed string literals pass through verbatim
+  // (field paths / wire syntax), never auto-wrapped in `$literal`. See
+  // GenerateCtx.pipelineContext.
+  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
   const tracking = makeSlotTracking();
@@ -445,7 +448,8 @@ export function generateImplicitPipeline(
   container: ContainerKind = "top",
 ): unknown[] {
   const out: unknown[] = [];
-  let ctx: GenerateCtx = startCtx;
+  // Pipeline context: see GenerateCtx.pipelineContext (string literals pass through).
+  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking();
@@ -728,7 +732,9 @@ function lowerReplaceStream(
   //     the right tool for appending docs to an existing stream.
   if (v.type === "ArrayLiteral") {
     if (v.elements.length === 0) {
-      return { stages: [{ $limit: 0 }], clearLets: false };
+      // Drop every document. `$limit: 0` is rejected by the server ("the limit
+      // must be positive"), so emit a never-matching `$match` instead.
+      return { stages: [{ $match: { $expr: false } }], clearLets: false };
     }
     if (isFirstStage) {
       const docs = extractDocumentsLiteral(v);
@@ -916,7 +922,10 @@ function lowerChainOnCollection(
   }
   const from: string | { db: string; coll: string } =
     target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
-  const stages: object[] = [{ $limit: 0 }];
+  // Drop the incoming stream, then union in the switched source. `$limit: 0`
+  // is rejected by the server ("the limit must be positive"), so clear the
+  // stream with a never-matching `$match` instead.
+  const stages: object[] = [{ $match: { $expr: false } }];
   if (inner.length === 0) {
     if (typeof from === "string") {
       stages.push({ $unionWith: from });
@@ -1214,11 +1223,12 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
   // string ("$items") or { path: "$items", includeArrayIndex, preserveNull... }.
   // The leading `$` is the path the user wants, NOT a string to protect with
   // $literal (that wrap is for expression contexts). validateUnwind already
-  // enforced the `$`-prefix, so emit the path raw via fieldPathString.
+  // enforced the `$`-prefix, and `ctx.pipelineContext` (seeded at every
+  // pipeline entrypoint) already suppresses the `$literal` wrap here, so the
+  // path emits raw with the surrounding ctx.
   if (stageName === "$unwind") {
-    const pathCtx = { ...ctx, fieldPathString: true };
-    if (body.type === "ObjectLiteral") return generateBodyObject(body, stageName, pathCtx);
-    return generateWithCtx(body, pathCtx);
+    if (body.type === "ObjectLiteral") return generateBodyObject(body, stageName, ctx);
+    return generateWithCtx(body, ctx);
   }
 
   // Other stages: if the body is an object literal, walk its entries so we
@@ -1366,7 +1376,8 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   }
   const out: unknown[] = [];
   let updateBuffer: UpdateOp[] = [];
-  let ctx: GenerateCtx = startCtx;
+  // Pipeline context: see GenerateCtx.pipelineContext (string literals pass through).
+  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true };
   let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
   const validator = makePipelineValidator(container);
 

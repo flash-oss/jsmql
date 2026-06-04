@@ -256,6 +256,9 @@ export const OPERATORS: Record<string, OperatorDef> = {
 
   // ── Array ──────────────────────────────────────────────────────────────────
   $arrayElemAt: array("array", "Returns the element at the specified array index."),
+  // [DEF-026] A literal multi-pair arg (`$arrayToObject([["a",1],["b",2]])`) emits
+  // `{ $arrayToObject: [[…],[…]] }`, which MongoDB reads as two arguments and
+  // rejects ("takes exactly 1 argument"). The single-pair form is fine. See DEFERRED.
   $arrayToObject: single("array", "Converts an array of key-value pairs to a document."),
   $concatArrays: array("array", "Concatenates arrays to return the concatenated array."),
   $filter: obj(

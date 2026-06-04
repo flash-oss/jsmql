@@ -64,11 +64,11 @@ echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
 binds it to `JSON.parse(VALUE)` (a malformed value is a usage error). Both are
 repeatable and accumulate into one params object.
 
-**[DEF-025]** Combining params with any strict-shape flag (`--filter` /
+**[DEF-028]** Combining params with any strict-shape flag (`--filter` /
 `--pipeline` / `--expr` / `--update`) or with `--validate` is a **usage error
 (exit 2)**: the strict entries and the structured `validate()` path have no
 `compile` overload, so binding values there would be silently ignored. The
-throw site in `src/cli.ts` carries the `[DEF-025]` tag.
+throw site in `src/cli.ts` carries the `[DEF-028]` tag.
 
 ## Exit codes
 
@@ -76,7 +76,7 @@ throw site in `src/cli.ts` carries the `[DEF-025]` tag.
 | --- | --- |
 | `0` | success; or `--validate` with `valid: true` |
 | `1` | compile/parse error; or `--validate` with `valid: false` |
-| `2` | usage error — unknown/conflicting flags, a missing flag value, no input on a TTY, an invalid `--argjson` value, or the [DEF-025] params+mode combination |
+| `2` | usage error — unknown/conflicting flags, a missing flag value, no input on a TTY, an invalid `--argjson` value, or the [DEF-028] params+mode combination |
 
 `main()` returns the code; the module sets `process.exitCode` (no mid-stream
 `process.exit`).
@@ -117,7 +117,7 @@ that file.
 
 - [test/cli.test.ts](../../test/cli.test.ts) — spawns `node src/cli.ts` (native
   type-stripping, no build needed): input sources, every output shape,
-  formatting flags, `--validate` valid/invalid, params, the [DEF-025] rejection,
+  formatting flags, `--validate` valid/invalid, params, the [DEF-028] rejection,
   error carets, and usage errors.
 - [test/smoke.test.ts](../../test/smoke.test.ts) — a strippable-TS check
   (`node src/cli.ts --help`) plus a dist-gated case driving the built
@@ -125,7 +125,7 @@ that file.
 
 ## Deferred work and non-goals
 
-The one deferred item is **DEF-025** (params + strict/validate flags) — see
+The one deferred item is **DEF-028** (params + strict/validate flags) — see
 [DEFERRED.md](../DEFERRED.md) §A. A deliberate **non-goal** is `jq`'s
 `-S/--sort-keys`: reordering object keys can change MQL semantics (e.g.
 `$project` computed-field order), so it is recorded as a won't-implement

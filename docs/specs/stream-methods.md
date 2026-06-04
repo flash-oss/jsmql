@@ -31,7 +31,7 @@ the third through `lowerStatementTail`:
 | Context | Chain head | Lowering site |
 |---|---|---|
 | **`$$ = $$.<chain>;`** | Bare `$$` (or `$$.filter(<pred>)` as the first method) | Each registry method appends one or more stages to the outer pipeline. |
-| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>` (or with `.filter(<pred>)` as the first method) | Each registry method appends stages inside the `$unionWith.pipeline` body of the emitted `$limit: 0` + `$unionWith` pair. |
+| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>` (or with `.filter(<pred>)` as the first method) | Each registry method appends stages inside the `$unionWith.pipeline` body of the emitted `$match` + `$unionWith` pair. |
 | **`$$.<chain>;`** (bare statement, no `$$ =` head) | Bare `$$` | Statement sugar for `$$ = $$.<chain>;` — see [§ Bare-statement stream chains](#bare-statement-stream-chains) below. |
 
 The first method of a chain may be `.filter(<lambda>)` — handled by the

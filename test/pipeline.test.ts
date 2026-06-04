@@ -447,7 +447,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   it("`$$ = $$$.<coll>.filter(p)` lowers to `$limit: 0` + `$unionWith`", () => {
     expect(jsmql(`$$ = $$$.transactions.filter(t => t.client === 156);`)).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "transactions", pipeline: [{ $match: { client: 156 } }] } },
     ]);
   });
@@ -456,7 +456,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     const out = jsmql(`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01"));`) as object[];
     // Date folds to a JS `Date` instance, so deep-equal needs the same shape.
     expect(out).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "transactions", pipeline: [{ $match: { createdAt: { $gte: new Date("2026-01-01") } } }] } },
     ]);
   });
@@ -464,7 +464,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   it("bracketed `[...]` form works for both shapes", () => {
     expect(jsmql(`[ $$ = $$.filter(t => t.x > 0) ]`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
     expect(jsmql(`[ $$ = $$$.users.filter(u => u.active) ]`)).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "users", pipeline: [{ $match: { $expr: "$active" } }] } },
     ]);
   });
@@ -473,7 +473,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     expect(
       jsmql(`$$ = $$$.transactions.filter(t => { $match(t.amount > 100); $sort({ amount: -1 }); $limit(5); });`),
     ).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       {
         $unionWith: {
           coll: "transactions",
@@ -485,7 +485,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   it("cross-DB source switch emits the `{ db, coll }` shape", () => {
     expect(jsmql(`$$ = $$$$.analytics.events.filter(e => e.type === "purchase");`)).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: { db: "analytics", coll: "events" }, pipeline: [{ $match: { type: "purchase" } }] } },
     ]);
   });
@@ -512,7 +512,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   it("`$$ = []` lowers to `$limit(0)` (drop all docs)", () => {
     // Previously rejected; landed in the deferred-features Wave 5 push as
     // the natural sugar for "empty the stream".
-    expect(jsmql(`$$ = [];`)).toEqual([{ $limit: 0 }]);
+    expect(jsmql(`$$ = [];`)).toEqual([{ $match: { $expr: false } }]);
   });
 
   it("`$$ = [{...}, {...}]` at stage 0 lowers to `$documents`", () => {
@@ -601,8 +601,8 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "orders",
-          let: { _id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$_id"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
+          let: { v_id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$v_id"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
           as: "__jsmql.__lookup1",
         },
       },
@@ -616,9 +616,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "events",
-          let: { _id: "$_id", region: "$region" },
+          let: { v_id: "$_id", region: "$region" },
           pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $eq: ["$region", "$$region"] }] } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$region", "$$region"] }] } } },
           ],
           as: "__jsmql.__lookup1",
         },
@@ -647,14 +647,14 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // No `$.<field>` ref — the predicate is a flat scan, so the existing
     // `$limit:0 + $unionWith` lowering is correct.
     expect(jsmql(`$$ = $$$.users.filter(u => u.active === true);`)).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "users", pipeline: [{ $match: { active: true } }] } },
     ]);
   });
 
   it("non-correlated predicate + chain keeps using $unionWith", () => {
     expect(jsmql(`$$ = $$$.users.filter(u => u.active === true).slice(0, 10);`)).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "users", pipeline: [{ $match: { active: true } }, { $limit: 10 }] } },
     ]);
   });
@@ -664,7 +664,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // to detect. The chain just runs against the foreign collection as a
     // standalone source.
     expect(jsmql(`$$ = $$$.users.slice(0, 5);`)).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "users", pipeline: [{ $limit: 5 }] } },
     ]);
   });
@@ -709,9 +709,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "events",
-          let: { _id: "$_id", region: "$__jsmql.region" },
+          let: { v_id: "$_id", region: "$__jsmql.region" },
           pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $eq: ["$region", "$$region"] }] } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$region", "$$region"] }] } } },
           ],
           as: "__jsmql.__lookup1",
         },

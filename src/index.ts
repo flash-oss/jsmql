@@ -965,6 +965,11 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   // `?? {}`: a vacuous predicate yields the empty (match-everything) Filter.
+  // The standalone-Filter `$expr` residual built by `mergeTranslatedQuery` runs
+  // WITHOUT `pipelineContext`, so `$`-string literals here stay `$literal`-wrapped
+  // (unlike a `$match` *inside* a pipeline, which passes them through — a
+  // `db.coll.find(filter)` is neither a pipeline nor `jsmql.expr`).
+  // Unifying the two is deferred [DEF-025] — see docs/DEFERRED.md.
   return mergeTranslatedQuery(t, ctx) ?? {};
 }
 

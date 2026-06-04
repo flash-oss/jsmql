@@ -47,21 +47,21 @@ describe(".slice(start, end?) — on $$ (top-level stream)", () => {
 describe(".slice — on $$$.<coll> (source switch)", () => {
   it("bare .slice on $$$.<coll> emits $limit:0 + $unionWith with inner $limit", () => {
     expect(jsmql("$$ = $$$.archive.slice(0, 5);")).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "archive", pipeline: [{ $limit: 5 }] } },
     ]);
   });
 
   it(".filter then .slice runs both stages inside the $unionWith body", () => {
     expect(jsmql("$$ = $$$.archive.filter(o => o.tier === 'gold').slice(0, 10);")).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "archive", pipeline: [{ $match: { tier: "gold" } }, { $limit: 10 }] } },
     ]);
   });
 
   it("cross-database $$$$.<db>.<coll>.filter(...).slice(...)", () => {
     expect(jsmql("$$ = $$$$.archive.users.filter(u => u.tier === 'gold').slice(0, 5);")).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       {
         $unionWith: { coll: { db: "archive", coll: "users" }, pipeline: [{ $match: { tier: "gold" } }, { $limit: 5 }] },
       },
@@ -76,7 +76,7 @@ describe(".slice — preserves existing $$.filter(...) behaviour", () => {
 
   it("$$ = $$$.coll.filter(o => true) keeps the existing $expr-residual shape", () => {
     expect(jsmql("$$ = $$$.archive.filter(o => true);")).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "archive", pipeline: [{ $match: { $expr: true } }] } },
     ]);
   });
@@ -188,7 +188,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
   it("works inside $$$.<coll> lookup body", () => {
     expect(jsmql("$$ = $$$.archive.filter(o => o.tier === 'gold').map(d => ({ n: d.name }));")).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "archive", pipeline: [{ $match: { tier: "gold" } }, { $replaceWith: { n: "$name" } }] } },
     ]);
   });
@@ -244,7 +244,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     expect(
       jsmql("$$ = $$$.users.filter(u => u.active === true).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));"),
     ).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       {
         $unionWith: {
           coll: "users",
@@ -266,7 +266,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         "$$ = $$$.users.filter(u => u.active === true).map(d => ({ archives: $$$.archive.filter(x => x.userId === d._id && x.tier === d.tier) }));",
       ),
     ).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       {
         $unionWith: {
           coll: "users",
@@ -275,9 +275,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
             {
               $lookup: {
                 from: "archive",
-                let: { _id: "$_id", tier: "$tier" },
+                let: { v_id: "$_id", tier: "$tier" },
                 pipeline: [
-                  { $match: { $expr: { $and: [{ $eq: ["$userId", "$$_id"] }, { $eq: ["$tier", "$$tier"] }] } } },
+                  { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$tier", "$$tier"] }] } } },
                 ],
                 as: "__jsmql.__lookup1",
               },
@@ -375,7 +375,7 @@ describe(".toReversed() — flips the preceding $sort", () => {
     expect(
       jsmql("$$ = $$$.archive.filter(o => o.active === true).toSorted((a, b) => a.x - b.x).toReversed();"),
     ).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "archive", pipeline: [{ $match: { active: true } }, { $sort: { x: -1 } }] } },
     ]);
   });
@@ -410,7 +410,7 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
 
   it("works inside $$$.<coll> lookup body", () => {
     expect(jsmql("$$ = $$$.orders.filter(o => o.shipped === true).flatMap(d => d.items);")).toEqual([
-      { $limit: 0 },
+      { $match: { $expr: false } },
       { $unionWith: { coll: "orders", pipeline: [{ $match: { shipped: true } }, { $unwind: "$items" }] } },
     ]);
   });
