@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: one `BINARY_OP_TO_MQL` table for the JS-op → MQL-op mapping
+
+Prefactoring, round 3. The JS-binary-operator → MQL-operator mapping was spelled out in two files: codegen's `generateBinaryExpr` (one switch case per op → `{ $gt: [...] }`, etc.) and match-translation's `orderedOpToMql` (`>` → `"$gt"`, … for the query-document form). The comparison operators were mapped in both — a small but real cross-file duplication.
+
+Introduced a single `BINARY_OP_TO_MQL` table in codegen.ts (the module that owns MQL emission — kept out of `ast.ts` so the AST layer stays MQL-agnostic) covering every op with a *direct* single-operator lowering (`-` `/` `%` `**` `===` `!==` `>` `>=` `<` `<=` and the associative chain ops `*` `??` `&` `|` `^`). `generateBinaryExpr` now groups those into two table-driven arms — DIRECT → `{ [op]: [l, r] }`, CHAIN → `{ [op]: flattenChain(...) }` — collapsing ~15 one-line cases to two; the bespoke ops (`+`, `==`/`!=`, `&&`/`||`, `in`) keep their own cases. match-translation imports the lone accessor `mqlForBinaryOp` so `orderedOpToMql` reads from the same table. The switch stays exhaustive over `BinaryOp` (no `default`), so a future operator still forces a compile-time decision. Behaviour-preserving, full suite green; worktree only. (Binary operators are a fixed set, so this is tidiness more than frequent-change leverage — it removes the duplication and documents the canonical mapping in one place.)
+
+---
+
 ## 2026-06-04 — refactor: `fieldQueryOrNegated` helper for `$not`-negatable peepholes
 
 Prefactoring, round 3. The `===` / `!==` equality-family peepholes in match-translation each pick a positive query and a negated form. Two of them — modulo (`{ $mod }`) and typeof (`{ $type }`) — negate identically: `{ [field]: { $not: <positive> } }`. Extracted that shared shape into `fieldQueryOrNegated(field, positive, op)` so each such translator supplies only the positive operator object; the `!==` `$not`-wrap comes for free, and the next `$not`-negatable query operator is a one-liner. (Equality-shorthand negates with `$ne` and the `undefined` peephole flips an `$exists` boolean, so those two keep their own forms — the helper deliberately covers only the `$not`-wrap family.) Pure dedup, full suite green; worktree only.

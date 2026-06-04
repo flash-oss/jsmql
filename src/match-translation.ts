@@ -17,7 +17,7 @@
 // as Expr nodes; the caller re-enters `generate()` on them.
 
 import type { Expr, BinaryOp } from "./ast.ts";
-import { isOpaqueBsonValue, generateWithCtx } from "./codegen.ts";
+import { isOpaqueBsonValue, generateWithCtx, mqlForBinaryOp } from "./codegen.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -673,10 +673,7 @@ function isOrderedOp(op: BinaryOp): op is ">" | ">=" | "<" | "<=" {
 }
 
 function orderedOpToMql(op: ">" | ">=" | "<" | "<="): string {
-  if (op === ">") return "$gt";
-  if (op === ">=") return "$gte";
-  if (op === "<") return "$lt";
-  return "$lte";
+  return mqlForBinaryOp(op);
 }
 
 function flipOrderedOp(op: ">" | ">=" | "<" | "<="): ">" | ">=" | "<" | "<=" {
