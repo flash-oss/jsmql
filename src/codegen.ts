@@ -2671,9 +2671,7 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
       // form and 1-arg key-function form. The args list is forwarded as-is.
       return { type: "MethodCall", object, method: "toSorted", args, pos };
     case "reverse":
-      if (args.length !== 0) {
-        throw new CodegenError(`.reverse() takes no arguments`, pos);
-      }
+      checkArity("reverse", { sig: "", none: true }, args.length, pos);
       return { type: "MethodCall", object, method: "toReversed", args: [], pos };
     case "splice":
       return { type: "MethodCall", object, method: "toSpliced", args, pos };
@@ -2692,9 +2690,7 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
       return { type: "OperatorCall", name: "$concatArrays", style: "positional", args: [itemsArr, object], pos };
     }
     case "pop": {
-      if (args.length !== 0) {
-        throw new CodegenError(`.pop() takes no arguments`, pos);
-      }
+      checkArity("pop", { sig: "", none: true }, args.length, pos);
       // `arr.slice(0, max(0, size - 1))` — everything-but-last with a clamp so
       // an empty input yields an empty output instead of `$slice([], 0, -1)`.
       const sizeExpr: Expr = mkOpCall("$size", [object], pos);
@@ -2703,9 +2699,7 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
       return mkOpCall("$slice", [object, mkNumber(0, pos), clamped], pos);
     }
     case "shift": {
-      if (args.length !== 0) {
-        throw new CodegenError(`.shift() takes no arguments`, pos);
-      }
+      checkArity("shift", { sig: "", none: true }, args.length, pos);
       // `$slice: [arr, 1, $size(arr)]` — start at index 1 and take everything
       // remaining. MongoDB clamps `len` to what's actually available, so an
       // empty input yields an empty output.
@@ -2732,9 +2726,7 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
  * as the array's `$size` at runtime.
  */
 function buildCopyWithinRhs(object: Expr, args: CallArg[], pos: number): Expr {
-  if (args.length < 2 || args.length > 3) {
-    throw new CodegenError(`.copyWithin(target, start[, end]) takes 2 or 3 arguments, got ${args.length}.`, pos);
-  }
+  checkArity("copyWithin", { sig: "target, start[, end]", allowed: [2, 3] }, args.length, pos);
   const lits = args.map((a) => {
     if (a.type === "SpreadElement") {
       throw new CodegenError(`.copyWithin(target, start[, end]) does not accept spread arguments.`, a.pos);
@@ -2806,12 +2798,7 @@ function mkNumber(value: number, pos: number): Expr {
  *   - `end >= 0`         ⇒ end
  */
 function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
-  if (args.length < 1) {
-    throw new CodegenError(`.fill() requires at least 1 argument (value[, start[, end]])`, pos);
-  }
-  if (args.length > 3) {
-    throw new CodegenError(`.fill() takes 1, 2, or 3 arguments (value[, start[, end]])`, pos);
-  }
+  checkArity("fill", { sig: "value[, start[, end]]", allowed: [1, 2, 3] }, args.length, pos);
   const exprArgs: Expr[] = [];
   for (const a of args) {
     if (a.type === "SpreadElement") {
@@ -3088,17 +3075,13 @@ function generateMathCall(method: MathMethod, args: CallArg[], ctx: GenerateCtx,
       return { $pow: [oneArg(method, args, ctx, pos), { $divide: [1, 3] }] };
     case "pow": {
       const exprArgs = exprArgsOnly(args, "pow");
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`Math.pow() requires exactly 2 arguments`, pos);
-      }
+      checkArity("pow", { sig: "base, exponent", exact: 2 }, exprArgs.length, pos, "Math.");
       return { $pow: [_generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
     }
     case "min":
     case "max": {
       // Variadic: accept (a, b, c, ...) OR a single array OR ...spread
-      if (args.length === 0) {
-        throw new CodegenError(`Math.${method}() requires at least 1 argument`, pos);
-      }
+      checkArity(method, { sig: "...values", atLeast: 1 }, args.length, pos, "Math.");
       const op = method === "min" ? "$min" : "$max";
       // Single non-spread arg → pass through (Mongo $min/$max accept either a value or an array)
       if (args.length === 1 && args[0].type !== "SpreadElement") {
@@ -3108,16 +3091,12 @@ function generateMathCall(method: MathMethod, args: CallArg[], ctx: GenerateCtx,
     }
     case "hypot": {
       const exprArgs = exprArgsOnly(args, "hypot");
-      if (exprArgs.length === 0) {
-        throw new CodegenError(`Math.hypot() requires at least 1 argument`, pos);
-      }
+      checkArity("hypot", { sig: "...values", atLeast: 1 }, exprArgs.length, pos, "Math.");
       const squares = exprArgs.map((a) => ({ $pow: [_generate(a, ctx), 2] }));
       return { $sqrt: { $add: squares } };
     }
     case "random":
-      if (args.length !== 0) {
-        throw new CodegenError(`Math.random() takes no arguments`, pos);
-      }
+      checkArity("random", { sig: "", none: true }, args.length, pos, "Math.");
       return { $rand: {} };
     case "sin":
       return { $sin: oneArg(method, args, ctx, pos) };
@@ -3133,9 +3112,7 @@ function generateMathCall(method: MathMethod, args: CallArg[], ctx: GenerateCtx,
       return { $atan: oneArg(method, args, ctx, pos) };
     case "atan2": {
       const exprArgs = exprArgsOnly(args, "atan2");
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`Math.atan2() requires exactly 2 arguments (y, x)`, pos);
-      }
+      checkArity("atan2", { sig: "y, x", exact: 2 }, exprArgs.length, pos, "Math.");
       return { $atan2: [_generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
     }
     case "sinh":
@@ -3155,9 +3132,7 @@ function generateMathCall(method: MathMethod, args: CallArg[], ctx: GenerateCtx,
 
 function oneArg(method: MathMethod, args: CallArg[], ctx: GenerateCtx, pos: number): unknown {
   const exprArgs = exprArgsOnly(args, method);
-  if (exprArgs.length !== 1) {
-    throw new CodegenError(`Math.${method}() requires exactly 1 argument`, pos);
-  }
+  checkArity(method, { sig: "value", exact: 1 }, exprArgs.length, pos, "Math.");
   return _generate(exprArgs[0], ctx);
 }
 
@@ -3173,33 +3148,31 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
   switch (method) {
     case "keys": {
       const exprArgs = exprArgsOnly(args, "Object.keys");
-      if (exprArgs.length !== 1) throw new CodegenError(`Object.keys() requires exactly 1 argument`, pos);
+      checkArity("keys", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
       return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.k" } };
     }
     case "values": {
       const exprArgs = exprArgsOnly(args, "Object.values");
-      if (exprArgs.length !== 1) throw new CodegenError(`Object.values() requires exactly 1 argument`, pos);
+      checkArity("values", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
       return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.v" } };
     }
     case "entries": {
       const exprArgs = exprArgsOnly(args, "Object.entries");
-      if (exprArgs.length !== 1) throw new CodegenError(`Object.entries() requires exactly 1 argument`, pos);
+      checkArity("entries", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
       return { $objectToArray: genWith(exprArgs[0], {}) };
     }
     case "fromEntries": {
       const exprArgs = exprArgsOnly(args, "Object.fromEntries");
-      if (exprArgs.length !== 1) throw new CodegenError(`Object.fromEntries() requires exactly 1 argument`, pos);
+      checkArity("fromEntries", { sig: "entries", exact: 1 }, exprArgs.length, pos, "Object.");
       return { $arrayToObject: genWith(exprArgs[0], []) };
     }
     case "assign": {
-      if (args.length < 1) throw new CodegenError(`Object.assign() requires at least 1 argument`, pos);
+      checkArity("assign", { sig: "...sources", atLeast: 1 }, args.length, pos, "Object.");
       return { $mergeObjects: generateVariadicArgs(args, ctx) };
     }
     case "groupBy": {
       const exprArgs = exprArgsOnly(args, "Object.groupBy");
-      if (exprArgs.length !== 2) {
-        throw new CodegenError(`Object.groupBy() requires exactly 2 arguments (items, x => key)`, pos);
-      }
+      checkArity("groupBy", { sig: "items, x => key", exact: 2 }, exprArgs.length, pos, "Object.");
       const input = exprArgs[0];
       const lambda = exprArgs[1];
       if (lambda.type !== "Lambda" || lambda.params.length !== 1) {
@@ -3441,9 +3414,7 @@ function generateSetMethodCall(
   const lhs = receiver.arg ? genSetInner(receiver.arg) : [];
   const exprArgs = exprArgsOnly(args, `Set.${method}`);
   const requireSetArg = (): unknown => {
-    if (exprArgs.length !== 1) {
-      throw new CodegenError(`Set.${method}() requires exactly 1 argument`, pos);
-    }
+    checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, pos, "Set.");
     const arg = exprArgs[0];
     if (arg.type !== "NewSet") {
       throw new CodegenError(
@@ -3493,9 +3464,7 @@ function generateRegexMethodCall(
 ): unknown {
   const pos = regex.pos;
   const exprArgs = exprArgsOnly(args, `regex.${method}`);
-  if (exprArgs.length !== 1) {
-    throw new CodegenError(`regex.${method}() requires exactly 1 argument (input string)`, pos);
-  }
+  checkArity(method, { sig: "str", exact: 1 }, exprArgs.length, pos, "regex.");
   const input = _generate(exprArgs[0], ctx);
   const opName = method === "test" ? "$regexMatch" : method === "exec" ? "$regexFind" : null;
   if (!opName) {
