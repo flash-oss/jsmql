@@ -19,15 +19,14 @@
 //
 // Sister to lookup-translation (which handles `$$$.<coll>.find/filter` →
 // `$lookup`) and union-translation (which handles `$$.push` → `$unionWith`).
-// All three share the `extractLetsFromExpr` / `extractLetsFromPipeline`
-// infrastructure for predicate translation; facet's twist is rejecting any
-// `$.<field>` reference, because inside a facet sub-pipeline the lambda
-// param IS the current document — there's no separate outer-doc concept.
+// All three lower their predicate lambda through `lowerLambdaPredicate` (shared
+// from lookup-translation); facet's twist is rejecting any `$.<field>`
+// reference, because inside a facet sub-pipeline the lambda param IS the current
+// document — there's no separate outer-doc concept.
 
 import type { Expr } from "./ast.ts";
-import { CodegenError, freshFacetCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
-import { extractLetsFromExpr, extractLetsFromPipeline, type SubPipelineLowerer } from "./lookup-translation.ts";
-import { translateMatchBody } from "./match-translation.ts";
+import { CodegenError, freshFacetCtx, type GenerateCtx } from "./codegen.ts";
+import { lowerLambdaPredicate, type SubPipelineLowerer } from "./lookup-translation.ts";
 
 type LambdaNode = Extract<Expr, { type: "Lambda" }>;
 
@@ -132,33 +131,23 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
       lambda.pos,
     );
   }
-  const param = lambda.params[0];
-
-  if (lambda.body !== undefined) {
-    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, param);
-    rejectLocalRef(letVars, param, lambda.pos);
-    const subCtx = freshFacetCtx(outerCtx);
-    const t = translateMatchBody(rewritten, { bindings: subCtx.bindings });
-    const queryEmpty = Object.keys(t.query).length === 0;
-    if (queryEmpty && t.residual === null) return [];
-    if (t.residual === null) return [{ $match: t.query }];
-    const exprBody = generateWithCtx(t.residual, subCtx);
-    if (queryEmpty) return [{ $match: { $expr: exprBody } }];
-    return [{ $match: { ...t.query, $expr: exprBody } }];
-  }
-
-  if (lambda.block !== undefined) {
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, param);
-    rejectLocalRef(letVars, param, lambda.pos);
-    const subCtx = freshFacetCtx(outerCtx);
-    return lowerBlock(rewritten, subCtx);
-  }
-
-  throw new CodegenError(`\`$$.filter(p)\` lambda is missing a body — internal parser bug; please report.`, lambda.pos);
+  // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). Inside
+  // a facet sub-pipeline the lambda param IS the current document, so a
+  // `$.<field>` reference (captured as a non-empty `letVars`) is rejected in
+  // favour of the param spelling.
+  return lowerLambdaPredicate(lambda, outerCtx, lowerBlock, {
+    freshCtx: freshFacetCtx,
+    onLocalRef: rejectLocalRef,
+    missingBody: () => {
+      throw new CodegenError(
+        `\`$$.filter(p)\` lambda is missing a body — internal parser bug; please report.`,
+        lambda.pos,
+      );
+    },
+  });
 }
 
-function rejectLocalRef(letVars: Record<string, string>, param: string, pos: number): void {
-  if (Object.keys(letVars).length === 0) return;
+function rejectLocalRef(letVars: Record<string, string>, param: string, pos: number): never {
   const sample = Object.values(letVars)[0]; // e.g. "$createdAt"
   const samplePath = sample.replace(/^\$+/, "");
   throw new CodegenError(

@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: one shared `lowerLambdaPredicate` for the sub-pipeline translators
+
+Prefactoring, behaviour-preserving. Four translators lowered a single-parameter predicate lambda into sub-pipeline stages with the *same* body, copy-pasted: `$unionWith` (`translateUnionPredicate`), `$facet` (`lowerFacetEntry`), `$out` (`lowerFilterAsMatch`), and the `$$ = $$.filter(…)` replace-stream filter (`lowerStreamFilterPredicate`). Each one: rewrite foreign paths via `extractLetsFromExpr`/`extractLetsFromPipeline`, reject a local-doc reference (none of these stages has a `let` slot), run an expression body through `translateMatchBody` then the identical six-line `queryEmpty`/`residual` `$match`-emission block, run a block body through the caller's `lowerBlock`, throw on a missing body. The only real variation was the rejection message and which fresh sub-pipeline ctx to build. The fragile part — the index-friendly-vs-`$expr` emission — was the part duplicated, so a fix to one risked drift in the others.
+
+Extracted two exports into `lookup-translation.ts` (the hub the others already depend on): `matchStagesFromTranslation(t, subCtx)` (the `$match`/`$expr` emission, now the single copy) and `lowerLambdaPredicate(lambda, outerCtx, lowerBlock, { freshCtx, onLocalRef, missingBody })` (the whole expr/block/missing skeleton). Each call site collapses to its own param-count validation plus one `lowerLambdaPredicate(...)` call supplying its rejection message and `freshCtx` (identity for the replace-stream filter, which already runs in the right ctx). `grep '$expr: exprBody' src/` now returns exactly one file. The plan named three call sites; the fourth (`lowerStreamFilterPredicate`) surfaced via that grep invariant and folded in cleanly. Output byte-identical, full suite green. Adding the next sub-pipeline translator now means a message + a ctx factory, not re-deriving the emission. Docs: [lookup-stage.md](specs/lookup-stage.md) + the translation-module file-map in [CLAUDE.md](../CLAUDE.md).
+
+---
+
 ## 2026-06-04 — refactor: accumulator-only gate derives from the operator registry
 
 Prefactoring, behaviour-preserving. Codegen's `checkOperatorContext` gated accumulator-only operators (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`) on a hand-maintained `ACCUMULATOR_ONLY_OPERATORS` set that *shadowed* the operator registry. Adding an accumulator operator silently required a second edit there; miss it and the new op would be wrongly accepted in arbitrary expression positions. That violates the project's "operator registry is the single source of truth" rule.

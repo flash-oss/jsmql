@@ -48,6 +48,8 @@ Exactly one of `body` / `block` is set. All existing consumers (array methods, I
 
 The `SubPipelineLowerer` callback is wired by `src/pipeline.ts` (which provides `generateImplicitPipeline` as the lowerer) so this module stays free of the circular `pipeline.ts` import.
 
+**Shared predicate lowering (`lowerLambdaPredicate`).** Four sibling translators lower a single-parameter predicate lambda the same way — `$unionWith` (`union-translation.ts`), `$facet` (`facet-translation.ts`), `$out` (`out-translation.ts`), and the `$$ = $$.filter(…)` replace-stream filter (`pipeline.ts`). Each rewrites foreign-doc paths via `extractLetsFromExpr` / `extractLetsFromPipeline`, rejects predicates that reference the *local* doc (none of these stages has a `let` slot), routes an expression body through `translateMatchBody` and a block body through the caller's `lowerBlock`, and emits the `$match` stages. That shared skeleton lives here as the exported `lowerLambdaPredicate(lambda, outerCtx, lowerBlock, { freshCtx, onLocalRef, missingBody })`; the per-stage variation is only the local-ref rejection message (`onLocalRef`) and the fresh sub-pipeline ctx (`freshCtx`, identity for the replace-stream filter, which already runs in the right ctx). The `$match`-emission half — vacuous→no stage, query-only, `$expr`-only, merged — is the separately exported `matchStagesFromTranslation(t, subCtx)`, so the index-friendly/`$expr`-residual shape can't drift between translators.
+
 ## Auto-`let` extraction
 
 The walker `transformExpr` in `src/lookup-translation.ts` runs over the lambda body (expression-form) or over each statement of the block (block-form). At every visited AST node, `classifyPath` reports whether the sub-tree is a `MemberAccess`/`IndexAccess` chain rooted at:

@@ -32,14 +32,12 @@ import type { Expr, CallArg, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } fr
 import { CodegenError, EMPTY_CTX, freshSubPipelineCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
   detectLookupCall,
-  extractLetsFromExpr,
-  extractLetsFromPipeline,
   extractLookupTarget,
+  lowerLambdaPredicate,
   validateLookupShape,
   type LookupCall,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
-import { translateMatchBody } from "./match-translation.ts";
 
 // Aliases for the few AST variants we touch directly.
 type SpreadElement = Extract<CallArg, { type: "SpreadElement" }>;
@@ -360,49 +358,23 @@ function buildUnionWith(
  *      translated half. Untranslatable residuals still ride in `$expr`.
  */
 function translateUnionPredicate(call: LookupCall, outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object[] {
-  const { lambda } = call;
-  const foreignParam = lambda.params[0];
-
-  // ── Expression body ────────────────────────────────────────────────
-  if (lambda.body !== undefined) {
-    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, foreignParam);
-    if (Object.keys(letVars).length > 0) {
+  // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). The
+  // foreign-doc paths are rewritten to bare `FieldRef`s, then expression bodies
+  // run through the same translator `$match` uses; the sub-pipeline gets a fresh
+  // ctx (outer lets don't cross the boundary). `$unionWith` has no `let` slot, so
+  // a predicate that references the local doc (`$.<field>`) is rejected.
+  return lowerLambdaPredicate(call.lambda, outerCtx, lowerBlock, {
+    freshCtx: freshSubPipelineCtx,
+    onLocalRef: () => {
       throw new CodegenError(correlatedPushPredicateMessage(call), call.lambda.pos);
-    }
-    // Run the rewritten body (foreign-paths now bare `FieldRef`s) through the
-    // same translator `$match` uses at the top level. The sub-pipeline runs in
-    // a fresh ctx (outer lets don't cross sub-pipeline boundaries) and inherits
-    // the function-form bindings so compile-time param values translate as
-    // literals.
-    const subCtx = freshSubPipelineCtx(outerCtx);
-    const t = translateMatchBody(rewritten, { bindings: subCtx.bindings });
-    const queryEmpty = Object.keys(t.query).length === 0;
-    if (queryEmpty && t.residual === null) {
-      // Vacuous predicate (e.g. literal `true`). Skip the $match entirely.
-      return [];
-    }
-    if (t.residual === null) {
-      return [{ $match: t.query }];
-    }
-    const exprBody = generateWithCtx(t.residual, subCtx);
-    if (queryEmpty) return [{ $match: { $expr: exprBody } }];
-    return [{ $match: { ...t.query, $expr: exprBody } }];
-  }
-
-  // ── Block body ─────────────────────────────────────────────────────
-  if (lambda.block !== undefined) {
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam);
-    if (Object.keys(letVars).length > 0) {
-      throw new CodegenError(correlatedPushPredicateMessage(call), call.lambda.pos);
-    }
-    const subCtx = freshSubPipelineCtx(outerCtx);
-    return lowerBlock(rewritten, subCtx);
-  }
-
-  throw new CodegenError(
-    `.${call.method}(predicate) lambda is missing a body — internal parser bug; please report.`,
-    lambda.pos,
-  );
+    },
+    missingBody: () => {
+      throw new CodegenError(
+        `.${call.method}(predicate) lambda is missing a body — internal parser bug; please report.`,
+        call.lambda.pos,
+      );
+    },
+  });
 }
 
 function correlatedPushPredicateMessage(call: LookupCall): string {

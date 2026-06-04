@@ -82,8 +82,7 @@ import {
   validateLookupShape,
   translatePredicate,
   extractLookupTarget,
-  extractLetsFromExpr,
-  extractLetsFromPipeline,
+  lowerLambdaPredicate,
   type LookupCall,
   type SlotAllocator,
   type SubPipelineLowerer,
@@ -1028,31 +1027,23 @@ function lowerStreamFilterPredicate(
       lambda.pos,
     );
   }
-  const param = lambda.params[0];
-  if (lambda.body !== undefined) {
-    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, param);
-    rejectLocalRefInStreamFilter(letVars, param, lambda.pos);
-    const t = translateMatchBody(rewritten, { bindings: predicateCtx.bindings });
-    const queryEmpty = Object.keys(t.query).length === 0;
-    if (queryEmpty && t.residual === null) return [];
-    if (t.residual === null) return [{ $match: t.query }];
-    const exprBody = generateWithCtx(t.residual, predicateCtx);
-    if (queryEmpty) return [{ $match: { $expr: exprBody } }];
-    return [{ $match: { ...t.query, $expr: exprBody } }];
-  }
-  if (lambda.block !== undefined) {
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, param);
-    rejectLocalRefInStreamFilter(letVars, param, lambda.pos);
-    return lowerBlockFn(rewritten, predicateCtx);
-  }
-  throw new CodegenError(
-    `'.filter(<predicate>)' lambda is missing a body — internal parser bug; please report.`,
-    lambda.pos,
-  );
+  // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). The
+  // stream filter already runs in the right ctx, so `freshCtx` is identity. A
+  // `$.<field>` reference (captured as a non-empty `letVars`) is rejected — the
+  // lambda parameter IS the document being matched.
+  return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
+    freshCtx: (ctx) => ctx,
+    onLocalRef: rejectLocalRefInStreamFilter,
+    missingBody: () => {
+      throw new CodegenError(
+        `'.filter(<predicate>)' lambda is missing a body — internal parser bug; please report.`,
+        lambda.pos,
+      );
+    },
+  });
 }
 
-function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: string, pos: number): void {
-  if (Object.keys(letVars).length === 0) return;
+function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: string, pos: number): never {
   const sample = Object.values(letVars)[0];
   const samplePath = sample.replace(/^\$+/, "");
   throw new CodegenError(

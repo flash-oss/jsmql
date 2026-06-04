@@ -27,14 +27,8 @@
 // `docs/specs/replace-root-stage.md`.
 
 import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
-import { CodegenError, freshSubPipelineCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
-import {
-  extractLetsFromExpr,
-  extractLetsFromPipeline,
-  type SubPipelineLowerer,
-  type SlotAllocator,
-} from "./lookup-translation.ts";
-import { translateMatchBody } from "./match-translation.ts";
+import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
+import { lowerLambdaPredicate, type SubPipelineLowerer, type SlotAllocator } from "./lookup-translation.ts";
 import { lookupStreamMethod } from "./stream-methods.ts";
 
 // ── Detection ─────────────────────────────────────────────────────────────────
@@ -328,22 +322,15 @@ const STAGE_EQUIVALENT_HINT: Record<string, string> = {
 };
 
 /**
- * `$$.filter(<lambda>)` → `[{ $match: <translated> }]`. The lambda has the
- * lookup-flavoured shape (one parameter = the foreign/current doc), so we
- * reuse `extractLetsFromExpr` / `extractLetsFromPipeline` from
- * lookup-translation to rewrite the lambda body into match-translation's
- * expected form (`$.<field>` references on the param are not supported —
- * the lambda's parameter *is* the current document, so they'd be ambiguous;
- * mirrors the facet-form rule).
- *
- * Two body shapes:
- *   - Expression body: routed through `translateMatchBody`, the same engine
- *     `$match` uses at the top level. Translatable conjuncts emit index-
- *     friendly `{ field: value }` syntax; untranslatable residuals ride
- *     in `$expr` side-by-side.
- *   - Block body: routed through the caller-supplied `lowerBlock` (same
- *     sub-pipeline lowerer used by lookup/union/facet). Each statement
- *     becomes a stage in the prefix.
+ * `$$.filter(<lambda>)` → `[{ $match: <translated> }]`. After validating the
+ * arrow shape (exactly one single-parameter predicate), the body is lowered via
+ * the shared `lowerLambdaPredicate` from lookup-translation, which both
+ * lookup/union/facet use:
+ *   - Expression body → match-translation's engine: translatable conjuncts emit
+ *     index-friendly `{ field: value }` syntax, residuals ride in `$expr`.
+ *   - Block body → the caller-supplied `lowerBlock` (each statement → a stage).
+ * `$.<field>` references on the param are rejected — the parameter *is* the
+ * current document, so they'd be ambiguous (mirrors the facet-form rule).
  */
 function lowerFilterAsMatch(
   call: Expr & { type: "MethodCall" },
@@ -369,48 +356,26 @@ function lowerFilterAsMatch(
       arg.pos,
     );
   }
-  const foreignParam = arg.params[0];
-
-  // Expression body
-  if (arg.body !== undefined) {
-    const { rewritten, letVars } = extractLetsFromExpr(arg.body, foreignParam);
-    if (Object.keys(letVars).length > 0) {
+  // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). A
+  // `$out` chain has no `let` slot, so a predicate that references the local doc
+  // (`$.<field>`, captured as a non-empty `letVars`) is rejected in favour of the
+  // lambda parameter.
+  return lowerLambdaPredicate(arg, outerCtx, lowerBlock, {
+    freshCtx: freshSubPipelineCtx,
+    onLocalRef: (_letVars, param, pos) => {
       throw new CodegenError(
-        `\`$.<field>\` inside '$$.filter(<predicate>)' in a '$out' chain is not supported — the lambda's parameter \`${foreignParam}\` IS the current document. ` +
-          `Write \`${foreignParam}.<field>\` instead.`,
+        `\`$.<field>\` inside '$$.filter(<predicate>)' in a '$out' chain is not supported — the lambda's parameter \`${param}\` IS the current document. ` +
+          `Write \`${param}.<field>\` instead.`,
+        pos,
+      );
+    },
+    missingBody: () => {
+      throw new CodegenError(
+        `'$$.filter(<predicate>)' lambda is missing a body — internal parser bug; please report.`,
         arg.pos,
       );
-    }
-    const subCtx = freshSubPipelineCtx(outerCtx);
-    const t = translateMatchBody(rewritten, { bindings: subCtx.bindings });
-    const queryEmpty = Object.keys(t.query).length === 0;
-    if (queryEmpty && t.residual === null) {
-      return []; // vacuous predicate — skip the `$match`
-    }
-    if (t.residual === null) return [{ $match: t.query }];
-    const exprBody = generateWithCtx(t.residual, subCtx);
-    if (queryEmpty) return [{ $match: { $expr: exprBody } }];
-    return [{ $match: { ...t.query, $expr: exprBody } }];
-  }
-
-  // Block body
-  if (arg.block !== undefined) {
-    const { rewritten, letVars } = extractLetsFromPipeline(arg.block, foreignParam);
-    if (Object.keys(letVars).length > 0) {
-      throw new CodegenError(
-        `\`$.<field>\` inside '$$.filter(<predicate>)' in a '$out' chain is not supported — the lambda's parameter \`${foreignParam}\` IS the current document. ` +
-          `Write \`${foreignParam}.<field>\` instead.`,
-        arg.pos,
-      );
-    }
-    const subCtx = freshSubPipelineCtx(outerCtx);
-    return lowerBlock(rewritten, subCtx);
-  }
-
-  throw new CodegenError(
-    `'$$.filter(<predicate>)' lambda is missing a body — internal parser bug; please report.`,
-    arg.pos,
-  );
+    },
+  });
 }
 
 // ── Public entry point: lower an `$out` assignment to stages ──────────────────

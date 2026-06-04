@@ -52,6 +52,7 @@ import type {
   KeyValueEntry,
 } from "./ast.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
+import { translateMatchBody, type MatchTranslation } from "./match-translation.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
@@ -945,6 +946,68 @@ export function extractLetsFromPipeline(
   const allocator = createLetAllocator();
   const stmts: PipelineStmt[] = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
+}
+
+/**
+ * Emit the `$match` stages for a translated expression-body predicate. Lifted
+ * verbatim from the union/facet/out translators, which all needed the same
+ * four-way split: vacuous predicate → no stage; pure query → `{ $match: query }`;
+ * pure residual → `{ $match: { $expr } }`; both → merged. Keeping it in one
+ * place means the index-friendly/`$expr`-residual emission can't drift between
+ * the sub-pipeline translators.
+ */
+export function matchStagesFromTranslation(t: MatchTranslation, subCtx: GenerateCtx): object[] {
+  const queryEmpty = Object.keys(t.query).length === 0;
+  if (queryEmpty && t.residual === null) return []; // vacuous predicate — skip the $match
+  if (t.residual === null) return [{ $match: t.query }];
+  const exprBody = generateWithCtx(t.residual, subCtx);
+  if (queryEmpty) return [{ $match: { $expr: exprBody } }];
+  return [{ $match: { ...t.query, $expr: exprBody } }];
+}
+
+/**
+ * Lower a single-parameter predicate lambda — the foreign/current document is
+ * the param — into sub-pipeline stages. Shared by the `$unionWith`, `$facet`,
+ * and `$out` translators, which differ only in (a) the message thrown when the
+ * predicate references the *local* doc (`$.<field>`, which would need a `let`
+ * slot the target stage lacks) and (b) which fresh sub-pipeline ctx they build.
+ * Both are injected; the expr-body / block-body / missing-body skeleton and the
+ * `$match` emission are identical and live here.
+ *
+ * The caller validates the lambda's parameter count first (with its own
+ * stage-specific message) — this helper assumes `lambda.params[0]` is the
+ * document parameter.
+ */
+export function lowerLambdaPredicate(
+  lambda: Lambda,
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+  opts: {
+    freshCtx: (outer: GenerateCtx) => GenerateCtx;
+    onLocalRef: (letVars: Record<string, string>, param: string, pos: number) => never;
+    missingBody: () => never;
+  },
+): object[] {
+  const param = lambda.params[0];
+
+  // Expression body → query-language translation + `$match`.
+  if (lambda.body !== undefined) {
+    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    const t = translateMatchBody(rewritten, { bindings: subCtx.bindings });
+    return matchStagesFromTranslation(t, subCtx);
+  }
+
+  // Block body → each statement becomes a stage via the caller's lowerer.
+  if (lambda.block !== undefined) {
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    return lowerBlock(rewritten, subCtx);
+  }
+
+  return opts.missingBody();
 }
 
 function transformStmt(
