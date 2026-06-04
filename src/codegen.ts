@@ -197,26 +197,120 @@ const STRING_OUTPUT_OPS = new Set([
   "$toString",
 ]);
 
-// Method names that always return a string
-const STRING_RETURNING_METHODS = new Set([
-  "trim",
-  "trimStart",
-  "trimEnd",
-  "trimLeft",
-  "trimRight",
-  "toLowerCase",
-  "toUpperCase",
-  "substr",
-  "substring",
-  "replace",
-  "replaceAll",
-  "charAt",
-  "toISOString",
-  "join",
-  "padStart",
-  "padEnd",
-  "repeat",
-]);
+// ── JS-method metadata registry ───────────────────────────────────────────────
+//
+// Single source of truth for every JS method jsmql recognises. The lowering for
+// each method still lives in its `case` in generateMethodCall (the dispatch is
+// the switch); this table holds the *metadata* that several inference passes
+// read — return type and optional-chaining receiver type — plus the full name
+// list that powers "did you mean?" suggestions. Adding a method is one entry
+// here (for its inference behaviour) plus its `case`, instead of editing up to
+// three separate Sets scattered across the file.
+//
+//   returns:  the method's result type, when invariant — feeds isStringProducing
+//             / isArrayProducing / isProvablyBool. Omitted when the result type
+//             depends on the receiver/args (e.g. `.slice`, `.concat`, `.at`).
+//   optional: the receiver's type, picking the `$ifNull` neutral when a `?.`
+//             chain feeds the receiver — "string" → "", "array" → [], "either" →
+//             runtime/branch-aware (see neutralForMethod). Omitted for methods
+//             whose underlying operator handles null cleanly (date/set/regex).
+type MethodReturn = "string" | "array" | "bool";
+type MethodOptional = "string" | "array" | "either";
+type MethodMeta = { returns?: MethodReturn; optional?: MethodOptional };
+
+const METHODS: Record<string, MethodMeta> = {
+  // ── String ────────────────────────────────────────────────────────────────
+  trim: { returns: "string", optional: "string" },
+  trimStart: { returns: "string", optional: "string" },
+  trimLeft: { returns: "string", optional: "string" },
+  trimEnd: { returns: "string", optional: "string" },
+  trimRight: { returns: "string", optional: "string" },
+  toLowerCase: { returns: "string", optional: "string" },
+  toUpperCase: { returns: "string", optional: "string" },
+  substr: { returns: "string", optional: "string" },
+  substring: { returns: "string", optional: "string" },
+  charAt: { returns: "string", optional: "string" },
+  split: { returns: "array", optional: "string" }, // returns an array, but the receiver is a string
+  startsWith: { returns: "bool", optional: "string" },
+  endsWith: { returns: "bool", optional: "string" },
+  replace: { returns: "string", optional: "string" },
+  replaceAll: { returns: "string", optional: "string" },
+  match: { optional: "string" },
+  matchAll: { optional: "string" },
+  search: { optional: "string" },
+  padStart: { returns: "string", optional: "string" },
+  padEnd: { returns: "string", optional: "string" },
+  repeat: { returns: "string", optional: "string" },
+  indexOf: { optional: "either" },
+  includes: { returns: "bool", optional: "either" },
+  // ── Array ─────────────────────────────────────────────────────────────────
+  at: { optional: "array" },
+  slice: { optional: "either" },
+  concat: { optional: "either" },
+  reverse: { returns: "array", optional: "array" }, // throws in expression position; metadata used by the statement-position rewrite
+  toReversed: { returns: "array", optional: "array" },
+  toSorted: { returns: "array", optional: "array" },
+  toSpliced: { returns: "array" },
+  with: { returns: "array" },
+  flat: { returns: "array", optional: "array" },
+  flatMap: { returns: "array", optional: "array" },
+  map: { returns: "array", optional: "array" },
+  filter: { returns: "array", optional: "array" },
+  find: { optional: "array" },
+  findIndex: {},
+  findLast: { optional: "array" },
+  findLastIndex: { optional: "array" },
+  lastIndexOf: {},
+  some: { returns: "bool", optional: "array" },
+  every: { returns: "bool", optional: "array" },
+  reduce: { optional: "array" },
+  reduceRight: {},
+  join: { returns: "string", optional: "array" }, // returns a string, but the receiver is an array
+  toString: {},
+  // ── Mutators (shimmed with tailored errors that point at immutable variants) ─
+  sort: {},
+  splice: {},
+  push: {},
+  pop: {},
+  shift: {},
+  unshift: {},
+  fill: {},
+  copyWithin: {},
+  // ── Iterator / void / locale (shimmed with tailored errors) ─────────────────
+  forEach: {},
+  entries: {},
+  keys: {},
+  values: {},
+  toLocaleString: {},
+  // ── Date ────────────────────────────────────────────────────────────────────
+  getFullYear: {},
+  getMonth: {},
+  getDate: {},
+  getDay: {},
+  getHours: {},
+  getMinutes: {},
+  getSeconds: {},
+  getMilliseconds: {},
+  getTime: {},
+  toISOString: { returns: "string" },
+  // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
+  //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
+  intersection: {},
+  union: {},
+  difference: {},
+  isSubsetOf: {},
+  isSupersetOf: {},
+  // ── Regex (intercepted on RegexLiteral receivers; same rationale) ───────────
+  test: {},
+  exec: {},
+};
+
+function methodsWhere(pred: (m: MethodMeta) => boolean): ReadonlySet<string> {
+  return new Set(Object.keys(METHODS).filter((name) => pred(METHODS[name])));
+}
+
+// Method names that always return a string / array / boolean — derived from METHODS.
+const STRING_RETURNING_METHODS = methodsWhere((m) => m.returns === "string");
 
 // ── Array-producing helpers ───────────────────────────────────────────────────
 
@@ -236,19 +330,8 @@ const ARRAY_OUTPUT_OPS = new Set([
   "$objectToArray",
 ]);
 
-// Method names that always return an array
-const ARRAY_RETURNING_METHODS = new Set([
-  "split",
-  "map",
-  "filter",
-  "reverse",
-  "toReversed",
-  "toSorted",
-  "toSpliced",
-  "with",
-  "flat",
-  "flatMap",
-]);
+// Method names that always return an array — derived from METHODS.
+const ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
 
 function isArrayProducing(expr: Expr): boolean {
   switch (expr.type) {
@@ -333,8 +416,8 @@ const BOOL_OUTPUT_OPS = new Set([
   "$setIsSubset",
 ]);
 
-// Method names whose codegen always emits a boolean.
-const BOOL_RETURNING_METHODS = new Set(["includes", "startsWith", "endsWith", "every", "some"]);
+// Method names whose codegen always emits a boolean — derived from METHODS.
+const BOOL_RETURNING_METHODS = methodsWhere((m) => m.returns === "bool");
 
 /** True if the AST node always compiles to an MQL expression that evaluates
  *  to a boolean. When true we skip the jsBool wrap. */
@@ -941,55 +1024,19 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
 // receiver. Date / Set / Regex methods are intentionally absent: their
 // underlying operators (`$year`, set ops, regex ops) handle null cleanly and
 // don't poison downstream callers.
-const OPTIONAL_STRING_METHODS: ReadonlySet<string> = new Set([
-  "trim",
-  "trimStart",
-  "trimLeft",
-  "trimEnd",
-  "trimRight",
-  "toLowerCase",
-  "toUpperCase",
-  "substr",
-  "substring",
-  "charAt",
-  "split",
-  "startsWith",
-  "endsWith",
-  "replace",
-  "replaceAll",
-  "match",
-  "matchAll",
-  "search",
-  "padStart",
-  "padEnd",
-  "repeat",
-]);
+// Derived from METHODS (`optional` field). String-receiver methods pick the
+// `""` neutral, array-receiver methods pick `[]`.
+const OPTIONAL_STRING_METHODS = methodsWhere((m) => m.optional === "string");
 
-const OPTIONAL_ARRAY_METHODS: ReadonlySet<string> = new Set([
-  "at",
-  "reverse",
-  "toReversed",
-  "toSorted",
-  "findLast",
-  "findLastIndex",
-  "join",
-  "flat",
-  "flatMap",
-  "map",
-  "filter",
-  "find",
-  "some",
-  "every",
-  "reduce",
-]);
+const OPTIONAL_ARRAY_METHODS = methodsWhere((m) => m.optional === "array");
 
-// `indexOf` / `includes` / `concat` dispatch on receiver type at codegen time
-// (or at runtime via `$cond` when the type is unknown). For these we pick the
+// `indexOf` / `includes` / `concat` / `slice` dispatch on receiver type at codegen
+// time (or at runtime via `$cond` when the type is unknown). For these we pick the
 // fallback that matches the chosen branch: `""` when the receiver is provably
 // string-producing, `[]` otherwise — `[]` is also safe for the runtime-dispatch
 // path because `$isArray([])` is true, sending it down the array branch which
 // returns the same sensible empty-array result the JS short-circuit would.
-const OPTIONAL_EITHER_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "concat", "slice"]);
+const OPTIONAL_EITHER_METHODS = methodsWhere((m) => m.optional === "either");
 
 function neutralForMethod(method: string, object: Expr): unknown | undefined {
   if (OPTIONAL_STRING_METHODS.has(method)) return "";
@@ -2822,95 +2869,10 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
   return { type: "CallExpression", callee: iifeCallee, args: [s0Init, e0Init], pos };
 }
 
-// Every method name with a dedicated case in generateMethodCall, used to power
-// "did you mean?" suggestions on unknown methods. Kept here rather than next to
-// the switch so adding a new method is a one-line edit at the call site plus
-// one entry here — clearer than scanning a 1000-line function for case labels.
-const KNOWN_METHODS: ReadonlySet<string> = new Set([
-  // String
-  "trim",
-  "trimStart",
-  "trimLeft",
-  "trimEnd",
-  "trimRight",
-  "toLowerCase",
-  "toUpperCase",
-  "substr",
-  "charAt",
-  "split",
-  "startsWith",
-  "endsWith",
-  "indexOf",
-  "replace",
-  "replaceAll",
-  "includes",
-  "match",
-  "matchAll",
-  "search",
-  "padStart",
-  "padEnd",
-  "repeat",
-  // Array
-  "at",
-  "slice",
-  "reverse",
-  "toReversed",
-  "toSorted",
-  "toSpliced",
-  "with",
-  "concat",
-  "join",
-  "flat",
-  "flatMap",
-  "map",
-  "filter",
-  "find",
-  "findIndex",
-  "findLast",
-  "findLastIndex",
-  "lastIndexOf",
-  "some",
-  "every",
-  "reduce",
-  "reduceRight",
-  "toString",
-  // Mutators (shimmed with tailored errors that point at immutable variants)
-  "sort",
-  "splice",
-  "push",
-  "pop",
-  "shift",
-  "unshift",
-  "fill",
-  "copyWithin",
-  // Iterator / void / locale (shimmed with tailored errors)
-  "forEach",
-  "entries",
-  "keys",
-  "values",
-  "toLocaleString",
-  // Date
-  "getFullYear",
-  "getMonth",
-  "getDate",
-  "getDay",
-  "getHours",
-  "getMinutes",
-  "getSeconds",
-  "getMilliseconds",
-  "getTime",
-  "toISOString",
-  // Set (intercepted before this dispatcher when receiver is a NewSet, but
-  // listed so a typo on a non-NewSet receiver still surfaces a useful suggestion)
-  "intersection",
-  "union",
-  "difference",
-  "isSubsetOf",
-  "isSupersetOf",
-  // Regex (intercepted on RegexLiteral receivers; same rationale)
-  "test",
-  "exec",
-]);
+// Every recognised method name, used to power "did you mean?" suggestions on
+// unknown methods — derived from the METHODS registry so adding a method is a
+// single entry there (no separate list to keep in sync).
+const KNOWN_METHODS: ReadonlySet<string> = new Set(Object.keys(METHODS));
 
 /**
  * Most methods can't take spread args — only variadic ones (concat). This helper

@@ -148,6 +148,11 @@ Breaking API changes must use `feat!:` or `fix!:` and must bump the major versio
 4. If the operator has user-visible syntax (e.g. a named convenience form), update `docs/LANGUAGE.md`.
 5. Update `docs/specs/operator-registry.md` if shape semantics change. The drift-protection test (`test/operator-spec-coverage.test.ts`) will catch missing categories or descriptions.
 
+### Adding a JS-method alias (`.foo()`)
+1. Add a `case "foo"` in `generateMethodCall` (`src/codegen.ts`) with the lowering. Validate the argument count with `checkArity("foo", { sig: "...", exact|allowed|atLeast|none }, count, callPos)` — never hand-roll the `if (length …) throw` (the central formatter keeps the message wording consistent: `.foo(<sig>) <quantity>, got <N>`).
+2. Add a `foo: { returns?, optional? }` entry to the `METHODS` registry (`src/codegen.ts`). Set `returns` when the result type is invariant (drives string/array/bool inference), `optional` to the receiver type for `?.`-chain neutrals. This single entry also adds `foo` to the `didYouMean` suggestion list — there are no separate Sets to update.
+3. Add a test in `test/codegen.test.ts`; update `docs/specs/method-dispatch.md` and `docs/LANGUAGE.md` for user-visible syntax.
+
 ### Formatting
 `oxfmt` is the only formatter. Config is in `.oxfmtrc.json` (excludes `*.md`, `dist/`, `package*.json`). Never make manual style decisions — just run `npm run format`.
 

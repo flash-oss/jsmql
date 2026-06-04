@@ -2512,6 +2512,9 @@ describe("error cases", () => {
   it("near-miss method names get a 'Did you mean' suggestion", () => {
     expect(() => jsmql.expr("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
     expect(() => jsmql.expr("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
+    // `substring` is part of the METHODS registry (it was missing from the old
+    // hand-maintained suggestion list), so near-misses now resolve to it.
+    expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
   });
   it("near-miss Math member gets a 'Did you mean' suggestion", () => {
     expect(() => jsmql.expr("Math.flor($.x)")).toThrow(/Did you mean 'Math\.floor'/);

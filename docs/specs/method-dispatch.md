@@ -18,7 +18,16 @@ If `asFieldPath()` returns `null` (non-field-chain expression), the `MemberAcces
 
 ## Method dispatch
 
-Method calls are handled by `generateMethodCall(object, method, args, ctx)` via a large switch statement on `method`. There is no lowering registry — each method's codegen is hardcoded in its `case`. Unknown methods throw `CodegenError`.
+Method calls are handled by `generateMethodCall(object, method, args, ctx)` via a large switch statement on `method`. Each method's *codegen* is hardcoded in its `case` (the switch is the lowering dispatch), but its *metadata* lives in one registry, `METHODS`.
+
+### `METHODS` — the metadata registry
+
+`METHODS: Record<string, MethodMeta>` is the single source of truth for every JS method jsmql recognises. Each entry carries up to two optional fields:
+
+- `returns?: "string" | "array" | "bool"` — the method's result type when it's invariant. Feeds `isStringProducing` / `isArrayProducing` / `isProvablyBool`. Omitted when the result type depends on the receiver or args (`.slice`, `.concat`, `.at`, `.indexOf`).
+- `optional?: "string" | "array" | "either"` — the *receiver's* type, used to pick the `$ifNull` neutral when a `?.` chain feeds the receiver (`""` / `[]` / branch-aware). Omitted for date/set/regex methods whose underlying operators handle null cleanly.
+
+The former hand-maintained Sets (`STRING_RETURNING_METHODS`, `ARRAY_RETURNING_METHODS`, `BOOL_RETURNING_METHODS`, `OPTIONAL_STRING_METHODS`, `OPTIONAL_ARRAY_METHODS`, `OPTIONAL_EITHER_METHODS`) and `KNOWN_METHODS` are now **derived** from `METHODS` via `methodsWhere(...)` / `Object.keys(...)`. Adding a method is one `METHODS` entry (for inference + suggestions) plus its `case` (for lowering) plus a `checkArity` call (for arity), instead of editing several scattered Sets. Unknown methods throw `CodegenError` with a `didYouMean` suggestion drawn from `Object.keys(METHODS)`.
 
 ### Argument-count validation — `checkArity`
 
