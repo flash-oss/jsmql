@@ -8,6 +8,8 @@
 //
 // Surfaces every jsmql stage and operator as an ambient global with a
 // precise signature, JSDoc description, and link to the MongoDB docs.
+// Also declares the `$$` / `$$$` / `$$$$` context references, with
+// completion for the collection- and cluster-scoped diagnostic stages.
 // The compiled module exports nothing at runtime (`export {};`), so the
 // import resolves to an empty module — bundlers tree-shake it away. For
 // fully zero-runtime use, add `"@koresar/jsmql/ops"` to tsconfig
@@ -2160,6 +2162,105 @@ declare global {
     /** An array of default element values to use if the input arrays have different lengths. You must specify useLongestLength: true along with this field, or else $zip will return an error. If useLongestLength: true but defaults is empty or not specified, $zip uses null as the default value. If specifying a non-empty defaults, you must specify a default for each input array or else $zip will return an error. */
     defaults?: any;
   }): any;
+
+  // ── Context references ($$, $$$, $$$$) ────────────────────────────────
+  /**
+   * jsmql current-collection context reference (`$$`, run on `db.coll.aggregate()`). Names a collection-scoped diagnostic source stage, or heads collection sugar (`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).
+   *
+   * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
+   */
+  const $$: {
+    /**
+     * Returns statistics regarding a collection or view.
+     *
+     * @minVersion 3.4
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/collStats/
+     */
+    collStats(options?: {
+      latencyStats?: { histograms?: boolean };
+      storageStats?: { scale?: number };
+      count?: Record<string, never>;
+      queryExecStats?: Record<string, never>;
+    }): any;
+    /**
+     * Returns statistics regarding the use of each index for the collection.
+     *
+     * @minVersion 3.0
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/indexStats/
+     */
+    indexStats(): any;
+    /**
+     * Returns information about existing Atlas Search indexes on a specified collection.
+     *
+     * @minVersion 7.0
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSearchIndexes/
+     */
+    listSearchIndexes(options?: { id?: string; name?: string }): any;
+    /**
+     * Returns plan cache information for a collection.
+     *
+     * @minVersion 4.4
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/planCacheStats/
+     */
+    planCacheStats(): any;
+    [key: string]: any;
+  };
+  /**
+   * jsmql current-database context reference (`$$$`, run on `db.aggregate()`). Heads cross-collection joins (`$$$.coll.find/filter(...)` → `$lookup`) and `$out` writes (`$$$.coll = ...`). Has no diagnostic source stages of its own — `$currentOp` & friends run on the admin database, reached via `$$$$`.
+   *
+   * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
+   */
+  const $$$: { [key: string]: any };
+  /**
+   * jsmql cluster/server context reference (`$$$$`, run on the admin database). Names a cluster-scoped diagnostic source stage, or heads cross-database joins (`$$$$.db.coll.find/filter(...)` → `$lookup`) and writes (`$$$$.db.coll = ...`).
+   *
+   * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
+   */
+  const $$$$: {
+    /**
+     * Returns information on active and/or dormant operations for the MongoDB deployment. To run, use the db.aggregate() method.
+     *
+     * @minVersion 3.2
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/currentOp/
+     */
+    currentOp(options?: {
+      allUsers?: boolean;
+      idleConnections?: boolean;
+      idleCursors?: boolean;
+      idleSessions?: boolean;
+      localOps?: boolean;
+      targetAllNodes?: boolean;
+    }): any;
+    /**
+     * Lists all active sessions recently in use on the currently connected mongos or mongod instance. These sessions may have not yet propagated to the system.sessions collection.
+     *
+     * @minVersion 3.6
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/listLocalSessions/
+     */
+    listLocalSessions(options?: { users?: { user: string; db: string }[]; allUsers?: boolean }): any;
+    /**
+     * Lists sampled queries for all collections or a specific collection.
+     *
+     * @minVersion 5.0
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSampledQueries/
+     */
+    listSampledQueries(options?: { namespace?: string }): any;
+    /**
+     * Lists all sessions that have been active long enough to propagate to the system.sessions collection.
+     *
+     * @minVersion 3.6
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSessions/
+     */
+    listSessions(options?: { users?: { user: string; db: string }[]; allUsers?: boolean }): any;
+    /**
+     * Provides data and size distribution information on sharded collections.
+     *
+     * @minVersion 6.0.3
+     * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/shardedDataDistribution/
+     */
+    shardedDataDistribution(): any;
+    [key: string]: any;
+  };
 }
 
 export {};

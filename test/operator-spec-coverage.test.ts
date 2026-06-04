@@ -161,6 +161,23 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     }
   });
 
+  it("declares the $$ / $$$ / $$$$ context refs with typed diagnostic methods", () => {
+    // The context-ref ambient globals let arrow-form `$$` / `$$$` / `$$$$` code
+    // type-check, and surface the collection-/cluster-scoped diagnostic stages
+    // with completion. A future generator change must not silently drop them.
+    const src = generateOpsSource();
+    expect(src).toContain("const $$: {");
+    expect(src).toContain("const $$$: {");
+    expect(src).toContain("const $$$$: {");
+    // Diagnostic methods derived from STAGES[…].diagnostic, with annotated args.
+    expect(src).toContain("collStats(options?: {");
+    expect(src).toContain("indexStats(): any;");
+    expect(src).toContain("currentOp(options?: {");
+    expect(src).toContain("shardedDataDistribution(): any;");
+    // Permissive tail keeps the non-diagnostic ref sugar type-checking.
+    expect(src).toContain("[key: string]: any;");
+  });
+
   it("object-shape registry entries use keys that exist in the spec", () => {
     // jsmql's positional key order may legitimately differ from the spec's
     // (changing it would be a breaking API change for callers using the
