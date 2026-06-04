@@ -71,7 +71,7 @@ import {
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
-import { translateMatchBody } from "./match-translation.ts";
+import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
   buildPipelineFormPredicate,
   detectLookupCall,
@@ -1167,10 +1167,9 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
       return generateBodyObject(body, stageName, ctx);
     }
     const t = translateMatchBody(body, { bindings: ctx.bindings });
-    const queryEmpty = Object.keys(t.query).length === 0;
-    if (queryEmpty) return { $expr: generateWithCtx(body, ctx) };
-    if (t.residual === null) return t.query;
-    return { ...t.query, $expr: generateWithCtx(t.residual, ctx) };
+    // `?? {}` is defensive — translateMatchBody never yields empty-query +
+    // null-residual (a vacuous body lands in the residual as `$expr`).
+    return mergeTranslatedQuery(t, ctx) ?? {};
   }
 
   // Other stages: if the body is an object literal, walk its entries so we

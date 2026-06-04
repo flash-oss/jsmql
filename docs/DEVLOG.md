@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: one `mergeTranslatedQuery` for the query/$expr emission
+
+Prefactoring, round 3. The "merge a `MatchTranslation` into a query document" logic — index-friendly conjuncts plus an `$expr`-wrapped residual, with the four-way vacuous/query-only/residual-only/both split — was written out three times: `generateFilter` (index.ts, top-level Filter), the `$match` stage body (pipeline.ts), and `matchStagesFromTranslation` (lookup-translation.ts, the sub-pipeline translators). Three subtly-different spellings of the same emission — a place for the shapes to drift (pipeline.ts even regenerated the residual from the original `body` rather than `t.residual`, an equivalent-but-divergent path).
+
+Hoisted it to `mergeTranslatedQuery(t, ctx)` in [match-translation.ts](../src/match-translation.ts), next to `translateMatchBody` and the `MatchTranslation` type. It returns the merged query document, or `null` for a vacuous predicate so callers can skip the `$match`. All three sites now route through it: `generateFilter` and the `$match` body use `mergeTranslatedQuery(t, ctx) ?? {}` (empty = match-everything), and `matchStagesFromTranslation` maps `null → []`, else `[{ $match: merged }]`. Behaviour-preserving — full suite green; the pipeline.ts `body`-vs-`residual` divergence is a no-op because a query-empty translation always carries the whole predicate in the residual, which lowers to identical MQL. `match-translation.ts` already imported from `codegen.ts` (one-way; codegen doesn't import it back), so pulling in `generateWithCtx` adds no cycle.
+
+---
+
 ## 2026-06-04 — refactor: generate playground.html from a hand-authored skeleton
 
 `sync-playground.mjs` used to read `playground.html`, replace its two managed

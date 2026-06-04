@@ -52,7 +52,7 @@ import type {
   KeyValueEntry,
 } from "./ast.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
-import { translateMatchBody, type MatchTranslation } from "./match-translation.ts";
+import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
@@ -957,12 +957,8 @@ export function extractLetsFromPipeline(
  * the sub-pipeline translators.
  */
 export function matchStagesFromTranslation(t: MatchTranslation, subCtx: GenerateCtx): object[] {
-  const queryEmpty = Object.keys(t.query).length === 0;
-  if (queryEmpty && t.residual === null) return []; // vacuous predicate — skip the $match
-  if (t.residual === null) return [{ $match: t.query }];
-  const exprBody = generateWithCtx(t.residual, subCtx);
-  if (queryEmpty) return [{ $match: { $expr: exprBody } }];
-  return [{ $match: { ...t.query, $expr: exprBody } }];
+  const merged = mergeTranslatedQuery(t, subCtx);
+  return merged === null ? [] : [{ $match: merged }]; // null = vacuous predicate, skip the $match
 }
 
 /**

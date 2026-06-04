@@ -17,7 +17,8 @@
 // as Expr nodes; the caller re-enters `generate()` on them.
 
 import type { Expr, BinaryOp } from "./ast.ts";
-import { isOpaqueBsonValue } from "./codegen.ts";
+import { isOpaqueBsonValue, generateWithCtx } from "./codegen.ts";
+import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
   /** The translated query-language fragment. Empty when nothing translated. */
@@ -25,6 +26,26 @@ export type MatchTranslation = {
   /** Remaining expression that couldn't be translated. Null when fully translated. */
   residual: Expr | null;
 };
+
+/**
+ * Merge a `MatchTranslation` into a single query document: the index-friendly
+ * `query` conjuncts plus, when present, the untranslatable `residual` lowered
+ * through codegen and wrapped in `$expr`. Returns `null` for a vacuous predicate
+ * (empty query, no residual) so callers can skip emitting a `$match` entirely.
+ *
+ * This is the one place the four-way query / `$expr` emission lives — vacuous →
+ * `null`; pure query → `query`; pure residual → `{ $expr }`; both → merged. Every
+ * consumer of `translateMatchBody` (the top-level Filter in index.ts, the
+ * `$match` stage body in pipeline.ts, and `matchStagesFromTranslation` for the
+ * sub-pipeline translators) routes through it so the emitted shape can't drift.
+ */
+export function mergeTranslatedQuery(t: MatchTranslation, ctx: GenerateCtx): Record<string, unknown> | null {
+  const queryEmpty = Object.keys(t.query).length === 0;
+  if (t.residual === null) return queryEmpty ? null : t.query;
+  const exprBody = generateWithCtx(t.residual, ctx);
+  if (queryEmpty) return { $expr: exprBody };
+  return { ...t.query, $expr: exprBody };
+}
 
 /**
  * Optional context passed in by the pipeline lowerer. `bindings` lets the

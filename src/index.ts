@@ -12,7 +12,7 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
-import { translateMatchBody } from "./match-translation.ts";
+import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
 import { LexError } from "./lexer.ts";
 import { containsLookupCall } from "./lookup-translation.ts";
@@ -956,10 +956,8 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
  */
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
-  if (t.residual === null) return t.query;
-  const exprPart = { $expr: generateWithCtx(t.residual, ctx) };
-  if (Object.keys(t.query).length === 0) return exprPart;
-  return { ...t.query, ...exprPart };
+  // `?? {}`: a vacuous predicate yields the empty (match-everything) Filter.
+  return mergeTranslatedQuery(t, ctx) ?? {};
 }
 
 /**
