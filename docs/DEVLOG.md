@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: `withFunctionInput` / `fnSource` for the arrow-input paths
+
+Prefactoring, round 4. Three entry points parse arrow-function input — the one-shot `dispatchInput` (function branch), `compileFunction`, and `validateInput` — and each spelled out `new Parser(src).parseFunctionInput()` inside a `try { … } catch (err) { throw augmentForFunctionInput(err); }`, plus `Function.prototype.toString.call(input).trim()` to get the source. Three copies of the same parse-and-augment scaffold, easy to let drift (e.g. one forgetting to route a codegen error through the augment).
+
+Extracted `withFunctionInput(src, body)` — parse the arrow source and run `body(parsed)`, routing any error (parse or whatever `body` does) through `augmentForFunctionInput` — and the trivial `fnSource(fn)`. The one-shot and `validate` paths pass a `body` that lowers (so codegen errors are augmented too); `compile` passes `(r) => r` to wrap the parse only, since its lowering happens later in the returned closure. `compile`'s string-or-function source handling and its type guard stay put (compile is the one path that also accepts a string). Behaviour-preserving — verified the closure-ref augmentation, the one-shot params-destructure rejection, and `compile`/`validate` all still behave; full suite green. Worktree only.
+
+---
+
 ## 2026-06-04 — refactor: `requireObjectBody` prelude helper for stage validators
 
 Prefactoring, round 4. Fourteen of the object-shaped stage-body validators in `stage-validation.ts` opened with the identical three-line prelude: `const info = objectInfo(body); if (info === null) return; requireKeys("$stage", info, body.pos, [...]);`. Folded that into one `requireObjectBody(stage, body, required?)` helper that returns the key map (or `null` when the body isn't an inspectable object literal — validation is best-effort, so a field-path/expression body is left for the server). Each validator now opens with `const info = requireObjectBody("$stage", body, [...]); if (info === null) return;` (or just the call, when it only needs the required-key side effect, as in `$lookup`/`$group`/`$geoNear`).

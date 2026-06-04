@@ -100,6 +100,27 @@ function isTemplateStringsArray(x: unknown): x is TemplateStringsArray {
   return Array.isArray(x) && Array.isArray((x as { raw?: unknown }).raw);
 }
 
+/** An arrow-function input's source text (its `.toString()`), trimmed. */
+function fnSource(fn: (...args: never[]) => unknown): string {
+  return Function.prototype.toString.call(fn).trim();
+}
+
+/**
+ * Parse arrow-function source and run `body` on the `(program, bindings)`
+ * result, routing any error — from the parse OR from whatever `body` does — through
+ * `augmentForFunctionInput`, so closure-reference / param-binding errors pick up
+ * the template-tag hint regardless of which entry point triggered them. The
+ * one-shot (`jsmql()`) and `validate` paths wrap parse + lower together; `compile`
+ * uses it parse-only (its lowering happens later, inside the returned closure).
+ */
+function withFunctionInput<T>(src: string, body: (parsed: FunctionInputResult) => T): T {
+  try {
+    return body(new Parser(src).parseFunctionInput());
+  } catch (err) {
+    throw augmentForFunctionInput(err);
+  }
+}
+
 /**
  * Single shared dispatcher for every public entry point that accepts the three
  * call shapes (string, arrow, template tag). The caller supplies its own
@@ -132,12 +153,10 @@ function dispatchInput(
     return lower(new Parser(src).parse(), ctx);
   }
   if (typeof input === "function") {
-    const src = Function.prototype.toString.call(input).trim();
-    // The try wraps both parsing AND lowering: `augmentForFunctionInput` must
-    // also fire when codegen throws an `UnknownIdentifierError` (closure ref)
-    // mid-lowering, not only when the arrow itself fails to parse.
-    try {
-      const { program, bindings } = new Parser(src).parseFunctionInput();
+    // The wrapper covers both parsing AND lowering: `augmentForFunctionInput`
+    // must also fire when codegen throws an `UnknownIdentifierError` (closure
+    // ref) mid-lowering, not only when the arrow itself fails to parse.
+    return withFunctionInput(fnSource(input), ({ program, bindings }) => {
       if (bindings.length > 0) {
         throw new FunctionInputError(
           `${apiName}() in its one-shot form does not accept a parameter-bindings destructure. ` +
@@ -146,9 +165,7 @@ function dispatchInput(
         );
       }
       return lower(program, EMPTY_CTX);
-    } catch (err) {
-      throw augmentForFunctionInput(err);
-    }
+    });
   }
   if (typeof input === "string") {
     return lower(new Parser(input).parse(), EMPTY_CTX);
@@ -296,20 +313,16 @@ function compileFunction<P extends Record<string, unknown>>(
 ): (params: P) => JsmqlOutput {
   let src: string;
   if (typeof input === "function") {
-    src = Function.prototype.toString.call(input).trim();
+    src = fnSource(input);
   } else if (typeof input === "string") {
     src = input.trim();
   } else {
     const ty = input === null ? "null" : typeof input;
     throw new TypeError(`jsmql.compile() expects an arrow function or a string containing one — got ${ty}.`);
   }
-  let parsed: FunctionInputResult;
-  try {
-    parsed = new Parser(src).parseFunctionInput();
-  } catch (err) {
-    throw augmentForFunctionInput(err);
-  }
-  const { program, bindings } = parsed;
+  // Parse-only: lowering happens later, inside the returned closure (it needs
+  // the per-call params), so only the parse runs under the function-input augment.
+  const { program, bindings } = withFunctionInput(src, (r) => r);
   return (params: P): JsmqlOutput => {
     const resolved = new Map<string, unknown>();
     for (const b of bindings) {
@@ -362,20 +375,14 @@ function validateInput(
       // surface for both shapes, so it parses the arrow and binds null
       // placeholders for each declared binding so codegen resolves them as
       // ParamRefs (the values don't affect validation, only their resolution).
-      const src = Function.prototype.toString.call(input).trim();
-      try {
-        const { program, bindings } = new Parser(src).parseFunctionInput();
+      // Mirror `jsmqlDispatch`'s function-input branch (parse + lower under the
+      // same augment), but bind each declared binding to a null placeholder so
+      // codegen resolves the ParamRefs — the values don't affect validation.
+      withFunctionInput(fnSource(input), ({ program, bindings }) => {
         const resolved = new Map<string, unknown>();
         for (const b of bindings) resolved.set(b.name, null);
-        const ctx = withBindings(EMPTY_CTX, resolved);
-        lowerWithCtx(program, ctx);
-      } catch (err) {
-        // Mirror `jsmqlDispatch`'s function-input branch: any error from the
-        // arrow path (parse OR codegen) goes through `augmentForFunctionInput`
-        // so unknown-identifier errors get the closure-ref / param-binding
-        // template-tag hint appended.
-        throw augmentForFunctionInput(err);
-      }
+        lowerWithCtx(program, withBindings(EMPTY_CTX, resolved));
+      });
     } else {
       jsmql(input);
     }
