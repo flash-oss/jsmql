@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: `fieldQueryOrNegated` helper for `$not`-negatable peepholes
+
+Prefactoring, round 3. The `===` / `!==` equality-family peepholes in match-translation each pick a positive query and a negated form. Two of them — modulo (`{ $mod }`) and typeof (`{ $type }`) — negate identically: `{ [field]: { $not: <positive> } }`. Extracted that shared shape into `fieldQueryOrNegated(field, positive, op)` so each such translator supplies only the positive operator object; the `!==` `$not`-wrap comes for free, and the next `$not`-negatable query operator is a one-liner. (Equality-shorthand negates with `$ne` and the `undefined` peephole flips an `$exists` boolean, so those two keep their own forms — the helper deliberately covers only the `$not`-wrap family.) Pure dedup, full suite green; worktree only.
+
+---
+
 ## 2026-06-04 — refactor: one `mergeTranslatedQuery` for the query/$expr emission
 
 Prefactoring, round 3. The "merge a `MatchTranslation` into a query document" logic — index-friendly conjuncts plus an `$expr`-wrapped residual, with the four-way vacuous/query-only/residual-only/both split — was written out three times: `generateFilter` (index.ts, top-level Filter), the `$match` stage body (pipeline.ts), and `matchStagesFromTranslation` (lookup-translation.ts, the sub-pipeline translators). Three subtly-different spellings of the same emission — a place for the shapes to drift (pipeline.ts even regenerated the residual from the original `body` rather than `t.residual`, an equivalent-but-divergent path).

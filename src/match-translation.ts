@@ -453,6 +453,22 @@ function isIntegerLiteral(expr: Expr): boolean {
 }
 
 /**
+ * Emit `{ [field]: positive }` for a `===` predicate, or `{ [field]: { $not:
+ * positive } }` for `!==`. The shared shape for any equality-family peephole
+ * whose negation is a `$not` wrap of an inner query operator (`$mod`, `$type`,
+ * …) — each such translator supplies only the positive operator object and gets
+ * the `!==` form for free. (Equality-shorthand and `$exists` negate differently
+ * — `$ne` and a flipped boolean — so they don't use this.)
+ */
+function fieldQueryOrNegated(
+  field: string,
+  positive: Record<string, unknown>,
+  op: "===" | "!==",
+): Record<string, unknown> {
+  return { [field]: op === "===" ? positive : { $not: positive } };
+}
+
+/**
  * `$.x % N === M` → `{ x: { $mod: [N, M] } }`. Both `N` (divisor) and `M`
  * (remainder) must be integer literals; the field path must be a clean
  * `$.<path>` (no method calls, no further arithmetic).
@@ -460,8 +476,7 @@ function isIntegerLiteral(expr: Expr): boolean {
 function translateModulo(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
   const oriented = orientModuloAndInt(left, right);
   if (oriented === null) return null;
-  if (op === "===") return { [oriented.field]: { $mod: [oriented.divisor, oriented.remainder] } };
-  return { [oriented.field]: { $not: { $mod: [oriented.divisor, oriented.remainder] } } };
+  return fieldQueryOrNegated(oriented.field, { $mod: [oriented.divisor, oriented.remainder] }, op);
 }
 
 function orientModuloAndInt(left: Expr, right: Expr): { field: string; divisor: number; remainder: number } | null {
@@ -538,8 +553,7 @@ function translateTypeofPredicate(left: Expr, right: Expr, op: "===" | "!=="): R
   const { field, alias: rawAlias } = oriented;
   const alias = JS_TO_BSON_TYPE.get(rawAlias) ?? rawAlias;
   if (!BSON_TYPE_ALIASES.has(alias)) return null;
-  if (op === "===") return { [field]: { $type: alias } };
-  return { [field]: { $not: { $type: alias } } };
+  return fieldQueryOrNegated(field, { $type: alias }, op);
 }
 
 function orientTypeofAndString(left: Expr, right: Expr): { field: string; alias: string } | null {
