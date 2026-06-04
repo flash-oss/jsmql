@@ -299,9 +299,26 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
+### DEF-025 — CLI params combined with a strict-shape / validate flag
+
+- **What's blocked.** In the `jsmql` CLI, passing `--arg` / `--argjson` together with any of `--filter` / `--pipeline` / `--expr` / `--update` / `--validate`. Params route through `jsmql.compile(source)(params)`, and those strict entries (plus the structured `validate()` path) have no `compile` overload — so today the combination is rejected as a usage error (exit 2) rather than binding the values.
+- **Target lowering.** Give the strict-shape and validate paths a parameterised form (e.g. a `compile`-aware variant) so `jsmql --pipeline --argjson minAge 18` binds the value and still enforces the Pipeline shape. No MQL output change for the existing one-shot paths.
+- **Why blocked.** `jsmql.compile()` returns a polymorphic builder; there is no `compile.filter` / `compile.pipeline` etc. Threading params through the strict entries is a small API addition but should be designed alongside the library surface, not bolted onto the CLI alone.
+- **Success criteria.** `echo '({minAge},$) => $.age > minAge' | jsmql --pipeline --argjson minAge 18` binds `minAge` and throws if the result isn't a Pipeline. The CLI usage-error message stops mentioning the limitation.
+- **Rejection site(s).** `src/cli.ts` (`main()`, the `opts.hasParams && opts.mode !== "auto"` guard, tagged `[DEF-025]`). `docs/specs/cli.md` § Parameters.
+- **Spec.** `docs/specs/cli.md` § Parameters / § Deferred work and non-goals.
+- **Status.** open
+- **Effort.** S–M (library: parameterised strict entries; CLI: drop the guard).
+
+---
+
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.
+
+### CLI `-S` / `--sort-keys`
+
+`jq`'s key-sorting flag has no safe analogue here: MQL is order-sensitive in places (`$project` / `$addFields` computed fields can reference earlier siblings; stage-body key order can matter), so sorting object keys could silently change meaning. The `jsmql` CLI prints keys in the order the compiler emits them. This is the same "no silent output drift" principle behind the §A/§B negation and `$let`-peephole decisions — see `feedback_no_silent_output_drift.md` in user memory. Documented in `docs/specs/cli.md`.
 
 ### `!expr` via De Morgan in `$match`
 

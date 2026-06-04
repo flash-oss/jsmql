@@ -202,6 +202,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Pre-flight validation** — jsmql rejects the pipeline mistakes the MongoDB server would otherwise reject, at compile time: stage placement (`$out`/`$merge` must be last, `$collStats`/`$geoNear`/`$changeStream` and friends must be first, stages forbidden inside `$facet`/`$lookup`/`$unionWith`), stage-body shape (literal type/range/enum/required-key/mutual-exclusivity rules — `$limit(-5)`, `$count('')`, `$project` mixing include/exclude, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo), and `$match` query placement (`$text` must be first; `$near`/`$where` aren't allowed). Only 100%-certain violations throw — a value jsmql can't evaluate (`$limit($.n)`) or a deployment-dependent rule (sharding, memory limits, Atlas availability) still emits MQL. See [docs/LANGUAGE.md → Mistakes caught at compile time](docs/LANGUAGE.md#mistakes-caught-at-compile-time).
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
 - **Strict TS, strippable source** — runs as-is on Node 22.18+ / 24.3+, Deno, and Bun (no flags, no transpile).
+- **`jsmql` on the command line** — a `jq`-style bin: JSMQL on stdin, MQL JSON on stdout. `echo '$.age > 18' | jsmql`. Opt-in `--filter` / `--pipeline` / `--expr` / `--update` / `--validate`, `--compact`, and jq-style `--arg` / `--argjson` for parameterised arrows. See [Command line](#command-line-jsmql).
 
 ## Using jsmql with mongoose
 
@@ -236,6 +237,43 @@ User.find({ age: { $gt: 18 } });                    // plain MQL JSON still pass
 **Patched methods** (with the slot used): `find` / `findOne` / `findOneAnd{Delete,Replace,Update}` / `countDocuments` / `deleteOne` / `deleteMany` / `replaceOne` / `exists` (filter at 0), `updateOne` / `updateMany` / `findOneAndUpdate` / `findByIdAndUpdate` (update at 1), `distinct` (filter at 1), `aggregate` (pipeline at 0). Each slot lowers through the matching strict-shape entry (`jsmql.filter` / `jsmql.update` / `jsmql.pipeline`), so a wrong-shape input — e.g. a bare expression at an `aggregate` slot — throws with the actionable strict-mode error at the patched call site instead of silently going wrong server-side. Registering twice on the same `mongoose` is a no-op.
 
 See [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md) for the full per-slot table, the methods that are deliberately *not* patched (e.g. `findOneAndReplace`'s replacement document), and the idempotence / subclass-propagation contracts.
+
+## Command line (`jsmql`)
+
+Installing the package puts a `jsmql` command on your `PATH`. It works like `jq`: **JSMQL source on stdin, MQL JSON on stdout** (a positional argument or `--file <path>` also work as the source).
+
+```sh
+echo '$.age > 18' | jsmql
+# {
+#   "age": { "$gt": 18 }
+# }
+
+echo '$match($.age > 18); $sort({ age: -1 })' | jsmql --pipeline -c
+# [{"$match":{"age":{"$gt":18}}},{"$sort":{"age":-1}}]
+
+jsmql --expr '$.price * (1 - $.discount)'
+# { "$multiply": ["$price", { "$subtract": [1, "$discount"] }] }
+```
+
+With no flag the output shape is picked the same way `jsmql()` picks it (a top-level `;` makes it a Pipeline). The strict flags lock the shape and inherit the library's actionable errors:
+
+| Flag | Shape | Library entry |
+| --- | --- | --- |
+| *(none)* | Filter or Pipeline | `jsmql()` |
+| `--filter` | Filter document | `jsmql.filter()` |
+| `--pipeline` | stage array | `jsmql.pipeline()` |
+| `--expr` | aggregation expression | `jsmql.expr()` |
+| `--update` | update pipeline | `jsmql.update()` |
+| `--validate` (`--check`) | `{ valid, errors }`; exit 1 if invalid | `jsmql.validate()` |
+
+Formatting is pretty 2-space by default (like `jq`); use `-c`/`--compact`, `--tab`, or `--indent N`. Parameterise a query with jq's own flags — the source must then be a parameterised arrow:
+
+```sh
+echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
+# { "age": { "$gt": 18 } }
+```
+
+`--arg name value` binds a string; `--argjson name value` binds a JSON value. Errors print compiler-style with a caret at the offending position; exit codes are `0` success, `1` compile error / invalid, `2` usage error. `jsmql --help` lists everything. Full reference: [docs/specs/cli.md](docs/specs/cli.md).
 
 ## Try it & learn more
 

@@ -10,25 +10,13 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-06-04 — fix: `$unwind("$items")` no longer wrapped in `$literal`
+## 2026-06-04 — feat: `jsmql` CLI executable (stdin → MQL, jq-style)
 
-`$unwind("$items")` compiled to `{ $unwind: { $literal: "$items" } }` — invalid MQL — and the object form `$unwind({ path: "$items" })` to `{ $unwind: { path: { $literal: "$items" } } }`. Both now emit the correct raw path: `{ $unwind: "$items" }` and `{ $unwind: { path: "$items" } }`. The field-ref form `$unwind($.items)` was already correct.
+Shipped a command-line bin named literally `jsmql`, modelled on `jq`: JSMQL source in (positional arg / `--file` / stdin), MQL JSON out (stdout), errors on stderr with a non-zero exit. It is a thin wrapper over the existing public API — every shape it can emit already exists as an entry point, so there is no new compilation logic. Default output shape is polymorphic (`jsmql(source)`, the `;` rule); opt-in `--filter` / `--pipeline` / `--expr` / `--update` / `--validate` route to the matching strict entry and inherit its actionable wrong-shape errors verbatim. Default formatting is pretty 2-space (jq parity) with `-c`/`--compact`, `--tab`, `--indent N`. jq-style `--arg` / `--argjson` bind params through `jsmql.compile(source)(params)` (the source must then be a parameterised arrow). Source: [src/cli.ts](../src/cli.ts); reference: [docs/specs/cli.md](specs/cli.md).
 
-Root cause was a layer mismatch. Codegen's `literalSafeString` ([src/codegen.ts](../src/codegen.ts)) defensively wraps any `"$…"`-shaped string literal in `{ $literal: … }` so that in an *expression* (`$.x == "$items"`) it stays a literal string instead of being read as a field reference. But `$unwind`'s body is a **field-path position**, not an expression — the leading `$` is precisely the path the user means. An earlier pass had hardened `validateUnwind` (the `$`-prefix *validation*, [src/stage-validation.ts](../src/stage-validation.ts)), which made it *look* like `$unwind` was handled, but validation never changes emitted MQL, so the wrap survived. The fix is in codegen, not validation.
+Three design points worth recording. (1) **Errors render compiler-style** — message, then the offending source line with a `^` caret derived from the error's `.pos` — reusing the position data the library already threads; the resolved source is `trimEnd()`-ed so a shell `echo`'s trailing newline doesn't push the caret onto a blank line. (2) **Version is injected at build** via an esbuild `define` of `__JSMQL_VERSION__` (guarded by `typeof` so the un-bundled `node src/cli.ts` still runs, returning a `0.0.0-dev` fallback) — no runtime `package.json` read. (3) **Params + a strict/validate flag is rejected** (exit 2, tagged `[DEF-025]`): the strict entries have no `compile` overload, so binding there would be silently ignored — better to reject than mislead. `jq`'s `-S`/`--sort-keys` is a deliberate non-goal (§B): reordering MQL object keys can change semantics (`$project` computed-field order), which violates the no-silent-output-drift principle.
 
-Fix: a new `fieldPathString` flag on `GenerateCtx` (sibling to `insideLiteral`; both suppress the wrap, for different reasons), set by `generateStageBody` for the `$unwind` body only via a dedicated branch mirroring the existing `$match` one ([src/pipeline.ts](../src/pipeline.ts)). Deliberately `$unwind`-scoped — stages that take a string in expression position (e.g. `$sortByCount("$items")`) keep the protection, since there `"$x"` vs `$.x` is the user's literal-vs-path choice. No silent output drift, no heuristic: one named stage, one explicit branch. Tests in `test/pipeline.test.ts` (the `$unwind("items")` missing-`$` rejection still throws); spec [`aggregation-stages.md`](specs/aggregation-stages.md) § Lowering.
-
----
-
-## 2026-06-04 — feat: bare-statement `$$.<chain>;` stream operations (ship DEF-003)
-
-A `$$`-rooted stream chain can now be written as a bare statement, dropping the `$$ =` head: `$$.filter(o => o.tier === "gold");`, `$$.map(d => ({ id: d._id }));`, `$$.slice(0, 5);`, and the rest of the registry (`.concat`, `.toSorted`, `.toReversed`, `.flatMap`) all work. It's statement sugar for `$$ = $$.<chain>;` and lowers identically. This ships **DEF-003** — the row is deleted and the "Out of scope" bullet 1 in `stream-methods.md` is rewritten into the new § Bare-statement stream chains.
-
-The interesting part was the equivalence guarantee. The user's requirement is that `$$.filter(p).map(f);` (chained), `$$.filter(p); $$.map(f);` (split), and `$$ = $$.filter(p).map(f);` (assignment) all emit the same MQL. For the five independent methods that's trivial. But `.toReversed()` reads `prevStages` and flips the *preceding* `$sort` in place — so lowering each bare statement with a fresh local buffer (the way the assignment form does) would make `$$.toSorted(c); $$.toReversed();` throw while the chained form succeeds. The fix: bare-statement chains lower against the **live pipeline `out`**, so a stage-coupled method sees stages emitted by earlier *statements*, not just earlier methods in its own chain. The per-method loop was extracted from `lowerChainOnStream` into a shared `applyStreamMethods(methods, target, …)` engine — the assignment form passes a fresh local buffer (zero behaviour change), the bare form (in `lowerStatementTail`) passes `out`. One engine, two buffers.
-
-One documented asymmetry: cross-statement `.toReversed()` works in the bare form but the assignment equivalent (`$$ = $$.toSorted(c); $$ = $$.toReversed();`) still errors, because each `$$ = …` chain lowers against its own local buffer. When both forms succeed they emit identical MQL; only the bare form reaches across statements, and it's the recommended concise spelling. `.toReversed()`'s missing-sort error was reworded ("needs a preceding `$sort` …") since it can now invert a `$sort` from a prior statement or a literal `$sort(...)` stage. Files: [`src/pipeline.ts`](../src/pipeline.ts), [`src/stream-methods.ts`](../src/stream-methods.ts). Specs: [`stream-methods.md`](specs/stream-methods.md), [`replace-stream-stage.md`](specs/replace-stream-stage.md). Tests in `test/stream-methods.test.ts`; full suite green.
-
-Follow-up: **`$$.<method>(...)` code-completion types.** Now that the bare form is real, `src/ops.ts` types the stream vocabulary on the `$$` collection ref so arrow-form `jsmql(($) => $$.filter(...).map(...))` gets IDE completion instead of falling through the `[key: string]: any` tail. Built on the context-ref ambient-types commit: the generator (`scripts/generate-ops.mjs`) derives the method *names* from `streamMethodNames()` (the `STREAM_METHODS` registry — single source of truth, asserted at generation time so a new stream method can't silently miss an entry) and pairs each with a hardcoded signature in `STREAM_METHOD_SIGNATURES` (plus `.filter` / `.push`, which aren't in that registry). All return `any` — completion, not real document typing (that's still gated on schema threading, DEF-013/DEF-015). Only `$$` gets them; `$$$` / `$$$$` reach the same methods via member access on the permissive tail. Generator + `src/ops.ts` regenerated; drift test in `test/operator-spec-coverage.test.ts` extended to assert the members + registry coverage. Spec: [`ops-generation.md`](specs/ops-generation.md) § Context references.
+Packaging: `src/cli.ts` stays in the strippable-TS subset and carries `#!/usr/bin/env node`; a new `cli` esbuild entry in `scripts/build-cjs.mjs` bundles it to `dist/cjs/cli.cjs` (Node 14 target, shebang preserved, `chmod 0o755`), and `package.json#bin` maps `jsmql` to it. Tests: [test/cli.test.ts](../test/cli.test.ts) spawns `node src/cli.ts` (no build needed) across all flags; [test/smoke.test.ts](../test/smoke.test.ts) adds a strippable check and a dist-gated run of the built bin (stdin→MQL, `--version`, shebang). Worktree only.
 
 ---
 
@@ -42,78 +30,15 @@ Each ref const ends with a permissive `[key: string]: any` tail so the non-diagn
 
 ---
 
-## 2026-06-04 — refactor: `withFunctionInput` / `fnSource` for the arrow-input paths
+## 2026-06-04 — feat: bare-statement `$$.<chain>;` stream operations (ship DEF-003)
 
-Prefactoring, round 4. Three entry points parse arrow-function input — the one-shot `dispatchInput` (function branch), `compileFunction`, and `validateInput` — and each spelled out `new Parser(src).parseFunctionInput()` inside a `try { … } catch (err) { throw augmentForFunctionInput(err); }`, plus `Function.prototype.toString.call(input).trim()` to get the source. Three copies of the same parse-and-augment scaffold, easy to let drift (e.g. one forgetting to route a codegen error through the augment).
+A `$$`-rooted stream chain can now be written as a bare statement, dropping the `$$ =` head: `$$.filter(o => o.tier === "gold");`, `$$.map(d => ({ id: d._id }));`, `$$.slice(0, 5);`, and the rest of the registry (`.concat`, `.toSorted`, `.toReversed`, `.flatMap`) all work. It's statement sugar for `$$ = $$.<chain>;` and lowers identically. This ships **DEF-003** — the row is deleted and the "Out of scope" bullet 1 in `stream-methods.md` is rewritten into the new § Bare-statement stream chains.
 
-Extracted `withFunctionInput(src, body)` — parse the arrow source and run `body(parsed)`, routing any error (parse or whatever `body` does) through `augmentForFunctionInput` — and the trivial `fnSource(fn)`. The one-shot and `validate` paths pass a `body` that lowers (so codegen errors are augmented too); `compile` passes `(r) => r` to wrap the parse only, since its lowering happens later in the returned closure. `compile`'s string-or-function source handling and its type guard stay put (compile is the one path that also accepts a string). Behaviour-preserving — verified the closure-ref augmentation, the one-shot params-destructure rejection, and `compile`/`validate` all still behave; full suite green. Worktree only.
+The interesting part was the equivalence guarantee. The user's requirement is that `$$.filter(p).map(f);` (chained), `$$.filter(p); $$.map(f);` (split), and `$$ = $$.filter(p).map(f);` (assignment) all emit the same MQL. For the five independent methods that's trivial. But `.toReversed()` reads `prevStages` and flips the *preceding* `$sort` in place — so lowering each bare statement with a fresh local buffer (the way the assignment form does) would make `$$.toSorted(c); $$.toReversed();` throw while the chained form succeeds. The fix: bare-statement chains lower against the **live pipeline `out`**, so a stage-coupled method sees stages emitted by earlier *statements*, not just earlier methods in its own chain. The per-method loop was extracted from `lowerChainOnStream` into a shared `applyStreamMethods(methods, target, …)` engine — the assignment form passes a fresh local buffer (zero behaviour change), the bare form (in `lowerStatementTail`) passes `out`. One engine, two buffers.
 
----
+One documented asymmetry: cross-statement `.toReversed()` works in the bare form but the assignment equivalent (`$$ = $$.toSorted(c); $$ = $$.toReversed();`) still errors, because each `$$ = …` chain lowers against its own local buffer. When both forms succeed they emit identical MQL; only the bare form reaches across statements, and it's the recommended concise spelling. `.toReversed()`'s missing-sort error was reworded ("needs a preceding `$sort` …") since it can now invert a `$sort` from a prior statement or a literal `$sort(...)` stage. Files: [`src/pipeline.ts`](../src/pipeline.ts), [`src/stream-methods.ts`](../src/stream-methods.ts). Specs: [`stream-methods.md`](specs/stream-methods.md), [`replace-stream-stage.md`](specs/replace-stream-stage.md). Tests in `test/stream-methods.test.ts`; full suite green.
 
-## 2026-06-04 — refactor: `requireObjectBody` prelude helper for stage validators
-
-Prefactoring, round 4. Fourteen of the object-shaped stage-body validators in `stage-validation.ts` opened with the identical three-line prelude: `const info = objectInfo(body); if (info === null) return; requireKeys("$stage", info, body.pos, [...]);`. Folded that into one `requireObjectBody(stage, body, required?)` helper that returns the key map (or `null` when the body isn't an inspectable object literal — validation is best-effort, so a field-path/expression body is left for the server). Each validator now opens with `const info = requireObjectBody("$stage", body, [...]); if (info === null) return;` (or just the call, when it only needs the required-key side effect, as in `$lookup`/`$group`/`$geoNear`).
-
-The repeated `body.pos` threading and the `objectInfo`+`requireKeys` pairing now live in one place — adding a new object-shaped stage validator starts from a single call instead of copy-pasting the prelude. Behaviour-preserving (same errors, same `.pos`); full suite green. `requireKeys` is now reached only through the helper; `objectInfo` stays directly used for inspecting *nested* sub-objects (`output`, `window`, field specs). Worktree only.
-
----
-
-## 2026-06-04 — refactor: one `BINARY_OP_TO_MQL` table for the JS-op → MQL-op mapping
-
-Prefactoring, round 3. The JS-binary-operator → MQL-operator mapping was spelled out in two files: codegen's `generateBinaryExpr` (one switch case per op → `{ $gt: [...] }`, etc.) and match-translation's `orderedOpToMql` (`>` → `"$gt"`, … for the query-document form). The comparison operators were mapped in both — a small but real cross-file duplication.
-
-Introduced a single `BINARY_OP_TO_MQL` table in codegen.ts (the module that owns MQL emission — kept out of `ast.ts` so the AST layer stays MQL-agnostic) covering every op with a *direct* single-operator lowering (`-` `/` `%` `**` `===` `!==` `>` `>=` `<` `<=` and the associative chain ops `*` `??` `&` `|` `^`). `generateBinaryExpr` now groups those into two table-driven arms — DIRECT → `{ [op]: [l, r] }`, CHAIN → `{ [op]: flattenChain(...) }` — collapsing ~15 one-line cases to two; the bespoke ops (`+`, `==`/`!=`, `&&`/`||`, `in`) keep their own cases. match-translation imports the lone accessor `mqlForBinaryOp` so `orderedOpToMql` reads from the same table. The switch stays exhaustive over `BinaryOp` (no `default`), so a future operator still forces a compile-time decision. Behaviour-preserving, full suite green; worktree only. (Binary operators are a fixed set, so this is tidiness more than frequent-change leverage — it removes the duplication and documents the canonical mapping in one place.)
-
----
-
-## 2026-06-04 — refactor: `fieldQueryOrNegated` helper for `$not`-negatable peepholes
-
-Prefactoring, round 3. The `===` / `!==` equality-family peepholes in match-translation each pick a positive query and a negated form. Two of them — modulo (`{ $mod }`) and typeof (`{ $type }`) — negate identically: `{ [field]: { $not: <positive> } }`. Extracted that shared shape into `fieldQueryOrNegated(field, positive, op)` so each such translator supplies only the positive operator object; the `!==` `$not`-wrap comes for free, and the next `$not`-negatable query operator is a one-liner. (Equality-shorthand negates with `$ne` and the `undefined` peephole flips an `$exists` boolean, so those two keep their own forms — the helper deliberately covers only the `$not`-wrap family.) Pure dedup, full suite green; worktree only.
-
----
-
-## 2026-06-04 — refactor: one `mergeTranslatedQuery` for the query/$expr emission
-
-Prefactoring, round 3. The "merge a `MatchTranslation` into a query document" logic — index-friendly conjuncts plus an `$expr`-wrapped residual, with the four-way vacuous/query-only/residual-only/both split — was written out three times: `generateFilter` (index.ts, top-level Filter), the `$match` stage body (pipeline.ts), and `matchStagesFromTranslation` (lookup-translation.ts, the sub-pipeline translators). Three subtly-different spellings of the same emission — a place for the shapes to drift (pipeline.ts even regenerated the residual from the original `body` rather than `t.residual`, an equivalent-but-divergent path).
-
-Hoisted it to `mergeTranslatedQuery(t, ctx)` in [match-translation.ts](../src/match-translation.ts), next to `translateMatchBody` and the `MatchTranslation` type. It returns the merged query document, or `null` for a vacuous predicate so callers can skip the `$match`. All three sites now route through it: `generateFilter` and the `$match` body use `mergeTranslatedQuery(t, ctx) ?? {}` (empty = match-everything), and `matchStagesFromTranslation` maps `null → []`, else `[{ $match: merged }]`. Behaviour-preserving — full suite green; the pipeline.ts `body`-vs-`residual` divergence is a no-op because a query-empty translation always carries the whole predicate in the residual, which lowers to identical MQL. `match-translation.ts` already imported from `codegen.ts` (one-way; codegen doesn't import it back), so pulling in `generateWithCtx` adds no cycle.
-
----
-
-## 2026-06-04 — refactor: generate playground.html from a hand-authored skeleton
-
-`sync-playground.mjs` used to read `playground.html`, replace its two managed
-regions (the esbuild bundle of `src/index.ts` and the realistic-examples JSON
-island) in place, and write the same file back. That made `playground.html`
-both the UI source *and* the build output, so a `src/` or `realistic.test.ts`
-change that triggered a regen sat in the same file as in-flight playground UI
-improvements — a recipe for merge collisions and accidental clobbering across
-parallel work.
-
-Split the two roles. **`playground_skeleton.html`** is now the hand-authored
-source for the entire UI (markup, CSS, behaviour); the two regions sit empty
-between their markers there (the bundle region is empty, the examples region
-ships `[]`). **`playground.html`** is a pure build artifact: the script reads
-the skeleton, injects the bundle + examples, and only ever *writes*
-`playground.html` — it never touches the skeleton. So changes to `src/` or the
-test file can no longer overwrite UI work, and a `playground.html` merge
-conflict is trivially resolved by re-running the sync against the merged
-skeleton. Regenerating from the new skeleton produces a byte-identical
-`playground.html` (verified: `sync` reported "already in sync"), so the change
-is behaviour-preserving. The PostToolUse hook
-([scripts/hook-post-edit-realistic.sh](../scripts/hook-post-edit-realistic.sh))
-now also fires on `playground_skeleton.html` edits, so UI changes made through
-Claude Code regenerate the artifact within the same commit.
-
----
-
-## 2026-06-04 — refactor: share the pipeline-sugar dispatch across both pipeline forms
-
-Prefactoring, round 2. The per-element sugar dispatch — detect `$ =`/lookup `AssignExpr` sugar, flush the update buffer, lower, push stages, update ctx — was written out twice, nearly verbatim: once in `generatePipeline` (the `[ … ]` form, ~45 lines) and once in `lowerUpdateFilterWithLookups` (the `,`-grouped op chain, ~45 lines). The statement-tail dispatch (`$$.push` → `$unionWith`, system source stages, generic stage call) was likewise duplicated between `generatePipeline` and `generateImplicitPipeline` (the `;` form). Adding a new sugar meant editing 3–4 spots across two-to-three functions and keeping the ordering identical by hand — exactly the growth-friction this area sees most (`$lookup`/`$unionWith`/`$facet`/`$out`/`$replaceWith`/system-stages were each such an edit).
-
-Extracted two shared helpers in `pipeline.ts`: `tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlock, isFirst)` returns either `{ handled, ctx, outPos }` (sugar lowered, stages pushed) or `{ handled: false, bufferOp }` (fall through to the update buffer); and `lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlock)` returns the next ctx. The genuinely per-form bits stay at the call site: first-stage detection (`out.length === 0` vs `globalStageIndex + out.length === 0`), loop control (`return` vs `continue`), the buffer identity, and how an `$out` terminal is recorded (`validator.markSugarOut` vs a `TerminalState`, keyed off the returned `outPos`). Now a new `$ =`-style sugar is one branch in `tryLowerAssignSugar` and a new statement sugar is one branch in `lowerStatementTail`; all forms pick it up at once.
-
-Behaviour-preserving — a pure extraction; the two call sites collapsed sharply, full suite + dist smoke green. No spec'd behaviour changed; the dispatch order within each helper matches the original exactly.
+Follow-up: **`$$.<method>(...)` code-completion types.** Now that the bare form is real, `src/ops.ts` types the stream vocabulary on the `$$` collection ref so arrow-form `jsmql(($) => $$.filter(...).map(...))` gets IDE completion instead of falling through the `[key: string]: any` tail. Built on the context-ref ambient-types commit: the generator (`scripts/generate-ops.mjs`) derives the method *names* from `streamMethodNames()` (the `STREAM_METHODS` registry — single source of truth, asserted at generation time so a new stream method can't silently miss an entry) and pairs each with a hardcoded signature in `STREAM_METHOD_SIGNATURES` (plus `.filter` / `.push`, which aren't in that registry). All return `any` — completion, not real document typing (that's still gated on schema threading, DEF-013/DEF-015). Only `$$` gets them; `$$$` / `$$$$` reach the same methods via member access on the permissive tail. Generator + `src/ops.ts` regenerated; drift test in `test/operator-spec-coverage.test.ts` extended to assert the members + registry coverage. Spec: [`ops-generation.md`](specs/ops-generation.md) § Context references.
 
 ---
 
@@ -150,31 +75,43 @@ violations throw" rule holds.
 
 ---
 
+## 2026-06-04 — fix: `$unwind("$items")` no longer wrapped in `$literal`
+
+`$unwind("$items")` compiled to `{ $unwind: { $literal: "$items" } }` — invalid MQL — and the object form `$unwind({ path: "$items" })` to `{ $unwind: { path: { $literal: "$items" } } }`. Both now emit the correct raw path: `{ $unwind: "$items" }` and `{ $unwind: { path: "$items" } }`. The field-ref form `$unwind($.items)` was already correct.
+
+Root cause was a layer mismatch. Codegen's `literalSafeString` ([src/codegen.ts](../src/codegen.ts)) defensively wraps any `"$…"`-shaped string literal in `{ $literal: … }` so that in an *expression* (`$.x == "$items"`) it stays a literal string instead of being read as a field reference. But `$unwind`'s body is a **field-path position**, not an expression — the leading `$` is precisely the path the user means. An earlier pass had hardened `validateUnwind` (the `$`-prefix *validation*, [src/stage-validation.ts](../src/stage-validation.ts)), which made it *look* like `$unwind` was handled, but validation never changes emitted MQL, so the wrap survived. The fix is in codegen, not validation.
+
+Fix: a new `fieldPathString` flag on `GenerateCtx` (sibling to `insideLiteral`; both suppress the wrap, for different reasons), set by `generateStageBody` for the `$unwind` body only via a dedicated branch mirroring the existing `$match` one ([src/pipeline.ts](../src/pipeline.ts)). Deliberately `$unwind`-scoped — stages that take a string in expression position (e.g. `$sortByCount("$items")`) keep the protection, since there `"$x"` vs `$.x` is the user's literal-vs-path choice. No silent output drift, no heuristic: one named stage, one explicit branch. Tests in `test/pipeline.test.ts` (the `$unwind("items")` missing-`$` rejection still throws); spec [`aggregation-stages.md`](specs/aggregation-stages.md) § Lowering.
+
+---
+
+## 2026-06-04 — refactor: `fieldQueryOrNegated` helper for `$not`-negatable peepholes
+
+Prefactoring, round 3. The `===` / `!==` equality-family peepholes in match-translation each pick a positive query and a negated form. Two of them — modulo (`{ $mod }`) and typeof (`{ $type }`) — negate identically: `{ [field]: { $not: <positive> } }`. Extracted that shared shape into `fieldQueryOrNegated(field, positive, op)` so each such translator supplies only the positive operator object; the `!==` `$not`-wrap comes for free, and the next `$not`-negatable query operator is a one-liner. (Equality-shorthand negates with `$ne` and the `undefined` peephole flips an `$exists` boolean, so those two keep their own forms — the helper deliberately covers only the `$not`-wrap family.) Pure dedup, full suite green; worktree only.
+
+---
+
+## 2026-06-04 — refactor: `requireObjectBody` prelude helper for stage validators
+
+Prefactoring, round 4. Fourteen of the object-shaped stage-body validators in `stage-validation.ts` opened with the identical three-line prelude: `const info = objectInfo(body); if (info === null) return; requireKeys("$stage", info, body.pos, [...]);`. Folded that into one `requireObjectBody(stage, body, required?)` helper that returns the key map (or `null` when the body isn't an inspectable object literal — validation is best-effort, so a field-path/expression body is left for the server). Each validator now opens with `const info = requireObjectBody("$stage", body, [...]); if (info === null) return;` (or just the call, when it only needs the required-key side effect, as in `$lookup`/`$group`/`$geoNear`).
+
+The repeated `body.pos` threading and the `objectInfo`+`requireKeys` pairing now live in one place — adding a new object-shaped stage validator starts from a single call instead of copy-pasting the prelude. Behaviour-preserving (same errors, same `.pos`); full suite green. `requireKeys` is now reached only through the helper; `objectInfo` stays directly used for inspecting *nested* sub-objects (`output`, `window`, field specs). Worktree only.
+
+---
+
+## 2026-06-04 — refactor: `withFunctionInput` / `fnSource` for the arrow-input paths
+
+Prefactoring, round 4. Three entry points parse arrow-function input — the one-shot `dispatchInput` (function branch), `compileFunction`, and `validateInput` — and each spelled out `new Parser(src).parseFunctionInput()` inside a `try { … } catch (err) { throw augmentForFunctionInput(err); }`, plus `Function.prototype.toString.call(input).trim()` to get the source. Three copies of the same parse-and-augment scaffold, easy to let drift (e.g. one forgetting to route a codegen error through the augment).
+
+Extracted `withFunctionInput(src, body)` — parse the arrow source and run `body(parsed)`, routing any error (parse or whatever `body` does) through `augmentForFunctionInput` — and the trivial `fnSource(fn)`. The one-shot and `validate` paths pass a `body` that lowers (so codegen errors are augmented too); `compile` passes `(r) => r` to wrap the parse only, since its lowering happens later in the returned closure. `compile`'s string-or-function source handling and its type guard stay put (compile is the one path that also accepts a string). Behaviour-preserving — verified the closure-ref augmentation, the one-shot params-destructure rejection, and `compile`/`validate` all still behave; full suite green. Worktree only.
+
+---
+
 ## 2026-06-04 — refactor: accumulator-only gate derives from the operator registry
 
 Prefactoring, behaviour-preserving. Codegen's `checkOperatorContext` gated accumulator-only operators (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`) on a hand-maintained `ACCUMULATOR_ONLY_OPERATORS` set that *shadowed* the operator registry. Adding an accumulator operator silently required a second edit there; miss it and the new op would be wrongly accepted in arbitrary expression positions. That violates the project's "operator registry is the single source of truth" rule.
 
 The flag now lives on the registry entry: `OperatorDef` gains an optional `accumulatorOnly?: boolean`, set via a small `acc(...)` wrapper around any shape factory (`acc(single("array", "…"))`), and `checkOperatorContext` reads `lookupOperator(name)?.accumulatorOnly`. The shadow set is deleted. Same nine ops gate, output unchanged, full suite green. The generator doesn't serialize the flag, so `src/ops.ts` is untouched. A new drift assertion in [test/operator-spec-coverage.test.ts](../test/operator-spec-coverage.test.ts) keeps the flag boolean-or-absent, and the "Adding a new MongoDB operator" steps in [CLAUDE.md](../CLAUDE.md) + [operator-registry.md](specs/operator-registry.md) now mention `acc(...)`. (Window-only operators were already registry-derived via `category === "window"`; this brings accumulators to parity.)
-
----
-
-## 2026-06-04 — refactor: single-source the JS-builtin static name-sets in `ast.ts`
-
-Prefactoring, round 2. The recognised-name lists for the `Math.` / `Object.` / `Number.` static families were triplicated: a runtime `Set` in `parser.ts` (for validation + `didYouMean` candidates), a hand-kept literal-union `type` in `ast.ts` (for codegen dispatch signatures), and the codegen switch itself. Adding a `Math` method meant editing all three, and forgetting the type let the parser accept a name codegen couldn't type. Worse, the `Set` method list had no parser registry at all — its canonical list lived *only* inside a codegen error string.
-
-Made `ast.ts` the single source: each family is now an `as const` array (`MATH_METHODS`, `MATH_CONSTANTS`, `OBJECT_METHODS`, `NUMBER_STATICS`, `SET_METHODS`) with its `…Method` type *derived* via `(typeof X)[number]`. `parser.ts` builds its lookup `Set`s from the imported arrays and draws `didYouMean` candidates from them; `codegen.ts` keeps its switches but their signatures derive from the same arrays, so the `as const` keeps the switch exhaustiveness-checked — adding a name surfaces a missing-case compile error rather than a silent gap. The `Set` list is now a real exported registry used by both the dispatch and the suggestion message.
-
-Net: adding a static method goes from three edits (set + type + switch) to two (the `as const` array + the switch `case`), with the compiler enforcing they agree. Behaviour-preserving — the derived unions have identical members; full suite green. `as const` arrays + `typeof[number]` type aliases are erasable, so `src/` stays in the strippable-TS subset. (The two-name `Array.`/`Date.` families stay inline — too small to warrant a registry, and not type-backed.)
-
----
-
-## 2026-06-04 — refactor: route the static-call families + array mutators through `checkArity`
-
-Prefactoring, round 2. Last round centralized the 27 instance-method arg-count checks but left the static-call families and the statement-position array-mutator rewrites still hand-rolling their own `if (length …) throw` with bespoke wording. That left the surface half-consistent: `.charAt(index) requires exactly 1 argument, got 0` next to `Math.pow() requires exactly 2 arguments` (no signature, no count) and `.copyWithin(target, start[, end]) takes 2 or 3 arguments, got 2.` (trailing period, "takes" not "requires").
-
-Migrated all ~21 remaining codegen-side checks to `checkArity` with its `prefix` param: `generateMathCall` (incl. the shared `oneArg` helper), `generateObjectCall`, `generateSetMethodCall`, `generateRegexMethodCall`, and the `.reverse`/`.pop`/`.shift`/`.copyWithin`/`.fill` mutator rewrites. Every arg-count error across the method + static surface now reads `<prefix><method>(<sig>) <quantity>, got <N>` — `Math.pow(base, exponent) requires exactly 2 arguments, got 1`, `Object.assign(...sources) requires at least 1 argument, got 0`, `regex.test(str) requires exactly 1 argument, got 0`. The static families gained signatures they never had. Output unchanged (message text only, and these were unasserted save one partial `Math.atan2`/`exactly 2 arguments` match that still holds); full suite green, plus new tests covering the static + mutator formats.
-
-The parser-side constructor checks (`new Set` / `new Date` / `Date.UTC`) stay as-is — they throw `ParseError` (a different class, in a different file) and already carry good `, got N` messages; folding them in would mean a parser-side formatter, out of scope here. Spec: [method-dispatch.md](specs/method-dispatch.md).
 
 ---
 
@@ -190,6 +127,41 @@ A follow-up commit consolidated the *metadata* too. The six hand-maintained meth
 
 ---
 
+## 2026-06-04 — refactor: generate playground.html from a hand-authored skeleton
+
+`sync-playground.mjs` used to read `playground.html`, replace its two managed
+regions (the esbuild bundle of `src/index.ts` and the realistic-examples JSON
+island) in place, and write the same file back. That made `playground.html`
+both the UI source *and* the build output, so a `src/` or `realistic.test.ts`
+change that triggered a regen sat in the same file as in-flight playground UI
+improvements — a recipe for merge collisions and accidental clobbering across
+parallel work.
+
+Split the two roles. **`playground_skeleton.html`** is now the hand-authored
+source for the entire UI (markup, CSS, behaviour); the two regions sit empty
+between their markers there (the bundle region is empty, the examples region
+ships `[]`). **`playground.html`** is a pure build artifact: the script reads
+the skeleton, injects the bundle + examples, and only ever *writes*
+`playground.html` — it never touches the skeleton. So changes to `src/` or the
+test file can no longer overwrite UI work, and a `playground.html` merge
+conflict is trivially resolved by re-running the sync against the merged
+skeleton. Regenerating from the new skeleton produces a byte-identical
+`playground.html` (verified: `sync` reported "already in sync"), so the change
+is behaviour-preserving. The PostToolUse hook
+([scripts/hook-post-edit-realistic.sh](../scripts/hook-post-edit-realistic.sh))
+now also fires on `playground_skeleton.html` edits, so UI changes made through
+Claude Code regenerate the artifact within the same commit.
+
+---
+
+## 2026-06-04 — refactor: one `BINARY_OP_TO_MQL` table for the JS-op → MQL-op mapping
+
+Prefactoring, round 3. The JS-binary-operator → MQL-operator mapping was spelled out in two files: codegen's `generateBinaryExpr` (one switch case per op → `{ $gt: [...] }`, etc.) and match-translation's `orderedOpToMql` (`>` → `"$gt"`, … for the query-document form). The comparison operators were mapped in both — a small but real cross-file duplication.
+
+Introduced a single `BINARY_OP_TO_MQL` table in codegen.ts (the module that owns MQL emission — kept out of `ast.ts` so the AST layer stays MQL-agnostic) covering every op with a *direct* single-operator lowering (`-` `/` `%` `**` `===` `!==` `>` `>=` `<` `<=` and the associative chain ops `*` `??` `&` `|` `^`). `generateBinaryExpr` now groups those into two table-driven arms — DIRECT → `{ [op]: [l, r] }`, CHAIN → `{ [op]: flattenChain(...) }` — collapsing ~15 one-line cases to two; the bespoke ops (`+`, `==`/`!=`, `&&`/`||`, `in`) keep their own cases. match-translation imports the lone accessor `mqlForBinaryOp` so `orderedOpToMql` reads from the same table. The switch stays exhaustive over `BinaryOp` (no `default`), so a future operator still forces a compile-time decision. Behaviour-preserving, full suite green; worktree only. (Binary operators are a fixed set, so this is tidiness more than frequent-change leverage — it removes the duplication and documents the canonical mapping in one place.)
+
+---
+
 ## 2026-06-04 — refactor: one `didYouMean` helper for every closed-set rejection
 
 Prefactoring, behaviour-preserving. The `closestNameTo(name, set) ? \` Did you mean '…'?\` : ""` snippet had been hand-rolled at 13 throw sites (codegen ×3, parser ×4, pipeline ×3, lookup/system translation), each with its own variable name (`suggestion`, `setSuggestion`, `regexSuggestion`, `near`, …) and its own spelling of the suggestion. Adding a new throw site — something nearly every feature does — meant copying three lines and getting the format right by hand. That is exactly the kind of friction this pass targets: *make the change easy, then make the easy change.*
@@ -198,11 +170,49 @@ The fix is `didYouMean(name, candidates, format?)` in [src/levenshtein.ts](../sr
 
 ---
 
+## 2026-06-04 — refactor: one `mergeTranslatedQuery` for the query/$expr emission
+
+Prefactoring, round 3. The "merge a `MatchTranslation` into a query document" logic — index-friendly conjuncts plus an `$expr`-wrapped residual, with the four-way vacuous/query-only/residual-only/both split — was written out three times: `generateFilter` (index.ts, top-level Filter), the `$match` stage body (pipeline.ts), and `matchStagesFromTranslation` (lookup-translation.ts, the sub-pipeline translators). Three subtly-different spellings of the same emission — a place for the shapes to drift (pipeline.ts even regenerated the residual from the original `body` rather than `t.residual`, an equivalent-but-divergent path).
+
+Hoisted it to `mergeTranslatedQuery(t, ctx)` in [match-translation.ts](../src/match-translation.ts), next to `translateMatchBody` and the `MatchTranslation` type. It returns the merged query document, or `null` for a vacuous predicate so callers can skip the `$match`. All three sites now route through it: `generateFilter` and the `$match` body use `mergeTranslatedQuery(t, ctx) ?? {}` (empty = match-everything), and `matchStagesFromTranslation` maps `null → []`, else `[{ $match: merged }]`. Behaviour-preserving — full suite green; the pipeline.ts `body`-vs-`residual` divergence is a no-op because a query-empty translation always carries the whole predicate in the residual, which lowers to identical MQL. `match-translation.ts` already imported from `codegen.ts` (one-way; codegen doesn't import it back), so pulling in `generateWithCtx` adds no cycle.
+
+---
+
 ## 2026-06-04 — refactor: one shared `lowerLambdaPredicate` for the sub-pipeline translators
 
 Prefactoring, behaviour-preserving. Four translators lowered a single-parameter predicate lambda into sub-pipeline stages with the *same* body, copy-pasted: `$unionWith` (`translateUnionPredicate`), `$facet` (`lowerFacetEntry`), `$out` (`lowerFilterAsMatch`), and the `$$ = $$.filter(…)` replace-stream filter (`lowerStreamFilterPredicate`). Each one: rewrite foreign paths via `extractLetsFromExpr`/`extractLetsFromPipeline`, reject a local-doc reference (none of these stages has a `let` slot), run an expression body through `translateMatchBody` then the identical six-line `queryEmpty`/`residual` `$match`-emission block, run a block body through the caller's `lowerBlock`, throw on a missing body. The only real variation was the rejection message and which fresh sub-pipeline ctx to build. The fragile part — the index-friendly-vs-`$expr` emission — was the part duplicated, so a fix to one risked drift in the others.
 
 Extracted two exports into `lookup-translation.ts` (the hub the others already depend on): `matchStagesFromTranslation(t, subCtx)` (the `$match`/`$expr` emission, now the single copy) and `lowerLambdaPredicate(lambda, outerCtx, lowerBlock, { freshCtx, onLocalRef, missingBody })` (the whole expr/block/missing skeleton). Each call site collapses to its own param-count validation plus one `lowerLambdaPredicate(...)` call supplying its rejection message and `freshCtx` (identity for the replace-stream filter, which already runs in the right ctx). `grep '$expr: exprBody' src/` now returns exactly one file. The plan named three call sites; the fourth (`lowerStreamFilterPredicate`) surfaced via that grep invariant and folded in cleanly. Output byte-identical, full suite green. Adding the next sub-pipeline translator now means a message + a ctx factory, not re-deriving the emission. Docs: [lookup-stage.md](specs/lookup-stage.md) + the translation-module file-map in [CLAUDE.md](../CLAUDE.md).
+
+---
+
+## 2026-06-04 — refactor: route the static-call families + array mutators through `checkArity`
+
+Prefactoring, round 2. Last round centralized the 27 instance-method arg-count checks but left the static-call families and the statement-position array-mutator rewrites still hand-rolling their own `if (length …) throw` with bespoke wording. That left the surface half-consistent: `.charAt(index) requires exactly 1 argument, got 0` next to `Math.pow() requires exactly 2 arguments` (no signature, no count) and `.copyWithin(target, start[, end]) takes 2 or 3 arguments, got 2.` (trailing period, "takes" not "requires").
+
+Migrated all ~21 remaining codegen-side checks to `checkArity` with its `prefix` param: `generateMathCall` (incl. the shared `oneArg` helper), `generateObjectCall`, `generateSetMethodCall`, `generateRegexMethodCall`, and the `.reverse`/`.pop`/`.shift`/`.copyWithin`/`.fill` mutator rewrites. Every arg-count error across the method + static surface now reads `<prefix><method>(<sig>) <quantity>, got <N>` — `Math.pow(base, exponent) requires exactly 2 arguments, got 1`, `Object.assign(...sources) requires at least 1 argument, got 0`, `regex.test(str) requires exactly 1 argument, got 0`. The static families gained signatures they never had. Output unchanged (message text only, and these were unasserted save one partial `Math.atan2`/`exactly 2 arguments` match that still holds); full suite green, plus new tests covering the static + mutator formats.
+
+The parser-side constructor checks (`new Set` / `new Date` / `Date.UTC`) stay as-is — they throw `ParseError` (a different class, in a different file) and already carry good `, got N` messages; folding them in would mean a parser-side formatter, out of scope here. Spec: [method-dispatch.md](specs/method-dispatch.md).
+
+---
+
+## 2026-06-04 — refactor: share the pipeline-sugar dispatch across both pipeline forms
+
+Prefactoring, round 2. The per-element sugar dispatch — detect `$ =`/lookup `AssignExpr` sugar, flush the update buffer, lower, push stages, update ctx — was written out twice, nearly verbatim: once in `generatePipeline` (the `[ … ]` form, ~45 lines) and once in `lowerUpdateFilterWithLookups` (the `,`-grouped op chain, ~45 lines). The statement-tail dispatch (`$$.push` → `$unionWith`, system source stages, generic stage call) was likewise duplicated between `generatePipeline` and `generateImplicitPipeline` (the `;` form). Adding a new sugar meant editing 3–4 spots across two-to-three functions and keeping the ordering identical by hand — exactly the growth-friction this area sees most (`$lookup`/`$unionWith`/`$facet`/`$out`/`$replaceWith`/system-stages were each such an edit).
+
+Extracted two shared helpers in `pipeline.ts`: `tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlock, isFirst)` returns either `{ handled, ctx, outPos }` (sugar lowered, stages pushed) or `{ handled: false, bufferOp }` (fall through to the update buffer); and `lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlock)` returns the next ctx. The genuinely per-form bits stay at the call site: first-stage detection (`out.length === 0` vs `globalStageIndex + out.length === 0`), loop control (`return` vs `continue`), the buffer identity, and how an `$out` terminal is recorded (`validator.markSugarOut` vs a `TerminalState`, keyed off the returned `outPos`). Now a new `$ =`-style sugar is one branch in `tryLowerAssignSugar` and a new statement sugar is one branch in `lowerStatementTail`; all forms pick it up at once.
+
+Behaviour-preserving — a pure extraction; the two call sites collapsed sharply, full suite + dist smoke green. No spec'd behaviour changed; the dispatch order within each helper matches the original exactly.
+
+---
+
+## 2026-06-04 — refactor: single-source the JS-builtin static name-sets in `ast.ts`
+
+Prefactoring, round 2. The recognised-name lists for the `Math.` / `Object.` / `Number.` static families were triplicated: a runtime `Set` in `parser.ts` (for validation + `didYouMean` candidates), a hand-kept literal-union `type` in `ast.ts` (for codegen dispatch signatures), and the codegen switch itself. Adding a `Math` method meant editing all three, and forgetting the type let the parser accept a name codegen couldn't type. Worse, the `Set` method list had no parser registry at all — its canonical list lived *only* inside a codegen error string.
+
+Made `ast.ts` the single source: each family is now an `as const` array (`MATH_METHODS`, `MATH_CONSTANTS`, `OBJECT_METHODS`, `NUMBER_STATICS`, `SET_METHODS`) with its `…Method` type *derived* via `(typeof X)[number]`. `parser.ts` builds its lookup `Set`s from the imported arrays and draws `didYouMean` candidates from them; `codegen.ts` keeps its switches but their signatures derive from the same arrays, so the `as const` keeps the switch exhaustiveness-checked — adding a name surfaces a missing-case compile error rather than a silent gap. The `Set` list is now a real exported registry used by both the dispatch and the suggestion message.
+
+Net: adding a static method goes from three edits (set + type + switch) to two (the `as const` array + the switch `case`), with the compiler enforcing they agree. Behaviour-preserving — the derived unions have identical members; full suite green. `as const` arrays + `typeof[number]` type aliases are erasable, so `src/` stays in the strippable-TS subset. (The two-name `Array.`/`Date.` families stay inline — too small to warrant a registry, and not type-backed.)
 
 ---
 

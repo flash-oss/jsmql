@@ -2632,6 +2632,42 @@ The allowed stages are MongoDB's [aggregation-pipeline update whitelist](https:/
 
 ---
 
+## Command Line (`jsmql`)
+
+Installing the package puts a `jsmql` command on your `PATH`. It is a `jq`-style transpiler: **JSMQL source on stdin, MQL JSON on stdout**. A positional argument or `--file <path>` can supply the source instead of stdin.
+
+```sh
+echo '$.age > 18' | jsmql
+# {
+#   "age": { "$gt": 18 }
+# }
+
+jsmql --pipeline -c '$match($.age > 18); $sort({ age: -1 })'
+# [{"$match":{"age":{"$gt":18}}},{"$sort":{"age":-1}}]
+```
+
+With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level `;` makes it a Pipeline). The mode flags lock the shape to one of the entry points above:
+
+| Flag | Output | Same as |
+| --- | --- | --- |
+| *(none)* | Filter or Pipeline | `jsmql()` |
+| `--filter` | Filter document | `jsmql.filter()` |
+| `--pipeline` | stage array | `jsmql.pipeline()` |
+| `--expr` | aggregation expression | `jsmql.expr()` |
+| `--update` | update pipeline | `jsmql.update()` |
+| `--validate` (or `--check`) | `{ valid, errors }`; exits 1 if invalid | `jsmql.validate()` |
+
+Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. Parameterise a query with `jq`'s own flags — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
+
+```sh
+echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
+# { "age": { "$gt": 18 } }
+```
+
+`--arg name value` binds a string; `--argjson name value` binds a JSON value; both repeat. Compile errors print with a caret at the offending position. Exit codes: `0` success, `1` compile error (or `--validate` invalid), `2` usage error. Run `jsmql --help` for the full list.
+
+---
+
 ## Parameterised Queries (`jsmql.compile`)
 
 For queries that run repeatedly with different values — a typical "list users in region X above age Y" handler — use `jsmql.compile(fn)`. It parses the arrow once and returns a callable that you invoke with a fresh **params object** on every call. Each call walks the cached AST and substitutes the bound values inline as MQL literals; no re-parsing happens.

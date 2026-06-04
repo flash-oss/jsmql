@@ -47,6 +47,15 @@ describe("smoke: strippable-TS invariant", () => {
     const result = spawnSync(process.execPath, ["src/mongoose.ts"], { cwd: ROOT, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
   });
+
+  it("`node src/cli.ts` (the bin source) strips and runs without errors", () => {
+    // The CLI is bundled to dist/cjs/cli.cjs for shipping, but the source must
+    // also satisfy the strippable-TS invariant so contributors can run it
+    // directly. `--help` exercises the full module load + arg parse and exits 0.
+    const result = spawnSync(process.execPath, ["src/cli.ts", "--help"], { cwd: ROOT, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Usage:");
+  });
 });
 
 describe("smoke: built dist", () => {
@@ -104,6 +113,26 @@ describe("smoke: built dist", () => {
       encoding: "utf8",
     });
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  const cliCjs = resolve(ROOT, "dist/cjs/cli.cjs");
+
+  it.skipIf(!existsSync(cliCjs))("dist/cjs/cli.cjs runs as the jsmql bin (stdin → MQL) and reports its version", () => {
+    // Exercises the built executable end-to-end: the esbuild bundle, the
+    // preserved shebang, and the version `define`. spawnSync drives `node
+    // dist/cjs/cli.cjs` (rather than the bare path) so the test is independent
+    // of the file's exec bit.
+    const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
+    expect(compiled.status, compiled.stderr).toBe(0);
+    expect(JSON.stringify(JSON.parse(compiled.stdout))).toBe('{"age":{"$gt":18}}');
+
+    const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
+    expect(version.status, version.stderr).toBe(0);
+    const pkgVersion = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).version;
+    expect(version.stdout.trim()).toBe(pkgVersion);
+
+    // The first bytes must be the shebang so the file is directly runnable.
+    expect(readFileSync(cliCjs, "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
   });
 
   const mongoosePkg = resolve(ROOT, "node_modules/mongoose/package.json");

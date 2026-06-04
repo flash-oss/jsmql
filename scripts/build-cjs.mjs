@@ -17,7 +17,7 @@
  * find a types entry for the `require` condition.
  */
 import { build } from "esbuild";
-import { mkdirSync, copyFileSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, copyFileSync, readFileSync, writeFileSync, appendFileSync, chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -26,11 +26,18 @@ const OUT_DIR = path.join(ROOT, "dist/cjs");
 
 mkdirSync(OUT_DIR, { recursive: true });
 
+// The CLI bundle (`cli` entry → dist/cjs/cli.cjs) inlines the package version
+// via `define` so the shipped binary reports it without reading package.json at
+// runtime. src/cli.ts guards the identifier with `typeof` so the un-bundled
+// `node src/cli.ts` run (no define) still works, returning a dev fallback.
+const pkgVersion = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+
 await build({
   entryPoints: {
     index: path.join(ROOT, "src/index.ts"),
     ops: path.join(ROOT, "src/ops.ts"),
     mongoose: path.join(ROOT, "src/mongoose.ts"),
+    cli: path.join(ROOT, "src/cli.ts"),
   },
   outdir: OUT_DIR,
   bundle: true,
@@ -38,9 +45,16 @@ await build({
   platform: "node",
   target: "node14",
   outExtension: { ".js": ".cjs" },
+  define: { __JSMQL_VERSION__: JSON.stringify(pkgVersion) },
   sourcemap: true,
   logLevel: "info",
 });
+
+// The bin must be executable. npm sets the exec bit on `package.json#bin`
+// targets at install time, but a locally-linked / freshly-built checkout
+// (`node dist/cjs/cli.cjs`, `npm link`) relies on this. esbuild preserves the
+// `#!/usr/bin/env node` shebang from the entry, so the file is runnable as-is.
+chmodSync(path.join(OUT_DIR, "cli.cjs"), 0o755);
 
 // Mirror the ESM .d.ts files as .d.cts so TypeScript's `nodenext` resolution
 // finds types under the `require` condition. The declaration content is
