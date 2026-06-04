@@ -10,11 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: share the pipeline-sugar dispatch across both pipeline forms
+
+Prefactoring, round 2. The per-element sugar dispatch — detect `$ =`/lookup `AssignExpr` sugar, flush the update buffer, lower, push stages, update ctx — was written out twice, nearly verbatim: once in `generatePipeline` (the `[ … ]` form, ~45 lines) and once in `lowerUpdateFilterWithLookups` (the `,`-grouped op chain, ~45 lines). The statement-tail dispatch (`$$.push` → `$unionWith`, system source stages, generic stage call) was likewise duplicated between `generatePipeline` and `generateImplicitPipeline` (the `;` form). Adding a new sugar meant editing 3–4 spots across two-to-three functions and keeping the ordering identical by hand — exactly the growth-friction this area sees most (`$lookup`/`$unionWith`/`$facet`/`$out`/`$replaceWith`/system-stages were each such an edit).
+
+Extracted two shared helpers in `pipeline.ts`: `tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlock, isFirst)` returns either `{ handled, ctx, outPos }` (sugar lowered, stages pushed) or `{ handled: false, bufferOp }` (fall through to the update buffer); and `lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlock)` returns the next ctx. The genuinely per-form bits stay at the call site: first-stage detection (`out.length === 0` vs `globalStageIndex + out.length === 0`), loop control (`return` vs `continue`), the buffer identity, and how an `$out` terminal is recorded (`validator.markSugarOut` vs a `TerminalState`, keyed off the returned `outPos`). Now a new `$ =`-style sugar is one branch in `tryLowerAssignSugar` and a new statement sugar is one branch in `lowerStatementTail`; all forms pick it up at once.
+
+Behaviour-preserving — a pure extraction; the two call sites collapsed sharply, full suite + dist smoke green. No spec'd behaviour changed; the dispatch order within each helper matches the original exactly.
+
+---
+
 ## 2026-06-04 — refactor: accumulator-only gate derives from the operator registry
 
 Prefactoring, behaviour-preserving. Codegen's `checkOperatorContext` gated accumulator-only operators (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`) on a hand-maintained `ACCUMULATOR_ONLY_OPERATORS` set that *shadowed* the operator registry. Adding an accumulator operator silently required a second edit there; miss it and the new op would be wrongly accepted in arbitrary expression positions. That violates the project's "operator registry is the single source of truth" rule.
 
 The flag now lives on the registry entry: `OperatorDef` gains an optional `accumulatorOnly?: boolean`, set via a small `acc(...)` wrapper around any shape factory (`acc(single("array", "…"))`), and `checkOperatorContext` reads `lookupOperator(name)?.accumulatorOnly`. The shadow set is deleted. Same nine ops gate, output unchanged, full suite green. The generator doesn't serialize the flag, so `src/ops.ts` is untouched. A new drift assertion in [test/operator-spec-coverage.test.ts](../test/operator-spec-coverage.test.ts) keeps the flag boolean-or-absent, and the "Adding a new MongoDB operator" steps in [CLAUDE.md](../CLAUDE.md) + [operator-registry.md](specs/operator-registry.md) now mention `acc(...)`. (Window-only operators were already registry-derived via `category === "window"`; this brings accumulators to parity.)
+
+---
+
+## 2026-06-04 — refactor: single-source the JS-builtin static name-sets in `ast.ts`
+
+Prefactoring, round 2. The recognised-name lists for the `Math.` / `Object.` / `Number.` static families were triplicated: a runtime `Set` in `parser.ts` (for validation + `didYouMean` candidates), a hand-kept literal-union `type` in `ast.ts` (for codegen dispatch signatures), and the codegen switch itself. Adding a `Math` method meant editing all three, and forgetting the type let the parser accept a name codegen couldn't type. Worse, the `Set` method list had no parser registry at all — its canonical list lived *only* inside a codegen error string.
+
+Made `ast.ts` the single source: each family is now an `as const` array (`MATH_METHODS`, `MATH_CONSTANTS`, `OBJECT_METHODS`, `NUMBER_STATICS`, `SET_METHODS`) with its `…Method` type *derived* via `(typeof X)[number]`. `parser.ts` builds its lookup `Set`s from the imported arrays and draws `didYouMean` candidates from them; `codegen.ts` keeps its switches but their signatures derive from the same arrays, so the `as const` keeps the switch exhaustiveness-checked — adding a name surfaces a missing-case compile error rather than a silent gap. The `Set` list is now a real exported registry used by both the dispatch and the suggestion message.
+
+Net: adding a static method goes from three edits (set + type + switch) to two (the `as const` array + the switch `case`), with the compiler enforcing they agree. Behaviour-preserving — the derived unions have identical members; full suite green. `as const` arrays + `typeof[number]` type aliases are erasable, so `src/` stays in the strippable-TS subset. (The two-name `Array.`/`Date.` families stay inline — too small to warrant a registry, and not type-backed.)
 
 ---
 

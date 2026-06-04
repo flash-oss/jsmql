@@ -1,5 +1,11 @@
 import { Lexer, TokenType, type Token } from "./lexer.ts";
 import { didYouMean } from "./levenshtein.ts";
+import {
+  MATH_METHODS as MATH_METHOD_NAMES,
+  MATH_CONSTANTS as MATH_CONSTANT_NAMES,
+  OBJECT_METHODS as OBJECT_METHOD_NAMES,
+  NUMBER_STATICS,
+} from "./ast.ts";
 import type {
   Expr,
   BinaryOp,
@@ -12,6 +18,7 @@ import type {
   MathMethod,
   MathConstant,
   ObjectMethod,
+  NumberStaticMethod,
   ObjectKey,
   CallArg,
   AssignExpr,
@@ -103,42 +110,10 @@ const UNARY_MATH_CALLABLES = new Set<string>([
   "tanh",
 ]);
 
-const MATH_METHODS = new Set<string>([
-  "abs",
-  "ceil",
-  "floor",
-  "round",
-  "pow",
-  "sqrt",
-  "exp",
-  "log",
-  "log2",
-  "log10",
-  "trunc",
-  "min",
-  "max",
-  "sign",
-  "hypot",
-  "cbrt",
-  "random",
-  "sin",
-  "cos",
-  "tan",
-  "asin",
-  "acos",
-  "atan",
-  "atan2",
-  "sinh",
-  "cosh",
-  "tanh",
-  "asinh",
-  "acosh",
-  "atanh",
-]);
-
-const MATH_CONSTANTS = new Set<string>(["PI", "E"]);
-
-const OBJECT_METHODS = new Set<string>(["keys", "values", "entries", "assign", "fromEntries", "groupBy"]);
+// Runtime lookup Sets built from the single-source name lists in ast.ts.
+const MATH_METHODS = new Set<string>(MATH_METHOD_NAMES);
+const MATH_CONSTANTS = new Set<string>(MATH_CONSTANT_NAMES);
+const OBJECT_METHODS = new Set<string>(OBJECT_METHOD_NAMES);
 
 const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 // Subset of TYPE_CAST_NAMES that are also valid as bare callbacks:
@@ -1807,17 +1782,14 @@ export class Parser {
     const numberTok = this.lexer.next(); // consume 'Number'
     this.lexer.expect(TokenType.Dot);
     const methodTok = this.lexer.peek();
-    if (
-      methodTok.type !== TokenType.Ident ||
-      (methodTok.value !== "isInteger" && methodTok.value !== "isNaN" && methodTok.value !== "isFinite")
-    ) {
-      const numberHint = didYouMean(methodTok.value, ["isInteger", "isNaN", "isFinite"], (s) => `Number.${s}`);
+    if (methodTok.type !== TokenType.Ident || !(NUMBER_STATICS as readonly string[]).includes(methodTok.value)) {
+      const numberHint = didYouMean(methodTok.value, NUMBER_STATICS, (s) => `Number.${s}`);
       throw new ParseError(
-        `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}.${numberHint} Supported: Number.isInteger, Number.isNaN, Number.isFinite.`,
+        `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}.${numberHint} Supported: ${NUMBER_STATICS.map((s) => `Number.${s}`).join(", ")}.`,
         numberTok.pos,
       );
     }
-    const method = methodTok.value as "isInteger" | "isNaN" | "isFinite";
+    const method = methodTok.value as NumberStaticMethod;
     this.lexer.next();
     this.lexer.expect(TokenType.LParen);
     const arg = this.parseExpression();

@@ -145,37 +145,56 @@ export type TypeCastOp = "Number" | "String" | "Boolean" | "parseInt" | "parseFl
  * Excludes parseInt/parseFloat because real-JS `arr.map(parseInt)` has the
  * famous index-as-radix footgun; users must write `x => parseInt(x)` to opt in. */
 export type BareCastOp = "Number" | "String" | "Boolean";
-export type MathMethod =
-  | "abs"
-  | "ceil"
-  | "floor"
-  | "round"
-  | "pow"
-  | "sqrt"
-  | "exp"
-  | "log"
-  | "log2"
-  | "log10"
-  | "trunc"
-  | "min"
-  | "max"
-  | "sign"
-  | "hypot"
-  | "cbrt"
-  | "random"
-  | "sin"
-  | "cos"
-  | "tan"
-  | "asin"
-  | "acos"
-  | "atan"
-  | "atan2"
-  | "sinh"
-  | "cosh"
-  | "tanh"
-  | "asinh"
-  | "acosh"
-  | "atanh";
-export type MathConstant = "PI" | "E";
-export type ObjectMethod = "keys" | "values" | "entries" | "assign" | "fromEntries" | "groupBy";
-export type NumberStaticMethod = "isInteger" | "isNaN" | "isFinite";
+// ── Recognised JS-builtin static/constructor names ─────────────────────────────
+// Single source of truth for each closed name-set: the parser validates against
+// these (and builds its `didYouMean` candidate lists from them), and codegen
+// derives its dispatch signatures from the matching `…Method` type. Each list is
+// `as const` so the derived union stays exhaustiveness-checked at the codegen
+// switch — adding a name here surfaces a missing-case compile error there.
+export const MATH_METHODS = [
+  "abs",
+  "ceil",
+  "floor",
+  "round",
+  "pow",
+  "sqrt",
+  "exp",
+  "log",
+  "log2",
+  "log10",
+  "trunc",
+  "min",
+  "max",
+  "sign",
+  "hypot",
+  "cbrt",
+  "random",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "atan2",
+  "sinh",
+  "cosh",
+  "tanh",
+  "asinh",
+  "acosh",
+  "atanh",
+] as const;
+export type MathMethod = (typeof MATH_METHODS)[number];
+
+export const MATH_CONSTANTS = ["PI", "E"] as const;
+export type MathConstant = (typeof MATH_CONSTANTS)[number];
+
+export const OBJECT_METHODS = ["keys", "values", "entries", "assign", "fromEntries", "groupBy"] as const;
+export type ObjectMethod = (typeof OBJECT_METHODS)[number];
+
+export const NUMBER_STATICS = ["isInteger", "isNaN", "isFinite"] as const;
+export type NumberStaticMethod = (typeof NUMBER_STATICS)[number];
+
+// Set-receiver methods jsmql lowers to `$setIntersection` / `$setUnion` / etc.
+// Previously the canonical list lived only in a codegen error string.
+export const SET_METHODS = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"] as const;
+export type SetMethod = (typeof SET_METHODS)[number];

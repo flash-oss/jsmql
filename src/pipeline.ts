@@ -377,48 +377,13 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       if (rewrite.kind === "rewrite") el = rewrite.assign;
     }
     if (el.type === "AssignExpr") {
-      if (isReplaceStreamAssign(el)) {
-        flushUpdateOps();
-        const result = lowerReplaceStream(el, ctx, lowerBlock, tracking.alloc, out.length === 0);
-        for (const s of result.stages) out.push(s);
-        if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
+      const r = tryLowerAssignSugar(el, ctx, out, flushUpdateOps, tracking.alloc, lowerBlock, out.length === 0);
+      if (r.handled) {
+        ctx = r.ctx;
+        if (r.outPos !== null) validator.markSugarOut(r.outPos);
         return;
       }
-      if (isReplaceRootAssign(el)) {
-        const facets = detectFacetShape(el.value);
-        if (facets !== null) {
-          flushUpdateOps();
-          for (const s of lowerFacet(facets, ctx, lowerBlock)) out.push(s);
-          ctx = clearCtxLets(ctx, "$facet");
-          return;
-        }
-        flushUpdateOps();
-        for (const s of lowerReplaceRoot(el, ctx, tracking.alloc, lowerBlock)) out.push(s);
-        ctx = clearCtxLets(ctx, "$replaceWith");
-        return;
-      }
-      const outTarget = detectOutAssign(el, ctx);
-      if (outTarget !== null) {
-        flushUpdateOps();
-        for (const s of lowerOut(el, outTarget, ctx, lowerBlock, tracking.alloc)) out.push(s);
-        validator.markSugarOut(el.pos);
-        return;
-      }
-      const direct = detectLookupCall(el.value, ctx);
-      if (direct !== null) {
-        validateLookupShape(el.value);
-        flushUpdateOps();
-        const asPath = updateOpWritePath({ type: "AssignExpr", target: el.target, value: el.value, pos: el.pos });
-        const stages = lowerLookup(direct, asPath, ctx, lowerBlock);
-        for (const s of stages) out.push(s);
-        return;
-      }
-      const { stages, rewritten } = extractLookupCalls(el.value, ctx, tracking.alloc, lowerBlock);
-      if (stages.length > 0) {
-        flushUpdateOps();
-        for (const s of stages) out.push(s);
-      }
-      updateBuffer.push({ type: "AssignExpr", target: el.target, value: rewritten, pos: el.pos });
+      updateBuffer.push(r.bufferOp);
       return;
     }
     if (el.type === "DeleteStmt") {
@@ -452,33 +417,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       return;
     }
     flushUpdateOps();
-    // `$$.push(...)` statement → one or more `$unionWith` stages (with inline-doc
-    // batching across consecutive `{...}` args). Statement-only; runs before
-    // the generic stage-element lowering so a bare `$$` receiver doesn't fall
-    // through to `lowerStageElement`'s "not a recognised stage" error.
-    if (el.type !== "SpreadElement") {
-      const pushCall = detectUnionPush(el as Expr);
-      if (pushCall !== null) {
-        for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
-        return;
-      }
-      // `$$.indexStats()` / `$$$$.currentOp()` / `$$$$.shardedDataDistribution()`
-      // → a diagnostic source stage. First-stage-only: a source produces the
-      // stream, so anything emitted before it is a contradiction.
-      if (el.type === "MethodCall" && isSystemStageCall(el)) {
-        const sys = resolveSystemStageCall(el);
-        if (out.length > 0) throw new CodegenError(notFirstStageMessage(sys), sys.callPos);
-        out.push(lowerSystemStageStmt(sys, ctx));
-        return;
-      }
-      validateUnionPushShape(el as Expr);
-    }
-    const rewrittenEl = extractFromStageElement(el, ctx, tracking.alloc, lowerBlock, out);
-    const shape = asStageShape(rewrittenEl);
-    if (shape !== null) validator.checkStage(shape.name, rewrittenEl.pos ?? el.pos, i, shape.body);
-    const result = lowerStageElement(rewrittenEl, i, ctx);
-    out.push(result.stage);
-    ctx = result.ctx;
+    ctx = lowerStatementTail(el, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
   flushUpdateOps();
   if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
@@ -556,29 +495,7 @@ export function generateImplicitPipeline(
       if (result.terminal !== null) validator.markSugarOut(result.terminal.pos);
       return;
     }
-    // `$$.push(...)` statement → one or more `$unionWith` stages (with
-    // inline-doc batching across consecutive `{...}` args). Statement-only.
-    const pushCall = detectUnionPush(stmt as Expr);
-    if (pushCall !== null) {
-      for (const s of lowerUnionPush(pushCall, ctx, lowerBlock)) out.push(s);
-      return;
-    }
-    // `$$.indexStats()` / `$$$$.currentOp()` / `$$$$.shardedDataDistribution()`
-    // → a diagnostic source stage. First-stage-only.
-    if (stmt.type === "MethodCall" && isSystemStageCall(stmt as Expr)) {
-      const sys = resolveSystemStageCall(stmt as Expr);
-      if (out.length > 0) throw new CodegenError(notFirstStageMessage(sys), sys.callPos);
-      out.push(lowerSystemStageStmt(sys, ctx));
-      return;
-    }
-    validateUnionPushShape(stmt as Expr);
-    // Stage call statement (Expr that resolves to a stage shape).
-    const rewrittenStmt = extractFromStageElement(stmt as Expr, ctx, tracking.alloc, lowerBlock, out);
-    const shape = asStageShape(rewrittenStmt as ArrayElement);
-    if (shape !== null) validator.checkStage(shape.name, (rewrittenStmt as Expr).pos, i, shape.body);
-    const result = lowerStageElement(rewrittenStmt as ArrayElement, i, ctx);
-    out.push(result.stage);
-    ctx = result.ctx;
+    ctx = lowerStatementTail(stmt as Expr, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
 
   if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
@@ -1579,6 +1496,122 @@ function makeSlotTracking(): { alloc: SlotAllocator; used: () => boolean } {
  * arithmetic RHSes go through `extractLookupCalls` first — the prologue
  * stages flush before the op is queued.
  */
+/**
+ * The `$ =`-rooted / lookup `AssignExpr` sugar chain, shared by both pipeline
+ * forms — `generatePipeline`'s `[…]` elements and `lowerUpdateFilterWithLookups`'s
+ * `,`-grouped ops. Tries each sugar in order and, on a hit, flushes the caller's
+ * update buffer (via `flush`), pushes the lowered stages onto `out`, and returns
+ * the (possibly let-cleared) ctx:
+ *   - `$$ = …`                              → replace-stream stages
+ *   - `$ = { k: $$.filter(…) }`             → `$facet`
+ *   - `$ = <expr>`                          → `$replaceWith`
+ *   - `$$$.<coll> = …`                      → `$out` (signalled via `outPos`)
+ *   - `$.<f> = $$$.<coll>.find/filter(…)`   → `$lookup`
+ * On a miss it returns `{ handled: false, bufferOp }` — the rewritten op (any
+ * buried lookups already hoisted onto `out`) for the caller to push onto its
+ * own update buffer.
+ *
+ * Per-form differences stay with the caller: first-stage detection (`isFirst`),
+ * loop control (`return` vs `continue`), the buffer identity, and how an `$out`
+ * terminal is recorded (`validator.markSugarOut` vs a `TerminalState`) — keyed
+ * off the returned `outPos`.
+ */
+type AssignSugarResult =
+  | { handled: true; ctx: GenerateCtx; outPos: number | null }
+  | { handled: false; bufferOp: AssignExpr };
+
+function tryLowerAssignSugar(
+  op: AssignExpr,
+  ctx: GenerateCtx,
+  out: unknown[],
+  flush: () => void,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+  isFirst: boolean,
+): AssignSugarResult {
+  if (isReplaceStreamAssign(op)) {
+    flush();
+    const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot, isFirst);
+    for (const s of result.stages) out.push(s);
+    return { handled: true, ctx: result.clearLets ? clearCtxLets(ctx, "$unionWith") : ctx, outPos: null };
+  }
+  if (isReplaceRootAssign(op)) {
+    const facets = detectFacetShape(op.value);
+    if (facets !== null) {
+      flush();
+      for (const s of lowerFacet(facets, ctx, lowerBlockFn)) out.push(s);
+      return { handled: true, ctx: clearCtxLets(ctx, "$facet"), outPos: null };
+    }
+    flush();
+    for (const s of lowerReplaceRoot(op, ctx, allocSlot, lowerBlockFn)) out.push(s);
+    return { handled: true, ctx: clearCtxLets(ctx, "$replaceWith"), outPos: null };
+  }
+  const outTarget = detectOutAssign(op, ctx);
+  if (outTarget !== null) {
+    flush();
+    for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn, allocSlot)) out.push(s);
+    return { handled: true, ctx, outPos: op.pos };
+  }
+  const direct = detectLookupCall(op.value, ctx);
+  if (direct !== null) {
+    validateLookupShape(op.value);
+    flush();
+    const asPath = updateOpWritePath(op);
+    for (const s of lowerLookup(direct, asPath, ctx, lowerBlockFn)) out.push(s);
+    return { handled: true, ctx, outPos: null };
+  }
+  const { stages, rewritten } = extractLookupCalls(op.value, ctx, allocSlot, lowerBlockFn);
+  if (stages.length > 0) {
+    flush();
+    for (const s of stages) out.push(s);
+  }
+  return { handled: false, bufferOp: { type: "AssignExpr", target: op.target, value: rewritten, pos: op.pos } };
+}
+
+/**
+ * The statement-tail dispatch shared by both pipeline forms: a non-assignment
+ * element that is either statement-only sugar or a stage call. Tries, in order:
+ *   - `$$.push(…)`                          → `$unionWith` stages
+ *   - `$$.indexStats()` / `$$$$.currentOp()`/ … → a diagnostic source stage
+ *     (first-stage-only)
+ *   - otherwise a stage call/object         → lowered via `lowerStageElement`,
+ *     with buried lookups hoisted to `out` first and stage-placement validated.
+ * Pushes the resulting stage(s) onto `out` and returns the next ctx. The
+ * `el.type !== "SpreadElement"` guard skips the sugar checks for a bare
+ * `...spread` element (only reachable from the `[…]` form) while still routing
+ * it through stage lowering.
+ */
+function lowerStatementTail(
+  el: ArrayElement,
+  i: number,
+  ctx: GenerateCtx,
+  out: unknown[],
+  validator: ReturnType<typeof makePipelineValidator>,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+): GenerateCtx {
+  if (el.type !== "SpreadElement") {
+    const pushCall = detectUnionPush(el as Expr);
+    if (pushCall !== null) {
+      for (const s of lowerUnionPush(pushCall, ctx, lowerBlockFn)) out.push(s);
+      return ctx;
+    }
+    if (el.type === "MethodCall" && isSystemStageCall(el)) {
+      const sys = resolveSystemStageCall(el);
+      if (out.length > 0) throw new CodegenError(notFirstStageMessage(sys), sys.callPos);
+      out.push(lowerSystemStageStmt(sys, ctx));
+      return ctx;
+    }
+    validateUnionPushShape(el as Expr);
+  }
+  const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);
+  const shape = asStageShape(rewrittenEl);
+  if (shape !== null) validator.checkStage(shape.name, rewrittenEl.pos ?? el.pos, i, shape.body);
+  const result = lowerStageElement(rewrittenEl, i, ctx);
+  out.push(result.stage);
+  return result.ctx;
+}
+
 function lowerUpdateFilterWithLookups(
   stmt: UpdateFilter,
   startCtx: GenerateCtx,
@@ -1598,48 +1631,13 @@ function lowerUpdateFilterWithLookups(
   for (const op of stmt.ops) {
     if (terminal !== null) throw makeAfterTerminalError(terminal, op.pos);
     if (op.type === "AssignExpr") {
-      if (isReplaceStreamAssign(op)) {
-        flush();
-        const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot, globalStageIndex + out.length === 0);
-        for (const s of result.stages) out.push(s);
-        if (result.clearLets) ctx = clearCtxLets(ctx, "$unionWith");
+      const r = tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlockFn, globalStageIndex + out.length === 0);
+      if (r.handled) {
+        ctx = r.ctx;
+        if (r.outPos !== null) terminal = { stageName: "$out", pos: r.outPos, viaSugar: true };
         continue;
       }
-      if (isReplaceRootAssign(op)) {
-        const facets = detectFacetShape(op.value);
-        if (facets !== null) {
-          flush();
-          for (const s of lowerFacet(facets, ctx, lowerBlockFn)) out.push(s);
-          ctx = clearCtxLets(ctx, "$facet");
-          continue;
-        }
-        flush();
-        for (const s of lowerReplaceRoot(op, ctx, allocSlot, lowerBlockFn)) out.push(s);
-        ctx = clearCtxLets(ctx, "$replaceWith");
-        continue;
-      }
-      const outTarget = detectOutAssign(op, ctx);
-      if (outTarget !== null) {
-        flush();
-        for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn, allocSlot)) out.push(s);
-        terminal = { stageName: "$out", pos: op.pos, viaSugar: true };
-        continue;
-      }
-      const direct = detectLookupCall(op.value, ctx);
-      if (direct !== null) {
-        validateLookupShape(op.value);
-        flush();
-        const asPath = updateOpWritePath(op);
-        const stages = lowerLookup(direct, asPath, ctx, lowerBlockFn);
-        for (const s of stages) out.push(s);
-        continue;
-      }
-      const { stages, rewritten } = extractLookupCalls(op.value, ctx, allocSlot, lowerBlockFn);
-      if (stages.length > 0) {
-        flush();
-        for (const s of stages) out.push(s);
-      }
-      buffer.push({ type: "AssignExpr", target: op.target, value: rewritten, pos: op.pos });
+      buffer.push(r.bufferOp);
       continue;
     }
     // DeleteStmt — target is a field path; no lookups possible.

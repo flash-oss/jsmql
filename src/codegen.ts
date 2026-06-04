@@ -1,5 +1,6 @@
 import { lookupOperator } from "./operators.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
   Expr,
@@ -11,6 +12,7 @@ import type {
   MathMethod,
   MathConstant,
   ObjectMethod,
+  NumberStaticMethod,
   TypeCastOp,
   AssignExpr,
   UpdateOp,
@@ -3355,7 +3357,7 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
 
 // ── Number.* static predicates ────────────────────────────────────────────────
 
-function generateNumberStatic(method: "isInteger" | "isNaN" | "isFinite", arg: Expr, ctx: GenerateCtx): unknown {
+function generateNumberStatic(method: NumberStaticMethod, arg: Expr, ctx: GenerateCtx): unknown {
   const val = _generate(arg, ctx);
   const pos = arg.pos;
   switch (method) {
@@ -3443,9 +3445,8 @@ function generateSetMethodCall(
         pos,
       );
     default: {
-      const setMethods = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"];
-      const setHint = didYouMean(method, setMethods);
-      throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${setMethods.join(", ")}.`, pos);
+      const setHint = didYouMean(method, SET_METHODS);
+      throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${SET_METHODS.join(", ")}.`, pos);
     }
   }
 }
