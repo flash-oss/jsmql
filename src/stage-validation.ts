@@ -111,13 +111,28 @@ function arrayElements(e: Expr): Expr[] | null {
 // ── Shared check helpers ────────────────────────────────────────────────────────
 
 /** Require `keys` to be present on an object-literal body (skips if a spread hides them). */
-function requireKeys(stage: string, info: ObjectInfo, bodyPos: number, keys: string[]): void {
+function requireKeys(stage: string, info: ObjectInfo, bodyPos: number, keys: readonly string[]): void {
   if (info.hasSpread) return;
   for (const k of keys) {
     if (!info.byKey.has(k)) {
       throw new CodegenError(`'${stage}' requires the '${k}' field, but it is missing.`, bodyPos);
     }
   }
+}
+
+/**
+ * Open an object-body validator: return the body's key map, or `null` when the
+ * body isn't an inspectable object literal (validation is best-effort — a field
+ * path or runtime expression in body position is left for MongoDB to check), in
+ * which case the caller `return`s. Any `required` keys are enforced up front.
+ * Folds the `objectInfo` + null-gate + `requireKeys` prelude that opens most
+ * object-shaped stage validators into one call.
+ */
+function requireObjectBody(stage: string, body: Expr, required: readonly string[] = []): ObjectInfo | null {
+  const info = objectInfo(body);
+  if (info === null) return null;
+  requireKeys(stage, info, body.pos, required);
+  return info;
 }
 
 /** Throw if a literal-string slot value is outside the allowed enum (with a "Did you mean"). */
@@ -266,7 +281,7 @@ function validateCount(body: Expr): void {
 }
 
 function validateSort(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$sort", body);
   if (info === null) return;
   if (info.byKey.size > 32 && !info.hasSpread) {
     throw new CodegenError(`'$sort' accepts at most 32 keys, but got ${info.byKey.size}.`, body.pos);
@@ -295,7 +310,7 @@ function validateSort(body: Expr): void {
 }
 
 function validateProject(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$project", body);
   if (info === null) return;
   if (info.byKey.size === 0 && !info.hasSpread) {
     throw new CodegenError(`'$project' specification must name at least one field.`, body.pos);
@@ -342,7 +357,7 @@ function validateUnwind(body: Expr): void {
     }
     return;
   }
-  const info = objectInfo(body);
+  const info = requireObjectBody("$unwind", body);
   if (info === null) return;
   const path = info.byKey.get("path");
   if (path !== undefined) {
@@ -368,17 +383,15 @@ function validateUnwind(body: Expr): void {
 }
 
 function validateSample(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$sample", body, ["size"]);
   if (info === null) return;
-  requireKeys("$sample", info, body.pos, ["size"]);
   const size = info.byKey.get("size");
   if (size !== undefined) checkIntBound("$sample size", size, { min: 0, label: "a non-negative integer" });
 }
 
 function validateBucket(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$bucket", body, ["groupBy", "boundaries"]);
   if (info === null) return;
-  requireKeys("$bucket", info, body.pos, ["groupBy", "boundaries"]);
   const boundaries = info.byKey.get("boundaries");
   if (boundaries === undefined) return;
   const els = arrayElements(boundaries);
@@ -419,9 +432,8 @@ function validateBucket(body: Expr): void {
 }
 
 function validateBucketAuto(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$bucketAuto", body, ["groupBy", "buckets"]);
   if (info === null) return;
-  requireKeys("$bucketAuto", info, body.pos, ["groupBy", "buckets"]);
   const buckets = info.byKey.get("buckets");
   if (buckets !== undefined) checkIntBound("$bucketAuto buckets", buckets, { min: 1, label: "a positive integer" });
   const granularity = info.byKey.get("granularity");
@@ -429,9 +441,8 @@ function validateBucketAuto(body: Expr): void {
 }
 
 function validateSetWindowFields(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$setWindowFields", body, ["output"]);
   if (info === null) return;
-  requireKeys("$setWindowFields", info, body.pos, ["output"]);
   const output = info.byKey.get("output");
   if (output === undefined) return;
   const outInfo = objectInfo(output);
@@ -453,9 +464,8 @@ function validateSetWindowFields(body: Expr): void {
 }
 
 function validateFill(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$fill", body, ["output"]);
   if (info === null) return;
-  requireKeys("$fill", info, body.pos, ["output"]);
   const output = info.byKey.get("output");
   if (output === undefined) return;
   const outInfo = objectInfo(output);
@@ -487,18 +497,22 @@ function validateFill(body: Expr): void {
 }
 
 function validateGraphLookup(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$graphLookup", body, [
+    "from",
+    "startWith",
+    "connectFromField",
+    "connectToField",
+    "as",
+  ]);
   if (info === null) return;
-  requireKeys("$graphLookup", info, body.pos, ["from", "startWith", "connectFromField", "connectToField", "as"]);
   const maxDepth = info.byKey.get("maxDepth");
   if (maxDepth !== undefined)
     checkIntBound("$graphLookup maxDepth", maxDepth, { min: 0, label: "a non-negative integer" });
 }
 
 function validateMerge(body: Expr): void {
-  const info = objectInfo(body);
-  if (info === null) return; // string form ("coll") is fine
-  requireKeys("$merge", info, body.pos, ["into"]);
+  const info = requireObjectBody("$merge", body, ["into"]); // string form ("coll") returns null → fine
+  if (info === null) return;
   const whenMatched = info.byKey.get("whenMatched");
   // whenMatched may be a pipeline (array) — only the string form is enum-checked.
   if (whenMatched !== undefined && litString(whenMatched) !== null) {
@@ -509,14 +523,12 @@ function validateMerge(body: Expr): void {
 }
 
 function validateLookup(body: Expr): void {
-  const info = objectInfo(body);
-  if (info === null) return;
-  requireKeys("$lookup", info, body.pos, ["from", "as"]);
+  requireObjectBody("$lookup", body, ["from", "as"]);
 }
 
 function validateUnionWith(body: Expr): void {
-  const info = objectInfo(body);
-  if (info === null) return; // string form ("coll") is fine
+  const info = requireObjectBody("$unionWith", body); // string form ("coll") returns null → fine
+  if (info === null) return;
   if (info.hasSpread) return;
   if (!info.byKey.has("coll") && !info.byKey.has("pipeline")) {
     throw new CodegenError(`'$unionWith' requires a 'coll' and/or a 'pipeline'.`, body.pos);
@@ -524,23 +536,18 @@ function validateUnionWith(body: Expr): void {
 }
 
 function validateReplaceRoot(body: Expr): void {
-  const info = objectInfo(body);
+  const info = requireObjectBody("$replaceRoot", body, ["newRoot"]);
   if (info === null) return;
-  requireKeys("$replaceRoot", info, body.pos, ["newRoot"]);
   const newRoot = info.byKey.get("newRoot");
   if (newRoot !== undefined) rejectNonDocumentNewRoot("$replaceRoot newRoot", newRoot);
 }
 
 function validateGroup(body: Expr): void {
-  const info = objectInfo(body);
-  if (info === null) return;
-  requireKeys("$group", info, body.pos, ["_id"]);
+  requireObjectBody("$group", body, ["_id"]);
 }
 
 function validateGeoNear(body: Expr): void {
-  const info = objectInfo(body);
-  if (info === null) return;
-  requireKeys("$geoNear", info, body.pos, ["near"]);
+  requireObjectBody("$geoNear", body, ["near"]);
 }
 
 function validateDocuments(body: Expr): void {

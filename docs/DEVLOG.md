@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: `requireObjectBody` prelude helper for stage validators
+
+Prefactoring, round 4. Fourteen of the object-shaped stage-body validators in `stage-validation.ts` opened with the identical three-line prelude: `const info = objectInfo(body); if (info === null) return; requireKeys("$stage", info, body.pos, [...]);`. Folded that into one `requireObjectBody(stage, body, required?)` helper that returns the key map (or `null` when the body isn't an inspectable object literal — validation is best-effort, so a field-path/expression body is left for the server). Each validator now opens with `const info = requireObjectBody("$stage", body, [...]); if (info === null) return;` (or just the call, when it only needs the required-key side effect, as in `$lookup`/`$group`/`$geoNear`).
+
+The repeated `body.pos` threading and the `objectInfo`+`requireKeys` pairing now live in one place — adding a new object-shaped stage validator starts from a single call instead of copy-pasting the prelude. Behaviour-preserving (same errors, same `.pos`); full suite green. `requireKeys` is now reached only through the helper; `objectInfo` stays directly used for inspecting *nested* sub-objects (`output`, `window`, field specs). Worktree only.
+
+---
+
 ## 2026-06-04 — refactor: one `BINARY_OP_TO_MQL` table for the JS-op → MQL-op mapping
 
 Prefactoring, round 3. The JS-binary-operator → MQL-operator mapping was spelled out in two files: codegen's `generateBinaryExpr` (one switch case per op → `{ $gt: [...] }`, etc.) and match-translation's `orderedOpToMql` (`>` → `"$gt"`, … for the query-document form). The comparison operators were mapped in both — a small but real cross-file duplication.
