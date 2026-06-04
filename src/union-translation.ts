@@ -56,44 +56,16 @@ export type UnionPushCall = {
 /**
  * Recognise a `$$.push(...)` MethodCall — the union entry point. Returns
  * `null` for anything else, including method calls on `CollectionRef` that
- * use a method other than `push` (those surface a "wrong method" error
- * elsewhere — see `validateUnionPushShape`).
+ * use a method other than `push`. Those other methods (`.filter`, `.map`,
+ * `.slice`, … as well as unknown names) are handled by the bare-statement
+ * stream-chain branch in `pipeline.ts` (`applyStreamMethods`), which lowers
+ * the valid ones and emits an actionable registry error for the rest.
  */
 export function detectUnionPush(expr: Expr): UnionPushCall | null {
   if (expr.type !== "MethodCall") return null;
   if (expr.method !== "push") return null;
   if (expr.object.type !== "CollectionRef") return null;
   return { pos: expr.object.pos, callPos: expr.pos, args: expr.args };
-}
-
-/**
- * If `expr` looks like a `$$.<method>(...)` call but is malformed (wrong
- * method, wrong receiver shape after `$$`, etc.), throw the targeted error.
- * Mirrors `validateLookupShape` from lookup-translation.
- */
-export function validateUnionPushShape(expr: Expr): void {
-  if (expr.type !== "MethodCall") return;
-  if (expr.object.type !== "CollectionRef") return;
-  if (expr.method === "push") return;
-  if (expr.method === "filter") {
-    // `$$.filter(<predicate>)` is only valid as a value inside the facet
-    // pattern `$ = { key: $$.filter(p), ... }` or as the RHS of `$$ = …`.
-    // At a statement position, the user almost certainly meant
-    // `$match(<predicate>)` (the leaner form for narrowing the current stream).
-    throw new CodegenError(
-      `'$$.filter(<predicate>)' is only valid as the RHS of \`$$ = $$.filter(<predicate>)\` or as a value inside \`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` (the \`$facet\` pattern). For filtering the current stream as a stage, use \`$match(<predicate>)\` instead.`,
-      expr.pos,
-    );
-  }
-  // Any other method on `$$` — direct CollectionRef receiver.
-  throw new CodegenError(
-    `'$$' (current collection) only supports .push(...) and .filter(...) — .${expr.method}() is not defined. ` +
-      `Use \`$$.push({...})\` to append a single document, ` +
-      `\`$$.push(...$$$.<coll>)\` or \`$$.push(...$$$.<coll>.filter(pred))\` to union with another collection, ` +
-      `\`$$.push($$$.<coll>.find(pred))\` to append a single matching document, ` +
-      `or \`$ = { key: $$.filter(p), ... }\` to build a \`$facet\` stage.`,
-    expr.pos,
-  );
 }
 
 /**

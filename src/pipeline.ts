@@ -87,7 +87,7 @@ import {
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
-import { detectUnionPush, lowerUnionPush, validateUnionPushShape } from "./union-translation.ts";
+import { detectUnionPush, lowerUnionPush } from "./union-translation.ts";
 import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
 import { validateStageBody, validateMatchPlacement } from "./stage-validation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
@@ -783,15 +783,48 @@ function lowerChainOnStream(
   rhs: Expr,
 ): { stages: object[]; clearLets: boolean } {
   const stages: object[] = [];
+  const clearLets = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
+  return { stages, clearLets };
+}
+
+/**
+ * Apply a `$$`-rooted method chain onto `target`, appending each method's
+ * stages and using `target` itself as the `prevStages` view (and the
+ * `replacesPreviousStage` pop target).
+ *
+ * Shared by two callers that differ only in *which* buffer they pass:
+ *   - `lowerChainOnStream` (the `$$ = $$.<chain>` assignment form) passes a
+ *     fresh local array, so the chain composes only against itself.
+ *   - `lowerStatementTail` (the bare `$$.<chain>;` statement form) passes the
+ *     live pipeline `out`, so a stage-coupled method (`.toReversed`) flips the
+ *     `$sort` emitted just before it — whether that `$sort` came from an
+ *     earlier method in this chain OR an earlier *statement*. That's what makes
+ *     `$$.toSorted(c).toReversed();` and `$$.toSorted(c); $$.toReversed();`
+ *     lower identically.
+ *
+ * The first method may be `.filter(<lambda>)` → a `$match` stage (predicate
+ * translated in `ctx` so prior `let` bindings resolve). Any subsequent method,
+ * or a non-`.filter` first method, dispatches through the stream-method
+ * registry; unknown names throw an actionable error. Returns whether any
+ * method cleared the `let` scope (the caller applies `clearCtxLets`).
+ */
+function applyStreamMethods(
+  methods: MethodCallNode[],
+  target: object[],
+  ctx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+  rhs: Expr,
+): boolean {
   let clearLets = false;
   let i = 0;
   if (methods[0].method === "filter") {
     const m = methods[0];
     if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
-      rejectInvalidReplaceStream(rhs, outerCtx);
+      rejectInvalidReplaceStream(rhs, ctx);
     }
-    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, outerCtx, lowerBlockFn);
-    stages.push(...matchStages);
+    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, ctx, lowerBlockFn);
+    target.push(...matchStages);
     i = 1;
   }
   for (; i < methods.length; i++) {
@@ -801,12 +834,12 @@ function lowerChainOnStream(
       throw unknownStreamMethod(m, "$$");
     }
     def.validate(m.args, m.pos);
-    const result = def.lower(m.args, outerCtx, m.pos, lowerBlockFn, stages, allocSlot, false);
-    if (result.replacesPreviousStage) stages.pop();
-    stages.push(...result.stages);
+    const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
+    if (result.replacesPreviousStage) target.pop();
+    target.push(...result.stages);
     if (result.clearLets) clearLets = true;
   }
-  return { stages, clearLets };
+  return clearLets;
 }
 
 /**
@@ -1003,11 +1036,16 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
     );
   }
   const names = streamMethodNames();
-  const hint = didYouMean(m.method, ["filter", ...names], (s) => `.${s}`);
+  // The bare `$$` stream also accepts `.push(...)` as a statement-level method
+  // (→ `$unionWith`); it isn't a chain method, but naming it in the suggestion
+  // set catches `.pop` / `.shift` mix-ups that a JS dev reaches for.
+  const isStream = receiver === "$$";
+  const hint = didYouMean(m.method, isStream ? ["filter", "push", ...names] : ["filter", ...names], (s) => `.${s}`);
   const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
+  const pushNote = isStream ? ` ('.push(...)' appends documents as a statement → $unionWith.)` : "";
   return new CodegenError(
     `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} ` +
-      `The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.`,
+      `The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.${pushNote}`,
     m.pos,
   );
 }
@@ -1612,7 +1650,28 @@ function lowerStatementTail(
       out.push(lowerSystemStageStmt(sys, ctx));
       return ctx;
     }
-    validateUnionPushShape(el as Expr);
+    // Bare-statement stream chain: `$$.filter(p).map(f);` (no `$$ =` head),
+    // sugar for `$$ = $$.<chain>;`. Lowered against the live `out` so that a
+    // stage-coupled method composes with earlier statements — guaranteeing
+    // `$$.toSorted(c); $$.toReversed();` ≡ `$$.toSorted(c).toReversed();`.
+    // `$$.push(...)` / `$$.indexStats()` are handled above; any other method on
+    // a bare `$$` (valid stream method, or an unknown one → actionable error
+    // from `applyStreamMethods`) flows through here. This supersedes the old
+    // `validateUnionPushShape` statement-position hook: every `$$.<method>(...)`
+    // is a CollectionRef-rooted chain, so it's caught here before reaching the
+    // generic stage path.
+    const streamChain = collectStreamChain(el as Expr);
+    if (streamChain.root.type === "CollectionRef" && streamChain.methods.length > 0) {
+      const clearLets = applyStreamMethods(
+        streamChain.methods,
+        out as object[],
+        ctx,
+        lowerBlockFn,
+        allocSlot,
+        el as Expr,
+      );
+      return clearLets ? clearCtxLets(ctx, "$unionWith") : ctx;
+    }
   }
   const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);
   const shape = asStageShape(rewrittenEl);

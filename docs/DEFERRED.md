@@ -45,18 +45,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only — blocked by DEF-013
 - **Effort.** S once DEF-013 lands.
 
-### DEF-003 — Bare-statement `$$.<chain>;` (no `$$ =` head)
-
-- **What's blocked.** A statement like `$$.filter(d => d.active);` (no LHS) at top level. Currently rejected as "not a recognised stage".
-- **Target lowering.** Probably identical to `$$ = $$.filter(d => d.active);` — but the explicit form is the documented convention and we've held the bare form back to keep the surface narrow.
-- **Why blocked.** Design choice, not technical. The explicit assignment form is more readable and matches the `$$$.coll = $$;` $out convention.
-- **Attempted approaches.** None.
-- **Success criteria.** TBD — first decide whether we want this at all. May stay decided-against.
-- **Rejection site(s).** Generic "not a recognised stage" error from the pipeline lowerer.
-- **Spec.** `docs/specs/stream-methods.md` "Out of scope" bullet 1.
-- **Status.** design-only (may be promoted to "won't implement")
-- **Effort.** S
-
 ### DEF-004 — `$$$.coll.concat(arrow)` → `$unionWith`
 
 - **What's blocked.** `$$ = $$.concat($$$.archive.filter(d => d.archived));` works (`.concat` is registered). The bare statement form `$$$.archive.concat(d => …);` doesn't.

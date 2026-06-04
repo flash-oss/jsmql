@@ -122,7 +122,7 @@ Spread entries (`...rest`) and computed keys are also rejected in strict mode.
 
 **Parser tweak.** Block-body lambdas (`o => { stmts; }`) inside method calls were previously allowed only when the receiver chain was rooted at `$$$` / `$$$$` (lookup). The new facet form needs block bodies for `$$.filter(...)` too, so the gate in `parsePostfix` now also allows `left.type === "CollectionRef"` for `.filter`. No new tokens or AST nodes — block-body parsing was already implemented, just gated by receiver shape.
 
-**Statement-position `$$.filter(...)`.** `validateUnionPushShape` (now misleadingly named, kept for stability) emits a targeted error when a user writes `$$.filter(...)` at a statement position rather than inside the facet object: it suggests `$match(<predicate>)` for stream-level filtering or the `$ = { ... }` shape for facets. The bare-`$$` codegen message in `codegen.ts` was updated in parallel to mention both `.push` and `.filter`.
+**Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is no longer an error — it lowers to `$match` as stream-chain sugar for `$$ = $$.filter(...)` (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains)). The `$ = { key: $$.filter(p), … }` object form is still what triggers `$facet`; the difference is the assignment target (`$ =` vs a bare statement). The old `validateUnionPushShape` statement-position hook that rejected bare `$$.filter(...)` was removed once the bare form became valid.
 
 ## Detection
 
@@ -231,11 +231,11 @@ src/
                            from lookup-translation and translateMatchBody from
                            match-translation. Treats any non-empty letVars as
                            a "use lambda param instead of $.<field>" error.
-  union-translation.ts     Updated. validateUnionPushShape recognises a
-                           statement-position $$.filter call and emits a
-                           "use $match or move into facet" hint; other
-                           wrong-method calls mention both .push and .filter
-                           as supported.
+  union-translation.ts     `validateUnionPushShape` was later removed when the
+                           bare-statement `$$.<chain>;` form shipped — a
+                           statement-position `$$.filter(...)` now lowers to
+                           `$match` instead of erroring, and other wrong-method
+                           calls surface the stream-method registry error.
 ```
 
 ## Deferred

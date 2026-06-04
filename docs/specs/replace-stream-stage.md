@@ -18,6 +18,10 @@ pipeline-mode-required gate.
 See [`docs/LANGUAGE.md#replace-stream`](../LANGUAGE.md#replace-stream)
 for the user-facing reference.
 
+A `$$.<chain>;` bare statement (no `$$ =` head) is statement sugar for
+`$$ = $$.<chain>;` and lowers identically — see
+[stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
+
 ## Lowering table
 
 | Input | Output stage(s) |
@@ -155,10 +159,10 @@ src/
   codegen.ts       Updated. The bare-`$$` CollectionRef rejection message now
                    mentions '$$ = <expr>' alongside '.push(...)' and the facet
                    pattern, for DX consistency with the new surface.
-  union-translation.ts  Updated. validateUnionPushShape's statement-position
-                   '$$.filter(...)' message now mentions '$$ = $$.filter(p)'
-                   as a valid form alongside the facet pattern; the primary
-                   suggestion ($match) is unchanged.
+  union-translation.ts  `validateUnionPushShape` was later removed when the
+                   bare-statement `$$.<chain>;` form shipped: a statement-position
+                   '$$.filter(...)' now lowers to '$match' (sugar for
+                   '$$ = $$.filter(p)') rather than emitting a suggestion.
   match-translation.ts  No change. translateMatchBody reused as-is.
   lookup-translation.ts No change. extractLookupTarget, extractLetsFromExpr,
                    extractLetsFromPipeline reused as-is (already exported).

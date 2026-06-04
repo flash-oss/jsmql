@@ -23,13 +23,16 @@ the receiver.
 
 ## Where the chain walker runs
 
-Two contexts share the same registry. Both currently live in
-`lowerReplaceStream` in [src/pipeline.ts](../../src/pipeline.ts):
+Three contexts share the same registry. The per-method loop is the single
+helper `applyStreamMethods` in [src/pipeline.ts](../../src/pipeline.ts); the
+first two contexts reach it through `lowerChainOnStream` / `lowerReplaceStream`,
+the third through `lowerStatementTail`:
 
 | Context | Chain head | Lowering site |
 |---|---|---|
 | **`$$ = $$.<chain>;`** | Bare `$$` (or `$$.filter(<pred>)` as the first method) | Each registry method appends one or more stages to the outer pipeline. |
 | **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>` (or with `.filter(<pred>)` as the first method) | Each registry method appends stages inside the `$unionWith.pipeline` body of the emitted `$limit: 0` + `$unionWith` pair. |
+| **`$$.<chain>;`** (bare statement, no `$$ =` head) | Bare `$$` | Statement sugar for `$$ = $$.<chain>;` — see [§ Bare-statement stream chains](#bare-statement-stream-chains) below. |
 
 The first method of a chain may be `.filter(<lambda>)` — handled by the
 pre-existing `lowerStreamFilterPredicate` (translates the predicate through
@@ -77,7 +80,7 @@ export type StreamMethodResult = {
 | `.concat(...others)` | 1+ args matching the `$$.push(...)` shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, `$$$.<coll>.find(p)`) | `lowerUnionPush` (shared with `$$.push`) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents`-form stage |
 | `.map(d => <expr>)` | One single-param expression-body arrow; `$.<field>` rejected ("use the lambda param") and `$$.push(...)` in body rejected. Embedded `$$$.<coll>.find/filter(...)` lookups are supported in both stream contexts | `extractLetsFromExpr` (rewrites `d.<path>` → bare field paths) + `extractLookupCalls` (materialises embedded lookups into `__jsmql.__lookup<N>` slots) + `generateWithCtx` | Prologue stages from `extractLookupCalls` (zero or more `$lookup` + `$set`-with-`$first` pairs) followed by one `{ $replaceWith: <expr> }`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` — the inner `$lookup` correlates against the sub-pipeline's local doc (the foreign collection), not any outer-pipeline `let` binding, so let-coordination across the nesting doesn't apply. Clears the let scope (reshape stage) |
 | `.toSorted((a, b) => <cmp>)` | Two-param expression-body arrow; body built from `a.<path> - b.<path>` / `b.<path> - a.<path>` terms combined with `\|\|` | `parseComparatorBody` walks the expression, classifies each subtraction's paths, emits a `$sort` spec | One `{ $sort: { … } }` stage; key order preserved from source for compound sorts |
-| `.toReversed()` | Zero args; must immediately follow a `.toSorted(...)` (or any preceding stage whose `$sort` has 1/-1 directions) in the same chain | Reads `prevStages`, flips every direction (1 ↔ -1), returns `replacesPreviousStage: true` so the caller drops the old `$sort` | One `{ $sort: { … } }` stage replacing the previous one — net stage count unchanged vs. writing `.toSorted` descending directly |
+| `.toReversed()` | Zero args; the immediately preceding stage must be a `$sort` with 1/-1 directions. In the `$$ = …` forms that means a `.toSorted(...)` earlier in the same chain; in the bare-statement form the preceding `$sort` may also come from a prior statement or a literal `$sort(...)` stage (the chain lowers against the live pipeline) | Reads `prevStages` (the chain's working buffer — the live pipeline for the bare form), flips every direction (1 ↔ -1), returns `replacesPreviousStage: true` so the caller drops the old `$sort` | One `{ $sort: { … } }` stage replacing the previous one — net stage count unchanged vs. writing `.toSorted` descending directly |
 | `.flatMap(d => d.<path>)` | Single-param arrow whose expression body is a bare field-path on the param (v1) | `paramFieldPath` resolves the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
 
 Future methods (per the planning notes) extend this table — see
@@ -291,11 +294,56 @@ at the preceding `$sort` to flip its spec) receive `prevStages: readonly object[
 return `replacesPreviousStage: true` to have the caller drop the previous stage
 before appending their own.
 
+## Bare-statement stream chains
+
+A `$$`-rooted chain may be written as a bare statement, with no `$$ =` head:
+
+```js
+$$.filter(o => o.tier === "gold");
+$$.map(d => ({ id: d._id }));
+$$.toSorted((a, b) => a.age - b.age).toReversed();
+```
+
+This is sugar for the explicit `$$ = $$.<chain>;` form and lowers identically.
+The detection lives in `lowerStatementTail` ([src/pipeline.ts](../../src/pipeline.ts)):
+after the `$$.push(...)` / diagnostic-source-stage checks, a `collectStreamChain`
+rooted at a bare `$$` (`CollectionRef`) with at least one method is handed to
+the shared `applyStreamMethods` engine. Because `push` / `indexStats` are not
+registered stream methods, they keep their existing meaning and never reach this
+branch. Scope is the bare `$$` receiver only — `$$$.<coll>.<chain>;` as a bare
+statement is still out of scope (see [DEF-004](../DEFERRED.md) for the
+`.concat` slice of it).
+
+**The composition guarantee.** Splitting a chain across statements produces the
+same MQL as chaining it, which in turn matches the assignment form:
+
+```js
+$$.filter(p).map(f);        // ≡
+$$.filter(p); $$.map(f);    // ≡
+$$ = $$.filter(p).map(f);
+```
+
+This holds for *every* method — including the one stage-coupled method,
+`.toReversed()` — because the bare form passes the **live pipeline `out`** as
+`applyStreamMethods`' working buffer, not a throwaway local array. So
+`$$.toSorted(c); $$.toReversed();` finds the `$sort` emitted by the previous
+statement and flips it, exactly as `$$.toSorted(c).toReversed();` does. (A bare
+`$$.toReversed();` will likewise invert a preceding literal `$sort(...)` stage.)
+
+**One documented asymmetry.** The cross-statement `.toReversed()` capability is
+unique to the bare form. The assignment equivalent
+`$$ = $$.toSorted(c); $$ = $$.toReversed();` still errors, because each `$$ = …`
+chain lowers against its own local buffer (which is empty for the second
+statement). When both forms succeed they emit identical MQL; only the bare form
+reaches across statements. The bare form is the recommended concise spelling.
+
+**JS-faithfulness note.** In plain JS `arr.filter(...)` as a statement discards
+its result. The bare form gives it "transform the running stream" meaning —
+syntactically valid JS (different runtime meaning is allowed; only syntax
+errors are not) and consistent with the existing `$$.push(...)` statement sugar.
+
 ## Out of scope (v1)
 
-- **Statement-level chain head as a bare statement.** Inputs still require
-  the explicit `$$ = $$.<chain>;` form; a bare `$$.<chain>;` top-level
-  statement is rejected as "not a recognised stage" exactly as before.
 - **Lookup-body chain extension after `.find/.filter` on `$$$.<coll>` as
   an expression (not a `$$ = …` RHS).** The existing chained-terminal
   walker in [src/lookup-translation.ts](../../src/lookup-translation.ts) handles

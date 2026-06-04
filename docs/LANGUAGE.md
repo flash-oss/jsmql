@@ -2070,10 +2070,34 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
 | `.map(d => <expr>)` | Single-param expression-body arrow; the param is the current document (write `d.x`, not `$.x`). Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
 | `.toSorted((a, b) => <cmp>)` | Two-param arrow; comparator body built from `a.<field> - b.<field>` (asc), `b.<field> - a.<field>` (desc), combined with `\|\|` for compound sort | `$sort: { … }` — key order preserved from source. Zero-arg `.toSorted()` is rejected (MongoDB streams have no natural document ordering) |
-| `.toReversed()` | Zero args; must immediately follow `.toSorted(...)` in the same chain | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding `.toSorted` the call is rejected with a "needs a sort key" hint |
+| `.toReversed()` | Zero args; the preceding stage must be a `$sort` — a `.toSorted(...)` earlier in the chain, or (in the [bare-statement form](#bare-statement-stream-operations)) a prior statement / literal `$sort(...)` | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding sort the call is rejected with a "needs a preceding $sort" hint |
 | `.flatMap(d => d.<path>)` | Single-param arrow whose body is a bare field-path on the param (v1) | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+
+#### Bare-statement stream operations
+
+When the receiver is the bare `$$` stream, you can drop the `$$ =` head entirely and write the chain as a plain statement. It reads like ordinary JS array work and lowers identically to the assignment form:
+
+```js
+jsmql(`
+  $$.filter(o => o.tier === "gold");
+  $$.map(d => ({ id: d._id, name: d.name }));
+`)
+// → [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id", name: "$name" } }]
+```
+
+Every stream method works this way (`.filter`, `.map`, `.slice`, `.concat`, `.toSorted`, `.toReversed`, `.flatMap`). Chaining and splitting are interchangeable — these three forms all produce the same MQL:
+
+```js
+$$.filter(p).map(f);        // chained
+$$.filter(p); $$.map(f);    // split across statements
+$$ = $$.filter(p).map(f);   // explicit assignment
+```
+
+This holds even for `.toReversed()`, which flips a preceding `$sort`: in the bare form the sort can come from an earlier statement, so `$$.toSorted((a, b) => a.age - b.age); $$.toReversed();` flips the sort from the previous line just as the chained `$$.toSorted(...).toReversed();` does.
+
+> **Note.** In plain JS, `arr.filter(...)` as a bare statement throws the result away. In a jsmql pipeline a bare `$$.filter(...)` statement *transforms the running stream* — each statement is a stage. (Same spirit as `$$.push(...)`.) The bare `$$` receiver is required; for source-switches keep the explicit `$$ = $$$.<coll>.<chain>;` head.
 
 **`.reduce` is not a chain method either** — what a reducer returns in JS decides how it's assigned. A reducer that returns a **scalar or object** (one value) must be **wrapped** into a stream-shaped RHS; a reducer that returns an **array** is already a stream and is assigned directly (see the array-returning form below). The two scalar/object wraps both lower to the same `$group` + `$replaceWith` pair — pick whichever reads best at the call site:
 

@@ -381,11 +381,11 @@ describe(".toReversed() — flips the preceding $sort", () => {
   });
 
   it("without a preceding .toSorted is rejected", () => {
-    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/needs a preceding \.toSorted/);
+    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/needs a preceding \$sort/);
   });
 
   it("after a non-$sort stage (e.g. .slice) is rejected", () => {
-    expect(() => jsmql("$$ = $$.slice(0, 10).toReversed();")).toThrow(/needs a preceding \.toSorted/);
+    expect(() => jsmql("$$ = $$.slice(0, 10).toReversed();")).toThrow(/needs a preceding \$sort/);
   });
 
   it("rejects positional args", () => {
@@ -825,5 +825,75 @@ describe("unknown chain method on $$ → registry error with hint", () => {
 
   it("unknown method after a valid .filter still surfaces the registry list", () => {
     expect(() => jsmql("$$ = $$.filter(o => o.active).bogus();")).toThrow(/is not a chainable stream method on '\$\$'/);
+  });
+});
+
+describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<chain>`", () => {
+  // Each registered array→array method works as a standalone statement,
+  // lowering identically to the explicit-assignment form.
+  it(".filter → $match", () => {
+    expect(jsmql("$$.filter(o => o.tier === 'gold');")).toEqual([{ $match: { tier: "gold" } }]);
+  });
+
+  it(".map → $replaceWith", () => {
+    expect(jsmql("$$.map(d => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
+  });
+
+  it(".slice → $skip + $limit", () => {
+    expect(jsmql("$$.slice(2, 5);")).toEqual([{ $skip: 2 }, { $limit: 3 }]);
+  });
+
+  it(".concat → $unionWith", () => {
+    expect(jsmql("$$.concat(...$$$.archive);")).toEqual([{ $unionWith: "archive" }]);
+  });
+
+  it(".toSorted → $sort", () => {
+    expect(jsmql("$$.toSorted((a, b) => a.age - b.age);")).toEqual([{ $sort: { age: 1 } }]);
+  });
+
+  it(".flatMap → $unwind", () => {
+    expect(jsmql("$$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }]);
+  });
+
+  it("chained .filter(p).map(f) → $match + $replaceWith", () => {
+    expect(jsmql("$$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));")).toEqual([
+      { $match: { tier: "gold" } },
+      { $replaceWith: { id: "$_id" } },
+    ]);
+  });
+
+  // The core equivalence the feature promises: chained ≡ split ≡ assignment.
+  it("filter().map(): chained ≡ split ≡ assignment", () => {
+    const chained = jsmql("$$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));");
+    const split = jsmql("$$.filter(o => o.tier === 'gold'); $$.map(d => ({ id: d._id }));");
+    const assigned = jsmql("$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));");
+    const expected = [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }];
+    expect(chained).toEqual(expected);
+    expect(split).toEqual(expected);
+    expect(assigned).toEqual(expected);
+  });
+
+  // The crux: .toReversed() composes against the live pipeline, so splitting
+  // it from its .toSorted() into a separate statement still flips the $sort.
+  it("toSorted().toReversed(): chained ≡ split (cross-statement) ≡ assignment", () => {
+    const chained = jsmql("$$.toSorted((a, b) => a.age - b.age).toReversed();");
+    const split = jsmql("$$.toSorted((a, b) => a.age - b.age); $$.toReversed();");
+    const assigned = jsmql("$$ = $$.toSorted((a, b) => a.age - b.age).toReversed();");
+    const expected = [{ $sort: { age: -1 } }];
+    expect(chained).toEqual(expected);
+    expect(split).toEqual(expected);
+    expect(assigned).toEqual(expected);
+  });
+
+  it("bare .toReversed() inverts a preceding literal $sort stage", () => {
+    expect(jsmql("$sort({ age: 1 }); $$.toReversed();")).toEqual([{ $sort: { age: -1 } }]);
+  });
+
+  it("bare .toReversed() with no preceding sort is rejected with the new wording", () => {
+    expect(() => jsmql("$$.toReversed();")).toThrow(/needs a preceding \$sort/);
+  });
+
+  it("unknown bare chain method surfaces the registry hint", () => {
+    expect(() => jsmql("$$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);
   });
 });

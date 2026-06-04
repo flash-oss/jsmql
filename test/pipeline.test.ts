@@ -425,10 +425,10 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), a: $$.filter(o => o.y > 0) };`)).toThrow(/duplicate key 'a'/);
   });
 
-  it("statement-position `$$.filter(...)` (not in facet) suggests `$match` or facet shape", () => {
-    expect(() => jsmql(`$$.filter(o => o.x > 0);`)).toThrow(
-      /'\$\$\.filter\(<predicate>\)' is only valid as the RHS of `\$\$ = \$\$\.filter\(<predicate>\)` or as a value inside.*`\$match\(<predicate>\)` instead/,
-    );
+  it("statement-position `$$.filter(...)` (not in facet) lowers to `$match` — bare-statement stream sugar", () => {
+    // Bare `$$.filter(...)` is sugar for `$$ = $$.filter(...)` (ships DEF-003),
+    // so a statement-position filter now narrows the stream rather than erroring.
+    expect(jsmql(`$$.filter(o => o.x > 0);`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
   });
 
   it("$facet is reshape-clearing: prior lets can't be read after", () => {

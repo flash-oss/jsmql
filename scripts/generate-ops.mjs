@@ -33,6 +33,7 @@ import yaml from "js-yaml";
 
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
+import { streamMethodNames } from "../src/stream-methods.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -104,6 +105,61 @@ const CONTEXT_REFS = {
       "(`$$$$.db.coll.find/filter(...)` → `$lookup`) and writes (`$$$$.db.coll = ...`).",
   },
 };
+
+// `$$.<method>(...)` completions beyond the diagnostic source stages: the
+// chainable / statement-level stream vocabulary on the current collection.
+// Names that come from `STREAM_METHODS` (src/stream-methods.ts) are asserted
+// against `streamMethodNames()` below so the registry stays the source of truth
+// — a new stream method without a signature here is a build-time error.
+// `.filter` (special-cased chain head) and `.push` (statement-level `$unionWith`)
+// aren't in that registry, so they're listed explicitly. Only the collection
+// ref (`$$`) gets these — `$$$` / `$$$$` reach the same methods via member
+// access on their permissive `[key: string]: any` tail.
+//
+// Name of the ambient interface the `$$` collection ref is typed as. Stream
+// methods return it (not `any`) so chains keep their completion AND their
+// callback params stay contextually typed — `$$.filter(d => …).map(d => …)`
+// would otherwise trip `noImplicitAny` on the second lambda once the first call
+// collapsed to `any`.
+const COLLECTION_REF_TYPE = "JsmqlCollectionRef";
+
+// Each stream method's JSDoc + parameter list. The return type is appended by
+// `streamMethodMembers` (always the chainable ref) — kept out of the table so
+// the chaining contract lives in one place.
+const STREAM_METHOD_SIGNATURES = {
+  filter: {
+    doc: "Narrow the stream → `$match`. Sugar for `$$ = $$.filter(p)`.",
+    params: "(predicate: (doc: any) => any)",
+  },
+  map: { doc: "Reshape each document → `$replaceWith`.", params: "(transform: (doc: any) => any)" },
+  slice: { doc: "Take a window of the stream → `$skip` / `$limit`.", params: "(start: number, end?: number)" },
+  concat: { doc: "Append documents / union collections → `$unionWith`.", params: "(...sources: any[])" },
+  toSorted: { doc: "Sort the stream → `$sort`.", params: "(compare: (a: any, b: any) => number)" },
+  toReversed: { doc: "Reverse the preceding sort — flips the preceding `$sort`.", params: "()" },
+  flatMap: { doc: "Unwind an array field → `$unwind`.", params: "(transform: (doc: any) => any)" },
+  push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
+};
+
+// Emission order for the `$$` stream methods (registry order, then the two
+// non-registry entries). Asserts every registered stream method has a signature.
+function streamMethodMembers() {
+  const registry = streamMethodNames();
+  const missing = registry.filter((n) => STREAM_METHOD_SIGNATURES[n] === undefined);
+  if (missing.length > 0) {
+    throw new Error(
+      `generate-ops: stream method(s) ${missing.join(", ")} are in the STREAM_METHODS registry ` +
+        `but have no signature in STREAM_METHOD_SIGNATURES. Add one so '$$.<method>()' gets completion.`,
+    );
+  }
+  const order = [...registry, "filter", "push"];
+  const members = [];
+  for (const name of order) {
+    const { doc, params } = STREAM_METHOD_SIGNATURES[name];
+    members.push(`/** ${doc} */`);
+    members.push(`${name}${params}: ${COLLECTION_REF_TYPE};`);
+  }
+  return members;
+}
 
 // ---------------------------------------------------------------------------
 // Spec loading. Mirrors the strategy in test/operator-spec-coverage.test.ts:
@@ -363,10 +419,24 @@ function contextRefBlock(spec) {
       members.push(jsdocFor(stageName, spec.stage.get(stageName), def));
       members.push(sig);
     }
+    // The collection ref also carries the stream vocabulary (`$$.filter(...)`,
+    // `$$.map(...)`, …) as typed members so they get completion; the other scopes
+    // reach their methods via member access on the permissive tail.
+    if (scope === "collection") {
+      members.push(...streamMethodMembers());
+    }
     // The permissive tail — keeps every non-diagnostic ref form type-checking.
     members.push("[key: string]: any;");
     const refJsdoc = `/**\n * ${ref.doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
-    blocks.push(`${refJsdoc}\nconst ${ref.name}: {\n${members.join("\n")}\n};`);
+    // The collection ref is emitted as a named interface so its stream methods
+    // can return it (chaining). The other two refs stay inline anonymous types.
+    if (scope === "collection") {
+      blocks.push(
+        `interface ${COLLECTION_REF_TYPE} {\n${members.join("\n")}\n}\n${refJsdoc}\nconst ${ref.name}: ${COLLECTION_REF_TYPE};`,
+      );
+    } else {
+      blocks.push(`${refJsdoc}\nconst ${ref.name}: {\n${members.join("\n")}\n};`);
+    }
   }
   return blocks.join("\n");
 }

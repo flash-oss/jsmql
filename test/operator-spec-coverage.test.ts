@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import yaml from "js-yaml";
 import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.ts";
+import { streamMethodNames } from "../src/stream-methods.ts";
 import { generateOpsSource } from "../scripts/generate-ops.mjs";
 
 // ---------------------------------------------------------------------------
@@ -166,7 +167,10 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // type-check, and surface the collection-/cluster-scoped diagnostic stages
     // with completion. A future generator change must not silently drop them.
     const src = generateOpsSource();
-    expect(src).toContain("const $$: {");
+    // `$$` is emitted as a named interface (so its stream methods can return it
+    // for chaining); `$$$` / `$$$$` stay inline anonymous types.
+    expect(src).toContain("interface JsmqlCollectionRef {");
+    expect(src).toContain("const $$: JsmqlCollectionRef;");
     expect(src).toContain("const $$$: {");
     expect(src).toContain("const $$$$: {");
     // Diagnostic methods derived from STAGES[…].diagnostic, with annotated args.
@@ -176,6 +180,26 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     expect(src).toContain("shardedDataDistribution(): any;");
     // Permissive tail keeps the non-diagnostic ref sugar type-checking.
     expect(src).toContain("[key: string]: any;");
+  });
+
+  it("declares the `$$.<method>(...)` stream vocabulary on the collection ref for completion", () => {
+    // Every registered stream method (plus the non-registry `.filter` / `.push`)
+    // surfaces as a typed `$$` member so arrow-form `$$.filter(...).map(...)`
+    // chains get IDE completion instead of falling through the `[key: string]`
+    // tail. The generator asserts registry coverage; this guards the output.
+    const src = generateOpsSource();
+    const block = src.slice(src.indexOf("interface JsmqlCollectionRef {"), src.indexOf("const $$$: {"));
+    // Stream methods return the ref interface (chaining) — not `any` — so
+    // `$$.filter(d => …).map(d => …)` keeps completion and contextual typing.
+    expect(block).toContain("filter(predicate: (doc: any) => any): JsmqlCollectionRef;");
+    expect(block).toContain("map(transform: (doc: any) => any): JsmqlCollectionRef;");
+    expect(block).toContain("slice(start: number, end?: number): JsmqlCollectionRef;");
+    expect(block).toContain("toReversed(): JsmqlCollectionRef;");
+    expect(block).toContain("push(...docs: any[]): JsmqlCollectionRef;");
+    // Registry is the source of truth: every STREAM_METHODS name must appear.
+    for (const name of streamMethodNames()) {
+      expect(block).toContain(`${name}(`);
+    }
   });
 
   it("object-shape registry entries use keys that exist in the spec", () => {

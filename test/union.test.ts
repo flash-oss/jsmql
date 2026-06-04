@@ -155,9 +155,9 @@ describe("$$.push — error cases", () => {
     expect(() => jsmql("$$.push()")).toThrow(/requires at least one argument/);
   });
 
-  it("wrong method on $$ → reject naming .push and .filter as the only supported methods", () => {
+  it("wrong method on $$ → stream-method registry error that still names .push", () => {
     expect(() => jsmql('$$.pop("x")')).toThrow(
-      /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) and \.filter\(\.\.\.\) — \.pop\(\) is not defined/,
+      /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.push\(\.\.\.\)' appends documents as a statement/,
     );
   });
 

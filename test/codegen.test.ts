@@ -4231,9 +4231,9 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
       expect(r.errors[0].message).toMatch(/statement-only and supports '\.push/);
       expect(r.errors[0].pos).toBe(0);
     });
-    it("wrong method on $$ surfaces a precise 'use .push / .filter' hint", () => {
+    it("wrong method on $$ surfaces the stream-method registry error, noting .push", () => {
       expect(() => jsmql("$$.pop({a:1})")).toThrow(
-        /'\$\$' \(current collection\) only supports \.push\(\.\.\.\) and \.filter\(\.\.\.\) — \.pop\(\) is not defined/,
+        /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.push\(\.\.\.\)' appends documents as a statement/,
       );
     });
   });

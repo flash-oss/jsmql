@@ -346,11 +346,15 @@ const TO_SORTED: StreamMethodDef = {
 
 // ── .toReversed() → flips the preceding $sort spec ────────────────────────────
 //
-// Zero-arg. Only valid immediately after `.toSorted(...)` in the same chain
-// — MongoDB streams of documents have no natural ordering, so reversing
-// requires a sort key. Lowering doesn't emit a new $sort stage: it rewrites
-// the preceding one with all directions flipped (1 → -1, -1 → 1), so the
-// total stage count stays equal to a hand-written descending `.toSorted`.
+// Zero-arg. Only valid when the immediately preceding stage is a `$sort` —
+// MongoDB streams of documents have no natural ordering, so reversing requires
+// a sort key. In the `$$ = $$.<chain>` form that preceding `$sort` comes from a
+// `.toSorted(...)` earlier in the same chain; in the bare-statement form
+// (`$$.toReversed();`) it can also come from a prior statement or a literal
+// `$sort(...)` stage, since the chain is lowered against the live pipeline.
+// Lowering doesn't emit a new $sort stage: it rewrites the preceding one with
+// all directions flipped (1 → -1, -1 → 1), so the total stage count stays equal
+// to a hand-written descending `.toSorted`.
 const TO_REVERSED: StreamMethodDef = {
   name: "toReversed",
   validate(args, callPos) {
@@ -363,7 +367,7 @@ const TO_REVERSED: StreamMethodDef = {
     const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
     if (sortSpec === undefined) {
       throw new CodegenError(
-        `.toReversed() needs a preceding .toSorted(...) in the same chain — MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or chain after a '.toSorted(...)' call to invert it.`,
+        `.toReversed() needs a preceding $sort (from a '.toSorted(...)' call or a '$sort' stage) to invert — MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or place '.toReversed()' after a sort.`,
         callPos,
       );
     }

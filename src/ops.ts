@@ -2164,12 +2164,7 @@ declare global {
   }): any;
 
   // ── Context references ($$, $$$, $$$$) ────────────────────────────────
-  /**
-   * jsmql current-collection context reference (`$$`, run on `db.coll.aggregate()`). Names a collection-scoped diagnostic source stage, or heads collection sugar (`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).
-   *
-   * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
-   */
-  const $$: {
+  interface JsmqlCollectionRef {
     /**
      * Returns statistics regarding a collection or view.
      *
@@ -2203,8 +2198,30 @@ declare global {
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/planCacheStats/
      */
     planCacheStats(): any;
+    /** Take a window of the stream → `$skip` / `$limit`. */
+    slice(start: number, end?: number): JsmqlCollectionRef;
+    /** Append documents / union collections → `$unionWith`. */
+    concat(...sources: any[]): JsmqlCollectionRef;
+    /** Reshape each document → `$replaceWith`. */
+    map(transform: (doc: any) => any): JsmqlCollectionRef;
+    /** Sort the stream → `$sort`. */
+    toSorted(compare: (a: any, b: any) => number): JsmqlCollectionRef;
+    /** Reverse the preceding sort — flips the preceding `$sort`. */
+    toReversed(): JsmqlCollectionRef;
+    /** Unwind an array field → `$unwind`. */
+    flatMap(transform: (doc: any) => any): JsmqlCollectionRef;
+    /** Narrow the stream → `$match`. Sugar for `$$ = $$.filter(p)`. */
+    filter(predicate: (doc: any) => any): JsmqlCollectionRef;
+    /** Append documents to the stream → `$unionWith`. */
+    push(...docs: any[]): JsmqlCollectionRef;
     [key: string]: any;
-  };
+  }
+  /**
+   * jsmql current-collection context reference (`$$`, run on `db.coll.aggregate()`). Names a collection-scoped diagnostic source stage, or heads collection sugar (`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).
+   *
+   * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
+   */
+  const $$: JsmqlCollectionRef;
   /**
    * jsmql current-database context reference (`$$$`, run on `db.aggregate()`). Heads cross-collection joins (`$$$.coll.find/filter(...)` → `$lookup`) and `$out` writes (`$$$.coll = ...`). Has no diagnostic source stages of its own — `$currentOp` & friends run on the admin database, reached via `$$$$`.
    *

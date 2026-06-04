@@ -630,9 +630,10 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     return generateImplicitPipeline(synthetic, ctx);
   }
   // Top-level `$$.<method>(...)` always lowers as a Pipeline statement.
-  // `$$.push(...)` emits `$unionWith` stages; any other method surfaces a
-  // precise "$$ only supports .push" error from the pipeline-level
-  // `validateUnionPushShape` hook. `isSystemStageCall` extends the same
+  // `$$.push(...)` emits `$unionWith` stages; the stream methods (`.filter`,
+  // `.map`, `.slice`, …) lower to their stages (sugar for `$$ = $$.<chain>`),
+  // and an unknown method surfaces a precise registry error. `isSystemStageCall`
+  // extends the same
   // auto-wrap to the diagnostic source-stage sugar on every ref level —
   // `$$.indexStats()`, `$$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`
   // — which `isCollectionMethodCall` (CollectionRef only) doesn't cover. In
@@ -975,11 +976,13 @@ function generateFilter(ast: Expr, ctx: GenerateCtx): object {
  * catch the "forgot the `;`" case before the silent `$expr` wrap fires.
  */
 /**
- * Top-level `$$.<method>(...)` is always a Pipeline statement (currently the
- * only supported method is `.push`, lowering to `$unionWith`). Detecting any
+ * Top-level `$$.<method>(...)` is always a Pipeline statement: `.push(...)`
+ * lowers to `$unionWith`, the stream methods (`.filter`, `.map`, `.slice`, …)
+ * lower to their stages as a bare-statement chain (sugar for `$$ = $$.<chain>`),
+ * and an unknown method surfaces an actionable registry error. Detecting any
  * method call on a `CollectionRef` receiver here lets the auto-wrap route the
- * input through Pipeline mode so the targeted "$$ only supports .push" error
- * surfaces from `validateUnionPushShape` instead of the generic CollectionRef
+ * input through Pipeline mode so the user doesn't have to add a trailing `;`,
+ * and sees the targeted stream error instead of the generic CollectionRef
  * "statement-only" codegen throw.
  */
 function isCollectionMethodCall(ast: Expr): boolean {

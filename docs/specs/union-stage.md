@@ -108,9 +108,10 @@ src/
                            statement-only constraint.
   index.ts                 Updated. Top-level `$$.<method>(...)` (any method)
                            auto-wraps as a single-statement Pipeline so the
-                           pipeline-level validators (validateUnionPushShape,
-                           the union lowerer) surface their precise errors
-                           instead of the generic CollectionRef one. Mode
+                           pipeline-level handlers (the union lowerer for
+                           `.push`, the bare-statement stream-chain branch for
+                           the rest) surface their precise errors instead of
+                           the generic CollectionRef one. Mode
                            gates (`jsmql.filter`, `jsmql.expr`, `jsmql.update`)
                            pre-reject lookup-bearing inputs via
                            `containsUnionPush` with apiName-specific messages.
@@ -124,7 +125,7 @@ argument, the inline doc, or the entire push call as appropriate).
 | Trigger | Message excerpt |
 |---|---|
 | `$$.foo`, `$$["x"]` (member / index access — no `.push`) | `'$$' (current collection) is statement-only and only supports '.push(...)'. Write $$.push({...}), $$.push(...$$$.<coll>[.filter(pred)]), or $$.push($$$.<coll>.find(pred)) as a top-level Pipeline statement…` |
-| `$$.pop(...)` (wrong method) | `'$$' (current collection) only supports .push(...) — .pop() is not defined. Use $$.push({...}) to append a single document, $$.push(...$$$.<coll>) or $$.push(...$$$.<coll>.filter(pred)) to union with another collection, or $$.push($$$.<coll>.find(pred)) to append a single matching document.` |
+| `$$.pop(...)` (wrong method) | Handled by the bare-statement stream-chain branch (`applyStreamMethods` → `unknownStreamMethod` in `pipeline.ts`), not the union code: `'.pop(...)' is not a chainable stream method on '$$'. … subsequent methods must come from the stream-method registry: .slice, .concat, .map, .toSorted, .toReversed, .flatMap. ('.push(...)' appends documents as a statement → $unionWith.)` |
 | `$.x = $$.push(...)` (RHS / value position) | `'$$' (current collection) is statement-only … '$$.push(...)' cannot appear on a RHS or inside another expression.` |
 | `$$.push()` (no args) | `$$.push() requires at least one argument — a document literal ({…}), a spread of $$$.<coll>[.filter(pred)], or $$$.<coll>.find(pred).` |
 | `$$.push($$$.coll.filter(p))` (forgot `...`) | `$$.push(...) was given $$$.<coll>.filter(pred) without ... — that would push the whole array as a single document. Use $$.push(...$$$.<coll>.filter(pred)) to append every matching document, or switch to .find(pred) if you meant the first match.` |
