@@ -210,6 +210,36 @@ describe("narrow the current stream (`$$ = $$.filter(...)`)", { features: ["Pipe
   });
 });
 
+describe("paginate + project a leaderboard via a bare stream chain", { features: ["Pipelines"] }, () => {
+  it(
+    "one `$$.filter(...).slice(...).map(...)` statement → $match + $skip + $limit + $replaceWith",
+    { kind: "pipeline", usage: "db.scores.aggregate(jsmql(...))" },
+    () => {
+      // The bare-statement stream chain (no `$$ =` head): each JS array method
+      // appends its stage to the running pipeline, so a single line that reads
+      // like ordinary array work lowers to four MQL stages.
+      //   .filter(p => …)   → $match    (narrow to this season's real scores)
+      //   .slice(40, 60)    → $skip + $limit  (page 3, 20 per page)
+      //   .map(p => ({…}))  → $replaceWith     (project a compact card)
+      // Splitting the chain across separate `$$.filter(...); $$.slice(...); …`
+      // statements — or writing it as `$$ = $$.filter(...)…` — produces the
+      // exact same MQL; the chained form is just the most concise spelling.
+      expect(
+        jsmql`
+$$.filter(p => p.season === "2026" && p.score > 0)
+  .slice(40, 60)
+  .map(p => ({ player: p.name, score: p.score, rank: p.rank }));
+      `,
+      ).toEqual([
+        { $match: { season: "2026", score: { $gt: 0 } } },
+        { $skip: 40 },
+        { $limit: 20 },
+        { $replaceWith: { player: "$name", score: "$score", rank: "$rank" } },
+      ]);
+    },
+  );
+});
+
 describe("lift the embedded profile to the top level (`$ = …`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // After a $match, replace each user doc with its `profile` sub-doc and then
