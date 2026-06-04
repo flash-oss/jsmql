@@ -42,6 +42,14 @@ describe("stage body validation — $sort", () => {
   it("rejects a direction that isn't 1 or -1", () => {
     expect(() => jsmql("[ $sort({ a: 2 }) ]")).toThrow(/direction for 'a' must be 1 .* or -1/);
   });
+  it("rejects a SQL-style string direction", () => {
+    expect(() => jsmql(`[ $sort({ createdAt: "desc" }) ]`)).toThrow(
+      /direction for 'createdAt' must be 1 .* or -1.* got 'desc'/,
+    );
+  });
+  it("rejects a boolean direction", () => {
+    expect(() => jsmql("[ $sort({ a: true }) ]")).toThrow(/direction for 'a' must be 1 .* or -1.* got true/);
+  });
   it("rejects more than 32 keys", () => {
     const keys = Array.from({ length: 33 }, (_, i) => `k${i}: 1`).join(", ");
     expect(() => jsmql(`[ $sort({ ${keys} }) ]`)).toThrow(/at most 32 keys/);

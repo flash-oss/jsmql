@@ -1937,3 +1937,91 @@ describe("invalid stage placement — validate() catches a misplaced $merge", { 
     expect(r.errors[0].message).toMatch(/must be the last stage/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pre-flight guard rails — `kind: "err"` examples. Each shows a frequent
+// developer mistake that jsmql rejects at compile time (the pipeline-validation
+// layer), so the playground can demonstrate the guard with a red error panel
+// instead of letting a broken query reach the server. Written in throwing-call
+// form so the test verifies the guard AND exposes an extractable `jsmql(...)`
+// call for the playground sync. See docs/specs/pipeline-validation.md.
+// ---------------------------------------------------------------------------
+
+describe("$group without _id is rejected at compile time", { features: ["Pipelines"] }, () => {
+  it(
+    "jsmql catches the missing grouping key before the server does",
+    { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // Beginner slip: forgetting that every $group needs an _id (use `_id: null`
+      // to aggregate the whole collection).
+      expect(() => jsmql(`$group({ total: $sum($.amount) });`)).toThrow(/'\$group' requires the '_id' field/);
+    },
+  );
+});
+
+describe("$unwind path must start with $", { features: ["Pipelines"] }, () => {
+  it(
+    "a bare field name is rejected — $unwind takes a field path",
+    { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // Easy to forget the `$`: $unwind wants a field PATH ("$items"), not a
+      // field name ("items").
+      expect(() => jsmql(`$unwind("items");`)).toThrow(/path must be a field path starting with '\$'/);
+    },
+  );
+});
+
+describe("$project cannot mix inclusion and exclusion", { features: ["Pipelines"] }, () => {
+  it(
+    "1-and-0 in the same $project is rejected (except _id)",
+    { kind: "err", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      // Classic mistake: trying to keep `name` and drop `internalNote` in one
+      // $project. MongoDB allows only all-include or all-exclude (besides _id).
+      expect(() => jsmql(`$project({ name: 1, internalNote: 0 });`)).toThrow(
+        /cannot mix field inclusion .* and exclusion/,
+      );
+    },
+  );
+});
+
+describe("$sort takes 1 or -1, not a SQL-style direction", { features: ["Pipelines"] }, () => {
+  it(`a string direction like "desc" is rejected`, { kind: "err", usage: "db.events.aggregate(jsmql(...))" }, () => {
+    // SQL habit: writing `"desc"` instead of `-1`. jsmql names the legal values.
+    expect(() => jsmql(`$sort({ createdAt: "desc" });`)).toThrow(
+      /direction for 'createdAt' must be 1 .* or -1.* got 'desc'/,
+    );
+  });
+});
+
+describe("$merge must be the last stage", { features: ["Pipelines"] }, () => {
+  it(
+    "sorting after writing the result is rejected at compile time",
+    { kind: "err", usage: "db.metrics.aggregate(jsmql(...))" },
+    () => {
+      // Materialised-view slip: roll up daily revenue, write it out, then "sort
+      // the result" — but nothing can run after $merge.
+      expect(() =>
+        jsmql(`
+$group({ _id: $.day, revenue: $sum($.total) });
+$merge({ into: "dailyRevenue" });
+$sort({ revenue: -1 });
+        `),
+      ).toThrow(/'\$merge' must be the last stage/);
+    },
+  );
+});
+
+describe("$near is not allowed inside an aggregation $match", { features: ["Pipelines"] }, () => {
+  it(
+    "the error points at the $geoNear stage to use instead",
+    { kind: "err", usage: "db.places.aggregate(jsmql(...))" },
+    () => {
+      // Query-language habit: `$near` works in `find()` but not in an
+      // aggregation `$match`. jsmql names the replacement stage.
+      expect(() => jsmql(`$match({ location: { $near: [-73.9, 40.7] } });`)).toThrow(
+        /'\$near' is not allowed inside an aggregation '\$match' — use the '\$geoNear' stage/,
+      );
+    },
+  );
+});

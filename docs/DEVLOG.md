@@ -20,6 +20,39 @@ Behaviour-preserving — a pure extraction; the two call sites collapsed sharply
 
 ---
 
+## 2026-06-04 — feat: playground `err` filter + `$sort` string/bool direction guard
+
+The playground gained a fourth legend filter — **`err`** (red, reusing the
+existing `--error: #c0392b`) — next to filter / pipeline / expression. It groups a
+small set of *intentionally broken* examples that showcase the pre-flight
+validation layer ([pipeline-validation.md](specs/pipeline-validation.md)): clicking
+one live-compiles the mistake and renders the actionable compile error in the
+existing red output panel, instead of letting a broken query reach the server. No
+new render logic was needed — the error path and red panel already existed; the
+filtering toggle is generic over `data-kind`, so the button is purely additive (the
+only JS touch was adding `"err"` to the input-panel class-reset list).
+
+Six examples were added to [realistic.test.ts](../test/realistic.test.ts) as
+`kind: "err"` describes, each a frequent developer slip spanning all three
+validation parts: `$group` without `_id`, `$unwind("items")` (path missing `$`),
+`$project({ name: 1, note: 0 })` (inclusion/exclusion mix), `$sort({ x: "desc" })`
+(SQL-style direction), `$sort` after `$merge` (must-be-last), and `$near` inside an
+aggregation `$match`. They're written in throwing-call form
+(`expect(() => jsmql(\`…\`)).toThrow(/…/)`) so each both verifies the guard and
+exposes an extractable `jsmql(...)` call for the playground sync.
+
+Shipping the `"desc"` example required closing a gap in `validateSort`
+([src/stage-validation.ts](../src/stage-validation.ts)): the validator gated only
+*numeric* literal directions, so `$sort({ createdAt: "desc" })` and
+`$sort({ x: true })` — both textbook SQL/JS habits the server rejects — slipped
+through and emitted invalid MQL. A literal string or boolean direction is now
+rejected with the same "must be 1 (ascending) or -1 (descending), but got …"
+message. Literal-gating still protects `{ $meta: "textScore" }`, field refs, and
+expressions (they aren't literals, so they pass the gate) — the "only 100%-certain
+violations throw" rule holds.
+
+---
+
 ## 2026-06-04 — refactor: accumulator-only gate derives from the operator registry
 
 Prefactoring, behaviour-preserving. Codegen's `checkOperatorContext` gated accumulator-only operators (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`) on a hand-maintained `ACCUMULATOR_ONLY_OPERATORS` set that *shadowed* the operator registry. Adding an accumulator operator silently required a second edit there; miss it and the new op would be wrongly accepted in arbitrary expression positions. That violates the project's "operator registry is the single source of truth" rule.
