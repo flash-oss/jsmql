@@ -1,5 +1,6 @@
 import { lookupOperator } from "./operators.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
   Expr,
@@ -11,6 +12,7 @@ import type {
   MathMethod,
   MathConstant,
   ObjectMethod,
+  NumberStaticMethod,
   TypeCastOp,
   AssignExpr,
   UpdateOp,
@@ -1131,49 +1133,77 @@ function asFieldPath(expr: Expr, ctx: GenerateCtx): string | null {
 
 // ── Binary expressions ────────────────────────────────────────────────────────
 
+/**
+ * Canonical JS-binary-operator → MQL-operator-name mapping — the single source
+ * of truth shared between codegen (which emits `{ $op: … }`) and
+ * `match-translation` (which uses the operator name as a query-document key, see
+ * its `orderedOpToMql`). Only operators with a *direct* single-operator lowering
+ * appear here; the ones with bespoke handling (`+` numeric-vs-string, `==`/`!=`
+ * null-only, `&&`/`||` JS-truthy, `in` membership) are not in the table.
+ *
+ * Two emission groups share it: DIRECT ops lower to `{ $op: [left, right] }`;
+ * CHAIN ops (associative) flatten to a flat N-ary array via `flattenChain`.
+ */
+const BINARY_OP_TO_MQL = {
+  "-": "$subtract",
+  "/": "$divide",
+  "%": "$mod",
+  "**": "$pow",
+  "===": "$eq",
+  "!==": "$ne",
+  ">": "$gt",
+  ">=": "$gte",
+  "<": "$lt",
+  "<=": "$lte",
+  "*": "$multiply",
+  "??": "$ifNull",
+  "&": "$bitAnd",
+  "|": "$bitOr",
+  "^": "$bitXor",
+} as const satisfies Partial<Record<BinaryOp, string>>;
+
+type DirectBinaryOp = "-" | "/" | "%" | "**" | "===" | "!==" | ">" | ">=" | "<" | "<=";
+type ChainBinaryOp = "*" | "??" | "&" | "|" | "^";
+
+/** The MQL operator name for a direct/chain binary op — the one accessor other
+ *  modules use (match-translation's query-document path), so `BINARY_OP_TO_MQL`
+ *  stays the single source of truth. */
+export function mqlForBinaryOp(op: DirectBinaryOp | ChainBinaryOp): string {
+  return BINARY_OP_TO_MQL[op];
+}
+
 function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: GenerateCtx, pos: number): unknown {
   switch (op) {
     case "+":
       return generateAdd(left, right, ctx);
-    case "-":
-      return { $subtract: [_generate(left, ctx), _generate(right, ctx)] };
-    case "*":
-      return { $multiply: flattenChain("*", left, right, ctx) };
-    case "/":
-      return { $divide: [_generate(left, ctx), _generate(right, ctx)] };
-    case "%":
-      return { $mod: [_generate(left, ctx), _generate(right, ctx)] };
-    case "**":
-      return { $pow: [_generate(left, ctx), _generate(right, ctx)] };
     case "==":
     case "!=":
       return generateLooseEquality(op, left, right, ctx, pos);
-    case "===":
-      return { $eq: [_generate(left, ctx), _generate(right, ctx)] };
-    case "!==":
-      return { $ne: [_generate(left, ctx), _generate(right, ctx)] };
-    case ">":
-      return { $gt: [_generate(left, ctx), _generate(right, ctx)] };
-    case ">=":
-      return { $gte: [_generate(left, ctx), _generate(right, ctx)] };
-    case "<":
-      return { $lt: [_generate(left, ctx), _generate(right, ctx)] };
-    case "<=":
-      return { $lte: [_generate(left, ctx), _generate(right, ctx)] };
     case "&&":
       return generateLogical("&&", left, right, ctx);
     case "||":
       return generateLogical("||", left, right, ctx);
-    case "??":
-      return { $ifNull: flattenChain("??", left, right, ctx) };
-    case "&":
-      return { $bitAnd: flattenChain("&", left, right, ctx) };
-    case "|":
-      return { $bitOr: flattenChain("|", left, right, ctx) };
-    case "^":
-      return { $bitXor: flattenChain("^", left, right, ctx) };
     case "in":
       return generateInExpr(left, right, ctx, pos);
+    // Direct binary operators → `{ $op: [left, right] }`.
+    case "-":
+    case "/":
+    case "%":
+    case "**":
+    case "===":
+    case "!==":
+    case ">":
+    case ">=":
+    case "<":
+    case "<=":
+      return { [BINARY_OP_TO_MQL[op]]: [_generate(left, ctx), _generate(right, ctx)] };
+    // Associative chain operators → flat N-ary array.
+    case "*":
+    case "??":
+    case "&":
+    case "|":
+    case "^":
+      return { [BINARY_OP_TO_MQL[op]]: flattenChain(op, left, right, ctx) };
   }
 }
 
@@ -3426,7 +3456,7 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
 
 // ── Number.* static predicates ────────────────────────────────────────────────
 
-function generateNumberStatic(method: "isInteger" | "isNaN" | "isFinite", arg: Expr, ctx: GenerateCtx): unknown {
+function generateNumberStatic(method: NumberStaticMethod, arg: Expr, ctx: GenerateCtx): unknown {
   const val = _generate(arg, ctx);
   const pos = arg.pos;
   switch (method) {
@@ -3514,9 +3544,8 @@ function generateSetMethodCall(
         pos,
       );
     default: {
-      const setMethods = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"];
-      const setHint = didYouMean(method, setMethods);
-      throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${setMethods.join(", ")}.`, pos);
+      const setHint = didYouMean(method, SET_METHODS);
+      throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${SET_METHODS.join(", ")}.`, pos);
     }
   }
 }

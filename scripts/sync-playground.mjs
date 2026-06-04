@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 /**
- * Sync `playground.html` so it is self-sufficient — distributable as a single
- * file with no sibling assets except the CodeMirror CDN.
+ * Generate `playground.html` from `playground_skeleton.html` so the result is
+ * self-sufficient — distributable as a single file with no sibling assets
+ * except the CodeMirror CDN.
  *
- * Two regions inside `playground.html` are regenerated in place:
+ * `playground_skeleton.html` is the hand-authored source for the entire
+ * playground UI (markup, CSS, behaviour). `playground.html` is a pure build
+ * artifact: the skeleton with two regions injected. Because this script reads
+ * the skeleton and only ever WRITES `playground.html`, changes to `src/` or
+ * `test/realistic.test.ts` (which feed only those two regions) can never
+ * overwrite UI work — UI development edits the skeleton, not the artifact.
+ *
+ * Two regions are injected (they sit empty between markers in the skeleton):
  *
  *   1. The jsmql library, bundled from `src/index.ts` via esbuild as an IIFE
  *      that exposes `globalThis.JSMQL`. Lives between the
@@ -52,6 +60,11 @@ import path from "node:path";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
 const ENTRY = path.join(ROOT, "src/index.ts");
+// The hand-authored UI source. Everything in `playground.html` except the two
+// injected regions lives here, so editing src/ or realistic.test.ts (which only
+// drive those two regions) can never clobber playground UI work. UI development
+// edits the skeleton; `playground.html` is a pure build artifact.
+const SKELETON = path.join(ROOT, "playground_skeleton.html");
 const HTML = path.join(ROOT, "playground.html");
 
 // ── Vitest loader registration ────────────────────────────────────────────────
@@ -471,7 +484,7 @@ const itCount = describes.reduce((sum, d) => sum + d.its.length, 0);
 
 const bundleSrc = await bundleJsmql();
 
-let html = readFileSync(HTML, "utf8");
+let html = readFileSync(SKELETON, "utf8");
 html = replaceRegion(html, BUNDLE_START, BUNDLE_END, buildBundleRegion(bundleSrc));
 html = replaceRegion(html, EXAMPLES_START, EXAMPLES_END, buildExamplesRegion(describes));
 
@@ -479,7 +492,7 @@ let existing = null;
 try {
   existing = readFileSync(HTML, "utf8");
 } catch {
-  // First run — `existing` stays null.
+  // First run — `playground.html` doesn't exist yet; `existing` stays null.
 }
 
 if (existing === html) {

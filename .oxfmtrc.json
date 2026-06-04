@@ -2,5 +2,12 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "printWidth": 120,
   "objectWrap": "collapse",
-  "ignorePatterns": ["**/*.md", "dist/**", "package.json", "package-lock.json", "playground.html"]
+  "ignorePatterns": [
+    "**/*.md",
+    "dist/**",
+    "package.json",
+    "package-lock.json",
+    "playground.html",
+    "playground_skeleton.html"
+  ]
 }

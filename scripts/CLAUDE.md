@@ -16,7 +16,11 @@ See [`docs/specs/ops-generation.md`](../docs/specs/ops-generation.md) for the ge
 
 ### `sync-playground.mjs`
 
-Regenerates the two managed regions inside `playground.html`: a minified esbuild IIFE bundle of `src/index.ts` (exposed as `globalThis.JSMQL`) and a JSON island of realistic examples extracted from `test/realistic.test.ts`. Output is the same self-sufficient file users can ship on its own — the only external dependency is the CodeMirror CDN. Runs as `prebuild`, so `npm run build` always produces a synced playground. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits the test file, staging the updated playground for the next commit. Outside Claude Code, run `npm run sync:playground` after editing src/ or the test file. Idempotent — exits 0 without writing if the file is already in sync.
+Generates `playground.html` from `playground_skeleton.html` by injecting two regions: a minified esbuild IIFE bundle of `src/index.ts` (exposed as `globalThis.JSMQL`) and a JSON island of realistic examples extracted from `test/realistic.test.ts`. Output is the same self-sufficient file users can ship on its own — the only external dependency is the CodeMirror CDN.
+
+`playground_skeleton.html` is the hand-authored UI source (markup, CSS, behaviour); the two regions sit empty between their markers there. `playground.html` is a **pure build artifact** — never hand-edit it; edit the skeleton and re-run the sync. Because the script reads the skeleton and only ever writes `playground.html`, changes to `src/` or `test/realistic.test.ts` (which feed only the two regions) can never clobber playground UI work. A `playground.html` merge conflict is therefore always resolvable by re-running the sync against the merged skeleton.
+
+Runs as `prebuild`, so `npm run build` always produces a synced playground. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`, staging the updated `playground.html` for the next commit. Outside Claude Code, run `npm run sync:playground` after editing the skeleton, `src/`, or the test file. Idempotent — exits 0 without writing if `playground.html` is already in sync.
 
 ### `build-cjs.mjs`
 
@@ -28,7 +32,7 @@ Auto-resolves `git merge` conflicts on `docs/DEVLOG.md`. Splits both sides on `-
 
 ### `hook-post-edit-realistic.sh`
 
-PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-playground.mjs` when Claude Code's Edit/Write tool touches `test/realistic.test.ts`. Keeps the example list in `playground.html` in sync within a single commit.
+PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-playground.mjs` when Claude Code's Edit/Write tool touches `test/realistic.test.ts` (the example source) or `playground_skeleton.html` (the playground UI source). Keeps the generated `playground.html` in sync within a single commit. (Despite the name, it dispatches on both files — kept for the stable settings.json reference.)
 
 ## Conventions
 
