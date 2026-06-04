@@ -32,6 +32,28 @@ export type StageDef = {
    * (`{ $indexStats: {} }`).
    */
   diagnostic?: { scope: "collection" | "database" | "cluster"; options: boolean };
+  /**
+   * Absolute positional constraint, knowable purely from pipeline shape:
+   *   "first" — must sit at index 0 of whatever pipeline it appears in. Set on
+   *             *source* stages that produce (not transform) documents and so
+   *             ignore any incoming stream. The 9 `diagnostic` stages are also
+   *             must-be-first — `stageMustBeFirst` derives that from
+   *             `diagnostic`, so they do NOT repeat `position` here.
+   *   "last"  — must be the final stage (a write / terminal stage).
+   * Enforced for the literal stage forms (`{ $merge: … }`) by pipeline.ts; the
+   * sugar forms (`$out` / `$$.indexStats()` / …) keep their own dedicated,
+   * sugar-aware messages. See docs/specs/pipeline-validation.md.
+   */
+  position?: "first" | "last";
+  /**
+   * Sub-pipeline containers this stage may not appear inside. The container
+   * kind is the stage that owns the sub-pipeline: "facet" (`$facet.*`),
+   * "lookup" (`$lookup.pipeline`), "unionWith" (`$unionWith.pipeline`).
+   * `$out`/`$merge` are forbidden in all three; the `$facet` forbidden-stage
+   * list (per the MongoDB `$facet` reference) bans source/search/write stages
+   * inside a facet sub-pipeline.
+   */
+  forbiddenIn?: readonly ("facet" | "lookup" | "unionWith")[];
 };
 
 export const STAGES: Record<string, StageDef> = {
@@ -54,16 +76,19 @@ export const STAGES: Record<string, StageDef> = {
     description:
       "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
     subPipelineFields: [],
+    position: "first",
   },
   $changeStreamSplitLargeEvent: {
     description:
       "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
     subPipelineFields: [],
+    position: "last",
   },
   $collStats: {
     description: "Returns statistics regarding a collection or view.",
     subPipelineFields: [],
     diagnostic: { scope: "collection", options: true },
+    forbiddenIn: ["facet"],
   },
   $count: {
     description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
@@ -80,18 +105,23 @@ export const STAGES: Record<string, StageDef> = {
     description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
     subPipelineFields: [],
   },
-  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [] },
+  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [], position: "first" },
   $facet: {
     description:
       "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
     // Every value in the body object is itself a sub-pipeline.
     subPipelineFields: ["*"],
+    // $facet cannot be nested inside another $facet.
+    forbiddenIn: ["facet"],
   },
   $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
   $geoNear: {
     description:
       "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
     subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"],
   },
   $graphLookup: {
     description:
@@ -107,6 +137,7 @@ export const STAGES: Record<string, StageDef> = {
     description: "Returns statistics regarding the use of each index for the collection.",
     subPipelineFields: [],
     diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"],
   },
   $limit: {
     description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
@@ -149,16 +180,21 @@ export const STAGES: Record<string, StageDef> = {
     description:
       "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"],
   },
   $out: {
     description:
       "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"],
   },
   $planCacheStats: {
     description: "Returns plan cache information for a collection.",
     subPipelineFields: [],
     diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"],
   },
   $project: {
     description:
@@ -192,11 +228,16 @@ export const STAGES: Record<string, StageDef> = {
   $search: {
     description: "Performs a full-text search of the field or fields in an Atlas collection.",
     subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"],
   },
   $searchMeta: {
     description:
       "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
     subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"],
   },
   $set: {
     description:
@@ -241,9 +282,33 @@ export const STAGES: Record<string, StageDef> = {
   $vectorSearch: {
     description: "Performs an ANN or ENN search on a vector in the specified field.",
     subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"],
   },
 };
 
 export function lookupStage(name: string): StageDef | undefined {
   return Object.prototype.hasOwnProperty.call(STAGES, name) ? STAGES[name] : undefined;
+}
+
+/**
+ * Must this stage sit at index 0 of its pipeline? True for the explicit
+ * `position: "first"` source stages AND for every diagnostic stage — a
+ * diagnostic produces its own document stream (index/collection stats, running
+ * ops, …) and ignores any input, so a non-first placement has no valid runtime
+ * context. Deriving the diagnostics here keeps the literal-form check in step
+ * with the sugar-form check (system-stage-translation.ts) off one source.
+ */
+export function stageMustBeFirst(def: StageDef): boolean {
+  return def.position === "first" || def.diagnostic !== undefined;
+}
+
+/** Must this stage be the final stage of its pipeline (a write / terminal stage)? */
+export function stageMustBeLast(def: StageDef): boolean {
+  return def.position === "last";
+}
+
+/** Is this stage forbidden inside the given sub-pipeline container kind? */
+export function stageForbiddenIn(def: StageDef, container: "facet" | "lookup" | "unionWith"): boolean {
+  return def.forbiddenIn?.includes(container) ?? false;
 }

@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 23. Decided-against: 6. As of 2026-06-01.
+**Counts.** Open: 24. Decided-against: 7. As of 2026-06-03.
 
 ---
 
@@ -297,6 +297,18 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M (ctx-threading through `lowerBlock` + tests)
 
+### DEF-024 — Forbidden-in-context inside sugar predicate block-bodies
+
+- **What's blocked.** A literal write/source stage (`{ $merge: … }`, `$out`, `$facet`, …) written inside a *sugar predicate block-body* lambda — `$$$.c.filter(o => { { $merge: 'm' }; })` (lookup) or `$ = { k: $$.filter(d => { … }) }` (facet) — gets must-first / must-last validation but NOT the forbidden-in-`$lookup`/`$facet`/`$unionWith` ban. Literal sub-pipeline arrays (`{ $lookup: { pipeline: [...] } }`) ARE fully covered via `generatePipelineWithCtx(container)`.
+- **Target lowering.** No MQL change. Thread the container kind into `generateImplicitPipeline` when it runs as a block-body lowerer (`lowerBlock`), so block-body sub-pipelines enforce `forbiddenIn`.
+- **Why blocked.** `lowerBlock` is the shared `SubPipelineLowerer`, used pervasively for predicate→`$match` translation (which produces top-level `$match` stages, not a sub-pipeline) as well as true sub-pipeline bodies. Binding a fixed container to it would mislabel the predicate-translation cases. A clean fix needs per-call-site container threading across `lookup-translation.ts` / `union-translation.ts` / `facet-translation.ts` — same class of change as DEF-023. Reachability of a literal write/source stage inside a predicate block-body is very low, and the gap never produces a false positive (at worst an imprecise must-last message or benign under-coverage).
+- **Attempted approaches.** Considered binding the container into a `lowerBlock` factory at each pipeline.ts call site; deferred because several sites (`lowerReplaceStream`, `lowerOut`, the chain lowerers) have no single unambiguous container and a wrong label is worse DX than the gap.
+- **Success criteria.** `$.x = $$$.c.filter(o => { { $merge: 'm' }; })` throws the forbidden-in-`$lookup` error with a meaningful `.pos`. Tests in `test/stage-validation.test.ts` / `test/pipeline.test.ts`.
+- **Rejection site(s).** `docs/specs/pipeline-validation.md` § Known gap (tagged). `src/pipeline.ts` `generateImplicitPipeline` `container` param (forward-compatible hook, defaults `"top"`).
+- **Spec.** `docs/specs/pipeline-validation.md` § Known gap.
+- **Status.** open
+- **Effort.** M (container threading through `lowerBlock` + tests)
+
 ---
 
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
@@ -322,6 +334,10 @@ JS `in` checks **property existence**; reusing it for array-membership would be 
 ### Bare foreign-param ref (`o` alone) in a `$lookup` predicate
 
 Not enough signal to choose between "all foreign docs" and "use foreign doc as key". User must write `o.<field>` or `o => true` explicitly. Rejected in `src/lookup-translation.ts:799-802`; tested in `test/lookup.test.ts:228-230`.
+
+### Compile-time validation of runtime-dependent pipeline constraints
+
+The pre-flight validator (`docs/specs/pipeline-validation.md`) throws only on violations that are 100% certain from the source. A whole class of server-enforced constraints depends on runtime state the compiler cannot know — sharding (`$out` to a sharded collection, `$unionWith`-in-`$lookup` on a sharded `coll`), transactions, view definitions, memory limits (`$group`/`$sort`/`$bucket` 100 MB without `allowDiskUse`, BSON 16 MB), collection type (`$out`→capped, `$merge`→time-series), read concern, and Atlas availability of `$search`/`$searchMeta`/`$vectorSearch`/`$listSearchIndexes`. jsmql emits the MQL unchanged for all of these and lets the server decide. Validating them at compile time would require modelling deployment/data state and would force throws on pipelines that are perfectly valid in another context — exactly the *probable*-not-*certain* throw rule #1 forbids. (Position rules that happen to involve an Atlas-only stage — e.g. `$search` must be first — still apply; only the availability check is skipped.)
 
 ### `$replaceRoot` verbose-form knob on `$ = …`
 
