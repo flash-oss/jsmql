@@ -113,6 +113,21 @@ describe("pipeline — stage-call form", () => {
     expect(jsmql("[$unwind($.items)]")).toEqual([{ $unwind: "$items" }]);
   });
 
+  it("$unwind with string-literal path is NOT wrapped in $literal", () => {
+    // $unwind's body is a field path, not an expression — the leading `$` is
+    // the path the user means, so it must pass through raw (no $literal wrap).
+    expect(jsmql('[$unwind("$items")]')).toEqual([{ $unwind: "$items" }]);
+  });
+
+  it("$unwind object body: path string is a raw field path", () => {
+    expect(jsmql('[$unwind({ path: "$items", preserveNullAndEmptyArrays: true })]')).toEqual([
+      { $unwind: { path: "$items", preserveNullAndEmptyArrays: true } },
+    ]);
+    expect(jsmql('[$unwind({ path: "$items", includeArrayIndex: "i" })]')).toEqual([
+      { $unwind: { path: "$items", includeArrayIndex: "i" } },
+    ]);
+  });
+
   it("$count with string arg", () => {
     expect(jsmql('[$count("totalDocs")]')).toEqual([{ $count: "totalDocs" }]);
   });

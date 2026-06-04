@@ -1172,6 +1172,17 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
     return mergeTranslatedQuery(t, ctx) ?? {};
   }
 
+  // $unwind: its body is field-path DATA, not an expression — a bare path
+  // string ("$items") or { path: "$items", includeArrayIndex, preserveNull... }.
+  // The leading `$` is the path the user wants, NOT a string to protect with
+  // $literal (that wrap is for expression contexts). validateUnwind already
+  // enforced the `$`-prefix, so emit the path raw via fieldPathString.
+  if (stageName === "$unwind") {
+    const pathCtx = { ...ctx, fieldPathString: true };
+    if (body.type === "ObjectLiteral") return generateBodyObject(body, stageName, pathCtx);
+    return generateWithCtx(body, pathCtx);
+  }
+
   // Other stages: if the body is an object literal, walk its entries so we
   // can spot sub-pipeline slots; otherwise generate directly.
   if (body.type === "ObjectLiteral") {

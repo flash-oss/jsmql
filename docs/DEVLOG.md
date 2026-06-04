@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — fix: `$unwind("$items")` no longer wrapped in `$literal`
+
+`$unwind("$items")` compiled to `{ $unwind: { $literal: "$items" } }` — invalid MQL — and the object form `$unwind({ path: "$items" })` to `{ $unwind: { path: { $literal: "$items" } } }`. Both now emit the correct raw path: `{ $unwind: "$items" }` and `{ $unwind: { path: "$items" } }`. The field-ref form `$unwind($.items)` was already correct.
+
+Root cause was a layer mismatch. Codegen's `literalSafeString` ([src/codegen.ts](../src/codegen.ts)) defensively wraps any `"$…"`-shaped string literal in `{ $literal: … }` so that in an *expression* (`$.x == "$items"`) it stays a literal string instead of being read as a field reference. But `$unwind`'s body is a **field-path position**, not an expression — the leading `$` is precisely the path the user means. An earlier pass had hardened `validateUnwind` (the `$`-prefix *validation*, [src/stage-validation.ts](../src/stage-validation.ts)), which made it *look* like `$unwind` was handled, but validation never changes emitted MQL, so the wrap survived. The fix is in codegen, not validation.
+
+Fix: a new `fieldPathString` flag on `GenerateCtx` (sibling to `insideLiteral`; both suppress the wrap, for different reasons), set by `generateStageBody` for the `$unwind` body only via a dedicated branch mirroring the existing `$match` one ([src/pipeline.ts](../src/pipeline.ts)). Deliberately `$unwind`-scoped — stages that take a string in expression position (e.g. `$sortByCount("$items")`) keep the protection, since there `"$x"` vs `$.x` is the user's literal-vs-path choice. No silent output drift, no heuristic: one named stage, one explicit branch. Tests in `test/pipeline.test.ts` (the `$unwind("items")` missing-`$` rejection still throws); spec [`aggregation-stages.md`](specs/aggregation-stages.md) § Lowering.
+
+---
+
 ## 2026-06-04 — feat: ambient TS types for the `$$` / `$$$` / `$$$$` context refs
 
 `src/ops.ts` now declares the three context-reference prefixes as ambient `const`s, so arrow-form code that uses them (`jsmql(($) => $$.indexStats())`, `$$$.orders.find(...)`, `$$$$.currentOp({...})`) type-checks under TypeScript instead of erroring on an undeclared identifier. Previously only the string form was usable in typed code — the prefixes existed in the lexer/parser/AST but had no global declaration. This is the diagnostic-ops half of **DEF-015** (the row is now "partial").

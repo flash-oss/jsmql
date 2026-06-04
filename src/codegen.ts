@@ -97,6 +97,16 @@ export type GenerateCtx = {
    */
   insideLiteral?: boolean;
   /**
+   * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
+   * literals because we're in a *field-path position*, not an expression. Set
+   * by `pipeline.ts` when lowering a `$unwind` body: `$unwind`'s path is a
+   * field path (`"$items"`), so the leading `$` is exactly what the user means
+   * — wrapping it in `$literal` would break the stage. Distinct from
+   * `insideLiteral` (which means "already inside a `$literal` envelope"); the
+   * effect on `literalSafeString` is the same, but the reason differs.
+   */
+  fieldPathString?: boolean;
+  /**
    * Accumulator context — set by `pipeline.ts` when descending into a `$group`
    * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
    * slot. Used by the operator-call codegen to gate operators that only make
@@ -121,6 +131,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
     insideLiteral: ctx.insideLiteral,
+    fieldPathString: ctx.fieldPathString,
     accumulatorContext: ctx.accumulatorContext,
   };
 }
@@ -596,7 +607,7 @@ function negativeLiteralValue(node: Expr): number | null {
  * second wrap would produce a literal-of-a-literal.
  */
 function literalSafeString(value: string, ctx: GenerateCtx): unknown {
-  if (ctx.insideLiteral) return value;
+  if (ctx.insideLiteral || ctx.fieldPathString) return value;
   if (value.length > 0 && value.charCodeAt(0) === 36 /* $ */) {
     return { $literal: value };
   }
