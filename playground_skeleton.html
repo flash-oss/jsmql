@@ -1,0 +1,1618 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jsmql playground</title>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/neo.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+
+    <style>
+      :root {
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --subtle: #94a3b8;
+        --bg: #fafafa;
+        --panel: #fff;
+        --sidebar-bg: #f6f7f9;
+        --border: #e3e6ea;
+        --border-strong: #d4d9e0;
+        --accent: #2a6df4;
+        --accent-soft: rgba(42, 109, 244, 0.1);
+        --accent-soft-strong: rgba(42, 109, 244, 0.16);
+        --expr: #2a6df4;
+        --expr-soft: rgba(42, 109, 244, 0.1);
+        --expr-strong: rgba(42, 109, 244, 0.22);
+        --pipe: #b45309;
+        --pipe-soft: rgba(217, 119, 6, 0.12);
+        --pipe-strong: rgba(217, 119, 6, 0.22);
+        --filter: #047857;
+        --filter-soft: rgba(4, 120, 87, 0.12);
+        --filter-strong: rgba(4, 120, 87, 0.22);
+        --update: #7c3aed;
+        --update-soft: rgba(124, 58, 237, 0.12);
+        --error: #c0392b;
+        --error-bg: #fdf3f2;
+        --err-soft: rgba(192, 57, 43, 0.12);
+        --err-strong: rgba(192, 57, 43, 0.22);
+        --mono:
+          ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        padding: 10px 16px;
+        /* Reserve room on the right so the 48px GitHub corner ribbon never
+           overlaps the "Hide examples" toggle. */
+        padding-right: 60px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      header strong {
+        font-size: 14px;
+      }
+
+      header .tag {
+        color: var(--muted);
+      }
+
+      header a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      header a:hover {
+        text-decoration: underline;
+      }
+
+      header .spacer {
+        flex: 1;
+      }
+
+      header .header-action {
+        font-family: inherit;
+        font-size: 12px;
+        color: var(--fg);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 4px 10px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      header .header-action:hover {
+        border-color: var(--border-strong);
+        background: var(--bg);
+      }
+
+      header .header-action .kbd {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        padding: 0 4px;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        background: var(--bg);
+      }
+
+      /* Classic GitHub corner ribbon, pinned top-right. The fill is the
+         accent colour so the octocat reads against the white header. */
+      .github-corner {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 10;
+        color: var(--accent);
+      }
+
+      /* The folded ribbon (the first, attribute-less path) takes the accent
+         fill; the octocat itself must be the page background colour so it
+         reads as a white silhouette against the blue triangle. */
+      .github-corner svg {
+        display: block;
+        fill: currentColor;
+      }
+
+      .github-corner .octo-arm,
+      .github-corner .octo-body {
+        fill: var(--panel);
+      }
+
+      .github-corner .octo-arm {
+        transform-origin: 130px 106px;
+      }
+
+      .github-corner:hover .octo-arm {
+        animation: octocat-wave 560ms ease-in-out;
+      }
+
+      @keyframes octocat-wave {
+        0%,
+        100% {
+          transform: rotate(0);
+        }
+        20%,
+        60% {
+          transform: rotate(-25deg);
+        }
+        40%,
+        80% {
+          transform: rotate(10deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .github-corner:hover .octo-arm {
+          animation: none;
+        }
+      }
+
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 300px 1fr 1fr;
+        min-height: 0;
+        background: var(--panel);
+      }
+
+      main.sidebar-collapsed {
+        grid-template-columns: 0 1fr 1fr;
+      }
+
+      main.sidebar-collapsed #sidebar {
+        display: none;
+      }
+
+      /* Pin each panel to an explicit grid column so the layout survives the
+         sidebar going `display: none` — without this, grid auto-placement
+         flows the input panel into the now-empty first track (0 width) and
+         the user sees only the output panel. */
+      #sidebar {
+        grid-column: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+        background: var(--sidebar-bg);
+        border-right: 1px solid var(--border);
+      }
+
+      #input-panel {
+        grid-column: 2;
+      }
+
+      #output-panel {
+        grid-column: 3;
+      }
+
+      .sidebar-top {
+        padding: 12px 12px 10px;
+        border-bottom: 1px solid var(--border);
+        background: var(--sidebar-bg);
+      }
+
+      .sidebar-title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .sidebar-title-row .title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--muted);
+      }
+
+      .sidebar-title-row .count {
+        font-size: 11px;
+        color: var(--subtle);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .search-wrap {
+        position: relative;
+      }
+
+      .search-wrap::before {
+        content: "";
+        position: absolute;
+        left: 9px;
+        top: 50%;
+        width: 12px;
+        height: 12px;
+        margin-top: -6px;
+        background: no-repeat center / contain
+          url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236b6b6b' stroke-width='1.6'><circle cx='7' cy='7' r='5'/><path d='m11 11 3 3'/></svg>");
+        opacity: 0.8;
+        pointer-events: none;
+      }
+
+      #search {
+        width: 100%;
+        font-family: inherit;
+        font-size: 13px;
+        padding: 7px 30px 7px 28px;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--fg);
+        -webkit-appearance: none;
+        appearance: none;
+      }
+
+      #search::-webkit-search-cancel-button {
+        -webkit-appearance: none;
+      }
+
+      #search:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .search-kbd {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        padding: 1px 5px;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        background: var(--bg);
+        pointer-events: none;
+      }
+
+      #search:focus + .search-kbd {
+        display: none;
+      }
+
+      .legend {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 10px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      /* Each legend item is a toggle filter button. Clicking toggles its kind
+         in the visible set; an empty visible set means "show all". */
+      .legend .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font: inherit;
+        color: inherit;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 3px 9px 3px 7px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .legend .legend-item:hover {
+        background: var(--bg);
+        border-color: var(--border-strong);
+      }
+
+      .legend .legend-item:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+
+      .legend .legend-item.active {
+        color: var(--fg);
+        border-color: currentColor;
+        background: var(--bg);
+      }
+
+      .legend .legend-item.filter.active {
+        color: var(--filter);
+        background: var(--filter-soft);
+      }
+
+      .legend .legend-item.pipeline.active {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      .legend .legend-item.expression.active {
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .legend .legend-item.err.active {
+        color: var(--error);
+        background: var(--err-soft);
+      }
+
+      .legend .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .legend .dot.expression {
+        background: var(--expr);
+      }
+
+      .legend .dot.pipeline {
+        background: var(--pipe);
+      }
+
+      .legend .dot.filter {
+        background: var(--filter);
+      }
+
+      .legend .dot.err {
+        background: var(--error);
+      }
+
+      #example-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 6px 0 12px;
+        scrollbar-gutter: stable;
+      }
+
+      .cat-group {
+        padding: 4px 0;
+      }
+
+      .cat-group[hidden] {
+        display: none;
+      }
+
+      .cat-heading {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--subtle);
+        padding: 10px 14px 4px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .cat-heading .cat-count {
+        color: var(--subtle);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Sub-header shown only when a describe carries 2+ `it()` examples. */
+      .describe-heading {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--muted);
+        padding: 6px 14px 2px 16px;
+      }
+
+      .describe-heading[hidden] {
+        display: none;
+      }
+
+      .example-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 6px 12px 6px 28px;
+        font: inherit;
+        font-size: 13px;
+        text-align: left;
+        background: transparent;
+        border: 0;
+        border-left: 3px solid transparent;
+        color: var(--fg);
+        cursor: pointer;
+        position: relative;
+        line-height: 1.35;
+      }
+
+      .example-item[hidden] {
+        display: none;
+      }
+
+      .example-item::before {
+        content: "";
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--expr);
+        opacity: 0.85;
+      }
+
+      .example-item.pipeline::before {
+        background: var(--pipe);
+      }
+
+      .example-item:hover {
+        background: var(--accent-soft);
+      }
+
+      .example-item.active {
+        background: var(--accent-soft-strong);
+        border-left-color: var(--accent);
+        font-weight: 600;
+      }
+
+      .example-item.pipeline.active {
+        border-left-color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      .example-item.pipeline.active::before {
+        background: var(--pipe);
+      }
+
+      .ex-title {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ex-kind {
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        flex-shrink: 0;
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .ex-kind.pipeline {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      .ex-kind.filter {
+        color: var(--filter);
+        background: var(--filter-soft);
+      }
+
+      .ex-kind.err {
+        color: var(--error);
+        background: var(--err-soft);
+      }
+
+      #no-matches {
+        padding: 24px 16px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+        line-height: 1.5;
+      }
+
+      #no-matches[hidden] {
+        display: none;
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+      }
+
+      .panel + .panel {
+        border-left: 1px solid var(--border);
+      }
+
+      .panel.input-panel.pipeline .label {
+        background: linear-gradient(180deg, var(--pipe-soft), var(--bg));
+        border-bottom-color: var(--pipe-strong);
+      }
+
+      .panel.input-panel.filter .label {
+        background: linear-gradient(180deg, var(--filter-soft), var(--bg));
+        border-bottom-color: var(--filter-strong);
+      }
+
+      .panel.input-panel.expression .label {
+        background: linear-gradient(180deg, var(--expr-soft), var(--bg));
+        border-bottom-color: var(--expr-strong);
+      }
+
+      .panel.input-panel.err .label {
+        background: linear-gradient(180deg, var(--err-soft), var(--bg));
+        border-bottom-color: var(--err-strong);
+      }
+
+      /* "MongoDB call" hint shown above the editor, directly below the grey
+         "jsmql input" label. The kind-coloured strip on the left mirrors the
+         example's kind so a user scanning the playground can connect the
+         label → call site → input → output at a glance. */
+      .usage-bar {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--sidebar-bg);
+        font-size: 12px;
+        overflow-x: auto;
+        white-space: nowrap;
+        flex-shrink: 0;
+        border-left: 3px solid var(--expr);
+      }
+
+      .panel.input-panel.pipeline .usage-bar {
+        border-left-color: var(--pipe);
+      }
+
+      .panel.input-panel.filter .usage-bar {
+        border-left-color: var(--filter);
+      }
+
+      .panel.input-panel.err .usage-bar {
+        border-left-color: var(--error);
+      }
+
+      .usage-bar .usage-label {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        flex-shrink: 0;
+      }
+
+      .usage-bar .usage-code {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--fg);
+        min-width: 0;
+      }
+
+      .label {
+        padding: 8px 12px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+        background: var(--bg);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 36px;
+      }
+
+      .label .label-main {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .label .label-tag {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+
+      .label .current-title {
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: normal;
+        color: var(--fg);
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      /* The compile-mode toggle sits in its own bar directly above the
+         "MongoDB call" hint (and stays visible even when that hint is
+         hidden). The 3px transparent left border keeps its contents aligned
+         with the colour-stripped usage-bar below it. */
+      .mode-bar {
+        display: flex;
+        align-items: center;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        border-left: 3px solid transparent;
+        background: var(--sidebar-bg);
+        flex-shrink: 0;
+      }
+
+      /* Compile-mode toggle: one button per jsmql entry point, styled like
+         the kind badges (same mono pill look) but rendered as a segmented
+         control where exactly one is active. Buttons share a fixed width so
+         the band reads as a uniform switch rather than ragged chips. */
+      .mode-toggle {
+        display: inline-flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .mode-toggle button {
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        width: 56px;
+        padding: 3px 0;
+        text-align: center;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        background: var(--panel);
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .mode-toggle button:hover {
+        border-color: currentColor;
+        background: var(--bg);
+      }
+
+      /* Each button always carries its kind colour (like the badges) so the
+         band reads as a colour-coded switch; the active one fills in with the
+         soft tint + a solid current-colour border. AUTO stays neutral. */
+      .mode-toggle button[data-mode="filter"] {
+        color: var(--filter);
+      }
+
+      .mode-toggle button[data-mode="update"] {
+        color: var(--update);
+      }
+
+      .mode-toggle button[data-mode="expression"] {
+        color: var(--expr);
+      }
+
+      .mode-toggle button[data-mode="pipeline"] {
+        color: var(--pipe);
+      }
+
+      .mode-toggle button.active {
+        border-color: currentColor;
+      }
+
+      .mode-toggle button.active[data-mode="filter"] {
+        color: var(--filter);
+        background: var(--filter-soft);
+      }
+
+      .mode-toggle button.active[data-mode="update"] {
+        color: var(--update);
+        background: var(--update-soft);
+      }
+
+      .mode-toggle button.active[data-mode="expression"] {
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .mode-toggle button.active[data-mode="pipeline"] {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      /* AUTO is the neutral, colourless default — it dispatches through the
+         plain `jsmql()` entry point that auto-detects the output shape. */
+      .mode-toggle button.active[data-mode="auto"] {
+        color: var(--fg);
+        background: var(--border);
+        border-color: var(--border-strong);
+      }
+
+      .label label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        text-transform: none;
+        letter-spacing: normal;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .label input[type="checkbox"] {
+        margin: 0;
+      }
+
+      .label button {
+        font-family: inherit;
+        font-size: 11px;
+        text-transform: none;
+        letter-spacing: normal;
+        color: var(--fg);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 2px 8px;
+        cursor: pointer;
+      }
+
+      .label button:hover {
+        background: var(--bg);
+      }
+
+      .label button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .label .controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      #output {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .CodeMirror {
+        flex: 1;
+        min-height: 0;
+        height: auto;
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .CodeMirror-lines {
+        padding: 14px 0;
+      }
+
+      pre.CodeMirror-line,
+      pre.CodeMirror-line-like {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .panel.error .CodeMirror {
+        background: var(--error-bg);
+        color: var(--error);
+        border-left: 3px solid var(--error);
+      }
+
+      .panel.error .CodeMirror-line,
+      .panel.error .CodeMirror-line span {
+        color: var(--error) !important;
+      }
+
+      .cm-error-marker {
+        background: rgba(192, 57, 43, 0.18);
+        border-bottom: 2px solid var(--error);
+      }
+
+      @media (max-width: 880px) {
+        main {
+          grid-template-columns: 220px 1fr 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>jsmql playground</strong>
+      <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
+      <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">syntax reference</a>
+      <span class="spacer"></span>
+      <button
+        type="button"
+        class="header-action"
+        id="toggle-sidebar"
+        title="Toggle examples sidebar"
+      >
+        <span id="toggle-sidebar-label">Hide examples</span>
+        <span class="kbd">⌘B</span>
+      </button>
+    </header>
+    <a
+      href="https://github.com/flash-oss/jsmql"
+      class="github-corner"
+      aria-label="View source on GitHub"
+      title="View source on GitHub"
+    >
+      <svg width="48" height="48" viewBox="0 0 250 250" aria-hidden="true">
+        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
+        <path
+          d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
+          fill="currentColor"
+          style="transform-origin: 130px 106px"
+          class="octo-arm"
+        ></path>
+        <path
+          d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.6 141.8,141.5 Z"
+          fill="currentColor"
+          class="octo-body"
+        ></path>
+      </svg>
+    </a>
+    <main id="main">
+      <aside id="sidebar" aria-label="Examples">
+        <div class="sidebar-top">
+          <div class="sidebar-title-row">
+            <span class="title">Examples</span>
+            <span class="count" id="example-count"></span>
+          </div>
+          <div class="search-wrap">
+            <input
+              id="search"
+              type="search"
+              placeholder="Search examples…"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              aria-label="Search examples"
+            />
+            <span class="search-kbd">⌘K</span>
+          </div>
+          <div class="legend" role="group" aria-label="Filter examples by kind">
+            <button
+              type="button"
+              class="legend-item filter"
+              data-kind="filter"
+              aria-pressed="false"
+            >
+              <span class="dot filter"></span>filter
+            </button>
+            <button
+              type="button"
+              class="legend-item pipeline"
+              data-kind="pipeline"
+              aria-pressed="false"
+            >
+              <span class="dot pipeline"></span>pipeline
+            </button>
+            <button
+              type="button"
+              class="legend-item expression"
+              data-kind="expression"
+              aria-pressed="false"
+            >
+              <span class="dot expression"></span>expression
+            </button>
+            <button
+              type="button"
+              class="legend-item err"
+              data-kind="err"
+              aria-pressed="false"
+            >
+              <span class="dot err"></span>err
+            </button>
+          </div>
+        </div>
+        <nav id="example-list" aria-label="Example navigation"></nav>
+        <div id="no-matches" hidden>No examples match your search.</div>
+      </aside>
+      <section class="panel input-panel" id="input-panel">
+        <div class="label">
+          <span class="label-main">
+            <span class="label-tag">jsmql input</span>
+            <span class="current-title" id="current-title"></span>
+          </span>
+        </div>
+        <div class="mode-bar">
+          <span
+            class="mode-toggle"
+            id="mode-toggle"
+            role="group"
+            aria-label="Compile mode"
+          >
+            <button type="button" data-mode="filter" title="jsmql.filter(...)">filter</button>
+            <button type="button" data-mode="update" title="jsmql.update(...)">update</button>
+            <button type="button" data-mode="expression" title="jsmql.expr(...)">expr</button>
+            <button type="button" data-mode="pipeline" title="jsmql.pipeline(...)">pipeline</button>
+            <button type="button" data-mode="auto" title="jsmql(...)">auto</button>
+          </span>
+        </div>
+        <div class="usage-bar" id="usage-bar">
+          <span class="usage-label">MongoDB call:</span>
+          <code class="usage-code" id="usage-code"></code>
+        </div>
+        <textarea
+          id="input"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          autocorrect="off"
+          autofocus
+        ></textarea>
+      </section>
+      <section class="panel" id="output-panel">
+        <div class="label">
+          <span>MQL output (Node/Deno/Bun)</span>
+          <span class="controls">
+            <label><input type="checkbox" id="prettify" checked /> Prettify</label>
+            <button type="button" id="copy">Copy</button>
+          </span>
+        </div>
+        <div id="output"></div>
+      </section>
+    </main>
+
+    <!-- jsmql-bundle:start — sync-playground.mjs injects the esbuild bundle of src/index.ts here when generating playground.html; this skeleton stays bundle-free -->
+    <!-- jsmql-bundle:end -->
+
+    <!-- jsmql-examples:start — sync-playground.mjs injects the realistic-examples manifest here when generating playground.html; this skeleton ships an empty list -->
+    <script type="application/json" id="examples-data">[]</script>
+    <!-- jsmql-examples:end -->
+
+    <script type="module">
+      const { jsmql } = globalThis.JSMQL;
+
+      const inputEl = document.getElementById("input");
+      const outputEl = document.getElementById("output");
+      const outputPanel = document.getElementById("output-panel");
+      const inputPanel = document.getElementById("input-panel");
+      const prettify = document.getElementById("prettify");
+      const copyBtn = document.getElementById("copy");
+      const searchEl = document.getElementById("search");
+      const listEl = document.getElementById("example-list");
+      const noMatchesEl = document.getElementById("no-matches");
+      const toggleSidebarBtn = document.getElementById("toggle-sidebar");
+      const toggleSidebarLabel = document.getElementById("toggle-sidebar-label");
+      const mainEl = document.getElementById("main");
+      const currentTitleEl = document.getElementById("current-title");
+      const countEl = document.getElementById("example-count");
+      const usageEl = document.getElementById("usage-bar");
+      const usageCodeEl = document.getElementById("usage-code");
+
+      const inputCm = CodeMirror.fromTextArea(inputEl, {
+        mode: { name: "javascript" },
+        theme: "neo",
+        lineWrapping: true,
+        tabSize: 2,
+        indentUnit: 2,
+      });
+
+      const outputCm = CodeMirror(outputEl, {
+        mode: { name: "javascript", json: true },
+        theme: "neo",
+        lineWrapping: true,
+        readOnly: "nocursor",
+        value: "",
+      });
+
+      // Example queries live in test/realistic.test.ts. `scripts/sync-
+      // playground.mjs` extracts the first jsmql(...) call from each top-
+      // level describe and embeds the result — together with derived
+      // category and kind metadata — in the #examples-data JSON block
+      // above, so this file is self-sufficient with no fetches.
+      const examples = new Map(); // slug → entry
+      const itemEls = new Map(); // slug → button element
+      let orderedSlugs = []; // render order
+      let visibleSlugs = []; // current filtered order (for ↑/↓ nav)
+      let activeSlug = null;
+      // Tracks which jsmql entry point compiles the editor contents. Updated
+      // BEFORE `inputCm.setValue` inside `selectExample` so the synchronous
+      // `change`-triggered `render()` already sees the new value — otherwise
+      // every example renders with the PREVIOUS example's compile mode and
+      // the MQL OUTPUT panel looks one step behind. After the user freely
+      // edits the input the value stays sticky (so editing an Expression
+      // example keeps producing aggregation-expression output); the editor
+      // going empty resets it.
+      //
+      // Compile mode is the ONLY playground state that influences the
+      // generated MQL — the output itself is recomputed from the input on
+      // every `change` event and never cached.
+      //
+      // Each mode maps to a jsmql entry point. "auto" is the plain `jsmql()`
+      // that auto-detects Filter vs Pipeline shape; the other four force a
+      // strict-shape entry point so the user can see exactly what each one
+      // emits (and the actionable error when the input lowers to the wrong
+      // shape). The compile-mode toggle in the input band drives this.
+      const MODE_FNS = {
+        auto: jsmql,
+        filter: jsmql.filter,
+        update: jsmql.update,
+        expression: jsmql.expr,
+        pipeline: jsmql.pipeline,
+      };
+      const modeToggleEl = document.getElementById("mode-toggle");
+      const modeButtons = modeToggleEl.querySelectorAll("button");
+      let currentMode = "auto";
+
+      // Drives the always-on "MONGODB CALL" hint. `currentColl` is the
+      // collection name parsed from the active example's call site (or the
+      // generic `collection` when typing freely). `lastOutputIsPipeline` is
+      // set by `render()` from the actual MQL OUTPUT shape so the AUTO hint
+      // can pick the right driver method (a Pipeline array → `aggregate`, a
+      // Filter document → `find`).
+      let currentColl = "collection";
+      let lastOutputIsPipeline = false;
+
+      // The example manifest only records the `jsmql` / `jsmql.expr` call
+      // each example was authored with; map that to a toggle mode.
+      function modeForCall(call) {
+        return call === "jsmql.expr" ? "expression" : "auto";
+      }
+
+      // Build the "MONGODB CALL" hint for the active compile mode: the exact
+      // driver call you'd write to get the MQL shown in the output panel. The
+      // four strict-shape modes have a fixed call site; AUTO picks `find` vs
+      // `aggregate` from the actual output shape.
+      function usageForMode(mode) {
+        const c = currentColl;
+        switch (mode) {
+          case "filter":
+            return `db.${c}.find(jsmql.filter(...))`;
+          case "update":
+            return `db.${c}.updateOne(filter, jsmql.update(...))`;
+          case "expression":
+            return `db.${c}.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`;
+          case "pipeline":
+            return `db.${c}.aggregate(jsmql.pipeline(...))`;
+          default:
+            return lastOutputIsPipeline
+              ? `db.${c}.aggregate(jsmql(...))`
+              : `db.${c}.find(jsmql(...))`;
+        }
+      }
+
+      // The call-site hint is always present and always reflects the active
+      // compile mode (and, for AUTO, the current output shape).
+      function updateUsageBar() {
+        if (!usageEl) return;
+        usageCodeEl.textContent = usageForMode(currentMode);
+      }
+
+      // Set the active compile mode: update the toggle UI, the call-site hint,
+      // and re-render. When called as part of loading an example
+      // (`rerender: false`) the caller re-renders itself after `setValue`, so
+      // we skip the extra render here.
+      function setMode(mode, { rerender = true } = {}) {
+        if (!MODE_FNS[mode]) mode = "auto";
+        currentMode = mode;
+        for (const btn of modeButtons) {
+          btn.classList.toggle("active", btn.dataset.mode === mode);
+        }
+        updateUsageBar();
+        if (rerender) render();
+      }
+
+      for (const btn of modeButtons) {
+        btn.addEventListener("click", () => setMode(btn.dataset.mode));
+      }
+
+      function populateExamples() {
+        // Manifest is now an array of describes, each with its own `features`
+        // tag list and an `its` array. Sidebar layout:
+        //
+        //   <Feature header>   (top-level grouping by describe.features[0])
+        //     <describe label, clickable>            (when describe has 1 it)
+        //     <describe sub-header>                  (when describe has 2+ its)
+        //       <it title, clickable>
+        //       <it title, clickable>
+        //
+        // `examples` map is keyed by `it.slug` (what the URL hash and the
+        // ↑/↓ navigation use), and carries the parent describe's title so
+        // the editor label can fall back to it when the it title is generic.
+        const list = JSON.parse(document.getElementById("examples-data").textContent);
+        const groups = new Map();
+        let itCount = 0;
+        for (const d of list) {
+          const feature = (d.features && d.features[0]) || "Other";
+          if (!groups.has(feature)) groups.set(feature, []);
+          groups.get(feature).push(d);
+          for (const it of d.its) {
+            examples.set(it.slug, {
+              ...it,
+              describeTitle: d.title,
+              features: d.features || [],
+              displayTitle: d.its.length === 1 ? d.title : it.title,
+            });
+            itCount += 1;
+          }
+        }
+
+        const frag = document.createDocumentFragment();
+        for (const [feature, describes] of groups) {
+          const section = document.createElement("section");
+          section.className = "cat-group";
+          section.dataset.category = feature;
+
+          const heading = document.createElement("div");
+          heading.className = "cat-heading";
+          const catName = document.createElement("span");
+          catName.className = "cat-name";
+          catName.textContent = feature;
+          const catCount = document.createElement("span");
+          catCount.className = "cat-count";
+          // Count the underlying its, not describes — the user clicks an it.
+          catCount.textContent = describes.reduce((sum, d) => sum + d.its.length, 0);
+          heading.append(catName, catCount);
+          section.appendChild(heading);
+
+          for (const d of describes) {
+            const renderItem = (label, it) => {
+              const item = document.createElement("button");
+              item.type = "button";
+              item.className = "example-item " + it.kind;
+              item.dataset.slug = it.slug;
+              item.dataset.describe = d.title;
+              const titleEl = document.createElement("span");
+              titleEl.className = "ex-title";
+              titleEl.textContent = label;
+              const kindEl = document.createElement("span");
+              kindEl.className = "ex-kind " + it.kind;
+              kindEl.textContent =
+                it.kind === "pipeline" ? "PIPE" : it.kind === "filter" ? "FILT" : "EXPR";
+              item.append(titleEl, kindEl);
+              item.addEventListener("click", () => {
+                selectExample(it.slug);
+                searchEl.focus();
+              });
+              section.appendChild(item);
+              itemEls.set(it.slug, item);
+              orderedSlugs.push(it.slug);
+            };
+
+            if (d.its.length === 1) {
+              renderItem(d.title, d.its[0]);
+            } else {
+              const sub = document.createElement("div");
+              sub.className = "describe-heading";
+              sub.textContent = d.title;
+              section.appendChild(sub);
+              for (const it of d.its) renderItem(it.title, it);
+            }
+          }
+
+          frag.appendChild(section);
+        }
+        listEl.replaceChildren(frag);
+
+        const allIts = [];
+        for (const d of list) for (const it of d.its) allIts.push(it);
+        const pipelines = allIts.filter((e) => e.kind === "pipeline").length;
+        const filters = allIts.filter((e) => e.kind === "filter").length;
+        const expressions = allIts.length - pipelines - filters;
+        countEl.textContent = `${itCount} (${filters} filt · ${pipelines} pipe · ${expressions} expr)`;
+      }
+
+      function writeHash(slug) {
+        if (slug) {
+          if (location.hash === "#" + slug) return;
+          history.replaceState(null, "", "#" + slug);
+        } else {
+          if (!location.hash) return;
+          history.replaceState(null, "", location.pathname + location.search);
+        }
+      }
+
+      function slugFromHash() {
+        const raw = location.hash.slice(1);
+        if (!raw) return null;
+        try {
+          return decodeURIComponent(raw);
+        } catch {
+          return raw;
+        }
+      }
+
+      function selectExample(slug, { scroll = true } = {}) {
+        const ex = examples.get(slug);
+        if (!ex) return;
+        activeSlug = slug;
+        // The "MONGODB CALL" hint is mode-driven (see `usageForMode`). Parse
+        // the example's collection name out of its authored call so every
+        // toggle mode can rebuild the call site for the same collection.
+        const collMatch = ex.usage && ex.usage.match(/^db\.([A-Za-z0-9_$]+)\./);
+        currentColl = collMatch ? collMatch[1] : "collection";
+        // Update the compile mode BEFORE `setValue` — the change-event-driven
+        // `render()` fires synchronously inside `setValue`, so any state it
+        // reads (compile mode, the call-site hint, anything else that changes
+        // per-example) must be in place first or the output panel renders the
+        // new input with the OLD example's compile mode. `setMode` also
+        // refreshes the call-site hint via `updateUsageBar`.
+        setMode(modeForCall(ex.call), { rerender: false });
+        loadingFromList = true;
+        inputCm.setValue(ex.query);
+        loadingFromList = false;
+        // Belt-and-braces: explicitly re-render after every state update is
+        // done. If `setValue` ever stops firing the change event (e.g. CM
+        // optimises a no-op replaceRange), this guarantees the output panel
+        // still reflects the freshly-selected example.
+        render();
+
+        currentTitleEl.textContent = ex.displayTitle;
+        inputPanel.classList.remove("pipeline", "filter", "expression", "err");
+        inputPanel.classList.add(ex.kind);
+
+        for (const [s, el] of itemEls) {
+          el.classList.toggle("active", s === slug);
+        }
+        if (scroll) {
+          const active = itemEls.get(slug);
+          if (active) active.scrollIntoView({ block: "nearest" });
+        }
+        writeHash(slug);
+      }
+
+      // When the user freely edits the input, we no longer match a stored
+      // example. Clear the active highlight so the sidebar reflects state.
+      let loadingFromList = false;
+      function clearActiveOnUserEdit() {
+        if (loadingFromList || activeSlug == null) return;
+        const ex = examples.get(activeSlug);
+        if (!ex || inputCm.getValue() === ex.query) return;
+        activeSlug = null;
+        for (const el of itemEls.values()) el.classList.remove("active");
+        currentTitleEl.textContent = "";
+        inputPanel.classList.remove("pipeline", "filter", "expression");
+        // No example loaded → fall back to the generic collection name so the
+        // (always-visible) call-site hint stays sensible while typing freely.
+        currentColl = "collection";
+        updateUsageBar();
+        writeHash(null);
+      }
+
+      // Set of currently-selected kind filters (`"filter"`, `"pipeline"`,
+      // `"expression"`). Empty means "show all kinds". Clicking a legend item
+      // toggles its kind in the set; the filter is unioned with the text
+      // search.
+      const selectedKinds = new Set();
+
+      function filterList(rawQuery) {
+        const q = rawQuery.trim().toLowerCase();
+        visibleSlugs = [];
+        let anyVisible = false;
+        for (const groupEl of listEl.querySelectorAll(".cat-group")) {
+          let groupHasMatch = false;
+          // Track which `.describe-heading` sub-headers belong to which it
+          // items — sub-headers are siblings, not children, so we toggle
+          // their visibility based on whether ANY item beneath them matches.
+          // Simpler: hide all sub-headers, then re-show ones whose immediate
+          // following items include a match.
+          const subHeaders = groupEl.querySelectorAll(".describe-heading");
+          for (const sub of subHeaders) sub.hidden = true;
+          for (const item of groupEl.querySelectorAll(".example-item")) {
+            const slug = item.dataset.slug;
+            const ex = examples.get(slug);
+            const haystack =
+              (ex.displayTitle || "").toLowerCase() +
+              " " +
+              (ex.describeTitle || "").toLowerCase() +
+              " " +
+              (ex.features || []).join(" ").toLowerCase() +
+              " " +
+              ex.kind +
+              " " +
+              ex.query.toLowerCase();
+            const textMatch = q === "" || haystack.includes(q);
+            const kindMatch = selectedKinds.size === 0 || selectedKinds.has(ex.kind);
+            const match = textMatch && kindMatch;
+            item.hidden = !match;
+            if (match) {
+              visibleSlugs.push(slug);
+              groupHasMatch = true;
+              // Walk backward to find the nearest `.describe-heading` and
+              // un-hide it (so multi-it groups still show their sub-header
+              // when any of their its matches the filter).
+              let prev = item.previousElementSibling;
+              while (prev && !prev.classList.contains("describe-heading")) {
+                if (prev.classList.contains("example-item")) break;
+                prev = prev.previousElementSibling;
+              }
+              if (prev && prev.classList.contains("describe-heading")) prev.hidden = false;
+            }
+          }
+          groupEl.hidden = !groupHasMatch;
+          if (groupHasMatch) anyVisible = true;
+        }
+        noMatchesEl.hidden = anyVisible;
+      }
+
+      // Wire up the kind-filter toggle pills under the search box.
+      for (const legendBtn of document.querySelectorAll(".legend .legend-item")) {
+        legendBtn.addEventListener("click", () => {
+          const kind = legendBtn.dataset.kind;
+          if (selectedKinds.has(kind)) selectedKinds.delete(kind);
+          else selectedKinds.add(kind);
+          legendBtn.classList.toggle("active", selectedKinds.has(kind));
+          legendBtn.setAttribute("aria-pressed", selectedKinds.has(kind) ? "true" : "false");
+          filterList(searchEl.value);
+          // Re-focus the search box so the user's ↑/↓ keys keep stepping
+          // through the filtered list without an explicit click.
+          searchEl.focus();
+        });
+      }
+
+      function stepSelection(dir) {
+        if (visibleSlugs.length === 0) return;
+        const idx = activeSlug ? visibleSlugs.indexOf(activeSlug) : -1;
+        let next;
+        if (idx === -1) {
+          next = dir > 0 ? 0 : visibleSlugs.length - 1;
+        } else {
+          next = (idx + dir + visibleSlugs.length) % visibleSlugs.length;
+        }
+        selectExample(visibleSlugs[next]);
+      }
+
+      searchEl.addEventListener("input", () => filterList(searchEl.value));
+      searchEl.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          stepSelection(1);
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          stepSelection(-1);
+        }
+      });
+
+      // ⌘K / Ctrl+K focuses the example search from anywhere.
+      // ⌘B / Ctrl+B toggles the sidebar.
+      window.addEventListener("keydown", (e) => {
+        const mod = e.metaKey || e.ctrlKey;
+        if (!mod) return;
+        const key = e.key.toLowerCase();
+        if (key === "k") {
+          e.preventDefault();
+          // ⌘K means "go find an example" — auto-reveal the sidebar if it
+          // was collapsed, otherwise focusing a `display: none` input is
+          // a silent no-op.
+          if (mainEl.classList.contains("sidebar-collapsed")) toggleSidebar();
+          searchEl.focus();
+          searchEl.select();
+        } else if (key === "b") {
+          e.preventDefault();
+          toggleSidebar();
+        }
+      });
+
+      function toggleSidebar() {
+        const collapsed = mainEl.classList.toggle("sidebar-collapsed");
+        toggleSidebarLabel.textContent = collapsed ? "Show examples" : "Hide examples";
+        // CodeMirror caches the gutter width when first laid out; force a
+        // refresh after the grid columns change so the editors re-measure.
+        requestAnimationFrame(() => {
+          inputCm.refresh();
+          outputCm.refresh();
+        });
+      }
+      toggleSidebarBtn.addEventListener("click", toggleSidebar);
+
+      let errorMarker = null;
+      function clearErrorMarker() {
+        if (errorMarker) {
+          errorMarker.clear();
+          errorMarker = null;
+        }
+      }
+
+      function highlightErrorAt(pos) {
+        clearErrorMarker();
+        const src = inputCm.getValue();
+        if (src.length === 0) return;
+        // Clamp positions past end-of-input back to the last character so the
+        // marker is always visible (e.g. unterminated `$.x &&` points just
+        // beyond the source).
+        const safePos = Math.min(pos, src.length - 1);
+        const from = inputCm.posFromIndex(safePos);
+        const to = inputCm.posFromIndex(safePos + 1);
+        errorMarker = inputCm.markText(from, to, { className: "cm-error-marker" });
+      }
+
+      // Encode one scalar as pasteable JavaScript source — not JSON. A BSON
+      // Date must round-trip as `new Date(...)` so output copied from this
+      // panel runs as-is in a Node.js mongodb call. Plain JSON.stringify turns
+      // a Date into an ISO *string* (minified) or `{}` (the pretty-printer
+      // walks its empty own-keys) — neither reads back as a BSON date.
+      function encodeScalar(x) {
+        if (x instanceof Date) return "new Date(" + JSON.stringify(x.toISOString()) + ")";
+        return JSON.stringify(x);
+      }
+
+      // Single-line JS-source form of any value. Shared by both output modes
+      // (prettify off renders this directly; prettify on uses it for nodes
+      // that fit on one line) so dates serialise identically in both.
+      function compact(x) {
+        if (x instanceof Date) return encodeScalar(x);
+        if (Array.isArray(x)) return "[" + x.map(compact).join(", ") + "]";
+        if (x && typeof x === "object")
+          return Object.keys(x).length
+            ? "{ " +
+              Object.keys(x)
+                .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
+                .join(", ") +
+              " }"
+            : "{}";
+        return encodeScalar(x);
+      }
+
+      // Fit-or-break JS pretty-printer: keep nodes on one line up to 80
+      // cols, only expanding when the compact form would overflow.
+      function pretty(root) {
+        const go = (v, i, c) => {
+          // A Date never expands — keep it on one line regardless of column
+          // budget, else the object branch below would walk its empty keys.
+          if (v instanceof Date) return compact(v);
+          const s = compact(v);
+          if (c + s.length <= 80) return s;
+          const pad = " ".repeat(i + 2);
+          const close = "\n" + " ".repeat(i);
+          if (Array.isArray(v))
+            return "[\n" + v.map((x) => pad + go(x, i + 2, i + 2)).join(",\n") + close + "]";
+          return (
+            "{\n" +
+            Object.keys(v)
+              .map((k) => {
+                const p = JSON.stringify(k) + ": ";
+                return pad + p + go(v[k], i + 2, i + 2 + p.length);
+              })
+              .join(",\n") +
+            close +
+            "}"
+          );
+        };
+        return go(root, 0, 0);
+      }
+
+      function render() {
+        clearActiveOnUserEdit();
+        const src = inputCm.getValue();
+        if (src.trim() === "") {
+          clearErrorMarker();
+          outputCm.setValue("");
+          outputCm.setOption("mode", { name: "javascript", json: true });
+          outputPanel.classList.remove("error");
+          // Empty editor is a fresh start — drop any sticky strict-shape
+          // mode back to AUTO so the next thing the user types compiles
+          // through the shape-detecting `jsmql()`. `rerender: false` avoids
+          // recursing into render() (we're already inside it); `setMode`
+          // still refreshes the (always-on) call-site hint.
+          currentColl = "collection";
+          lastOutputIsPipeline = false;
+          setMode("auto", { rerender: false });
+          return;
+        }
+        const result = jsmql.validate(src);
+        if (result.valid) {
+          clearErrorMarker();
+          // Dispatch through the entry point the compile-mode toggle selects.
+          // AUTO is the plain `jsmql()` shape-detector; the others force a
+          // strict-shape entry point. This is also why Expression examples
+          // (jsmql.expr-authored) render correctly — without the strict
+          // dispatch they would go through `jsmql()` and pick up the find-
+          // filter wrap (`{ $expr: <agg> }`) instead of the bare aggregation
+          // expression. See docs/specs/filter-mode.md for the dispatch.
+          const compile = MODE_FNS[currentMode] || jsmql;
+          // `jsmql.validate` checks the source against the shape-detecting
+          // `jsmql()` semantics, so a strict-shape entry point (filter /
+          // update / pipeline) can still throw here when the input would
+          // lower to the OTHER shape — e.g. forcing `pipeline` on a bare
+          // predicate. Those throws carry the same actionable wording the
+          // library shows at the call site, so surface them in the error
+          // panel rather than letting the exception strand stale output.
+          let out;
+          try {
+            out = compile(src);
+          } catch (err) {
+            const pos = typeof err.pos === "number" ? err.pos : 0;
+            if (typeof err.pos === "number" && err.code === "SYNTAX_ERROR") {
+              highlightErrorAt(pos);
+            } else {
+              clearErrorMarker();
+            }
+            outputCm.setOption("mode", null);
+            outputCm.setValue(`${err.name || "Error"} at position ${pos}\n\n${err.message}`);
+            outputPanel.classList.add("error");
+            updateUsageBar();
+            return;
+          }
+          outputCm.setOption("mode", { name: "javascript", json: true });
+          outputCm.setValue(prettify.checked ? pretty(out) : compact(out));
+          outputPanel.classList.remove("error");
+          // The call-site hint must name the API that produces THIS output —
+          // for AUTO that means `aggregate` for a Pipeline array vs `find`
+          // for a Filter document.
+          lastOutputIsPipeline = Array.isArray(out);
+          updateUsageBar();
+        } else {
+          const e = result.errors[0];
+          // CODEGEN_ERROR carries pos: 0 as a placeholder, not a real
+          // location — only highlight when the position is meaningful.
+          if (e.code === "SYNTAX_ERROR") highlightErrorAt(e.pos);
+          else clearErrorMarker();
+          outputCm.setOption("mode", null);
+          outputCm.setValue(`${e.code} at position ${e.pos}\n\n${e.message}`);
+          outputPanel.classList.add("error");
+          updateUsageBar();
+        }
+      }
+
+      inputCm.on("change", render);
+      prettify.addEventListener("change", render);
+
+      let copyResetTimer = null;
+      copyBtn.addEventListener("click", async () => {
+        const text = outputCm.getValue();
+        if (text === "" || outputPanel.classList.contains("error")) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = "Copied!";
+        } catch {
+          copyBtn.textContent = "Copy failed";
+        }
+        clearTimeout(copyResetTimer);
+        copyResetTimer = setTimeout(() => {
+          copyBtn.textContent = "Copy";
+        }, 1200);
+      });
+
+      setMode("auto", { rerender: false });
+      populateExamples();
+      filterList("");
+      window.addEventListener("hashchange", () => {
+        const slug = slugFromHash();
+        if (slug && examples.has(slug) && slug !== activeSlug) {
+          selectExample(slug, { scroll: true });
+        }
+      });
+      if (orderedSlugs.length > 0) {
+        const initialSlug = slugFromHash();
+        const startSlug =
+          initialSlug && examples.has(initialSlug) ? initialSlug : orderedSlugs[0];
+        selectExample(startSlug, { scroll: initialSlug != null });
+      }
+    </script>
+  </body>
+</html>

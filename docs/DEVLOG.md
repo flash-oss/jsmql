@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-04 — refactor: generate playground.html from a hand-authored skeleton
+
+`sync-playground.mjs` used to read `playground.html`, replace its two managed
+regions (the esbuild bundle of `src/index.ts` and the realistic-examples JSON
+island) in place, and write the same file back. That made `playground.html`
+both the UI source *and* the build output, so a `src/` or `realistic.test.ts`
+change that triggered a regen sat in the same file as in-flight playground UI
+improvements — a recipe for merge collisions and accidental clobbering across
+parallel work.
+
+Split the two roles. **`playground_skeleton.html`** is now the hand-authored
+source for the entire UI (markup, CSS, behaviour); the two regions sit empty
+between their markers there (the bundle region is empty, the examples region
+ships `[]`). **`playground.html`** is a pure build artifact: the script reads
+the skeleton, injects the bundle + examples, and only ever *writes*
+`playground.html` — it never touches the skeleton. So changes to `src/` or the
+test file can no longer overwrite UI work, and a `playground.html` merge
+conflict is trivially resolved by re-running the sync against the merged
+skeleton. Regenerating from the new skeleton produces a byte-identical
+`playground.html` (verified: `sync` reported "already in sync"), so the change
+is behaviour-preserving. The PostToolUse hook
+([scripts/hook-post-edit-realistic.sh](../scripts/hook-post-edit-realistic.sh))
+now also fires on `playground_skeleton.html` edits, so UI changes made through
+Claude Code regenerate the artifact within the same commit.
+
+---
+
 ## 2026-06-04 — refactor: share the pipeline-sugar dispatch across both pipeline forms
 
 Prefactoring, round 2. The per-element sugar dispatch — detect `$ =`/lookup `AssignExpr` sugar, flush the update buffer, lower, push stages, update ctx — was written out twice, nearly verbatim: once in `generatePipeline` (the `[ … ]` form, ~45 lines) and once in `lowerUpdateFilterWithLookups` (the `,`-grouped op chain, ~45 lines). The statement-tail dispatch (`$$.push` → `$unionWith`, system source stages, generic stage call) was likewise duplicated between `generatePipeline` and `generateImplicitPipeline` (the `;` form). Adding a new sugar meant editing 3–4 spots across two-to-three functions and keeping the ordering identical by hand — exactly the growth-friction this area sees most (`$lookup`/`$unionWith`/`$facet`/`$out`/`$replaceWith`/system-stages were each such an edit).
