@@ -565,9 +565,9 @@ $.recentOrders = $$$.orders.filter(o => {
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { _id: "$_id" },
+//       let: { v_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
 //         { $sort: { createdAt: -1 } },
 //         { $limit: 10 }
 //       ],
@@ -608,9 +608,9 @@ $.recentOrders = $$$.orders
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { _id: "$_id" },
+//       let: { v_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
 //         { $sort: { placedAt: -1 } },     // toSorted + toReversed
 //         { $limit: 5 },                    // slice(0, 5)
 //         { $replaceWith: { id: "$_id", total: "$total" } },  // map
@@ -2002,9 +2002,9 @@ jsmql`$$ = $$$.orders
 // → [
 //   { $lookup: {
 //       from: "orders",
-//       let: { _id: "$_id" },
+//       let: { v_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
@@ -2012,7 +2012,6 @@ jsmql`$$ = $$$.orders
 //   } },
 //   { $unwind: "$__jsmql.__lookup1" },
 //   { $replaceWith: "$__jsmql.__lookup1" },
-//   { $unset: "__jsmql" },
 // ]
 ```
 
@@ -2032,7 +2031,6 @@ $$ = $$$.users.filter(u => u._id === uid);
 //   { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "__jsmql.__lookup1" } },
 //   { $unwind: "$__jsmql.__lookup1" },
 //   { $replaceWith: "$__jsmql.__lookup1" },
-//   { $unset: "__jsmql" },
 // ]
 ```
 
@@ -2066,17 +2064,17 @@ jsmql(`
 //   } },
 //   { $unwind: "$__jsmql.__lookup1" },
 //   { $replaceWith: "$__jsmql.__lookup1" },
-//   { $unset: "__jsmql" },
 // ]
 ```
 
 Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the snapshotted `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name. The three statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline.
 
+**Empty the stream.** `$$ = []` drops every document — it lowers to `[{ $match: { $expr: false } }]` (a never-matching `$match`). MongoDB rejects `$limit: 0` ("the limit must be positive"), so the never-matching `$match` is what jsmql emits. The explicit-stage spelling is `$match(false)`.
+
 Compile-time rejections:
 
 | RHS | Why it's rejected |
 |---|---|
-| `$$ = []` | Empty stream not yet supported. Use `$limit(0)` or `$match($expr(false))` directly. |
 | `$$ = cond ? A : B` | Stream-level ternary not yet supported [DEF-001]. |
 | `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS but pipelines are arrays. For "first match", write `.filter(p).slice(0, 1)`. For replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
 | `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |

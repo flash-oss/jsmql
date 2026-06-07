@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-06 — docs: stop documenting MQL forms that don't run
+
+Pure doc/comment/test-name accuracy pass — **no behaviour change**. After the "server-valid MQL" fix batch and the `$$ = []` sugar landed, several docs still described the pre-fix world and, worse, suggested forms that don't actually run. Fixed:
+
+- **`$$ = []` is supported.** It lowers to `[{ $match: { $expr: false } }]` (drop all documents). Removed the stale "Empty stream not yet supported" rejection rows from [docs/LANGUAGE.md](LANGUAGE.md) and [docs/specs/replace-stream-stage.md](specs/replace-stream-stage.md), deleted the two shipped "Deferred" bullets (`$$ = []` and the non-empty `$documents` array literal) in that spec, and documented the supported form (plus the explicit-stage spelling `$match(false)`). The mid-pipeline `$$ = [<docs>]` rejection message in the spec was corrected to the real one (points at `$$.push(...)`).
+- **Dropped the broken suggestions.** Nothing now recommends `$limit(0)` (jsmql's own validator rejects it; the server rejects `$limit: 0`) or `$match($expr(false))` (double-wraps to invalid MQL). The canonical "drop all" spellings are `$$ = []` / `$match(false)`.
+- **Stale invalid var names in examples.** The `$lookup` auto-`let` examples in LANGUAGE.md showed `let: { _id: "$_id" }` / `$$_id`, and grammar.md showed the `&&` short-circuit binding as `_v` / `$$_v` — all server-invalid (MongoDB var names must start with a lowercase letter). Corrected to the actual emitted `v_id` / `$$v_id` and `v` / `$$v` (`safeVarName` / `gensymInScope("v")`).
+- **Stale example output.** The three `$$ = …` source-switch lookup-pivot examples in LANGUAGE.md showed a trailing `{ $unset: "__jsmql" }` that the compiler no longer emits (redundant after `$replaceWith` replaces root). Removed.
+- **`$limit: 0` wording.** README's source-switch lowering said `$limit: 0` + `$unionWith`; corrected to `$match` + `$unionWith`. The `lowerReplaceStream` code comment and two `test/pipeline.test.ts` names that still said `$limit(0)` / `$limit:0` were updated to `$match: { $expr: false }`.
+
+Every edited example was re-verified against `node src/cli.ts`. A separate follow-up (deferred to another session) will make `$match($expr(false))` and other explicit `$op(...)` match bodies emit the operator verbatim.
+
+---
+
 ## 2026-06-04 — chore: merge `claude/sleepy-aryabhata-2ced91` into master
 
 Merged the branch carrying the server-valid-MQL fix batch (`fix!: emit server-valid MQL — pipeline $-string pass-through + reject-class fixes`) into master, which had concurrently shipped the CLI, the bare-statement `$$.<chain>;` stream form, and the `$unwind`-path `$literal` fix. Six files conflicted; two non-mechanical decisions:

@@ -373,7 +373,7 @@ The codegen helpers `jsBool(value)` and `isProvablyBool(expr)` (in `src/codegen.
 | `a ? b : c` | `{$cond: [jsBoolIfNeeded(a), b, c]}` |
 | `a && b` (all-bool chain) | `{$and: [...operands]}` (cheap form) |
 | `a && b` (mixed chain, pure-ref or bool LHS) | `{$cond: [jsBoolIfNeeded(a), b, a]}` (operand-preserving) |
-| `a && b` (mixed chain, expensive LHS) | `$let` binds `_v = a`, then `$cond` on `$$_v` (no double-eval). `_v` gensyms against in-scope lambda params. |
+| `a && b` (mixed chain, expensive LHS) | `$let` binds `v = a`, then `$cond` on `$$v` (no double-eval). `v` gensyms against in-scope lambda params (and is MongoDB-valid — lowercase lead). |
 | `a \|\| b` | mirror of `&&` with `$cond` branches swapped |
 | `arr.filter(p)` etc. | predicate body wrapped in `jsBoolIfNeeded` |
 

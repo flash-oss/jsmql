@@ -509,7 +509,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("`$$ = []` lowers to `$limit(0)` (drop all docs)", () => {
+  it("`$$ = []` lowers to `$match: { $expr: false }` (drop all docs)", () => {
     // Previously rejected; landed in the deferred-features Wave 5 push as
     // the natural sugar for "empty the stream".
     expect(jsmql(`$$ = [];`)).toEqual([{ $match: { $expr: false } }]);
@@ -553,7 +553,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("validate() reports `$$ = []` as valid (now lowers cleanly to $limit:0)", () => {
+  it("validate() reports `$$ = []` as valid (now lowers cleanly to $match: { $expr: false })", () => {
     const r = jsmql.validate(`$$ = [];`);
     expect(r.valid).toBe(true);
     expect(r.errors).toEqual([]);
