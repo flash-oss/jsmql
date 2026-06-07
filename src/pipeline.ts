@@ -695,7 +695,7 @@ function lowerReplaceStream(
     }
   }
   // Array-literal RHSes that aren't reduce-wraps:
-  //   - `$$ = []` → `[{ $limit: 0 }]` (drop all docs; pre-1.0 sugar item #2)
+  //   - `$$ = []` → `[{ $match: { $expr: false } }]` (drop all docs; pre-1.0 sugar item #2)
   //   - `$$ = [{...}, {...}]` at stage 0 → `[{ $documents: [...] }]`
   //     (literal-doc seed; MongoDB requires $documents to be the first stage)
   //   - `$$ = [{...}, {...}]` mid-pipeline → throw, naming `$$.push(...)` as

@@ -26,6 +26,7 @@ A `$$.<chain>;` bare statement (no `$$ =` head) is statement sugar for
 
 | Input | Output stage(s) |
 |---|---|
+| `$$ = []` (drop all documents) | `[{ $match: { $expr: false } }]` |
 | `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5 } } }]` |
 | `$$ = $$.filter(t => true)` (vacuous) | `[{ $match: { $expr: true } }]` |
 | `$$ = $$$.t.filter(t => t.x > 5)` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |
@@ -113,7 +114,7 @@ user's intent is recoverable:
 
 | Trigger | Message excerpt |
 |---|---|
-| `ArrayLiteral` RHS (e.g. `$$ = []`) | `'$$ = []' (drop all documents) is not supported in this release. To empty the stream, use '$match($expr(false))' or a '$limit(0)' stage directly.` |
+| `ArrayLiteral` RHS of docs mid-pipeline (e.g. `$match(...); $$ = [{...}]`) | `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, …)' instead, which lowers to '$unionWith'.` (Note: `$$ = []` is supported — it empties the stream; `$$ = [<docs>]` at stage 0 lowers to `$documents`.) |
 | `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not yet supported [DEF-001]. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection). See docs/DEFERRED.md.` |
 | `MethodCall` on `$$` / `$$$.<coll>` with method other than `filter` | `'$$ = …' RHS supports only '<recv>.filter(<predicate>)' — '.<method>(...)' is not allowed here.[ Did you mean '.filter'?] Use '<recv>.filter(<predicate>)' to <intent>, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.` |
 | Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source.` |
@@ -170,9 +171,6 @@ src/
 
 ## Deferred
 
-- **`$$ = []`** would naturally lower to `{ $match: { $expr: false } }`. Skipped for v1: the
-  ergonomic win is tiny (`$limit(0)` is one token longer) and the parser path
-  needs a small extension to thread an `ArrayLiteral` RHS through.
 - **`$$ = cond ? A : B`** (stream-level ternary). The genuinely hard piece is
   passing the outer `let` scope into `$unionWith.pipeline` (no `let:` slot
   on `$unionWith` in current MongoDB). Without that, the common case
@@ -184,6 +182,3 @@ src/
   blocked on collection-name binding — jsmql compiles statelessly. Worth
   revisiting after the lookup work has a slot for `jsmql.compile({ collection })`
   or similar.
-- **Non-empty array literal on the RHS** (e.g. `$$ = [{ x: 1 }, { x: 2 }]`).
-  Would map to `$documents` but only at the first stage. Skipped — niche
-  enough that the existing `$documents` stage call is fine.
