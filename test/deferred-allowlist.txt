@@ -29,10 +29,8 @@
 # Meta-documentation about the deferral system itself.
 # -----------------------------------------------------------------------------
 CLAUDE.md::out of scope for the current task
-CLAUDE.md::are still future work — flagged in
 CLAUDE.md::is the single source of truth for every open
 docs/CLAUDE.md::"what did we decide against?"
-docs/CLAUDE.md::nested-lookup rejection (planned future work
 docs/LANGUAGE.md::features not yet implemented or rejected
 
 # -----------------------------------------------------------------------------
@@ -85,7 +83,6 @@ test/lookup.test.ts::out of scope for v1
 # Drop these entries when the fork settles and we do a doc cleanup pass.
 # -----------------------------------------------------------------------------
 docs/LANGUAGE.md::other richer body shapes are future work
-docs/CLAUDE.md::Future work areas — not yet implemented and not yet specified
 docs/specs/aggregation-stages.md::Will get its own spec when work begins
 
 # -----------------------------------------------------------------------------

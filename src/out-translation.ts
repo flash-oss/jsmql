@@ -1,30 +1,11 @@
-// `$out` collection-write translation: lowers
+// `$out` collection-write translation: lowers `$$$.<coll> = <RHS>;` (same-db)
+// and `$$$$.<db>.<coll> = <RHS>;` (cross-db), dot or string-bracket forms, into
+// pipeline stages ending with `$out`. Statement-only and last-stage-only
+// (`sawOut` blocks anything after it).
 //
-//   $$$.<coll>            = <RHS>;     // same-database write
-//   $$$["<coll>"]         = <RHS>;     // same-database, bracket form
-//   $$$$.<db>.<coll>      = <RHS>;     // cross-database write
-//   $$$$["<db>"]["<coll>"] = <RHS>;    // cross-database, bracket form
-//
-// into one or more pipeline stages ending with `$out`.
-//
-// The LHS shape (one or two static — dot or string-bracket — accesses on a
-// `DatabaseRef` or `ClusterRef`) is recognised by `detectOutAssign`. The RHS
-// must be rooted at `$$` (CollectionRef) — either bare (no extra stages) or
-// a chain of stage-producing method calls (`v1: .filter(<predicate>)` only;
-// the chain walker rejects other methods with an actionable hint).
-//
-// Statement-only, last-stage-only: `$out` writes downstream; nothing can
-// follow it in a pipeline. The caller (`generatePipeline` /
-// `lowerUpdateFilterWithLookups`) flips a `sawOut` flag after emission so
-// subsequent statements throw the trailing-stage error.
-//
-// Why a distinct LHS prefix and not `$ = …`? jsmql reserves `$ = <expr>`
-// for *root-replacing* sugar (`$replaceWith`, `$facet`) — the bare `$` LHS
-// is the signal that the document itself is being replaced. `$out` does
-// not replace root; it writes the (filtered) stream elsewhere. The LHS
-// makes the write destination visible at a glance. See
-// `docs/specs/out-stage.md` and the convention note in
-// `docs/specs/replace-root-stage.md`.
+// LHS/RHS shape detection, the destination-bearing-LHS convention (vs `$ = …`),
+// and the error catalog are owned by docs/specs/out-stage.md (convention also in
+// docs/specs/replace-root-stage.md).
 
 import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
 import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";

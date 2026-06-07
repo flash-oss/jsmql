@@ -40,6 +40,10 @@ New AST node types add a case in the `_generate(expr, ctx)` switch. The public e
 
 `GenerateCtx` carries two things: `lambdaParams` (set of in-scope lambda parameter names) and `reduceRemap` (maps user param names to MongoDB's fixed `$$value`/`$$this` names inside `.reduce()` bodies). Use `extendCtx(ctx, params)` to add lambda params; never mutate ctx directly.
 
+## Extending the pipeline sugar
+
+`pipeline.ts` is the sugar-dispatch hub: per-element lowering is shared across all pipeline forms (`[ … ]`, `;`-separated, and the `,`-grouped update-filter op chain) through two helpers. Add a new `$ =`-rooted / lookup sugar in `tryLowerAssignSugar` (replace-stream, `$facet`, `$replaceWith`, `$out`, `$lookup`); add a new statement-style sugar (`$$.push` → `$unionWith`, system source stages, the generic stage-call path) in `lowerStatementTail`. Touch either helper and both pipeline forms pick it up at once. Each sugar's behaviour is owned by its spec in `docs/specs/` — keep the lowering rules there, not in comments here.
+
 ## Error classes
 
 | Class          | Where thrown | Has `.pos`                                                              |

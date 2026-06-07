@@ -1,47 +1,17 @@
-// Pipeline detection and lowering.
+// Pipeline detection and lowering — owns everything stage-related so codegen.ts
+// stays focused on a single expression. Also the sugar-dispatch hub
+// (tryLowerAssignSugar / lowerStatementTail — see src/CLAUDE.md § Extending the
+// pipeline sugar).
 //
-// Owns everything stage-related so codegen.ts stays focused on a single
-// expression. Public surface:
-//   - isPipelineAst(ast)   — true if the AST root looks like an aggregation pipeline
+// Public surface:
+//   - isPipelineAst(ast)    — true if the AST root looks like an aggregation pipeline
 //   - generatePipeline(ast) — compile a pipeline-shaped AST to an MQL stage array
 //
-// Detection rule: the AST root is an ArrayLiteral whose *first* element is a
-// recognised stage shape (single-key object literal `{ $stage: body }` whose
-// key is in STAGES, or `$stage(body)` whose name is in STAGES). Once
-// triggered, every remaining element must also be a stage shape — otherwise
-// CodegenError pinpoints the offending element. If the first element does
-// not look like a stage, the array is left to the existing expression-mode
-// codegen (so `jsmql("[1, 2, 3]")` still compiles as a literal array).
-//
-// $match has a special-case body lowering with two layers:
-//   1. An object-literal body is treated as a raw MongoDB query document and
-//      passed through verbatim. This is the explicit escape hatch for users
-//      who want strict aggregation `$eq` semantics (`$match({ $expr: ... })`).
-//   2. An expression body goes through `translateMatchBody` (see
-//      `match-translation.ts`), which emits an index-friendly query document
-//      for the translatable subset (field-vs-literal comparisons combined
-//      with `&&`/`||`). Untranslatable sub-expressions are returned as a
-//      residual and wrapped in `$expr`, yielding e.g.
-//      `{ $match: { status: "active", $expr: <residual> } }` — indexes still
-//      apply to the `status` predicate.
-// See `docs/specs/match-query-translation.md` for the translation rules and
-// the four documented semantic divergences between query-language equality
-// and aggregation `$eq`.
-//
-// `let` bindings (see docs/specs/let-bindings.md) are pipeline-scoped local
-// variables that materialise under a single compiler-owned namespace field
-// (`__jsmql.<name>`) for the duration of the pipeline, with one trailing
-// `$unset: "__jsmql"` stage to clean up. The let scope is threaded through
-// stage lowering via a GenerateCtx so subsequent stages can resolve bare-
-// identifier references to the corresponding field path. Reshape-clearing
-// stages (`$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, `$replaceWith`)
-// drop the document and so drop all lets; later references become precise
-// "let X can't be read after $group" errors. Sub-pipelines (`$lookup.pipeline`,
-// `$unionWith.pipeline`, `$facet.*`) get a fresh empty let scope — outer lets
-// do not cross sub-pipeline boundaries in v1. The `$match` translator returns
-// AST residuals that the caller re-lowers; we re-lower them with the current
-// pipeline ctx so a let referenced inside an otherwise-translatable $match body
-// still resolves correctly.
+// Behaviour (detection rule, the two-layer $match body lowering, pipeline-scoped
+// `let` variables and their reshape-clearing rules) is owned by the specs:
+//   docs/specs/aggregation-stages.md      — detection + stage lowering
+//   docs/specs/match-query-translation.md — $match body → query document
+//   docs/specs/let-bindings.md            — pipeline-scoped `let` variables
 
 import type {
   Expr,

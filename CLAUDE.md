@@ -8,17 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The primary syntax is JS: `$.age > 18`, `$.name.trim().toLowerCase()`, `$.items.map(x => x * 1.1)`. The `$op(args...)` escape hatch (direct operator form) reaches MongoDB operators that have no JavaScript equivalent (e.g. `$sampleRate(0.1)`, `$stdDevPop($.measurements)`, `$dateTrunc({ date: $.t, unit: "week" })`).
 
-The public API is the `jsmql` callable from `src/index.ts`, which carries six properties (`jsmql.compile`, `jsmql.validate`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`). The shape is built with `Object.assign` rather than a `namespace` declaration because `src/` stays in TypeScript's strippable subset — see [src/index.ts:271-284](src/index.ts:271).
+The public API is the `jsmql` callable from `src/index.ts`, carrying six properties (`jsmql.compile`, `jsmql.validate`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`). The callable/properties shape (built with `Object.assign`, not a `namespace`) lives at [src/index.ts:271-284](src/index.ts:271) — see [src/CLAUDE.md](src/CLAUDE.md) for why. All entry points are polymorphic over the same three call shapes: **string** (`jsmql("…")`), **arrow** (`jsmql(($) => …)`), and **template tag** (`` jsmql`… ${value} …` ``). One line per entry; the linked doc owns the detail:
 
-- `jsmql(input)` — parse and transpile, throws on error. Accepts three call shapes: a **string** (`jsmql("…")`), an **arrow function** (`jsmql(($) => …)`), or a **template tag** (`` jsmql`… ${value} …` ``) which JSON-serialises interpolated JS values before parsing.
-- `jsmql.compile(fn)` — pre-compile a parameterised arrow so the parse cost is paid once. The arrow uses up to a three-slot signature `(params, $, $$)`; parse-time slot classification and the binding/let name-collision rule live in [docs/specs/function-form-params.md](docs/specs/function-form-params.md). Returns a function `(params) → MQL`. See [docs/LANGUAGE.md](docs/LANGUAGE.md#parameterised-queries-jsmqlcompile) for the user-facing reference.
-- `jsmql.validate(input)` — same three call shapes as `jsmql()`, returns `{ valid: boolean, errors: ValidationError[] }` instead of throwing. Each error carries a `.pos` (see the `.validate()` rule in the DX section below).
-- `jsmql.expr(input)` — compile a partial / "unfinished" expression in raw aggregation-expression form. Same three input shapes as `jsmql()`. Use this when the output goes inside a Pipeline stage body (`$project`, `$addFields`, `$group`, …) or as the update document in `db.coll.updateOne(filter, update)` — anywhere a Filter wrapper would be noise. Differs from `jsmql()` only in the bare-expression branch: no `$expr` wrap, no query-document translation.
-- `jsmql.filter(input)` / `jsmql.pipeline(input)` / `jsmql.update(input)` — strict-shape variants of `jsmql()` for call sites where the expected shape is fixed by the driver method. Each accepts the same three input shapes and throws an actionable error if the input would lower to the *other* shape. `jsmql.update()` additionally restricts the output to MongoDB's [aggregation-pipeline update whitelist](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline) so a misplaced `$match` / `$sort` is caught at compile time. (The function is named `update`, not `updateFilter`, even though the Node MongoDB driver types the slot as `UpdateFilter<TSchema>` — "filter" in that type name routinely tricks developers into reaching for it when they meant the *query* document. The AST node type stays `UpdateFilter`.) See [docs/specs/strict-shape-entries.md](docs/specs/strict-shape-entries.md).
-- `require("@koresar/jsmql/mongoose")(mongoose)` — optional mongoose plugin. Monkey-patches `Model.find`, `updateOne`, `aggregate`, and the other static query methods so they accept jsmql source (string / arrow) directly at the filter / update / pipeline slots. Plain objects/arrays pass through, so existing MQL-JSON call sites keep working. Source: [src/mongoose.ts](src/mongoose.ts); spec: [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md).
-- `jsmql` **CLI** — a `jq`-style command-line bin (`package.json#bin`). JSMQL source in (positional arg / `--file` / stdin), MQL JSON out (stdout); errors on stderr with a non-zero exit. Default output shape is polymorphic; `--filter` / `--pipeline` / `--expr` / `--update` / `--validate` route to the matching entry above, and jq-style `--arg` / `--argjson` route through `jsmql.compile`. It's a thin wrapper — no compilation logic of its own. Source: [src/cli.ts](src/cli.ts); spec: [docs/specs/cli.md](docs/specs/cli.md).
+- `jsmql(input)` — parse + transpile, throws on error. → [LANGUAGE.md](docs/LANGUAGE.md)
+- `jsmql.compile(fn)` — pre-compile a parameterised arrow `(params, $, $$)` → `(params) → MQL`. → [LANGUAGE.md](docs/LANGUAGE.md#parameterised-queries-jsmqlcompile), [docs/specs/function-form-params.md](docs/specs/function-form-params.md)
+- `jsmql.validate(input)` — returns `{ valid, errors: ValidationError[] }` (each with a `.pos`) instead of throwing. → the `.validate()` rule in the DX section below
+- `jsmql.expr(input)` — raw aggregation-expression form (no `$expr` wrap, no query translation) for a stage body or `updateOne` update doc. → [LANGUAGE.md](docs/LANGUAGE.md)
+- `jsmql.filter` / `jsmql.pipeline` / `jsmql.update` — strict-shape variants that throw if the input would lower to the *other* shape (`update` also enforces the update-pipeline whitelist). → [docs/specs/strict-shape-entries.md](docs/specs/strict-shape-entries.md)
+- `require("@koresar/jsmql/mongoose")(mongoose)` — mongoose plugin: patches `find` / `updateOne` / `aggregate` / … to accept jsmql source at the filter/update/pipeline slots. → [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md)
+- `jsmql` **CLI** — `jq`-style bin: source in (positional / `--file` / stdin), MQL JSON out; shape flags route to the matching entry. → [docs/specs/cli.md](docs/specs/cli.md)
 
-jsmql targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.coll.aggregate(pipeline)`), using the Node.js MongoDB driver's own terminology. The output shape is dispatched on the presence of `;` at the top level. No-`;` inputs lower to a Filter (via [src/match-translation.ts](src/match-translation.ts) — the same translator the `$match` stage uses), with anything not query-translatable riding in a top-level `$expr` residual. Any `;` flips to Pipeline mode (one stage per statement). See [docs/specs/filter-mode.md](docs/specs/filter-mode.md) for the dispatch implementation. Query-only predicate operators that have no MQL aggregation counterpart (`$elemMatch`, `$exists`, `$jsonSchema`, …) are still future work — flagged in `docs/CLAUDE.md`.
+jsmql targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.coll.aggregate(pipeline)`), using the Node.js MongoDB driver's own terminology. Output shape is dispatched on the presence of a top-level `;` (no `;` → Filter, any `;` → Pipeline). → [docs/specs/filter-mode.md](docs/specs/filter-mode.md). Open roadmap items (e.g. query-only predicate operators with no aggregation counterpart) live in [docs/DEFERRED.md](docs/DEFERRED.md).
 
 ## #1 priority: developer experience
 
@@ -64,42 +64,62 @@ node_modules/.bin/vitest run -t "string context"
 
 ## File map
 
+One line per file: what it owns + where the detail lives. The spec named in each row is the
+single source of truth for that module's behaviour — don't restate lowering rules here (see the
+SSOT rule under `## Rules`). For implementation conventions and "where do I add X", see
+[src/CLAUDE.md](src/CLAUDE.md); for the spec index, [docs/CLAUDE.md](docs/CLAUDE.md).
+
 ```
 src/
-  ast.ts          AST node union types; also the single source of truth for the recognised JS-builtin static name-sets (MATH_METHODS / MATH_CONSTANTS / OBJECT_METHODS / NUMBER_STATICS / SET_METHODS — `as const` arrays with derived `…Method` types). Parser validates against these; codegen derives its dispatch signatures from the types.
-  lexer.ts        Tokeniser
-  operators.ts    MongoDB operator registry (single source of truth for operator shapes)
-  stages.ts       Aggregation pipeline stage registry
-  parser.ts       Recursive-descent parser → AST
-  codegen.ts      AST → MQL JSON
-  index.ts        Public API: `jsmql` callable with `.compile` and `.validate` properties; all three are polymorphic over string / arrow / template tag
-  cli.ts          The `jsmql` command-line bin (a `jq`-style transpiler: source in via positional/--file/stdin, MQL JSON out on stdout). Thin wrapper over index.ts — output-shape flags route to the matching entry; jq-style --arg/--argjson route through jsmql.compile. Bundled to dist/cjs/cli.cjs by scripts/build-cjs.mjs (the `cli` entry + version `define`); package.json#bin maps `jsmql` → it. See docs/specs/cli.md.
-  mongoose.ts     `@koresar/jsmql/mongoose` plugin: monkey-patches mongoose Model statics (find / updateOne / aggregate / …) so they accept jsmql source at the filter / update / pipeline slots. See docs/specs/mongoose-plugin.md.
-  pipeline.ts     Pipeline detection and lowering (the `;`-separated form, bracketed `[ ... ]` form, and sub-pipeline integration), plus the wiring that materialises `$$$.<coll>.find/filter(...)` lookup syntax into `$lookup` stages, `$$.push(...)` union syntax into `$unionWith` stages, `$ = <expr>` replace-root syntax into `$replaceWith` stages (see docs/specs/replace-root-stage.md), `$$ = <expr>` replace-stream syntax into `$match` / `$match`+`$unionWith` stages (see docs/specs/replace-stream-stage.md), `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` sugar into `$out` stages (see docs/specs/out-stage.md), and `$$.indexStats()` / `$$$$.currentOp(…)` / `$$$$.shardedDataDistribution()` direct-ref calls into diagnostic / system source stages (collection on `$$`, server/cluster on `$$$$`; see docs/specs/system-stages.md). The per-element sugar dispatch is shared by both pipeline forms (`[ … ]` and `;`-separated, plus the `,`-grouped update-filter op chain) via two helpers — `tryLowerAssignSugar` (the `$ =`-rooted / lookup `AssignExpr` chain: replace-stream, `$facet`, `$replaceWith`, `$out`, `$lookup`) and `lowerStatementTail` (`$$.push` → `$unionWith`, system source stages, and the generic stage-call path). Add a new `$ =`-style sugar in `tryLowerAssignSugar` and a new statement-style sugar in `lowerStatementTail`; both call sites pick it up at once.
-  lookup-translation.ts  `$$$.<coll>.find/filter(pred)` → `$lookup` lowering: detect, translate predicate (basic vs pipeline form, auto-`let` extraction), materialise chained terminals (`.length`, `.reduce`, member access) into `__jsmql.__lookup<N>` slots. Also the hub for shared predicate lowering — exports `extractLetsFromExpr` / `extractLetsFromPipeline`, plus `lowerLambdaPredicate` (expr-or-block predicate lambda → sub-pipeline stages; per-stage `onLocalRef` message + `freshCtx` injected) and `matchStagesFromTranslation` (the one `$match`/`$expr` emission), reused by union / facet / out / replace-stream-filter. See docs/specs/lookup-stage.md.
-  union-translation.ts   `$$.push(args...)` → `$unionWith` lowering: detect, enforce JS-faithful spread rules, batch consecutive inline docs into one `$documents` sub-pipeline, translate predicates without a `let` slot, preserve source order across mixed args. Lowers predicates via `lowerLambdaPredicate` from `lookup-translation.ts`. See docs/specs/union-stage.md.
-  facet-translation.ts   `$ = { k: $$.filter(p), … }` → `$facet` lowering: detect object-literal RHS where every value is `$$.filter(<lambda>)`, translate each predicate into a sub-pipeline body (expression body → `$match`, block body → block stages), reject `$.<field>` references in favour of the lambda param. Lowers predicates via `lowerLambdaPredicate` from `lookup-translation.ts`. See docs/specs/replace-root-stage.md.
-  out-translation.ts     `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` lowering: detect the LHS shape (dot or string-literal-bracket access on `DatabaseRef` / `ClusterRef`, with computed brackets rejected outright), walk the RHS chain rooted at `$$` (v1: bare `$$` and `$$.filter(<predicate>)`), compose the prefix stages with the trailing `$out`. Lowers the `$$.filter` predicate via `lowerLambdaPredicate` from `lookup-translation.ts`. See docs/specs/out-stage.md.
-  system-stage-translation.ts  `$$.indexStats()` / `$$$$.currentOp(…)` / `$$$$.shardedDataDistribution()` → diagnostic / system *source* stage lowering. A *direct* `MethodCall` on a bare `CollectionRef` / `ClusterRef` (distinct from `$lookup`'s `MemberAccess`-wrapped receiver) maps the method name (stage name minus `$`) to its stage; the ref prefix encodes the scope MongoDB requires — two tiers, collection (`$$`) and cluster/server (`$$$$`, the `currentOp` family runs on admin, not the current DB, so `$$$` has no diagnostics) — so a wrong-scope use is a compile-time error. Scope ↔ stage mapping lives in the `diagnostic: { scope, options }` field of the STAGES registry — this module only derives the method map + per-scope suggestion lists. Exports `isSystemStageCall` (cheap gate, also used by index.ts auto-wrap), `resolveSystemStageCall` (validate + descriptor), `notFirstStageMessage`. First-stage-only; Pipeline-mode-only. See docs/specs/system-stages.md.
-  stream-methods.ts      Registry of chainable JS-array-shaped methods (currently `.slice`, `.concat`, `.map`, `.toSorted`, `.toReversed`, `.flatMap`) that may appear after the receiver inside a `$$ = $$.<chain>;` or `$$ = $$$.<coll>.<chain>;` RHS. Each entry declares an arg-shape validator and a `lower(args, ctx, callPos, lowerBlock, prevStages, allocSlot, inSubPipeline) → { stages, clearLets?, replacesPreviousStage? }`. Walked by `lowerChainOnStream` / `lowerChainOnCollection` in `pipeline.ts`. `.reduce` is NOT a chain method (would break the "stream is always an array" invariant); instead three explicit wrap forms are exported: `detectReduceWrap` + `lowerReduceWrap` cover scalar-into-object & object-returning reducers (both lower to `$group` + `$replaceWith`), and `detectArrayReducerWrap` covers the array-returning form, assigned unbracketed since a `[]`-seeded reducer already yields a stream (`$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<f>) : acc), [])`, lowers to `$match` + `$replaceWith` via `lowerArrayReducerWrap` in `pipeline.ts`; the bracketed `$$ = [$$.reduce(…, [])]` throws). See docs/specs/stream-methods.md.
-  stage-validation.ts    Per-stage body-shape validation: `validateStageBody(stageName, body)` (called at the top of `generateStageBody`) runs one small, *literal-gated* validator per stage from `STAGE_BODY_VALIDATORS` — wrong literal types, out-of-range literal numbers, enum typos (with `closestNameTo` "Did you mean"), missing required keys, mutually-exclusive keys, malformed literal arrays, bad field-name formats. Also exports `validateMatchPlacement` ($text-must-be-first, $near/$nearSphere/$where bans in `$match`). Every check no-ops on a non-literal slot (field/expr/spread/computed key) so probable violations still emit MQL. Structural *placement* rules (must-first/last, forbidden-in-sub-pipeline) live in `pipeline.ts` (the `makePipelineValidator` closure + the `position`/`forbiddenIn` fields in `stages.ts`), not here. See docs/specs/pipeline-validation.md.
-  ops.ts          GENERATED. Ambient `declare global` types for every stage + operator, shipped at the `@koresar/jsmql/ops` subpath. Regenerated by scripts/generate-ops.mjs on prebuild / pretest.
+  ast.ts          AST node unions + the single source of truth for JS-builtin static name-sets (MATH_METHODS / OBJECT_METHODS / NUMBER_STATICS / SET_METHODS, `as const` with derived types).
+  lexer.ts        Tokeniser.
+  operators.ts    MongoDB operator registry — single source of truth for operator shapes.
+  stages.ts       Aggregation pipeline stage registry.
+  parser.ts       Recursive-descent parser → AST.
+  codegen.ts      AST → MQL JSON.
+  index.ts        Public API: the `jsmql` callable + its properties, polymorphic over string / arrow / template tag.
+  cli.ts          The `jsmql` command-line bin (thin `jq`-style wrapper over index.ts). See docs/specs/cli.md.
+  mongoose.ts     `@koresar/jsmql/mongoose` plugin. See docs/specs/mongoose-plugin.md.
+  pipeline.ts     Pipeline detection + lowering (`;`-separated / bracketed / sub-pipeline forms) and the sugar-dispatch hub. See docs/specs/aggregation-stages.md (and the per-sugar specs below); src/CLAUDE.md for the dispatch-helper extension points.
+  lookup-translation.ts        `$$$.<coll>.find/filter(pred)` → `$lookup`; also the shared predicate-lowering hub. See docs/specs/lookup-stage.md.
+  union-translation.ts         `$$.push(args…)` → `$unionWith`. See docs/specs/union-stage.md.
+  facet-translation.ts         `$ = { k: $$.filter(p), … }` → `$facet`. See docs/specs/replace-root-stage.md.
+  out-translation.ts           `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out`. See docs/specs/out-stage.md.
+  system-stage-translation.ts  `$$.indexStats()` / `$$$$.currentOp(…)` / … → diagnostic / system source stages. See docs/specs/system-stages.md.
+  stream-methods.ts            Registry of chainable array-shaped methods on a `$$ = …` RHS (plus the `.reduce` wrap forms). See docs/specs/stream-methods.md.
+  stage-validation.ts          Per-stage body-shape validation (literal-gated) + `$match` placement rules. See docs/specs/pipeline-validation.md.
+  ops.ts          GENERATED ambient `declare global` types (`@koresar/jsmql/ops`). See docs/specs/ops-generation.md.
 docs/
-  LANGUAGE.md     User-facing language reference
-  specs/          Implementation specs (see docs/CLAUDE.md)
+  LANGUAGE.md     User-facing language reference (canonical for user-visible behaviour + examples).
+  specs/          Implementation specs — canonical for per-feature internals (see docs/CLAUDE.md for the index).
 test/
-  codegen.test.ts    Unit tests, one case per feature
-  realistic.test.ts  Full-feature integration tests (referenced from README)
-  smoke.test.ts      Strippable-TS and built-dist invariants (spawn-based)
+  codegen.test.ts    Unit tests, one case per feature.
+  realistic.test.ts  Full-feature integration tests (referenced from README).
+  smoke.test.ts      Strippable-TS and built-dist invariants (spawn-based).
 scripts/
-  generate-ops.mjs              Generates src/ops.ts from OPERATORS + STAGES + vendor MQL spec; runs on prebuild / pretest
-  build-cjs.mjs                 Bundles dist/cjs/{index,ops}.cjs via esbuild (Node 14 target) for the `require` condition; runs after `tsc` in `npm run build`
-  merge-devlog.mjs              Auto-resolve a docs/DEVLOG.md merge conflict
-  sync-playground.mjs           Generate playground.html from playground_skeleton.html + esbuild bundle of src/index.ts + the realistic examples
-  hook-post-edit-realistic.sh   PostToolUse dispatcher that runs sync-playground when Claude edits realistic.test.ts or playground_skeleton.html
+  generate-ops.mjs              Generates src/ops.ts; runs on prebuild / pretest.
+  build-cjs.mjs                 Bundles dist/cjs/*.cjs via esbuild for the `require` condition.
+  merge-devlog.mjs              Auto-resolve a docs/DEVLOG.md merge conflict.
+  sync-playground.mjs           Generate playground.html from playground_skeleton.html + bundle + realistic examples.
+  hook-post-edit-realistic.sh   PostToolUse dispatcher that runs sync-playground.
 ```
+(See [scripts/CLAUDE.md](scripts/CLAUDE.md) for build-script detail.)
 
 ## Rules
+
+### Single source of truth — link, don't restate
+Every fact has **one** canonical home. Everywhere else is a one-line pointer (`See docs/specs/<f>.md`), never a second copy. This is what keeps doc/spec drift from happening: a behaviour change then touches the owner + the code, not six prose paragraphs that silently diverge.
+
+| Fact type | Canonical home |
+|---|---|
+| User-facing behaviour + examples | `docs/LANGUAGE.md` |
+| Per-feature implementation detail / lowering rules | `docs/specs/<feature>.md` |
+| Module invariants, "where do I add X" | `src/CLAUDE.md` |
+| Operator / stage shapes | `src/operators.ts` / `src/stages.ts` |
+| "Which doc to update when" governance | `docs/CLAUDE.md` |
+| Historical record of changes | `docs/DEVLOG.md` (append-only — duplication there is fine) |
+
+The rule when writing anywhere else: **if you're about to copy a paragraph that already lives in a canonical home, write one sentence and a link instead.** This file's "What this project is" and "File map" sections, and the `docs/CLAUDE.md` spec table, are **indexes** — one line + a pointer per item, not restatements. Code comments follow the same rule: a short intent header + `See docs/specs/<f>.md` (`src/stream-methods.ts` is the model); keep only inline `// why` notes that have no other home.
 
 ### Maintain CLAUDE.md files
 Create and keep up to date a `CLAUDE.md` in every directory that contains non-trivial logic: `src/`, `docs/`, `test/`. Each one should explain the purpose of that directory and the conventions specific to it. When you add a new directory, add a `CLAUDE.md` immediately.
@@ -169,7 +189,7 @@ Strict mode stays on. No `any` without a comment explaining why it is unavoidabl
 - **Pre-1.0 versioning** — the project is at `0.1.0` and the public API is not yet committed to. Do **not** introduce `v1`/`v2`/`v3`/`v4` markers in test names, spec headers, or anywhere else; those imply released versions that don't exist. When the API stabilises and we cut `1.0`, that becomes the first real version.
 - **Semver** — `jsmql()`, `jsmql.compile()`, and `jsmql.validate()` input/output shapes (across all three call forms — string, arrow, template tag) are the public contract. Once we are at `1.0`, any change to those shapes is a breaking change.
 - **The template-tag form of `jsmql` is first-class**, not a fallback. DX around it (good errors, correct interpolation, polymorphic detection) matters as much as the string and function forms.
-- **The operator registry is the single source of truth.** Never add special-case operator handling inside the parser or codegen — it all goes through `src/operators.ts`.
-- **`$ =` is reserved for root-replacing sugar.** `$replaceWith` and the `$facet` variant use `$ = …` because the LHS — the bare `$` — is the document being replaced. Sugar that writes to a destination *other than* root must use a different LHS so the asymmetry is visible: `$out` uses `$$$.<coll> = …` / `$$$$.<db>.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)`. When adding new sugar, keep this asymmetry — if it replaces root, it starts with `$ =`; otherwise pick a prefix that makes the destination visible at a glance.
+- **The operator registry is the single source of truth.** Never add special-case operator handling inside the parser or codegen — it all goes through `src/operators.ts`. (Detail: [src/CLAUDE.md](src/CLAUDE.md).)
+- **`$ =` is reserved for root-replacing sugar.** When adding new sugar: if it replaces the document root it starts with `$ =` (the bare `$` *is* the replaced doc); otherwise pick a prefix that makes the destination visible (`$out` → `$$$.<coll> = …`, `$lookup` → `$$$.<coll>.find(…)`, `$unionWith` → `$$.push(…)`). Rationale + full convention: [docs/specs/replace-root-stage.md](docs/specs/replace-root-stage.md).
 - **`src/` stays in TypeScript's strippable subset** so the source runs as-is on Node 22.18+ / 24.3+ (native type-stripping, no flag — unflagged in 22.18.0 LTS and in 24.3.0; stable in 25.2.0), Deno, and Bun. The full list of banned constructs and the rationale live in [`src/CLAUDE.md`](src/CLAUDE.md). The invariant is locked down by `test/smoke.test.ts`, which `npm test` runs on every change. Pair with `npm run smoke:dist` after a build to verify the published bundle still imports.
 - **`playground.html` is a generated, self-sufficient single-file artifact — never hand-edit it.** Its hand-authored source is **`playground_skeleton.html`** (markup, CSS, behaviour — the entire UI). `scripts/sync-playground.mjs` reads the skeleton and injects two regions to produce `playground.html`: the bundle region (delimited by `<!-- jsmql-bundle:start -->` / `<!-- jsmql-bundle:end -->`) holds an esbuild IIFE of `src/index.ts` exposed as `globalThis.JSMQL`; the examples region (`<!-- jsmql-examples:start -->` / `<!-- jsmql-examples:end -->`) holds a JSON island extracted from the first `jsmql(...)` call in each top-level `describe` of `test/realistic.test.ts`. Both sit empty between their markers in the skeleton. The only external dependency is the CodeMirror CDN. **This split is deliberate:** because the script only ever writes `playground.html`, changes to `src/` or `test/realistic.test.ts` can never clobber playground UI work — do UI development in the skeleton. A PostToolUse hook in `.claude/settings.json` runs the script (and `git add`s the HTML) whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`; the script also runs as `prebuild`. Outside Claude Code, run `npm run sync:playground` after editing the skeleton, src/, or the test file. A `playground.html` merge conflict is resolved by re-running the sync against the merged skeleton.

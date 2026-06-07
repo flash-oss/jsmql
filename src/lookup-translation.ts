@@ -1,44 +1,14 @@
 // Cross-collection lookup translation: lowers `$$$.<coll>.find/filter(pred)`
 // and its chained-read forms into MongoDB `$lookup` (+ follow-up) stages.
+// Detect → translate predicate → materialise into a slot. Also the hub for
+// shared predicate lowering reused by union / facet / out / replace-stream
+// (`extractLetsFromExpr`, `lowerLambdaPredicate`, `matchStagesFromTranslation`).
 //
-// Three responsibilities:
+// `containsLookupCall` is the cheap walk `index.ts` uses to pre-reject lookup
+// syntax outside Pipeline mode with an actionable error.
 //
-//   1. **Detect** a lookup call in an arbitrary expression position
-//      (`detectLookupCall`).
-//
-//   2. **Translate** the predicate lambda into either the basic-form
-//      shape (`{ from, localField, foreignField, as }`) when the body
-//      collapses to a single `===` between a foreign path and a `$.`
-//      local path, or the correlated-pipeline shape
-//      (`{ from, let, pipeline: [...], as }`) otherwise. The pipeline
-//      form auto-hoists every `$.x` reference into a `let` entry whose
-//      name is the path's last segment; references to the foreign-doc
-//      lambda param (`o.x.y`) are rewritten to bare `FieldRef` so they
-//      lower to `"$x.y"` inside the sub-pipeline (foreign doc is
-//      `$$ROOT` there). Block-body lambdas (`o => { stmt; stmt; }`)
-//      always go through the pipeline form, using the block stmts as
-//      the sub-pipeline body verbatim.
-//
-//   3. **Materialise** the lookup result into a pipeline stage,
-//      writing to either a user-named slot (when the lookup is the
-//      whole RHS of an assignment or `let`) or an internal
-//      `__jsmql.__lookup<N>` slot. For `.find`, an extra
-//      `$set { <slot>: { $first: "$<slot>" } }` stage follows the
-//      `$lookup` so the slot holds scalar-or-null instead of an array
-//      — JS-faithful semantics. For chained terminals (`.length`,
-//      `.reduce(fn, init)`), a third `$set` stage applies the
-//      reduction over the slot. Internal slots ride the existing
-//      `__jsmql` cleanup at the end of the pipeline — no per-temp
-//      `$unset` emitted.
-//
-// `containsLookupCall` is the cheap walk used by `index.ts` to
-// pre-reject lookup syntax in Filter / `jsmql.expr` / `jsmql.update`
-// modes before codegen, so the user sees an actionable "use Pipeline
-// mode" error instead of the generic `DatabaseRef` reserved-syntax
-// throw.
-//
-// See `docs/specs/lookup-stage.md` for the full design, the predicate-
-// translation algorithm, and the error catalog.
+// Design, predicate-translation algorithm, slot conventions, and error catalog
+// are owned by docs/specs/lookup-stage.md.
 
 import type {
   Expr,

@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-07 — docs: de-duplicate the doc surface to a single-source-of-truth model
+
+The same fact was being written as a full paragraph in three index-like places — root `CLAUDE.md`'s "What this project is" API section, root `CLAUDE.md`'s "File map", and the `docs/CLAUDE.md` spec-table "Covers" column — on top of the spec that actually owns it (plus README + LANGUAGE.md on the user side, plus restating module-header block comments in `src/*.ts`). Every behaviour change therefore needed 4–6 synchronised prose edits, and the misses are exactly the "spec drift" this repo keeps generating.
+
+Fix: established a **single source of truth** model and made every non-canonical location a one-line pointer. Concretely — (1) added a new "### Single source of truth — link, don't restate" rule to root `CLAUDE.md` with the canonical-home table (user behaviour → LANGUAGE.md; per-feature internals → `docs/specs/<f>.md`; module invariants / "where do I add X" → `src/CLAUDE.md`; governance → `docs/CLAUDE.md`; history → DEVLOG); (2) collapsed the three indexes to one line + link each — the file map's multi-line lowering prose and the `docs/CLAUDE.md` "Covers" cells now name *what* each spec is about, not its contents; (3) trimmed the module-header comments in `pipeline.ts` / `lookup-translation.ts` / `union-translation.ts` / `out-translation.ts` to a short intent + `See docs/specs/<f>.md`, matching the `stream-methods.ts` model; (4) relocated CLAUDE-only rationale to its owning spec (the `update`-vs-`updateFilter` naming note was already in `strict-shape-entries.md`; the `Object.assign`-vs-`namespace` note stays in `src/CLAUDE.md`) and moved the `tryLowerAssignSugar` / `lowerStatementTail` "where to add a sugar" hint into `src/CLAUDE.md`; (5) light README Highlights pass — heavy bullets keep a claim + one example + their existing LANGUAGE.md link, dropping the restated lowering mechanics.
+
+Drift-test interaction: trimming the "future work" wording removed three phrases the deferred-coverage allowlist referenced, so the matching entries in `test/deferred-allowlist.txt` were dropped in the same change (STALE-ALLOWLIST gate), and the replacement prose was worded to avoid re-introducing untagged marker phrases (UNTAGGED gate). No behaviour, no public API, no spec *bodies* changed — the specs and LANGUAGE.md remain the canonical content; only the indexes pointing at them shrank.
+
+---
+
 ## 2026-06-04 — chore: merge `claude/sleepy-aryabhata-2ced91` into master
 
 Merged the branch carrying the server-valid-MQL fix batch (`fix!: emit server-valid MQL — pipeline $-string pass-through + reject-class fixes`) into master, which had concurrently shipped the CLI, the bare-statement `$$.<chain>;` stream form, and the `$unwind`-path `$literal` fix. Six files conflicted; two non-mechanical decisions:

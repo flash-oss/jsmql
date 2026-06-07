@@ -1,32 +1,10 @@
 // Collection-union translation: lowers `$$.push(args...)` statements into
-// MongoDB `$unionWith` stages.
+// MongoDB `$unionWith` stages. `.push` mirrors `Array.prototype.push`, so the
+// spread rule is JS-faithful (`...arr` spreads, scalar pushes one) and source
+// order is preserved. Statement-only — no value position.
 //
-// `$$` is the current-collection context-ref. `.push(...)` is the JS array
-// mutation that appends items to the end of an array — exactly the
-// semantic of `$unionWith` (append documents from another collection /
-// pipeline / `$documents` block to the current stream). Symmetry with
-// `Array.prototype.push` means the spread (`...`) rule is JS-faithful:
-//
-//   - `.push(...arr)` spreads an array (`.filter(pred)` or bare collection).
-//   - `.push(scalar)` pushes one value (`.find(pred)` or `{ inline doc }`).
-//
-// `.find(...)` returns a single doc → no spread. `.filter(...)` returns an
-// array → must be spread. Inline objects are scalars → no spread. Each
-// shape lowers to a distinct `$unionWith` stage body; consecutive inline-doc
-// arguments batch into one `$documents` sub-pipeline (fewer stages, identical
-// behaviour). Source-order is preserved across the whole arg list — a
-// document pushed before a collection appears first in the union, and vice
-// versa.
-//
-// `$unionWith` has no `let` slot (unlike `$lookup`), so a predicate that
-// references the local document (`$.x`) is a compile-time error — moving the
-// local filter to a `$match` stage before the push is the documented fix.
-//
-// Statement-only: `$$.push(...)` emits one or more stages and produces no
-// value. Using it on a RHS / as a value is rejected — `CollectionRef`
-// codegen surfaces the bare-reference error for those misuses.
-//
-// See `docs/specs/union-stage.md` for the full design and the error catalog.
+// Spread rules, inline-doc `$documents` batching, the no-`let`-slot predicate
+// rejection, and the error catalog are owned by docs/specs/union-stage.md.
 
 import type { Expr, CallArg, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
 import { CodegenError, EMPTY_CTX, freshSubPipelineCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
