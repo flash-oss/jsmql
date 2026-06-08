@@ -81,6 +81,20 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
 
+  // List-only operators (no single-value form) — HR2/HR3:
+  //   2+ args → array; 1 array literal → the array IS the operand list; 1 non-array → error.
+  it("list-only op: a single array literal is the operand list (HR2 round-trip)", () => {
+    expect(jsmql.expr("$setUnion([$.a, $.b])")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("$setUnion($.a, $.b)")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("$divide([10, 2])")).toEqual({ $divide: [10, 2] });
+  });
+
+  it("list-only op: a single non-array operand is rejected (HR3)", () => {
+    expect(() => jsmql.expr("$setUnion($.a)")).toThrow(/\$setUnion operates on a list of operands/);
+    expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
+    expect(() => jsmql.expr("$and(true)")).toThrow(/\$and operates on a list of operands/);
+  });
+
   it("$and logical", () => {
     expect(jsmql.expr('$and($gt($.age, 18), $eq($.status, "active"))')).toEqual({
       $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],
@@ -3244,11 +3258,17 @@ describe("computed object keys", () => {
 });
 
 describe("spread in operator args", () => {
-  it("$concatArrays with spread", () => {
-    expect(jsmql.expr("$concatArrays(...$.arrs)")).toEqual({ $concatArrays: "$arrs" });
-  });
-  it("Object.assign with spread", () => {
+  // The JS spread is idiomatic in JS-method position (Math.max/min, Object.assign)
+  // and stays supported there. It is NOT supported in the `$op(...)` escape hatch
+  // — an MQL operator takes its operands directly (HR2). The split is by surface:
+  // a JS builtin you already know vs. the raw direct-operator form.
+  it("Object.assign with spread (JS-method form — supported)", () => {
     expect(jsmql.expr("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
+  });
+  it("$op(...) escape hatch rejects spread", () => {
+    expect(() => jsmql.expr("$concatArrays(...$.arrs)")).toThrow(
+      /Spread \(\.\.\.\) is not supported in \$concatArrays\(\.\.\.\)/,
+    );
   });
 });
 
@@ -3322,11 +3342,16 @@ describe("flex-shape operators", () => {
   });
 
   // ── Spread handling ─────────────────────────────────────────────────────────
-  it("flex op with single spread → bare array", () => {
-    expect(jsmql.expr("$min(...$.scores)")).toEqual({ $min: "$scores" });
+  // The `$op(...)` escape hatch rejects the JS spread (HR2 — an operator takes its
+  // operands directly). For the array-from-runtime case, write `Math.min(...arr)`
+  // (the JS-method form keeps spread) or pass the field as a single array arg.
+  it("flex op rejects single spread", () => {
+    expect(() => jsmql.expr("$min(...$.scores)")).toThrow(/Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\)/);
   });
-  it("flex op with mixed spread + scalar → $concatArrays", () => {
-    expect(jsmql.expr("$max($.first, ...$.rest)")).toEqual({ $max: { $concatArrays: [["$first"], "$rest"] } });
+  it("flex op rejects mixed spread + scalar", () => {
+    expect(() => jsmql.expr("$max($.first, ...$.rest)")).toThrow(
+      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\)/,
+    );
   });
 
   // ── Edge cases ──────────────────────────────────────────────────────────────

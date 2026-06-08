@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: strict list-only `$op(...)` call form + spread removed from the escape hatch
+
+The `array` shape (now genuinely list-only, after the comparison ops moved to `flex`) blindly array-wrapped via `generateVariadicArgs` regardless of arity or array-ness: `$divide(10)` → `{ $divide: [10] }`, `$setUnion([$.a, $.b])` → `{ $setUnion: [["$a", "$b"]] }` (double-wrapped), and `$setUnion($.a)` silently emitted `{ $setUnion: ["$a"] }`. HR2/HR3 fix in `generateOperatorCall`: **2+ args** → array; **1 array literal** → that array is the operand list (`$setUnion([$.a, $.b])` → `{ $setUnion: ["$a", "$b"] }`, the round-trip of `{ $op: [...] }`); **1 non-array** → actionable HR3 error (`$setUnion operates on a list of operands — write $setUnion(a, b) or $setUnion([a, b])`).
+
+Spread removed from the `$op(...)` escape hatch (user decision): `assertNoSpread` now runs up-front in `generateOperatorCall` for every shape, so `$min(...$.scores)` / `$concatArrays(...$.arrs)` are rejected with a "pass a single array" hint. The JS spread stays supported in JS-method position — `Math.max(...arr)`, `Math.min(...arr)`, `Object.assign(...docs)` route through `generateMathCall`/the `Object.assign` lowering → `generateVariadicArgs` (which keeps its `$concatArrays` handling), never the escape hatch. The split is by surface: a JS builtin the developer already knows vs. the raw direct-operator form where spread "doesn't make sense" (every MQL operator takes its operands directly). Tests: added list-only HR2/HR3 cases; the three `$op(...)`-spread tests now assert the rejection. Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [docs/specs/operator-registry.md](specs/operator-registry.md), [docs/LANGUAGE.md](LANGUAGE.md).
+
+---
+
 ## 2026-06-09 — fix!: comparison operators + `$in` are dual-form (`array` → `flex`)
 
 `{ field: { $gt: v } }` is the valid single-value *query* comparison operator; `{ $gt: [a, b] }` is the *aggregation* operands form. The registry had `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` (and `$in`) as `array`, so `$gt($.x)` array-wrapped to `{ $gt: ["$x"] }` — wrong, and it contradicted HR2's round-trip (`{ $gt: "$x" }` is valid MQL, so `$gt($.x)` must produce it). Moved those seven operators to `flex` so a single arg passes through as `{ $gt: "$x" }` and two-or-more wrap as `{ $gt: [a, b] }`. `$cmp` stays `array` (aggregation-only, no single-value form). This is the registry half of bringing the escape hatch into HR2/HR3 conformance; the list-only `array` ops (`$setUnion`, `$add`, …) get their strict single-non-array rejection in a following change. Regenerated `src/ops.ts`. Files: [src/operators.ts](../src/operators.ts), [src/ops.ts](../src/ops.ts), [docs/specs/operator-registry.md](specs/operator-registry.md).

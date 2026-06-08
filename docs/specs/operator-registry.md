@@ -26,13 +26,20 @@ $not($.active)    →  { $not: "$active" }
 ```
 
 ### `array` → `{ $op: [a, b, ...] }`
-The operator takes one or more positional arguments collected into an array. Single-argument calls still produce an array.
+A **list-only** operator — it has no single-value form, so its operand is always a list (HR2/HR3 — see [LANG_RULES.md](../LANG_RULES.md)):
+
+- **2+ args** → collected into an array.
+- **1 array literal** → that array IS the operand list (the HR2 round-trip of `{ $op: [...] }`).
+- **1 non-array value** → rejected: a list operator can't take a lone scalar.
 
 ```
-$eq($.age, 18)          →  { $eq: ["$age", 18] }
-$add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }
+$add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }      (2+ args → array)
+$setUnion([$.a, $.b])   →  { $setUnion: ["$a", "$b"] }       (1 array literal → unwrapped)
 $ifNull($.x, $.y, 0)    →  { $ifNull: ["$x", "$y", 0] }
+$add($.x)               →  ✗ error  ("$add operates on a list of operands — write $add(a, b) or $add([a, b])")
 ```
+
+Operators with a *valid* single-value form (the comparison operators, `$in`) are `flex`, not `array`. The JS spread (`$add(...arr)`) is not accepted on any operator-call form — pass a single array literal instead. (Spread stays supported in JS-method position: `Math.max(...arr)`, `Object.assign(...docs)`.)
 
 ### `object` → `{ $op: { k1: a, k2: b } }`
 The operator's MQL form takes an object. The registry entry stores an ordered `keys` array that maps positional argument positions to named keys.
@@ -73,12 +80,7 @@ $gt($.x)                  →  { $gt: "$x" }                  (query single-valu
 $gt($.a, $.b)             →  { $gt: ["$a", "$b"] }          (aggregation operands)
 ```
 
-Spread handling matches `array`-shape operators:
-
-```
-$min(...$.scores)         →  { $min: "$scores" }                          (single spread → bare)
-$max($.first, ...$.rest)  →  { $max: { $concatArrays: [["$first"], "$rest"] } }  (mixed)
-```
+The JS spread is not accepted in the `$op(...)` escape hatch (any shape) — `$min(...$.scores)` is rejected; pass a single array (`$min([...])`) or use the JS-method form `Math.min(...$.scores)`, where spread stays supported.
 
 A single object-literal arg is treated as a **value** (the object itself), not as a shape signal. `flex` is not the same as `object`-shape: with `object`-shape, a lone object literal is the operator's structured argument with named keys; with `flex`, it's just one value among potentially many.
 

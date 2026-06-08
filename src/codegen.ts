@@ -1658,6 +1658,10 @@ function generateOperatorCall(
   pos: number,
 ): Record<string, unknown> {
   checkOperatorContext(name, ctx, pos);
+  // HR2: the `$op(...)` escape hatch takes operands directly. The JS spread
+  // (`$op(...arr)`) is not supported on any operator — pass operands as
+  // separate args or as a single array literal.
+  assertNoSpread(args, name, pos);
   // Special case: $literal(value) — the argument is wrapped verbatim and
   // MongoDB does not re-evaluate it at query time. Recurse with the
   // `insideLiteral` flag so nested `"$..."` strings don't get a second
@@ -1714,12 +1718,10 @@ function generateOperatorCall(
 
   switch (shape.kind) {
     case "none": {
-      assertNoSpread(args, name, pos);
       return { [name]: {} };
     }
 
     case "single": {
-      assertNoSpread(args, name, pos);
       if (args.length !== 1) {
         throw new CodegenError(`Operator ${name} expects exactly 1 argument, got ${args.length}`, pos);
       }
@@ -1727,30 +1729,35 @@ function generateOperatorCall(
     }
 
     case "array": {
-      if (args.length === 0) {
-        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
-      }
-      return { [name]: generateVariadicArgs(args, ctx) };
-    }
-
-    case "flex": {
-      // Flex: 1 arg → `{ $op: expr }`, 2+ → `{ $op: [a, b, ...] }`.
-      // A single spread (`...arr`) collapses to the single form, passing the array through.
+      // List-only operator (no single-value form). HR2/HR3:
+      //   2+ args        → `{ $op: [a, b, ...] }`
+      //   1 array literal → `{ $op: [...] }`  (the array IS the operand list)
+      //   1 non-array     → HR3 error (a list operator can't take a lone scalar)
       if (args.length === 0) {
         throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
       }
       if (args.length === 1) {
-        const only = args[0];
-        if (only.type === "SpreadElement") {
-          return { [name]: _generate(only.argument, ctx) };
+        const only = args[0] as Expr;
+        if (only.type !== "ArrayLiteral") {
+          throw listOperandError(name, only.pos);
         }
         return { [name]: _generate(only, ctx) };
       }
       return { [name]: generateVariadicArgs(args, ctx) };
     }
 
+    case "flex": {
+      // Flex (has a single-value form): 1 arg → `{ $op: expr }`, 2+ → `{ $op: [a, b, ...] }`.
+      if (args.length === 0) {
+        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
+      }
+      if (args.length === 1) {
+        return { [name]: _generate(args[0] as Expr, ctx) };
+      }
+      return { [name]: generateVariadicArgs(args, ctx) };
+    }
+
     case "object": {
-      assertNoSpread(args, name, pos);
       if (args.length === 0) {
         throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
       }
@@ -1771,16 +1778,16 @@ function generateOperatorCall(
   }
 }
 
+// Registry-miss path: the compiler can't know an unknown operator's shape, so it
+// can't tell whether a single non-array value is invalid (HR3 only fires on what
+// it KNOWS). Mirror `flex`: 1 arg → bare value, 2+ → array. (Spread is already
+// rejected up-front by `generateOperatorCall`.)
 function generateUnknownOperator(name: string, args: CallArg[], ctx: GenerateCtx): Record<string, unknown> {
   if (args.length === 0) {
     return { [name]: {} };
   }
   if (args.length === 1) {
-    const only = args[0];
-    if (only.type === "SpreadElement") {
-      // Single ...arr passes the spread argument through directly as the operator value.
-      return { [name]: _generate(only.argument, ctx) };
-    }
+    const only = args[0] as Expr;
     if (only.type === "ObjectLiteral") {
       return { [name]: generateStaticObjectEntries(only.entries, ctx) };
     }
@@ -1790,12 +1797,14 @@ function generateUnknownOperator(name: string, args: CallArg[], ctx: GenerateCtx
 }
 
 /**
- * Generate a variadic argument list, handling spread via concatArrays.
+ * Generate a variadic argument list, handling JS spread via `$concatArrays`.
+ * Used by the JS-method lowerings (`Math.min`/`Math.max`, `Object.assign`) where
+ * spread is idiomatic JS the developer already knows. The `$op(...)` escape hatch
+ * does NOT reach here with a spread — `generateOperatorCall` rejects it up-front.
  *
  *   - all-non-spread args → a flat array
- *   - single spread arg → the spread's value (which is presumed to be an array)
- *   - mixed → `{ $concatArrays: [...wrapped] }`, where non-spread args become single-element arrays
- *     and spread args are passed through as their array value.
+ *   - single spread arg → the spread's value (presumed to be an array)
+ *   - mixed → `{ $concatArrays: [...] }`, non-spread args wrapped as single-element arrays.
  */
 function generateVariadicArgs(args: CallArg[], ctx: GenerateCtx): unknown {
   const hasSpread = args.some((a) => a.type === "SpreadElement");
@@ -1810,11 +1819,19 @@ function generateVariadicArgs(args: CallArg[], ctx: GenerateCtx): unknown {
   return { $concatArrays: parts };
 }
 
+/** HR3: a list-only operator (no single-value form) was handed a lone non-array operand. */
+function listOperandError(name: string, pos: number): CodegenError {
+  return new CodegenError(
+    `${name} operates on a list of operands — pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,
+    pos,
+  );
+}
+
 function assertNoSpread(args: CallArg[], name: string, callPos: number): void {
   for (const a of args) {
     if (a.type === "SpreadElement") {
       throw new CodegenError(
-        `Spread (...) is not supported as an argument to ${name} — only variadic operators accept it`,
+        `Spread (...) is not supported in ${name}(...) — pass operands directly (${name}(a, b)) or as a single array (${name}([a, b])).`,
         a.pos ?? callPos,
       );
     }

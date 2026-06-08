@@ -1595,11 +1595,23 @@ These treat arrays as sets (order ignored, duplicates removed):
 ```js
 $setUnion($.a, $.b)                // { $setUnion: ["$a", "$b"] }
 $setUnion($.a, $.b, $.c)           // $setUnion accepts more than 2 arguments
+$setUnion([$.a, $.b])              // a single array is the operand list — same output
 $setIntersection($.a, $.b)         // { $setIntersection: ["$a", "$b"] }
 $setDifference($.a, $.b)           // { $setDifference: ["$a", "$b"] }
 $setIsSubset($.a, $.b)             // { $setIsSubset: ["$a", "$b"] }
 $setEquals($.a, $.b)               // { $setEquals: ["$a", "$b"] }
 ```
+
+**Operand rules for list operators.** Operators whose operand is a list (the set
+operators, arithmetic `$add`/`$divide`/…, `$and`/`$or`, the bitwise ops) take
+either two-or-more arguments or a single array — both produce the same `{ $op:
+[…] }`. A single *non-array* value is rejected, because such an operator has no
+single-value form (write `$setUnion($.a, $.b)` or `$setUnion([$.a, $.b])`, not
+`$setUnion($.a)`). The JS spread isn't accepted in `$op(...)` — pass a single
+array, or use the JS-method form where it applies (`Math.max(...$.scores)`). The
+comparison operators are the exception: they *do* have a single-value form
+(`$gt($.x)` → `{ $gt: "$x" }`, the query-operator shape), so a lone argument is
+fine there.
 
 ### Object Operations
 
