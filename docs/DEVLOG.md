@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: comparison operators + `$in` are dual-form (`array` → `flex`)
+
+`{ field: { $gt: v } }` is the valid single-value *query* comparison operator; `{ $gt: [a, b] }` is the *aggregation* operands form. The registry had `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` (and `$in`) as `array`, so `$gt($.x)` array-wrapped to `{ $gt: ["$x"] }` — wrong, and it contradicted HR2's round-trip (`{ $gt: "$x" }` is valid MQL, so `$gt($.x)` must produce it). Moved those seven operators to `flex` so a single arg passes through as `{ $gt: "$x" }` and two-or-more wrap as `{ $gt: [a, b] }`. `$cmp` stays `array` (aggregation-only, no single-value form). This is the registry half of bringing the escape hatch into HR2/HR3 conformance; the list-only `array` ops (`$setUnion`, `$add`, …) get their strict single-non-array rejection in a following change. Regenerated `src/ops.ts`. Files: [src/operators.ts](../src/operators.ts), [src/ops.ts](../src/ops.ts), [docs/specs/operator-registry.md](specs/operator-registry.md).
+
+---
+
 ## 2026-06-09 — fix!: HR1 — source `$`-strings pass through everywhere (only injected values wrap)
 
 New axiom doc `docs/LANG_RULES.md` makes **HR1** law: a `"$x"` typed in *source* IS the MQL field ref `$x` and passes through verbatim in **every** context — jsmql adds no `$literal` of its own. Previously `jsmql.expr('{ a: "$b" }')` emitted `{ a: { $literal: "$b" } }` and the standalone Filter `$expr` residual wrapped `$`-strings too (the latter was tracked as DEF-025). Both violated HR1.

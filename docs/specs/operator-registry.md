@@ -62,13 +62,15 @@ $rand()    →  { $rand: {} }
 ```
 
 ### `flex` → `{ $op: expr }` _or_ `{ $op: [a, b, ...] }`
-The operator legitimately accepts both a single expression (typically in accumulator context, e.g. `$min` inside `$group`) and an array of expressions (in expression context, e.g. `$min` inside `$project`). The output shape is decided by argument count:
+The operator legitimately accepts both a single expression and an array of expressions; the output shape is decided by argument count. Two cases use this: (1) accumulator-vs-expression duals (e.g. `$min` — single in `$group`, array in `$project`); (2) **dual-form operators with a single-value query form** — the comparison operators `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` and `$in`, where one argument is the valid query shape `{ field: { $gt: v } }` and two-or-more are the aggregation operands (HR2 — see [LANG_RULES.md](../LANG_RULES.md)). This is why a single arg never errors for these (unlike a list-only `array` op such as `$setUnion`, which has no single-value form).
 
 ```
 $min($.scores)            →  { $min: "$scores" }            (1 arg → single)
 $min($.a, $.b, $.c)       →  { $min: ["$a", "$b", "$c"] }   (2+ args → array)
 $round($.price)           →  { $round: "$price" }
 $round($.price, 2)        →  { $round: ["$price", 2] }
+$gt($.x)                  →  { $gt: "$x" }                  (query single-value form)
+$gt($.a, $.b)             →  { $gt: ["$a", "$b"] }          (aggregation operands)
 ```
 
 Spread handling matches `array`-shape operators:

@@ -62,6 +62,21 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$gt($.age, 18)")).toEqual({ $gt: ["$age", 18] });
   });
 
+  // Comparison operators + $in are dual-form (`flex`): a single argument is the
+  // valid query-operator shape `{ field: { $gt: v } }`; two args are the
+  // aggregation operands `{ $gt: [a, b] }` (HR2 — see docs/LANG_RULES.md). A
+  // single arg must NOT error or array-wrap.
+  it("comparison single arg → query single-value form (HR2)", () => {
+    expect(jsmql.expr("$gt($.x)")).toEqual({ $gt: "$x" });
+    expect(jsmql.expr("$eq(5)")).toEqual({ $eq: 5 });
+    expect(jsmql.expr("$lte($.score)")).toEqual({ $lte: "$score" });
+  });
+
+  it("$in dual form: single array → query, two args → aggregation", () => {
+    expect(jsmql.expr("$in([1, 2, 3])")).toEqual({ $in: [1, 2, 3] });
+    expect(jsmql.expr("$in($.x, $.arr)")).toEqual({ $in: ["$x", "$arr"] });
+  });
+
   it("$add multiple args", () => {
     expect(jsmql.expr("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
