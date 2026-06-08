@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — docs: HR4 verified + HR-conformance sweep (close the LANG_RULES batch)
+
+Closing pass over the LANG_RULES conformance work. **HR4** (four sigils, one scope each) verified conformant: `$` → document, `$$` → collection/stream, `$$$` → database, `$$$$` → server/cluster each map to exactly one ref type by construction (parser → fixed ref node → dedicated lowering), and the 2116-test suite exercises every sigil surface. No code change.
+
+**Sweep** for other "auto-wrap / knowingly-invalid MQL" behaviour beyond the escape hatch: the `$literal` auto-wrap is now injected-values-only (HR1); `$expr` only appears as a legitimate match residual, the deliberate `$$ = []` empty-stream sugar, and lookup sub-pipelines; array auto-wrap is fixed. Two **pre-existing HR3 gaps remain, both already tracked**: DEF-026 (`$arrayToObject` with a literal multi-pair array emits a server-rejected two-argument shape) and DEF-027 (constant-only stage slots like `$limit($.n)` pass a field ref through to server-invalid MQL). Cross-referenced both DEFERRED rows to HR3 — they're deferred because each fix is shape/slot-specific, not because the behaviour is acceptable. No new rejections introduced, so no new DEF rows.
+
+Verification: the full probe matrix from the conformance plan matches the required shapes (errors where required), HR1's injected-value exception still wraps, `npm test` green (2116), `npm run smoke:dist` green (10).
+
+---
+
 ## 2026-06-09 — fix!: a top-level object-literal Filter is a raw query doc (HR1 — no `$expr` wrap)
 
 `generateFilter` routed *every* bare expression — including a top-level object literal — through the predicate translator, so a hand-written query document `{ age: { $gt: 18 } }` (and even `{ a: 1 }`) came out as `{ $expr: { age: { $gt: 18 } } }`: `$expr` wrapping a field-keyed object, which doesn't filter on the field at all. With the comparison ops now `flex`, `{ age: $gt($.x) }` was the worst case — `{ $expr: { age: { $gt: ["$x"] } } }`, doubly wrong. HR1 says a pasted/hand-written query document passes through verbatim, and a bare `{ … }` in `find(…)` position *is* the query document. Fix: `generateFilter` short-circuits an `ObjectLiteral` root and emits it via `generateWithCtx` (raw passthrough) — `{ age: { $gt: 18 } }` → itself, `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }` — mirroring how a `$match` stage body already treats object literals, so the Filter and Pipeline surfaces finally agree. Predicate expressions (`$.age > 18`, `$.name.trim() === 'alice'`) are unchanged: they still translate to indexable query docs or `$expr` residuals. Full suite stayed green (no test pinned the old `$expr`-wrapped object-literal form). Breaking (`fix!`); pre-1.0. Files: [src/index.ts](../src/index.ts), [docs/specs/filter-mode.md](specs/filter-mode.md).

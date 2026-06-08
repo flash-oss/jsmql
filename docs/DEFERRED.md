@@ -301,6 +301,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ### DEF-026 — `$arrayToObject` with a literal multi-pair array emits server-rejected MQL
 
+- **HR3 gap.** This is a known [HR3](LANG_RULES.md) violation (the compiler emits MQL it could know the server rejects); deferred because the fix is shape-sensitive, not because the behaviour is acceptable.
 - **What's blocked.** `$arrayToObject([["a", 1], ["b", 2]])` lowers to `{ $arrayToObject: [["a",1],["b",2]] }`. MongoDB reads a top-level array value as an *argument list*, so it sees two arguments and rejects it ("Expression $arrayToObject takes exactly 1 argument. 2 were passed in."). The single-pair form (`{ $arrayToObject: [[k, v]] }`, the common computed-key case) is unaffected.
 - **Target lowering.** Emit a shape MongoDB reads as one array argument. `$literal`-wrapping the outer array is wrong when the pairs contain expressions (it would freeze `$$this` etc.), so the fix needs to distinguish a constant pair-array (wrap in `$literal`) from one with expression elements (build it as a single array expression another way).
 - **Why blocked.** Niche (most `$arrayToObject` use is computed-single-key or a field ref); the correct fix is shape-sensitive and not a one-liner.
@@ -313,6 +314,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ### DEF-027 — Validate compile-time-constant-only stage slots given a non-constant
 
+- **HR3 gap.** A known [HR3](LANG_RULES.md) violation (statically-knowable server-invalid MQL is emitted rather than rejected); deferred because it spans many slots and needs a per-slot constant annotation.
 - **What's blocked.** Several stage slots require a compile-time constant; jsmql's validator is literal-gated (it only throws on 100%-certain literal violations), so a field/expression in these slots passes through and the server rejects it: `$limit($.n)` → `{ $limit: "$n" }` ("invalid argument to $limit stage: Expected a number"), `$bucket({ boundaries: $.x })` (must be a literal array), `$sample({ size: $.n })`, `$lookup({ pipeline: $.x })` ("A pipeline must be an array of objects"), and a string passed where a Date is required (`$dateDiff` startDate). These all emit MQL that fails at parse/optimize time.
 - **Target lowering.** Extend `validateStageBody` (and operator-arg validation) to reject a non-constant (field ref / expression / non-array) in a constant-only slot at compile time with an actionable message, instead of emitting server-invalid MQL. Distinct from the §B "runtime-dependent constraints" decision — these are *statically* knowable (the slot value is a field ref, not a literal).
 - **Why blocked.** Spans several stages/operators and needs a per-slot "must be a literal constant" annotation; out of scope for the var-name/`$limit:0`/regex fix batch.
