@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: HR1 — source `$`-strings pass through everywhere (only injected values wrap)
+
+New axiom doc `docs/LANG_RULES.md` makes **HR1** law: a `"$x"` typed in *source* IS the MQL field ref `$x` and passes through verbatim in **every** context — jsmql adds no `$literal` of its own. Previously `jsmql.expr('{ a: "$b" }')` emitted `{ a: { $literal: "$b" } }` and the standalone Filter `$expr` residual wrapped `$`-strings too (the latter was tracked as DEF-025). Both violated HR1.
+
+Fix: the `StringLiteral` codegen case now returns the value unchanged in all contexts; `literalSafeString` was renamed `literalSafeInjectedString` and is reached only via `safeBoundValue` (the runtime-injected path). HR1's one exception — a `jsmql.compile` param or template-tag `${…}` that looks like `"$x"` still wraps in expression position so untrusted input can't silently become a field ref — is preserved. The template-tag fast path inlined plain values as source text, which erased the injected-vs-source distinction; so injected `$`-strings are now routed through a synthesized `ParamRef` binding (extended `needsBindingRoute` / `substituteRoutedValues` in `index.ts`, alongside the existing opaque-BSON routing) so `safeBoundValue` applies the context-dependent wrap. `GenerateCtx.pipelineContext` now gates **only** the injected-value wrap.
+
+Resolved **DEF-025** (deleted the §A row, stripped its tags in `src/index.ts` and `docs/specs/filter-mode.md`) and updated the §B "Model A" note — HR1 settles the source-string question globally, so there is no surface- or nesting-dependent wrap. Test churn: `literal-passthrough.test.ts`'s per-operator "wraps in jsmql.expr" assertions inverted to "passes through" (158 cases); `codegen.test.ts`'s source-string cases flipped to pass-through while the injected (template-tag / compile) cases stay wrapped. Breaking output-shape change (`fix!`); pre-1.0 so the package version stays `0.1.0`. Files: [src/codegen.ts](../src/codegen.ts), [src/index.ts](../src/index.ts), [docs/LANGUAGE.md](LANGUAGE.md), [docs/specs/filter-mode.md](specs/filter-mode.md), [docs/specs/aggregation-stages.md](specs/aggregation-stages.md), [src/CLAUDE.md](../src/CLAUDE.md).
+
+---
+
 ## 2026-06-07 — docs: de-duplicate the doc surface to a single-source-of-truth model
 
 The same fact was being written as a full paragraph in three index-like places — root `CLAUDE.md`'s "What this project is" API section, root `CLAUDE.md`'s "File map", and the `docs/CLAUDE.md` spec-table "Covers" column — on top of the spec that actually owns it (plus README + LANGUAGE.md on the user side, plus restating module-header block comments in `src/*.ts`). Every behaviour change therefore needed 4–6 synchronised prose edits, and the misses are exactly the "spec drift" this repo keeps generating.

@@ -241,40 +241,39 @@ Both single and double quotes. Escape sequences: `\\`, `\"`, `\'`, `\n`, `\t`:
 "escaped \"quote\""
 ```
 
-#### `$`-prefixed strings: pipelines pass through, `jsmql.expr` wraps
+#### `$`-prefixed strings: a `"$x"` you type is the field ref `$x`
 
-A string that starts with `$` (like `"$items"`) is special, because MongoDB reads
-such strings as **field references** in aggregation expressions. jsmql treats them
-differently depending on which surface you are on:
+A string that starts with `$` (like `"$items"`) is read by MongoDB as a **field
+reference** in aggregation expressions. jsmql honours that: a `"$x"` you type in
+source **is** the field ref `$x`, and it **passes through verbatim in every
+context** — pipelines, stage bodies, and `jsmql.expr` alike. jsmql never adds a
+`$literal` of its own (this is rule **HR1**; see [LANG_RULES.md](LANG_RULES.md)):
 
-- **In a pipeline / stage** (`jsmql(...)`, `jsmql.pipeline(...)`, and stage bodies)
-  a `$`-string **passes through verbatim**. This is the "MongoDB documents you
-  write or paste" surface, so pasted MQL round-trips unchanged:
+```js
+jsmql(`$unwind("$items");`)        // → [{ $unwind: "$items" }]
+jsmql(`[{ $unwind: "$items" }]`)   // → [{ $unwind: "$items" }]  (raw MQL, unchanged)
+jsmql(`$project({ t: $concat("$a", "$b") });`)
+//    → [{ $project: { t: { $concat: ["$a", "$b"] } } }]   (even nested in an operator)
+jsmql.expr(`$eq($.x, "$y")`)       // → { $eq: ["$x", "$y"] }   ("$y" is the field ref $y)
+```
 
-  ```js
-  jsmql(`$unwind("$items");`)        // → [{ $unwind: "$items" }]
-  jsmql(`[{ $unwind: "$items" }]`)   // → [{ $unwind: "$items" }]  (raw MQL, unchanged)
-  jsmql(`$project({ x: "$y" });`)    // → [{ $project: { x: "$y" } }]
-  jsmql(`$project({ t: $concat("$a", "$b") });`)
-  //    → [{ $project: { t: { $concat: ["$a", "$b"] } } }]   (even nested in an operator)
-  ```
+Writing `$.items` instead of `"$items"` produces the identical output, so use
+whichever reads better. To force a **literal** string that happens to start with
+`$`, use the `$literal(...)` escape hatch — exactly as in raw MQL:
 
-  Writing `$.items` instead of `"$items"` produces the identical output, so use
-  whichever reads better. To force a **literal** string that happens to start with
-  `$` inside a pipeline, use the `$literal(...)` escape hatch:
+```js
+jsmql.expr(`$literal("$y")`)                // → { $literal: "$y" }
+jsmql(`$project({ x: $literal("$y") });`)   // → [{ $project: { x: { $literal: "$y" } } }]
+```
 
-  ```js
-  jsmql(`$project({ x: $literal("$y") });`)   // → [{ $project: { x: { $literal: "$y" } } }]
-  ```
+The one exception is for safety: a **runtime-injected** value (a `jsmql.compile`
+parameter or a template-tag `${…}` interpolation) that looks like `"$x"` *is*
+wrapped in `$literal` in expression position, so untrusted input can't silently
+turn into a field reference:
 
-- **In `jsmql.expr(...)`** — the raw aggregation-expression authoring surface — a
-  `$`-string is a **literal string** and gets wrapped in `$literal` so MongoDB
-  does not mistake it for a field reference. Write `$.y` for a field reference:
-
-  ```js
-  jsmql.expr(`$eq($.x, "$y")`)   // → { $eq: ["$x", { $literal: "$y" }] }
-  jsmql.expr(`$eq($.x, $.y)`)    // → { $eq: ["$x", "$y"] }
-  ```
+```js
+jsmql.expr`$.x === ${userInput}`   // userInput = "$secret" → { $eq: ["$x", { $literal: "$secret" }] }
+```
 
 ### Template Literals
 

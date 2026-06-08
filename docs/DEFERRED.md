@@ -299,19 +299,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-025 — Unify the standalone-Filter `$expr` residual with pipeline `$`-string pass-through
-
-- **What's blocked.** Inside a pipeline, `$`-prefixed string literals pass through verbatim (no `$literal`) — set by `pipelineContext` at the pipeline entrypoints. The **standalone** Filter `$expr` residual (`jsmql('…')` / `jsmql.filter('…')` non-translatable branch) is generated WITHOUT that flag, so a `$`-string there is still `$literal`-wrapped. Consequence: `$match($.a === "$b")` *inside a pipeline* passes `"$b"` through, but a *standalone* `jsmql.filter('$.a === "$b"')` `$expr` residual wraps it.
-- **Target lowering.** Decide whether a standalone Filter is a "documents you write/paste" surface (pass through, like a pipeline) or an expression-authoring surface (wrap, like `jsmql.expr`). If the former, seed `pipelineContext: true` in `generateFilter` ([src/index.ts](../src/index.ts)).
-- **Why blocked.** Low impact — most Filters lower to query-document literals (handled by `translateMatchBody`, not `literalSafeString`); a `$`-string literal reaching the `$expr` residual is rare. Keeping the wrap costs zero filter-test regression now; the unification is a deliberate follow-up so the choice gets its own review.
-- **Success criteria.** A decision recorded (pass-through vs wrap) + `jsmql.filter('$.a === "$b")` matches it; tests in `test/filter.test.ts`.
-- **Rejection site(s).** `src/index.ts` `generateFilter` (tagged `[DEF-025]`); `docs/specs/filter-mode.md` § Edge cases.
-- **Spec.** `docs/specs/filter-mode.md`.
-- **Status.** open
-- **Effort.** S (one-line flag seed + decision + tests)
-
----
-
 ### DEF-026 — `$arrayToObject` with a literal multi-pair array emits server-rejected MQL
 
 - **What's blocked.** `$arrayToObject([["a", 1], ["b", 2]])` lowers to `{ $arrayToObject: [["a",1],["b",2]] }`. MongoDB reads a top-level array value as an *argument list*, so it sees two arguments and rejects it ("Expression $arrayToObject takes exactly 1 argument. 2 were passed in."). The single-pair form (`{ $arrayToObject: [[k, v]] }`, the common computed-key case) is unaffected.
@@ -385,9 +372,9 @@ The pre-flight validator (`docs/specs/pipeline-validation.md`) throws only on vi
 
 The lean `$replaceWith` shape is correct for the `$ = …` sugar. Adding a knob to opt into the verbose 4.0-compatible `$replaceRoot({ newRoot: … })` form adds API surface for no gain — users who need that shape write the stage call directly.
 
-### Wrapping nested-operator `$`-strings in pipeline context ("Model A")
+### Wrapping nested-operator `$`-strings ("Model A")
 
-When a pipeline stage value is itself an operator call — `$project({ t: $concat("$a", "$b") })` — the `$`-string args pass through verbatim (`{ $concat: ["$a", "$b"] }`); they are NOT `$literal`-wrapped. We considered the alternative ("Model A": an operator call wraps its `$`-string args the same way everywhere, so only *direct* stage-spec values pass through). Rejected: it makes the same `$op("$x")` call mean different things at different nesting depths within one pipeline, and breaks the "paste raw MQL and it round-trips" property. The chosen rule (Model B) is positional by *surface*, not by operator: a whole pipeline is pass-through; only `jsmql.expr` wraps. Confirmed with the user. Implemented via `GenerateCtx.pipelineContext`; see `docs/specs/aggregation-stages.md`.
+When a stage value is itself an operator call — `$project({ t: $concat("$a", "$b") })` — the `$`-string args pass through verbatim (`{ $concat: ["$a", "$b"] }`); they are NOT `$literal`-wrapped. We considered the alternative ("Model A": an operator call wraps its `$`-string args, so only *direct* stage-spec values pass through). Rejected: it makes the same `$op("$x")` call mean different things at different nesting depths, and breaks the "paste raw MQL and it round-trips" property. **HR1 (added later) settled this globally**: a source-typed `$`-string passes through in *every* context — pipeline, stage, and `jsmql.expr` alike — so there is no nesting- or surface-dependent wrap at all. Only runtime-injected values wrap. See [docs/LANG_RULES.md](LANG_RULES.md) (HR1).
 
 ---
 

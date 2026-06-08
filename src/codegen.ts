@@ -97,18 +97,18 @@ export type GenerateCtx = {
    */
   insideLiteral?: boolean;
   /**
-   * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
-   * literals — they pass through verbatim. Set once at every pipeline-generation
-   * entrypoint (`generatePipeline` / `generateImplicitPipeline` /
-   * `generatePipelineWithCtx`) and propagated down through all stage bodies,
-   * sub-pipelines, and nested operator args. This is what makes
-   * `$unwind("$items")`, `$project({ x: "$y" })`, and
-   * `$project({ t: $concat(["$a"]) })` emit field-path strings instead of
-   * `$literal` envelopes — and lets pasted raw MQL round-trip. Distinct from
-   * `insideLiteral` (which marks a `$literal(...)` envelope); the two are OR-ed
-   * in `literalSafeString` / `safeBoundValue`. Left unset by `jsmql.expr`, whose
-   * bare-expression branch keeps the JS-string-literal-means-literal semantics
-   * (`"$y"` is the literal string; `$.y` is the field-ref spelling).
+   * When true, suppress the auto-`$literal` wrap on RUNTIME-INJECTED
+   * `"$..."`-shaped strings (a pipeline is a paste-raw-MQL surface). Set once at
+   * every pipeline-generation entrypoint (`generatePipeline` /
+   * `generateImplicitPipeline` / `generatePipelineWithCtx`) and propagated down
+   * through all stage bodies, sub-pipelines, and nested operator args. Distinct
+   * from `insideLiteral` (which marks a `$literal(...)` envelope); the two are
+   * OR-ed in `literalSafeInjectedString` / `safeBoundValue`. Left unset by
+   * `jsmql.expr`, where an injected `"$y"` keeps the safety wrap.
+   *
+   * Note (HR1): source-typed string literals pass through verbatim in EVERY
+   * context regardless of this flag — see the `StringLiteral` codegen case.
+   * This flag now only gates the injected-value wrap.
    */
   pipelineContext?: boolean;
   /**
@@ -639,20 +639,18 @@ function negativeLiteralValue(node: Expr): number | null {
 }
 
 /**
- * Emit a string literal in a value position, auto-wrapping in `$literal` when
- * the value would be misread by MongoDB as a field reference / system variable.
+ * Auto-wrap a RUNTIME-INJECTED string in `$literal` when MongoDB would misread
+ * it as a field reference / system variable. This is HR1's only exception: a
+ * `"$x"` typed in jsmql *source* passes through verbatim (it IS the field ref —
+ * see the `StringLiteral` codegen case), but a `"$x"` arriving as a
+ * `jsmql.compile` param or template-tag `${…}` is untrusted input we must not
+ * let silently become a field reference, so we wrap it in expression position.
  *
- * In MongoDB aggregation expression context, any string value that starts with
- * `$` is interpreted at query time — `"$foo"` reads field `foo`, `"$$NOW"` is
- * the system variable. A user who writes the string literal `"$foo"` in jsmql
- * source means the literal four-character string, not field access (they'd
- * write `$.foo` for that). Wrap in `$literal` so the runtime keeps it intact.
- *
- * Suppressed when `ctx.insideLiteral` is set — we're already inside a
- * `$literal(...)` envelope, MongoDB will not re-evaluate this subtree, and a
- * second wrap would produce a literal-of-a-literal.
+ * Suppressed when `ctx.insideLiteral` is set (already inside a `$literal(...)`
+ * envelope — a second wrap would produce a literal-of-a-literal) or when
+ * `ctx.pipelineContext` is set (a pipeline is a paste-raw-MQL surface).
  */
-function literalSafeString(value: string, ctx: GenerateCtx): unknown {
+function literalSafeInjectedString(value: string, ctx: GenerateCtx): unknown {
   if (ctx.insideLiteral || ctx.pipelineContext) return value;
   if (value.length > 0 && value.charCodeAt(0) === 36 /* $ */) {
     return { $literal: value };
@@ -661,10 +659,11 @@ function literalSafeString(value: string, ctx: GenerateCtx): unknown {
 }
 
 /**
- * Apply the same `$literal` safety net to a `jsmql.compile`/template-tag bound
- * value as we do to user-written string literals: any `"$..."`-shaped string,
- * at any nesting depth, gets wrapped so MongoDB doesn't read it as a field ref
- * at runtime. Plain objects and arrays recurse; primitives pass through.
+ * Apply the `$literal` safety net to a `jsmql.compile`/template-tag bound
+ * value: any `"$..."`-shaped string, at any nesting depth, gets wrapped so
+ * MongoDB doesn't read injected input as a field ref at runtime (HR1's
+ * runtime-injected exception). Plain objects and arrays recurse; primitives
+ * pass through.
  *
  * `validateInterpolatable` has already rejected functions, symbols, BigInt,
  * non-finite numbers, and circular references, so this walker only needs to
@@ -675,7 +674,7 @@ function literalSafeString(value: string, ctx: GenerateCtx): unknown {
  */
 function safeBoundValue(value: unknown, ctx: GenerateCtx): unknown {
   if (ctx.insideLiteral || ctx.pipelineContext) return value;
-  if (typeof value === "string") return literalSafeString(value, ctx);
+  if (typeof value === "string") return literalSafeInjectedString(value, ctx);
   if (isOpaqueBsonValue(value)) return value;
   if (Array.isArray(value)) return value.map((v) => safeBoundValue(v, ctx));
   if (value !== null && typeof value === "object") {
@@ -753,7 +752,10 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "BigIntLiteral":
       return { $toLong: expr.value };
     case "StringLiteral":
-      return literalSafeString(expr.value, ctx);
+      // HR1: a `"$x"` string typed in source IS the MQL field ref `$x`, in every
+      // context — it passes through verbatim, jsmql adds no `$literal` of its own.
+      // (Runtime-INJECTED values get the safety wrap; see `safeBoundValue`.)
+      return expr.value;
     case "BooleanLiteral":
       return expr.value;
     case "NullLiteral":

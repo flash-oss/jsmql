@@ -3446,19 +3446,20 @@ describe("misc / hash / timestamp / sigmoid / type / literal operators", () => {
   });
 });
 
-describe("auto-$literal wrap for `$`-prefixed string values", () => {
-  // MongoDB reads any value-position string that starts with `$` as a field
-  // reference (or system variable) at query time. Users who write `"$foo"` as
-  // a literal in jsmql source mean the four-character string, not field
-  // access (they'd write `$.foo` for that). jsmql wraps these in `$literal`
-  // automatically so the runtime sees the intended string.
+describe("$-prefixed string values: source passes through, injected wraps (HR1)", () => {
+  // HR1: a `"$foo"` typed in jsmql SOURCE is the MQL field ref `$foo` and passes
+  // through verbatim in every context — jsmql adds no `$literal` of its own (to
+  // get the literal four-char string, write `$literal("$foo")`). The only wrap is
+  // HR1's runtime-injected exception: a `"$foo"` arriving via a template-tag
+  // `${…}` or a `jsmql.compile` param is wrapped in expression position so
+  // untrusted input can't silently become a field reference.
 
-  it("bare $-prefixed string literal at the top level", () => {
-    expect(jsmql.expr('"$foo"')).toEqual({ $literal: "$foo" });
+  it("bare $-prefixed source string passes through at the top level", () => {
+    expect(jsmql.expr('"$foo"')).toEqual("$foo");
   });
 
-  it("$$-prefixed system-variable-shaped literal also wraps", () => {
-    expect(jsmql.expr('"$$NOW"')).toEqual({ $literal: "$$NOW" });
+  it("$$-prefixed system-variable-shaped source string passes through", () => {
+    expect(jsmql.expr('"$$NOW"')).toEqual("$$NOW");
   });
 
   it("plain strings (no leading $) are unaffected", () => {
@@ -3466,12 +3467,12 @@ describe("auto-$literal wrap for `$`-prefixed string values", () => {
     expect(jsmql.expr('""')).toEqual("");
   });
 
-  it("$-string inside an array literal", () => {
-    expect(jsmql.expr('[1, "$foo", "bar"]')).toEqual([1, { $literal: "$foo" }, "bar"]);
+  it("$-string inside an array literal passes through", () => {
+    expect(jsmql.expr('[1, "$foo", "bar"]')).toEqual([1, "$foo", "bar"]);
   });
 
-  it("$-string as an object value (key form unchanged)", () => {
-    expect(jsmql.expr('({ x: "$foo", y: "bar" })')).toEqual({ x: { $literal: "$foo" }, y: "bar" });
+  it("$-string as an object value passes through", () => {
+    expect(jsmql.expr('({ x: "$foo", y: "bar" })')).toEqual({ x: "$foo", y: "bar" });
   });
 
   it("$-string as an object KEY does not wrap", () => {
@@ -3480,10 +3481,8 @@ describe("auto-$literal wrap for `$`-prefixed string values", () => {
     expect(jsmql.expr('({ "$foo": 1 })')).toEqual({ $foo: 1 });
   });
 
-  it("$-string as an operator argument", () => {
-    expect(jsmql.expr('$concat("$first", " ", "$last")')).toEqual({
-      $concat: [{ $literal: "$first" }, " ", { $literal: "$last" }],
-    });
+  it("$-string as an operator argument passes through", () => {
+    expect(jsmql.expr('$concat("$first", " ", "$last")')).toEqual({ $concat: ["$first", " ", "$last"] });
   });
 
   it("real field refs (`$.foo`) are NOT wrapped — they aren't string literals", () => {

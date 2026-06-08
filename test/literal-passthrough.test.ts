@@ -4,16 +4,18 @@ import { OPERATORS, type OperatorDef } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The rule under test (see docs/specs/filter-mode.md, GenerateCtx.pipelineContext):
+// The rule under test (HR1 — see docs/LANG_RULES.md):
 //
-//   In PIPELINE/stage context, every `$`-prefixed string literal passes through
-//   verbatim — at any depth, including inside nested operator calls. This is the
-//   "MongoDB documents you write/paste" surface, so pasted MQL round-trips.
+//   A `$`-prefixed string literal typed in SOURCE passes through verbatim in
+//   EVERY context — pipeline, stage body, and `jsmql.expr` alike, at any depth
+//   including inside nested operator calls. It IS the MQL field ref `$x`, so
+//   jsmql adds no `$literal` of its own. This makes pasted raw MQL round-trip.
 //
-//   `$literal` auto-wrapping happens only in the `jsmql.expr` expression surface,
-//   where a JS string `"$y"` means the literal string and `$.y` is the field-ref
-//   spelling. The `$literal("$y")` escape hatch re-introduces a literal inside a
-//   pipeline.
+//   The only `$literal` auto-wrap is HR1's runtime-injected exception: a `"$x"`
+//   arriving via `jsmql.compile` params or a template-tag `${…}` gets wrapped in
+//   expression position so untrusted input can't silently become a field ref —
+//   covered in codegen.test.ts, not here (this file uses source-typed sentinels).
+//   The explicit `$literal("$y")` escape hatch forces a literal anywhere.
 //
 // This file is the comprehensive guard: it loops EVERY operator and EVERY stage
 // so no `$op` can silently regress into emitting (or dropping) a `$literal`.
@@ -51,10 +53,10 @@ function stageSourceFor(name: string, def: OperatorDef, call: string): string {
   return `$addFields({ v: ${call} });`;
 }
 
-/** Does an `$op(...)` call placed in `jsmql.expr` legitimately wrap its `$`-string arg? */
-function exprShouldWrap(def: OperatorDef): boolean {
+/** Can an `$op(...)` call legally sit in bare `jsmql.expr` position with a `$`-string arg? */
+function exprCanTakeStringArg(def: OperatorDef): boolean {
   // Accumulator-/window-only operators are illegal in bare expression position;
-  // `none`-shape operators take no `$`-string arg to wrap.
+  // `none`-shape operators take no `$`-string arg.
   return !def.accumulatorOnly && def.category !== "window" && def.shape.kind !== "none";
 }
 
@@ -100,10 +102,10 @@ describe("literal pass-through — every operator in the registry", () => {
       expect(out).not.toContain("$literal");
     });
 
-    if (exprShouldWrap(def)) {
-      it(`${name}: same call wraps the $-string in jsmql.expr context`, () => {
+    if (exprCanTakeStringArg(def)) {
+      it(`${name}: same source $-string ALSO passes through in jsmql.expr (HR1)`, () => {
         const out = JSON.stringify(jsmql.expr(call));
-        expect(out).toContain("$literal");
+        expect(out).not.toContain("$literal");
       });
     }
   }
