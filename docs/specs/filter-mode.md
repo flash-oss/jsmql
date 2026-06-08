@@ -35,7 +35,9 @@ function generateFilter(ast: Expr, ctx: GenerateCtx): object {
 }
 ```
 
-Three cases:
+**A top-level object literal is a raw query document (HR1).** Before the predicate translator runs, `generateFilter` short-circuits an `ObjectLiteral` root and emits it verbatim — `{ age: { $gt: 18 } }` → `{ age: { $gt: 18 } }`, `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }`, `{ a: 1 }` → `{ a: 1 }`. A bare `{ … }` in `db.coll.find(…)` position *is* the query document, so it passes through unchanged (no `$expr` wrap), exactly as a `$match` stage body does. See [docs/LANG_RULES.md](../LANG_RULES.md) (HR1).
+
+For any *other* expression (a predicate like `$.age > 18`, or a non-predicate like `$abs(42)`), `translateMatchBody` runs and there are three cases:
 
 1. **Fully translatable** (residual is `null`) → return the query document directly. Indexable on every conjunct.
 2. **Fully untranslatable** (query is empty) → return `{ $expr: <aggExpr> }`. `$expr` is a legal top-level Filter operator, so the output is a valid Filter for any non-predicate expression too.

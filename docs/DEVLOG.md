@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: a top-level object-literal Filter is a raw query doc (HR1 — no `$expr` wrap)
+
+`generateFilter` routed *every* bare expression — including a top-level object literal — through the predicate translator, so a hand-written query document `{ age: { $gt: 18 } }` (and even `{ a: 1 }`) came out as `{ $expr: { age: { $gt: 18 } } }`: `$expr` wrapping a field-keyed object, which doesn't filter on the field at all. With the comparison ops now `flex`, `{ age: $gt($.x) }` was the worst case — `{ $expr: { age: { $gt: ["$x"] } } }`, doubly wrong. HR1 says a pasted/hand-written query document passes through verbatim, and a bare `{ … }` in `find(…)` position *is* the query document. Fix: `generateFilter` short-circuits an `ObjectLiteral` root and emits it via `generateWithCtx` (raw passthrough) — `{ age: { $gt: 18 } }` → itself, `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }` — mirroring how a `$match` stage body already treats object literals, so the Filter and Pipeline surfaces finally agree. Predicate expressions (`$.age > 18`, `$.name.trim() === 'alice'`) are unchanged: they still translate to indexable query docs or `$expr` residuals. Full suite stayed green (no test pinned the old `$expr`-wrapped object-literal form). Breaking (`fix!`); pre-1.0. Files: [src/index.ts](../src/index.ts), [docs/specs/filter-mode.md](specs/filter-mode.md).
+
+---
+
 ## 2026-06-09 — fix!: raw `{ $op: <non-array> }` for a list-only operator is rejected (HR3)
 
 HR3 governs raw MQL too, not just MQL jsmql compiles from JS. So `{ $setUnion: $.x }` — a list-only operator keyed to a non-array value — must throw, exactly like the call form `$setUnion($.x)` (it's server-rejected: a set/arithmetic/boolean operator has no single-operand form). Added the check to `generateStaticObjectEntries`: when an object-entry key is a registry `array`-shape operator and the value AST is not an array literal, throw the same `listOperandError`. Gated tightly — fires only on a `$`-prefixed key that resolves to an `array`-shape operator, so `{ $setUnion: [$.a, $.b] }` (and every non-operator object) passes through verbatim (HR1). Full suite + realistic pipelines stayed green (no false positives). Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [docs/specs/operator-registry.md](specs/operator-registry.md).

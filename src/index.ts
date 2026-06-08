@@ -964,12 +964,17 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
  * Lower a single expression AST to a MongoDB **Filter** (the document passed
  * as the first argument to `db.coll.find(filter)`).
  *
- * Reuses the same translator that `$match` uses inside a Pipeline
- * (`translateMatchBody`): translatable conjuncts emit indexable `{ field: ... }`
- * pairs; an untranslatable residual is wrapped in `$expr`, which is a legal
- * top-level Filter operator. So both predicates (`$.age > 18` →
- * `{ age: { $gt: 18 } }`) and non-predicate expressions
- * (`$abs(42)` → `{ $expr: { $abs: 42 } }`) produce a valid Filter document.
+ * A top-level **object literal** is a raw query document and passes through
+ * verbatim (HR1) — `{ age: { $gt: 18 } }` → `{ age: { $gt: 18 } }`,
+ * `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }` — never `$expr`-wrapped. This
+ * mirrors how a `$match` stage body already treats an object literal, so the
+ * Filter and Pipeline surfaces agree.
+ *
+ * Any other expression is a predicate, lowered through the same translator that
+ * `$match` uses (`translateMatchBody`): translatable conjuncts emit indexable
+ * `{ field: ... }` pairs; an untranslatable residual is wrapped in `$expr`, a
+ * legal top-level Filter operator. So `$.age > 18` → `{ age: { $gt: 18 } }` and
+ * `$abs(42)` → `{ $expr: { $abs: 42 } }` both produce a valid Filter.
  *
  * Stage-intent shapes (`$match(...)`, `{ $match: ... }`, …) never reach this
  * function — they are caught in `lowerWithCtx` and routed through
@@ -977,6 +982,10 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
  * Pipeline instead of a useless `{ $expr: { $match: ... } }` Filter.
  */
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
+  // HR1: a hand-written / pasted query document passes through unchanged.
+  if (ast.type === "ObjectLiteral") {
+    return generateWithCtx(ast, ctx) as object;
+  }
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   // `?? {}`: a vacuous predicate yields the empty (match-everything) Filter.
   // Source `$`-string literals pass through verbatim here too (HR1) — including

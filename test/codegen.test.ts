@@ -4088,6 +4088,20 @@ describe("Filter dispatch (no semicolons)", () => {
     });
   });
 
+  describe("top-level object-literal Filter is a raw query doc (HR1 — no $expr wrap)", () => {
+    // A bare `{ ... }` in Filter position IS the MongoDB query document and
+    // passes through verbatim, mirroring how a `$match` stage body is treated.
+    it("hand-written query document passes through", () => {
+      expect(jsmql("{ age: { $gt: 18 } }")).toEqual({ age: { $gt: 18 } });
+      expect(jsmql("{ a: 1 }")).toEqual({ a: 1 });
+      expect(jsmql("{ a: 1, b: 'x' }")).toEqual({ a: 1, b: "x" });
+    });
+
+    it("an operator-call value produces a clean query operator (not a malformed $expr)", () => {
+      expect(jsmql("{ age: $gt($.x) }")).toEqual({ age: { $gt: "$x" } });
+    });
+  });
+
   describe("bare stage call auto-wraps as a one-stage Pipeline", () => {
     // A top-level `$match(...)` / `$project(...)` / etc. without a `;` is
     // Pipeline intent — the user wrote a stage at the top level. `jsmql()`
