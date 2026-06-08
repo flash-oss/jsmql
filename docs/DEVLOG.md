@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: raw `{ $op: <non-array> }` for a list-only operator is rejected (HR3)
+
+HR3 governs raw MQL too, not just MQL jsmql compiles from JS. So `{ $setUnion: $.x }` — a list-only operator keyed to a non-array value — must throw, exactly like the call form `$setUnion($.x)` (it's server-rejected: a set/arithmetic/boolean operator has no single-operand form). Added the check to `generateStaticObjectEntries`: when an object-entry key is a registry `array`-shape operator and the value AST is not an array literal, throw the same `listOperandError`. Gated tightly — fires only on a `$`-prefixed key that resolves to an `array`-shape operator, so `{ $setUnion: [$.a, $.b] }` (and every non-operator object) passes through verbatim (HR1). Full suite + realistic pipelines stayed green (no false positives). Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [docs/specs/operator-registry.md](specs/operator-registry.md).
+
+---
+
 ## 2026-06-09 — fix!: strict list-only `$op(...)` call form + spread removed from the escape hatch
 
 The `array` shape (now genuinely list-only, after the comparison ops moved to `flex`) blindly array-wrapped via `generateVariadicArgs` regardless of arity or array-ness: `$divide(10)` → `{ $divide: [10] }`, `$setUnion([$.a, $.b])` → `{ $setUnion: [["$a", "$b"]] }` (double-wrapped), and `$setUnion($.a)` silently emitted `{ $setUnion: ["$a"] }`. HR2/HR3 fix in `generateOperatorCall`: **2+ args** → array; **1 array literal** → that array is the operand list (`$setUnion([$.a, $.b])` → `{ $setUnion: ["$a", "$b"] }`, the round-trip of `{ $op: [...] }`); **1 non-array** → actionable HR3 error (`$setUnion operates on a list of operands — write $setUnion(a, b) or $setUnion([a, b])`).

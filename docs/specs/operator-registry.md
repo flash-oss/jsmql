@@ -41,6 +41,8 @@ $add($.x)               →  ✗ error  ("$add operates on a list of operands �
 
 Operators with a *valid* single-value form (the comparison operators, `$in`) are `flex`, not `array`. The JS spread (`$add(...arr)`) is not accepted on any operator-call form — pass a single array literal instead. (Spread stays supported in JS-method position: `Math.max(...arr)`, `Object.assign(...docs)`.)
 
+The same rejection applies to the **raw-object form** — HR3 governs raw MQL too, so `{ $setUnion: $.x }` (a list-only operator key with a non-array value) throws exactly like `$setUnion($.x)`. The check is in `generateStaticObjectEntries` ([src/codegen.ts](../../src/codegen.ts)): it fires only when the key is a registry `array`-shape operator and the value is not an array literal, so a valid `{ $setUnion: [$.a, $.b] }` passes through untouched (HR1).
+
 ### `object` → `{ $op: { k1: a, k2: b } }`
 The operator's MQL form takes an object. The registry entry stores an ordered `keys` array that maps positional argument positions to named keys.
 

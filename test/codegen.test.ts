@@ -95,6 +95,15 @@ describe("array-shape operators", () => {
     expect(() => jsmql.expr("$and(true)")).toThrow(/\$and operates on a list of operands/);
   });
 
+  // HR3 governs raw MQL too: the same rejection applies to the `{ $op: value }`
+  // raw-object form, not just the `$op(...)` call form.
+  it("list-only op: raw `{ $op: <non-array> }` object is rejected (HR3)", () => {
+    expect(() => jsmql.expr("({ $setUnion: $.x })")).toThrow(/\$setUnion operates on a list of operands/);
+    expect(() => jsmql.expr("({ $add: 5 })")).toThrow(/\$add operates on a list of operands/);
+    // ...but the valid array-operand form passes through verbatim (HR1).
+    expect(jsmql.expr("({ $setUnion: [$.a, $.b] })")).toEqual({ $setUnion: ["$a", "$b"] });
+  });
+
   it("$and logical", () => {
     expect(jsmql.expr('$and($gt($.age, 18), $eq($.status, "active"))')).toEqual({
       $and: [{ $gt: ["$age", 18] }, { $eq: ["$status", "active"] }],

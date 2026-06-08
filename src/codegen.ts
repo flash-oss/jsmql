@@ -1602,6 +1602,15 @@ function generateStaticObjectEntries(entries: ObjectEntry[], ctx: GenerateCtx): 
         entry.pos,
       );
     }
+    // HR3: a raw `{ $op: value }` object whose key is a list-only operator (no
+    // single-value form) is only valid MQL when `value` is the operand array —
+    // `{ $setUnion: $.x }` is server-rejected. Reject it here too, with the same
+    // message as the `$op(...)` call form, so the rule holds on every surface.
+    if (entry.key.name.charCodeAt(0) === 36 /* $ */ && entry.value.type !== "ArrayLiteral") {
+      if (lookupOperator(entry.key.name)?.shape.kind === "array") {
+        throw listOperandError(entry.key.name, entry.value.pos);
+      }
+    }
     result[entry.key.name] = _generate(entry.value, ctx);
   }
   return result;
