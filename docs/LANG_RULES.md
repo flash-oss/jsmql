@@ -40,7 +40,8 @@ jsmql('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$
 
 ```js
 $setUnion($.a)          // ✗ error — "$setUnion operates on a list of operands" → write $setUnion($.a, $.b) or $setUnion([$.a, $.b])
-$gt($.x)                // ✗ error — comparison needs an operands array → write $gt([$.x, $.y])
+$add($.x)               // ✗ error — $add needs an operands array → write $add($.x, $.y) or $add([$.x, $.y]) 
+$gt($.x)                // → { $gt: "$x" } - becuase $gt value can be a single argument or an array of 2 items 
 $round($.x)             // → { $round: "$x" } - becuase $round supports single argument when it's a field reference
 ```
 
