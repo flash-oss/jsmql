@@ -24,6 +24,10 @@ jsmql targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.c
 
 [docs/LANG_RULES.md](docs/LANG_RULES.md) holds the foundational language invariants — the HARD RULES (HR1–HR4) and SOFT RULES. The HARD RULES outrank every other doc, spec, and `CLAUDE.md` here and the compiler upholds them **at all times** (a build that breaks one is a bug, never a feature). Read them before any change to lexing, parsing, codegen, the operator registry, or stage lowering. On conflict, **LANG_RULES wins**: fix the conformance bug; don't weaken the rule. When you can't fix it in the same change, leave the rule stated as law and flag the divergence as tracked work.
 
+### Verify MQL against a running MongoDB
+
+HR3 says jsmql never knowingly emits invalid MQL — and the only way to *know* a shape is valid is to run it. A local `mongod` is the authority: **whenever there is the slightest doubt that an emitted document would actually run, execute it against the background `mongod` before trusting it** — `coll.aggregate([…])` / `coll.find(filter)` / `coll.updateMany({}, update)`, or `coll.aggregate([{ $addFields: { __v: <expr> } }])` for a bare `jsmql.expr` fragment. A passing `toEqual(...)` only proves what jsmql *emits*, never that the server *accepts* it (the `$arrayToObject` and constant-only-slot bugs both hid behind green `toEqual`s for exactly this reason). If `mongod` is **not installed or not running, stop and ask the developer to install and start it** — point them at the official [MongoDB Community installation guide](https://www.mongodb.com/docs/manual/administration/install-community/) — rather than guessing whether a shape is valid. The how-to (spin-up, the `$addFields`-not-`$project` caveat, the known server-rejection traps) lives in [test/CLAUDE.md](test/CLAUDE.md).
+
 ## #1 priority: developer experience
 
 Every decision should be evaluated through the lens of DX for the people **using** jsmql (not building it). There is no point shipping a feature if it is confusing or hard to use correctly. Concretely:
