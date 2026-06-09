@@ -52,7 +52,7 @@ A passing `toEqual(...)` only proves jsmql *emits* a given document — **not** 
 - **`$$` variable names that don't start with a lowercase ASCII letter.** MongoDB rejects user-variable names beginning with `_`, `$`, or an uppercase letter ("starts with an invalid character for a user variable name"). Watch `$let`/`$map`/`$reduce` `as`/`vars` and `$lookup.let` keys — especially auto-derived ones (a lookup `let` named after an `_id` field, internal gensyms).
 - **`$limit: 0`** — "the limit must be positive"; `$limit`/`$skip` need a positive constant integer, never `0` and never an expression/field path (`{$limit:"$n"}` is rejected).
 - **Regex `options` carrying JS-only flags** — MongoDB allows only `imxs`; a `g` or `y` flag from a JS regex (`/x/g`) is rejected.
-- **A literal array where an operator expects a single array argument** — e.g. `{$arrayToObject:[[k,v],[k,v]]}` is read as two args; such values need a `$literal` wrap.
+- **A literal array where an operator expects a single array argument** — e.g. `{$arrayToObject:[[k,v],[k,v]]}` is read as two args (and even `{$arrayToObject:[[k,v]]}` is unwrapped to `[k,v]` and rejected). jsmql wraps such a pairs array one level deeper — `{$arrayToObject:[pairs]}` — so MongoDB reads it as the single argument (`arrayToObjectOfLiteralPairs` in codegen.ts).
 - **A field/expression where the server requires a compile-time constant** — `$bucket.boundaries`, `$limit`, `$sample.size`, `$lookup.pipeline`, date-typed operator inputs, etc.
 
 When you fix a bug in this class, add the offending shape to `literal-passthrough.test.ts` (or the relevant topic suite) as a guard so it can't regress.

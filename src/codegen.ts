@@ -1577,12 +1577,28 @@ function generateObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx, _pos: n
   return { $mergeObjects: operands };
 }
 
+/**
+ * Wrap a literal pairs array as a server-valid `$arrayToObject` argument.
+ *
+ * `{ $arrayToObject: <arrayLiteral> }` is mis-parsed: MongoDB reads a literal
+ * array *value* as the operator's argument LIST, so `[[k,v],[k2,v2]]` becomes
+ * two arguments ("$arrayToObject takes exactly 1 argument"), and even a single
+ * `[[k,v]]` is unwrapped to `[k,v]` and rejected ("Unrecognised input type").
+ * Wrapping one level deeper — `{ $arrayToObject: [pairs] }` — makes MongoDB
+ * unwrap exactly once back to `pairs`, the single array argument. Works for any
+ * pair count and for expression-valued pairs (a `$literal` wrap can't — it would
+ * freeze `$$this` etc.). Verified on MongoDB 8.2.
+ */
+function arrayToObjectOfLiteralPairs(pairs: unknown): Record<string, unknown> {
+  return { $arrayToObject: [pairs] };
+}
+
 function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): unknown {
   const pairs = entries.map((entry) => {
     const key = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
     return [key, _generate(entry.value, ctx)];
   });
-  return { $arrayToObject: pairs };
+  return arrayToObjectOfLiteralPairs(pairs);
 }
 
 /**
@@ -1715,6 +1731,14 @@ function generateOperatorCall(
     const vars = generateStaticObjectEntries(varsExpr.entries, ctx);
     const bodyCtx = extendCtx(ctx, lambdaExpr.params);
     return { $let: { vars, in: _generate(lambdaExpr.body, bodyCtx) } };
+  }
+
+  // $arrayToObject([pairs]) — a literal pairs-array argument must be wrapped one
+  // level deeper (see `arrayToObjectOfLiteralPairs`). A field-ref / expression
+  // argument (`$arrayToObject($.pairs)`) already resolves to one array, so it is
+  // left untouched by the `single`-shape default below.
+  if (name === "$arrayToObject" && style === "positional" && args.length === 1 && args[0].type === "ArrayLiteral") {
+    return arrayToObjectOfLiteralPairs(_generate(args[0] as Expr, ctx));
   }
 
   const def = lookupOperator(name);

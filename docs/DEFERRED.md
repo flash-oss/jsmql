@@ -299,19 +299,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-026 — `$arrayToObject` with a literal multi-pair array emits server-rejected MQL
-
-- **HR3 gap.** This is a known [HR3](LANG_RULES.md) violation (the compiler emits MQL it could know the server rejects); deferred because the fix is shape-sensitive, not because the behaviour is acceptable.
-- **What's blocked.** `$arrayToObject([["a", 1], ["b", 2]])` lowers to `{ $arrayToObject: [["a",1],["b",2]] }`. MongoDB reads a top-level array value as an *argument list*, so it sees two arguments and rejects it ("Expression $arrayToObject takes exactly 1 argument. 2 were passed in."). The single-pair form (`{ $arrayToObject: [[k, v]] }`, the common computed-key case) is unaffected.
-- **Target lowering.** Emit a shape MongoDB reads as one array argument. `$literal`-wrapping the outer array is wrong when the pairs contain expressions (it would freeze `$$this` etc.), so the fix needs to distinguish a constant pair-array (wrap in `$literal`) from one with expression elements (build it as a single array expression another way).
-- **Why blocked.** Niche (most `$arrayToObject` use is computed-single-key or a field ref); the correct fix is shape-sensitive and not a one-liner.
-- **Success criteria.** `$arrayToObject([["a",1],["b",2]])` runs on a real server; covered in `test/literal-passthrough.test.ts`.
-- **Rejection site(s).** `src/operators.ts` `$arrayToObject` entry (tagged `[DEF-026]`).
-- **Status.** open
-- **Effort.** M
-
----
-
 ### DEF-027 — Validate compile-time-constant-only stage slots given a non-constant
 
 - **HR3 gap.** A known [HR3](LANG_RULES.md) violation (statically-knowable server-invalid MQL is emitted rather than rejected); deferred because it spans many slots and needs a per-slot constant annotation.

@@ -370,7 +370,7 @@ When the receiver is a `RegexLiteral`, method dispatch is intercepted and routed
 
 ## Object literals with computed or special entries
 
-`generateObjectLiteral(entries, ctx)` is the entry point for object literals as values. If any entry has a computed key, it emits via `$arrayToObject` over a list of `[key, value]` pairs. Otherwise it falls through to the static-key fast path. `generateStaticObjectEntries` is used for operator-style argument objects (`{ input, find, replacement }`) where keys are part of the wire format.
+`generateObjectLiteral(entries, ctx)` is the entry point for object literals as values. If any entry has a computed key, it emits via `$arrayToObject` over a list of `[key, value]` pairs — wrapped one level deeper as `{ $arrayToObject: [pairs] }` (see `arrayToObjectOfLiteralPairs` in codegen.ts) so MongoDB reads the pairs array as the single argument rather than an argument list (a bare `{ $arrayToObject: [[k,v]] }` is server-rejected). Otherwise it falls through to the static-key fast path. `generateStaticObjectEntries` is used for operator-style argument objects (`{ input, find, replacement }`) where keys are part of the wire format.
 
 The split between the two helpers is enforced inside `generateOperatorCall`: when an operator's registered shape is `object`, the static helper is used (and computed keys are rejected); otherwise the value helper is used.
 

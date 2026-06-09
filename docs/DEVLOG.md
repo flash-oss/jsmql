@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: $arrayToObject literal pairs array — server-valid shape (HR3, closes DEF-026)
+
+Shipping DEF-026 — but verifying against a real `mongod` (8.2.3) revealed it was *worse* than the row described: not only the multi-pair escape hatch but **every** computed-key object emitted server-invalid MQL. `{ $arrayToObject: [[k,v]] }` (the single-pair computed-key shape the row called "unaffected") is rejected too — MongoDB reads the literal array as the operator's argument LIST, unwraps the 1-element `[[k,v]]` to `[k,v]`, and fails with "Unrecognised input type"; 2+ pairs fail with "takes exactly 1 argument." So the existing computed-key feature, and `realistic.test.ts`'s asserted shapes, were never runnable.
+
+Fix (`arrayToObjectOfLiteralPairs` in codegen.ts): wrap the pairs array one level deeper — `{ $arrayToObject: [pairs] }` — so MongoDB unwraps exactly once back to `pairs`, the single argument. Chosen over a `$literal` wrap because it works uniformly for expression-valued pairs (`$$this`, `$getField`, …) which `$literal` would freeze, and over `$concatArrays`-of-singletons because it's minimal. Applied in both `generateComputedKeyObject` (covers `{ [k]: v }`) and the `$arrayToObject([…])` escape hatch (a field-ref/expression argument is left as-is). Each new shape verified to run on mongod 8.2; ~9 existing tests that asserted the old invalid shapes updated. Removed DEF-026 (row + tag). Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [src/operators.ts](../src/operators.ts), [docs/LANGUAGE.md](LANGUAGE.md), [docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-06-09 — fix: spread-rejection errors point at the JS-idiomatic alternative
 
 The `$op(...)` spread rejection said "pass operands directly or as a single array" — correct but a dead end for the cases that have a real JS form. Made the message operator-aware: `$min(...)`/`$max(...)` → "use the JS form Math.min/Math.max(...arr)", `$concatArrays(...)` → "use array spread ([...a, ...b]) or .concat()", `$mergeObjects(...)` → "use object spread ({ ...a, ...b }) or Object.assign(...docs)"; everything else keeps the single-array/multi-arg hint. Backs the new root-`CLAUDE.md` rule "if something is not supported we throw, but the message must guide toward an alternative." Files: [src/codegen.ts](../src/codegen.ts) (`SPREAD_JS_ALTERNATIVE` + `assertNoSpread`), [test/codegen.test.ts](../test/codegen.test.ts).
