@@ -1594,9 +1594,14 @@ function arrayToObjectOfLiteralPairs(pairs: unknown): Record<string, unknown> {
 }
 
 function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): unknown {
+  // Emit `$arrayToObject`'s `{ k, v }` object-pair form rather than the `[k, v]`
+  // array-pair form: one less nesting level once wrapped, self-documenting, and
+  // unambiguous when a value is itself an array. (Both still need the
+  // `arrayToObjectOfLiteralPairs` wrap — a bare `[{k,v}]` is unwrapped by MongoDB
+  // to the object and rejected, "requires an array input, found: object".)
   const pairs = entries.map((entry) => {
-    const key = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
-    return [key, _generate(entry.value, ctx)];
+    const k = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
+    return { k, v: _generate(entry.value, ctx) };
   });
   return arrayToObjectOfLiteralPairs(pairs);
 }

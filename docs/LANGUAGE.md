@@ -347,14 +347,14 @@ Objects are useful as `$push` arguments in `group()`, as `$project` escape hatch
 Keys may be computed expressions, just like in JS:
 
 ```js
-{ [$.k]: 1 }                       // → { $arrayToObject: [[["$k", 1]]] }
-{ a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [[["a", 1], ["$dynKey", 2]]] }
+{ [$.k]: 1 }                       // → { $arrayToObject: [[{ k: "$k", v: 1 }]] }
+{ a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [[{ k: "a", v: 1 }, { k: "$dynKey", v: 2 }]] }
 ```
 
-Whenever a static block of keys contains at least one computed key, that block compiles to `$arrayToObject` so MongoDB can build it at query time. (The pairs array is wrapped one level deeper — `{ $arrayToObject: [pairs] }` — because MongoDB reads a bare literal array as an *argument list*; the wrap makes it the single argument.) Computed keys mix with spread — each block is built independently, then `$mergeObjects` joins them:
+Whenever a static block of keys contains at least one computed key, that block compiles to `$arrayToObject` (using its `{ k, v }` object-pair form) so MongoDB can build it at query time. (The pairs array is wrapped one level deeper — `{ $arrayToObject: [pairs] }` — because MongoDB reads a bare literal array as an *argument list*; the wrap makes it the single argument.) Computed keys mix with spread — each block is built independently, then `$mergeObjects` joins them:
 
 ```js
-{ ...$.base, [$.k]: $.v }          // → { $mergeObjects: ["$base", { $arrayToObject: [[["$k", "$v"]]] }] }
+{ ...$.base, [$.k]: $.v }          // → { $mergeObjects: ["$base", { $arrayToObject: [[{ k: "$k", v: "$v" }]] }] }
 ```
 
 #### Shorthand Properties

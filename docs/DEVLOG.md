@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — refactor!: computed keys emit `$arrayToObject`'s `{ k, v }` object-pair form
+
+Follow-up to the `$arrayToObject` fix. `generateComputedKeyObject` now builds `{ k, v }` object pairs instead of `[k, v]` array pairs, so `{ [s]: expr }` lowers to `{ $arrayToObject: [[{ k: "$$this", v: expr }]] }` rather than the triple-bracketed `{ $arrayToObject: [[["$$this", expr]]] }`. One less nesting level, self-documenting (`k`/`v` vs positional), and unambiguous when a value is itself an array. The outer `[pairs]` wrap is still required — verified on mongod 8.2 that a bare `{ $arrayToObject: [{k,v}] }` is unwrapped to the object and rejected ("requires an array input, found: object"), exactly like the array-pair form. The `$arrayToObject([...])` escape hatch is unchanged — it keeps whatever pair shape the user typed, just wrapped. New shapes re-verified to run on mongod; ~9 computed-key test assertions updated. Output-shape change (`refactor!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [docs/LANGUAGE.md](LANGUAGE.md), [docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-06-09 — fix!: reject non-constants in constant-only stage slots (HR3, closes DEF-027 stage half)
 
 The stage-body validator is literal-gated — a field ref / expression in a checked slot is normally a no-op (rule #2: only 100%-certain literal violations throw). But a handful of slots MUST hold a compile-time constant, and there a non-constant is *itself* 100%-certain-invalid (verified on mongod 8.2): `$limit($.n)` → `{ $limit: "$n" }` ("Expected a number"), `$skip`, `$sample.size`, `$bucketAuto.buckets`, `$graphLookup.maxDepth`, `$bucket.boundaries` ("must be an array"), `$lookup.pipeline` ("A pipeline must be an array of objects"). Added the **constant-only-slot exception** to `stage-validation.ts`: `checkIntBound` and a new `requireConstantArray` now reject a field ref / runtime expression with an actionable message ("must be … and a compile-time constant"). A compile-bound `ParamRef` is allowed — it inlines to a literal value at codegen, so `jsmql.compile('({n}) => { $limit(n); }')({ n: 5 })` → `[{ $limit: 5 }]` still works.

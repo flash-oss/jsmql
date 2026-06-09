@@ -322,7 +322,7 @@ describe("object spread", () => {
 
   it("computed key inside a static block uses $arrayToObject for that block only", () => {
     expect(jsmql.expr("$foo({ ...$.base, [$.k]: $.v })")).toEqual({
-      $foo: { $mergeObjects: ["$base", { $arrayToObject: [[["$k", "$v"]]] }] },
+      $foo: { $mergeObjects: ["$base", { $arrayToObject: [[{ k: "$k", v: "$v" }]] }] },
     });
   });
 
@@ -339,7 +339,12 @@ describe("object spread", () => {
             "$$value",
             {
               $arrayToObject: [
-                [["$$this", { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] }]],
+                [
+                  {
+                    k: "$$this",
+                    v: { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] },
+                  },
+                ],
               ],
             },
           ],
@@ -1294,7 +1299,7 @@ describe("reduce accumulator type narrowing", () => {
       $reduce: {
         input: "$xs",
         initialValue: {},
-        in: { $mergeObjects: ["$$value", { $arrayToObject: [[["$$this", 1]]] }] },
+        in: { $mergeObjects: ["$$value", { $arrayToObject: [[{ k: "$$this", v: 1 }]] }] },
       },
     });
     // Read the accumulator with bracket access in the body — confirms the
@@ -1306,7 +1311,7 @@ describe("reduce accumulator type narrowing", () => {
         in: {
           $mergeObjects: [
             "$$value",
-            { $arrayToObject: [[["$$this", { $getField: { field: "$$this", input: "$$value" } }]]] },
+            { $arrayToObject: [[{ k: "$$this", v: { $getField: { field: "$$this", input: "$$value" } } }]] },
           ],
         },
       },
@@ -1431,7 +1436,11 @@ describe("reduce accumulator type narrowing", () => {
         in: {
           $mergeObjects: [
             "$$value",
-            { $arrayToObject: [[["$$this", { $getField: { field: "$$this", input: { $ifNull: ["$$value", {}] } } }]]] },
+            {
+              $arrayToObject: [
+                [{ k: "$$this", v: { $getField: { field: "$$this", input: { $ifNull: ["$$value", {}] } } } }],
+              ],
+            },
           ],
         },
       },
@@ -3251,13 +3260,15 @@ describe("comments", () => {
 });
 
 describe("computed object keys", () => {
-  // The pairs array is wrapped one level deeper (`{ $arrayToObject: [pairs] }`)
-  // so MongoDB reads it as the single argument, not an argument list. The bare
-  // `{ $arrayToObject: [[k,v]] }` shape is server-REJECTED ("Unrecognised input
-  // type" for one pair, "takes exactly 1 argument" for two). The wrapped shape
-  // below is verified to run on MongoDB 8.2 (HR3).
+  // Computed keys emit `$arrayToObject`'s `{ k, v }` object-pair form, wrapped one
+  // level deeper (`{ $arrayToObject: [pairs] }`) so MongoDB reads it as the single
+  // argument, not an argument list. A bare `{ $arrayToObject: [{k,v}] }` is
+  // server-REJECTED (unwrapped to the object — "requires an array input, found:
+  // object"); two pairs hit "takes exactly 1 argument". The wrapped shapes below
+  // are verified to run on MongoDB 8.2 (HR3). The `$arrayToObject([...])` escape
+  // hatch keeps whatever pair shape the user typed (array-pairs here), just wrapped.
   it("single computed key", () => {
-    expect(jsmql.expr("$abs({ [$.k]: 1 })")).toEqual({ $abs: { $arrayToObject: [[["$k", 1]]] } });
+    expect(jsmql.expr("$abs({ [$.k]: 1 })")).toEqual({ $abs: { $arrayToObject: [[{ k: "$k", v: 1 }]] } });
   });
   it("$arrayToObject escape hatch with a literal pairs array wraps the same way", () => {
     expect(jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toEqual({
@@ -3276,8 +3287,8 @@ describe("computed object keys", () => {
       $abs: {
         $arrayToObject: [
           [
-            ["a", 1],
-            ["$k", 2],
+            { k: "a", v: 1 },
+            { k: "$k", v: 2 },
           ],
         ],
       },
