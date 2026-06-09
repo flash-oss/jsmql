@@ -1836,13 +1836,24 @@ function listOperandError(name: string, pos: number): CodegenError {
   );
 }
 
+// JS-idiomatic spread alternative per operator, for the spread-rejection message.
+// These operators have a JS form where spread IS supported (it lowers to the same
+// MQL), so the error points the user straight at it instead of a dead end.
+const SPREAD_JS_ALTERNATIVE: Record<string, string> = {
+  $min: "use the JS form Math.min(...arr)",
+  $max: "use the JS form Math.max(...arr)",
+  $concatArrays: "use array spread ([...a, ...b]) or .concat()",
+  $mergeObjects: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
+};
+
 function assertNoSpread(args: CallArg[], name: string, callPos: number): void {
   for (const a of args) {
     if (a.type === "SpreadElement") {
-      throw new CodegenError(
-        `Spread (...) is not supported in ${name}(...) — pass operands directly (${name}(a, b)) or as a single array (${name}([a, b])).`,
-        a.pos ?? callPos,
-      );
+      const alt = SPREAD_JS_ALTERNATIVE[name];
+      const fix = alt
+        ? `${alt}, or pass a single array (${name}([a, b]))`
+        : `pass operands directly (${name}(a, b)) or as a single array (${name}([a, b]))`;
+      throw new CodegenError(`Spread (...) is not supported in ${name}(...) — ${fix}.`, a.pos ?? callPos);
     }
   }
 }

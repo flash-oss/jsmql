@@ -3274,10 +3274,11 @@ describe("spread in operator args", () => {
   it("Object.assign with spread (JS-method form — supported)", () => {
     expect(jsmql.expr("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
   });
-  it("$op(...) escape hatch rejects spread", () => {
+  it("$op(...) escape hatch rejects spread, pointing at the JS alternative", () => {
     expect(() => jsmql.expr("$concatArrays(...$.arrs)")).toThrow(
-      /Spread \(\.\.\.\) is not supported in \$concatArrays\(\.\.\.\)/,
+      /Spread \(\.\.\.\) is not supported in \$concatArrays\(\.\.\.\).*array spread.*\.concat\(\)/,
     );
+    expect(() => jsmql.expr("$mergeObjects(...$.docs)")).toThrow(/object spread.*Object\.assign/);
   });
 });
 
@@ -3354,12 +3355,14 @@ describe("flex-shape operators", () => {
   // The `$op(...)` escape hatch rejects the JS spread (HR2 — an operator takes its
   // operands directly). For the array-from-runtime case, write `Math.min(...arr)`
   // (the JS-method form keeps spread) or pass the field as a single array arg.
-  it("flex op rejects single spread", () => {
-    expect(() => jsmql.expr("$min(...$.scores)")).toThrow(/Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\)/);
+  it("flex op rejects single spread, pointing at Math.min", () => {
+    expect(() => jsmql.expr("$min(...$.scores)")).toThrow(
+      /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*Math\.min\(\.\.\.arr\)/,
+    );
   });
-  it("flex op rejects mixed spread + scalar", () => {
+  it("flex op rejects mixed spread + scalar, pointing at Math.max", () => {
     expect(() => jsmql.expr("$max($.first, ...$.rest)")).toThrow(
-      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\)/,
+      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\).*Math\.max\(\.\.\.arr\)/,
     );
   });
 

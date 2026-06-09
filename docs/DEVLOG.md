@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix: spread-rejection errors point at the JS-idiomatic alternative
+
+The `$op(...)` spread rejection said "pass operands directly or as a single array" — correct but a dead end for the cases that have a real JS form. Made the message operator-aware: `$min(...)`/`$max(...)` → "use the JS form Math.min/Math.max(...arr)", `$concatArrays(...)` → "use array spread ([...a, ...b]) or .concat()", `$mergeObjects(...)` → "use object spread ({ ...a, ...b }) or Object.assign(...docs)"; everything else keeps the single-array/multi-arg hint. Backs the new root-`CLAUDE.md` rule "if something is not supported we throw, but the message must guide toward an alternative." Files: [src/codegen.ts](../src/codegen.ts) (`SPREAD_JS_ALTERNATIVE` + `assertNoSpread`), [test/codegen.test.ts](../test/codegen.test.ts).
+
+---
+
 ## 2026-06-09 — docs: HR4 verified + HR-conformance sweep (close the LANG_RULES batch)
 
 Closing pass over the LANG_RULES conformance work. **HR4** (four sigils, one scope each) verified conformant: `$` → document, `$$` → collection/stream, `$$$` → database, `$$$$` → server/cluster each map to exactly one ref type by construction (parser → fixed ref node → dedicated lowering), and the 2116-test suite exercises every sigil surface. No code change.
