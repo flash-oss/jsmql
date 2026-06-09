@@ -136,20 +136,25 @@ function dispatchInput(
   lower: (program: Program, ctx: GenerateCtx) => JsmqlOutput,
 ): JsmqlOutput {
   if (isTemplateStringsArray(input)) {
-    // Opaque BSON instances (Date, RegExp, Buffer, ObjectId) can't be embedded
-    // as JSON literals — `JSON.stringify(new Date(...))` yields an ISO string,
-    // `JSON.stringify(/x/)` yields `"{}"`. Route them through a synthesized
-    // ParamRef binding instead, so the value reaches MQL output as-is. Plain
-    // JSON-shaped values still go through `JSON.stringify` (unchanged).
+    // Two kinds of interpolated value can't be safely inlined as source text and
+    // are routed through a synthesized `ParamRef` binding instead:
+    //   1. Opaque BSON instances (Date, RegExp, Buffer, ObjectId) — `JSON.stringify`
+    //      can't round-trip them (`new Date(...)` → ISO string, `/x/` → `"{}"`).
+    //   2. `$`-prefixed strings — HR1's runtime-injected exception: an injected
+    //      `"$x"` must keep its `$literal` safety wrap (in expression position) so
+    //      untrusted input can't silently become a field reference. Source-typed
+    //      `"$x"` passes through verbatim, so routing through `safeBoundValue` (via
+    //      ParamRef) is the only place the injected-vs-source distinction survives.
+    // Everything else (plain JSON-shaped values) still inlines via `JSON.stringify`.
     let src = "";
-    const opaqueBindings = new Map<string, unknown>();
+    const routedBindings = new Map<string, unknown>();
     for (let i = 0; i < input.length; i++) {
       src += input[i];
       if (i < values.length) {
-        src += stringifyInterpolation(values[i], i + 1, opaqueBindings);
+        src += stringifyInterpolation(values[i], i + 1, routedBindings);
       }
     }
-    const ctx = opaqueBindings.size > 0 ? withBindings(EMPTY_CTX, opaqueBindings) : EMPTY_CTX;
+    const ctx = routedBindings.size > 0 ? withBindings(EMPTY_CTX, routedBindings) : EMPTY_CTX;
     return lower(new Parser(src).parse(), ctx);
   }
   if (typeof input === "function") {
@@ -450,72 +455,81 @@ export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {
 // replace markers after JSON.stringify produces the source fragment.
 const OPAQUE_INTERP_MARKER = "";
 
-function stringifyInterpolation(value: unknown, slot: number, opaqueBindings: Map<string, unknown>): string {
-  if (!containsOpaqueBsonAnywhere(value)) {
-    // Fast path: pure JSON-shaped value. After validateInterpolatable, JSON.stringify
-    // is guaranteed to produce a string (no `undefined` return, no throw, no silent
-    // NaN→null coercion at top level).
+/** A `$`-prefixed string — a field-ref / system-variable shape that HR1 wraps when injected. */
+function isFieldRefShapedString(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.charCodeAt(0) === 36 /* $ */;
+}
+
+function stringifyInterpolation(value: unknown, slot: number, routedBindings: Map<string, unknown>): string {
+  if (!needsBindingRoute(value)) {
+    // Fast path: pure JSON-shaped value with no `$`-string. After
+    // validateInterpolatable, JSON.stringify is guaranteed to produce a string
+    // (no `undefined` return, no throw, no silent NaN→null coercion at top level).
     validateInterpolatable(value, slot);
     return JSON.stringify(value)!;
   }
-  // Slow path: at least one opaque BSON instance lives somewhere in the value.
-  // Substitute each instance with a marker string carrying a unique binding
-  // name, JSON-stringify the rewritten tree (so the surrounding JSON-shaped
-  // parts get the same serialization as the fast path), then replace the
-  // markers in the output with bare identifiers — which the parser resolves
-  // as `ParamRef`s and the binding map carries through to codegen.
+  // Slow path: an opaque BSON instance or a `$`-string lives somewhere in the
+  // value. Substitute each with a marker string carrying a unique binding name,
+  // JSON-stringify the rewritten tree (so the surrounding JSON-shaped parts get
+  // the same serialization as the fast path), then replace the markers in the
+  // output with bare identifiers — which the parser resolves as `ParamRef`s and
+  // the binding map carries through to codegen (where `safeBoundValue` applies
+  // HR1's runtime-injected `$literal` wrap to the `$`-strings).
   const state = { counter: 0, seen: new WeakSet<object>() };
-  const substituted = substituteOpaqueValues(value, slot, opaqueBindings, state);
-  // `substituted` is a pure-JSON tree (the original BSON instances replaced
-  // with marker strings), so the existing validation still applies — non-
-  // finite top-level numbers, circular references in the surviving structure,
-  // BigInt anywhere, etc. all surface here.
+  const substituted = substituteRoutedValues(value, slot, routedBindings, state);
+  // `substituted` is a pure-JSON tree (the routed values replaced with marker
+  // strings), so the existing validation still applies — non-finite top-level
+  // numbers, circular references in the surviving structure, BigInt anywhere,
+  // etc. all surface here.
   validateInterpolatable(substituted, slot);
   const jsonWithMarkers = JSON.stringify(substituted)!;
-  // Each opaque value appears in the JSON output as `"<M><name><M>"` (JSON-
+  // Each routed value appears in the JSON output as `"<M><name><M>"` (JSON-
   // quoted because the substitute was a string). The lookup against the
   // bindings map disambiguates against the (theoretical) edge case of a user-
   // supplied string that happens to look like a marker pair around a known
   // binding name.
   const markerPattern = new RegExp(`"${OPAQUE_INTERP_MARKER}([A-Za-z_][A-Za-z0-9_]*)${OPAQUE_INTERP_MARKER}"`, "g");
-  return jsonWithMarkers.replace(markerPattern, (match, name) => (opaqueBindings.has(name) ? name : match));
+  return jsonWithMarkers.replace(markerPattern, (match, name) => (routedBindings.has(name) ? name : match));
 }
 
 /**
- * True iff `value` is — or transitively contains — an opaque BSON instance.
- * Used to pick between the fast (pure-JSON) and slow (substitute-then-
+ * True iff `value` is — or transitively contains — a value that must be routed
+ * through a binding rather than inlined as source: an opaque BSON instance, or
+ * a `$`-prefixed string (HR1 injected-value wrap). Used to pick between the
+ * fast (pure-JSON) and slow (substitute-then-
  * stringify) interpolation paths. Cycle-safe: re-encountering a previously-
  * seen object returns `false`, leaving the cycle to be caught later by
  * JSON.stringify when either path runs.
  */
-function containsOpaqueBsonAnywhere(value: unknown, seen?: WeakSet<object>): boolean {
-  if (isOpaqueBsonValue(value)) return true;
+function needsBindingRoute(value: unknown, seen?: WeakSet<object>): boolean {
+  if (isOpaqueBsonValue(value) || isFieldRefShapedString(value)) return true;
   if (value === null || typeof value !== "object") return false;
   const s = seen ?? new WeakSet<object>();
   if (s.has(value)) return false;
   s.add(value);
   if (Array.isArray(value)) {
-    for (const v of value) if (containsOpaqueBsonAnywhere(v, s)) return true;
+    for (const v of value) if (needsBindingRoute(v, s)) return true;
     return false;
   }
-  for (const v of Object.values(value)) if (containsOpaqueBsonAnywhere(v, s)) return true;
+  for (const v of Object.values(value)) if (needsBindingRoute(v, s)) return true;
   return false;
 }
 
 /**
- * Walk `value`, replacing every opaque BSON instance with a marker string
- * carrying a freshly-allocated `__jsmql_interp_<slot>_<n>` binding name.
- * Records the original instance under that name in `bindings`. Plain JSON
- * values pass through unchanged so the surrounding tree retains the exact
- * shape JSON.stringify would have produced for the fast path.
+ * Walk `value`, replacing every binding-routed value (opaque BSON instance, or
+ * `$`-prefixed string) with a marker string carrying a freshly-allocated
+ * `__jsmql_interp_<slot>_<n>` binding name. Records the original under that name
+ * in `bindings`. Plain JSON values pass through unchanged so the surrounding
+ * tree retains the exact shape JSON.stringify would have produced for the fast
+ * path.
  */
-function substituteOpaqueValues(
+function substituteRoutedValues(
   value: unknown,
   slot: number,
   bindings: Map<string, unknown>,
   state: { counter: number; seen: WeakSet<object> },
 ): unknown {
-  if (isOpaqueBsonValue(value)) {
+  if (isOpaqueBsonValue(value) || isFieldRefShapedString(value)) {
     state.counter += 1;
     const name = `__jsmql_interp_${slot}_${state.counter}`;
     bindings.set(name, value);
@@ -528,11 +542,11 @@ function substituteOpaqueValues(
   if (state.seen.has(value)) return value;
   state.seen.add(value);
   if (Array.isArray(value)) {
-    return value.map((v) => substituteOpaqueValues(v, slot, bindings, state));
+    return value.map((v) => substituteRoutedValues(v, slot, bindings, state));
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
-    out[k] = substituteOpaqueValues(v, slot, bindings, state);
+    out[k] = substituteRoutedValues(v, slot, bindings, state);
   }
   return out;
 }
@@ -950,12 +964,17 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
  * Lower a single expression AST to a MongoDB **Filter** (the document passed
  * as the first argument to `db.coll.find(filter)`).
  *
- * Reuses the same translator that `$match` uses inside a Pipeline
- * (`translateMatchBody`): translatable conjuncts emit indexable `{ field: ... }`
- * pairs; an untranslatable residual is wrapped in `$expr`, which is a legal
- * top-level Filter operator. So both predicates (`$.age > 18` →
- * `{ age: { $gt: 18 } }`) and non-predicate expressions
- * (`$abs(42)` → `{ $expr: { $abs: 42 } }`) produce a valid Filter document.
+ * A top-level **object literal** is a raw query document and passes through
+ * verbatim (HR1) — `{ age: { $gt: 18 } }` → `{ age: { $gt: 18 } }`,
+ * `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }` — never `$expr`-wrapped. This
+ * mirrors how a `$match` stage body already treats an object literal, so the
+ * Filter and Pipeline surfaces agree.
+ *
+ * Any other expression is a predicate, lowered through the same translator that
+ * `$match` uses (`translateMatchBody`): translatable conjuncts emit indexable
+ * `{ field: ... }` pairs; an untranslatable residual is wrapped in `$expr`, a
+ * legal top-level Filter operator. So `$.age > 18` → `{ age: { $gt: 18 } }` and
+ * `$abs(42)` → `{ $expr: { $abs: 42 } }` both produce a valid Filter.
  *
  * Stage-intent shapes (`$match(...)`, `{ $match: ... }`, …) never reach this
  * function — they are caught in `lowerWithCtx` and routed through
@@ -963,13 +982,15 @@ const UPDATE_PIPELINE_STAGES = new Set<string>([
  * Pipeline instead of a useless `{ $expr: { $match: ... } }` Filter.
  */
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
+  // HR1: a hand-written / pasted query document passes through unchanged.
+  if (ast.type === "ObjectLiteral") {
+    return generateWithCtx(ast, ctx) as object;
+  }
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   // `?? {}`: a vacuous predicate yields the empty (match-everything) Filter.
-  // The standalone-Filter `$expr` residual built by `mergeTranslatedQuery` runs
-  // WITHOUT `pipelineContext`, so `$`-string literals here stay `$literal`-wrapped
-  // (unlike a `$match` *inside* a pipeline, which passes them through — a
-  // `db.coll.find(filter)` is neither a pipeline nor `jsmql.expr`).
-  // Unifying the two is deferred [DEF-025] — see docs/DEFERRED.md.
+  // Source `$`-string literals pass through verbatim here too (HR1) — including
+  // inside the `$expr` residual `mergeTranslatedQuery` builds — same as every
+  // other surface. Only runtime-injected values keep the `$literal` safety wrap.
   return mergeTranslatedQuery(t, ctx) ?? {};
 }
 

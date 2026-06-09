@@ -10,6 +10,74 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: reject non-constants in constant-only stage slots (HR3, closes DEF-027 stage half)
+
+The stage-body validator is literal-gated — a field ref / expression in a checked slot is normally a no-op (rule #2: only 100%-certain literal violations throw). But a handful of slots MUST hold a compile-time constant, and there a non-constant is *itself* 100%-certain-invalid (verified on mongod 8.2): `$limit($.n)` → `{ $limit: "$n" }` ("Expected a number"), `$skip`, `$sample.size`, `$bucketAuto.buckets`, `$graphLookup.maxDepth`, `$bucket.boundaries` ("must be an array"), `$lookup.pipeline` ("A pipeline must be an array of objects"). Added the **constant-only-slot exception** to `stage-validation.ts`: `checkIntBound` and a new `requireConstantArray` now reject a field ref / runtime expression with an actionable message ("must be … and a compile-time constant"). A compile-bound `ParamRef` is allowed — it inlines to a literal value at codegen, so `jsmql.compile('({n}) => { $limit(n); }')({ n: 5 })` → `[{ $limit: 5 }]` still works.
+
+Split off the operator-arg *type* half of the old DEF-027 (a literal non-date in a date-typed slot, `$dateDiff({ startDate: "2020-01-01" })`) into **DEF-029**: that needs argument-type metadata in the operator registry (a new dimension) plus an operator-arg validator — a different subsystem, and not yet an HR3 case because the compiler can't currently *know* an arg is date-typed. Three tests that asserted the old (server-invalid) passthrough updated to expect the rejection. Breaking (`fix!`); pre-1.0. Files: [src/stage-validation.ts](../src/stage-validation.ts), [docs/specs/pipeline-validation.md](specs/pipeline-validation.md).
+
+---
+
+## 2026-06-09 — fix!: $arrayToObject literal pairs array — server-valid shape (HR3, closes DEF-026)
+
+Shipping DEF-026 — but verifying against a real `mongod` (8.2.3) revealed it was *worse* than the row described: not only the multi-pair escape hatch but **every** computed-key object emitted server-invalid MQL. `{ $arrayToObject: [[k,v]] }` (the single-pair computed-key shape the row called "unaffected") is rejected too — MongoDB reads the literal array as the operator's argument LIST, unwraps the 1-element `[[k,v]]` to `[k,v]`, and fails with "Unrecognised input type"; 2+ pairs fail with "takes exactly 1 argument." So the existing computed-key feature, and `realistic.test.ts`'s asserted shapes, were never runnable.
+
+Fix (`arrayToObjectOfLiteralPairs` in codegen.ts): wrap the pairs array one level deeper — `{ $arrayToObject: [pairs] }` — so MongoDB unwraps exactly once back to `pairs`, the single argument. Chosen over a `$literal` wrap because it works uniformly for expression-valued pairs (`$$this`, `$getField`, …) which `$literal` would freeze, and over `$concatArrays`-of-singletons because it's minimal. Applied in both `generateComputedKeyObject` (covers `{ [k]: v }`) and the `$arrayToObject([…])` escape hatch (a field-ref/expression argument is left as-is). Each new shape verified to run on mongod 8.2; ~9 existing tests that asserted the old invalid shapes updated. Removed DEF-026 (row + tag). Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [src/operators.ts](../src/operators.ts), [docs/LANGUAGE.md](LANGUAGE.md), [docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
+## 2026-06-09 — fix: spread-rejection errors point at the JS-idiomatic alternative
+
+The `$op(...)` spread rejection said "pass operands directly or as a single array" — correct but a dead end for the cases that have a real JS form. Made the message operator-aware: `$min(...)`/`$max(...)` → "use the JS form Math.min/Math.max(...arr)", `$concatArrays(...)` → "use array spread ([...a, ...b]) or .concat()", `$mergeObjects(...)` → "use object spread ({ ...a, ...b }) or Object.assign(...docs)"; everything else keeps the single-array/multi-arg hint. Backs the new root-`CLAUDE.md` rule "if something is not supported we throw, but the message must guide toward an alternative." Files: [src/codegen.ts](../src/codegen.ts) (`SPREAD_JS_ALTERNATIVE` + `assertNoSpread`), [test/codegen.test.ts](../test/codegen.test.ts).
+
+---
+
+## 2026-06-09 — docs: HR4 verified + HR-conformance sweep (close the LANG_RULES batch)
+
+Closing pass over the LANG_RULES conformance work. **HR4** (four sigils, one scope each) verified conformant: `$` → document, `$$` → collection/stream, `$$$` → database, `$$$$` → server/cluster each map to exactly one ref type by construction (parser → fixed ref node → dedicated lowering), and the 2116-test suite exercises every sigil surface. No code change.
+
+**Sweep** for other "auto-wrap / knowingly-invalid MQL" behaviour beyond the escape hatch: the `$literal` auto-wrap is now injected-values-only (HR1); `$expr` only appears as a legitimate match residual, the deliberate `$$ = []` empty-stream sugar, and lookup sub-pipelines; array auto-wrap is fixed. Two **pre-existing HR3 gaps remain, both already tracked**: DEF-026 (`$arrayToObject` with a literal multi-pair array emits a server-rejected two-argument shape) and DEF-027 (constant-only stage slots like `$limit($.n)` pass a field ref through to server-invalid MQL). Cross-referenced both DEFERRED rows to HR3 — they're deferred because each fix is shape/slot-specific, not because the behaviour is acceptable. No new rejections introduced, so no new DEF rows.
+
+Verification: the full probe matrix from the conformance plan matches the required shapes (errors where required), HR1's injected-value exception still wraps, `npm test` green (2116), `npm run smoke:dist` green (10).
+
+---
+
+## 2026-06-09 — fix!: a top-level object-literal Filter is a raw query doc (HR1 — no `$expr` wrap)
+
+`generateFilter` routed *every* bare expression — including a top-level object literal — through the predicate translator, so a hand-written query document `{ age: { $gt: 18 } }` (and even `{ a: 1 }`) came out as `{ $expr: { age: { $gt: 18 } } }`: `$expr` wrapping a field-keyed object, which doesn't filter on the field at all. With the comparison ops now `flex`, `{ age: $gt($.x) }` was the worst case — `{ $expr: { age: { $gt: ["$x"] } } }`, doubly wrong. HR1 says a pasted/hand-written query document passes through verbatim, and a bare `{ … }` in `find(…)` position *is* the query document. Fix: `generateFilter` short-circuits an `ObjectLiteral` root and emits it via `generateWithCtx` (raw passthrough) — `{ age: { $gt: 18 } }` → itself, `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }` — mirroring how a `$match` stage body already treats object literals, so the Filter and Pipeline surfaces finally agree. Predicate expressions (`$.age > 18`, `$.name.trim() === 'alice'`) are unchanged: they still translate to indexable query docs or `$expr` residuals. Full suite stayed green (no test pinned the old `$expr`-wrapped object-literal form). Breaking (`fix!`); pre-1.0. Files: [src/index.ts](../src/index.ts), [docs/specs/filter-mode.md](specs/filter-mode.md).
+
+---
+
+## 2026-06-09 — fix!: raw `{ $op: <non-array> }` for a list-only operator is rejected (HR3)
+
+HR3 governs raw MQL too, not just MQL jsmql compiles from JS. So `{ $setUnion: $.x }` — a list-only operator keyed to a non-array value — must throw, exactly like the call form `$setUnion($.x)` (it's server-rejected: a set/arithmetic/boolean operator has no single-operand form). Added the check to `generateStaticObjectEntries`: when an object-entry key is a registry `array`-shape operator and the value AST is not an array literal, throw the same `listOperandError`. Gated tightly — fires only on a `$`-prefixed key that resolves to an `array`-shape operator, so `{ $setUnion: [$.a, $.b] }` (and every non-operator object) passes through verbatim (HR1). Full suite + realistic pipelines stayed green (no false positives). Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [docs/specs/operator-registry.md](specs/operator-registry.md).
+
+---
+
+## 2026-06-09 — fix!: strict list-only `$op(...)` call form + spread removed from the escape hatch
+
+The `array` shape (now genuinely list-only, after the comparison ops moved to `flex`) blindly array-wrapped via `generateVariadicArgs` regardless of arity or array-ness: `$divide(10)` → `{ $divide: [10] }`, `$setUnion([$.a, $.b])` → `{ $setUnion: [["$a", "$b"]] }` (double-wrapped), and `$setUnion($.a)` silently emitted `{ $setUnion: ["$a"] }`. HR2/HR3 fix in `generateOperatorCall`: **2+ args** → array; **1 array literal** → that array is the operand list (`$setUnion([$.a, $.b])` → `{ $setUnion: ["$a", "$b"] }`, the round-trip of `{ $op: [...] }`); **1 non-array** → actionable HR3 error (`$setUnion operates on a list of operands — write $setUnion(a, b) or $setUnion([a, b])`).
+
+Spread removed from the `$op(...)` escape hatch (user decision): `assertNoSpread` now runs up-front in `generateOperatorCall` for every shape, so `$min(...$.scores)` / `$concatArrays(...$.arrs)` are rejected with a "pass a single array" hint. The JS spread stays supported in JS-method position — `Math.max(...arr)`, `Math.min(...arr)`, `Object.assign(...docs)` route through `generateMathCall`/the `Object.assign` lowering → `generateVariadicArgs` (which keeps its `$concatArrays` handling), never the escape hatch. The split is by surface: a JS builtin the developer already knows vs. the raw direct-operator form where spread "doesn't make sense" (every MQL operator takes its operands directly). Tests: added list-only HR2/HR3 cases; the three `$op(...)`-spread tests now assert the rejection. Breaking (`fix!`); pre-1.0. Files: [src/codegen.ts](../src/codegen.ts), [docs/specs/operator-registry.md](specs/operator-registry.md), [docs/LANGUAGE.md](LANGUAGE.md).
+
+---
+
+## 2026-06-09 — fix!: comparison operators + `$in` are dual-form (`array` → `flex`)
+
+`{ field: { $gt: v } }` is the valid single-value *query* comparison operator; `{ $gt: [a, b] }` is the *aggregation* operands form. The registry had `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` (and `$in`) as `array`, so `$gt($.x)` array-wrapped to `{ $gt: ["$x"] }` — wrong, and it contradicted HR2's round-trip (`{ $gt: "$x" }` is valid MQL, so `$gt($.x)` must produce it). Moved those seven operators to `flex` so a single arg passes through as `{ $gt: "$x" }` and two-or-more wrap as `{ $gt: [a, b] }`. `$cmp` stays `array` (aggregation-only, no single-value form). This is the registry half of bringing the escape hatch into HR2/HR3 conformance; the list-only `array` ops (`$setUnion`, `$add`, …) get their strict single-non-array rejection in a following change. Regenerated `src/ops.ts`. Files: [src/operators.ts](../src/operators.ts), [src/ops.ts](../src/ops.ts), [docs/specs/operator-registry.md](specs/operator-registry.md).
+
+---
+
+## 2026-06-09 — fix!: HR1 — source `$`-strings pass through everywhere (only injected values wrap)
+
+New axiom doc `docs/LANG_RULES.md` makes **HR1** law: a `"$x"` typed in *source* IS the MQL field ref `$x` and passes through verbatim in **every** context — jsmql adds no `$literal` of its own. Previously `jsmql.expr('{ a: "$b" }')` emitted `{ a: { $literal: "$b" } }` and the standalone Filter `$expr` residual wrapped `$`-strings too (the latter was tracked as DEF-025). Both violated HR1.
+
+Fix: the `StringLiteral` codegen case now returns the value unchanged in all contexts; `literalSafeString` was renamed `literalSafeInjectedString` and is reached only via `safeBoundValue` (the runtime-injected path). HR1's one exception — a `jsmql.compile` param or template-tag `${…}` that looks like `"$x"` still wraps in expression position so untrusted input can't silently become a field ref — is preserved. The template-tag fast path inlined plain values as source text, which erased the injected-vs-source distinction; so injected `$`-strings are now routed through a synthesized `ParamRef` binding (extended `needsBindingRoute` / `substituteRoutedValues` in `index.ts`, alongside the existing opaque-BSON routing) so `safeBoundValue` applies the context-dependent wrap. `GenerateCtx.pipelineContext` now gates **only** the injected-value wrap.
+
+Resolved **DEF-025** (deleted the §A row, stripped its tags in `src/index.ts` and `docs/specs/filter-mode.md`) and updated the §B "Model A" note — HR1 settles the source-string question globally, so there is no surface- or nesting-dependent wrap. Test churn: `literal-passthrough.test.ts`'s per-operator "wraps in jsmql.expr" assertions inverted to "passes through" (158 cases); `codegen.test.ts`'s source-string cases flipped to pass-through while the injected (template-tag / compile) cases stay wrapped. Breaking output-shape change (`fix!`); pre-1.0 so the package version stays `0.1.0`. Files: [src/codegen.ts](../src/codegen.ts), [src/index.ts](../src/index.ts), [docs/LANGUAGE.md](LANGUAGE.md), [docs/specs/filter-mode.md](specs/filter-mode.md), [docs/specs/aggregation-stages.md](specs/aggregation-stages.md), [src/CLAUDE.md](../src/CLAUDE.md).
+
+---
+
 ## 2026-06-07 — docs: de-duplicate the doc surface to a single-source-of-truth model
 
 The same fact was being written as a full paragraph in three index-like places — root `CLAUDE.md`'s "What this project is" API section, root `CLAUDE.md`'s "File map", and the `docs/CLAUDE.md` spec-table "Covers" column — on top of the spec that actually owns it (plus README + LANGUAGE.md on the user side, plus restating module-header block comments in `src/*.ts`). Every behaviour change therefore needed 4–6 synchronised prose edits, and the misses are exactly the "spec drift" this repo keeps generating.

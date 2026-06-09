@@ -40,9 +40,9 @@ jsmql('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$
 
 ```js
 $setUnion($.a)          // ✗ error — "$setUnion operates on a list of operands" → write $setUnion($.a, $.b) or $setUnion([$.a, $.b])
-$add($.x)               // ✗ error — $add needs an operands array → write $add($.x, $.y) or $add([$.x, $.y]) 
-$gt($.x)                // → { $gt: "$x" } - becuase $gt value can be a single argument or an array of 2 items 
-$round($.x)             // → { $round: "$x" } - becuase $round supports single argument when it's a field reference
+$add($.x)               // ✗ error — $add needs an operands array → write $add($.x, $.y) or $add([$.x, $.y])
+$gt($.x)                // → { $gt: "$x" } — because a $gt value can be a single argument or an array of 2 items
+$round($.x)             // → { $round: "$x" } — because $round supports a single argument when it's a field reference
 ```
 
 HR3 governs both: the raw MQL given to it and the MQL it emits by compiling JS to MQL.

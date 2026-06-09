@@ -62,8 +62,46 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$gt($.age, 18)")).toEqual({ $gt: ["$age", 18] });
   });
 
+  // Comparison operators + $in are dual-form (`flex`): a single argument is the
+  // valid query-operator shape `{ field: { $gt: v } }`; two args are the
+  // aggregation operands `{ $gt: [a, b] }` (HR2 — see docs/LANG_RULES.md). A
+  // single arg must NOT error or array-wrap.
+  it("comparison single arg → query single-value form (HR2)", () => {
+    expect(jsmql.expr("$gt($.x)")).toEqual({ $gt: "$x" });
+    expect(jsmql.expr("$eq(5)")).toEqual({ $eq: 5 });
+    expect(jsmql.expr("$lte($.score)")).toEqual({ $lte: "$score" });
+  });
+
+  it("$in dual form: single array → query, two args → aggregation", () => {
+    expect(jsmql.expr("$in([1, 2, 3])")).toEqual({ $in: [1, 2, 3] });
+    expect(jsmql.expr("$in($.x, $.arr)")).toEqual({ $in: ["$x", "$arr"] });
+  });
+
   it("$add multiple args", () => {
     expect(jsmql.expr("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
+  });
+
+  // List-only operators (no single-value form) — HR2/HR3:
+  //   2+ args → array; 1 array literal → the array IS the operand list; 1 non-array → error.
+  it("list-only op: a single array literal is the operand list (HR2 round-trip)", () => {
+    expect(jsmql.expr("$setUnion([$.a, $.b])")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("$setUnion($.a, $.b)")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("$divide([10, 2])")).toEqual({ $divide: [10, 2] });
+  });
+
+  it("list-only op: a single non-array operand is rejected (HR3)", () => {
+    expect(() => jsmql.expr("$setUnion($.a)")).toThrow(/\$setUnion operates on a list of operands/);
+    expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
+    expect(() => jsmql.expr("$and(true)")).toThrow(/\$and operates on a list of operands/);
+  });
+
+  // HR3 governs raw MQL too: the same rejection applies to the `{ $op: value }`
+  // raw-object form, not just the `$op(...)` call form.
+  it("list-only op: raw `{ $op: <non-array> }` object is rejected (HR3)", () => {
+    expect(() => jsmql.expr("({ $setUnion: $.x })")).toThrow(/\$setUnion operates on a list of operands/);
+    expect(() => jsmql.expr("({ $add: 5 })")).toThrow(/\$add operates on a list of operands/);
+    // ...but the valid array-operand form passes through verbatim (HR1).
+    expect(jsmql.expr("({ $setUnion: [$.a, $.b] })")).toEqual({ $setUnion: ["$a", "$b"] });
   });
 
   it("$and logical", () => {
@@ -284,7 +322,7 @@ describe("object spread", () => {
 
   it("computed key inside a static block uses $arrayToObject for that block only", () => {
     expect(jsmql.expr("$foo({ ...$.base, [$.k]: $.v })")).toEqual({
-      $foo: { $mergeObjects: ["$base", { $arrayToObject: [["$k", "$v"]] }] },
+      $foo: { $mergeObjects: ["$base", { $arrayToObject: [[["$k", "$v"]]] }] },
     });
   });
 
@@ -301,7 +339,7 @@ describe("object spread", () => {
             "$$value",
             {
               $arrayToObject: [
-                ["$$this", { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] }],
+                [["$$this", { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] }]],
               ],
             },
           ],
@@ -1256,7 +1294,7 @@ describe("reduce accumulator type narrowing", () => {
       $reduce: {
         input: "$xs",
         initialValue: {},
-        in: { $mergeObjects: ["$$value", { $arrayToObject: [["$$this", 1]] }] },
+        in: { $mergeObjects: ["$$value", { $arrayToObject: [[["$$this", 1]]] }] },
       },
     });
     // Read the accumulator with bracket access in the body — confirms the
@@ -1268,7 +1306,7 @@ describe("reduce accumulator type narrowing", () => {
         in: {
           $mergeObjects: [
             "$$value",
-            { $arrayToObject: [["$$this", { $getField: { field: "$$this", input: "$$value" } }]] },
+            { $arrayToObject: [[["$$this", { $getField: { field: "$$this", input: "$$value" } }]]] },
           ],
         },
       },
@@ -1393,7 +1431,7 @@ describe("reduce accumulator type narrowing", () => {
         in: {
           $mergeObjects: [
             "$$value",
-            { $arrayToObject: [["$$this", { $getField: { field: "$$this", input: { $ifNull: ["$$value", {}] } } }]] },
+            { $arrayToObject: [[["$$this", { $getField: { field: "$$this", input: { $ifNull: ["$$value", {}] } } }]]] },
           ],
         },
       },
@@ -3213,15 +3251,34 @@ describe("comments", () => {
 });
 
 describe("computed object keys", () => {
+  // The pairs array is wrapped one level deeper (`{ $arrayToObject: [pairs] }`)
+  // so MongoDB reads it as the single argument, not an argument list. The bare
+  // `{ $arrayToObject: [[k,v]] }` shape is server-REJECTED ("Unrecognised input
+  // type" for one pair, "takes exactly 1 argument" for two). The wrapped shape
+  // below is verified to run on MongoDB 8.2 (HR3).
   it("single computed key", () => {
-    expect(jsmql.expr("$abs({ [$.k]: 1 })")).toEqual({ $abs: { $arrayToObject: [["$k", 1]] } });
+    expect(jsmql.expr("$abs({ [$.k]: 1 })")).toEqual({ $abs: { $arrayToObject: [[["$k", 1]]] } });
+  });
+  it("$arrayToObject escape hatch with a literal pairs array wraps the same way", () => {
+    expect(jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toEqual({
+      $arrayToObject: [
+        [
+          ["a", 1],
+          ["b", 2],
+        ],
+      ],
+    });
+    // A field-ref / expression argument already resolves to one array — left as-is.
+    expect(jsmql.expr("$arrayToObject($.pairs)")).toEqual({ $arrayToObject: "$pairs" });
   });
   it("mixed static and computed keys", () => {
     expect(jsmql.expr("$abs({ a: 1, [$.k]: 2 })")).toEqual({
       $abs: {
         $arrayToObject: [
-          ["a", 1],
-          ["$k", 2],
+          [
+            ["a", 1],
+            ["$k", 2],
+          ],
         ],
       },
     });
@@ -3229,11 +3286,18 @@ describe("computed object keys", () => {
 });
 
 describe("spread in operator args", () => {
-  it("$concatArrays with spread", () => {
-    expect(jsmql.expr("$concatArrays(...$.arrs)")).toEqual({ $concatArrays: "$arrs" });
-  });
-  it("Object.assign with spread", () => {
+  // The JS spread is idiomatic in JS-method position (Math.max/min, Object.assign)
+  // and stays supported there. It is NOT supported in the `$op(...)` escape hatch
+  // — an MQL operator takes its operands directly (HR2). The split is by surface:
+  // a JS builtin you already know vs. the raw direct-operator form.
+  it("Object.assign with spread (JS-method form — supported)", () => {
     expect(jsmql.expr("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
+  });
+  it("$op(...) escape hatch rejects spread, pointing at the JS alternative", () => {
+    expect(() => jsmql.expr("$concatArrays(...$.arrs)")).toThrow(
+      /Spread \(\.\.\.\) is not supported in \$concatArrays\(\.\.\.\).*array spread.*\.concat\(\)/,
+    );
+    expect(() => jsmql.expr("$mergeObjects(...$.docs)")).toThrow(/object spread.*Object\.assign/);
   });
 });
 
@@ -3307,11 +3371,18 @@ describe("flex-shape operators", () => {
   });
 
   // ── Spread handling ─────────────────────────────────────────────────────────
-  it("flex op with single spread → bare array", () => {
-    expect(jsmql.expr("$min(...$.scores)")).toEqual({ $min: "$scores" });
+  // The `$op(...)` escape hatch rejects the JS spread (HR2 — an operator takes its
+  // operands directly). For the array-from-runtime case, write `Math.min(...arr)`
+  // (the JS-method form keeps spread) or pass the field as a single array arg.
+  it("flex op rejects single spread, pointing at Math.min", () => {
+    expect(() => jsmql.expr("$min(...$.scores)")).toThrow(
+      /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*Math\.min\(\.\.\.arr\)/,
+    );
   });
-  it("flex op with mixed spread + scalar → $concatArrays", () => {
-    expect(jsmql.expr("$max($.first, ...$.rest)")).toEqual({ $max: { $concatArrays: [["$first"], "$rest"] } });
+  it("flex op rejects mixed spread + scalar, pointing at Math.max", () => {
+    expect(() => jsmql.expr("$max($.first, ...$.rest)")).toThrow(
+      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\).*Math\.max\(\.\.\.arr\)/,
+    );
   });
 
   // ── Edge cases ──────────────────────────────────────────────────────────────
@@ -3446,19 +3517,20 @@ describe("misc / hash / timestamp / sigmoid / type / literal operators", () => {
   });
 });
 
-describe("auto-$literal wrap for `$`-prefixed string values", () => {
-  // MongoDB reads any value-position string that starts with `$` as a field
-  // reference (or system variable) at query time. Users who write `"$foo"` as
-  // a literal in jsmql source mean the four-character string, not field
-  // access (they'd write `$.foo` for that). jsmql wraps these in `$literal`
-  // automatically so the runtime sees the intended string.
+describe("$-prefixed string values: source passes through, injected wraps (HR1)", () => {
+  // HR1: a `"$foo"` typed in jsmql SOURCE is the MQL field ref `$foo` and passes
+  // through verbatim in every context — jsmql adds no `$literal` of its own (to
+  // get the literal four-char string, write `$literal("$foo")`). The only wrap is
+  // HR1's runtime-injected exception: a `"$foo"` arriving via a template-tag
+  // `${…}` or a `jsmql.compile` param is wrapped in expression position so
+  // untrusted input can't silently become a field reference.
 
-  it("bare $-prefixed string literal at the top level", () => {
-    expect(jsmql.expr('"$foo"')).toEqual({ $literal: "$foo" });
+  it("bare $-prefixed source string passes through at the top level", () => {
+    expect(jsmql.expr('"$foo"')).toEqual("$foo");
   });
 
-  it("$$-prefixed system-variable-shaped literal also wraps", () => {
-    expect(jsmql.expr('"$$NOW"')).toEqual({ $literal: "$$NOW" });
+  it("$$-prefixed system-variable-shaped source string passes through", () => {
+    expect(jsmql.expr('"$$NOW"')).toEqual("$$NOW");
   });
 
   it("plain strings (no leading $) are unaffected", () => {
@@ -3466,12 +3538,12 @@ describe("auto-$literal wrap for `$`-prefixed string values", () => {
     expect(jsmql.expr('""')).toEqual("");
   });
 
-  it("$-string inside an array literal", () => {
-    expect(jsmql.expr('[1, "$foo", "bar"]')).toEqual([1, { $literal: "$foo" }, "bar"]);
+  it("$-string inside an array literal passes through", () => {
+    expect(jsmql.expr('[1, "$foo", "bar"]')).toEqual([1, "$foo", "bar"]);
   });
 
-  it("$-string as an object value (key form unchanged)", () => {
-    expect(jsmql.expr('({ x: "$foo", y: "bar" })')).toEqual({ x: { $literal: "$foo" }, y: "bar" });
+  it("$-string as an object value passes through", () => {
+    expect(jsmql.expr('({ x: "$foo", y: "bar" })')).toEqual({ x: "$foo", y: "bar" });
   });
 
   it("$-string as an object KEY does not wrap", () => {
@@ -3480,10 +3552,8 @@ describe("auto-$literal wrap for `$`-prefixed string values", () => {
     expect(jsmql.expr('({ "$foo": 1 })')).toEqual({ $foo: 1 });
   });
 
-  it("$-string as an operator argument", () => {
-    expect(jsmql.expr('$concat("$first", " ", "$last")')).toEqual({
-      $concat: [{ $literal: "$first" }, " ", { $literal: "$last" }],
-    });
+  it("$-string as an operator argument passes through", () => {
+    expect(jsmql.expr('$concat("$first", " ", "$last")')).toEqual({ $concat: ["$first", " ", "$last"] });
   });
 
   it("real field refs (`$.foo`) are NOT wrapped — they aren't string literals", () => {
@@ -4037,6 +4107,20 @@ describe("Filter dispatch (no semicolons)", () => {
 
     it("a method-call predicate isn't query-translatable and rides in `$expr`", () => {
       expect(jsmql("$.name.trim() === 'alice'")).toEqual({ $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } });
+    });
+  });
+
+  describe("top-level object-literal Filter is a raw query doc (HR1 — no $expr wrap)", () => {
+    // A bare `{ ... }` in Filter position IS the MongoDB query document and
+    // passes through verbatim, mirroring how a `$match` stage body is treated.
+    it("hand-written query document passes through", () => {
+      expect(jsmql("{ age: { $gt: 18 } }")).toEqual({ age: { $gt: 18 } });
+      expect(jsmql("{ a: 1 }")).toEqual({ a: 1 });
+      expect(jsmql("{ a: 1, b: 'x' }")).toEqual({ a: 1, b: "x" });
+    });
+
+    it("an operator-call value produces a clean query operator (not a malformed $expr)", () => {
+      expect(jsmql("{ age: $gt($.x) }")).toEqual({ age: { $gt: "$x" } });
     });
   });
 

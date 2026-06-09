@@ -97,18 +97,18 @@ export type GenerateCtx = {
    */
   insideLiteral?: boolean;
   /**
-   * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
-   * literals — they pass through verbatim. Set once at every pipeline-generation
-   * entrypoint (`generatePipeline` / `generateImplicitPipeline` /
-   * `generatePipelineWithCtx`) and propagated down through all stage bodies,
-   * sub-pipelines, and nested operator args. This is what makes
-   * `$unwind("$items")`, `$project({ x: "$y" })`, and
-   * `$project({ t: $concat(["$a"]) })` emit field-path strings instead of
-   * `$literal` envelopes — and lets pasted raw MQL round-trip. Distinct from
-   * `insideLiteral` (which marks a `$literal(...)` envelope); the two are OR-ed
-   * in `literalSafeString` / `safeBoundValue`. Left unset by `jsmql.expr`, whose
-   * bare-expression branch keeps the JS-string-literal-means-literal semantics
-   * (`"$y"` is the literal string; `$.y` is the field-ref spelling).
+   * When true, suppress the auto-`$literal` wrap on RUNTIME-INJECTED
+   * `"$..."`-shaped strings (a pipeline is a paste-raw-MQL surface). Set once at
+   * every pipeline-generation entrypoint (`generatePipeline` /
+   * `generateImplicitPipeline` / `generatePipelineWithCtx`) and propagated down
+   * through all stage bodies, sub-pipelines, and nested operator args. Distinct
+   * from `insideLiteral` (which marks a `$literal(...)` envelope); the two are
+   * OR-ed in `literalSafeInjectedString` / `safeBoundValue`. Left unset by
+   * `jsmql.expr`, where an injected `"$y"` keeps the safety wrap.
+   *
+   * Note (HR1): source-typed string literals pass through verbatim in EVERY
+   * context regardless of this flag — see the `StringLiteral` codegen case.
+   * This flag now only gates the injected-value wrap.
    */
   pipelineContext?: boolean;
   /**
@@ -639,20 +639,18 @@ function negativeLiteralValue(node: Expr): number | null {
 }
 
 /**
- * Emit a string literal in a value position, auto-wrapping in `$literal` when
- * the value would be misread by MongoDB as a field reference / system variable.
+ * Auto-wrap a RUNTIME-INJECTED string in `$literal` when MongoDB would misread
+ * it as a field reference / system variable. This is HR1's only exception: a
+ * `"$x"` typed in jsmql *source* passes through verbatim (it IS the field ref —
+ * see the `StringLiteral` codegen case), but a `"$x"` arriving as a
+ * `jsmql.compile` param or template-tag `${…}` is untrusted input we must not
+ * let silently become a field reference, so we wrap it in expression position.
  *
- * In MongoDB aggregation expression context, any string value that starts with
- * `$` is interpreted at query time — `"$foo"` reads field `foo`, `"$$NOW"` is
- * the system variable. A user who writes the string literal `"$foo"` in jsmql
- * source means the literal four-character string, not field access (they'd
- * write `$.foo` for that). Wrap in `$literal` so the runtime keeps it intact.
- *
- * Suppressed when `ctx.insideLiteral` is set — we're already inside a
- * `$literal(...)` envelope, MongoDB will not re-evaluate this subtree, and a
- * second wrap would produce a literal-of-a-literal.
+ * Suppressed when `ctx.insideLiteral` is set (already inside a `$literal(...)`
+ * envelope — a second wrap would produce a literal-of-a-literal) or when
+ * `ctx.pipelineContext` is set (a pipeline is a paste-raw-MQL surface).
  */
-function literalSafeString(value: string, ctx: GenerateCtx): unknown {
+function literalSafeInjectedString(value: string, ctx: GenerateCtx): unknown {
   if (ctx.insideLiteral || ctx.pipelineContext) return value;
   if (value.length > 0 && value.charCodeAt(0) === 36 /* $ */) {
     return { $literal: value };
@@ -661,10 +659,11 @@ function literalSafeString(value: string, ctx: GenerateCtx): unknown {
 }
 
 /**
- * Apply the same `$literal` safety net to a `jsmql.compile`/template-tag bound
- * value as we do to user-written string literals: any `"$..."`-shaped string,
- * at any nesting depth, gets wrapped so MongoDB doesn't read it as a field ref
- * at runtime. Plain objects and arrays recurse; primitives pass through.
+ * Apply the `$literal` safety net to a `jsmql.compile`/template-tag bound
+ * value: any `"$..."`-shaped string, at any nesting depth, gets wrapped so
+ * MongoDB doesn't read injected input as a field ref at runtime (HR1's
+ * runtime-injected exception). Plain objects and arrays recurse; primitives
+ * pass through.
  *
  * `validateInterpolatable` has already rejected functions, symbols, BigInt,
  * non-finite numbers, and circular references, so this walker only needs to
@@ -675,7 +674,7 @@ function literalSafeString(value: string, ctx: GenerateCtx): unknown {
  */
 function safeBoundValue(value: unknown, ctx: GenerateCtx): unknown {
   if (ctx.insideLiteral || ctx.pipelineContext) return value;
-  if (typeof value === "string") return literalSafeString(value, ctx);
+  if (typeof value === "string") return literalSafeInjectedString(value, ctx);
   if (isOpaqueBsonValue(value)) return value;
   if (Array.isArray(value)) return value.map((v) => safeBoundValue(v, ctx));
   if (value !== null && typeof value === "object") {
@@ -753,7 +752,10 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "BigIntLiteral":
       return { $toLong: expr.value };
     case "StringLiteral":
-      return literalSafeString(expr.value, ctx);
+      // HR1: a `"$x"` string typed in source IS the MQL field ref `$x`, in every
+      // context — it passes through verbatim, jsmql adds no `$literal` of its own.
+      // (Runtime-INJECTED values get the safety wrap; see `safeBoundValue`.)
+      return expr.value;
     case "BooleanLiteral":
       return expr.value;
     case "NullLiteral":
@@ -1575,12 +1577,28 @@ function generateObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx, _pos: n
   return { $mergeObjects: operands };
 }
 
+/**
+ * Wrap a literal pairs array as a server-valid `$arrayToObject` argument.
+ *
+ * `{ $arrayToObject: <arrayLiteral> }` is mis-parsed: MongoDB reads a literal
+ * array *value* as the operator's argument LIST, so `[[k,v],[k2,v2]]` becomes
+ * two arguments ("$arrayToObject takes exactly 1 argument"), and even a single
+ * `[[k,v]]` is unwrapped to `[k,v]` and rejected ("Unrecognised input type").
+ * Wrapping one level deeper — `{ $arrayToObject: [pairs] }` — makes MongoDB
+ * unwrap exactly once back to `pairs`, the single array argument. Works for any
+ * pair count and for expression-valued pairs (a `$literal` wrap can't — it would
+ * freeze `$$this` etc.). Verified on MongoDB 8.2.
+ */
+function arrayToObjectOfLiteralPairs(pairs: unknown): Record<string, unknown> {
+  return { $arrayToObject: [pairs] };
+}
+
 function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): unknown {
   const pairs = entries.map((entry) => {
     const key = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
     return [key, _generate(entry.value, ctx)];
   });
-  return { $arrayToObject: pairs };
+  return arrayToObjectOfLiteralPairs(pairs);
 }
 
 /**
@@ -1599,6 +1617,15 @@ function generateStaticObjectEntries(entries: ObjectEntry[], ctx: GenerateCtx): 
         "Computed object keys are not allowed here — operator argument keys must be literal names",
         entry.pos,
       );
+    }
+    // HR3: a raw `{ $op: value }` object whose key is a list-only operator (no
+    // single-value form) is only valid MQL when `value` is the operand array —
+    // `{ $setUnion: $.x }` is server-rejected. Reject it here too, with the same
+    // message as the `$op(...)` call form, so the rule holds on every surface.
+    if (entry.key.name.charCodeAt(0) === 36 /* $ */ && entry.value.type !== "ArrayLiteral") {
+      if (lookupOperator(entry.key.name)?.shape.kind === "array") {
+        throw listOperandError(entry.key.name, entry.value.pos);
+      }
     }
     result[entry.key.name] = _generate(entry.value, ctx);
   }
@@ -1656,6 +1683,10 @@ function generateOperatorCall(
   pos: number,
 ): Record<string, unknown> {
   checkOperatorContext(name, ctx, pos);
+  // HR2: the `$op(...)` escape hatch takes operands directly. The JS spread
+  // (`$op(...arr)`) is not supported on any operator — pass operands as
+  // separate args or as a single array literal.
+  assertNoSpread(args, name, pos);
   // Special case: $literal(value) — the argument is wrapped verbatim and
   // MongoDB does not re-evaluate it at query time. Recurse with the
   // `insideLiteral` flag so nested `"$..."` strings don't get a second
@@ -1702,6 +1733,14 @@ function generateOperatorCall(
     return { $let: { vars, in: _generate(lambdaExpr.body, bodyCtx) } };
   }
 
+  // $arrayToObject([pairs]) — a literal pairs-array argument must be wrapped one
+  // level deeper (see `arrayToObjectOfLiteralPairs`). A field-ref / expression
+  // argument (`$arrayToObject($.pairs)`) already resolves to one array, so it is
+  // left untouched by the `single`-shape default below.
+  if (name === "$arrayToObject" && style === "positional" && args.length === 1 && args[0].type === "ArrayLiteral") {
+    return arrayToObjectOfLiteralPairs(_generate(args[0] as Expr, ctx));
+  }
+
   const def = lookupOperator(name);
 
   if (!def) {
@@ -1712,12 +1751,10 @@ function generateOperatorCall(
 
   switch (shape.kind) {
     case "none": {
-      assertNoSpread(args, name, pos);
       return { [name]: {} };
     }
 
     case "single": {
-      assertNoSpread(args, name, pos);
       if (args.length !== 1) {
         throw new CodegenError(`Operator ${name} expects exactly 1 argument, got ${args.length}`, pos);
       }
@@ -1725,30 +1762,35 @@ function generateOperatorCall(
     }
 
     case "array": {
-      if (args.length === 0) {
-        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
-      }
-      return { [name]: generateVariadicArgs(args, ctx) };
-    }
-
-    case "flex": {
-      // Flex: 1 arg → `{ $op: expr }`, 2+ → `{ $op: [a, b, ...] }`.
-      // A single spread (`...arr`) collapses to the single form, passing the array through.
+      // List-only operator (no single-value form). HR2/HR3:
+      //   2+ args        → `{ $op: [a, b, ...] }`
+      //   1 array literal → `{ $op: [...] }`  (the array IS the operand list)
+      //   1 non-array     → HR3 error (a list operator can't take a lone scalar)
       if (args.length === 0) {
         throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
       }
       if (args.length === 1) {
-        const only = args[0];
-        if (only.type === "SpreadElement") {
-          return { [name]: _generate(only.argument, ctx) };
+        const only = args[0] as Expr;
+        if (only.type !== "ArrayLiteral") {
+          throw listOperandError(name, only.pos);
         }
         return { [name]: _generate(only, ctx) };
       }
       return { [name]: generateVariadicArgs(args, ctx) };
     }
 
+    case "flex": {
+      // Flex (has a single-value form): 1 arg → `{ $op: expr }`, 2+ → `{ $op: [a, b, ...] }`.
+      if (args.length === 0) {
+        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
+      }
+      if (args.length === 1) {
+        return { [name]: _generate(args[0] as Expr, ctx) };
+      }
+      return { [name]: generateVariadicArgs(args, ctx) };
+    }
+
     case "object": {
-      assertNoSpread(args, name, pos);
       if (args.length === 0) {
         throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
       }
@@ -1769,16 +1811,16 @@ function generateOperatorCall(
   }
 }
 
+// Registry-miss path: the compiler can't know an unknown operator's shape, so it
+// can't tell whether a single non-array value is invalid (HR3 only fires on what
+// it KNOWS). Mirror `flex`: 1 arg → bare value, 2+ → array. (Spread is already
+// rejected up-front by `generateOperatorCall`.)
 function generateUnknownOperator(name: string, args: CallArg[], ctx: GenerateCtx): Record<string, unknown> {
   if (args.length === 0) {
     return { [name]: {} };
   }
   if (args.length === 1) {
-    const only = args[0];
-    if (only.type === "SpreadElement") {
-      // Single ...arr passes the spread argument through directly as the operator value.
-      return { [name]: _generate(only.argument, ctx) };
-    }
+    const only = args[0] as Expr;
     if (only.type === "ObjectLiteral") {
       return { [name]: generateStaticObjectEntries(only.entries, ctx) };
     }
@@ -1788,12 +1830,14 @@ function generateUnknownOperator(name: string, args: CallArg[], ctx: GenerateCtx
 }
 
 /**
- * Generate a variadic argument list, handling spread via concatArrays.
+ * Generate a variadic argument list, handling JS spread via `$concatArrays`.
+ * Used by the JS-method lowerings (`Math.min`/`Math.max`, `Object.assign`) where
+ * spread is idiomatic JS the developer already knows. The `$op(...)` escape hatch
+ * does NOT reach here with a spread — `generateOperatorCall` rejects it up-front.
  *
  *   - all-non-spread args → a flat array
- *   - single spread arg → the spread's value (which is presumed to be an array)
- *   - mixed → `{ $concatArrays: [...wrapped] }`, where non-spread args become single-element arrays
- *     and spread args are passed through as their array value.
+ *   - single spread arg → the spread's value (presumed to be an array)
+ *   - mixed → `{ $concatArrays: [...] }`, non-spread args wrapped as single-element arrays.
  */
 function generateVariadicArgs(args: CallArg[], ctx: GenerateCtx): unknown {
   const hasSpread = args.some((a) => a.type === "SpreadElement");
@@ -1808,13 +1852,32 @@ function generateVariadicArgs(args: CallArg[], ctx: GenerateCtx): unknown {
   return { $concatArrays: parts };
 }
 
+/** HR3: a list-only operator (no single-value form) was handed a lone non-array operand. */
+function listOperandError(name: string, pos: number): CodegenError {
+  return new CodegenError(
+    `${name} operates on a list of operands — pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,
+    pos,
+  );
+}
+
+// JS-idiomatic spread alternative per operator, for the spread-rejection message.
+// These operators have a JS form where spread IS supported (it lowers to the same
+// MQL), so the error points the user straight at it instead of a dead end.
+const SPREAD_JS_ALTERNATIVE: Record<string, string> = {
+  $min: "use the JS form Math.min(...arr)",
+  $max: "use the JS form Math.max(...arr)",
+  $concatArrays: "use array spread ([...a, ...b]) or .concat()",
+  $mergeObjects: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
+};
+
 function assertNoSpread(args: CallArg[], name: string, callPos: number): void {
   for (const a of args) {
     if (a.type === "SpreadElement") {
-      throw new CodegenError(
-        `Spread (...) is not supported as an argument to ${name} — only variadic operators accept it`,
-        a.pos ?? callPos,
-      );
+      const alt = SPREAD_JS_ALTERNATIVE[name];
+      const fix = alt
+        ? `${alt}, or pass a single array (${name}([a, b]))`
+        : `pass operands directly (${name}(a, b)) or as a single array (${name}([a, b]))`;
+      throw new CodegenError(`Spread (...) is not supported in ${name}(...) — ${fix}.`, a.pos ?? callPos);
     }
   }
 }

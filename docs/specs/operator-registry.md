@@ -26,13 +26,22 @@ $not($.active)    →  { $not: "$active" }
 ```
 
 ### `array` → `{ $op: [a, b, ...] }`
-The operator takes one or more positional arguments collected into an array. Single-argument calls still produce an array.
+A **list-only** operator — it has no single-value form, so its operand is always a list (HR2/HR3 — see [LANG_RULES.md](../LANG_RULES.md)):
+
+- **2+ args** → collected into an array.
+- **1 array literal** → that array IS the operand list (the HR2 round-trip of `{ $op: [...] }`).
+- **1 non-array value** → rejected: a list operator can't take a lone scalar.
 
 ```
-$eq($.age, 18)          →  { $eq: ["$age", 18] }
-$add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }
+$add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }      (2+ args → array)
+$setUnion([$.a, $.b])   →  { $setUnion: ["$a", "$b"] }       (1 array literal → unwrapped)
 $ifNull($.x, $.y, 0)    →  { $ifNull: ["$x", "$y", 0] }
+$add($.x)               →  ✗ error  ("$add operates on a list of operands — write $add(a, b) or $add([a, b])")
 ```
+
+Operators with a *valid* single-value form (the comparison operators, `$in`) are `flex`, not `array`. The JS spread (`$add(...arr)`) is not accepted on any operator-call form — pass a single array literal instead. (Spread stays supported in JS-method position: `Math.max(...arr)`, `Object.assign(...docs)`.)
+
+The same rejection applies to the **raw-object form** — HR3 governs raw MQL too, so `{ $setUnion: $.x }` (a list-only operator key with a non-array value) throws exactly like `$setUnion($.x)`. The check is in `generateStaticObjectEntries` ([src/codegen.ts](../../src/codegen.ts)): it fires only when the key is a registry `array`-shape operator and the value is not an array literal, so a valid `{ $setUnion: [$.a, $.b] }` passes through untouched (HR1).
 
 ### `object` → `{ $op: { k1: a, k2: b } }`
 The operator's MQL form takes an object. The registry entry stores an ordered `keys` array that maps positional argument positions to named keys.
@@ -62,21 +71,18 @@ $rand()    →  { $rand: {} }
 ```
 
 ### `flex` → `{ $op: expr }` _or_ `{ $op: [a, b, ...] }`
-The operator legitimately accepts both a single expression (typically in accumulator context, e.g. `$min` inside `$group`) and an array of expressions (in expression context, e.g. `$min` inside `$project`). The output shape is decided by argument count:
+The operator legitimately accepts both a single expression and an array of expressions; the output shape is decided by argument count. Two cases use this: (1) accumulator-vs-expression duals (e.g. `$min` — single in `$group`, array in `$project`); (2) **dual-form operators with a single-value query form** — the comparison operators `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` and `$in`, where one argument is the valid query shape `{ field: { $gt: v } }` and two-or-more are the aggregation operands (HR2 — see [LANG_RULES.md](../LANG_RULES.md)). This is why a single arg never errors for these (unlike a list-only `array` op such as `$setUnion`, which has no single-value form).
 
 ```
 $min($.scores)            →  { $min: "$scores" }            (1 arg → single)
 $min($.a, $.b, $.c)       →  { $min: ["$a", "$b", "$c"] }   (2+ args → array)
 $round($.price)           →  { $round: "$price" }
 $round($.price, 2)        →  { $round: ["$price", 2] }
+$gt($.x)                  →  { $gt: "$x" }                  (query single-value form)
+$gt($.a, $.b)             →  { $gt: ["$a", "$b"] }          (aggregation operands)
 ```
 
-Spread handling matches `array`-shape operators:
-
-```
-$min(...$.scores)         →  { $min: "$scores" }                          (single spread → bare)
-$max($.first, ...$.rest)  →  { $max: { $concatArrays: [["$first"], "$rest"] } }  (mixed)
-```
+The JS spread is not accepted in the `$op(...)` escape hatch (any shape) — `$min(...$.scores)` is rejected; pass a single array (`$min([...])`) or use the JS-method form `Math.min(...$.scores)`, where spread stays supported.
 
 A single object-literal arg is treated as a **value** (the object itself), not as a shape signal. `flex` is not the same as `object`-shape: with `object`-shape, a lone object literal is the operator's structured argument with named keys; with `flex`, it's just one value among potentially many.
 

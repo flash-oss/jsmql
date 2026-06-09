@@ -27,6 +27,16 @@ rule #1: we never throw on a value we cannot statically pin down. (See the
 helper gate — `litNumber` / `litString` / `litBool` / `describeLiteral` /
 `objectInfo` / `arrayElements` — in `src/stage-validation.ts`.)
 
+**The constant-only-slot exception (HR3).** A few slots MUST hold a compile-time
+constant — `$limit` / `$skip` / `$sample.size` / `$bucketAuto.buckets` /
+`$graphLookup.maxDepth` (a constant integer) and `$bucket.boundaries` /
+`$lookup.pipeline` (a constant array). There the gate is **inverted**: a field
+reference or runtime expression is *itself* the 100%-certain violation (the
+server rejects `{ $limit: "$n" }`, `{ $lookup: { pipeline: "$x" } }`, …), so it
+throws. A compile-bound `ParamRef` is exempt — it inlines to a literal at codegen,
+so it may be a valid constant. Implemented by `checkIntBound` (numeric slots) and
+`requireConstantArray` (array slots) in `src/stage-validation.ts`.
+
 ## Part 1 — Structural stage placement (`src/pipeline.ts`)
 
 Rules are declared in the STAGES registry (`src/stages.ts`) and applied by a

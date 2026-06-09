@@ -1086,7 +1086,8 @@ declare global {
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/eq/
    */
-  function $eq(...expression1: any[]): any;
+  function $eq(expression1: any): any;
+  function $eq(...expression1s: any[]): any;
   /**
    * Raises e to the specified exponent.
    *
@@ -1179,14 +1180,16 @@ declare global {
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/gt/
    */
-  function $gt(...expression1: any[]): any;
+  function $gt(expression1: any): any;
+  function $gt(...expression1s: any[]): any;
   /**
    * Returns true if the first value is greater than or equal to the second.
    *
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/gte/
    */
-  function $gte(...expression1: any[]): any;
+  function $gte(expression1: any): any;
+  function $gte(...expression1s: any[]): any;
   /**
    * Generates and returns a binary hash value (BinData) from a UTF-8 string or binary data. Use $hash in an aggregation
    * pipeline to compute binary hashes for storage, verification, or comparison. To get a hexadecimal string instead of
@@ -1225,7 +1228,8 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/in/
    */
-  function $in(...expression: any[]): any;
+  function $in(expression: any): any;
+  function $in(...expressions: any[]): any;
   /**
    * Searches an array for an occurrence of a specified value and returns the array index of the first occurrence. Array indexes start at zero.
    *
@@ -1377,14 +1381,16 @@ declare global {
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/lt/
    */
-  function $lt(...expression1: any[]): any;
+  function $lt(expression1: any): any;
+  function $lt(...expression1s: any[]): any;
   /**
    * Returns true if the first value is less than or equal to the second.
    *
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/lte/
    */
-  function $lte(...expression1: any[]): any;
+  function $lte(expression1: any): any;
+  function $lte(...expression1s: any[]): any;
   /**
    * Removes whitespace or the specified characters from the beginning of a string.
    *
@@ -1525,7 +1531,8 @@ declare global {
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/ne/
    */
-  function $ne(...expression1: any[]): any;
+  function $ne(expression1: any): any;
+  function $ne(...expression1s: any[]): any;
   /**
    * Returns the boolean value that is the opposite of its argument expression. Accepts a single argument expression.
    *

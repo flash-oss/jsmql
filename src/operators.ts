@@ -126,13 +126,16 @@ export const OPERATORS: Record<string, OperatorDef> = {
   $radiansToDegrees: single("trigonometry", "Converts a value from radians to degrees."),
 
   // ── Comparison ─────────────────────────────────────────────────────────────
+  // $eq/$ne/$gt/$gte/$lt/$lte are `flex` (dual-form): a single value is the valid
+  // *query* comparison `{ field: { $gt: v } }`; two args are the *aggregation*
+  // operands `{ $gt: [a, b] }` (HR2). $cmp has no single-value form → `array`.
   $cmp: array("comparison", "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less."),
-  $eq: array("comparison", "Returns true if the values are equivalent."),
-  $ne: array("comparison", "Returns true if the values are not equivalent."),
-  $gt: array("comparison", "Returns true if the first value is greater than the second."),
-  $gte: array("comparison", "Returns true if the first value is greater than or equal to the second."),
-  $lt: array("comparison", "Returns true if the first value is less than the second."),
-  $lte: array("comparison", "Returns true if the first value is less than or equal to the second."),
+  $eq: flex("comparison", "Returns true if the values are equivalent."),
+  $ne: flex("comparison", "Returns true if the values are not equivalent."),
+  $gt: flex("comparison", "Returns true if the first value is greater than the second."),
+  $gte: flex("comparison", "Returns true if the first value is greater than or equal to the second."),
+  $lt: flex("comparison", "Returns true if the first value is less than the second."),
+  $lte: flex("comparison", "Returns true if the first value is less than or equal to the second."),
 
   // ── Boolean ────────────────────────────────────────────────────────────────
   $and: array("boolean", "Returns true only when all its expressions evaluate to true."),
@@ -256,9 +259,9 @@ export const OPERATORS: Record<string, OperatorDef> = {
 
   // ── Array ──────────────────────────────────────────────────────────────────
   $arrayElemAt: array("array", "Returns the element at the specified array index."),
-  // [DEF-026] A literal multi-pair arg (`$arrayToObject([["a",1],["b",2]])`) emits
-  // `{ $arrayToObject: [[…],[…]] }`, which MongoDB reads as two arguments and
-  // rejects ("takes exactly 1 argument"). The single-pair form is fine. See DEFERRED.
+  // A literal pairs-array argument is wrapped one level deeper in codegen
+  // (`{ $arrayToObject: [pairs] }`) so MongoDB reads it as the single argument
+  // rather than an argument list — see `arrayToObjectOfLiteralPairs` in codegen.ts.
   $arrayToObject: single("array", "Converts an array of key-value pairs to a document."),
   $concatArrays: array("array", "Concatenates arrays to return the concatenated array."),
   $filter: obj(
@@ -271,7 +274,9 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
   $first: single("array", "Returns the result of an expression for the first document in an array."),
   $firstN: obj("array", "Returns a specified number of elements from the beginning of an array.", "input", "n"),
-  $in: array("array", "Returns a boolean indicating whether a specified value is in an array."),
+  // `flex` (dual-form): query `{ field: { $in: [v1, v2] } }` takes a single array;
+  // aggregation `{ $in: [needle, haystack] }` takes two operands.
+  $in: flex("array", "Returns a boolean indicating whether a specified value is in an array."),
   $indexOfArray: array("array", "Searches an array for a value and returns the index of the first occurrence, or -1."),
   $isArray: single("array", "Determines if the operand is an array."),
   $last: single("array", "Returns the result of an expression for the last document in an array."),
@@ -332,6 +337,10 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Date ───────────────────────────────────────────────────────────────────
+  // [DEF-029] The registry encodes arg *shapes*, not arg *types*: a literal
+  // non-date in a date-typed slot (`$dateDiff({ startDate: "2020-01-01" })`,
+  // `$year("x")`, …) passes through to server-invalid MQL. Closing this needs
+  // arg-type metadata here + an operator-arg validator. See docs/DEFERRED.md.
   $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
   $dateDiff: obj(
     "date",

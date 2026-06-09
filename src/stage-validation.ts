@@ -14,6 +14,15 @@
 // statically pin down — a *probable* violation must still compile (rule #2).
 // This is how comprehensive coverage coexists with "only 100%-certain throws".
 //
+// THE CONSTANT-ONLY-SLOT EXCEPTION (HR3): a handful of slots MUST hold a
+// compile-time constant — `$limit`/`$skip`/`$sample.size`/`$bucketAuto.buckets`/
+// `$graphLookup.maxDepth` (a constant integer) and `$bucket.boundaries`/
+// `$lookup.pipeline` (a constant array). There, a field reference / runtime
+// expression is itself a 100%-certain violation (the server rejects `{ $limit:
+// "$n" }`, `{ $lookup: { pipeline: "$x" } }`, …), so the gate is INVERTED: a
+// non-constant throws. A compile-bound param (`ParamRef`) is allowed — it inlines
+// to a literal value at codegen, so it may well be a valid constant.
+//
 // Validators see only USER-written stage bodies: sugar-generated stages
 // ($lookup from `$$$.coll.find`, $unionWith from `$$.push`, …) build their
 // objects directly and never pass through `generateStageBody`.
@@ -144,14 +153,44 @@ function checkEnum(stage: string, field: string, value: Expr, allowed: readonly 
   throw new CodegenError(`'${stage}' ${field} must be one of: ${allowed.join(", ")} — got '${s}'.${hint}`, value.pos);
 }
 
+/**
+ * A compile-bound param (`ParamRef`) inlines to a literal value at codegen, so a
+ * constant-only slot can't statically rule it out. Everything else that isn't a
+ * literal — a field ref or a runtime expression — is a certain violation.
+ */
+function nonConstantDesc(e: Expr): string {
+  return e.type === "FieldRef" ? "a field reference" : "a runtime expression";
+}
+
+/** Reject a non-constant in a slot the server requires to be a constant array (e.g. `$lookup.pipeline`). */
+function requireConstantArray(label: string, value: Expr): void {
+  if (value.type === "ArrayLiteral" || value.type === "ParamRef") return;
+  const desc = describeLiteral(value);
+  throw new CodegenError(
+    `'${label}' must be a constant array — got ${desc ?? nonConstantDesc(value)}, ` +
+      `which the server can't accept here. Use a literal array.`,
+    value.pos,
+  );
+}
+
 /** Throw if a numeric slot holds a definitely-wrong literal (non-number, non-integer, or out of bound). */
 function checkIntBound(stage: string, body: Expr, opts: { min: number; label: string }): void {
   const n = litNumber(body);
   if (n === null) {
     const desc = describeLiteral(body);
-    // Only a literal of a clearly-wrong type throws; a field/expression is fine.
+    // A literal of a clearly-wrong type (string/array/object/…) throws.
     if (desc !== null) {
       throw new CodegenError(`'${stage}' expects an integer, but got ${desc}.`, body.pos);
+    }
+    // HR3 constant-only-slot exception: the server requires a constant integer
+    // here, so a field ref / runtime expression is a certain violation. A param
+    // inlines to a value, so it's allowed.
+    if (body.type !== "ParamRef") {
+      throw new CodegenError(
+        `'${stage}' must be ${opts.label} and a compile-time constant — got ${nonConstantDesc(body)}, ` +
+          `which the server can't accept here. Use a literal value.`,
+        body.pos,
+      );
     }
     return;
   }
@@ -399,6 +438,7 @@ function validateBucket(body: Expr): void {
   if (info === null) return;
   const boundaries = info.byKey.get("boundaries");
   if (boundaries === undefined) return;
+  requireConstantArray("$bucket boundaries", boundaries); // HR3: must be a constant array
   const els = arrayElements(boundaries);
   if (els === null) return;
   if (els.length < 2) {
@@ -528,7 +568,12 @@ function validateMerge(body: Expr): void {
 }
 
 function validateLookup(body: Expr): void {
-  requireObjectBody("$lookup", body, ["from", "as"]);
+  const info = requireObjectBody("$lookup", body, ["from", "as"]);
+  if (info === null) return;
+  const pipeline = info.byKey.get("pipeline");
+  // HR3: a `$lookup` pipeline must be a literal array of stage objects — a field
+  // ref / expression (`{ pipeline: "$x" }`) is rejected by the server.
+  if (pipeline !== undefined) requireConstantArray("$lookup pipeline", pipeline);
 }
 
 function validateUnionWith(body: Expr): void {
@@ -592,13 +637,10 @@ const STAGE_BODY_VALIDATORS: Record<string, BodyValidator> = {
 /**
  * Validate a stage's body against the 100%-static-certain shape rules. A no-op
  * for stages with no validator, and (per the literal-gating invariant) a no-op
- * whenever the checked slot isn't a fully-static literal.
- *
- * [DEF-027] Constant-only slots given a *non-literal* (a field ref / expression)
- * are NOT yet caught here — e.g. `$limit($.n)` → `{ $limit: "$n" }`,
- * `$bucket({ boundaries: $.x })`, `$lookup({ pipeline: $.x })` — and the server
- * rejects them at parse time. These are statically knowable (the slot holds a
- * non-constant) but not yet validated. See docs/DEFERRED.md.
+ * whenever the checked slot isn't a fully-static literal — EXCEPT the
+ * constant-only slots (`$limit`/`$skip`/`$sample.size`/`$bucket.boundaries`/
+ * `$lookup.pipeline`/…), where a non-constant (field ref / expression) is itself
+ * a certain violation and throws (see the constant-only-slot exception above).
  */
 export function validateStageBody(stageName: string, body: Expr): void {
   const validator = STAGE_BODY_VALIDATORS[stageName];

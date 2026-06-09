@@ -299,38 +299,13 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-025 — Unify the standalone-Filter `$expr` residual with pipeline `$`-string pass-through
+### DEF-029 — Reject a literal non-date in a date-typed operator argument
 
-- **What's blocked.** Inside a pipeline, `$`-prefixed string literals pass through verbatim (no `$literal`) — set by `pipelineContext` at the pipeline entrypoints. The **standalone** Filter `$expr` residual (`jsmql('…')` / `jsmql.filter('…')` non-translatable branch) is generated WITHOUT that flag, so a `$`-string there is still `$literal`-wrapped. Consequence: `$match($.a === "$b")` *inside a pipeline* passes `"$b"` through, but a *standalone* `jsmql.filter('$.a === "$b"')` `$expr` residual wraps it.
-- **Target lowering.** Decide whether a standalone Filter is a "documents you write/paste" surface (pass through, like a pipeline) or an expression-authoring surface (wrap, like `jsmql.expr`). If the former, seed `pipelineContext: true` in `generateFilter` ([src/index.ts](../src/index.ts)).
-- **Why blocked.** Low impact — most Filters lower to query-document literals (handled by `translateMatchBody`, not `literalSafeString`); a `$`-string literal reaching the `$expr` residual is rare. Keeping the wrap costs zero filter-test regression now; the unification is a deliberate follow-up so the choice gets its own review.
-- **Success criteria.** A decision recorded (pass-through vs wrap) + `jsmql.filter('$.a === "$b")` matches it; tests in `test/filter.test.ts`.
-- **Rejection site(s).** `src/index.ts` `generateFilter` (tagged `[DEF-025]`); `docs/specs/filter-mode.md` § Edge cases.
-- **Spec.** `docs/specs/filter-mode.md`.
-- **Status.** open
-- **Effort.** S (one-line flag seed + decision + tests)
-
----
-
-### DEF-026 — `$arrayToObject` with a literal multi-pair array emits server-rejected MQL
-
-- **What's blocked.** `$arrayToObject([["a", 1], ["b", 2]])` lowers to `{ $arrayToObject: [["a",1],["b",2]] }`. MongoDB reads a top-level array value as an *argument list*, so it sees two arguments and rejects it ("Expression $arrayToObject takes exactly 1 argument. 2 were passed in."). The single-pair form (`{ $arrayToObject: [[k, v]] }`, the common computed-key case) is unaffected.
-- **Target lowering.** Emit a shape MongoDB reads as one array argument. `$literal`-wrapping the outer array is wrong when the pairs contain expressions (it would freeze `$$this` etc.), so the fix needs to distinguish a constant pair-array (wrap in `$literal`) from one with expression elements (build it as a single array expression another way).
-- **Why blocked.** Niche (most `$arrayToObject` use is computed-single-key or a field ref); the correct fix is shape-sensitive and not a one-liner.
-- **Success criteria.** `$arrayToObject([["a",1],["b",2]])` runs on a real server; covered in `test/literal-passthrough.test.ts`.
-- **Rejection site(s).** `src/operators.ts` `$arrayToObject` entry (tagged `[DEF-026]`).
-- **Status.** open
-- **Effort.** M
-
----
-
-### DEF-027 — Validate compile-time-constant-only stage slots given a non-constant
-
-- **What's blocked.** Several stage slots require a compile-time constant; jsmql's validator is literal-gated (it only throws on 100%-certain literal violations), so a field/expression in these slots passes through and the server rejects it: `$limit($.n)` → `{ $limit: "$n" }` ("invalid argument to $limit stage: Expected a number"), `$bucket({ boundaries: $.x })` (must be a literal array), `$sample({ size: $.n })`, `$lookup({ pipeline: $.x })` ("A pipeline must be an array of objects"), and a string passed where a Date is required (`$dateDiff` startDate). These all emit MQL that fails at parse/optimize time.
-- **Target lowering.** Extend `validateStageBody` (and operator-arg validation) to reject a non-constant (field ref / expression / non-array) in a constant-only slot at compile time with an actionable message, instead of emitting server-invalid MQL. Distinct from the §B "runtime-dependent constraints" decision — these are *statically* knowable (the slot value is a field ref, not a literal).
-- **Why blocked.** Spans several stages/operators and needs a per-slot "must be a literal constant" annotation; out of scope for the var-name/`$limit:0`/regex fix batch.
-- **Success criteria.** `$limit($.n)` (and siblings) throw a clear compile-time error; tests in `test/stage-validation.test.ts`.
-- **Rejection site(s).** `src/stage-validation.ts` (tagged `[DEF-027]`).
+- **What's blocked.** Date operators require a Date in their date slots, but the operator registry encodes only argument *shapes*, not argument *types* — so a literal string/number in a date slot passes through to server-invalid MQL: `$dateDiff({ startDate: "2020-01-01", … })` → "requires 'startDate' to be a date, but got string"; likewise `$dateAdd`/`$dateSubtract` `startDate`, `$dateTrunc` `date`, and the single-arg date accessors (`$year("x")`, `$month`, …). A field ref (`$year($.d)`) is fine (it may be a date), and `new Date("…")` folds to a real Date — only a literal non-date is certainly wrong.
+- **Why deferred (not yet an HR3 case).** HR3 rejects what the compiler can tell *from what it knows* — and the registry has no notion of date-typed args, so the compiler currently can't know. Closing this means **adding argument-type metadata to the operator registry** (a new dimension beyond `shape`/`category`) plus an operator-arg validator, which is a separate subsystem from the stage-body validator. The stage-slot half of the original gap (the constant-only `$limit`/`$bucket.boundaries`/`$lookup.pipeline`/… slots) shipped — see DEVLOG.
+- **Target lowering.** Annotate date-typed args in `src/operators.ts` (`[DEF-029]`), then reject a literal non-Date in those slots with an actionable message (e.g. "wrap it in `new Date(...)`").
+- **Success criteria.** `$dateDiff({ startDate: "2020-01-01", … })` throws a clear compile-time error; field refs and `new Date(...)` still pass; tests in `test/codegen.test.ts`.
+- **Rejection site(s).** `src/operators.ts` date operators (tagged `[DEF-029]`); a new operator-arg validator.
 - **Status.** open
 - **Effort.** M
 
@@ -385,9 +360,9 @@ The pre-flight validator (`docs/specs/pipeline-validation.md`) throws only on vi
 
 The lean `$replaceWith` shape is correct for the `$ = …` sugar. Adding a knob to opt into the verbose 4.0-compatible `$replaceRoot({ newRoot: … })` form adds API surface for no gain — users who need that shape write the stage call directly.
 
-### Wrapping nested-operator `$`-strings in pipeline context ("Model A")
+### Wrapping nested-operator `$`-strings ("Model A")
 
-When a pipeline stage value is itself an operator call — `$project({ t: $concat("$a", "$b") })` — the `$`-string args pass through verbatim (`{ $concat: ["$a", "$b"] }`); they are NOT `$literal`-wrapped. We considered the alternative ("Model A": an operator call wraps its `$`-string args the same way everywhere, so only *direct* stage-spec values pass through). Rejected: it makes the same `$op("$x")` call mean different things at different nesting depths within one pipeline, and breaks the "paste raw MQL and it round-trips" property. The chosen rule (Model B) is positional by *surface*, not by operator: a whole pipeline is pass-through; only `jsmql.expr` wraps. Confirmed with the user. Implemented via `GenerateCtx.pipelineContext`; see `docs/specs/aggregation-stages.md`.
+When a stage value is itself an operator call — `$project({ t: $concat("$a", "$b") })` — the `$`-string args pass through verbatim (`{ $concat: ["$a", "$b"] }`); they are NOT `$literal`-wrapped. We considered the alternative ("Model A": an operator call wraps its `$`-string args, so only *direct* stage-spec values pass through). Rejected: it makes the same `$op("$x")` call mean different things at different nesting depths, and breaks the "paste raw MQL and it round-trips" property. **HR1 (added later) settled this globally**: a source-typed `$`-string passes through in *every* context — pipeline, stage, and `jsmql.expr` alike — so there is no nesting- or surface-dependent wrap at all. Only runtime-injected values wrap. See [docs/LANG_RULES.md](LANG_RULES.md) (HR1).
 
 ---
 

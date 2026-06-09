@@ -20,11 +20,16 @@ The public API is the `jsmql` callable from `src/index.ts`, carrying six propert
 
 jsmql targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.coll.aggregate(pipeline)`), using the Node.js MongoDB driver's own terminology. Output shape is dispatched on the presence of a top-level `;` (no `;` → Filter, any `;` → Pipeline). → [docs/specs/filter-mode.md](docs/specs/filter-mode.md). Open roadmap items (e.g. query-only predicate operators with no aggregation counterpart) live in [docs/DEFERRED.md](docs/DEFERRED.md).
 
+## #0 priority: the language axioms
+
+[docs/LANG_RULES.md](docs/LANG_RULES.md) holds the foundational language invariants — the HARD RULES (HR1–HR4) and SOFT RULES. The HARD RULES outrank every other doc, spec, and `CLAUDE.md` here and the compiler upholds them **at all times** (a build that breaks one is a bug, never a feature). Read them before any change to lexing, parsing, codegen, the operator registry, or stage lowering. On conflict, **LANG_RULES wins**: fix the conformance bug; don't weaken the rule. When you can't fix it in the same change, leave the rule stated as law and flag the divergence as tracked work.
+
 ## #1 priority: developer experience
 
 Every decision should be evaluated through the lens of DX for the people **using** jsmql (not building it). There is no point shipping a feature if it is confusing or hard to use correctly. Concretely:
 
 - **Error messages must be actionable.** Every error should tell the user what went wrong and, where possible, what to write instead. Vague errors like "syntax error" are not acceptable.
+- **If something is not supported we throw — but the error message must guide toward an alternative solution.** A rejection is only acceptable when it tells the user what to write instead. When a JS construct has no MQL meaning in the form they used, point at the JS-idiomatic alternative that *does* work — e.g. spread in the `$op(...)` escape hatch is rejected, so the message names the JS form (`Math.min(...)` / `Math.max(...)` / `Object.assign(...)` / array spread `[...a, ...b]` / `.concat()`) or the single-array form. Never leave the user at a dead end.
 - **Errors stay consistent and helpful across the surface.** When you add a new throw site, match the patterns the existing ones already use — don't invent a one-off phrasing for one error category that's worded differently from its siblings. Concretely:
   - Whenever you reject a name from a closed set (a method, a stage, a static call, an operator), build the suggestion tail with `didYouMean(name, candidates[, format])` from [src/levenshtein.ts](src/levenshtein.ts) and interpolate it into the message: `` `Unknown method '.${m}()'.${didYouMean(m, KNOWN_METHODS)}` ``. It returns `""` when nothing is close enough, so you never branch on it. The optional `format` callback spells the suggestion to match the surrounding message — default is `.foo()`; pass `(s) => \`Class.${s}\`` for statics or `(s) => s` for bare names (stages). `format` receives the matched candidate, so a scope-dependent prefix can be looked up inside it. Don't hand-roll the `closestNameTo(...) ? \` Did you mean …\` : ""` pattern — that's exactly what `didYouMean` wraps. Don't dump the whole list into the message — the suggestion is the value-add, the full list is doc material.
   - Arg-count errors name the missing/extra parameter (`.charAt(index)`, `.slice(start[, end])`, …). A bare `requires 1 argument` is not enough; the user shouldn't have to context-switch to MDN to find out what that argument is supposed to be.
@@ -112,6 +117,7 @@ Every fact has **one** canonical home. Everywhere else is a one-line pointer (`S
 
 | Fact type | Canonical home |
 |---|---|
+| Language axioms (HR1–HR4, SOFT rules) | `docs/LANG_RULES.md` |
 | User-facing behaviour + examples | `docs/LANGUAGE.md` |
 | Per-feature implementation detail / lowering rules | `docs/specs/<feature>.md` |
 | Module invariants, "where do I add X" | `src/CLAUDE.md` |
@@ -119,7 +125,7 @@ Every fact has **one** canonical home. Everywhere else is a one-line pointer (`S
 | "Which doc to update when" governance | `docs/CLAUDE.md` |
 | Historical record of changes | `docs/DEVLOG.md` (append-only — duplication there is fine) |
 
-The rule when writing anywhere else: **if you're about to copy a paragraph that already lives in a canonical home, write one sentence and a link instead.** This file's "What this project is" and "File map" sections, and the `docs/CLAUDE.md` spec table, are **indexes** — one line + a pointer per item, not restatements. Code comments follow the same rule: a short intent header + `See docs/specs/<f>.md` (`src/stream-methods.ts` is the model); keep only inline `// why` notes that have no other home.
+The rule when writing anywhere else: **if you're about to copy a paragraph that already lives in a canonical home, write one sentence and a link instead.** State each fact in exactly one place; everywhere else is a one-line pointer. **The only two surfaces where restating is allowed are `docs/DEVLOG.md` and `README.md`** — everything else (this file, `src/CLAUDE.md`, specs, code comments) links rather than copies. This file's "What this project is" and "File map" sections, and the `docs/CLAUDE.md` spec table, are **indexes** — one line + a pointer per item, not restatements. Code comments follow the same rule: a short intent header + `See docs/specs/<f>.md` (`src/stream-methods.ts` is the model); keep only inline `// why` notes that have no other home.
 
 ### Maintain CLAUDE.md files
 Create and keep up to date a `CLAUDE.md` in every directory that contains non-trivial logic: `src/`, `docs/`, `test/`. Each one should explain the purpose of that directory and the conventions specific to it. When you add a new directory, add a `CLAUDE.md` immediately.
@@ -163,6 +169,8 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 - `refactor:` — internal restructuring, no behaviour change
 
 Breaking API changes must use `feat!:` or `fix!:` and must bump the major version.
+
+**Commit hygiene — one logical change per commit.** Split unrelated changes into separate commits; keep each commit minimal and limited in scope. Don't let a governance/doc tweak ride along with a code fix, or bundle two independent fixes together. When a single behaviour change does span code + its spec + its DEVLOG entry + its tests, those belong in *one* commit (they're the same logical change); two different behaviour changes are two commits.
 
 ### Adding a new MongoDB operator
 1. Verify the operator exists in `vendor/mql-specifications/definitions/expression/<name>.yaml` (or `definitions/accumulator/`). If it isn't, bump the pinned commit in `vendor/fetch-mql-specs.mjs` or add the operator to `REGISTRY_ONLY` in `test/operator-spec-coverage.test.ts` with a comment.
