@@ -177,11 +177,12 @@ describe("pipeline — sub-pipelines", () => {
     ]);
   });
 
-  it("$lookup pipeline: field that is not a stage array stays as expression", () => {
-    // If the value isn't pipeline-shaped, generate it normally — no error.
-    expect(jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toEqual([
-      { $lookup: { from: "x", pipeline: "$someVar", as: "y" } },
-    ]);
+  it("$lookup pipeline: a field ref is rejected (HR3 — pipeline must be a constant array)", () => {
+    // The server rejects `{ $lookup: { pipeline: "$someVar" } }` ("A pipeline must
+    // be an array of objects"), so a non-array pipeline slot throws at compile time.
+    expect(() => jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toThrow(
+      /'\$lookup pipeline' must be a constant array/,
+    );
   });
 
   it("$facet recurses into every value", () => {

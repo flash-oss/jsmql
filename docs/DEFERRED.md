@@ -299,14 +299,13 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-027 — Validate compile-time-constant-only stage slots given a non-constant
+### DEF-029 — Reject a literal non-date in a date-typed operator argument
 
-- **HR3 gap.** A known [HR3](LANG_RULES.md) violation (statically-knowable server-invalid MQL is emitted rather than rejected); deferred because it spans many slots and needs a per-slot constant annotation.
-- **What's blocked.** Several stage slots require a compile-time constant; jsmql's validator is literal-gated (it only throws on 100%-certain literal violations), so a field/expression in these slots passes through and the server rejects it: `$limit($.n)` → `{ $limit: "$n" }` ("invalid argument to $limit stage: Expected a number"), `$bucket({ boundaries: $.x })` (must be a literal array), `$sample({ size: $.n })`, `$lookup({ pipeline: $.x })` ("A pipeline must be an array of objects"), and a string passed where a Date is required (`$dateDiff` startDate). These all emit MQL that fails at parse/optimize time.
-- **Target lowering.** Extend `validateStageBody` (and operator-arg validation) to reject a non-constant (field ref / expression / non-array) in a constant-only slot at compile time with an actionable message, instead of emitting server-invalid MQL. Distinct from the §B "runtime-dependent constraints" decision — these are *statically* knowable (the slot value is a field ref, not a literal).
-- **Why blocked.** Spans several stages/operators and needs a per-slot "must be a literal constant" annotation; out of scope for the var-name/`$limit:0`/regex fix batch.
-- **Success criteria.** `$limit($.n)` (and siblings) throw a clear compile-time error; tests in `test/stage-validation.test.ts`.
-- **Rejection site(s).** `src/stage-validation.ts` (tagged `[DEF-027]`).
+- **What's blocked.** Date operators require a Date in their date slots, but the operator registry encodes only argument *shapes*, not argument *types* — so a literal string/number in a date slot passes through to server-invalid MQL: `$dateDiff({ startDate: "2020-01-01", … })` → "requires 'startDate' to be a date, but got string"; likewise `$dateAdd`/`$dateSubtract` `startDate`, `$dateTrunc` `date`, and the single-arg date accessors (`$year("x")`, `$month`, …). A field ref (`$year($.d)`) is fine (it may be a date), and `new Date("…")` folds to a real Date — only a literal non-date is certainly wrong.
+- **Why deferred (not yet an HR3 case).** HR3 rejects what the compiler can tell *from what it knows* — and the registry has no notion of date-typed args, so the compiler currently can't know. Closing this means **adding argument-type metadata to the operator registry** (a new dimension beyond `shape`/`category`) plus an operator-arg validator, which is a separate subsystem from the stage-body validator. The stage-slot half of the original gap (the constant-only `$limit`/`$bucket.boundaries`/`$lookup.pipeline`/… slots) shipped — see DEVLOG.
+- **Target lowering.** Annotate date-typed args in `src/operators.ts` (`[DEF-029]`), then reject a literal non-Date in those slots with an actionable message (e.g. "wrap it in `new Date(...)`").
+- **Success criteria.** `$dateDiff({ startDate: "2020-01-01", … })` throws a clear compile-time error; field refs and `new Date(...)` still pass; tests in `test/codegen.test.ts`.
+- **Rejection site(s).** `src/operators.ts` date operators (tagged `[DEF-029]`); a new operator-arg validator.
 - **Status.** open
 - **Effort.** M
 

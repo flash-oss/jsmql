@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
 // Per-stage body validation — see docs/specs/pipeline-validation.md.
-// Every check is literal-gated: a non-literal slot (field/expression) must
-// always compile (rule #2). Each block pairs a throwing case with a POSITIVE
-// (compiles) case, including a non-literal rule-#2 proof where relevant.
+// Most checks are literal-gated: a non-literal slot (field/expression) compiles
+// (rule #2). The EXCEPTION is the constant-only slots ($limit/$skip/$sample.size/
+// $bucket.boundaries/$lookup.pipeline/…), where a non-constant is itself a
+// certain violation and throws (HR3). Each block pairs throwing and compiling
+// cases.
 
 describe("stage body validation — $limit / $skip", () => {
   it("rejects a non-positive literal $limit", () => {
@@ -20,10 +22,21 @@ describe("stage body validation — $limit / $skip", () => {
   it("rejects a negative literal $skip", () => {
     expect(() => jsmql("[ $skip(-1) ]")).toThrow(/'\$skip' must be a non-negative integer/);
   });
-  it("accepts $limit(5), $skip(0), and a non-literal $limit (rule #2)", () => {
+  it("accepts $limit(5), $skip(0)", () => {
     expect(jsmql("[ $limit(5) ]")).toEqual([{ $limit: 5 }]);
     expect(jsmql("[ $skip(0) ]")).toEqual([{ $skip: 0 }]);
-    expect(jsmql("[ $limit($.pageSize) ]")).toEqual([{ $limit: "$pageSize" }]);
+  });
+
+  // HR3 constant-only-slot exception: $limit/$skip require a compile-time
+  // constant, so a field ref (which the server rejects as `{ $limit: "$n" }`)
+  // is itself a certain violation and throws — it does NOT pass through.
+  it("rejects a field ref / expression in $limit / $skip (constant-only slot)", () => {
+    expect(() => jsmql("[ $limit($.pageSize) ]")).toThrow(
+      /'\$limit' must be a positive integer and a compile-time constant/,
+    );
+    expect(() => jsmql("[ $skip($.n) ]")).toThrow(
+      /'\$skip' must be a non-negative integer and a compile-time constant/,
+    );
   });
 });
 
@@ -93,13 +106,17 @@ describe("stage body validation — $sample / $bucket / $bucketAuto", () => {
     expect(() => jsmql("[ $bucket({ groupBy: $.x, boundaries: [1] }) ]")).toThrow(/at least 2 values/);
     expect(() => jsmql("[ $bucket({ groupBy: $.x, boundaries: [3, 1, 2] }) ]")).toThrow(/strictly ascending order/);
   });
-  it("accepts valid $bucket and a non-literal boundaries (rule #2)", () => {
+  it("accepts a valid literal $bucket boundaries array", () => {
     expect(jsmql("[ $bucket({ groupBy: $.x, boundaries: [0, 10, 20] }) ]")).toEqual([
       { $bucket: { groupBy: "$x", boundaries: [0, 10, 20] } },
     ]);
-    expect(jsmql("[ $bucket({ groupBy: $.x, boundaries: $.bounds }) ]")).toEqual([
-      { $bucket: { groupBy: "$x", boundaries: "$bounds" } },
-    ]);
+  });
+  // HR3 constant-only-slot exception: boundaries must be a constant array, so a
+  // field ref (server-rejected as `{ boundaries: "$bounds" }`) throws.
+  it("rejects a field ref / expression $bucket boundaries (constant-only slot)", () => {
+    expect(() => jsmql("[ $bucket({ groupBy: $.x, boundaries: $.bounds }) ]")).toThrow(
+      /'\$bucket boundaries' must be a constant array/,
+    );
   });
   it("validates $bucketAuto buckets and granularity enum", () => {
     expect(() => jsmql("[ $bucketAuto({ groupBy: $.x, buckets: 0 }) ]")).toThrow(/must be a positive integer/);

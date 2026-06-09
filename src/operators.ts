@@ -337,6 +337,10 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Date ───────────────────────────────────────────────────────────────────
+  // [DEF-029] The registry encodes arg *shapes*, not arg *types*: a literal
+  // non-date in a date-typed slot (`$dateDiff({ startDate: "2020-01-01" })`,
+  // `$year("x")`, …) passes through to server-invalid MQL. Closing this needs
+  // arg-type metadata here + an operator-arg validator. See docs/DEFERRED.md.
   $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
   $dateDiff: obj(
     "date",

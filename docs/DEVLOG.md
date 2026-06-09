@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-09 — fix!: reject non-constants in constant-only stage slots (HR3, closes DEF-027 stage half)
+
+The stage-body validator is literal-gated — a field ref / expression in a checked slot is normally a no-op (rule #2: only 100%-certain literal violations throw). But a handful of slots MUST hold a compile-time constant, and there a non-constant is *itself* 100%-certain-invalid (verified on mongod 8.2): `$limit($.n)` → `{ $limit: "$n" }` ("Expected a number"), `$skip`, `$sample.size`, `$bucketAuto.buckets`, `$graphLookup.maxDepth`, `$bucket.boundaries` ("must be an array"), `$lookup.pipeline` ("A pipeline must be an array of objects"). Added the **constant-only-slot exception** to `stage-validation.ts`: `checkIntBound` and a new `requireConstantArray` now reject a field ref / runtime expression with an actionable message ("must be … and a compile-time constant"). A compile-bound `ParamRef` is allowed — it inlines to a literal value at codegen, so `jsmql.compile('({n}) => { $limit(n); }')({ n: 5 })` → `[{ $limit: 5 }]` still works.
+
+Split off the operator-arg *type* half of the old DEF-027 (a literal non-date in a date-typed slot, `$dateDiff({ startDate: "2020-01-01" })`) into **DEF-029**: that needs argument-type metadata in the operator registry (a new dimension) plus an operator-arg validator — a different subsystem, and not yet an HR3 case because the compiler can't currently *know* an arg is date-typed. Three tests that asserted the old (server-invalid) passthrough updated to expect the rejection. Breaking (`fix!`); pre-1.0. Files: [src/stage-validation.ts](../src/stage-validation.ts), [docs/specs/pipeline-validation.md](specs/pipeline-validation.md).
+
+---
+
 ## 2026-06-09 — fix!: $arrayToObject literal pairs array — server-valid shape (HR3, closes DEF-026)
 
 Shipping DEF-026 — but verifying against a real `mongod` (8.2.3) revealed it was *worse* than the row described: not only the multi-pair escape hatch but **every** computed-key object emitted server-invalid MQL. `{ $arrayToObject: [[k,v]] }` (the single-pair computed-key shape the row called "unaffected") is rejected too — MongoDB reads the literal array as the operator's argument LIST, unwraps the 1-element `[[k,v]]` to `[k,v]`, and fails with "Unrecognised input type"; 2+ pairs fail with "takes exactly 1 argument." So the existing computed-key feature, and `realistic.test.ts`'s asserted shapes, were never runnable.
