@@ -69,18 +69,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only
 - **Effort.** M
 
-### DEF-008 — `function` keyword → `$function` / `$accumulator` / `$where`
-
-- **What's blocked.** Server-side JavaScript expressions are not callable from jsmql today (only via `$op($function, …)`).
-- **Target lowering.** A JS `function` expression in jsmql source becomes a `$function: { body: "...", args: [...], lang: "js" }`. Sketched in fork plan §B5.
-- **Why blocked.** (1) Security: server-side JS is off by default on Atlas and a risk in self-managed deployments. We need a compile-time opt-in flag or warning channel. (2) Reserving the `function` keyword needs parser work that's substantial enough for its own session.
-- **Attempted approaches.** None.
-- **Success criteria.** TBD with the security posture (opt-in flag? default-warning? same for `$where`?).
-- **Rejection site(s).** No live throw — the `function` keyword is unreserved today; using it produces a parse error.
-- **Spec.** Will need `docs/specs/function-keyword.md`.
-- **Status.** design-only — security review required
-- **Effort.** L
-
 ### DEF-009 — `const` keyword as alias for `let`
 
 - **What's blocked.** `const x = $.foo;` is a parse error. Forces `let` for everything.

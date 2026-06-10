@@ -166,10 +166,10 @@ A few patterns translate differently in `$match` position than they would in an 
 ## Out of scope — rejected as bad DX
 
 - **`!expr` via De Morgan.** Negation has subtle null/missing interactions in MongoDB — silent index/non-index flips driven by data shape are exactly the surprise jsmql aims to avoid. Users write positive forms or `$op($not, …)` explicitly. See `feedback_no_silent_output_drift.md` in user memory for the rationale.
+- **Server-side JS predicates (`$where`) and a `function`-keyword sugar for `$function` / `$accumulator`.** jsmql's purpose is to compile JS to MQL on the *client*, not to ship JS to the server — and `$where` is deprecated. We will not add a `function` keyword that lowers to these. (`$function` / `$accumulator` stay reachable through the `$op(...)` escape hatch for the rare case server-side JS is genuinely needed.)
 
 ## Out of scope — future work
 
 - **`in` operator** (jsmql's `BinaryExpr(in)`) — distinct from query-language `$in` and rarely the right translation. Stays rejected; `.includes()` covers the common case.
 - **Partial extraction under `||`** [DEF-011] for the case where every branch has a translatable AND an untranslatable factor with matching shape — only useful in narrow cases.
-- **Server-side JS predicates (`$where`)** [DEF-008] — covered by the planned `function` keyword for `$function` / `$accumulator` / `$where` (its own design session).
 - **`$jsonSchema`, `$geoWithin`, `$near`, `$text`** — query-only operators that have no idiomatic JS shape. Continue to use `$op($jsonSchema, …)` etc. as the escape hatch.
