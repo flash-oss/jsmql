@@ -6,6 +6,8 @@ How `jsmql.compile(fn)` lowers a parameterised arrow function to a reusable MQL 
 
 `jsmql.compile` exists so a query whose values are dynamic — minimum age, region filter, allowed-status list — can be parsed once and re-bound on every call. It is the function-form counterpart to template-tag interpolation, with the same value-inlining semantics but a typed surface: bindings are named in the arrow's destructure pattern, and TypeScript can flow types from the params object straight through to each identifier in the body.
 
+Every rule below applies identically to the strict-shape `.compile` builders (`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, `jsmql.expr.compile`): they share the one parametric engine (`makeCompile(lower, apiName)` in [`src/index.ts`](../../src/index.ts)), differing only in the `lower` callback they run and the output type they narrow to. See [strict-shape-entries.md § Parameterised form](strict-shape-entries.md#parameterised-form-compile).
+
 ## Accepted input
 
 `jsmql.compile()` accepts either an arrow function or a **string** containing the arrow source text. The function form goes through `Function.prototype.toString.call` to obtain the source; the string form is passed through unchanged. Both paths converge on the same `Parser.parseFunctionInput()` call, so every rule below applies identically. A string without an arrow shape surfaces the same `FunctionInputError` the function-form path would have raised (`"jsmql expects an arrow function \`($) => …\` as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).

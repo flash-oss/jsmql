@@ -14,7 +14,7 @@ The public API is the `jsmql` callable from `src/index.ts`, carrying six propert
 - `jsmql.compile(fn)` — pre-compile a parameterised arrow `(params, $, $$)` → `(params) → MQL`. → [LANGUAGE.md](docs/LANGUAGE.md#parameterised-queries-jsmqlcompile), [docs/specs/function-form-params.md](docs/specs/function-form-params.md)
 - `jsmql.validate(input)` — returns `{ valid, errors: ValidationError[] }` (each with a `.pos`) instead of throwing. → the `.validate()` rule in the DX section below
 - `jsmql.expr(input)` — raw aggregation-expression form (no `$expr` wrap, no query translation) for a stage body or `updateOne` update doc. → [LANGUAGE.md](docs/LANGUAGE.md)
-- `jsmql.filter` / `jsmql.pipeline` / `jsmql.update` — strict-shape variants that throw if the input would lower to the *other* shape (`update` also enforces the update-pipeline whitelist). → [docs/specs/strict-shape-entries.md](docs/specs/strict-shape-entries.md)
+- `jsmql.filter` / `jsmql.pipeline` / `jsmql.update` — strict-shape variants that throw if the input would lower to the *other* shape (`update` also enforces the update-pipeline whitelist); each carries a `.compile` parameterised builder (`jsmql.filter.compile`, …) narrowed to its shape. → [docs/specs/strict-shape-entries.md](docs/specs/strict-shape-entries.md)
 - `require("@koresar/jsmql/mongoose")(mongoose)` — mongoose plugin: patches `find` / `updateOne` / `aggregate` / … to accept jsmql source at the filter/update/pipeline slots. → [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md)
 - `jsmql` **CLI** — `jq`-style bin: source in (positional / `--file` / stdin), MQL JSON out; shape flags route to the matching entry. → [docs/specs/cli.md](docs/specs/cli.md)
 

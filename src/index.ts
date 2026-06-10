@@ -14,7 +14,7 @@ import {
 import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
-import { LexError } from "./lexer.ts";
+import { LexError, Lexer, TokenType } from "./lexer.ts";
 import { containsLookupCall } from "./lookup-translation.ts";
 import { containsUnionPush, detectUnionPush } from "./union-translation.ts";
 import { containsOutAssign } from "./out-translation.ts";
@@ -289,62 +289,90 @@ function updateDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unk
 }
 
 /**
- * Compile a parameterised arrow function to a reusable MQL builder.
+ * The shape every `*.compile()` builder shares: a parse-once function that
+ * accepts the parameterised arrow as a function value *or* as its source
+ * string, and returns a bind-many closure `(params) => MQL`. `R` narrows the
+ * MQL output type to match the entry point (`object` for `jsmql.filter`,
+ * `object[]` for `jsmql.pipeline` / `jsmql.update`, the polymorphic
+ * `JsmqlOutput` for `jsmql.compile` / `jsmql.expr`).
+ */
+type CompileBuilder<R extends JsmqlOutput> = {
+  <P extends Record<string, unknown>>(fn: JsmqlCompileFn<P>): (params: P) => R;
+  (src: string): (params: Record<string, unknown>) => R;
+};
+
+/**
+ * Build a `*.compile()` entry point parameterised on the same `lower` callback
+ * its one-shot sibling uses. Every strict-shape and polymorphic entry shares a
+ * single parse-once / bind-many engine: the arrow is parsed exactly once (here,
+ * eagerly), and the returned closure resolves the per-call params into
+ * `ParamRef` bindings and runs `lower`, so the shape contract (Filter-only,
+ * Pipeline-only, the update-stage whitelist, …) is enforced on every call by
+ * the same lowerer the non-parameterised entry uses.
  *
  * The arrow's first slot is a destructure pattern naming the bindings: a
- * `Record<string, JsonValue>` whose keys must be supplied as the params
- * object at call time. The returned function does no parsing on each
- * invocation — it walks the cached AST with the bound values substituted in
- * place of `ParamRef` nodes, emitting an inline MQL literal for each.
- *
- * The MQL output shape matches the template-tag form: each binding value
- * appears as a JSON literal, never wrapped in `$let`. This makes parameter
- * bindings compose uniformly across expression mode, pipeline mode, and
- * sub-pipelines (`$lookup`, `$unionWith`, `$facet`), and avoids `$$name`
- * collisions with lambda parameters.
+ * `Record<string, JsonValue>` whose keys must be supplied as the params object
+ * at call time. Each bound value appears in the MQL as a JSON literal, never
+ * wrapped in `$let` — matching the template-tag form, so bindings compose
+ * uniformly across expression mode, pipeline mode, and sub-pipelines
+ * (`$lookup`, `$unionWith`, `$facet`) without `$$name` collisions.
  *
  * The input may also be a **string** containing the arrow source text — e.g.
- * `jsmql.compile("({ minAge }, $) => $.age > minAge")`. This is useful when
- * the query is stored externally (config, file, database) and the caller
- * still wants the parse-once-bind-many semantics. The destructure pattern is
- * the only parameter-declaration mechanism for both call shapes; placeholder
- * syntaxes like `${name}` are deliberately not supported (they would break
- * the strict-JS-subset rule and collide with real template literals).
+ * `jsmql.compile("({ minAge }, $) => $.age > minAge")`. Useful when the query
+ * is stored externally (config, file, database) and the caller still wants the
+ * parse-once-bind-many semantics. The destructure pattern is the only
+ * parameter-declaration mechanism for both call shapes; placeholder syntaxes
+ * like `${name}` are deliberately not supported (they would break the
+ * strict-JS-subset rule and collide with real template literals).
+ *
+ * `apiName` is interpolated into the wrong-input-type `TypeError` so the
+ * message names the actual entry point (`jsmql.filter.compile()`, …).
  */
-function compileFunction<P extends Record<string, unknown>>(fn: JsmqlCompileFn<P>): (params: P) => JsmqlOutput;
-function compileFunction(src: string): (params: Record<string, unknown>) => JsmqlOutput;
-function compileFunction<P extends Record<string, unknown>>(
-  input: JsmqlCompileFn<P> | string,
-): (params: P) => JsmqlOutput {
-  let src: string;
-  if (typeof input === "function") {
-    src = fnSource(input);
-  } else if (typeof input === "string") {
-    src = input.trim();
-  } else {
-    const ty = input === null ? "null" : typeof input;
-    throw new TypeError(`jsmql.compile() expects an arrow function or a string containing one — got ${ty}.`);
-  }
-  // Parse-only: lowering happens later, inside the returned closure (it needs
-  // the per-call params), so only the parse runs under the function-input augment.
-  const { program, bindings } = withFunctionInput(src, (r) => r);
-  return (params: P): JsmqlOutput => {
-    const resolved = new Map<string, unknown>();
-    for (const b of bindings) {
-      if (!Object.prototype.hasOwnProperty.call(params, b.key)) {
-        // The body refers to `b.name`; the user's missing key is `b.key`. When
-        // aliased, mention both so the user can find either.
-        const expected = b.key === b.name ? b.key : `${b.key}' (bound to '${b.name}' in the function body)`;
-        throw new UnknownIdentifierError(expected);
-      }
-      const value = (params as Record<string, unknown>)[b.key];
-      validateInterpolatable(value, 0, b.key);
-      resolved.set(b.name, value);
+function makeCompile<R extends JsmqlOutput>(
+  lower: (program: Program, ctx: GenerateCtx) => JsmqlOutput,
+  apiName: string,
+): CompileBuilder<R> {
+  function compile<P extends Record<string, unknown>>(input: JsmqlCompileFn<P> | string): (params: P) => R {
+    let src: string;
+    if (typeof input === "function") {
+      src = fnSource(input);
+    } else if (typeof input === "string") {
+      src = input.trim();
+    } else {
+      const ty = input === null ? "null" : typeof input;
+      throw new TypeError(`${apiName}() expects an arrow function or a string containing one — got ${ty}.`);
     }
-    const ctx = withBindings(EMPTY_CTX, resolved);
-    return lowerWithCtx(program, ctx);
-  };
+    // Parse-only: lowering happens later, inside the returned closure (it needs
+    // the per-call params), so only the parse runs under the function-input augment.
+    const { program, bindings } = withFunctionInput(src, (r) => r);
+    return (params: P): R => {
+      const resolved = new Map<string, unknown>();
+      for (const b of bindings) {
+        if (!Object.prototype.hasOwnProperty.call(params, b.key)) {
+          // The body refers to `b.name`; the user's missing key is `b.key`. When
+          // aliased, mention both so the user can find either.
+          const expected = b.key === b.name ? b.key : `${b.key}' (bound to '${b.name}' in the function body)`;
+          throw new UnknownIdentifierError(expected);
+        }
+        const value = (params as Record<string, unknown>)[b.key];
+        validateInterpolatable(value, 0, b.key);
+        resolved.set(b.name, value);
+      }
+      const ctx = withBindings(EMPTY_CTX, resolved);
+      return lower(program, ctx) as R;
+    };
+  }
+  return compile;
 }
+
+/**
+ * `jsmql.compile(fn)` — compile a parameterised arrow to a reusable Filter /
+ * Pipeline builder. The polymorphic counterpart of `jsmql()`: the returned
+ * closure dispatches Filter or Pipeline from the parsed shape, just like the
+ * one-shot call. For a guaranteed output shape, reach for the strict
+ * `jsmql.filter.compile` / `jsmql.pipeline.compile` / `jsmql.update.compile`.
+ */
+const compileFunction: CompileBuilder<JsmqlOutput> = makeCompile(lowerWithCtx, "jsmql.compile");
 
 /**
  * Parse-and-validate any input shape `jsmql()` or `jsmql.compile()` accepts.
@@ -373,21 +401,15 @@ function validateInput(
     if (isTemplateStringsArray(input)) {
       jsmql(input, ...values);
     } else if (typeof input === "function") {
-      // Inline the function-input path here (instead of delegating to
-      // `jsmql(input)`) so compile-form arrows — those carrying a params
-      // destructure — are accepted for validation. `jsmqlDispatch` rejects
-      // them outright in the one-shot path; validate is the structured-result
-      // surface for both shapes, so it parses the arrow and binds null
-      // placeholders for each declared binding so codegen resolves them as
-      // ParamRefs (the values don't affect validation, only their resolution).
-      // Mirror `jsmqlDispatch`'s function-input branch (parse + lower under the
-      // same augment), but bind each declared binding to a null placeholder so
-      // codegen resolves the ParamRefs — the values don't affect validation.
-      withFunctionInput(fnSource(input), ({ program, bindings }) => {
-        const resolved = new Map<string, unknown>();
-        for (const b of bindings) resolved.set(b.name, null);
-        lowerWithCtx(program, withBindings(EMPTY_CTX, resolved));
-      });
+      // Validate the compile-form arrow (params destructure carried in the
+      // first slot). `jsmqlDispatch` rejects these outright in the one-shot
+      // path; validate is the structured-result surface for both shapes.
+      validateCompileForm(fnSource(input));
+    } else if (typeof input === "string" && isCompileFormArrow(input)) {
+      // A parameterised-arrow *string* — the shape `jsmql.compile(str)` accepts
+      // and the CLI hands here for `--validate` with params. Validate it as a
+      // compile-form arrow (not plain query source) so the bindings resolve.
+      validateCompileForm(input);
     } else {
       jsmql(input);
     }
@@ -395,6 +417,53 @@ function validateInput(
   } catch (err) {
     return errorToValidationResult(err);
   }
+}
+
+/**
+ * Validate a compile-form arrow (given as its source text): parse it under the
+ * function-input augment, bind each declared binding to a `null` placeholder so
+ * codegen resolves the `ParamRef`s, and lower. The param *values* don't affect
+ * validity, only their resolution, so `null` placeholders suffice. Shared by
+ * `validate()`'s function-input branch and its parameterised-arrow-string branch.
+ */
+function validateCompileForm(src: string): void {
+  withFunctionInput(src, ({ program, bindings }) => {
+    const resolved = new Map<string, unknown>();
+    for (const b of bindings) resolved.set(b.name, null);
+    lowerWithCtx(program, withBindings(EMPTY_CTX, resolved));
+  });
+}
+
+/**
+ * True iff `src` is a compile-form arrow (`( params ) => …`) rather than plain
+ * query source. A parenthesised plain expression like `($.age > 18)` also
+ * starts with `(`, so the sound signal is a top-level `)` immediately followed
+ * by `=>`: scan tokens tracking paren depth and check what follows the matching
+ * close paren. `async` / `function` leading tokens are arrow-ish shapes that
+ * `parseFunctionInput` rejects with a targeted message — treat them as
+ * compile-form so validate reports *that* error rather than a plain-source one.
+ *
+ * Used by `validate()` to route a parameterised-arrow string (the form the CLI
+ * hands it for `--validate` with params) through compile-form validation.
+ */
+function isCompileFormArrow(src: string): boolean {
+  let lex: Lexer;
+  try {
+    lex = new Lexer(src);
+  } catch {
+    return false; // lex error — let plain-source validation surface it
+  }
+  const first = lex.next();
+  if (first.type === TokenType.Ident && (first.value === "async" || first.value === "function")) return true;
+  if (first.type !== TokenType.LParen) return false;
+  let depth = 1;
+  while (depth > 0) {
+    const t = lex.next();
+    if (t.type === TokenType.EOF) return false;
+    if (t.type === TokenType.LParen) depth++;
+    else if (t.type === TokenType.RParen) depth--;
+  }
+  return lex.next().type === TokenType.Arrow;
 }
 
 // `jsmql` is exposed as a callable with attached properties:
@@ -411,22 +480,28 @@ function validateInput(
 //                        underlying driver type is still `UpdateFilter<T>`.
 // The strippable-TS rule (see src/CLAUDE.md) forbids `namespace` declarations,
 // so we build the shape with `Object.assign` and an explicit intersection type.
+//
+// `jsmql.expr` / `jsmql.filter` / `jsmql.pipeline` / `jsmql.update` are each a
+// callable carrying its own `.compile` builder — the parse-once / bind-many
+// parameterised form of that entry point, narrowed to the same output shape.
 type Jsmql = typeof jsmqlDispatch & {
-  compile: typeof compileFunction;
+  compile: CompileBuilder<JsmqlOutput>;
   validate: typeof validateInput;
-  expr: typeof exprDispatch;
-  filter: typeof filterDispatch;
-  pipeline: typeof pipelineDispatch;
-  update: typeof updateDispatch;
+  expr: typeof exprDispatch & { compile: CompileBuilder<JsmqlOutput> };
+  filter: typeof filterDispatch & { compile: CompileBuilder<object> };
+  pipeline: typeof pipelineDispatch & { compile: CompileBuilder<object[]> };
+  update: typeof updateDispatch & { compile: CompileBuilder<object[]> };
 };
 
 export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {
   compile: compileFunction,
   validate: validateInput,
-  expr: exprDispatch,
-  filter: filterDispatch,
-  pipeline: pipelineDispatch,
-  update: updateDispatch,
+  expr: Object.assign(exprDispatch, { compile: makeCompile<JsmqlOutput>(lowerExprWithCtx, "jsmql.expr.compile") }),
+  filter: Object.assign(filterDispatch, { compile: makeCompile<object>(lowerFilterStrict, "jsmql.filter.compile") }),
+  pipeline: Object.assign(pipelineDispatch, {
+    compile: makeCompile<object[]>(lowerPipelineStrict, "jsmql.pipeline.compile"),
+  }),
+  update: Object.assign(updateDispatch, { compile: makeCompile<object[]>(lowerUpdateStrict, "jsmql.update.compile") }),
 });
 
 // Wrap JSON.stringify with the validation needed to keep the template-tag

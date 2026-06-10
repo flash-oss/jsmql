@@ -77,6 +77,40 @@ jsmql.update() rejected '$sort' (stage 1): MongoDB's aggregation-pipeline update
 
 **`$out` sugar is pre-rejected outside Pipeline mode.** `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` lowers to a `$out` write. `$out` isn't in the update-pipeline whitelist (it's a stream write, not a per-document update), so the post-codegen whitelist still rejects it as a second line of defence. But `lowerFilterStrict` and `lowerExprWithCtx` also run `containsOutAssign` up front and surface an "use Pipeline mode" hint that names the right entry point — without the pre-check, the user would see the bare-`DatabaseRef` / bare-`ClusterRef` codegen error, which mentions `$lookup` and `$out` but doesn't tell them which mode to switch to. Additionally, `lowerWithCtx` and `lowerToPipelineStages` reroute an `UpdateFilter`-shaped input that contains `$out` sugar through the pipeline lowerer (the bare `generateUpdateFilter` path doesn't know about `$out`). See [out-stage.md](out-stage.md).
 
+## Parameterised form: `*.compile`
+
+Each strict entry carries a `.compile` builder — `jsmql.filter.compile`,
+`jsmql.pipeline.compile`, `jsmql.update.compile` (and, for symmetry,
+`jsmql.expr.compile`) — the parse-once / bind-many form of that entry, narrowed
+to the same output type. They share a single engine, `makeCompile(lower,
+apiName)` in [src/index.ts](../../src/index.ts), parameterised on the same
+`lower` callback the one-shot entry uses:
+
+| Builder | `lower` | Return type |
+|---|---|---|
+| `jsmql.compile` | `lowerWithCtx` | `JsmqlOutput` (polymorphic) |
+| `jsmql.expr.compile` | `lowerExprWithCtx` | `JsmqlOutput` |
+| `jsmql.filter.compile` | `lowerFilterStrict` | `object` |
+| `jsmql.pipeline.compile` | `lowerPipelineStrict` | `object[]` |
+| `jsmql.update.compile` | `lowerUpdateStrict` | `object[]` |
+
+The arrow is parsed once (eagerly); the returned closure resolves the per-call
+params into `ParamRef` bindings and runs `lower`. Because the shape lowerer is
+the *same* one the one-shot entry uses, the shape contract is re-enforced on
+every call — a parameterised arrow whose body lowers to the wrong shape throws
+the identical actionable error (`jsmql.pipeline() expects a Pipeline …`, the
+update-stage whitelist rejection, …). Binding mechanics — destructure-pattern
+params, `null`-free value validation, the inline-JSON-literal (never `$let`)
+output — are shared verbatim with `jsmql.compile`; see
+[function-form-params.md](function-form-params.md). The only per-entry
+difference is the wrong-input-type `TypeError`, which names the actual builder
+(`jsmql.filter.compile() expects an arrow function …`).
+
+The CLI uses these for `--arg` / `--argjson` combined with a shape flag — see
+[cli.md § Parameters](cli.md). `jsmql.validate` accepts a parameterised-arrow
+string directly (validating its shape with the bound values stubbed to `null`),
+so `--validate` with params needs no separate `validate.compile`.
+
 ## Error messages
 
 Every rejection error carries the offending position from the AST root (`ast.pos`) so editor tooling can underline the source region. The messages follow the DX rules in the root `CLAUDE.md`:

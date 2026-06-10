@@ -30,7 +30,7 @@ Smoke also has a strippable-TS check for the CLI bin (`node src/cli.ts --help`) 
 
 ### `cli.test.ts` — the `jsmql` command-line bin
 
-Spawns `node src/cli.ts` directly (native type-stripping, no build step) and asserts on `{ status, stdout, stderr }`. Covers input sources (stdin / positional / `--file`), every output-shape flag, formatting (`-c` / `--tab` / `--indent`), `--validate` valid+invalid, jq-style params (`--arg` / `--argjson`), the `[DEF-028]` params+mode usage error, compiler-style caret rendering, and usage errors (unknown/conflicting flags). The built-bin invariants (shebang, exec bit, version `define`) live in `smoke.test.ts`, not here. See [`docs/specs/cli.md`](../docs/specs/cli.md).
+Spawns `node src/cli.ts` directly (native type-stripping, no build step) and asserts on `{ status, stdout, stderr }`. Covers input sources (stdin / positional / `--file`), every output-shape flag, formatting (`-c` / `--tab` / `--indent`), `--validate` valid+invalid, jq-style params (`--arg` / `--argjson`) combined with each output-shape / `--validate` flag (routed through the matching `*.compile()` builder), compiler-style caret rendering, and usage errors (unknown/conflicting flags). The built-bin invariants (shebang, exec bit, version `define`) live in `smoke.test.ts`, not here. See [`docs/specs/cli.md`](../docs/specs/cli.md).
 
 ### `update-filter.test.ts`, `pipeline.test.ts`, `security.test.ts`, `operator-spec-coverage.test.ts`
 

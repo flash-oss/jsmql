@@ -178,3 +178,64 @@ describe("jsmql.update() — strict aggregation-pipeline update", () => {
     ]);
   });
 });
+
+// The strict-shape entries each carry a parameterised `.compile` builder — the
+// parse-once / bind-many form of that entry point, narrowed to the same output
+// shape. They mirror `jsmql.compile` but enforce the entry's shape contract on
+// every call (so a parameterised arrow that lowers to the wrong shape throws
+// the same actionable error the one-shot strict entry would).
+describe("strict-shape `.compile` builders", () => {
+  it("jsmql.filter.compile binds params and returns a Filter", () => {
+    const q = jsmql.filter.compile(({ minAge }: { minAge: number }) => $.age > minAge);
+    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
+    expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
+  });
+
+  it("jsmql.filter.compile accepts the arrow as a source string", () => {
+    const q = jsmql.filter.compile("({ minAge }, $) => $.age > minAge");
+    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
+  });
+
+  it("jsmql.filter.compile throws on a Pipeline-shaped arrow body", () => {
+    const q = jsmql.filter.compile("($) => { $match($.x > 0); $sort({ x: 1 }) }");
+    expect(() => q({})).toThrow(/jsmql\.filter\(\) expects a Filter/);
+  });
+
+  it("jsmql.pipeline.compile binds params and returns a stage array", () => {
+    const q = jsmql.pipeline.compile(({ minAge }: { minAge: number }) => {
+      $match($.age > minAge);
+      $sort({ age: -1 });
+    });
+    expect(q({ minAge: 18 })).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]);
+  });
+
+  it("jsmql.pipeline.compile throws on a bare-expression arrow body", () => {
+    const q = jsmql.pipeline.compile("({ minAge }, $) => $.age > minAge");
+    expect(() => q({ minAge: 18 })).toThrow(/jsmql\.pipeline\(\) expects a Pipeline.*bare expression/);
+  });
+
+  it("jsmql.update.compile binds params and enforces the update-stage whitelist", () => {
+    const q = jsmql.update.compile(({ tier }: { tier: number }) => ($.tier = tier));
+    expect(q({ tier: 2 })).toEqual([{ $set: { tier: 2 } }]);
+  });
+
+  it("jsmql.update.compile throws when the body uses a non-whitelisted stage", () => {
+    const q = jsmql.update.compile("($) => { $match($.x > 0) }");
+    expect(() => q({})).toThrow(/jsmql\.update\(\) rejected '\$match'/);
+  });
+
+  it("jsmql.expr.compile binds params and returns a raw aggregation expression", () => {
+    const q = jsmql.expr.compile(({ k }: { k: number }) => $.a + k);
+    expect(q({ k: 2 })).toEqual({ $add: ["$a", 2] });
+  });
+
+  it("missing a declared binding throws (same as jsmql.compile)", () => {
+    const q = jsmql.filter.compile(({ minAge }: { minAge: number }) => $.age > minAge);
+    expect(() => q({} as { minAge: number })).toThrow(/minAge/);
+  });
+
+  it("rejects a non-arrow input type with an entry-named TypeError", () => {
+    // @ts-expect-error — exercising the runtime guard on a wrong-typed call.
+    expect(() => jsmql.pipeline.compile(42)).toThrow(/jsmql\.pipeline\.compile\(\) expects an arrow function/);
+  });
+});

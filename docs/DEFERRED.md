@@ -251,19 +251,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-028 — CLI params combined with a strict-shape / validate flag
-
-- **What's blocked.** In the `jsmql` CLI, passing `--arg` / `--argjson` together with any of `--filter` / `--pipeline` / `--expr` / `--update` / `--validate`. Params route through `jsmql.compile(source)(params)`, and those strict entries (plus the structured `validate()` path) have no `compile` overload — so today the combination is rejected as a usage error (exit 2) rather than binding the values.
-- **Target lowering.** Give the strict-shape and validate paths a parameterised form (e.g. a `compile`-aware variant) so `jsmql --pipeline --argjson minAge 18` binds the value and still enforces the Pipeline shape. No MQL output change for the existing one-shot paths.
-- **Why blocked.** `jsmql.compile()` returns a polymorphic builder; there is no `compile.filter` / `compile.pipeline` etc. Threading params through the strict entries is a small API addition but should be designed alongside the library surface, not bolted onto the CLI alone.
-- **Success criteria.** `echo '({minAge},$) => $.age > minAge' | jsmql --pipeline --argjson minAge 18` binds `minAge` and throws if the result isn't a Pipeline. The CLI usage-error message stops mentioning the limitation.
-- **Rejection site(s).** `src/cli.ts` (`main()`, the `opts.hasParams && opts.mode !== "auto"` guard, tagged `[DEF-028]`). `docs/specs/cli.md` § Parameters.
-- **Spec.** `docs/specs/cli.md` § Parameters / § Deferred work and non-goals.
-- **Status.** open
-- **Effort.** S–M (library: parameterised strict entries; CLI: drop the guard).
-
----
-
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.

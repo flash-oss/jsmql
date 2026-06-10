@@ -2679,6 +2679,8 @@ The allowed stages are MongoDB's [aggregation-pipeline update whitelist](https:/
 - The same source string might legitimately produce either Filter or Pipeline → `jsmql()`.
 - Inside another structure (a hand-written stage body, the `then` branch of a `$cond`) → `jsmql.expr()`.
 
+Each strict entry has a parameterised `.compile` variant (`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`) for reusable parameterised queries that keep the same shape guarantee — see [Shape-specific compile builders](#shape-specific-compile-builders).
+
 ---
 
 ## Command Line (`jsmql`)
@@ -2711,9 +2713,13 @@ Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line
 ```sh
 echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
 # { "age": { "$gt": 18 } }
+
+# Params combine with any shape flag — routed through the matching *.compile():
+echo '({ minAge }, $) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
+# [{ "$match": { "age": { "$gt": 18 } } }]
 ```
 
-`--arg name value` binds a string; `--argjson name value` binds a JSON value; both repeat. Compile errors print with a caret at the offending position. Exit codes: `0` success, `1` compile error (or `--validate` invalid), `2` usage error. Run `jsmql --help` for the full list.
+`--arg name value` binds a string; `--argjson name value` binds a JSON value; both repeat. Params work with any output-shape flag (each routes through the matching `*.compile()` builder and enforces that shape) and with `--validate` (which validates the parameterised arrow's shape). Compile errors print with a caret at the offending position. Exit codes: `0` success, `1` compile error (or `--validate` invalid), `2` usage error. Run `jsmql --help` for the full list.
 
 ---
 
@@ -2821,7 +2827,32 @@ If a binding referenced in the body is missing from the params object, the call 
 
 ### Validation
 
-`jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` exists for the one-shot input shapes (string, arrow, template tag); the parameterised path stays throw-only.
+`jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` accepts the one-shot input shapes (string, arrow, template tag) **and** a parameterised-arrow string (it validates the arrow's shape with bindings stubbed out); the parameterised callable returned by `.compile` stays throw-only.
+
+### Shape-specific compile builders
+
+`jsmql.compile` is polymorphic — the compiled callable returns a Filter or a Pipeline depending on the arrow body, exactly like `jsmql()`. When the call site has a fixed shape, each strict entry point carries its own `.compile` that locks the output:
+
+```js
+const adultsInRegion = jsmql.filter.compile(({ minAge, region }, $) =>
+  $.age >= minAge && $.region === region,
+);
+db.users.find(adultsInRegion({ minAge: 18, region: "AU" }));
+// → { age: { $gte: 18 }, region: "AU" }
+
+const recentFirst = jsmql.pipeline.compile(({ minAge }, $) => {
+  $match($.age >= minAge);
+  $sort({ createdAt: -1 });
+});
+db.users.aggregate(recentFirst({ minAge: 18 }));
+// → [ { $match: { age: { $gte: 18 } } }, { $sort: { createdAt: -1 } } ]
+
+const bumpTier = jsmql.update.compile(({ tier }, $) => ($.tier = tier));
+db.users.updateMany({}, bumpTier({ tier: 2 }));
+// → [ { $set: { tier: 2 } } ]
+```
+
+`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` share `jsmql.compile`'s binding mechanics exactly — they only narrow the output and enforce the same shape contract their one-shot siblings do. A compiled builder whose arrow body lowers to the wrong shape throws the identical error the one-shot strict entry would (e.g. `jsmql.pipeline.compile(({ m }, $) => $.age > m)` throws "expects a Pipeline … but received a bare expression" when called).
 
 ### Operator autocomplete (`@koresar/jsmql/ops`)
 

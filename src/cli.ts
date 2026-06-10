@@ -48,8 +48,8 @@ Formatting (default: pretty, 2-space):
 Input:
   -f, --file PATH read source from PATH instead of stdin/positional
 
-Parameters (route through jsmql.compile — the source must be a parameterised
-arrow, e.g. '({ minAge }, $) => $.age > minAge'):
+Parameters (the source must be a parameterised arrow, e.g.
+'({ minAge }, $) => $.age > minAge'; combine with any output-shape flag above):
       --arg NAME VALUE      bind NAME to the string VALUE
       --argjson NAME VALUE  bind NAME to the JSON-parsed VALUE
 
@@ -61,6 +61,7 @@ Examples:
   echo '$.age > 18' | jsmql
   echo '$.age > 18; $sort({ age: -1 })' | jsmql --pipeline
   echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
+  echo '({ minAge }, $) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
 `;
 
 type Mode = "auto" | "filter" | "pipeline" | "expr" | "update" | "validate";
@@ -166,7 +167,19 @@ function resolveSource(opts: Options): string {
   return readFileSync(0, "utf8");
 }
 
-function compile(mode: Mode, source: string): unknown {
+// Route the source to the matching entry point. With params present the source
+// is a parameterised arrow, so each shape routes through its `*.compile()`
+// builder (`jsmql.compile` for the default polymorphic shape); without params
+// it goes through the one-shot entry. `--validate` is handled separately in
+// `main()` (it produces a structured result rather than throwing).
+function compile(mode: Mode, source: string, params: Record<string, unknown> | undefined): unknown {
+  if (params) {
+    if (mode === "filter") return jsmql.filter.compile(source)(params);
+    if (mode === "pipeline") return jsmql.pipeline.compile(source)(params);
+    if (mode === "expr") return jsmql.expr.compile(source)(params);
+    if (mode === "update") return jsmql.update.compile(source)(params);
+    return jsmql.compile(source)(params);
+  }
   if (mode === "filter") return jsmql.filter(source);
   if (mode === "pipeline") return jsmql.pipeline(source);
   if (mode === "expr") return jsmql.expr(source);
@@ -220,15 +233,6 @@ function main(): number {
 
   let source: string;
   try {
-    // [DEF-028] Params (--arg/--argjson) route through jsmql.compile(), which
-    // the strict-shape entries and the structured validate() path don't expose.
-    // Rejecting the combination beats silently ignoring the bound values.
-    if (opts.hasParams && opts.mode !== "auto") {
-      throw new UsageError(
-        `parameters (--arg/--argjson) work only with the default output shape, not --${opts.mode}. ` +
-          "Drop the mode flag, or bind the values directly into the arrow body.",
-      );
-    }
     // Trailing whitespace (notably the newline a shell `echo`/heredoc appends)
     // is insignificant to the language; trimming it keeps an end-of-input
     // error's caret on the source line instead of a dangling blank one.
@@ -240,11 +244,14 @@ function main(): number {
 
   try {
     if (opts.mode === "validate") {
+      // `jsmql.validate` accepts a parameterised-arrow string too, so a
+      // `--validate` + params combination validates the arrow's shape (the
+      // bound values don't affect validity). No separate params branch needed.
       const result = jsmql.validate(source);
       process.stdout.write(JSON.stringify(result, null, opts.indent) + "\n");
       return result.valid ? 0 : 1;
     }
-    const result = opts.hasParams ? jsmql.compile(source)(opts.params) : compile(opts.mode, source);
+    const result = compile(opts.mode, source, opts.hasParams ? opts.params : undefined);
     process.stdout.write(JSON.stringify(result, null, opts.indent) + "\n");
     return 0;
   } catch (err) {
