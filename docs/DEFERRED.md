@@ -9,13 +9,13 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - Untagged-marker gate: every occurrence of a deferral phrase in the live surface → must carry a tag, OR be listed in `test/deferred-allowlist.txt` (with a one-line reason). Allowlist entries that no longer match any phrase fail the test — so the allowlist shrinks over time and cannot grow stale.
 
 **Conventions.**
-- Tag format: `[DEF-NNN]` — literal. Optional human label inside: `[DEF-007: projection]`. Match regex is `\[DEF-\d{3}\]`.
+- Tag format: `[DEF-NNN]` — literal. Optional human label inside: `[DEF-005: merge]`. Match regex is `\[DEF-\d{3}\]`.
 - When you ship an item: delete its row AND strip every `[DEF-NNN]` tag in the same commit.
 - When you reject a feature with a "not yet" error: add the row AND a tag in the same commit.
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 27. Decided-against: 8. As of 2026-06-04.
+**Counts.** Open: 25. Decided-against: 9. As of 2026-06-11.
 
 ---
 
@@ -44,18 +44,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** Will need `docs/specs/update-doc.md` when work begins.
 - **Status.** design-only
 - **Effort.** L (full new entry point + 10 pattern matchers + tests)
-
-### DEF-007 — Projection-aware translation in `$project` body
-
-- **What's blocked.** Inside `$project({ … })`, methods like `.slice()` and `.some()` should lower to projection-form `$slice` (single-arg) and `$elemMatch` instead of expression-form `$slice` / aggregation `$filter`. Today they lower to the expression form regardless of context.
-- **Target lowering.** `$project({ recent: $.items.slice(0, 3) })` → `{ $project: { recent: { $slice: ["$items", 3] } } }` (single-arg, projection form). `$project({ matchingItems: $.items.some(item => item.x > 5) })` → `{ $project: { matchingItems: { $elemMatch: { x: { $gt: 5 } } } } }`.
-- **Why blocked.** Translator doesn't track `inProjectionBody`. Needs a context flag threaded through codegen.
-- **Attempted approaches.** None.
-- **Success criteria.** Three method/operator switches: `.slice`, `.some`, `$meta`. Existing expression-context lowerings unchanged. The positional `$` projection (`{ "items.$": 1 }`) stays accessible only via raw passthrough.
-- **Rejection site(s).** `docs/CLAUDE.md` "Future work areas" paragraph (projection operators).
-- **Spec.** Will need `docs/specs/projection.md`.
-- **Status.** design-only
-- **Effort.** M
 
 ### DEF-010 — Multi-binding `let a = …, b = …;`
 
@@ -242,6 +230,15 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.
+
+### Projection-aware translation in `$project` body (`.slice` / `.some` → projection-form operators)
+
+Was DEF-007. The idea was to make `.slice()` / `.some()` lower to *projection-form* `$slice` (single-arg) and `$elemMatch` inside `$project({ … })`. The premise is wrong: jsmql's `$project` is the **aggregation pipeline stage**, not a `find()` projection, and the projection-form operators are `find()`-projection-only features the aggregation stage rejects. Verified against a running mongod (2026-06-11):
+
+- `{ $slice: N }` (single-arg) → `Expression $slice takes at least 2 arguments, … but 1 were passed` — in aggregation `$project`, `$slice` is always the expression operator.
+- `{ $elemMatch: { … } }` → `Cannot use $elemMatch in this context` — `$elemMatch` is not an aggregation operator at all. Even where it is valid (`find()` projection), it returns the *matched element*, not a boolean — which would break `.some()`'s JS semantics.
+
+The expression forms jsmql already emits run correctly in `$project`: `$.items.slice(0, 3)` → `{ $slice: ["$items", 3] }` and `$.items.some(i => i.x > 5)` → `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships in `src/operators.ts` as a normal aggregation expression reachable via `$op($meta("textScore"))`. So there was nothing valid left to build — implementing it would have made jsmql knowingly emit invalid MQL, an HR3 violation.
 
 ### CLI `-S` / `--sort-keys`
 

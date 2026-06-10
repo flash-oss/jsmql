@@ -165,7 +165,7 @@ Open [docs/DEFERRED.md](docs/DEFERRED.md) and scan §A (open items) and §B (won
 
 **4. When you reject a feature as "won't implement"** — add a row to §B with the rationale. No `[DEF-NNN]` tag in the codebase — §B rows are decisions, not deferred work.
 
-Tag format: `[DEF-NNN]` — literal three-digit ID. Optional human label inside: `[DEF-007: projection]`. The drift test ([test/deferred-coverage.test.ts](test/deferred-coverage.test.ts)) enforces forward (tag→row), reverse (row→tag), untagged-marker (phrase→tag-or-allowlist), and stale-allowlist (allowlist entry must match at least one phrase) gates on every `npm test`.
+Tag format: `[DEF-NNN]` — literal three-digit ID. Optional human label inside: `[DEF-005: merge]`. The drift test ([test/deferred-coverage.test.ts](test/deferred-coverage.test.ts)) enforces forward (tag→row), reverse (row→tag), untagged-marker (phrase→tag-or-allowlist), and stale-allowlist (allowlist entry must match at least one phrase) gates on every `npm test`.
 
 ### Commit conventions
 Use [Conventional Commits](https://www.conventionalcommits.org/):
