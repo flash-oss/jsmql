@@ -33,30 +33,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M (1–3 days)
 
-### DEF-002 — `$$.find(p)` self-join on the current collection
-
-- **What's blocked.** `$$.find(u => u.parentId === $._id)` — a `$lookup` against the *same* collection — has nowhere to resolve the collection name from.
-- **Target lowering.** `[{ $lookup: { from: <current-coll>, localField: "_id", foreignField: "parentId", as: "..." } }]`.
-- **Why blocked.** jsmql compiles statelessly; it doesn't know its own collection name. Blocked on DEF-013 (schema/metadata threading).
-- **Attempted approaches.** None.
-- **Success criteria.** Once DEF-013 lands: `jsmql.bind({ collection: "users" })("$$.find(u => u.parentId === $._id);")` lowers correctly.
-- **Rejection site(s).** No specific code rejection today — the `$$.find` parse path falls through to the generic codegen error. Will add a targeted message when DEF-013 lands.
-- **Spec.** `docs/specs/context-references.md` § Future work bullet 1.
-- **Status.** design-only — blocked by DEF-013
-- **Effort.** S once DEF-013 lands.
-
-### DEF-004 — `$$$.coll.concat(arrow)` → `$unionWith`
-
-- **What's blocked.** `$$ = $$.concat($$$.archive.filter(d => d.archived));` works (`.concat` is registered). The bare statement form `$$$.archive.concat(d => …);` doesn't.
-- **Target lowering.** `[{ $unionWith: { coll: "archive", pipeline: [{ $match: … }] } }]` as a statement (not an assignment).
-- **Why blocked.** `$unionWith` has no `as` slot — needs a statement-only sugar surface separate from the existing `$$ = $$.concat(…)` chain.
-- **Attempted approaches.** None — listed as "Future work" in lookup-stage.md.
-- **Success criteria.** `$$$.archive.concat(d => d.userId === $._id);` lowers to a one-stage `$unionWith` (no assignment required).
-- **Rejection site(s).** Lives in spec only — no live throw site today.
-- **Spec.** `docs/specs/lookup-stage.md` § Future work bullet 3.
-- **Status.** design-only
-- **Effort.** S
-
 ### DEF-005 — `$merge` sugar (`$$$.coll += $$;`)
 
 - **What's blocked.** Writing the result of a pipeline to a collection with merge semantics (upsert / merge into existing docs) rather than `$out`'s full replace.
@@ -157,12 +133,12 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 - **What's blocked.** jsmql compiles statelessly — it doesn't know the current collection's name, so `$$.find()` / `$$.filter()` (self-join) can't resolve their `$lookup.from`. Same gap blocks `$$ = cond ? … : $$.find(…)` (DEF-001 ternary's source-switch branch).
 - **Target lowering.** New entry point `jsmql.bind({ collection, db })` returns a new callable shaped like `jsmql` (callable + `.compile` + `.validate` + `.expr` + `.filter` + `.pipeline` + `.update` + `.updateDoc`), with `boundCollection` / `boundDb` threaded into `GenerateCtx`. Mongoose plugin uses it automatically with the model's `collection.name`.
-- **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering. Force multiplier — unblocks DEF-002 (self-join) and the source-switch half of DEF-001.
+- **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering. Force multiplier — unblocks the source-switch half of DEF-001.
 - **Attempted approaches.** None — design in fork plan §B8.
 - **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
 - **Rejection site(s).** `docs/specs/context-references.md:131-132` (allowlisted as a spec future-work bullet).
 - **Spec.** `docs/specs/context-references.md` § Future work bullet 1–2. Will need its own `docs/specs/bind.md`.
-- **Status.** design-only — force multiplier (unblocks DEF-002, half of DEF-001)
+- **Status.** design-only — force multiplier (unblocks half of DEF-001)
 - **Effort.** L
 
 ### DEF-014 — Optimised chained terminals on lookups

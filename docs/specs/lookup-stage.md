@@ -181,7 +181,5 @@ Nested lookups inside another lookup's **expression-body** predicate (`.find/.fi
 
 - **Block-body nested lookups** (see limitation above).
 - **Cross-level field-name collision** in 3+-level nesting (see limitation above).
-- **`$$.find(...)` self-join.** Needs collection-name binding from a schema/driver — see [`context-references.md`](./context-references.md) future-work list.
-- **`$$$.coll.concat(arrow)` → `$unionWith`.** Plausible candidate, but `$unionWith` has no `as` slot — needs a statement form (not an assignment) to lower cleanly.
 - **Ambient TS types for `$$$`** so the function-form lookup (`($) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).
 - **Optimised chained terminals.** `.map`, `.at`, second `.filter` currently fall through the generic path (one extra `$set` stage); they could emit specialised single-stage transforms.

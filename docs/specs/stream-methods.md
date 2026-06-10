@@ -310,9 +310,9 @@ after the `$$.push(...)` / diagnostic-source-stage checks, a `collectStreamChain
 rooted at a bare `$$` (`CollectionRef`) with at least one method is handed to
 the shared `applyStreamMethods` engine. Because `push` / `indexStats` are not
 registered stream methods, they keep their existing meaning and never reach this
-branch. Scope is the bare `$$` receiver only — `$$$.<coll>.<chain>;` as a bare
-statement is still out of scope (see [DEF-004](../DEFERRED.md) for the
-`.concat` slice of it).
+branch. Scope is the bare `$$` receiver only; a bare `$$$.<coll>.<chain>;`
+statement is not a recognised form — chain on `$$`, or use the
+`$$ = $$.concat($$$.<coll>.filter(…))` assignment, instead.
 
 **The composition guarantee.** Splitting a chain across statements produces the
 same MQL as chaining it, which in turn matches the assignment form:
