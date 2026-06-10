@@ -90,6 +90,7 @@ export const TokenType = {
   Typeof: "Typeof", // typeof
   Delete: "Delete", // delete
   Let: "Let", // let
+  Const: "Const", // const (alias for let — see docs/specs/let-bindings.md)
 
   // Identifier
   Ident: "Ident",
@@ -172,6 +173,7 @@ export const TOKEN_DISPLAY: Record<TokenType, string> = {
   Typeof: "'typeof'",
   Delete: "'delete'",
   Let: "'let'",
+  Const: "'const'",
   Ident: "an identifier",
   EOF: "end of input",
 };
@@ -889,6 +891,8 @@ export class Lexer {
         return { type: TokenType.Delete, value: "delete", pos };
       case "let":
         return { type: TokenType.Let, value: "let", pos };
+      case "const":
+        return { type: TokenType.Const, value: "const", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }

@@ -29,8 +29,11 @@ no MongoDB-side feature is being added.
 One new node type in [src/ast.ts](../../src/ast.ts):
 
 ```ts
-type LetDecl = { type: "LetDecl"; name: string; value: Expr };
+type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const" };
 ```
+
+`kind` records the surface keyword and only affects reassignment (see
+§ Reassignment): a `let` binding is reassignable, a `const` binding is not.
 
 `PipelineStmt` is widened to `UpdateFilter | Expr | LetDecl`; `ArrayElement`
 is widened to include `LetDecl` (parallel to `AssignExpr` / `DeleteStmt`), so a
@@ -39,11 +42,12 @@ bracketed `[…]` pipeline.
 
 ## Lexer
 
-One new keyword in [src/lexer.ts](../../src/lexer.ts):
+Two keywords in [src/lexer.ts](../../src/lexer.ts):
 
 | Token | Source | Notes |
 |-------|--------|-------|
 | `Let` | `let`  | Reserved keyword. Added to `isIdentOrKeyword` so `$let(...)` (the MongoDB operator) and `{ let: … }` (object keys in `$lookup`, `$graphLookup`, top-level `aggregate({ let })`) still parse. The shorthand-property form `{ let }` is intentionally rejected — there's no useful meaning for it and it would collide with `let x = …` statements. |
+| `Const` | `const` | Read-only sibling of `let` (see § `let` vs `const`). Also added to `isIdentOrKeyword` so `$.const` field paths and `{ const: … }` object keys keep parsing — `const` is a valid JS property name. Shorthand `{ const }` is rejected, same as `{ let }`. |
 
 ## Parser
 
@@ -59,14 +63,57 @@ Three production-level changes in [src/parser.ts](../../src/parser.ts):
    is only valid inside a pipeline. Add a trailing \`;\`, or use the bracketed
    form \`[ let X = …, … ]\`.`
 
-`parseLetDecl()` consumes `let <Ident> = <Expression>`. Missing identifier or
-missing `=` produces a position-marked `ParseError`. Re-declaration is **not**
-caught at the parser — it needs a pipeline-level view and lives in codegen.
-The constructed `LetDecl` node records the `let` keyword's source offset in its
-`pos` field; codegen forwards that offset into every `CodegenError` it raises
-about the binding (re-declaration, binding/parameter name collision, dropped-let
-read after a reshape stage), so `.validate()` callers see the original `let`
+`parseLetDecl()` consumes `let <Ident> = <Expression>` (or the `const` alias).
+Missing identifier or missing `=` produces a position-marked `ParseError` that
+echoes the keyword the user actually wrote (`Expected '=' after \`const x\``).
+Re-declaration is **not** caught at the parser — it needs a pipeline-level view
+and lives in codegen. The constructed `LetDecl` node records the keyword's source
+offset in its `pos` field; codegen forwards that offset into every `CodegenError`
+it raises about the binding (re-declaration, binding/parameter name collision,
+dropped-let read after a reshape stage), so `.validate()` callers see the original
 keyword in `errors[0].pos`.
+
+### `let` vs `const`
+
+Both keywords declare a pipeline-scoped binding; they differ only in **reassignment**.
+The three dispatch sites (`collectStatement()`, `parseArrayLiteral()`, and the
+object-key branch in `parseObjectEntry()`) accept either keyword. `parseLetDecl()`
+records which one was written in `LetDecl.kind` (`"let" | "const"`); declaration,
+read, scope-tracking, and cleanup are otherwise keyword-agnostic. The keyword is
+echoed in the re-declaration / shadow / parser error wording.
+
+### Reassignment
+
+A later `<name> = <expr>` statement (a bare-identifier assignment) reassigns an
+in-scope `let`. Because the name has no `$.` prefix, the parser cannot tell at
+parse time whether it's an assignable `let`, a read-only `const`, or undeclared —
+so `validateUpdateTarget()` **accepts any bare-identifier (`ParamRef`) target**
+and defers the decision to codegen. `tryLowerAssignSugar()`
+([src/pipeline.ts](../../src/pipeline.ts)) — the shared `AssignExpr` chokepoint
+for every top-level pipeline form — dispatches on a `ParamRef` target first:
+
+- **in-scope `let`** → flush the pending update-op buffer, then emit one
+  `{ $set: { "__jsmql.<name>": <rewritten RHS> } }` stage. The RHS resolves the
+  binding's own reads through `ctx.pipelineLets` as usual, so `p = p * 0.9`
+  lowers to `{ $set: { "__jsmql.p": { $multiply: ["$__jsmql.p", 0.9] } } }`.
+  Each reassignment is its own `$set` (a read-after-write needs separate stages),
+  matching how a re-declaring `let` already lowers. `+=` / `++` desugar to a
+  `BinaryExpr` RHS in the parser, so they flow through this same path for free.
+- **in-scope `const`** (`ctx.pipelineConstNames`) → `CodegenError`: *Cannot
+  reassign `x` — it is a `const` binding. Declare it with `let x = …` …*.
+- **dropped by a reshape stage** (`ctx.droppedLets`) → the post-reshape error,
+  reassignment flavour.
+- **undeclared** → *Cannot assign to bare identifier 'x' — it isn't a `let`
+  binding in scope …*.
+
+Outside a pipeline (Filter / `jsmql.expr` / update-doc mode) there is no let
+scope, so a bare-identifier assignment never reaches `tryLowerAssignSugar`;
+`targetToPath()` in codegen rejects it with the same "bare identifier" guidance.
+
+`const`-ness rides on `LetDecl.kind` and is tracked on `GenerateCtx` as
+`pipelineConstNames` (a subset of `pipelineLets`); `clearCtxLets()` resets it
+alongside the lets, and `extendCtxLets(ctx, name, path, kind)` records it on
+declaration.
 
 ## Codegen
 
@@ -192,8 +239,6 @@ materialises `__jsmql.<name>` from that slot in the standard way. See
   expression and no reshape stage intervenes, the compiler could emit a
   single MongoDB `$let` wrapping that expression instead of `$addFields`/
   `$unset`. Worthwhile for index-preserving `$match`es; not v1.
-- **`const` keyword [DEF-009].** Pre-1.0 there is no semantic difference from `let`,
-  so adding the keyword is pure surface-area cost.
 - **Multi-binding `let a = …, b = …;` [DEF-010].** Comma-separated bindings inside one
   `let`. Doesn't compose well with the existing `,`-as-update op-separator
   rule; punt to a follow-up that picks a clear disambiguation.

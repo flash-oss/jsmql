@@ -368,6 +368,46 @@ $project({ sku: 1, subtotal, withTax, final: withShip });
   });
 });
 
+describe("derive a price with a reassignable `let` helper", { features: ["Let bindings"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // Snapshot the order's base price into a `let`, then apply a 10% discount by
+    // reassigning it — a `let` binding re-`$set`s its slot, just like
+    // `let p = …; p = p * 0.9` in JavaScript. Each reassignment is its own
+    // `$set` stage (read-after-write needs separate stages).
+    expect(
+      jsmql(`
+let basePrice = $.price * $.qty;
+basePrice = basePrice * 0.9;
+$project({ total: basePrice });
+      `),
+    ).toEqual([
+      { $set: { "__jsmql.basePrice": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.basePrice": { $multiply: ["$__jsmql.basePrice", 0.9] } } },
+      { $project: { total: "$__jsmql.basePrice" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
+describe("reassigning a `const` binding is rejected at compile time", { features: ["Let bindings"] }, () => {
+  it(
+    "a `const` snapshot can't be reassigned — the error points at `let`",
+    { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // `const` is a read-only binding. Snapshot the order's base price as a
+      // `const`, then (mistakenly) try to discount it in place. jsmql rejects the
+      // reassignment and points at the fix: declare it `let` if it must change.
+      expect(() =>
+        jsmql(`
+const basePrice = $.price * $.qty;
+basePrice = basePrice * 0.9;
+$project({ total: basePrice });
+        `),
+      ).toThrow(/Cannot reassign `basePrice` — it is a `const` binding\. Declare it with `let basePrice = …`/);
+    },
+  );
+});
+
 describe("active premium subscribers", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.subscribers.find(jsmql(...))" }, () => {
     expect(

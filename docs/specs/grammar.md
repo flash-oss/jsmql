@@ -20,10 +20,11 @@ pipeline_stmt  = update_filter
                | let_decl
                | expression           (* must compile to a stage at codegen *)
 
-let_decl       = "let" IDENT "=" expression
+let_decl       = ("let" | "const") IDENT "=" expression
                (* pipeline-scoped local binding; see docs/specs/let-bindings.md.
+                  `let` is reassignable (`name = …` later), `const` is not.
                   Only valid inside a pipeline (any `;`-separated form or a
-                  bracketed `[...]` pipeline element). A top-level `let` in
+                  bracketed `[...]` pipeline element). A top-level let/const in
                   expression mode is a parse error. *)
 
 update_filter  = update_op ("," update_op)* ","?
@@ -46,8 +47,11 @@ assignment_chain
 compound_op    = "+=" | "-=" | "*=" | "/="
 
 target         = field_ref ("." FIELD_SEGMENT)*
-               (* must be a static field path; index access ($.x[0]) and
-                  bare identifiers are rejected at parse time *)
+               | IDENT                       (* bare identifier — a `let` reassignment;
+                                                accepted at parse time, validated against
+                                                the pipeline let-scope at codegen *)
+               (* a field-path target must be static; index access ($.x[0]) is
+                  rejected at parse time *)
 
 expression     = ternary
 

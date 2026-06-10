@@ -712,3 +712,114 @@ describe("let bindings — $project keeps the let scope (documented trade-off)",
     ]);
   });
 });
+
+// ── `let` reassignment (DEF-009) ──────────────────────────────────────────────
+
+describe("let bindings — reassignment", () => {
+  it("reassigning a `let` re-`$set`s its materialised slot", () => {
+    // The second statement reads the binding's current value and writes back to
+    // the same `__jsmql.<name>` slot — exactly how `let x = 1; x = x + 1` reads
+    // in JavaScript.
+    expect(
+      jsmql(`
+        let basePrice = $.price * $.qty;
+        basePrice = basePrice * 0.9;
+        $project({ total: basePrice });
+      `),
+    ).toEqual([
+      { $set: { "__jsmql.basePrice": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.basePrice": { $multiply: ["$__jsmql.basePrice", 0.9] } } },
+      { $project: { total: "$__jsmql.basePrice" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("compound assignment and increment desugar against the slot", () => {
+    expect(jsmql("let n = $.start; n += 5; $project({ n })")).toEqual([
+      { $set: { "__jsmql.n": "$start" } },
+      { $set: { "__jsmql.n": { $add: ["$__jsmql.n", 5] } } },
+      { $project: { n: "$__jsmql.n" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("let n = $.start; n++; $project({ n })")).toEqual([
+      { $set: { "__jsmql.n": "$start" } },
+      { $set: { "__jsmql.n": { $add: ["$__jsmql.n", 1] } } },
+      { $project: { n: "$__jsmql.n" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("reassignment works in the bracketed pipeline form", () => {
+    expect(jsmql("[ let x = $.a, x = x + 1, $project({ x }) ]")).toEqual([
+      { $set: { "__jsmql.x": "$a" } },
+      { $set: { "__jsmql.x": { $add: ["$__jsmql.x", 1] } } },
+      { $project: { x: "$__jsmql.x" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("reassigning a `const`-bound name throws a `const` error", () => {
+    expect(() => jsmql("const x = $.foo; x = 5; $project({ x });")).toThrow(
+      /Cannot reassign `x` — it is a `const` binding\. Declare it with `let x = …`/,
+    );
+  });
+
+  it("assigning to an undeclared bare identifier throws an actionable error", () => {
+    expect(() => jsmql("$match($.a > 0); zzz = 5; $project({ a: 1 });")).toThrow(
+      /Cannot assign to bare identifier 'zzz' — it isn't a `let` binding in scope/,
+    );
+  });
+
+  it("reassigning a `let` after a reshape stage drops it (precise error)", () => {
+    expect(() => jsmql("let v = $.x; $group({ _id: $.cat }); v = 5; $match(v > 0)")).toThrow(
+      /`v` is a `let` binding and can't be reassigned after `\$group`/,
+    );
+  });
+
+  it("a bare-identifier assignment outside a pipeline is rejected (no let scope)", () => {
+    const result = jsmql.validate("x = 5");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/Cannot assign to bare identifier 'x'/);
+    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ── `const` keyword (DEF-009) ─────────────────────────────────────────────────
+
+describe("let bindings — `const` is a read-only alias for `let`", () => {
+  it("`const` lowers identically to `let` for declaration + read", () => {
+    // Declaration and reads are identical; only reassignment differs.
+    const fromConst = jsmql("const x = $.foo; $match($.parent === x);");
+    const fromLet = jsmql("let x = $.foo; $match($.parent === x);");
+    expect(fromConst).toEqual(fromLet);
+    expect(fromConst).toEqual([
+      { $set: { "__jsmql.x": "$foo" } },
+      { $match: { $expr: { $eq: ["$parent", "$__jsmql.x"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("`const` works in the bracketed pipeline form", () => {
+    expect(jsmql("[ const x = $.foo, $match($.parent === x) ]")).toEqual([
+      { $set: { "__jsmql.x": "$foo" } },
+      { $match: { $expr: { $eq: ["$parent", "$__jsmql.x"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("parser errors echo the `const` keyword the user actually wrote", () => {
+    expect(() => jsmql("const = 5;")).toThrow(/Expected an identifier after `const`/);
+    expect(() => jsmql("const x 5;")).toThrow(/Expected '=' after `const x`.*`const` requires an initialiser/s);
+  });
+
+  it("`const` is still usable as a field name and object key", () => {
+    // Adding the keyword token must not regress `const` as a plain identifier in
+    // field paths / object keys (it's a valid JS property name).
+    expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
+    expect(jsmql.expr("$.user.const")).toEqual("$user.const");
+    expect(jsmql("$project({ const: 1 }); $match($.x > 1);")).toEqual([
+      { $project: { const: 1 } },
+      { $match: { x: { $gt: 1 } } },
+    ]);
+  });
+});

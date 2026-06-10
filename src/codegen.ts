@@ -61,6 +61,14 @@ export type GenerateCtx = {
    */
   pipelineLets?: ReadonlyMap<string, string>;
   /**
+   * Subset of `pipelineLets` names that were declared with `const` (not `let`).
+   * A `const` binding is read-only: a later `<name> = …` reassignment is
+   * rejected, whereas a `let` binding re-`$set`s its slot. Tracked separately so
+   * the common read path (`pipelineLets`) is untouched. See
+   * docs/specs/let-bindings.md § Reassignment.
+   */
+  pipelineConstNames?: ReadonlySet<string>;
+  /**
    * Names of lets that were dropped by an earlier scope-reshaping stage
    * (`$group`, `$replaceRoot`, …). Value is the stage that dropped them, used
    * to produce a precise "let X can't be read after $group" error rather than
@@ -132,6 +140,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     lambdaParams: new Set([...ctx.lambdaParams, ...params]),
     reduceRemap: ctx.reduceRemap,
     pipelineLets: ctx.pipelineLets,
+    pipelineConstNames: ctx.pipelineConstNames,
     droppedLets: ctx.droppedLets,
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
@@ -141,11 +150,22 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
   };
 }
 
-/** Add a new pipeline let to the context. Returns a fresh ctx; never mutates. */
-export function extendCtxLets(ctx: GenerateCtx, name: string, fieldPath: string): GenerateCtx {
+/**
+ * Add a new pipeline let to the context. Returns a fresh ctx; never mutates.
+ * `kind: "const"` also records the name as read-only (reassignment rejected).
+ */
+export function extendCtxLets(
+  ctx: GenerateCtx,
+  name: string,
+  fieldPath: string,
+  kind: "let" | "const" = "let",
+): GenerateCtx {
   const next = new Map(ctx.pipelineLets ?? []);
   next.set(name, fieldPath);
-  return { ...ctx, pipelineLets: next };
+  if (kind !== "const") return { ...ctx, pipelineLets: next };
+  const consts = new Set(ctx.pipelineConstNames ?? []);
+  consts.add(name);
+  return { ...ctx, pipelineLets: next, pipelineConstNames: consts };
 }
 
 /** Drop all pipeline lets, moving them to `droppedLets` with the stage name. */
@@ -153,7 +173,7 @@ export function clearCtxLets(ctx: GenerateCtx, droppedByStage: string): Generate
   if (!ctx.pipelineLets || ctx.pipelineLets.size === 0) return ctx;
   const dropped = new Map(ctx.droppedLets ?? []);
   for (const name of ctx.pipelineLets.keys()) dropped.set(name, droppedByStage);
-  return { ...ctx, pipelineLets: new Map(), droppedLets: dropped };
+  return { ...ctx, pipelineLets: new Map(), pipelineConstNames: new Set(), droppedLets: dropped };
 }
 
 /** Public access for pipeline.ts to read the let-bindings count. */
@@ -187,6 +207,7 @@ export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
     lambdaParams: new Set(),
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
+    pipelineConstNames: outer.pipelineConstNames,
     pipelineContext: outer.pipelineContext,
   };
 }
@@ -3771,6 +3792,19 @@ function targetToPath(target: Expr): string {
   if (target.type === "FieldRef") return target.path;
   if (target.type === "MemberAccess") {
     return `${targetToPath(target.object)}.${target.member}`;
+  }
+  // A bare identifier (`x = …`). The parser defers this to codegen because a
+  // `let`-binding reassignment is valid — but only inside a pipeline, where
+  // `tryLowerAssignSugar` intercepts it before it reaches here. Reaching this
+  // point means there is no pipeline scope (Filter / `jsmql.expr` / update-doc
+  // mode), so the name can't be a binding.
+  if (target.type === "ParamRef") {
+    throw new CodegenError(
+      `Cannot assign to bare identifier '${target.name}'. ` +
+        `Reassignable \`let\` bindings exist only inside a pipeline — add a \`;\` to enter pipeline mode and declare it first (\`let ${target.name} = …\`). ` +
+        `To write a document field, use a field path: \`$.${target.name} = …\`.`,
+      target.pos,
+    );
   }
   internalError("update op target is not a field path (parser should have rejected)");
 }

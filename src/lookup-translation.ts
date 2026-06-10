@@ -20,6 +20,7 @@ import type {
   ArrayElement,
   ObjectEntry,
   KeyValueEntry,
+  LetDecl,
 } from "./ast.ts";
 import {
   CodegenError,
@@ -408,9 +409,7 @@ function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
     for (const el of expr.elements) {
       if (el.type === "SpreadElement") {
         if (walkContainsLookup(el.argument, ctx)) return true;
-      } else if (
-        walkContainsLookup(el as Expr | UpdateOp | { type: "LetDecl"; name: string; value: Expr; pos: number }, ctx)
-      ) {
+      } else if (walkContainsLookup(el as Expr | UpdateOp | LetDecl, ctx)) {
         return true;
       }
     }
@@ -996,6 +995,7 @@ function transformStmt(
       type: "LetDecl",
       name: stmt.name,
       value: transformExpr(stmt.value, foreignParam, allocator, outerLets),
+      kind: stmt.kind,
       pos: stmt.pos,
     };
   }
@@ -1204,6 +1204,7 @@ function mapChildren(
               type: "LetDecl",
               name: el.name,
               value: transformExpr(el.value, foreignParam, allocator, outerLets),
+              kind: el.kind,
               pos: el.pos,
             };
           }
@@ -1684,7 +1685,7 @@ function descendAndExtract(
               };
             if (el.type === "DeleteStmt") return { type: "DeleteStmt", target: rewriteChild(el.target), pos: el.pos };
             if (el.type === "LetDecl")
-              return { type: "LetDecl", name: el.name, value: rewriteChild(el.value), pos: el.pos };
+              return { type: "LetDecl", name: el.name, value: rewriteChild(el.value), kind: el.kind, pos: el.pos };
             return rewriteChild(el as Expr);
           }),
           pos: expr.pos,

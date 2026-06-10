@@ -604,10 +604,11 @@ export class Parser {
   private collectStatement(): PipelineStmt {
     const first = this.lexer.peek();
 
-    // `let <ident> = <expr>` — pipeline-scoped local binding. Only legal in a
-    // pipeline context; codegen errors if it shows up in expression-mode input
-    // (no `;` boundary and not inside a bracketed pipeline).
-    if (first.type === TokenType.Let) {
+    // `let <ident> = <expr>` (or the `const` alias) — pipeline-scoped local
+    // binding. Only legal in a pipeline context; codegen errors if it shows up
+    // in expression-mode input (no `;` boundary and not inside a bracketed
+    // pipeline).
+    if (first.type === TokenType.Let || first.type === TokenType.Const) {
       return this.parseLetDecl();
     }
 
@@ -651,18 +652,20 @@ export class Parser {
   // ── Let declaration ──────────────────────────────────────────────────────
 
   /**
-   * Parse `let <ident> = <expr>`. The leading `let` token must already be the
-   * current peek; this consumes it and the rest of the declaration. The cursor
-   * is left at whatever follows the value expression (typically `;` or `,` in
-   * the array-pipeline form). No re-declaration check here — that needs a
+   * Parse `let <ident> = <expr>` (or the `const` alias — see
+   * docs/specs/let-bindings.md). The leading `let`/`const` token must already
+   * be the current peek; this consumes it and the rest of the declaration. The
+   * cursor is left at whatever follows the value expression (typically `;` or
+   * `,` in the array-pipeline form). No re-declaration check here — that needs a
    * pipeline-level view and lives in codegen.
    */
   private parseLetDecl(): LetDecl {
-    const letTok = this.lexer.next(); // consume `let`
+    const kwTok = this.lexer.next(); // consume `let` / `const`
+    const kw = kwTok.value; // echo the keyword the user wrote in error messages
     const ident = this.lexer.peek();
     if (ident.type !== TokenType.Ident) {
       throw new ParseError(
-        `Expected an identifier after \`let\` at position ${ident.pos}, got '${ident.value}'`,
+        `Expected an identifier after \`${kw}\` at position ${ident.pos}, got '${ident.value}'`,
         ident.pos,
       );
     }
@@ -670,14 +673,15 @@ export class Parser {
     const eq = this.lexer.peek();
     if (eq.type !== TokenType.Eq) {
       throw new ParseError(
-        `Expected '=' after \`let ${ident.value}\` at position ${eq.pos}, got '${eq.value}'. ` +
-          `\`let\` requires an initialiser — write \`let ${ident.value} = <expr>\`.`,
+        `Expected '=' after \`${kw} ${ident.value}\` at position ${eq.pos}, got '${eq.value}'. ` +
+          `\`${kw}\` requires an initialiser — write \`${kw} ${ident.value} = <expr>\`.`,
         eq.pos,
       );
     }
     this.lexer.next(); // consume `=`
     const value = this.parseExpression();
-    return { type: "LetDecl", name: ident.value, value, pos: letTok.pos };
+    const kind = kw === "const" ? "const" : "let";
+    return { type: "LetDecl", name: ident.value, value, kind, pos: kwTok.pos };
   }
 
   // ── UpdateOp program ─────────────────────────────────────────────────────
@@ -920,13 +924,15 @@ export class Parser {
     // `detectOutAssign` (src/out-translation.ts) so the error message can
     // suggest the right corrective form.
     if (this.isOutTarget(target)) return;
+    // A bare identifier may be a reassignment of a `let` binding (`let x = …; x
+    // = …`). Whether `x` is actually an in-scope `let` (assignable) vs a `const`
+    // (not) vs undeclared (not) needs the pipeline-scope view the parser doesn't
+    // have — so accept the shape here and let codegen validate it against the
+    // live let scope (see `tryLowerAssignSugar` in pipeline.ts). In non-pipeline
+    // contexts there are no lets, so codegen rejects it with an actionable
+    // message. See docs/specs/let-bindings.md § Reassignment.
+    if (target.type === "ParamRef") return;
     const pos = this.lexer.peek().pos;
-    if (target.type === "ParamRef") {
-      throw new ParseError(
-        `UpdateOp target must be a field path like '$.${target.name}', not a bare identifier (at position ${pos})`,
-        pos,
-      );
-    }
     if (target.type === "IndexAccess") {
       throw new ParseError(
         `UpdateOp target must be a static field path; computed/index access ('[…]') is not supported (at position ${pos})`,
@@ -1560,7 +1566,8 @@ export class Parser {
       t.type === TokenType.In ||
       t.type === TokenType.New ||
       t.type === TokenType.Typeof ||
-      t.type === TokenType.Let
+      t.type === TokenType.Let ||
+      t.type === TokenType.Const
     );
   }
 
@@ -1939,9 +1946,10 @@ export class Parser {
         // `delete $.x` as a pipeline element. Codegen rejects it if the array
         // turns out not to be a pipeline.
         elements.push(this.parseDeleteStmt());
-      } else if (this.lexer.peek().type === TokenType.Let) {
-        // `let x = expr` as a pipeline element. Codegen rejects it if the
-        // array is not a pipeline (parallel to AssignExpr/DeleteStmt handling).
+      } else if (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
+        // `let x = expr` (or the `const` alias) as a pipeline element. Codegen
+        // rejects it if the array is not a pipeline (parallel to
+        // AssignExpr/DeleteStmt handling).
         elements.push(this.parseLetDecl());
       } else if (this.peekIncDecOp() !== null) {
         // Prefix `++$.x` / `--$.x` as a pipeline element.
@@ -2039,16 +2047,17 @@ export class Parser {
       return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
 
-    // `let` is a jsmql keyword but is also a legitimate MongoDB object-key name
+    // `let`/`const` are jsmql keywords but are also legitimate object-key names
     // (`$lookup`, `$graphLookup`, `$documents`, and top-level `aggregate({ let: ... })`
-    // all carry a `let:` field). Accept it as an object key so those stage shapes
-    // continue to parse. Shorthand `{ let }` is intentionally rejected — that
-    // would conflict with `let x = …` statements and serve no useful purpose.
-    if (tok.type === TokenType.Let) {
+    // all carry a `let:` field; `const` is a plausible plain field name). Accept
+    // either as an object key so those shapes continue to parse. Shorthand
+    // `{ let }` / `{ const }` is intentionally rejected — it would conflict with
+    // `let x = …` / `const x = …` statements and serve no useful purpose.
+    if (tok.type === TokenType.Let || tok.type === TokenType.Const) {
       this.lexer.next();
       this.lexer.expect(TokenType.Colon);
       const value = this.parseExpression();
-      const key: ObjectKey = { kind: "static", name: "let" };
+      const key: ObjectKey = { kind: "static", name: tok.value };
       return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
 

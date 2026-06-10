@@ -143,7 +143,7 @@ There are two pipeline forms, with one important behavioural difference:
 
 | Situation                       | Where caught | Message theme |
 |---------------------------------|--------------|---------------|
-| Bare identifier as target       | parser       | "Update op target must be a field path like '$.x', not a bare identifier" |
+| Bare identifier as target       | codegen      | A bare-identifier target is validated at codegen: in a pipeline it may reassign an in-scope `let` (see [let-bindings.md § Reassignment](let-bindings.md)); otherwise "Cannot assign to bare identifier 'x' …" |
 | `IndexAccess` as target         | parser       | "Update op target must be a static field path; computed/index access ('[…]') is not supported" |
 | Lambda or compound-shape target | parser       | "Update op target must be a field path like '$.x' or '$.x.y'" |
 | Compound chain                  | parser       | "Compound assignment cannot be chained — split into separate statements" |

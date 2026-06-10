@@ -57,18 +57,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only
 - **Effort.** M
 
-### DEF-009 — `const` keyword as alias for `let`
-
-- **What's blocked.** `const x = $.foo;` is a parse error. Forces `let` for everything.
-- **Target lowering.** Identical to `let` — pre-1.0, `let` bindings aren't reassignable from jsmql source anyway, so `const` is purely surface sugar.
-- **Why blocked.** Trivially easy (one keyword token, one parser branch). Not yet picked up.
-- **Attempted approaches.** None.
-- **Success criteria.** `const x = $.foo; $match($.parent === x);` lowers identically to `let x = …;`. Reassignment to a `const`-bound name throws the same target-validation error a `let` target would.
-- **Rejection site(s).** No live throw — parse error.
-- **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 2.
-- **Status.** design-only
-- **Effort.** S
-
 ### DEF-010 — Multi-binding `let a = …, b = …;`
 
 - **What's blocked.** Comma-separated bindings inside one `let` statement.

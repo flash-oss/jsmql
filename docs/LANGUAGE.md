@@ -1802,10 +1802,10 @@ A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#p
 
 ### Targets
 
-The left-hand side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. Bare identifiers and computed/index access are not assignable:
+In a Filter / update-doc, the left-hand side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. Computed/index access is not assignable, and a bare identifier is assignable only inside a pipeline where it names an in-scope `let` binding (see [Local bindings](#local-bindings-let)):
 
 ```js
-x = 5                  // ✗ — bare identifier
+x = 5                  // ✗ — bare identifier, no pipeline / not a `let`
 $.items[0] = 5         // ✗ — index access
 $.user.name = "alice"  // ✓ — nested field path
 ```
@@ -2369,6 +2369,35 @@ The full rule table and divergence reference live in [docs/specs/match-query-tra
 ### Local bindings (`let`)
 
 Pipelines can introduce **named local helpers** with `let`. Each binding is scoped to the rest of the pipeline; the compiler materialises it under a single compiler-owned namespace (`__jsmql.<name>`) and emits one cleanup `$unset` at the end.
+
+A `let` binding is **reassignable** — a later `name = …` re-`$set`s it, just like JavaScript. Each reassignment is its own `$set` stage (a read-after-write needs a separate stage):
+
+```js
+jsmql`
+  let basePrice = $.price * $.qty;
+  basePrice = basePrice * 0.9;          // 10% discount, in place
+  $project({ total: basePrice });
+`;
+// → [
+//   { $set: { "__jsmql.basePrice": { $multiply: ["$price", "$qty"] } } },
+//   { $set: { "__jsmql.basePrice": { $multiply: ["$__jsmql.basePrice", 0.9] } } },
+//   { $project: { total: "$__jsmql.basePrice" } },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+`+= -= *= …` and `++ / --` work on a `let` too (they desugar to the same `$set`).
+
+Use **`const`** for a binding that must not change. It declares and reads identically to `let`, but reassigning it is a compile-time error:
+
+```js
+jsmql`
+  const basePrice = $.price * $.qty;
+  basePrice = basePrice * 0.9;          // ✗
+`;
+// → Error: Cannot reassign `basePrice` — it is a `const` binding.
+//   Declare it with `let basePrice = …` instead if its value needs to change.
+```
 
 ```js
 jsmql`

@@ -383,7 +383,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       }
       const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, tracking.alloc, lowerBlock);
       for (const s of prologue) out.push(s);
-      const stage = lowerLetDecl({ type: "LetDecl", name: el.name, value: rewritten, pos: el.pos }, ctx);
+      const stage = lowerLetDecl({ type: "LetDecl", name: el.name, value: rewritten, kind: el.kind, pos: el.pos }, ctx);
       out.push(stage.set);
       ctx = stage.ctx;
       everHadLet = true;
@@ -450,7 +450,10 @@ export function generateImplicitPipeline(
       }
       const { stages: prologue, rewritten } = extractLookupCalls(stmt.value, ctx, tracking.alloc, lowerBlock);
       for (const s of prologue) out.push(s);
-      const stage = lowerLetDecl({ type: "LetDecl", name: stmt.name, value: rewritten, pos: stmt.pos }, ctx);
+      const stage = lowerLetDecl(
+        { type: "LetDecl", name: stmt.name, value: rewritten, kind: stmt.kind, pos: stmt.pos },
+        ctx,
+      );
       out.push(stage.set);
       ctx = stage.ctx;
       everHadLet = true;
@@ -481,24 +484,24 @@ type LetLowering = { set: Record<string, unknown>; ctx: GenerateCtx };
 function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
   if (ctx.pipelineLets?.has(decl.name)) {
     throw new CodegenError(
-      `\`let ${decl.name}\` is already declared earlier in this pipeline. ` +
-        `Re-declaration in the same scope is not allowed — pick a different name, ` +
+      `\`${decl.kind} ${decl.name}\` is already declared earlier in this pipeline. ` +
+        `Re-declaration in the same scope is not allowed — ${decl.kind === "const" ? "" : "reassign it (`" + decl.name + " = …`), "}pick a different name, ` +
         `or rebind after a reshape stage (\`$group\`, \`$replaceRoot\`, …).`,
       decl.pos,
     );
   }
   if (ctx.bindings?.has(decl.name)) {
     throw new CodegenError(
-      `\`let ${decl.name}\` shadows a function-form parameter binding of the same name. ` +
+      `\`${decl.kind} ${decl.name}\` shadows a function-form parameter binding of the same name. ` +
         `Rename one — parameter bindings are compile-time constants supplied at call time, ` +
-        `\`let\` bindings are per-document values derived from a stage expression; ` +
+        `\`${decl.kind}\` bindings are per-document values derived from a stage expression; ` +
         `mixing them under one name would be ambiguous.`,
       decl.pos,
     );
   }
   const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
   const value = generateWithCtx(decl.value, ctx);
-  return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath) };
+  return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind) };
 }
 
 /**
@@ -1558,6 +1561,42 @@ function tryLowerAssignSugar(
   lowerBlockFn: SubPipelineLowerer,
   isFirst: boolean,
 ): AssignSugarResult {
+  // `<name> = …` — reassignment of a pipeline `let` binding. The bare-identifier
+  // target (a `ParamRef`) is unique to this case — every other assign sugar is
+  // rooted at a `FieldRef` / context-ref — so dispatch on it first. A `let`
+  // re-`$set`s its materialised slot; a `const` is read-only; an undeclared
+  // name isn't assignable. See docs/specs/let-bindings.md § Reassignment.
+  if (op.target.type === "ParamRef") {
+    const name = op.target.name;
+    if (ctx.pipelineConstNames?.has(name)) {
+      throw new CodegenError(
+        `Cannot reassign \`${name}\` — it is a \`const\` binding. ` +
+          `Declare it with \`let ${name} = …\` instead if its value needs to change.`,
+        op.pos,
+      );
+    }
+    const letPath = ctx.pipelineLets?.get(name);
+    if (letPath !== undefined) {
+      flush();
+      const { stages, rewritten } = extractLookupCalls(op.value, ctx, allocSlot, lowerBlockFn);
+      for (const s of stages) out.push(s);
+      out.push({ $set: { [letPath]: generateWithCtx(rewritten, ctx) } });
+      return { handled: true, ctx, outPos: null };
+    }
+    const droppedBy = ctx.droppedLets?.get(name);
+    if (droppedBy !== undefined) {
+      throw new CodegenError(
+        `\`${name}\` is a \`let\` binding and can't be reassigned after \`${droppedBy}\` — ` +
+          `the stage replaces the document. Rebind it after the stage with \`let ${name} = …\`.`,
+        op.pos,
+      );
+    }
+    throw new CodegenError(
+      `Cannot assign to bare identifier '${name}' — it isn't a \`let\` binding in scope. ` +
+        `Declare it first with \`let ${name} = …\`, or write \`$.${name} = …\` to set a document field.`,
+      op.pos,
+    );
+  }
   if (isReplaceStreamAssign(op)) {
     flush();
     const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot, isFirst);
