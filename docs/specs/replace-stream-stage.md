@@ -115,7 +115,7 @@ user's intent is recoverable:
 | Trigger | Message excerpt |
 |---|---|
 | `ArrayLiteral` RHS of docs mid-pipeline (e.g. `$match(...); $$ = [{...}]`) | `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, …)' instead, which lowers to '$unionWith'.` (Note: `$$ = []` is supported — it empties the stream; `$$ = [<docs>]` at stage 0 lowers to `$documents`.) |
-| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not yet supported [DEF-001]. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection). See docs/DEFERRED.md.` |
+| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not a supported form — a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
 | `MethodCall` on `$$` / `$$$.<coll>` with method other than `filter` | `'$$ = …' RHS supports only '<recv>.filter(<predicate>)' — '.<method>(...)' is not allowed here.[ Did you mean '.filter'?] Use '<recv>.filter(<predicate>)' to <intent>, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.` |
 | Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source.` |
 | Anything else | `'$$ = …' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
@@ -169,16 +169,17 @@ src/
                    extractLetsFromPipeline reused as-is (already exported).
 ```
 
-## Deferred
+## Not supported (by design)
 
-- **`$$ = cond ? A : B`** (stream-level ternary). The genuinely hard piece is
-  passing the outer `let` scope into `$unionWith.pipeline` (no `let:` slot
-  on `$unionWith` in current MongoDB). Without that, the common case
-  (`let id = …; $$ = cond ? [] : $$$.<other>.filter(o => o.parent === id)`)
-  can't lower cleanly. Deferred until either `$unionWith` gains a `let:` slot
-  or jsmql grows a multi-pipeline output shape.
-- **`$$.find(<predicate>)`** (self-lookup on the current collection). Already
-  noted in [`src/lookup-translation.ts`](../../src/lookup-translation.ts) as
-  blocked on collection-name binding — jsmql compiles statelessly. Worth
-  revisiting after the lookup work has a slot for `jsmql.compile({ collection })`
-  or similar.
+These RHS forms are rejected on purpose — they have no coherent JS semantics, so
+they are not on the roadmap:
+
+- **`$$ = cond ? A : B`** (stream-level ternary). A stream is many documents; there
+  is no single condition that swaps the *whole* stream for A or B, so "replace the
+  stream with A or B" has no JS meaning. Narrow the stream with `$$.filter(p)`, or
+  switch source with `$$$.<coll>.filter(p)`.
+- **`$$.find(<predicate>)`** (self-lookup on the current collection). Finding one
+  document within the very stream of documents produces a value with nothing to do
+  in JS expression semantics; jsmql also compiles statelessly (it doesn't know the
+  current collection's name). Use an explicit `$$$.<coll>.find(...)` lookup against
+  a named collection instead.

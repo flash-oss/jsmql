@@ -2086,7 +2086,7 @@ Compile-time rejections:
 
 | RHS | Why it's rejected |
 |---|---|
-| `$$ = cond ? A : B` | Stream-level ternary not yet supported [DEF-001]. |
+| `$$ = cond ? A : B` | Stream-level ternary is not a supported form — a stream has no single condition that swaps the whole stream for A or B. Narrow with `$$.filter(p)` or switch source with `$$$.<coll>.filter(p)`. |
 | `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS but pipelines are arrays. For "first match", write `.filter(p).slice(0, 1)`. For replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
 | `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |

@@ -89,5 +89,4 @@ docs/specs/aggregation-stages.md::Will get its own spec when work begins
 # Test-file phrase fragments (tests assert against rejection wording; the
 # rejection itself is tagged or allowlisted above).
 # -----------------------------------------------------------------------------
-test/pipeline.test.ts::not yet supported
 test/operator-spec-coverage.test.ts::not yet implemented in the

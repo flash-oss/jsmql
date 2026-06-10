@@ -1114,7 +1114,7 @@ function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
   }
   if (value.type === "TernaryExpr") {
     throw new CodegenError(
-      `'$$ = <ternary>' (conditional stream branching) is not yet supported [DEF-001]. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection). See docs/DEFERRED.md.`,
+      `'$$ = <ternary>' (conditional stream branching) is not a supported form — a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
       value.pos,
     );
   }

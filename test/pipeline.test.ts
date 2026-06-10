@@ -526,9 +526,9 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("rejects `$$ = <ternary>` as 'not yet supported'", () => {
+  it("rejects `$$ = <ternary>` (conditional stream branching is not a supported form)", () => {
     expect(() => jsmql(`$$ = true ? $$.filter(o => o.x) : $$.filter(o => o.y);`)).toThrow(
-      /'\$\$ = <ternary>'.*not yet supported/,
+      /'\$\$ = <ternary>'.*not a supported form/,
     );
   });
 

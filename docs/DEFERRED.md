@@ -21,18 +21,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ## §A. Open — to implement
 
-### DEF-001 — `$$ = cond ? A : B` (stream-level ternary)
-
-- **What's blocked.** Conditional stream branching like `$$ = isAdmin ? $$ : $$.filter(d => d.public)` is rejected at codegen.
-- **Target lowering.** `$$ = cond ? $$ : $$$.other` → either `[{ $match: { $expr: cond } }]` for narrow-branch or `[{ $match: { $expr: false } }, { $unionWith: { coll: "other" } }]` for source-switch — depending on which side of the ternary picks.
-- **Why blocked.** Needs outer-`let` threading into `$unionWith.pipeline` (no `let:` slot in MongoDB's current `$unionWith`), which is the same blocker as DEF-013 schema threading.
-- **Attempted approaches.** None — design-stage only. Outer-let threading is the hard pre-req.
-- **Success criteria.** `$$ = isAdmin ? $$ : $$.filter(d => d.public);` lowers to the narrow form. `let id = $.userId; $$ = isAdmin ? $$ : $$$.children.filter(c => c.parentId === id);` lowers to source-switch with `id` available inside the sub-pipeline. Tests in `test/pipeline.test.ts`.
-- **Rejection site(s).** `src/pipeline.ts` `lowerReplaceStream` ternary branch (search for `not yet supported`).
-- **Spec.** `docs/specs/replace-stream-stage.md` § Deferred.
-- **Status.** open
-- **Effort.** M (1–3 days)
-
 ### DEF-005 — `$merge` sugar (`$$$.coll += $$;`)
 
 - **What's blocked.** Writing the result of a pipeline to a collection with merge semantics (upsert / merge into existing docs) rather than `$out`'s full replace.
@@ -119,14 +107,14 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ### DEF-013 — Schema / metadata threading (`jsmql.bind({ db, collection })`)
 
-- **What's blocked.** jsmql compiles statelessly — it doesn't know the current collection's name, so `$$.find()` / `$$.filter()` (self-join) can't resolve their `$lookup.from`. Same gap blocks `$$ = cond ? … : $$.find(…)` (DEF-001 ternary's source-switch branch).
+- **What's blocked.** jsmql compiles statelessly — it doesn't know the current collection's name, so a self-join (`$$.find()` / `$$.filter()`) can't resolve its `$lookup.from`.
 - **Target lowering.** New entry point `jsmql.bind({ collection, db })` returns a new callable shaped like `jsmql` (callable + `.compile` + `.validate` + `.expr` + `.filter` + `.pipeline` + `.update` + `.updateDoc`), with `boundCollection` / `boundDb` threaded into `GenerateCtx`. Mongoose plugin uses it automatically with the model's `collection.name`.
-- **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering. Force multiplier — unblocks the source-switch half of DEF-001.
+- **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering.
 - **Attempted approaches.** None — design in fork plan §B8.
 - **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
 - **Rejection site(s).** `docs/specs/context-references.md:131-132` (allowlisted as a spec future-work bullet).
 - **Spec.** `docs/specs/context-references.md` § Future work bullet 1–2. Will need its own `docs/specs/bind.md`.
-- **Status.** design-only — force multiplier (unblocks half of DEF-001)
+- **Status.** design-only
 - **Effort.** L
 
 ### DEF-014 — Optimised chained terminals on lookups
