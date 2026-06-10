@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-11 — docs: drop DEF-007 (projection-aware `$project` translation) — won't implement
+
+Moved DEF-007 from §A (open) to §B (won't-implement) in [docs/DEFERRED.md](DEFERRED.md). The row proposed lowering `.slice()` / `.some()` to *projection-form* `$slice` (single-arg) and `$elemMatch` inside `$project({ … })`. The premise was mistaken: jsmql's `$project` is the **aggregation pipeline stage**, not a `find()` projection, and those projection-form operators are `find()`-only features the aggregation stage rejects. Verified on a running mongod: `{ $slice: N }` → "Expression $slice takes at least 2 arguments" (it's always the expression operator in aggregation `$project`), and `{ $elemMatch: { … } }` → "Cannot use $elemMatch in this context". `$elemMatch` also returns the matched element, not a boolean, so it would break `.some()`'s JS semantics. The expression forms jsmql already emits (`{ $slice: ["$items", 3] }`, `$anyElementTrue`/`$map`) run correctly there, and the third proposed switch, `$meta`, already ships in [src/operators.ts](../src/operators.ts) via `$op($meta(...))`. Implementing it would have made jsmql knowingly emit invalid MQL (HR3 violation), so there was nothing valid left to build. DEF-007 was design-only (no live `[DEF-007]` tags); the two format-example mentions in [CLAUDE.md](../CLAUDE.md) and DEFERRED.md were re-pointed at `[DEF-005: merge]`.
+
+---
+
 ## 2026-06-10 — feat: parameterised strict-shape builders + closes DEF-028 (CLI params + mode flags)
 
 Added `jsmql.filter.compile` / `jsmql.pipeline.compile` / `jsmql.update.compile` (plus `jsmql.expr.compile` for symmetry) — the parse-once / bind-many form of each strict entry, narrowed to that entry's output type. Extracted the existing `jsmql.compile` body into a single parametric `makeCompile(lower, apiName)` so every builder shares one engine; each is just `makeCompile` over the matching strict lowerer (`lowerFilterStrict`, `lowerPipelineStrict`, …). Because the shape lowerer is the *same* one the one-shot entry uses, the shape contract is re-enforced on every call — a parameterised arrow that lowers to the wrong shape throws the identical actionable error. The entries became callables-carrying-`.compile` via the established `Object.assign` pattern (no `namespace`, strippable-TS rule).
