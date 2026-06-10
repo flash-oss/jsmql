@@ -141,7 +141,11 @@ Every code change that affects observable behaviour must also update the relevan
 Every change to library behaviour visible at the call site — new entry point, changed output shape, new operator surface, new error wording, dropped/renamed feature — must update [README.md](README.md) in the same commit. Cross-check the headline example block, the Tour section, and the Highlights bullets; if a feature you touched would no longer match what those three sections claim, fix them. The README is the first thing a new user reads and is part of the public contract, not optional reference material. **For ad-hoc output probing, reach for the `jsmql` CLI first** — `echo '<jsmql>' | node src/cli.ts [--pipeline|--expr|--update|--validate|-c]` (Node 22.18+ / 24.3+ strips TS natively — no build, no flag) is the fastest way to confirm what the library emits for a given input. Fall back to a short probe script that imports from `src/index.ts` (`node tmp/probe.mjs`) only when the CLI can't express the case — template-tag interpolation, inspecting an intermediate value, or anything that needs the JS API directly — or test against the built dist.
 
 ### Maintain docs/DEFERRED.md
-[docs/DEFERRED.md](docs/DEFERRED.md) is the single source of truth for every open "not yet" / "future work" / "deferred" / "out of scope" item plus every "won't implement" decision. Four triggers, in the order they typically arise:
+[docs/DEFERRED.md](docs/DEFERRED.md) is the single source of truth for every open "not yet" / "future work" / "deferred" / "out of scope" item plus every "won't implement" decision.
+
+**Always ask the developer's permission before adding a new DEFERRED item** — any new §A row, §B decision, or `[DEF-NNN]` tag. Deferring is a product decision (it parks work or rules it out), so it is the developer's call, not yours. Surface the proposed rejection / future-work item, explain why, and wait for an explicit yes before writing it. (Editing, splitting, or *closing* existing items as you ship them does not need permission — that's just keeping the file honest.)
+
+Four triggers, in the order they typically arise:
 
 **1. Before designing or planning a feature / change — read DEFERRED.md first.**
 Open [docs/DEFERRED.md](docs/DEFERRED.md) and scan §A (open items) and §B (won't-implement decisions) for anything the proposed work touches. Four outcomes:
