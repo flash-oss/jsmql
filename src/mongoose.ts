@@ -34,7 +34,10 @@
  * `findOneAndReplace` / `replaceOne` take a full *replacement document* at
  * argument 1, not an update spec — so we patch their filter slot only.
  * `findById` and `findByIdAndDelete` are id-only and aren't patched at all.
- * `Query.prototype.*` builder methods are out of scope today [DEF-020]; see docs/DEFERRED.md.
+ * `Query.prototype.*` builder methods (`.where()`, `.gt()`, `.sort()`, …) are
+ * intentionally NOT patched: jsmql keeps the mongoose surface to the `Model`
+ * statics so developers don't have to learn a new API (DX-first). See
+ * docs/specs/mongoose-plugin.md.
  */
 
 import { jsmql, type JsmqlInput } from "./index.ts";

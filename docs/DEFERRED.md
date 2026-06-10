@@ -189,18 +189,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only — small win
 - **Effort.** S
 
-### DEF-020 — Mongoose `Query.prototype.*` builder methods
-
-- **What's blocked.** `Model.find().where("…").gt(…).sort("…").limit(10)` — the mongoose Query builder. Today only `Model`-static methods accept jsmql source; the Query builder doesn't.
-- **Target lowering.** Same as the Model statics — patch `Query.prototype.where` / `.sort` / `.gt` / `.lt` / `.eq` / `.skip` / `.limit` with the same string-or-function detection.
-- **Why blocked.** The plugin is Model-static-only by design ("the Query builder is a separate composition surface that the user reaches *after* a static call"). Whether to expand is a DX call: builder use is widespread and the impedance mismatch is real.
-- **Attempted approaches.** None.
-- **Success criteria.** `Model.find().where(($) => $.x > 5).sort("…").limit(10)` works through the existing detection. Plain object/string slots still pass through.
-- **Rejection site(s).** `docs/specs/mongoose-plugin.md:104`, `src/mongoose.ts:37`.
-- **Spec.** `docs/specs/mongoose-plugin.md`.
-- **Status.** open
-- **Effort.** M
-
 ### DEF-021 — src-watching playground hook
 
 - **What's blocked.** Edits to `src/*.ts` outside Claude Code need a manual `npm run sync:playground` (or `npm run build`) to re-embed the bundle. The PostToolUse hook only fires on `test/realistic.test.ts` edits.
