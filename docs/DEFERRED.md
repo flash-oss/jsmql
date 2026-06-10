@@ -303,25 +303,3 @@ The lean `$replaceWith` shape is correct for the `$ = …` sugar. Adding a knob 
 ### Wrapping nested-operator `$`-strings ("Model A")
 
 When a stage value is itself an operator call — `$project({ t: $concat("$a", "$b") })` — the `$`-string args pass through verbatim (`{ $concat: ["$a", "$b"] }`); they are NOT `$literal`-wrapped. We considered the alternative ("Model A": an operator call wraps its `$`-string args, so only *direct* stage-spec values pass through). Rejected: it makes the same `$op("$x")` call mean different things at different nesting depths, and breaks the "paste raw MQL and it round-trips" property. **HR1 (added later) settled this globally**: a source-typed `$`-string passes through in *every* context — pipeline, stage, and `jsmql.expr` alike — so there is no nesting- or surface-dependent wrap at all. Only runtime-injected values wrap. See [docs/LANG_RULES.md](LANG_RULES.md) (HR1).
-
----
-
-## §C. Fork-coordination notes
-
-A parallel session (`v2 deferral features (fork)`, branch `claude/charming-hofstadter-c6a6a9`) is implementing ~23 deferred items in waves. As of 2026-06-01, 12 have landed. The remaining 11 are tracked **only in the fork plan** (`~/.claude/plans/suggest-syntax-for-all-cheerful-meerkat.md`), not here, to avoid constant merge conflicts on this file as each fork wave lands.
-
-The drift test's allowlist file (`test/deferred-allowlist.txt`) names the specific source/spec lines the fork is still working on — once each lands, the allowlist entry is removed (the test fails if a removed entry's phrase no longer matches anything in the surface). If the fork stalls before completing all 11, the remaining items get rolled into §A in a follow-up commit.
-
-Fork-in-flight items (will not have rows here):
-
-- Nested lookups (`$$$.coll2.find/filter` inside another lookup or sub-pipeline)
-- `$$.length` top-level terminal
-- `$$$.coll.filter(p).<chain>` in expression position
-- `$out` multi-method RHS chains
-- `$out` with `jsmql.compile`-bound destination
-- `.copyWithin()` array method at statement position
-- `$group` / `$setWindowFields` accumulator-category validation
-- Outer-let bindings crossing into `$facet.*` sub-pipelines
-- Richer per-key body shapes in object-returning reducers
-- Trailing `$unset: "__jsmql"` elision peephole
-- `$setWindowFields` static validation of window-only ops
