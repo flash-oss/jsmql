@@ -1,0 +1,10797 @@
+// src/lexer.ts
+var TokenType = {
+  // Punctuation
+  LParen: "LParen",
+  // (
+  RParen: "RParen",
+  // )
+  LBracket: "LBracket",
+  // [
+  RBracket: "RBracket",
+  // ]
+  LBrace: "LBrace",
+  // {
+  RBrace: "RBrace",
+  // }
+  Comma: "Comma",
+  // ,
+  Semi: "Semi",
+  // ;
+  Colon: "Colon",
+  // :
+  Dot: "Dot",
+  // .
+  QuestDot: "QuestDot",
+  // ?.  (optional chaining)
+  DollarDot: "DollarDot",
+  // $.
+  Dollar: "Dollar",
+  // $ (standalone, before IDENT for operator)
+  DoubleDollar: "DoubleDollar",
+  // $$  (current-collection reference, postfix .name or [expr])
+  TripleDollar: "TripleDollar",
+  // $$$  (current-database reference)
+  QuadDollar: "QuadDollar",
+  // $$$$  (current-cluster reference)
+  Spread: "Spread",
+  // ...
+  // Arithmetic operators
+  Plus: "Plus",
+  // +
+  Minus: "Minus",
+  // -
+  Star: "Star",
+  // *
+  StarStar: "StarStar",
+  // **
+  Slash: "Slash",
+  // /
+  Percent: "Percent",
+  // %
+  // Increment / decrement (update op statements; not value expressions)
+  PlusPlus: "PlusPlus",
+  // ++
+  MinusMinus: "MinusMinus",
+  // --
+  // Assignment operators
+  Eq: "Eq",
+  // =
+  PlusEq: "PlusEq",
+  // +=
+  MinusEq: "MinusEq",
+  // -=
+  StarEq: "StarEq",
+  // *=
+  SlashEq: "SlashEq",
+  // /=
+  // Comparison operators
+  EqEq: "EqEq",
+  // ==
+  EqEqEq: "EqEqEq",
+  // ===
+  BangEq: "BangEq",
+  // !=
+  BangEqEq: "BangEqEq",
+  // !==
+  Gt: "Gt",
+  // >
+  GtEq: "GtEq",
+  // >=
+  Lt: "Lt",
+  // <
+  LtEq: "LtEq",
+  // <=
+  // Logical operators
+  AmpAmp: "AmpAmp",
+  // &&
+  PipePipe: "PipePipe",
+  // ||
+  Bang: "Bang",
+  // !
+  // Bitwise operators
+  Amp: "Amp",
+  // &
+  Pipe: "Pipe",
+  // |
+  Caret: "Caret",
+  // ^
+  Tilde: "Tilde",
+  // ~
+  // Misc operators
+  QuestQuest: "QuestQuest",
+  // ??
+  Quest: "Quest",
+  // ?
+  Arrow: "Arrow",
+  // =>
+  // Literals
+  Number: "Number",
+  BigInt: "BigInt",
+  // 123n
+  String: "String",
+  True: "True",
+  False: "False",
+  Null: "Null",
+  Undefined: "Undefined",
+  RegexLiteral: "RegexLiteral",
+  // /pattern/flags
+  // Template literals
+  TemplateStart: "TemplateStart",
+  // opening `
+  TemplateChars: "TemplateChars",
+  // literal chunk between ` and ${ (or ` and `)
+  TemplateExprStart: "TemplateExprStart",
+  // ${
+  TemplateEnd: "TemplateEnd",
+  // closing `
+  // Keywords
+  In: "In",
+  // in
+  New: "New",
+  // new
+  Typeof: "Typeof",
+  // typeof
+  Delete: "Delete",
+  // delete
+  Let: "Let",
+  // let
+  Const: "Const",
+  // const (alias for let — see docs/specs/let-bindings.md)
+  // Identifier
+  Ident: "Ident",
+  EOF: "EOF"
+};
+var TOKEN_DISPLAY = {
+  LParen: "'('",
+  RParen: "')'",
+  LBracket: "'['",
+  RBracket: "']'",
+  LBrace: "'{'",
+  RBrace: "'}'",
+  Comma: "','",
+  Semi: "';'",
+  Colon: "':'",
+  Dot: "'.'",
+  QuestDot: "'?.'",
+  DollarDot: "'$.'",
+  Dollar: "'$'",
+  DoubleDollar: "'$$'",
+  TripleDollar: "'$$$'",
+  QuadDollar: "'$$$$'",
+  Spread: "'...'",
+  Plus: "'+'",
+  Minus: "'-'",
+  Star: "'*'",
+  StarStar: "'**'",
+  Slash: "'/'",
+  Percent: "'%'",
+  PlusPlus: "'++'",
+  MinusMinus: "'--'",
+  Eq: "'='",
+  PlusEq: "'+='",
+  MinusEq: "'-='",
+  StarEq: "'*='",
+  SlashEq: "'/='",
+  EqEq: "'=='",
+  EqEqEq: "'==='",
+  BangEq: "'!='",
+  BangEqEq: "'!=='",
+  Gt: "'>'",
+  GtEq: "'>='",
+  Lt: "'<'",
+  LtEq: "'<='",
+  AmpAmp: "'&&'",
+  PipePipe: "'||'",
+  Bang: "'!'",
+  Amp: "'&'",
+  Pipe: "'|'",
+  Caret: "'^'",
+  Tilde: "'~'",
+  QuestQuest: "'??'",
+  Quest: "'?'",
+  Arrow: "'=>'",
+  Number: "a number",
+  BigInt: "a BigInt literal",
+  String: "a string",
+  True: "'true'",
+  False: "'false'",
+  Null: "'null'",
+  Undefined: "'undefined'",
+  RegexLiteral: "a regex literal",
+  TemplateStart: "a template literal",
+  TemplateChars: "template-literal text",
+  TemplateExprStart: "'${'",
+  TemplateEnd: "'`'",
+  In: "'in'",
+  New: "'new'",
+  Typeof: "'typeof'",
+  Delete: "'delete'",
+  Let: "'let'",
+  Const: "'const'",
+  Ident: "an identifier",
+  EOF: "end of input"
+};
+function formatActualToken(t) {
+  const display = TOKEN_DISPLAY[t.type];
+  if (t.type === TokenType.Ident || t.type === TokenType.Number || t.type === TokenType.BigInt || t.type === TokenType.String || t.type === TokenType.RegexLiteral) {
+    return `${display} '${t.value}'`;
+  }
+  return display;
+}
+var LexError = class extends Error {
+  constructor(message, pos) {
+    super(message);
+    this.name = "LexError";
+    this.pos = pos;
+  }
+};
+var VALUE_ENDING_TYPES = /* @__PURE__ */ new Set([
+  TokenType.Number,
+  TokenType.BigInt,
+  TokenType.String,
+  TokenType.True,
+  TokenType.False,
+  TokenType.Null,
+  TokenType.Undefined,
+  TokenType.Ident,
+  TokenType.RParen,
+  TokenType.RBracket,
+  TokenType.TemplateEnd
+]);
+var Lexer = class _Lexer {
+  constructor(src) {
+    this.pos = 0;
+    this.tokens = [];
+    this.tokenIdx = 0;
+    this.lastTokenType = null;
+    // Brace depth tracking for template literal expression interpolation.
+    // Each entry on templateBraceDepths is the brace depth at which a `${` was opened —
+    // when a `}` would bring us back to that depth, it closes the template expression
+    // instead of being a normal RBrace.
+    this.braceDepth = 0;
+    this.templateBraceDepths = [];
+    this.src = src;
+    this.tokenize();
+  }
+  peek() {
+    return this.tokens[this.tokenIdx] ?? { type: TokenType.EOF, value: "", pos: this.src.length };
+  }
+  next() {
+    const t = this.peek();
+    this.tokenIdx++;
+    return t;
+  }
+  lookahead(offset) {
+    return this.tokens[this.tokenIdx + offset] ?? { type: TokenType.EOF, value: "", pos: this.src.length };
+  }
+  expect(type) {
+    const t = this.next();
+    if (t.type !== type) {
+      throw new LexError(`Expected ${TOKEN_DISPLAY[type]} but got ${formatActualToken(t)} at position ${t.pos}`, t.pos);
+    }
+    return t;
+  }
+  pushToken(tok) {
+    this.tokens.push(tok);
+    this.lastTokenType = tok.type;
+  }
+  tokenize() {
+    const src = this.src;
+    const len = src.length;
+    while (this.pos < len) {
+      this.skipTrivia();
+      if (this.pos >= len) break;
+      const start = this.pos;
+      const ch = src[this.pos];
+      const ch2 = src[this.pos + 1] ?? "";
+      const ch3 = src[this.pos + 2] ?? "";
+      if (ch === "(") {
+        this.emit(TokenType.LParen, "(", start, 1);
+        continue;
+      }
+      if (ch === ")") {
+        this.emit(TokenType.RParen, ")", start, 1);
+        continue;
+      }
+      if (ch === "[") {
+        this.emit(TokenType.LBracket, "[", start, 1);
+        continue;
+      }
+      if (ch === "]") {
+        this.emit(TokenType.RBracket, "]", start, 1);
+        continue;
+      }
+      if (ch === "{") {
+        this.emit(TokenType.LBrace, "{", start, 1);
+        this.braceDepth++;
+        continue;
+      }
+      if (ch === "}") {
+        if (this.templateBraceDepths.length > 0 && this.templateBraceDepths[this.templateBraceDepths.length - 1] === this.braceDepth) {
+          this.templateBraceDepths.pop();
+          this.pos++;
+          this.readTemplateChunk(start);
+          continue;
+        }
+        this.emit(TokenType.RBrace, "}", start, 1);
+        this.braceDepth--;
+        continue;
+      }
+      if (ch === ",") {
+        this.emit(TokenType.Comma, ",", start, 1);
+        continue;
+      }
+      if (ch === ";") {
+        this.emit(TokenType.Semi, ";", start, 1);
+        continue;
+      }
+      if (ch === ":") {
+        this.emit(TokenType.Colon, ":", start, 1);
+        continue;
+      }
+      if (ch === "." && ch2 === "." && ch3 === ".") {
+        this.emit(TokenType.Spread, "...", start, 3);
+        continue;
+      }
+      if (ch === ".") {
+        this.emit(TokenType.Dot, ".", start, 1);
+        continue;
+      }
+      if (ch === "$") {
+        let dollarCount = 1;
+        while (src[start + dollarCount] === "$") dollarCount++;
+        if (dollarCount === 1) {
+          if (ch2 === ".") {
+            this.emit(TokenType.DollarDot, "$.", start, 2);
+          } else {
+            this.emit(TokenType.Dollar, "$", start, 1);
+          }
+          continue;
+        }
+        if (dollarCount === 2) {
+          this.emit(TokenType.DoubleDollar, "$$", start, 2);
+          continue;
+        }
+        if (dollarCount === 3) {
+          this.emit(TokenType.TripleDollar, "$$$", start, 3);
+          continue;
+        }
+        if (dollarCount === 4) {
+          this.emit(TokenType.QuadDollar, "$$$$", start, 4);
+          continue;
+        }
+        throw new LexError(
+          `Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$') at position ${start}`,
+          start
+        );
+      }
+      if (ch === "*" && ch2 === "*") {
+        this.emit(TokenType.StarStar, "**", start, 2);
+        continue;
+      }
+      if (ch === "*" && ch2 === "=") {
+        this.emit(TokenType.StarEq, "*=", start, 2);
+        continue;
+      }
+      if (ch === "*") {
+        this.emit(TokenType.Star, "*", start, 1);
+        continue;
+      }
+      if (ch === "=") {
+        if (ch2 === "=" && ch3 === "=") {
+          this.emit(TokenType.EqEqEq, "===", start, 3);
+          continue;
+        }
+        if (ch2 === "=") {
+          this.emit(TokenType.EqEq, "==", start, 2);
+          continue;
+        }
+        if (ch2 === ">") {
+          this.emit(TokenType.Arrow, "=>", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Eq, "=", start, 1);
+        continue;
+      }
+      if (ch === "!") {
+        if (ch2 === "=" && ch3 === "=") {
+          this.emit(TokenType.BangEqEq, "!==", start, 3);
+          continue;
+        }
+        if (ch2 === "=") {
+          this.emit(TokenType.BangEq, "!=", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Bang, "!", start, 1);
+        continue;
+      }
+      if (ch === ">") {
+        if (ch2 === "=") {
+          this.emit(TokenType.GtEq, ">=", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Gt, ">", start, 1);
+        continue;
+      }
+      if (ch === "<") {
+        if (ch2 === "=") {
+          this.emit(TokenType.LtEq, "<=", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Lt, "<", start, 1);
+        continue;
+      }
+      if (ch === "&") {
+        if (ch2 === "&") {
+          this.emit(TokenType.AmpAmp, "&&", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Amp, "&", start, 1);
+        continue;
+      }
+      if (ch === "|") {
+        if (ch2 === "|") {
+          this.emit(TokenType.PipePipe, "||", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Pipe, "|", start, 1);
+        continue;
+      }
+      if (ch === "^") {
+        this.emit(TokenType.Caret, "^", start, 1);
+        continue;
+      }
+      if (ch === "~") {
+        this.emit(TokenType.Tilde, "~", start, 1);
+        continue;
+      }
+      if (ch === "?") {
+        if (ch2 === "?") {
+          this.emit(TokenType.QuestQuest, "??", start, 2);
+          continue;
+        }
+        if (ch2 === "." && !this.isDigit(ch3)) {
+          this.emit(TokenType.QuestDot, "?.", start, 2);
+          continue;
+        }
+        this.emit(TokenType.Quest, "?", start, 1);
+        continue;
+      }
+      if (ch === "+") {
+        if (ch2 === "+") {
+          this.emit(TokenType.PlusPlus, "++", start, 2);
+        } else if (ch2 === "=") {
+          this.emit(TokenType.PlusEq, "+=", start, 2);
+        } else {
+          this.emit(TokenType.Plus, "+", start, 1);
+        }
+        continue;
+      }
+      if (ch === "-") {
+        if (ch2 === "-") {
+          this.emit(TokenType.MinusMinus, "--", start, 2);
+        } else if (ch2 === "=") {
+          this.emit(TokenType.MinusEq, "-=", start, 2);
+        } else {
+          this.emit(TokenType.Minus, "-", start, 1);
+        }
+        continue;
+      }
+      if (ch === "%") {
+        this.emit(TokenType.Percent, "%", start, 1);
+        continue;
+      }
+      if (ch === "/") {
+        if (this.lastTokenType !== null && VALUE_ENDING_TYPES.has(this.lastTokenType)) {
+          if (ch2 === "=") {
+            this.emit(TokenType.SlashEq, "/=", start, 2);
+          } else {
+            this.emit(TokenType.Slash, "/", start, 1);
+          }
+        } else {
+          this.pushToken(this.readRegex(start));
+        }
+        continue;
+      }
+      if (this.isDigit(ch)) {
+        this.pushToken(this.readNumber(start));
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        this.pushToken(this.readString(start));
+        continue;
+      }
+      if (ch === "`") {
+        this.pushToken({ type: TokenType.TemplateStart, value: "`", pos: start });
+        this.pos++;
+        this.readTemplateChunk(start);
+        continue;
+      }
+      if (this.isIdentStart(ch)) {
+        const ident = this.readIdent();
+        const tok = this.keywordToken(ident, start);
+        this.pushToken(tok);
+        continue;
+      }
+      throw new LexError(`Unexpected character '${ch}' at position ${start}`, start);
+    }
+    this.tokens.push({ type: TokenType.EOF, value: "", pos: len });
+  }
+  emit(type, value, pos, len) {
+    this.pushToken({ type, value, pos });
+    this.pos += len;
+  }
+  static {
+    // ECMAScript LineTerminator set: U+000A (LF), U+000D (CR),
+    // U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR).
+    // Use \u escapes — LSEP/PSEP render invisibly in most editors.
+    this.LINE_TERMINATORS = /[\n\r\u2028\u2029]/;
+  }
+  // Whitespace + JS-style comments. Both forms are pure trivia: discarded
+  // here, never reach the token stream or AST. Loop until neither pass
+  // makes progress, so any sequence of mixed whitespace and comments
+  // collapses to a single trivia run (matches JS).
+  skipTrivia() {
+    while (this.pos < this.src.length) {
+      const before = this.pos;
+      while (this.pos < this.src.length && /\s/.test(this.src[this.pos])) {
+        this.pos++;
+      }
+      if (this.pos < this.src.length && this.src[this.pos] === "/") {
+        const next = this.src[this.pos + 1];
+        if (next === "/") this.skipLineComment();
+        else if (next === "*") this.skipBlockComment();
+        else break;
+      }
+      if (this.pos === before) break;
+    }
+  }
+  // // line comments: skip until any LineTerminator or EOF. The terminator
+  // itself stays for the whitespace pass on the next skipTrivia iteration —
+  // this keeps positional reporting honest and lets future line/column
+  // tracking count newlines in one place.
+  skipLineComment() {
+    this.pos += 2;
+    while (this.pos < this.src.length && !_Lexer.LINE_TERMINATORS.test(this.src[this.pos])) {
+      this.pos++;
+    }
+  }
+  // /* block comments */: scan for the closing */, EOF means unclosed.
+  // No nesting (matches JS — the first */ closes).
+  skipBlockComment() {
+    const start = this.pos;
+    this.pos += 2;
+    while (this.pos + 1 < this.src.length) {
+      if (this.src[this.pos] === "*" && this.src[this.pos + 1] === "/") {
+        this.pos += 2;
+        return;
+      }
+      this.pos++;
+    }
+    throw new LexError(`Unclosed block comment starting at position ${start}`, start);
+  }
+  isDigit(ch) {
+    return ch >= "0" && ch <= "9";
+  }
+  isIdentStart(ch) {
+    return ch >= "a" && ch <= "z" || ch >= "A" && ch <= "Z" || ch === "_";
+  }
+  isIdentPart(ch) {
+    return this.isIdentStart(ch) || this.isDigit(ch);
+  }
+  readNumber(start) {
+    const src = this.src;
+    let i = this.pos;
+    i = this.consumeDigitsWithSeparators(i, start);
+    let hasFraction = false;
+    let hasExponent = false;
+    if (i < src.length && src[i] === "." && i + 1 < src.length && this.isDigit(src[i + 1])) {
+      hasFraction = true;
+      i++;
+      i = this.consumeDigitsWithSeparators(i, start);
+    }
+    if (i < src.length && (src[i] === "e" || src[i] === "E")) {
+      hasExponent = true;
+      i++;
+      if (i < src.length && (src[i] === "+" || src[i] === "-")) i++;
+      i = this.consumeDigitsWithSeparators(i, start);
+    }
+    if (i < src.length && src[i] === "n") {
+      if (hasFraction || hasExponent) {
+        throw new LexError(
+          `Invalid BigInt literal at position ${start}: 'n' suffix requires an integer (no fraction or exponent)`,
+          start
+        );
+      }
+      const raw2 = src.slice(this.pos, i);
+      const value2 = raw2.replace(/_/g, "");
+      this.pos = i + 1;
+      return { type: TokenType.BigInt, value: value2, pos: start };
+    }
+    const raw = src.slice(this.pos, i);
+    const value = raw.replace(/_/g, "");
+    this.pos = i;
+    return { type: TokenType.Number, value, pos: start };
+  }
+  /**
+   * Consume a run of digits, allowing single underscores between them as numeric
+   * separators (1_000_000). Rejects leading, trailing, or doubled underscores.
+   */
+  consumeDigitsWithSeparators(i, start) {
+    const src = this.src;
+    if (i >= src.length || !this.isDigit(src[i])) return i;
+    i++;
+    while (i < src.length) {
+      const ch = src[i];
+      if (this.isDigit(ch)) {
+        i++;
+        continue;
+      }
+      if (ch === "_") {
+        const next = src[i + 1];
+        if (next === void 0 || !this.isDigit(next)) {
+          throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
+        }
+        i++;
+        continue;
+      }
+      break;
+    }
+    return i;
+  }
+  readString(start) {
+    const src = this.src;
+    const quote = src[this.pos];
+    this.pos++;
+    let result = "";
+    while (this.pos < src.length && src[this.pos] !== quote) {
+      if (src[this.pos] === "\\") {
+        this.pos++;
+        const esc = src[this.pos];
+        switch (esc) {
+          case "n":
+            result += "\n";
+            break;
+          case "t":
+            result += "	";
+            break;
+          case "r":
+            result += "\r";
+            break;
+          case "\\":
+            result += "\\";
+            break;
+          case '"':
+            result += '"';
+            break;
+          case "'":
+            result += "'";
+            break;
+          default:
+            result += esc;
+        }
+      } else {
+        result += src[this.pos];
+      }
+      this.pos++;
+    }
+    if (this.pos >= src.length) {
+      throw new LexError(`Unterminated string at position ${start}`, start);
+    }
+    this.pos++;
+    return { type: TokenType.String, value: result, pos: start };
+  }
+  /**
+   * Read a chunk of a template literal — characters between the previous boundary
+   * (opening `, or `${...}`) and the next boundary (closing `, or `${`).
+   *
+   * Always emits a TemplateChars token (possibly empty) followed by either:
+   *   - TemplateExprStart for `${`, then returns to caller (main lex loop resumes
+   *     normal lexing inside the expression — the matching `}` re-enters this method)
+   *   - TemplateEnd for closing backtick, then returns
+   */
+  readTemplateChunk(initialStart) {
+    const src = this.src;
+    const chunkStart = this.pos;
+    let result = "";
+    while (this.pos < src.length) {
+      const ch = src[this.pos];
+      if (ch === "`") {
+        this.pushToken({ type: TokenType.TemplateChars, value: result, pos: chunkStart });
+        this.pushToken({ type: TokenType.TemplateEnd, value: "`", pos: this.pos });
+        this.pos++;
+        return;
+      }
+      if (ch === "$" && src[this.pos + 1] === "{") {
+        this.pushToken({ type: TokenType.TemplateChars, value: result, pos: chunkStart });
+        this.pushToken({ type: TokenType.TemplateExprStart, value: "${", pos: this.pos });
+        this.pos += 2;
+        this.templateBraceDepths.push(this.braceDepth);
+        return;
+      }
+      if (ch === "\\") {
+        this.pos++;
+        const esc = src[this.pos];
+        switch (esc) {
+          case "n":
+            result += "\n";
+            break;
+          case "t":
+            result += "	";
+            break;
+          case "r":
+            result += "\r";
+            break;
+          case "\\":
+            result += "\\";
+            break;
+          case "`":
+            result += "`";
+            break;
+          case "$":
+            result += "$";
+            break;
+          default:
+            result += esc;
+        }
+        this.pos++;
+        continue;
+      }
+      result += ch;
+      this.pos++;
+    }
+    throw new LexError(`Unterminated template literal at position ${initialStart}`, initialStart);
+  }
+  readRegex(start) {
+    const src = this.src;
+    this.pos++;
+    let pattern = "";
+    let inClass = false;
+    while (this.pos < src.length) {
+      const ch = src[this.pos];
+      if (ch === "\\") {
+        this.pos++;
+        if (this.pos < src.length) {
+          pattern += "\\" + src[this.pos];
+          this.pos++;
+        }
+        continue;
+      }
+      if (ch === "[") {
+        inClass = true;
+        pattern += ch;
+        this.pos++;
+        continue;
+      }
+      if (ch === "]") {
+        inClass = false;
+        pattern += ch;
+        this.pos++;
+        continue;
+      }
+      if (ch === "/" && !inClass) {
+        this.pos++;
+        break;
+      }
+      if (ch === "\n") {
+        throw new LexError(`Unterminated regex literal at position ${start}`, start);
+      }
+      pattern += ch;
+      this.pos++;
+    }
+    let flags = "";
+    while (this.pos < src.length && /[gimsuy]/.test(src[this.pos])) {
+      flags += src[this.pos];
+      this.pos++;
+    }
+    return { type: TokenType.RegexLiteral, value: pattern, flags, pos: start };
+  }
+  readIdent() {
+    const src = this.src;
+    let i = this.pos;
+    while (i < src.length && this.isIdentPart(src[i])) i++;
+    const ident = src.slice(this.pos, i);
+    this.pos = i;
+    return ident;
+  }
+  keywordToken(ident, pos) {
+    switch (ident) {
+      case "true":
+        return { type: TokenType.True, value: "true", pos };
+      case "false":
+        return { type: TokenType.False, value: "false", pos };
+      case "null":
+        return { type: TokenType.Null, value: "null", pos };
+      case "undefined":
+        return { type: TokenType.Undefined, value: "undefined", pos };
+      case "in":
+        return { type: TokenType.In, value: "in", pos };
+      case "new":
+        return { type: TokenType.New, value: "new", pos };
+      case "typeof":
+        return { type: TokenType.Typeof, value: "typeof", pos };
+      case "delete":
+        return { type: TokenType.Delete, value: "delete", pos };
+      case "let":
+        return { type: TokenType.Let, value: "let", pos };
+      case "const":
+        return { type: TokenType.Const, value: "const", pos };
+      default:
+        return { type: TokenType.Ident, value: ident, pos };
+    }
+  }
+};
+
+// src/levenshtein.ts
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const prev = new Array(n + 1);
+  const curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+  return prev[n];
+}
+function closestNameTo(name, candidates) {
+  let best = null;
+  for (const candidate of candidates) {
+    const d = levenshtein(name, candidate);
+    if (best === null || d < best.dist) best = { name: candidate, dist: d };
+  }
+  if (best === null) return null;
+  if (best.dist <= 2 && best.dist < name.length) return best.name;
+  return null;
+}
+function didYouMean(name, candidates, format = (s) => `.${s}()`) {
+  const suggestion = closestNameTo(name, candidates);
+  return suggestion ? ` Did you mean '${format(suggestion)}'?` : "";
+}
+
+// src/ast.ts
+var MATH_METHODS = [
+  "abs",
+  "ceil",
+  "floor",
+  "round",
+  "pow",
+  "sqrt",
+  "exp",
+  "log",
+  "log2",
+  "log10",
+  "trunc",
+  "min",
+  "max",
+  "sign",
+  "hypot",
+  "cbrt",
+  "random",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "atan2",
+  "sinh",
+  "cosh",
+  "tanh",
+  "asinh",
+  "acosh",
+  "atanh"
+];
+var MATH_CONSTANTS = ["PI", "E"];
+var OBJECT_METHODS = ["keys", "values", "entries", "assign", "fromEntries", "groupBy"];
+var NUMBER_STATICS = ["isInteger", "isNaN", "isFinite"];
+var SET_METHODS = ["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"];
+
+// src/parser.ts
+var ParseError = class extends Error {
+  constructor(message, pos) {
+    super(message);
+    this.name = "ParseError";
+    this.pos = pos;
+  }
+};
+var FunctionInputError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "FunctionInputError";
+    this.pos = pos;
+  }
+};
+var UNARY_MATH_CALLABLES = /* @__PURE__ */ new Set([
+  "abs",
+  "ceil",
+  "floor",
+  "round",
+  "sqrt",
+  "exp",
+  "log",
+  "log2",
+  "log10",
+  "trunc",
+  "sign",
+  "cbrt",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "sinh",
+  "cosh",
+  "tanh"
+]);
+var MATH_METHODS2 = new Set(MATH_METHODS);
+var MATH_CONSTANTS2 = new Set(MATH_CONSTANTS);
+var OBJECT_METHODS2 = new Set(OBJECT_METHODS);
+var TYPE_CAST_NAMES = /* @__PURE__ */ new Set(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
+var BARE_CAST_NAMES = /* @__PURE__ */ new Set(["Number", "String", "Boolean"]);
+function compoundBinaryOp(op) {
+  switch (op) {
+    case "+=":
+      return "+";
+    case "-=":
+      return "-";
+    case "*=":
+      return "*";
+    case "/=":
+      return "/";
+  }
+}
+var MAX_RECURSION_DEPTH = 200;
+var Parser = class {
+  constructor(src) {
+    this.depth = 0;
+    this.lexer = new Lexer(src);
+  }
+  parse() {
+    const stmts = [this.collectStatement()];
+    let sawSemi = false;
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+      sawSemi = true;
+      if (this.lexer.peek().type === TokenType.EOF) break;
+      stmts.push(this.collectStatement());
+    }
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
+    }
+    if (!sawSemi) {
+      const only = stmts[0];
+      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
+      return only;
+    }
+    return { type: "Pipeline", stmts, pos: stmts[0].pos };
+  }
+  /**
+   * Entry point for the function-input form (`jsmql(($) => …)`). The source
+   * is the result of `Function.prototype.toString.call(fn)` — a full arrow
+   * function expression. We consume the parameter list and `=>`, then dispatch
+   * to either a block-body parser (`{ stmt; stmt; }`, the function-form mirror
+   * of the implicit `;`-separated pipeline) or an expression-body parser (a
+   * single jsmql expression / update op, with one optional trailing `;` allowed
+   * as a formatter artifact — single-statement bodies do NOT flip into pipeline
+   * mode here).
+   *
+   * Raises `FunctionInputError` for shape problems specific to the adapter
+   * (`async`, `function`, missing arrow, `return` in a block body, …) and
+   * `ParseError`/`LexError` for grammar problems inside the body itself.
+   */
+  parseFunctionInput() {
+    const first = this.lexer.peek();
+    if (first.type === TokenType.Ident && first.value === "async") {
+      throw new FunctionInputError(
+        "jsmql does not support async functions. Use a synchronous arrow: `($) => \u2026`",
+        first.pos
+      );
+    }
+    if (first.type === TokenType.Ident && first.value === "function") {
+      throw new FunctionInputError(
+        "jsmql expects an arrow function, got a `function` declaration. Use: `($) => \u2026`",
+        first.pos
+      );
+    }
+    if (first.type !== TokenType.LParen) {
+      throw new FunctionInputError("jsmql expects an arrow function `($) => \u2026` as the function-form input.", first.pos);
+    }
+    const bindings = this.parseParameterList();
+    const arrowTok = this.lexer.peek();
+    if (arrowTok.type !== TokenType.Arrow) {
+      throw new FunctionInputError(
+        "jsmql could not find an arrow operator (`=>`) in the function source. Use: `($) => \u2026`",
+        arrowTok.pos
+      );
+    }
+    this.lexer.next();
+    const program = this.lexer.peek().type === TokenType.LBrace ? this.parseBlockBody() : this.parseExpressionBody();
+    return { program, bindings };
+  }
+  /**
+   * Parse and classify the parenthesised parameter list of the function-form
+   * arrow. Each top-level parameter slot is one of three *shapes*:
+   *
+   *   - **Plain identifier** (`$`, `doc`, anything) — the document-context slot.
+   *     Discarded; the body parser doesn't need the name.
+   *   - **Destructure pattern with all keys starting with `$`** (`{ $dateDiff }`,
+   *     `{ $match, $project }`) — the ops-hint slot (types-only IDE
+   *     autocomplete). Discarded; the keys don't reach codegen.
+   *   - **Destructure pattern with at least one non-`$` key** (`{ minAge }`) —
+   *     the function-form parameter bindings. Names are returned so codegen can
+   *     inline values supplied at `jsmql.compile()` call time.
+   *
+   * The legal slot orderings are: `()`, `(doc)`, `(ops)`, `(params)`,
+   * `(doc, ops)`, `(params, doc)`, `(params, ops)`, `(params, doc, ops)`.
+   * Anything else throws `FunctionInputError` with a precise message.
+   *
+   * Returns the binding names extracted from the params slot (in source
+   * order). Cursor is left immediately after the closing `)`.
+   */
+  parseParameterList() {
+    this.lexer.next();
+    const slots = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      while (true) {
+        slots.push(this.parseParameterSlot());
+        const sep = this.lexer.peek();
+        if (sep.type === TokenType.Comma) {
+          this.lexer.next();
+          continue;
+        }
+        if (sep.type === TokenType.RParen) break;
+        throw new FunctionInputError(
+          `jsmql could not parse the function parameter list \u2014 expected ',' or ')' at position ${sep.pos}, got '${sep.value}'.`,
+          sep.pos
+        );
+      }
+    }
+    const closeParen = this.lexer.next();
+    if (slots.length > 3) {
+      throw new FunctionInputError(
+        `jsmql's compile-form arrow takes at most three parameters in the order \`(params, $, opsHint)\`. Got ${slots.length} parameters. Reorder to \`(params, $, opsHint)\` and drop any extras.`,
+        closeParen.pos
+      );
+    }
+    let sawParams = false;
+    let sawDoc = false;
+    let sawOps = false;
+    let bindings = [];
+    for (const slot of slots) {
+      if (slot.kind === "params") {
+        if (sawParams) {
+          throw new FunctionInputError(
+            "jsmql params destructure may only appear once. Combine the bindings into a single parameter: `({ a, b }, \u2026) => \u2026`.",
+            slot.pos
+          );
+        }
+        if (sawDoc || sawOps) {
+          throw new FunctionInputError(
+            "jsmql expects the params destructure to appear before the `$` doc-context parameter and the ops-hint destructure. Reorder to `(params, $, opsHint)`.",
+            slot.pos
+          );
+        }
+        sawParams = true;
+        bindings = slot.bindings;
+      } else if (slot.kind === "doc") {
+        if (sawDoc) {
+          throw new FunctionInputError(
+            "jsmql's compile-form arrow takes at most one document-context parameter (`$`).",
+            slot.pos
+          );
+        }
+        if (sawOps) {
+          throw new FunctionInputError(
+            "jsmql expects the `$` doc-context parameter to appear before the ops-hint destructure. Reorder to `(params, $, opsHint)`.",
+            slot.pos
+          );
+        }
+        sawDoc = true;
+      } else {
+        if (sawOps) {
+          throw new FunctionInputError(
+            "jsmql's compile-form arrow takes at most one ops-hint destructure (e.g. `{ $match }`).",
+            slot.pos
+          );
+        }
+        sawOps = true;
+      }
+    }
+    return bindings;
+  }
+  /**
+   * Parse a single parameter slot and classify it by shape. Called by
+   * `parseParameterList`; advances the lexer past the slot.
+   */
+  parseParameterSlot() {
+    const head = this.lexer.peek();
+    if (head.type === TokenType.LBracket) {
+      throw new FunctionInputError(
+        "jsmql params must be an object destructure pattern: `{ a, b }`. Array destructure is not accepted \u2014 params are always named, never positional.",
+        head.pos
+      );
+    }
+    if (head.type === TokenType.Ident) {
+      this.lexer.next();
+      return { kind: "doc", pos: head.pos };
+    }
+    if (head.type === TokenType.Dollar) {
+      this.lexer.next();
+      return { kind: "doc", pos: head.pos };
+    }
+    if (head.type !== TokenType.LBrace) {
+      throw new FunctionInputError(
+        `jsmql expects each parameter to be an identifier or an object destructure pattern. Got '${head.value}' at position ${head.pos}.`,
+        head.pos
+      );
+    }
+    return this.parseDestructureSlot();
+  }
+  /**
+   * Parse `{ key (: alias)? (, key)* (,)? }` and classify the slot as `ops`
+   * (every key starts with `$`) or `params` (at least one non-`$` key).
+   * Rejects defaults, nested destructure, rest, and mixed `$`/non-`$` keys
+   * with the user-facing error messages from `docs/LANGUAGE.md`.
+   */
+  parseDestructureSlot() {
+    const openBrace = this.lexer.next();
+    const opsKeys = [];
+    const paramBindings = [];
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      this.lexer.next();
+      return { kind: "ops", pos: openBrace.pos };
+    }
+    while (true) {
+      const key = this.lexer.peek();
+      if (key.type === TokenType.Spread) {
+        throw new FunctionInputError(
+          "jsmql does not support rest patterns in params: `{ ...rest }`. The set of bindings must be statically known at compile time so the generated MQL can reference each by name. List each binding explicitly: `{ a, b, c }`.",
+          key.pos
+        );
+      }
+      let keyName;
+      let isOpsKey;
+      if (key.type === TokenType.Dollar) {
+        this.lexer.next();
+        const ident = this.lexer.peek();
+        if (ident.type !== TokenType.Ident) {
+          throw new FunctionInputError(
+            `jsmql expected an identifier after '$' in the destructure key at position ${ident.pos}.`,
+            ident.pos
+          );
+        }
+        this.lexer.next();
+        keyName = `$${ident.value}`;
+        isOpsKey = true;
+      } else if (key.type === TokenType.Ident) {
+        this.lexer.next();
+        keyName = key.value;
+        isOpsKey = false;
+      } else {
+        throw new FunctionInputError(
+          `jsmql expected an identifier in the destructure pattern at position ${key.pos}, got '${key.value}'.`,
+          key.pos
+        );
+      }
+      let bindingName = keyName;
+      if (this.lexer.peek().type === TokenType.Colon) {
+        this.lexer.next();
+        const alias = this.lexer.peek();
+        if (alias.type === TokenType.LBrace || alias.type === TokenType.LBracket) {
+          throw new FunctionInputError(
+            "jsmql does not support nested destructure in params: `{ <name>: { \u2026 } }`. Params is a flat key\u2192value map at the MQL level. Use a single level of destructure and reference nested fields explicitly at the call site, e.g. `q({ b: source.a.b })`.",
+            alias.pos
+          );
+        }
+        if (alias.type !== TokenType.Ident) {
+          throw new FunctionInputError(
+            `jsmql expected an alias identifier after ':' in the destructure pattern at position ${alias.pos}, got '${alias.value}'.`,
+            alias.pos
+          );
+        }
+        this.lexer.next();
+        bindingName = alias.value;
+      }
+      if (this.lexer.peek().type === TokenType.Eq) {
+        const defaultTok = this.lexer.peek();
+        throw new FunctionInputError(
+          "jsmql does not support default values in the params destructure: `{ <name> = <expr> }`.\n\njsmql compiles your function to MQL at parse time. It reads the function's source text but cannot evaluate the default expression \u2014 for `= config.minAge` or `= Date.now()` there is no runtime to ask, since jsmql never actually calls your arrow. Restricting defaults to literals (`= 18`) would make the rule silently inconsistent with the rest of the destructure, where any value is fine at call time.\n\nInstead:\n  - For a runtime fallback, use JS's `??` at the call site: `q({ minAge: input ?? 18 })`.\n  - For a value that's always the same and never overridden, the template-tag form already inlines hardcoded values: `` jsmql`$.age > ${18}` ``.",
+          defaultTok.pos
+        );
+      }
+      if (isOpsKey) opsKeys.push(keyName);
+      else paramBindings.push({ key: keyName, name: bindingName });
+      const sep = this.lexer.peek();
+      if (sep.type === TokenType.Comma) {
+        this.lexer.next();
+        if (this.lexer.peek().type === TokenType.RBrace) break;
+        continue;
+      }
+      if (sep.type === TokenType.RBrace) break;
+      throw new FunctionInputError(
+        `jsmql could not parse the destructure pattern \u2014 expected ',' or '}' at position ${sep.pos}, got '${sep.value}'.`,
+        sep.pos
+      );
+    }
+    this.lexer.next();
+    if (opsKeys.length > 0 && paramBindings.length > 0) {
+      throw new FunctionInputError(
+        "jsmql expects the operator-hint destructure (e.g. `{ $match, $project }`) to be separate from the params destructure (e.g. `{ minAge }`). Split into two parameters: `(params, $, opsHint) => \u2026`.",
+        openBrace.pos
+      );
+    }
+    if (paramBindings.length > 0) return { kind: "params", bindings: paramBindings, pos: openBrace.pos };
+    return { kind: "ops", pos: openBrace.pos };
+  }
+  /**
+   * Parse the body of a block-body arrow: `{ stmt (; stmt)* ;? }`. This is
+   * structurally the same as the top-level `;`-separated pipeline form
+   * (see `parse()`), terminated by `}` instead of EOF. A single-statement
+   * block body without `;` returns the underlying `Expr`/`UpdateFilter`
+   * unchanged; any `;` (including a trailing one) wraps as a `Pipeline`.
+   *
+   * `return` is rejected up front with a precise `FunctionInputError` so the
+   * user gets a clear pointer to either the `;`-separated form or an
+   * expression-body arrow, instead of the parser's generic "unknown
+   * identifier" message.
+   */
+  parseBlockBody() {
+    const openBrace = this.lexer.next();
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      throw new FunctionInputError("jsmql expects at least one statement inside a block-body arrow.", openBrace.pos);
+    }
+    this.rejectReturn();
+    const stmts = [this.collectStatement()];
+    let sawSemi = false;
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+      sawSemi = true;
+      if (this.lexer.peek().type === TokenType.RBrace) break;
+      this.rejectReturn();
+      stmts.push(this.collectStatement());
+    }
+    const closeTok = this.lexer.peek();
+    if (closeTok.type !== TokenType.RBrace) {
+      throw new ParseError(`Expected '}' to close the block body at position ${closeTok.pos}`, closeTok.pos);
+    }
+    this.lexer.next();
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+    if (!sawSemi) {
+      const only = stmts[0];
+      if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
+      return only;
+    }
+    return { type: "Pipeline", stmts, pos: stmts[0].pos };
+  }
+  /**
+   * Parse the body of an expression-body arrow: a single jsmql statement,
+   * with one optional trailing `;` consumed as a formatter artifact. The
+   * trailing `;` does NOT trigger pipeline mode here — single-statement
+   * expression bodies preserve their object-shaped output, matching the
+   * documented contract for `jsmql(($) => …)`.
+   */
+  parseExpressionBody() {
+    const stmt = this.collectStatement();
+    if (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+    }
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+    if (stmt.type === "LetDecl") this.throwLetOutsidePipeline(stmt.name, stmt.pos);
+    return stmt;
+  }
+  /**
+   * Raised when a `let` declaration appears at the top of an input that turns
+   * out to be expression-mode (no `;` separator, not a bracketed pipeline).
+   * `let` only makes sense as a pipeline statement — there's no enclosing
+   * scope for the binding to live in otherwise.
+   */
+  throwLetOutsidePipeline(name, pos) {
+    throw new ParseError(
+      `\`let ${name} = \u2026\` is only valid inside a pipeline. Add at least one more statement separated by \`;\` to flip into pipeline mode (e.g. \`let ${name} = \u2026; { $project: \u2026 }\`). The bracketed pipeline form \`[ let ${name} = \u2026, \u2026 ]\` works too.`,
+      pos
+    );
+  }
+  /**
+   * Throw a precise `FunctionInputError` if the next token is the bare
+   * identifier `return`. Called at every statement-start position inside
+   * a block body, so a `return` token *inside* a string or expression
+   * (where it would just be a property name like `obj.return`) doesn't
+   * false-fire — only true statement-leading `return`s reach this check.
+   */
+  rejectReturn() {
+    const tok = this.lexer.peek();
+    if (tok.type === TokenType.Ident && tok.value === "return") {
+      throw new FunctionInputError(
+        "jsmql block-body arrows are a sequence of jsmql statements, not JavaScript control flow. Remove `return` \u2014 write the body as `;`-separated jsmql statements, or switch to an expression-body arrow `($) => EXPR`.",
+        tok.pos
+      );
+    }
+  }
+  /**
+   * Parse one top-level statement: either an expression or a update op chain
+   * (one or more comma-separated update ops sharing a stage). Stops at the
+   * first `;` or EOF; the caller (`parse()`) handles the `;` boundary.
+   */
+  collectStatement() {
+    const first = this.lexer.peek();
+    if (first.type === TokenType.Let || first.type === TokenType.Const) {
+      return this.parseLetDecl();
+    }
+    if (first.type === TokenType.Delete || first.type === TokenType.PlusPlus || first.type === TokenType.MinusMinus) {
+      return this.parseUpdateFilter();
+    }
+    const expr = this.parseExpression();
+    if (this.peekAssignOp() !== null) {
+      this.validateUpdateTarget(expr);
+      return this.parseUpdateFilterFrom(expr);
+    }
+    if (this.peekIncDecOp() !== null) {
+      this.validateUpdateTarget(expr);
+      return this.parseUpdateFilterFromPostfix(expr);
+    }
+    if (expr.type === "AssignExpr") {
+      const ops = [expr];
+      this.parseUpdateFilterRest(ops);
+      return { type: "UpdateFilter", ops, pos: ops[0].pos };
+    }
+    return expr;
+  }
+  // ── Let declaration ──────────────────────────────────────────────────────
+  /**
+   * Parse `let <ident> = <expr>` (or the `const` alias — see
+   * docs/specs/let-bindings.md). The leading `let`/`const` token must already
+   * be the current peek; this consumes it and the rest of the declaration. The
+   * cursor is left at whatever follows the value expression (typically `;` or
+   * `,` in the array-pipeline form). No re-declaration check here — that needs a
+   * pipeline-level view and lives in codegen.
+   */
+  parseLetDecl() {
+    const kwTok = this.lexer.next();
+    const kw = kwTok.value;
+    const ident = this.lexer.peek();
+    if (ident.type !== TokenType.Ident) {
+      throw new ParseError(
+        `Expected an identifier after \`${kw}\` at position ${ident.pos}, got '${ident.value}'`,
+        ident.pos
+      );
+    }
+    this.lexer.next();
+    const eq = this.lexer.peek();
+    if (eq.type !== TokenType.Eq) {
+      throw new ParseError(
+        `Expected '=' after \`${kw} ${ident.value}\` at position ${eq.pos}, got '${eq.value}'. \`${kw}\` requires an initialiser \u2014 write \`${kw} ${ident.value} = <expr>\`.`,
+        eq.pos
+      );
+    }
+    this.lexer.next();
+    const value = this.parseExpression();
+    const kind = kw === "const" ? "const" : "let";
+    return { type: "LetDecl", name: ident.value, value, kind, pos: kwTok.pos };
+  }
+  // ── UpdateOp program ─────────────────────────────────────────────────────
+  /** Entry when the input starts with a update op token (`delete`). */
+  parseUpdateFilter() {
+    const ops = [];
+    ops.push(...this.parseUpdateOp());
+    this.parseUpdateFilterRest(ops);
+    return { type: "UpdateFilter", ops, pos: ops[0].pos };
+  }
+  /** Entry when the first target was already parsed as an expression. */
+  parseUpdateFilterFrom(firstTarget) {
+    const ops = [];
+    ops.push(...this.parseAssignmentChainFrom(firstTarget));
+    this.parseUpdateFilterRest(ops);
+    return { type: "UpdateFilter", ops, pos: ops[0].pos };
+  }
+  /**
+   * Entry when the first target was parsed and is followed by `++` or `--`
+   * (postfix inc/dec). Validation must already have happened.
+   */
+  parseUpdateFilterFromPostfix(firstTarget) {
+    const op = this.peekIncDecOp();
+    if (op === null) {
+      const tok = this.lexer.peek();
+      throw new ParseError(`Expected '++' or '--' at position ${tok.pos}`, tok.pos);
+    }
+    this.lexer.next();
+    const ops = [this.makeIncDecUpdateOp(firstTarget, op)];
+    this.parseUpdateFilterRest(ops);
+    return { type: "UpdateFilter", ops, pos: ops[0].pos };
+  }
+  /**
+   * After the first update op is parsed, consume any `,`-separated tail.
+   * Stops at the first non-`,` token (typically `;` or EOF) and leaves
+   * the cursor there for the caller to handle.
+   */
+  parseUpdateFilterRest(ops) {
+    while (this.peekUpdateOpSeparator()) {
+      this.lexer.next();
+      const next = this.lexer.peek().type;
+      if (next === TokenType.EOF || next === TokenType.Semi) break;
+      ops.push(...this.parseUpdateOp());
+    }
+  }
+  /**
+   * Parse a single update op. Returns an array because a chained assignment
+   * (`$.a = $.b = expr`) flattens to multiple `AssignExpr` nodes here, all
+   * sharing the deepest RHS.
+   */
+  parseUpdateOp() {
+    if (this.lexer.peek().type === TokenType.Delete) {
+      return [this.parseDeleteStmt()];
+    }
+    if (this.peekIncDecOp() !== null) {
+      return [this.parsePrefixIncDec()];
+    }
+    const target = this.parsePostfix();
+    if (target.type === "AssignExpr") {
+      return [target];
+    }
+    this.validateUpdateTarget(target);
+    const postfix = this.peekIncDecOp();
+    if (postfix !== null) {
+      this.lexer.next();
+      return [this.makeIncDecUpdateOp(target, postfix)];
+    }
+    return this.parseAssignmentChainFrom(target);
+  }
+  parseDeleteStmt() {
+    const delTok = this.lexer.next();
+    const target = this.parsePostfix();
+    this.validateUpdateTarget(target);
+    return { type: "DeleteStmt", target, pos: delTok.pos };
+  }
+  /**
+   * Given a target already parsed and validated, expect an assignment operator
+   * and parse the RHS. Handles right-associative chains for `=`; rejects them
+   * for compound operators because `a += b += 1` is too easy to misread.
+   */
+  parseAssignmentChainFrom(target) {
+    const opTok = this.lexer.peek();
+    const op = this.peekAssignOp();
+    if (op === null) {
+      throw new ParseError(`Expected assignment operator at position ${opTok.pos}`, opTok.pos);
+    }
+    this.lexer.next();
+    if (op === "=") {
+      if (this.peekIsAssignmentChainStart()) {
+        const subTarget = this.parsePostfix();
+        this.validateUpdateTarget(subTarget);
+        const sub = this.parseAssignmentChainFrom(subTarget);
+        const deepestValue = sub[sub.length - 1].value;
+        return [{ type: "AssignExpr", target, value: deepestValue, pos: target.pos }, ...sub];
+      }
+      const value = this.parseExpression();
+      return [{ type: "AssignExpr", target, value, pos: target.pos }];
+    }
+    if (this.peekIsAssignmentChainStart()) {
+      const tok = this.lexer.peek();
+      throw new ParseError(
+        `Compound assignment cannot be chained at position ${tok.pos} \u2014 split into separate statements`,
+        tok.pos
+      );
+    }
+    const rhs = this.parseExpression();
+    const desugared = { type: "BinaryExpr", op: compoundBinaryOp(op), left: target, right: rhs, pos: target.pos };
+    return [{ type: "AssignExpr", target, value: desugared, pos: target.pos }];
+  }
+  /**
+   * Returns the assignment operator string at the current position, or null
+   * if the next token is not an assignment operator.
+   */
+  peekAssignOp() {
+    switch (this.lexer.peek().type) {
+      case TokenType.Eq:
+        return "=";
+      case TokenType.PlusEq:
+        return "+=";
+      case TokenType.MinusEq:
+        return "-=";
+      case TokenType.StarEq:
+        return "*=";
+      case TokenType.SlashEq:
+        return "/=";
+      default:
+        return null;
+    }
+  }
+  isAssignOpType(t) {
+    return t === TokenType.Eq || t === TokenType.PlusEq || t === TokenType.MinusEq || t === TokenType.StarEq || t === TokenType.SlashEq;
+  }
+  peekUpdateOpSeparator() {
+    return this.lexer.peek().type === TokenType.Comma;
+  }
+  /**
+   * Returns "++" or "--" if the next token is an inc/dec operator, else null.
+   * Used at both prefix (start of update op) and postfix (after a target)
+   * positions; the caller decides which.
+   */
+  peekIncDecOp() {
+    switch (this.lexer.peek().type) {
+      case TokenType.PlusPlus:
+        return "++";
+      case TokenType.MinusMinus:
+        return "--";
+      default:
+        return null;
+    }
+  }
+  /**
+   * Parse a prefix `++<target>` or `--<target>`. The prefix vs postfix
+   * distinction is irrelevant in MQL pipeline context — both forms compile
+   * to the same `$set: { x: { $add|$subtract: ["$x", 1] } }` shape, since
+   * pipeline stages don't carry "value of expression" semantics.
+   */
+  parsePrefixIncDec() {
+    const op = this.peekIncDecOp();
+    if (op === null) {
+      const tok = this.lexer.peek();
+      throw new ParseError(`Expected '++' or '--' at position ${tok.pos}`, tok.pos);
+    }
+    this.lexer.next();
+    const target = this.parsePostfix();
+    this.validateUpdateTarget(target);
+    return this.makeIncDecUpdateOp(target, op);
+  }
+  /** Build the desugared AssignExpr for `target++` / `target--` / `++target` / `--target`. */
+  makeIncDecUpdateOp(target, op) {
+    const value = {
+      type: "BinaryExpr",
+      op: op === "++" ? "+" : "-",
+      left: target,
+      right: { type: "NumberLiteral", value: 1, pos: target.pos },
+      pos: target.pos
+    };
+    return { type: "AssignExpr", target, value, pos: target.pos };
+  }
+  /**
+   * Lookahead: do the next tokens look like `$.path[.path]* <assignOp>`?
+   * Used to detect the start of a chained assignment's RHS when we're at
+   * the right of a `=` operator. Bounded by the length of the field path
+   * so it's cheap and never false-positive on regular RHS expressions.
+   */
+  peekIsAssignmentChainStart() {
+    if (this.lexer.peek().type !== TokenType.DollarDot) return false;
+    let offset = 1;
+    if (!this.isIdentOrKeyword(this.lexer.lookahead(offset))) return false;
+    offset++;
+    while (this.lexer.lookahead(offset).type === TokenType.Dot) {
+      offset++;
+      if (!this.isIdentOrKeyword(this.lexer.lookahead(offset))) return false;
+      offset++;
+    }
+    return this.isAssignOpType(this.lexer.lookahead(offset).type);
+  }
+  /**
+   * UpdateOp targets are restricted to field paths: a `FieldRef` (`$.x`) or
+   * a chain of `MemberAccess` nodes rooted at one (`$.x.y.z`). Anything else
+   * — index access, function calls, parameter refs, parenthesized expressions
+   * containing operators — is rejected with a precise error.
+   */
+  validateUpdateTarget(target) {
+    if (this.isFieldPathTarget(target)) return;
+    if (this.isOutTarget(target)) return;
+    if (target.type === "ParamRef") return;
+    const pos = this.lexer.peek().pos;
+    if (target.type === "IndexAccess") {
+      throw new ParseError(
+        `UpdateOp target must be a static field path; computed/index access ('[\u2026]') is not supported (at position ${pos})`,
+        pos
+      );
+    }
+    throw new ParseError(
+      `Cannot assign to ${describeUpdateTarget(target)} at position ${pos} \u2014 only field paths like '$.x' or '$.x.y' are assignable.`,
+      pos
+    );
+  }
+  isFieldPathTarget(target) {
+    if (target.type === "FieldRef") return true;
+    if (target.type === "CollectionRef") return true;
+    if (target.type === "MemberAccess") return this.isFieldPathTarget(target.object);
+    return false;
+  }
+  /**
+   * Accept the `$out` sugar LHS shape: one or two static (dot or bracket)
+   * accesses rooted at `DatabaseRef` (`$$$`) or `ClusterRef` (`$$$$`). The
+   * detailed validation (right segment count, no computed bracket) lives in
+   * codegen — at parse time we only commit to "this looks like a write
+   * destination" so the assignment can be built and routed.
+   */
+  isOutTarget(target) {
+    if (target.type === "DatabaseRef" || target.type === "ClusterRef") return true;
+    if (target.type === "MemberAccess") return this.isOutTarget(target.object);
+    if (target.type === "IndexAccess") return this.isOutTarget(target.object);
+    return false;
+  }
+  // ── Precedence hierarchy (low → high) ────────────────────────────────────
+  parseExpression() {
+    if (++this.depth > MAX_RECURSION_DEPTH) {
+      this.depth--;
+      const pos = this.lexer.peek().pos;
+      throw new ParseError(`Expression nests too deeply (max ${MAX_RECURSION_DEPTH} levels) at position ${pos}`, pos);
+    }
+    try {
+      return this.parseTernary();
+    } finally {
+      this.depth--;
+    }
+  }
+  /** ternary:  nullish ("?" expression ":" ternary)?  — right-associative */
+  parseTernary() {
+    const condition = this.parseNullish();
+    if (this.lexer.peek().type !== TokenType.Quest) return condition;
+    this.lexer.next();
+    const consequent = this.parseExpression();
+    const colon = this.lexer.peek();
+    if (colon.type !== TokenType.Colon) {
+      throw new ParseError(`Expected ':' in ternary expression at position ${colon.pos}`, colon.pos);
+    }
+    this.lexer.next();
+    const alternate = this.parseTernary();
+    return { type: "TernaryExpr", condition, consequent, alternate, pos: condition.pos };
+  }
+  /** nullish:  or ("??" or)*  — left-associative, flattened later */
+  parseNullish() {
+    let left = this.parseOr();
+    while (this.lexer.peek().type === TokenType.QuestQuest) {
+      this.lexer.next();
+      const right = this.parseOr();
+      left = { type: "BinaryExpr", op: "??", left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** or:  and ("||" and)*  */
+  parseOr() {
+    let left = this.parseAnd();
+    while (this.lexer.peek().type === TokenType.PipePipe) {
+      this.lexer.next();
+      const right = this.parseAnd();
+      left = { type: "BinaryExpr", op: "||", left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** and:  bitOr ("&&" bitOr)*  */
+  parseAnd() {
+    let left = this.parseBitOr();
+    while (this.lexer.peek().type === TokenType.AmpAmp) {
+      this.lexer.next();
+      const right = this.parseBitOr();
+      left = { type: "BinaryExpr", op: "&&", left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** bitOr:  bitXor ("|" bitXor)*  */
+  parseBitOr() {
+    let left = this.parseBitXor();
+    while (this.lexer.peek().type === TokenType.Pipe) {
+      this.lexer.next();
+      const right = this.parseBitXor();
+      left = { type: "BinaryExpr", op: "|", left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** bitXor:  bitAnd ("^" bitAnd)*  */
+  parseBitXor() {
+    let left = this.parseBitAnd();
+    while (this.lexer.peek().type === TokenType.Caret) {
+      this.lexer.next();
+      const right = this.parseBitAnd();
+      left = { type: "BinaryExpr", op: "^", left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** bitAnd:  comparison ("&" comparison)*  */
+  parseBitAnd() {
+    let left = this.parseComparison();
+    while (this.lexer.peek().type === TokenType.Amp) {
+      this.lexer.next();
+      const right = this.parseComparison();
+      left = { type: "BinaryExpr", op: "&", left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /**
+   * comparison:  relational [ (==|!=|===|!==) relational ]
+   * Non-chainable. Lower precedence than relational (<, <=, >, >=, in) to match JS.
+   */
+  parseComparison() {
+    const left = this.parseRelational();
+    const op = this.peekEqualityOp();
+    if (!op) return left;
+    this.lexer.next();
+    const right = this.parseRelational();
+    return { type: "BinaryExpr", op, left, right, pos: left.pos };
+  }
+  peekEqualityOp() {
+    switch (this.lexer.peek().type) {
+      case TokenType.EqEq:
+        return "==";
+      case TokenType.EqEqEq:
+        return "===";
+      case TokenType.BangEq:
+        return "!=";
+      case TokenType.BangEqEq:
+        return "!==";
+      default:
+        return null;
+    }
+  }
+  /**
+   * relational:  additive [ (<|<=|>|>=|in) additive ]
+   * Non-chainable. Higher precedence than equality to match JS.
+   */
+  parseRelational() {
+    const left = this.parseAdditive();
+    const op = this.peekRelationalOp();
+    if (!op) return left;
+    this.lexer.next();
+    const right = this.parseAdditive();
+    return { type: "BinaryExpr", op, left, right, pos: left.pos };
+  }
+  peekRelationalOp() {
+    switch (this.lexer.peek().type) {
+      case TokenType.Gt:
+        return ">";
+      case TokenType.GtEq:
+        return ">=";
+      case TokenType.Lt:
+        return "<";
+      case TokenType.LtEq:
+        return "<=";
+      case TokenType.In:
+        return "in";
+      default:
+        return null;
+    }
+  }
+  /** additive:  multiplicative ((+|-) multiplicative)*  */
+  parseAdditive() {
+    let left = this.parseMultiplicative();
+    while (this.lexer.peek().type === TokenType.Plus || this.lexer.peek().type === TokenType.Minus) {
+      const op = this.lexer.next().type === TokenType.Plus ? "+" : "-";
+      const right = this.parseMultiplicative();
+      left = { type: "BinaryExpr", op, left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** multiplicative:  power ((*|/|%) power)*  */
+  parseMultiplicative() {
+    let left = this.parsePower();
+    for (; ; ) {
+      const t = this.lexer.peek().type;
+      let op = null;
+      if (t === TokenType.Star) op = "*";
+      else if (t === TokenType.Slash) op = "/";
+      else if (t === TokenType.Percent) op = "%";
+      if (!op) break;
+      this.lexer.next();
+      const right = this.parsePower();
+      left = { type: "BinaryExpr", op, left, right, pos: left.pos };
+    }
+    return left;
+  }
+  /** power:  unary ("**" power)?  — right-associative  */
+  parsePower() {
+    const left = this.parseUnary();
+    if (this.lexer.peek().type !== TokenType.StarStar) return left;
+    this.lexer.next();
+    const right = this.parsePower();
+    return { type: "BinaryExpr", op: "**", left, right, pos: left.pos };
+  }
+  /** unary:  typeof | ("!"|"-"|"~") unary  |  postfix  */
+  parseUnary() {
+    const t = this.lexer.peek();
+    if (t.type === TokenType.Typeof) {
+      this.lexer.next();
+      const operand = this.parseUnary();
+      return { type: "TypeofExpr", operand, pos: t.pos };
+    }
+    if (t.type === TokenType.Bang) {
+      this.lexer.next();
+      const operand = this.parseUnary();
+      return { type: "UnaryExpr", op: "!", operand, pos: t.pos };
+    }
+    if (t.type === TokenType.Minus) {
+      this.lexer.next();
+      const operand = this.parseUnary();
+      return { type: "UnaryExpr", op: "-", operand, pos: t.pos };
+    }
+    if (t.type === TokenType.Tilde) {
+      this.lexer.next();
+      const operand = this.parseUnary();
+      return { type: "UnaryExpr", op: "~", operand, pos: t.pos };
+    }
+    return this.parsePostfix();
+  }
+  /**
+   * postfix:  primary ( "[" expression "]" | "." member | "?." member | "?.[" expression "]" )*
+   *
+   * Optional chaining (`?.`) produces the same AST node shape as the non-optional
+   * counterpart, but with `optional: true`. The codegen consults this flag at every
+   * null-unsafe consumer site (array spread, array/string method receivers, string
+   * `$concat`, template-literal interpolations, `.length`, `Object.keys`/etc.) to
+   * wrap the chain's result with `$ifNull(v, neutral)`, where `neutral` is `[]`
+   * / `""` / `{}` depending on the consumer. See `chainHasOptional` /
+   * `wrapIfNull` in src/codegen.ts and docs/specs/method-dispatch.md.
+   */
+  parsePostfix() {
+    let left = this.parsePrimary();
+    for (; ; ) {
+      const t = this.lexer.peek().type;
+      if (t === TokenType.LParen) {
+        const args = this.parseMethodCallArgs();
+        left = { type: "CallExpression", callee: left, args, pos: left.pos };
+        continue;
+      }
+      if (t === TokenType.LBracket) {
+        this.lexer.next();
+        const index = this.parseExpression();
+        const close = this.lexer.peek();
+        if (close.type !== TokenType.RBracket) {
+          throw new ParseError(`Expected ']' after index expression at position ${close.pos}`, close.pos);
+        }
+        this.lexer.next();
+        left = { type: "IndexAccess", object: left, index, pos: left.pos };
+      } else if (t === TokenType.Dot || t === TokenType.QuestDot) {
+        const isOptional = t === TokenType.QuestDot;
+        this.lexer.next();
+        if (isOptional && this.lexer.peek().type === TokenType.LBracket) {
+          this.lexer.next();
+          const index = this.parseExpression();
+          const close = this.lexer.peek();
+          if (close.type !== TokenType.RBracket) {
+            throw new ParseError(`Expected ']' after index expression at position ${close.pos}`, close.pos);
+          }
+          this.lexer.next();
+          left = { type: "IndexAccess", object: left, index, pos: left.pos, optional: true };
+          continue;
+        }
+        const member = this.lexer.peek();
+        if (!this.isIdentOrKeyword(member)) {
+          throw new ParseError(`Expected property name after '.' at position ${member.pos}`, member.pos);
+        }
+        this.lexer.next();
+        if (this.lexer.peek().type === TokenType.LParen) {
+          const allowBlockBody = (member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left) || member.value === "filter" && left.type === "CollectionRef";
+          const args = this.parseMethodCallArgs(allowBlockBody);
+          left = {
+            type: "MethodCall",
+            object: left,
+            method: member.value,
+            args,
+            pos: left.pos,
+            ...isOptional && { optional: true }
+          };
+        } else {
+          left = {
+            type: "MemberAccess",
+            object: left,
+            member: member.value,
+            pos: left.pos,
+            ...isOptional && { optional: true }
+          };
+        }
+      } else {
+        break;
+      }
+    }
+    return left;
+  }
+  /** Parse method call argument list: "(" [argOrLambda (, argOrLambda)*] ")" */
+  parseMethodCallArgs(allowBlockBody = false) {
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return [];
+    }
+    const args = [this.parseCallArg(allowBlockBody)];
+    while (this.lexer.peek().type === TokenType.Comma) {
+      this.lexer.next();
+      args.push(this.parseCallArg(allowBlockBody));
+    }
+    this.lexer.expect(TokenType.RParen);
+    return args;
+  }
+  /**
+   * Parse one argument in a call site. Allows:
+   *   - ...expr (spread)
+   *   - lambda forms (x => ..., (x) => ..., (x, y) => ...)
+   *   - any expression
+   */
+  parseCallArg(allowBlockBody = false) {
+    if (this.lexer.peek().type === TokenType.Spread) {
+      const spreadTok = this.lexer.next();
+      const argument = this.parseExpression();
+      const spread = { type: "SpreadElement", argument, pos: spreadTok.pos };
+      return spread;
+    }
+    return this.parseArgOrLambda(allowBlockBody);
+  }
+  /**
+   * Parse an argument that might be a lambda expression.
+   * Checks for lambda patterns before falling back to parseExpression().
+   * When `allowBlockBody` is true, the lambda body may be a `{ stmt; stmt; }`
+   * block (only set inside `$$$.<coll>.find/filter(...)`); otherwise `=> {`
+   * keeps its current meaning (object-literal start via parseObjectLiteral).
+   */
+  parseArgOrLambda(allowBlockBody = false) {
+    if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
+      return this.parseLambdaUnparen(allowBlockBody);
+    }
+    if (this.isLambdaStart()) {
+      return this.parseLambdaParen(allowBlockBody);
+    }
+    return this.parseExpression();
+  }
+  /** primary:  operator_call | field_ref | literals | "(" expr ")" | array | object  */
+  parsePrimary() {
+    const t = this.lexer.peek();
+    switch (t.type) {
+      case TokenType.Dollar:
+        if (this.isIdentOrKeyword(this.lexer.lookahead(1))) return this.parseOperatorCall();
+        this.lexer.next();
+        return { type: "FieldRef", path: "", pos: t.pos };
+      case TokenType.DollarDot:
+        return this.parseFieldRef();
+      case TokenType.DoubleDollar:
+        return this.parseContextRef("CollectionRef", "$$");
+      case TokenType.TripleDollar:
+        return this.parseContextRef("DatabaseRef", "$$$");
+      case TokenType.QuadDollar:
+        return this.parseContextRef("ClusterRef", "$$$$");
+      case TokenType.Number:
+        return this.parseNumber();
+      case TokenType.BigInt:
+        this.lexer.next();
+        return { type: "BigIntLiteral", value: t.value, pos: t.pos };
+      case TokenType.String:
+        this.lexer.next();
+        return { type: "StringLiteral", value: t.value, pos: t.pos };
+      case TokenType.True:
+        this.lexer.next();
+        return { type: "BooleanLiteral", value: true, pos: t.pos };
+      case TokenType.False:
+        this.lexer.next();
+        return { type: "BooleanLiteral", value: false, pos: t.pos };
+      case TokenType.Null:
+        this.lexer.next();
+        return { type: "NullLiteral", pos: t.pos };
+      case TokenType.Undefined:
+        this.lexer.next();
+        return { type: "UndefinedLiteral", pos: t.pos };
+      case TokenType.LBracket:
+        return this.parseArrayLiteral();
+      case TokenType.LBrace:
+        return this.parseObjectLiteral();
+      case TokenType.RegexLiteral:
+        this.lexer.next();
+        return { type: "RegexLiteral", pattern: t.value, flags: t.flags ?? "", pos: t.pos };
+      case TokenType.TemplateStart:
+        return this.parseTemplateLiteral();
+      case TokenType.New:
+        return this.parseNewDate();
+      case TokenType.LParen:
+        if (this.isLambdaStart()) return this.parseLambdaParen();
+        return this.parseGrouped();
+      case TokenType.Ident: {
+        const name = t.value;
+        if (name === "Math") return this.parseMathReference();
+        if (name === "Object") return this.parseObjectCall();
+        if (name === "Date" && this.lexer.lookahead(1).type === TokenType.Dot) {
+          return this.parseDateStatic();
+        }
+        if (name === "Array" && this.lexer.lookahead(1).type === TokenType.Dot) {
+          return this.parseArrayStaticCall();
+        }
+        if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
+          return this.parseNumberStaticCall();
+        }
+        if (TYPE_CAST_NAMES.has(name)) {
+          if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
+          if (BARE_CAST_NAMES.has(name)) {
+            this.lexer.next();
+            return { type: "TypeCastRef", cast: name, pos: t.pos };
+          }
+          return this.parseTypeCast();
+        }
+        this.lexer.next();
+        return { type: "ParamRef", name, pos: t.pos };
+      }
+      default:
+        if (t.type === TokenType.EOF) {
+          throw new ParseError(`Unexpected end of expression`, t.pos);
+        }
+        throw new ParseError(`Unexpected token '${t.value}' at position ${t.pos}`, t.pos);
+    }
+  }
+  // ── Sub-parsers ───────────────────────────────────────────────────────────
+  /** "(" expression ")"  — also handles `(x => expr)`, the unparen-single-param lambda */
+  parseGrouped() {
+    this.lexer.expect(TokenType.LParen);
+    let expr;
+    if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
+      expr = this.parseLambdaUnparen();
+    } else if (this.peekIncDecOp() !== null) {
+      expr = this.parsePrefixIncDec();
+    } else {
+      expr = this.parseExpression();
+      if (this.peekAssignOp() !== null) {
+        this.validateUpdateTarget(expr);
+        const chain = this.parseAssignmentChainFrom(expr);
+        if (chain.length !== 1) {
+          const tok = this.lexer.peek();
+          throw new ParseError(
+            `Chained assignment inside parentheses is not supported at position ${tok.pos}`,
+            tok.pos
+          );
+        }
+        expr = chain[0];
+      } else if (this.peekIncDecOp() !== null) {
+        const op = this.peekIncDecOp();
+        this.lexer.next();
+        this.validateUpdateTarget(expr);
+        expr = this.makeIncDecUpdateOp(expr, op);
+      }
+    }
+    const close = this.lexer.peek();
+    if (close.type !== TokenType.RParen) {
+      throw new ParseError(`Expected ')' at position ${close.pos}`, close.pos);
+    }
+    this.lexer.next();
+    return expr;
+  }
+  parseOperatorCall() {
+    const dollar = this.lexer.next();
+    const nameTok = this.lexer.peek();
+    if (!this.isIdentOrKeyword(nameTok)) {
+      throw new ParseError(`Expected operator name after '$' at position ${dollar.pos}`, dollar.pos);
+    }
+    this.lexer.next();
+    const name = `$${nameTok.value}`;
+    this.lexer.expect(TokenType.LParen);
+    const peek = this.lexer.peek();
+    if (peek.type === TokenType.RParen) {
+      this.lexer.next();
+      return { type: "OperatorCall", name, style: "positional", args: [], pos: dollar.pos };
+    }
+    if (peek.type === TokenType.LBrace) {
+      const obj2 = this.parseObjectLiteral();
+      const after = this.lexer.peek();
+      if (after.type === TokenType.RParen) {
+        this.lexer.next();
+        return { type: "OperatorCall", name, style: "object", args: [obj2], pos: dollar.pos };
+      }
+      const args2 = [obj2];
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        args2.push(this.parseCallArg());
+      }
+      this.lexer.expect(TokenType.RParen);
+      return { type: "OperatorCall", name, style: "positional", args: args2, pos: dollar.pos };
+    }
+    const args = [this.parseCallArg()];
+    while (this.lexer.peek().type === TokenType.Comma) {
+      this.lexer.next();
+      args.push(this.parseCallArg());
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "OperatorCall", name, style: "positional", args, pos: dollar.pos };
+  }
+  /** $.field — stops at first segment; postfix handles further dots */
+  parseFieldRef() {
+    const dollarDot = this.lexer.next();
+    const first = this.lexer.peek();
+    if (!this.isIdentOrKeyword(first)) {
+      throw new ParseError(`Expected field name after '$.' at position ${dollarDot.pos}`, dollarDot.pos);
+    }
+    this.lexer.next();
+    return { type: "FieldRef", path: first.value, pos: dollarDot.pos };
+  }
+  /**
+   * Context-reference prefix: `$$` (collection), `$$$` (database), `$$$$` (cluster).
+   * Returns a bare marker AST node; postfix `.name` (MemberAccess) and `[expr]`
+   * (IndexAccess) compose via the standard primary-postfix loop.
+   *
+   * Sanity-guards that the next token is `.` or `[` so bare `$$$` / `$$$$`
+   * (which are meaningless on their own) produce an actionable error rather
+   * than a downstream surprise. `$$` (CollectionRef) is more permissive: it
+   * is valid as the LHS of `$$ = <expr>` (the stream-level replacement) and
+   * as the RHS of `$$$.coll = $$` (the no-op `$out` write of the current
+   * stream), so for CollectionRef we accept anything that isn't an
+   * identifier-like follower. The typo case `$$foo` (no separator, an Ident
+   * next) is still rejected so the user sees the actionable
+   * "Expected '.<name>' or '[<expr>]'" hint; codegen continues to gate bare
+   * `$$` in unsupported positions via the CollectionRef branch.
+   */
+  parseContextRef(nodeType, displayPrefix) {
+    const prefix = this.lexer.next();
+    const next = this.lexer.peek();
+    if (next.type !== TokenType.Dot && next.type !== TokenType.LBracket) {
+      if (nodeType === "CollectionRef" && !this.isIdentOrKeyword(next)) {
+        return { type: nodeType, pos: prefix.pos };
+      }
+      throw new ParseError(
+        `Expected '.<name>' or '[<expr>]' after '${displayPrefix}' at position ${prefix.pos}`,
+        prefix.pos
+      );
+    }
+    return { type: nodeType, pos: prefix.pos };
+  }
+  /**
+   * An identifier-like token — a regular `Ident` or one of the reserved-word
+   * keywords (`in`, `new`, `typeof`) we accept in identifier position. Valid
+   * after `.` (field-path segments, member names), after `$` (operator names),
+   * and as a `$<key>` in object literals.
+   */
+  isIdentOrKeyword(t) {
+    return t.type === TokenType.Ident || t.type === TokenType.In || t.type === TokenType.New || t.type === TokenType.Typeof || t.type === TokenType.Let || t.type === TokenType.Const;
+  }
+  /**
+   * Non-consuming lookahead: is the current position the start of a parenthesized lambda?
+   * Matches: "(" ")" "=>" | "(" Ident ")" "=>" | "(" Ident ("," Ident)* ")" "=>"
+   */
+  isLambdaStart() {
+    if (this.lexer.peek().type !== TokenType.LParen) return false;
+    let offset = 1;
+    if (this.lexer.lookahead(offset).type === TokenType.RParen) {
+      return this.lexer.lookahead(offset + 1).type === TokenType.Arrow;
+    }
+    while (this.lexer.lookahead(offset).type === TokenType.Ident) {
+      offset++;
+      if (this.lexer.lookahead(offset).type === TokenType.RParen) {
+        return this.lexer.lookahead(offset + 1).type === TokenType.Arrow;
+      }
+      if (this.lexer.lookahead(offset).type !== TokenType.Comma) return false;
+      offset++;
+    }
+    return false;
+  }
+  /** Parse "x => expr" — single unparenthesized parameter */
+  parseLambdaUnparen(allowBlockBody = false) {
+    const paramTok = this.lexer.next();
+    this.lexer.next();
+    if (allowBlockBody && this.lexer.peek().type === TokenType.LBrace) {
+      const block = this.parseLambdaBlockBody();
+      return { type: "Lambda", params: [paramTok.value], block, pos: paramTok.pos };
+    }
+    const body = this.parseExpression();
+    return { type: "Lambda", params: [paramTok.value], body, pos: paramTok.pos };
+  }
+  /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
+  parseLambdaParen(allowBlockBody = false) {
+    const lparen = this.lexer.next();
+    const params = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      params.push(this.lexer.expect(TokenType.Ident).value);
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        params.push(this.lexer.expect(TokenType.Ident).value);
+      }
+    }
+    this.lexer.expect(TokenType.RParen);
+    this.lexer.expect(TokenType.Arrow);
+    if (allowBlockBody && this.lexer.peek().type === TokenType.LBrace) {
+      const block = this.parseLambdaBlockBody();
+      return { type: "Lambda", params, block, pos: lparen.pos };
+    }
+    const body = this.parseExpression();
+    return { type: "Lambda", params, body, pos: lparen.pos };
+  }
+  /**
+   * Parse the block-body of a lookup-callback lambda: `{ stmt; stmt; }`.
+   * The block reuses the same machinery as the top-level `;`-separated
+   * pipeline form — every statement must be a stage call, an update op
+   * (`$.x = …`, `delete $.x`), or a `let` binding. The result is normalised
+   * to a `Pipeline` (one stmt = single-stage pipeline, several = multi-stage).
+   * Only callable when the lookup-callback `allowBlockBody` flag is set —
+   * outside that, `=> {` keeps its existing object-literal interpretation.
+   */
+  parseLambdaBlockBody() {
+    const openBrace = this.lexer.next();
+    if (this.lexer.peek().type === TokenType.RBrace) {
+      throw new ParseError(
+        `Expected at least one statement inside the lookup callback's block body at position ${openBrace.pos}`,
+        openBrace.pos
+      );
+    }
+    const stmts = [this.collectStatement()];
+    while (this.lexer.peek().type === TokenType.Semi) {
+      this.lexer.next();
+      if (this.lexer.peek().type === TokenType.RBrace) break;
+      stmts.push(this.collectStatement());
+    }
+    const closeTok = this.lexer.peek();
+    if (closeTok.type !== TokenType.RBrace) {
+      throw new ParseError(
+        `Expected '}' to close the lookup callback's block body at position ${closeTok.pos}`,
+        closeTok.pos
+      );
+    }
+    this.lexer.next();
+    return { type: "Pipeline", stmts, pos: openBrace.pos };
+  }
+  /** "new Date()" / "new Date(expr)" or "new Set()" / "new Set(expr)" */
+  parseNewDate() {
+    const newTok = this.lexer.next();
+    const className = this.lexer.peek();
+    if (className.type !== TokenType.Ident) {
+      throw new ParseError(`Expected class name after 'new' at position ${newTok.pos}`, newTok.pos);
+    }
+    if (className.value !== "Date" && className.value !== "Set") {
+      throw new ParseError(
+        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set()`,
+        className.pos
+      );
+    }
+    const cls = className.value;
+    this.lexer.next();
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return cls === "Date" ? { type: "NewDate", args: [], pos: newTok.pos } : { type: "NewSet", arg: null, pos: newTok.pos };
+    }
+    const args = [this.parseExpression()];
+    while (this.lexer.peek().type === TokenType.Comma) {
+      this.lexer.next();
+      args.push(this.parseExpression());
+    }
+    this.lexer.expect(TokenType.RParen);
+    if (cls === "Set") {
+      if (args.length > 1) {
+        throw new ParseError(
+          `'new Set(...)' takes 0 or 1 arguments, got ${args.length} at position ${newTok.pos}`,
+          newTok.pos
+        );
+      }
+      return { type: "NewSet", arg: args[0], pos: newTok.pos };
+    }
+    if (args.length > 7) {
+      throw new ParseError(
+        `'new Date(year, month, day, hour, minute, second, ms)' takes at most 7 arguments, got ${args.length} at position ${newTok.pos}`,
+        newTok.pos
+      );
+    }
+    return { type: "NewDate", args, pos: newTok.pos };
+  }
+  /** "Date.now()" or "Date.UTC(year, month, day, …)" — other Date.* members are not supported */
+  parseDateStatic() {
+    const dateTok = this.lexer.next();
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident) {
+      throw new ParseError(`Expected Date method name at position ${methodTok.pos}`, methodTok.pos);
+    }
+    if (methodTok.value === "now") {
+      this.lexer.next();
+      this.lexer.expect(TokenType.LParen);
+      this.lexer.expect(TokenType.RParen);
+      return { type: "DateNow", pos: dateTok.pos };
+    }
+    if (methodTok.value === "UTC") {
+      this.lexer.next();
+      this.lexer.expect(TokenType.LParen);
+      const args = [];
+      if (this.lexer.peek().type !== TokenType.RParen) {
+        args.push(this.parseExpression());
+        while (this.lexer.peek().type === TokenType.Comma) {
+          this.lexer.next();
+          args.push(this.parseExpression());
+        }
+      }
+      this.lexer.expect(TokenType.RParen);
+      if (args.length < 1 || args.length > 7) {
+        throw new ParseError(
+          `Date.UTC(year[, month, day, hour, minute, second, ms]) takes 1 to 7 arguments, got ${args.length} at position ${dateTok.pos}`,
+          dateTok.pos
+        );
+      }
+      return { type: "DateUTC", args, pos: dateTok.pos };
+    }
+    throw new ParseError(
+      `Unknown Date method '${methodTok.value}' at position ${methodTok.pos}. Only Date.now() and Date.UTC(\u2026) are supported as JS-style calls; for other date operations use the $date* operators directly (e.g. $dateAdd, $dateDiff, $dateTrunc, $dateToString).`,
+      dateTok.pos
+    );
+  }
+  /** "Array.isArray(x)" or "Array.from(input)" or "Array.from(input, mapFn)" */
+  parseArrayStaticCall() {
+    const arrayTok = this.lexer.next();
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident) {
+      throw new ParseError(`Expected Array method name at position ${methodTok.pos}`, arrayTok.pos);
+    }
+    if (methodTok.value === "isArray") {
+      this.lexer.next();
+      this.lexer.expect(TokenType.LParen);
+      const arg = this.parseExpression();
+      this.lexer.expect(TokenType.RParen);
+      return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg], pos: arrayTok.pos };
+    }
+    if (methodTok.value === "from") {
+      this.lexer.next();
+      this.lexer.expect(TokenType.LParen);
+      const input = this.parseExpression();
+      let mapFn = null;
+      if (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        const arg = this.parseArgOrLambda();
+        mapFn = arg;
+      }
+      this.lexer.expect(TokenType.RParen);
+      return { type: "ArrayFrom", input, mapFn, pos: arrayTok.pos };
+    }
+    const arrayHint = didYouMean(methodTok.value, ["isArray", "from"], (s) => `Array.${s}`);
+    throw new ParseError(
+      `Unknown Array method '${methodTok.value}' at position ${methodTok.pos}.${arrayHint} Supported: Array.isArray(), Array.from().`,
+      arrayTok.pos
+    );
+  }
+  /** "Number.isInteger(x)" / "Number.isNaN(x)" / "Number.isFinite(x)" */
+  parseNumberStaticCall() {
+    const numberTok = this.lexer.next();
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident || !NUMBER_STATICS.includes(methodTok.value)) {
+      const numberHint = didYouMean(methodTok.value, NUMBER_STATICS, (s) => `Number.${s}`);
+      throw new ParseError(
+        `Unknown Number static method '${methodTok.value}' at position ${methodTok.pos}.${numberHint} Supported: ${NUMBER_STATICS.map((s) => `Number.${s}`).join(", ")}.`,
+        numberTok.pos
+      );
+    }
+    const method = methodTok.value;
+    this.lexer.next();
+    this.lexer.expect(TokenType.LParen);
+    const arg = this.parseExpression();
+    this.lexer.expect(TokenType.RParen);
+    return { type: "NumberStatic", method, arg, pos: numberTok.pos };
+  }
+  /** "Math.method(args)" or "Math.PI" / "Math.E" constants */
+  parseMathReference() {
+    const mathTok = this.lexer.next();
+    this.lexer.expect(TokenType.Dot);
+    const ident = this.lexer.peek();
+    if (ident.type !== TokenType.Ident) {
+      throw new ParseError(`Expected Math member name at position ${ident.pos}`, mathTok.pos);
+    }
+    if (MATH_CONSTANTS2.has(ident.value)) {
+      this.lexer.next();
+      return { type: "MathConst", name: ident.value, pos: mathTok.pos };
+    }
+    if (!MATH_METHODS2.has(ident.value)) {
+      const hint = didYouMean(ident.value, [...MATH_METHODS2, ...MATH_CONSTANTS2], (s) => `Math.${s}`);
+      throw new ParseError(
+        `Unknown Math member '${ident.value}' at position ${ident.pos}.${hint} See docs/LANGUAGE.md for the full list of supported Math methods and constants.`,
+        mathTok.pos
+      );
+    }
+    this.lexer.next();
+    const method = ident.value;
+    if (this.lexer.peek().type !== TokenType.LParen) {
+      if (!UNARY_MATH_CALLABLES.has(method)) {
+        throw new ParseError(
+          `Math.${method} requires '(...)'. Only the unary Math methods (Math.floor / .ceil / .round / .abs / \u2026) can be passed as bare callbacks (e.g. \`arr.map(Math.floor)\`).`,
+          mathTok.pos
+        );
+      }
+      return { type: "MathCallRef", method, pos: mathTok.pos };
+    }
+    this.lexer.expect(TokenType.LParen);
+    const args = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      args.push(this.parseCallArg());
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        args.push(this.parseCallArg());
+      }
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "MathCall", method, args, pos: mathTok.pos };
+  }
+  /** "Object.method(args)" */
+  parseObjectCall() {
+    const objectTok = this.lexer.next();
+    this.lexer.expect(TokenType.Dot);
+    const methodTok = this.lexer.peek();
+    if (methodTok.type !== TokenType.Ident || !OBJECT_METHODS2.has(methodTok.value)) {
+      const objectHint = didYouMean(methodTok.value, [...OBJECT_METHODS2], (s) => `Object.${s}`);
+      throw new ParseError(
+        `Unknown Object method '${methodTok.value}' at position ${methodTok.pos}.${objectHint} Supported: ${[...OBJECT_METHODS2].join(", ")}.`,
+        objectTok.pos
+      );
+    }
+    this.lexer.next();
+    const method = methodTok.value;
+    this.lexer.expect(TokenType.LParen);
+    const args = [];
+    if (this.lexer.peek().type !== TokenType.RParen) {
+      args.push(this.parseCallArg());
+      while (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+        args.push(this.parseCallArg());
+      }
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "ObjectCall", method, args, pos: objectTok.pos };
+  }
+  /** "Number(x)" | "String(x)" | "Boolean(x)" | "parseInt(x)" | "parseFloat(x)" */
+  parseTypeCast() {
+    const castTok = this.lexer.next();
+    const cast = castTok.value;
+    this.lexer.expect(TokenType.LParen);
+    const arg = this.parseExpression();
+    if (this.lexer.peek().type === TokenType.Comma) {
+      throw new ParseError(`Type cast '${cast}()' takes exactly 1 argument at position ${castTok.pos}`, castTok.pos);
+    }
+    this.lexer.expect(TokenType.RParen);
+    return { type: "TypeCast", cast, arg, pos: castTok.pos };
+  }
+  parseNumber() {
+    const t = this.lexer.next();
+    const value = parseFloat(t.value);
+    if (isNaN(value)) {
+      throw new ParseError(`Invalid number '${t.value}' at position ${t.pos}`, t.pos);
+    }
+    return { type: "NumberLiteral", value, pos: t.pos };
+  }
+  /** Parse a template literal: `chunk0${expr0}chunk1${expr1}chunk2` */
+  parseTemplateLiteral() {
+    const startTok = this.lexer.expect(TokenType.TemplateStart);
+    const quasis = [];
+    const expressions = [];
+    for (; ; ) {
+      const chunk = this.lexer.expect(TokenType.TemplateChars);
+      quasis.push(chunk.value);
+      const next = this.lexer.peek();
+      if (next.type === TokenType.TemplateEnd) {
+        this.lexer.next();
+        break;
+      }
+      if (next.type === TokenType.TemplateExprStart) {
+        this.lexer.next();
+        const expr = this.parseExpression();
+        expressions.push(expr);
+        continue;
+      }
+      throw new ParseError(`Unexpected token in template literal at position ${next.pos}`, next.pos);
+    }
+    return { type: "TemplateLiteral", quasis, expressions, pos: startTok.pos };
+  }
+  parseArrayLiteral() {
+    const openBracket = this.lexer.expect(TokenType.LBracket);
+    const elements = [];
+    while (this.lexer.peek().type !== TokenType.RBracket) {
+      if (this.lexer.peek().type === TokenType.EOF) {
+        throw new ParseError("Unterminated array literal", this.lexer.peek().pos);
+      }
+      if (this.lexer.peek().type === TokenType.Spread) {
+        const spreadTok = this.lexer.next();
+        const arg = this.parseExpression();
+        const spread = { type: "SpreadElement", argument: arg, pos: spreadTok.pos };
+        elements.push(spread);
+      } else if (this.lexer.peek().type === TokenType.Delete) {
+        elements.push(this.parseDeleteStmt());
+      } else if (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
+        elements.push(this.parseLetDecl());
+      } else if (this.peekIncDecOp() !== null) {
+        elements.push(this.parsePrefixIncDec());
+      } else {
+        const expr = this.parseExpression();
+        if (this.peekAssignOp() !== null) {
+          this.validateUpdateTarget(expr);
+          for (const m of this.parseAssignmentChainFrom(expr)) elements.push(m);
+        } else if (this.peekIncDecOp() !== null) {
+          const op = this.peekIncDecOp();
+          this.lexer.next();
+          this.validateUpdateTarget(expr);
+          elements.push(this.makeIncDecUpdateOp(expr, op));
+        } else {
+          elements.push(expr);
+        }
+      }
+      if (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+      } else {
+        break;
+      }
+    }
+    this.lexer.expect(TokenType.RBracket);
+    return { type: "ArrayLiteral", elements, pos: openBracket.pos };
+  }
+  parseObjectLiteral() {
+    const openBrace = this.lexer.expect(TokenType.LBrace);
+    const entries = [];
+    while (this.lexer.peek().type !== TokenType.RBrace) {
+      if (this.lexer.peek().type === TokenType.EOF) {
+        throw new ParseError("Unterminated object literal", this.lexer.peek().pos);
+      }
+      if (this.lexer.peek().type === TokenType.Spread) {
+        const spreadTok = this.lexer.next();
+        const arg = this.parseExpression();
+        const spread = { type: "SpreadElement", argument: arg, pos: spreadTok.pos };
+        entries.push(spread);
+      } else {
+        entries.push(this.parseObjectEntry());
+      }
+      if (this.lexer.peek().type === TokenType.Comma) {
+        this.lexer.next();
+      } else {
+        break;
+      }
+    }
+    this.lexer.expect(TokenType.RBrace);
+    return { type: "ObjectLiteral", entries, pos: openBrace.pos };
+  }
+  /**
+   * Parse one non-spread object entry. Supports:
+   *   - Static key:    `name: expr`  or  `"name": expr`
+   *   - Computed key:  `[expr]: expr`
+   *   - Shorthand:     `name`  (sugar for `name: name`, valid in lambda scope)
+   */
+  parseObjectEntry() {
+    const tok = this.lexer.peek();
+    if (tok.type === TokenType.LBracket) {
+      this.lexer.next();
+      const keyExpr = this.parseExpression();
+      this.lexer.expect(TokenType.RBracket);
+      this.lexer.expect(TokenType.Colon);
+      const value2 = this.parseExpression();
+      const key2 = { kind: "computed", expr: keyExpr };
+      return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
+    }
+    if (tok.type === TokenType.Dollar) {
+      this.lexer.next();
+      const ident = this.lexer.peek();
+      if (!this.isIdentOrKeyword(ident)) {
+        throw new ParseError(`Expected identifier after '$' at position ${tok.pos}`, tok.pos);
+      }
+      this.lexer.next();
+      this.lexer.expect(TokenType.Colon);
+      const value2 = this.parseExpression();
+      const key2 = { kind: "static", name: `$${ident.value}` };
+      return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
+    }
+    if (tok.type === TokenType.Let || tok.type === TokenType.Const) {
+      this.lexer.next();
+      this.lexer.expect(TokenType.Colon);
+      const value2 = this.parseExpression();
+      const key2 = { kind: "static", name: tok.value };
+      return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
+    }
+    if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
+      throw new ParseError(`Expected object key at position ${tok.pos}`, tok.pos);
+    }
+    this.lexer.next();
+    const next = this.lexer.peek();
+    if (tok.type === TokenType.Ident && (next.type === TokenType.Comma || next.type === TokenType.RBrace)) {
+      const key2 = { kind: "static", name: tok.value };
+      const value2 = { type: "ParamRef", name: tok.value, pos: tok.pos };
+      return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
+    }
+    this.lexer.expect(TokenType.Colon);
+    const value = this.parseExpression();
+    const key = { kind: "static", name: tok.value };
+    return { type: "KeyValueEntry", key, value, pos: tok.pos };
+  }
+};
+function isLookupReceiverRooted(expr) {
+  let node = expr;
+  for (; ; ) {
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef") return true;
+    if (node.type === "MemberAccess") {
+      node = node.object;
+      continue;
+    }
+    if (node.type === "IndexAccess") {
+      node = node.object;
+      continue;
+    }
+    return false;
+  }
+}
+function describeUpdateTarget(target) {
+  switch (target.type) {
+    case "MethodCall":
+      return `a method-call result ('.${target.method}()')`;
+    case "CallExpression":
+      return "a call result";
+    case "BinaryExpr":
+      return `a '${target.op}' expression`;
+    case "UnaryExpr":
+      return `a unary '${target.op}' expression`;
+    case "TernaryExpr":
+      return "a ternary expression";
+    case "TypeCast":
+      return `a '${target.cast}()' cast`;
+    case "TypeCastRef":
+      return `a bare '${target.cast}' reference`;
+    case "MemberAccess":
+      return "a member access whose root is not a field path";
+    case "Lambda":
+      return "a lambda expression";
+    case "ArrayLiteral":
+      return "an array literal";
+    case "ObjectLiteral":
+      return "an object literal";
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+      return "a literal value";
+    case "TemplateLiteral":
+      return "a template literal";
+    case "OperatorCall":
+      return `the result of ${target.name}(\u2026)`;
+    case "MathCall":
+      return `the result of Math.${target.method}(\u2026)`;
+    case "MathCallRef":
+      return `a bare 'Math.${target.method}' reference`;
+    case "MathConst":
+      return `the Math.${target.name} constant`;
+    case "ObjectCall":
+      return `the result of Object.${target.method}(\u2026)`;
+    case "NewDate":
+      return "a 'new Date(\u2026)' expression";
+    case "NewSet":
+      return "a 'new Set(\u2026)' expression";
+    case "DateNow":
+      return "the result of Date.now()";
+    case "DateUTC":
+      return "the result of Date.UTC(\u2026)";
+    case "ArrayFrom":
+      return "an Array.from(\u2026) result";
+    case "NumberStatic":
+      return `the result of Number.${target.method}(\u2026)`;
+    case "TypeofExpr":
+      return "a typeof expression";
+    case "RegexLiteral":
+      return "a regex literal";
+    default:
+      return "this expression";
+  }
+}
+
+// src/operators.ts
+var SINGLE = { kind: "single" };
+var ARRAY = { kind: "array" };
+var NONE = { kind: "none" };
+var FLEX = { kind: "flex" };
+function single(category, description) {
+  return { shape: SINGLE, category, description };
+}
+function array(category, description) {
+  return { shape: ARRAY, category, description };
+}
+function none(category, description) {
+  return { shape: NONE, category, description };
+}
+function flex(category, description) {
+  return { shape: FLEX, category, description };
+}
+function obj(category, description, ...keys) {
+  return { shape: { kind: "object", keys }, category, description };
+}
+function acc(def) {
+  return { ...def, accumulatorOnly: true };
+}
+var OPERATORS = {
+  // ── Arithmetic ─────────────────────────────────────────────────────────────
+  $abs: single("arithmetic", "Returns the absolute value of a number."),
+  $add: array("arithmetic", "Adds numbers to return the sum, or adds numbers and a date to return a new date."),
+  $ceil: single("arithmetic", "Returns the smallest integer greater than or equal to the specified number."),
+  $divide: array("arithmetic", "Returns the result of dividing the first number by the second."),
+  $exp: single("arithmetic", "Raises e to the specified exponent."),
+  $floor: single("arithmetic", "Returns the largest integer less than or equal to the specified number."),
+  $ln: single("arithmetic", "Calculates the natural log of a number."),
+  $log: array("arithmetic", "Calculates the log of a number in the specified base."),
+  $log10: single("arithmetic", "Calculates the log base 10 of a number."),
+  $mod: array("arithmetic", "Returns the remainder of the first number divided by the second."),
+  $multiply: array("arithmetic", "Multiplies numbers to return the product."),
+  $pow: array("arithmetic", "Raises a number to the specified exponent."),
+  $round: flex("arithmetic", "Rounds a number to a whole integer or to a specified decimal place."),
+  $sigmoid: single(
+    "arithmetic",
+    "Returns the sigmoid of a value, defined as 1 / (1 + e^(-x)). The result is between 0 and 1."
+  ),
+  $sqrt: single("arithmetic", "Calculates the square root."),
+  $subtract: array("arithmetic", "Returns the result of subtracting the second value from the first."),
+  $trunc: flex("arithmetic", "Truncates a number to a whole integer or to a specified decimal place."),
+  // ── Bitwise ────────────────────────────────────────────────────────────────
+  $bitAnd: array("bitwise", "Returns the result of a bitwise AND operation on an array of int or long values."),
+  $bitNot: single("bitwise", "Returns the result of a bitwise NOT operation on a single int or long value."),
+  $bitOr: array("bitwise", "Returns the result of a bitwise OR operation on an array of int or long values."),
+  $bitXor: array(
+    "bitwise",
+    "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values."
+  ),
+  // ── Trigonometry ───────────────────────────────────────────────────────────
+  $sin: single("trigonometry", "Returns the sine of a value that is measured in radians."),
+  $cos: single("trigonometry", "Returns the cosine of a value that is measured in radians."),
+  $tan: single("trigonometry", "Returns the tangent of a value that is measured in radians."),
+  $asin: single("trigonometry", "Returns the inverse sine (arc sine) of a value in radians."),
+  $acos: single("trigonometry", "Returns the inverse cosine (arc cosine) of a value in radians."),
+  $atan: single("trigonometry", "Returns the inverse tangent (arc tangent) of a value in radians."),
+  $atan2: array(
+    "trigonometry",
+    "Returns the inverse tangent of y / x in radians, where y and x are the first and second arguments."
+  ),
+  $sinh: single("trigonometry", "Returns the hyperbolic sine of a value measured in radians."),
+  $cosh: single("trigonometry", "Returns the hyperbolic cosine of a value measured in radians."),
+  $tanh: single("trigonometry", "Returns the hyperbolic tangent of a value measured in radians."),
+  $asinh: single("trigonometry", "Returns the inverse hyperbolic sine of a value in radians."),
+  $acosh: single("trigonometry", "Returns the inverse hyperbolic cosine of a value in radians."),
+  $atanh: single("trigonometry", "Returns the inverse hyperbolic tangent of a value in radians."),
+  $degreesToRadians: single("trigonometry", "Converts a value from degrees to radians."),
+  $radiansToDegrees: single("trigonometry", "Converts a value from radians to degrees."),
+  // ── Comparison ─────────────────────────────────────────────────────────────
+  // $eq/$ne/$gt/$gte/$lt/$lte are `flex` (dual-form): a single value is the valid
+  // *query* comparison `{ field: { $gt: v } }`; two args are the *aggregation*
+  // operands `{ $gt: [a, b] }` (HR2). $cmp has no single-value form → `array`.
+  $cmp: array("comparison", "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less."),
+  $eq: flex("comparison", "Returns true if the values are equivalent."),
+  $ne: flex("comparison", "Returns true if the values are not equivalent."),
+  $gt: flex("comparison", "Returns true if the first value is greater than the second."),
+  $gte: flex("comparison", "Returns true if the first value is greater than or equal to the second."),
+  $lt: flex("comparison", "Returns true if the first value is less than the second."),
+  $lte: flex("comparison", "Returns true if the first value is less than or equal to the second."),
+  // ── Boolean ────────────────────────────────────────────────────────────────
+  $and: array("boolean", "Returns true only when all its expressions evaluate to true."),
+  $or: array("boolean", "Returns true when any of its expressions evaluates to true."),
+  $not: single("boolean", "Returns the boolean value that is the opposite of its argument expression."),
+  // ── Conditional ────────────────────────────────────────────────────────────
+  $cond: obj(
+    "conditional",
+    "A ternary operator that evaluates one expression and returns one of two other expressions based on the result.",
+    "if",
+    "then",
+    "else"
+  ),
+  $ifNull: array(
+    "conditional",
+    "Returns either the non-null result of the first expression or the result of the second expression."
+  ),
+  $switch: obj(
+    "conditional",
+    "Evaluates a series of case expressions; executes the matching case's expression and breaks out of the control flow.",
+    "branches",
+    "default"
+  ),
+  // ── String ─────────────────────────────────────────────────────────────────
+  $concat: array("string", "Concatenates any number of strings."),
+  $indexOfBytes: array(
+    "string",
+    "Searches a string for a substring and returns the UTF-8 byte index of the first occurrence, or -1."
+  ),
+  $indexOfCP: array(
+    "string",
+    "Searches a string for a substring and returns the UTF-8 code point index of the first occurrence, or -1."
+  ),
+  $ltrim: obj(
+    "string",
+    "Removes whitespace or the specified characters from the beginning of a string.",
+    "input",
+    "chars"
+  ),
+  $rtrim: obj("string", "Removes whitespace or the specified characters from the end of a string.", "input", "chars"),
+  $trim: obj(
+    "string",
+    "Removes whitespace or the specified characters from the beginning and end of a string.",
+    "input",
+    "chars"
+  ),
+  $regexFind: obj(
+    "string",
+    "Applies a regular expression to a string and returns information on the first matched substring.",
+    "input",
+    "regex",
+    "options"
+  ),
+  $regexFindAll: obj(
+    "string",
+    "Applies a regular expression to a string and returns information on all matched substrings.",
+    "input",
+    "regex",
+    "options"
+  ),
+  $regexMatch: obj(
+    "string",
+    "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
+    "input",
+    "regex",
+    "options"
+  ),
+  $replaceAll: obj(
+    "string",
+    "Replaces all instances of a search string in an input string with a replacement string.",
+    "input",
+    "find",
+    "replacement"
+  ),
+  $replaceOne: obj(
+    "string",
+    "Replaces the first instance of a matched string in a given input.",
+    "input",
+    "find",
+    "replacement"
+  ),
+  $split: array("string", "Splits a string into substrings based on a delimiter and returns an array of substrings."),
+  $strLenBytes: single("string", "Returns the number of UTF-8 encoded bytes in a string."),
+  $strLenCP: single("string", "Returns the number of UTF-8 code points in a string."),
+  $strcasecmp: array("string", "Performs case-insensitive string comparison."),
+  $substr: array("string", "Deprecated. Use $substrBytes or $substrCP."),
+  $substrBytes: array("string", "Returns the substring of a string starting at the specified UTF-8 byte index."),
+  $substrCP: array("string", "Returns the substring of a string starting at the specified UTF-8 code point index."),
+  $toLower: single("string", "Converts a string to lowercase."),
+  $toUpper: single("string", "Converts a string to uppercase."),
+  // ── Encrypted String (Queryable Encryption) ───────────────────────────────
+  // Not in mongodb/mql-specifications as of pinned commit; allowlisted in the
+  // drift test. Shapes inferred from the MongoDB documentation.
+  $encStrContains: obj(
+    "encrypted-string",
+    "Returns true if a substring exists within the encrypted string.",
+    "input",
+    "substring"
+  ),
+  $encStrEndsWith: obj(
+    "encrypted-string",
+    "Returns true if the encrypted string ends with the specified suffix.",
+    "input",
+    "suffix"
+  ),
+  $encStrNormalizedEq: obj(
+    "encrypted-string",
+    "Returns true if the normalized encrypted string equals the specified string.",
+    "input",
+    "string"
+  ),
+  $encStrStartsWith: obj(
+    "encrypted-string",
+    "Returns true if the encrypted string starts with the specified prefix.",
+    "input",
+    "prefix"
+  ),
+  // ── Array ──────────────────────────────────────────────────────────────────
+  $arrayElemAt: array("array", "Returns the element at the specified array index."),
+  // A literal pairs-array argument is wrapped one level deeper in codegen
+  // (`{ $arrayToObject: [pairs] }`) so MongoDB reads it as the single argument
+  // rather than an argument list — see `arrayToObjectOfLiteralPairs` in codegen.ts.
+  $arrayToObject: single("array", "Converts an array of key-value pairs to a document."),
+  $concatArrays: array("array", "Concatenates arrays to return the concatenated array."),
+  $filter: obj(
+    "array",
+    "Selects a subset of the array, returning only elements that match the filter condition.",
+    "input",
+    "as",
+    "cond",
+    "limit"
+  ),
+  $first: single("array", "Returns the result of an expression for the first document in an array."),
+  $firstN: obj("array", "Returns a specified number of elements from the beginning of an array.", "input", "n"),
+  // `flex` (dual-form): query `{ field: { $in: [v1, v2] } }` takes a single array;
+  // aggregation `{ $in: [needle, haystack] }` takes two operands.
+  $in: flex("array", "Returns a boolean indicating whether a specified value is in an array."),
+  $indexOfArray: array("array", "Searches an array for a value and returns the index of the first occurrence, or -1."),
+  $isArray: single("array", "Determines if the operand is an array."),
+  $last: single("array", "Returns the result of an expression for the last document in an array."),
+  $lastN: obj("array", "Returns a specified number of elements from the end of an array.", "input", "n"),
+  $map: obj(
+    "array",
+    "Applies a subexpression to each element of an array and returns the array of resulting values.",
+    "input",
+    "as",
+    "in"
+  ),
+  $maxN: obj("array", "Returns the n largest values in an array.", "input", "n"),
+  $minN: obj("array", "Returns the n smallest values in an array.", "input", "n"),
+  $objectToArray: single("array", "Converts a document to an array of documents representing key-value pairs."),
+  $range: array("array", "Outputs an array containing a sequence of integers according to user-defined inputs."),
+  $reduce: obj(
+    "array",
+    "Applies an expression to each element in an array and combines them into a single value.",
+    "input",
+    "initialValue",
+    "in"
+  ),
+  $reverseArray: single("array", "Returns an array with the elements in reverse order."),
+  $size: single("array", "Returns the number of elements in the array."),
+  $slice: array("array", "Returns a subset of an array."),
+  $sortArray: obj("array", "Sorts the elements of an array.", "input", "sortBy"),
+  $zip: obj(
+    "array",
+    "Merges two or more arrays element-wise into a single array of arrays.",
+    "inputs",
+    "useLongestLength",
+    "defaults"
+  ),
+  // ── Set ────────────────────────────────────────────────────────────────────
+  $allElementsTrue: single("set", "Returns true if no element of a set evaluates to false."),
+  $anyElementTrue: single("set", "Returns true if any elements of a set evaluate to true."),
+  $setDifference: array("set", "Returns a set with elements that appear in the first set but not in the second set."),
+  $setEquals: array("set", "Returns true if the input sets have the same distinct elements."),
+  $setIntersection: array("set", "Returns a set with elements that appear in all of the input sets."),
+  $setIsSubset: array("set", "Returns true if all elements of the first set appear in the second set."),
+  $setUnion: array("set", "Returns a set with elements that appear in any of the input sets."),
+  // ── Object ─────────────────────────────────────────────────────────────────
+  $getField: obj(
+    "object",
+    "Returns the value of a specified field from a document, including fields whose names contain periods or start with $.",
+    "field",
+    "input"
+  ),
+  $mergeObjects: flex("object", "Combines multiple documents into a single document."),
+  $setField: obj("object", "Adds, updates, or removes a specified field in a document.", "field", "input", "value"),
+  $unsetField: obj(
+    "object",
+    "Removes a specified field from a document. Alias for $setField using $$REMOVE.",
+    "field",
+    "input"
+  ),
+  // ── Date ───────────────────────────────────────────────────────────────────
+  // [DEF-029] The registry encodes arg *shapes*, not arg *types*: a literal
+  // non-date in a date-typed slot (`$dateDiff({ startDate: "2020-01-01" })`,
+  // `$year("x")`, …) passes through to server-invalid MQL. Closing this needs
+  // arg-type metadata here + an operator-arg validator. See docs/DEFERRED.md.
+  $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
+  $dateDiff: obj(
+    "date",
+    "Returns the difference between two dates.",
+    "startDate",
+    "endDate",
+    "unit",
+    "startOfWeek",
+    "timezone"
+  ),
+  $dateFromParts: obj(
+    "date",
+    "Constructs a BSON Date object given the date's constituent parts.",
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "millisecond",
+    "timezone"
+  ),
+  $dateFromString: obj(
+    "date",
+    "Converts a date/time string to a date object.",
+    "dateString",
+    "format",
+    "timezone",
+    "onError",
+    "onNull"
+  ),
+  $dateSubtract: obj(
+    "date",
+    "Subtracts a number of time units from a date object.",
+    "startDate",
+    "unit",
+    "amount",
+    "timezone"
+  ),
+  $dateToParts: obj(
+    "date",
+    "Returns a document containing the constituent parts of a date.",
+    "date",
+    "timezone",
+    "iso8601"
+  ),
+  $dateToString: obj("date", "Returns the date as a formatted string.", "date", "format", "timezone", "onNull"),
+  $dateTrunc: obj("date", "Truncates a date.", "date", "unit", "binSize", "timezone", "startOfWeek"),
+  $dayOfMonth: single("date", "Returns the day of the month for a date as a number between 1 and 31."),
+  $dayOfWeek: single("date", "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday)."),
+  $dayOfYear: single("date", "Returns the day of the year for a date as a number between 1 and 366."),
+  $hour: single("date", "Returns the hour for a date as a number between 0 and 23."),
+  $isoDayOfWeek: single(
+    "date",
+    "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday)."
+  ),
+  $isoWeek: single("date", "Returns the week number in ISO 8601 format, ranging from 1 to 53."),
+  $isoWeekYear: single("date", "Returns the year number in ISO 8601 format."),
+  $millisecond: single("date", "Returns the milliseconds of a date as a number between 0 and 999."),
+  $minute: single("date", "Returns the minute for a date as a number between 0 and 59."),
+  $month: single("date", "Returns the month for a date as a number between 1 (January) and 12 (December)."),
+  $second: single("date", "Returns the seconds for a date as a number between 0 and 60 (leap seconds)."),
+  $toDate: single("date", "Converts a value to a Date."),
+  $week: single("date", "Returns the week number for a date as a number between 0 and 53."),
+  $year: single("date", "Returns the year for a date as a number."),
+  // ── Timestamp ──────────────────────────────────────────────────────────────
+  $tsIncrement: single("timestamp", "Returns the incrementing ordinal from a timestamp as a long."),
+  $tsSecond: single("timestamp", "Returns the seconds from a timestamp as a long."),
+  // ── Type ───────────────────────────────────────────────────────────────────
+  $convert: obj("type", "Converts a value to a specified type.", "input", "to", "onError", "onNull"),
+  $isNumber: single("type", "Returns true if the expression resolves to an integer, decimal, double, or long."),
+  $toArray: single("type", "Converts a value to an array."),
+  $toBool: single("type", "Converts a value to a boolean."),
+  $toDecimal: single("type", "Converts a value to a Decimal128."),
+  $toDouble: single("type", "Converts a value to a double."),
+  $toInt: single("type", "Converts a value to an integer."),
+  $toLong: single("type", "Converts a value to a long."),
+  $toObject: single("type", "Converts a string to an object."),
+  $toObjectId: single("type", "Converts a value to an ObjectId."),
+  $toString: single("type", "Converts a value to a string."),
+  $toUUID: single("type", "Converts a string to a UUID."),
+  $type: single("type", "Returns the BSON data type of the field."),
+  // ── Literal ────────────────────────────────────────────────────────────────
+  $literal: single(
+    "literal",
+    "Returns a value without parsing. Use to keep values that the pipeline would otherwise interpret as expressions (e.g. strings starting with $)."
+  ),
+  // ── Variable ───────────────────────────────────────────────────────────────
+  $let: obj(
+    "variable",
+    "Defines variables for use within the scope of a subexpression and returns the result.",
+    "vars",
+    "in"
+  ),
+  // ── Custom Aggregation ─────────────────────────────────────────────────────
+  $accumulator: acc(
+    obj(
+      "custom-aggregation",
+      "Defines a custom accumulator function. Body fields hold JavaScript source executed by the server.",
+      "init",
+      "initArgs",
+      "accumulate",
+      "accumulateArgs",
+      "merge",
+      "finalize",
+      "lang"
+    )
+  ),
+  $function: obj(
+    "custom-aggregation",
+    "Defines a custom function. The body field is JavaScript source executed by the server.",
+    "body",
+    "args",
+    "lang"
+  ),
+  // ── Data Size ──────────────────────────────────────────────────────────────
+  $binarySize: single("data-size", "Returns the size of a string or binary data value's content in bytes."),
+  $bsonSize: single("data-size", "Returns the size in bytes of a document when encoded as BSON."),
+  // ── Text ───────────────────────────────────────────────────────────────────
+  $meta: single(
+    "text",
+    'Accesses per-document metadata related to the aggregation operation. Argument is a keyword string (e.g. "textScore"), not an arbitrary expression.'
+  ),
+  // ── Miscellaneous ──────────────────────────────────────────────────────────
+  $createObjectId: none("miscellaneous", "Returns a random ObjectId."),
+  $hash: obj(
+    "miscellaneous",
+    "Generates a binary hash value (BinData) from a UTF-8 string or binary data.",
+    "input",
+    "algorithm"
+  ),
+  $hexHash: obj(
+    "miscellaneous",
+    "Generates an uppercase hexadecimal hash string from a UTF-8 string or binary data.",
+    "input",
+    "algorithm"
+  ),
+  $rand: none("miscellaneous", "Returns a random float between 0 and 1."),
+  $sampleRate: single("miscellaneous", "Randomly selects documents at a given rate. Used inside $match."),
+  $toHashedIndexKey: single(
+    "miscellaneous",
+    "Computes the hash of the input expression using MongoDB's hashed-index hash function."
+  ),
+  // ── Accumulators (also valid as expression operators in some stages) ──────
+  $addToSet: acc(single("array", "Returns an array of unique expression values for each group.")),
+  $avg: flex("arithmetic", "Returns the average for the specified expression."),
+  $count: none("array", "Returns the number of documents in the group or window."),
+  $max: flex("comparison", "Returns the maximum value that results from applying an expression."),
+  $median: acc(
+    obj("arithmetic", "Returns an approximation of the median (50th percentile) as a scalar value.", "input", "method")
+  ),
+  $min: flex("comparison", "Returns the minimum value that results from applying an expression."),
+  $percentile: acc(
+    obj(
+      "arithmetic",
+      "Returns an array of scalar values that correspond to specified percentile values.",
+      "input",
+      "p",
+      "method"
+    )
+  ),
+  $push: acc(single("array", "Returns an array of values that result from applying an expression.")),
+  $stdDevPop: flex("arithmetic", "Calculates the population standard deviation of the input values."),
+  $stdDevSamp: flex("arithmetic", "Calculates the sample standard deviation of the input values."),
+  $sum: flex("arithmetic", "Returns a sum of numerical values, ignoring non-numeric values."),
+  $bottom: acc(
+    obj(
+      "array",
+      "Returns the bottom element within a group according to the specified sort order.",
+      "output",
+      "sortBy"
+    )
+  ),
+  $bottomN: acc(
+    obj(
+      "array",
+      "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
+      "output",
+      "sortBy",
+      "n"
+    )
+  ),
+  $top: acc(
+    obj("array", "Returns the top element within a group according to the specified sort order.", "output", "sortBy")
+  ),
+  $topN: acc(
+    obj(
+      "array",
+      "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
+      "output",
+      "sortBy",
+      "n"
+    )
+  ),
+  // ── Window (only valid inside $setWindowFields) ───────────────────────────
+  $covariancePop: array("window", "Returns the population covariance of two numeric expressions."),
+  $covarianceSamp: array("window", "Returns the sample covariance of two numeric expressions."),
+  $denseRank: none(
+    "window",
+    "Returns the document position (rank) within the partition. There are no gaps; ties receive the same rank."
+  ),
+  $derivative: obj("window", "Returns the average rate of change within the specified window.", "input", "unit"),
+  $documentNumber: none(
+    "window",
+    "Returns the position of a document in the $setWindowFields partition. Ties produce different adjacent numbers."
+  ),
+  $expMovingAvg: obj(
+    "window",
+    "Returns the exponential moving average for the numeric expression.",
+    "input",
+    "N",
+    "alpha"
+  ),
+  $integral: obj("window", "Returns the approximation of the area under a curve.", "input", "unit"),
+  $linearFill: single(
+    "window",
+    "Fills null and missing fields in a window using linear interpolation based on surrounding field values."
+  ),
+  $locf: single(
+    "window",
+    "Last observation carried forward \u2014 sets null/missing fields in a window to the last non-null value."
+  ),
+  $rank: none("window", "Returns the document position (rank) within the $setWindowFields partition."),
+  $shift: obj(
+    "window",
+    "Returns the value from an expression applied to a document in a specified position relative to the current document.",
+    "output",
+    "by",
+    "default"
+  )
+};
+function lookupOperator(name) {
+  return OPERATORS[name];
+}
+
+// src/codegen.ts
+var CodegenError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "CodegenError";
+    this.pos = pos;
+  }
+};
+function internalError(detail, pos = 0) {
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
+}
+var UnknownIdentifierError = class extends CodegenError {
+  constructor(identifier, pos = 0) {
+    super(`Unknown identifier '${identifier}'. Did you mean '$.${identifier}'?`, pos);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier;
+  }
+};
+var EMPTY_CTX = { lambdaParams: /* @__PURE__ */ new Set() };
+function extendCtx(ctx, params) {
+  return {
+    lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, ...params]),
+    reduceRemap: ctx.reduceRemap,
+    pipelineLets: ctx.pipelineLets,
+    pipelineConstNames: ctx.pipelineConstNames,
+    droppedLets: ctx.droppedLets,
+    bindings: ctx.bindings,
+    bindingTypes: ctx.bindingTypes,
+    insideLiteral: ctx.insideLiteral,
+    pipelineContext: ctx.pipelineContext,
+    accumulatorContext: ctx.accumulatorContext
+  };
+}
+function extendCtxLets(ctx, name, fieldPath, kind = "let") {
+  const next = new Map(ctx.pipelineLets ?? []);
+  next.set(name, fieldPath);
+  if (kind !== "const") return { ...ctx, pipelineLets: next };
+  const consts = new Set(ctx.pipelineConstNames ?? []);
+  consts.add(name);
+  return { ...ctx, pipelineLets: next, pipelineConstNames: consts };
+}
+function clearCtxLets(ctx, droppedByStage) {
+  if (!ctx.pipelineLets || ctx.pipelineLets.size === 0) return ctx;
+  const dropped = new Map(ctx.droppedLets ?? []);
+  for (const name of ctx.pipelineLets.keys()) dropped.set(name, droppedByStage);
+  return { ...ctx, pipelineLets: /* @__PURE__ */ new Map(), pipelineConstNames: /* @__PURE__ */ new Set(), droppedLets: dropped };
+}
+function ctxHasLets(ctx) {
+  return (ctx.pipelineLets?.size ?? 0) > 0;
+}
+function freshSubPipelineCtx(outer) {
+  return { lambdaParams: /* @__PURE__ */ new Set(), bindings: outer.bindings, pipelineContext: outer.pipelineContext };
+}
+function freshFacetCtx(outer) {
+  return {
+    lambdaParams: /* @__PURE__ */ new Set(),
+    bindings: outer.bindings,
+    pipelineLets: outer.pipelineLets,
+    pipelineConstNames: outer.pipelineConstNames,
+    pipelineContext: outer.pipelineContext
+  };
+}
+function withBindings(ctx, bindings) {
+  return { ...ctx, bindings };
+}
+var STRING_OUTPUT_OPS = /* @__PURE__ */ new Set([
+  "$toLower",
+  "$toUpper",
+  "$trim",
+  "$ltrim",
+  "$rtrim",
+  "$concat",
+  "$substrCP",
+  "$substrBytes",
+  "$substr",
+  "$replaceOne",
+  "$replaceAll",
+  "$dateToString",
+  "$type",
+  "$strcasecmp",
+  "$toString"
+]);
+var METHODS = {
+  // ── String ────────────────────────────────────────────────────────────────
+  trim: { returns: "string", optional: "string" },
+  trimStart: { returns: "string", optional: "string" },
+  trimLeft: { returns: "string", optional: "string" },
+  trimEnd: { returns: "string", optional: "string" },
+  trimRight: { returns: "string", optional: "string" },
+  toLowerCase: { returns: "string", optional: "string" },
+  toUpperCase: { returns: "string", optional: "string" },
+  substr: { returns: "string", optional: "string" },
+  substring: { returns: "string", optional: "string" },
+  charAt: { returns: "string", optional: "string" },
+  split: { returns: "array", optional: "string" },
+  // returns an array, but the receiver is a string
+  startsWith: { returns: "bool", optional: "string" },
+  endsWith: { returns: "bool", optional: "string" },
+  replace: { returns: "string", optional: "string" },
+  replaceAll: { returns: "string", optional: "string" },
+  match: { optional: "string" },
+  matchAll: { optional: "string" },
+  search: { optional: "string" },
+  padStart: { returns: "string", optional: "string" },
+  padEnd: { returns: "string", optional: "string" },
+  repeat: { returns: "string", optional: "string" },
+  indexOf: { optional: "either" },
+  includes: { returns: "bool", optional: "either" },
+  // ── Array ─────────────────────────────────────────────────────────────────
+  at: { optional: "array" },
+  slice: { optional: "either" },
+  concat: { optional: "either" },
+  reverse: { returns: "array", optional: "array" },
+  // throws in expression position; metadata used by the statement-position rewrite
+  toReversed: { returns: "array", optional: "array" },
+  toSorted: { returns: "array", optional: "array" },
+  toSpliced: { returns: "array" },
+  with: { returns: "array" },
+  flat: { returns: "array", optional: "array" },
+  flatMap: { returns: "array", optional: "array" },
+  map: { returns: "array", optional: "array" },
+  filter: { returns: "array", optional: "array" },
+  find: { optional: "array" },
+  findIndex: {},
+  findLast: { optional: "array" },
+  findLastIndex: { optional: "array" },
+  lastIndexOf: {},
+  some: { returns: "bool", optional: "array" },
+  every: { returns: "bool", optional: "array" },
+  reduce: { optional: "array" },
+  reduceRight: {},
+  join: { returns: "string", optional: "array" },
+  // returns a string, but the receiver is an array
+  toString: {},
+  // ── Mutators (shimmed with tailored errors that point at immutable variants) ─
+  sort: {},
+  splice: {},
+  push: {},
+  pop: {},
+  shift: {},
+  unshift: {},
+  fill: {},
+  copyWithin: {},
+  // ── Iterator / void / locale (shimmed with tailored errors) ─────────────────
+  forEach: {},
+  entries: {},
+  keys: {},
+  values: {},
+  toLocaleString: {},
+  // ── Date ────────────────────────────────────────────────────────────────────
+  getFullYear: {},
+  getMonth: {},
+  getDate: {},
+  getDay: {},
+  getHours: {},
+  getMinutes: {},
+  getSeconds: {},
+  getMilliseconds: {},
+  getTime: {},
+  toISOString: { returns: "string" },
+  // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
+  //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
+  intersection: {},
+  union: {},
+  difference: {},
+  isSubsetOf: {},
+  isSupersetOf: {},
+  // ── Regex (intercepted on RegexLiteral receivers; same rationale) ───────────
+  test: {},
+  exec: {}
+};
+function methodsWhere(pred) {
+  return new Set(Object.keys(METHODS).filter((name) => pred(METHODS[name])));
+}
+var STRING_RETURNING_METHODS = methodsWhere((m) => m.returns === "string");
+var ARRAY_OUTPUT_OPS = /* @__PURE__ */ new Set([
+  "$split",
+  "$range",
+  "$reverseArray",
+  "$slice",
+  "$map",
+  "$filter",
+  "$concatArrays",
+  "$setUnion",
+  "$setIntersection",
+  "$setDifference",
+  "$zip",
+  "$objectToArray"
+]);
+var ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
+function isArrayProducing(expr) {
+  switch (expr.type) {
+    case "ArrayLiteral":
+      return true;
+    case "OperatorCall":
+      return ARRAY_OUTPUT_OPS.has(expr.name);
+    case "MethodCall":
+      if (expr.method === "slice") return isArrayProducing(expr.object);
+      return ARRAY_RETURNING_METHODS.has(expr.method);
+    case "ObjectCall":
+      return expr.method === "entries" || expr.method === "keys" || expr.method === "values";
+    default:
+      return false;
+  }
+}
+function isObjectProducing(expr) {
+  return expr.type === "ObjectLiteral";
+}
+function isStringProducing(expr) {
+  switch (expr.type) {
+    case "StringLiteral":
+      return true;
+    case "TemplateLiteral":
+      return true;
+    case "OperatorCall":
+      return STRING_OUTPUT_OPS.has(expr.name);
+    case "MethodCall":
+      if (expr.method === "slice") return isStringProducing(expr.object);
+      return STRING_RETURNING_METHODS.has(expr.method);
+    case "TypeCast":
+      return expr.cast === "String";
+    case "TypeofExpr":
+      return true;
+    case "BinaryExpr":
+      if (expr.op === "+") {
+        const chain = [];
+        collectExprChain("+", expr, chain);
+        return chain.some((e) => isStringProducing(e));
+      }
+      return false;
+    default:
+      return false;
+  }
+}
+var BOOL_OUTPUT_OPS = /* @__PURE__ */ new Set([
+  "$eq",
+  "$ne",
+  "$gt",
+  "$gte",
+  "$lt",
+  "$lte",
+  "$and",
+  "$or",
+  "$not",
+  "$in",
+  "$regexMatch",
+  "$isNumber",
+  "$isArray",
+  "$allElementsTrue",
+  "$anyElementTrue",
+  "$setEquals",
+  "$setIsSubset"
+]);
+var BOOL_RETURNING_METHODS = methodsWhere((m) => m.returns === "bool");
+function isProvablyBool(expr) {
+  switch (expr.type) {
+    case "BooleanLiteral":
+      return true;
+    case "UnaryExpr":
+      return expr.op === "!";
+    case "BinaryExpr":
+      switch (expr.op) {
+        case "==":
+        case "===":
+        case "!=":
+        case "!==":
+        case "<":
+        case "<=":
+        case ">":
+        case ">=":
+        case "in":
+          return true;
+        case "&&":
+        case "||":
+          return isProvablyBool(expr.left) && isProvablyBool(expr.right);
+        default:
+          return false;
+      }
+    case "TypeCast":
+      return expr.cast === "Boolean";
+    case "OperatorCall":
+      return BOOL_OUTPUT_OPS.has(expr.name);
+    case "MethodCall":
+      return BOOL_RETURNING_METHODS.has(expr.method);
+    default:
+      return false;
+  }
+}
+function jsBool(value) {
+  return {
+    $and: [
+      { $ne: [value, null] },
+      // catches null AND missing — MongoDB treats them equal in $ne
+      { $ne: [value, false] },
+      { $ne: [value, ""] },
+      { $ne: [value, 0] }
+    ]
+  };
+}
+function jsBoolIfNeeded(srcExpr, generated) {
+  return isProvablyBool(srcExpr) ? generated : jsBool(generated);
+}
+function isPureRef(expr, ctx) {
+  return asFieldPath(expr, ctx) !== null;
+}
+function safeVarName(name) {
+  return /^[a-z]/.test(name) ? name : "v" + name;
+}
+function mongoRegexOptions(jsFlags) {
+  let out = "";
+  for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
+  return out;
+}
+function gensymInScope(ctx, base) {
+  if (!ctx.lambdaParams.has(base)) return base;
+  for (let i = 2; ; i++) {
+    const name = `${base}${i}`;
+    if (!ctx.lambdaParams.has(name)) return name;
+  }
+}
+function clampNonNegativeIndex(node, ctx) {
+  if (node.type === "NumberLiteral") return Math.max(0, node.value);
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
+    return Math.max(0, -node.operand.value);
+  }
+  return { $max: [0, _generate(node, ctx)] };
+}
+function clampNonNegativeLength(value) {
+  if (typeof value === "number") return Math.max(0, value);
+  return { $max: [0, value] };
+}
+function foldedSubtract(a, b) {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return { $subtract: [a, b] };
+}
+function normaliseSliceIndex(node, ctx, genObj) {
+  if (node.type === "NumberLiteral") {
+    if (node.value >= 0) return node.value;
+    return foldedSubtract({ $strLenCP: genObj }, -node.value);
+  }
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
+    return foldedSubtract({ $strLenCP: genObj }, node.operand.value);
+  }
+  const gen = _generate(node, ctx);
+  return { $cond: [{ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen] };
+}
+function sliceArray(genObj, exprArgs, ctx) {
+  if (exprArgs.length === 0) return genObj;
+  if (exprArgs.length === 1) return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
+  return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+}
+function sliceString(genObj, exprArgs, ctx) {
+  if (exprArgs.length === 0) return genObj;
+  const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
+  if (exprArgs.length === 1) {
+    const negativeLiteral = negativeLiteralValue(exprArgs[0]);
+    if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
+    return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+  }
+  const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
+  return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
+}
+function negativeLiteralValue(node) {
+  if (node.type === "NumberLiteral" && node.value < 0) return -node.value;
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral" && node.operand.value > 0) {
+    return node.operand.value;
+  }
+  return null;
+}
+function literalSafeInjectedString(value, ctx) {
+  if (ctx.insideLiteral || ctx.pipelineContext) return value;
+  if (value.length > 0 && value.charCodeAt(0) === 36) {
+    return { $literal: value };
+  }
+  return value;
+}
+function safeBoundValue(value, ctx) {
+  if (ctx.insideLiteral || ctx.pipelineContext) return value;
+  if (typeof value === "string") return literalSafeInjectedString(value, ctx);
+  if (isOpaqueBsonValue(value)) return value;
+  if (Array.isArray(value)) return value.map((v) => safeBoundValue(v, ctx));
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = safeBoundValue(v, ctx);
+    }
+    return out;
+  }
+  return value;
+}
+function isOpaqueBsonValue(value) {
+  if (value instanceof Date) return true;
+  if (value instanceof RegExp) return true;
+  if (value instanceof Uint8Array) return true;
+  if (typeof value === "object" && value !== null) {
+    const tag = value._bsontype;
+    if (tag === "ObjectID" || tag === "ObjectId") return true;
+  }
+  return false;
+}
+function generateWithCtx(expr, ctx) {
+  return _generate(expr, ctx);
+}
+function _generate(expr, ctx) {
+  return _generateBody(expr, ctx);
+}
+function _generateBody(expr, ctx) {
+  const dynType = expr.type;
+  if (dynType === "AssignExpr" || dynType === "DeleteStmt") {
+    throw new CodegenError(
+      `${dynType === "AssignExpr" ? "Assignment" : "delete"} is a statement, not a value. It is only valid at the top level or as a pipeline-array element.`,
+      expr.pos
+    );
+  }
+  if (dynType === "LetDecl") {
+    throw new CodegenError(
+      "`let` is a pipeline statement, not a value. It is only valid at the top level of a pipeline.",
+      expr.pos
+    );
+  }
+  switch (expr.type) {
+    case "NumberLiteral":
+      return expr.value;
+    case "BigIntLiteral":
+      return { $toLong: expr.value };
+    case "StringLiteral":
+      return expr.value;
+    case "BooleanLiteral":
+      return expr.value;
+    case "NullLiteral":
+      return null;
+    case "UndefinedLiteral":
+      throw new CodegenError(
+        `'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.`,
+        expr.pos
+      );
+    case "FieldRef":
+      return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
+    case "CollectionRef":
+      throw new CodegenError(
+        `'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. Write \`$$.push({...})\`, \`$$.push(...$$$.<coll>[.filter(pred)])\`, or \`$$.push($$$.<coll>.find(pred))\` as a top-level Pipeline statement to append documents (lowers to '$unionWith'), \`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` to build a '$facet' stage, or \`$$ = $$.filter(<pred>)\` / \`$$ = $$$.<coll>.filter(<pred>)\` to replace the current stream. As the first stage it also accepts a collection-scoped diagnostic \u2014 \`$$.indexStats()\`, \`$$.collStats({...})\`, \`$$.planCacheStats()\`, \`$$.listSearchIndexes({...})\`. Bare '$$' has no value, and these statement shapes cannot appear on a RHS or inside another expression.`,
+        expr.pos
+      );
+    case "DatabaseRef":
+      throw new CodegenError(
+        `'$$$.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a $lookup read), or assigned to as a destination ('$$$.<coll> = $$' \u2192 $out write). Bare '$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()). (System diagnostics aren't database-scoped: collection ones are on '$$', server/cluster ones on '$$$$'.)`,
+        expr.pos
+      );
+    case "ClusterRef":
+      throw new CodegenError(
+        `'$$$$.<db>.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a cross-database $lookup), or assigned to as a destination ('$$$$.<db>.<coll> = $$' \u2192 cross-database $out). A direct call on '$$$$' is a server/cluster-scoped diagnostic source stage (\`$$$$.currentOp({...})\`, \`$$$$.listSessions({...})\`, \`$$$$.listLocalSessions({...})\`, \`$$$$.listSampledQueries({...})\`, \`$$$$.shardedDataDistribution()\`) as the first Pipeline stage. Bare '$$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
+        expr.pos
+      );
+    case "ArrayLiteral":
+      return generateArrayLiteral(expr.elements, ctx, expr.pos);
+    case "ObjectLiteral":
+      return generateObjectLiteral(expr.entries, ctx, expr.pos);
+    case "TemplateLiteral":
+      return generateTemplateLiteral(expr.quasis, expr.expressions, ctx);
+    case "OperatorCall":
+      return generateOperatorCall(expr.name, expr.style, expr.args, ctx, expr.pos);
+    case "BinaryExpr":
+      return generateBinaryExpr(expr.op, expr.left, expr.right, ctx, expr.pos);
+    case "UnaryExpr":
+      return generateUnaryExpr(expr.op, expr.operand, ctx, expr.pos);
+    case "TernaryExpr":
+      return {
+        $cond: [
+          jsBoolIfNeeded(expr.condition, _generate(expr.condition, ctx)),
+          _generate(expr.consequent, ctx),
+          _generate(expr.alternate, ctx)
+        ]
+      };
+    case "IndexAccess": {
+      if (expr.index.type === "StringLiteral" && expr.object.type === "FieldRef" && expr.object.path === "") {
+        return `$${expr.index.value}`;
+      }
+      const rawObj = _generate(expr.object, ctx);
+      const idx = _generate(expr.index, ctx);
+      const optional = expr.optional || chainHasOptional(expr.object);
+      const known = isArrayProducing(expr.object) ? "array" : expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : void 0;
+      if (known === "array") {
+        const obj3 = optional ? wrapIfNull(rawObj, []) : rawObj;
+        return { $arrayElemAt: [obj3, idx] };
+      }
+      if (known === "object") {
+        const obj3 = optional ? wrapIfNull(rawObj, {}) : rawObj;
+        return { $getField: { field: idx, input: obj3 } };
+      }
+      const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
+      return { $cond: [{ $isArray: obj2 }, { $arrayElemAt: [obj2, idx] }, { $getField: { field: idx, input: obj2 } }] };
+    }
+    case "RegexLiteral":
+      throw new CodegenError(
+        `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+        expr.pos
+      );
+    case "ParamRef": {
+      if (ctx.reduceRemap?.has(expr.name)) {
+        return `$$${ctx.reduceRemap.get(expr.name)}`;
+      }
+      if (ctx.lambdaParams.has(expr.name)) {
+        return `$$${safeVarName(expr.name)}`;
+      }
+      const letPath = ctx.pipelineLets?.get(expr.name);
+      if (letPath !== void 0) {
+        return `$${letPath}`;
+      }
+      if (ctx.bindings?.has(expr.name)) {
+        return safeBoundValue(ctx.bindings.get(expr.name), ctx);
+      }
+      const droppedBy = ctx.droppedLets?.get(expr.name);
+      if (droppedBy !== void 0) {
+        throw new CodegenError(
+          `\`${expr.name}\` is a \`let\` binding and can't be read after \`${droppedBy}\` \u2014 the stage replaces the document. Inline the expression into the \`${droppedBy}\` body, or rebind after the stage with another \`let\`.`,
+          expr.pos
+        );
+      }
+      throw new UnknownIdentifierError(expr.name, expr.pos);
+    }
+    case "MemberAccess": {
+      if (expr.member === "length") {
+        return generateLengthAccess(expr.object, expr.optional || chainHasOptional(expr.object), ctx);
+      }
+      const path = asFieldPath(expr, ctx);
+      if (path !== null) return path;
+      const rawObj = _generate(expr.object, ctx);
+      const obj2 = expr.optional || chainHasOptional(expr.object) ? wrapIfNull(rawObj, {}) : rawObj;
+      return { $getField: { field: expr.member, input: obj2 } };
+    }
+    case "MethodCall":
+      return generateMethodCall(expr.object, expr.method, expr.args, ctx, expr.pos, !!expr.optional);
+    case "CallExpression":
+      return generateCallExpression(expr.callee, expr.args, ctx, expr.pos);
+    case "Lambda":
+      throw new CodegenError(
+        "Lambda expression cannot be used here \u2014 only valid as array method argument or $let second argument",
+        expr.pos
+      );
+    case "TypeofExpr":
+      return { $type: _generate(expr.operand, ctx) };
+    case "NewDate":
+      return generateNewDate(expr.args, ctx);
+    case "NewSet":
+      return expr.arg === null ? [] : _generate(expr.arg, ctx);
+    case "ArrayFrom":
+      return generateArrayFrom(expr.input, expr.mapFn, ctx, expr.pos);
+    case "NumberStatic":
+      return generateNumberStatic(expr.method, expr.arg, ctx);
+    case "DateNow":
+      return { $toLong: "$$NOW" };
+    case "DateUTC":
+      return generateDateUTC(expr.args, ctx);
+    case "TypeCast":
+      return generateTypeCast(expr.cast, expr.arg, ctx, expr.pos);
+    case "TypeCastRef":
+      throw new CodegenError(
+        `'${expr.cast}' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.filter(${expr.cast})). To coerce a single value, write ${expr.cast}(value).`,
+        expr.pos
+      );
+    case "MathCall":
+      return generateMathCall(expr.method, expr.args, ctx, expr.pos);
+    case "MathCallRef":
+      throw new CodegenError(
+        `'Math.${expr.method}' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.map(Math.${expr.method})). To compute on a single value, write Math.${expr.method}(value).`,
+        expr.pos
+      );
+    case "MathConst":
+      return generateMathConst(expr.name);
+    case "ObjectCall":
+      return generateObjectCall(expr.method, expr.args, ctx, expr.pos);
+  }
+}
+function chainHasOptional(expr) {
+  let node = expr;
+  while (node.type === "MemberAccess" || node.type === "IndexAccess") {
+    if (node.optional) return true;
+    node = node.object;
+  }
+  return false;
+}
+function wrapIfNull(value, fallback) {
+  return { $ifNull: [value, fallback] };
+}
+function generateLengthAccess(object, optional, ctx) {
+  const rawObj = _generate(object, ctx);
+  if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
+  if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
+  const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
+  return { $cond: [{ $isArray: obj2 }, { $size: obj2 }, { $strLenCP: obj2 }] };
+}
+var OPTIONAL_STRING_METHODS = methodsWhere((m) => m.optional === "string");
+var OPTIONAL_ARRAY_METHODS = methodsWhere((m) => m.optional === "array");
+var OPTIONAL_EITHER_METHODS = methodsWhere((m) => m.optional === "either");
+function neutralForMethod(method, object) {
+  if (OPTIONAL_STRING_METHODS.has(method)) return "";
+  if (OPTIONAL_ARRAY_METHODS.has(method)) return [];
+  if (OPTIONAL_EITHER_METHODS.has(method)) {
+    if (isStringProducing(object)) return "";
+    return [];
+  }
+  return void 0;
+}
+function asFieldPath(expr, ctx) {
+  if (expr.type === "FieldRef") return expr.path === "" ? "$$ROOT" : `$${expr.path}`;
+  if (expr.type === "ParamRef") {
+    if (ctx.reduceRemap?.has(expr.name)) {
+      return `$$${ctx.reduceRemap.get(expr.name)}`;
+    }
+    if (ctx.lambdaParams.has(expr.name)) {
+      return `$$${safeVarName(expr.name)}`;
+    }
+    const letPath = ctx.pipelineLets?.get(expr.name);
+    if (letPath !== void 0) {
+      return `$${letPath}`;
+    }
+    return null;
+  }
+  if (expr.type === "MemberAccess") {
+    const base = asFieldPath(expr.object, ctx);
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+var BINARY_OP_TO_MQL = {
+  "-": "$subtract",
+  "/": "$divide",
+  "%": "$mod",
+  "**": "$pow",
+  "===": "$eq",
+  "!==": "$ne",
+  ">": "$gt",
+  ">=": "$gte",
+  "<": "$lt",
+  "<=": "$lte",
+  "*": "$multiply",
+  "??": "$ifNull",
+  "&": "$bitAnd",
+  "|": "$bitOr",
+  "^": "$bitXor"
+};
+function mqlForBinaryOp(op) {
+  return BINARY_OP_TO_MQL[op];
+}
+function generateBinaryExpr(op, left, right, ctx, pos) {
+  switch (op) {
+    case "+":
+      return generateAdd(left, right, ctx);
+    case "==":
+    case "!=":
+      return generateLooseEquality(op, left, right, ctx, pos);
+    case "&&":
+      return generateLogical("&&", left, right, ctx);
+    case "||":
+      return generateLogical("||", left, right, ctx);
+    case "in":
+      return generateInExpr(left, right, ctx, pos);
+    // Direct binary operators → `{ $op: [left, right] }`.
+    case "-":
+    case "/":
+    case "%":
+    case "**":
+    case "===":
+    case "!==":
+    case ">":
+    case ">=":
+    case "<":
+    case "<=":
+      return { [BINARY_OP_TO_MQL[op]]: [_generate(left, ctx), _generate(right, ctx)] };
+    // Associative chain operators → flat N-ary array.
+    case "*":
+    case "??":
+    case "&":
+    case "|":
+    case "^":
+      return { [BINARY_OP_TO_MQL[op]]: flattenChain(op, left, right, ctx) };
+  }
+}
+function generateLooseEquality(op, left, right, ctx, pos) {
+  const leftIsNull = left.type === "NullLiteral";
+  const rightIsNull = right.type === "NullLiteral";
+  if (!leftIsNull && !rightIsNull) {
+    throw new CodegenError(
+      `'${op}' is only allowed against null in jsmql. Use '${op === "==" ? "===" : "!=="}' for JS-like strict equality (no surprising type coercion). To match "null or missing", write '$.x ${op} null'.`,
+      pos
+    );
+  }
+  const operand = _generate(leftIsNull ? right : left, ctx);
+  const inNullOrMissing = { $in: [{ $type: operand }, ["null", "missing"]] };
+  return op === "==" ? inNullOrMissing : { $not: [inNullOrMissing] };
+}
+function flattenChain(op, left, right, ctx) {
+  const operands = [];
+  collectChain(op, left, operands, ctx);
+  operands.push(_generate(right, ctx));
+  return operands;
+}
+function collectChain(op, expr, out, ctx) {
+  if (expr.type === "BinaryExpr" && expr.op === op) {
+    collectChain(op, expr.left, out, ctx);
+    out.push(_generate(expr.right, ctx));
+  } else {
+    out.push(_generate(expr, ctx));
+  }
+}
+function generateLogical(op, left, right, ctx) {
+  const chain = [];
+  collectExprChain(op, left, chain);
+  chain.push(right);
+  return foldLogical(op, chain, ctx);
+}
+function foldLogical(op, chain, ctx) {
+  if (chain.length === 1) return _generate(chain[0], ctx);
+  if (chain.every((e) => isProvablyBool(e))) {
+    const operands = chain.map((e) => _generate(e, ctx));
+    return op === "&&" ? { $and: operands } : { $or: operands };
+  }
+  const lhs = chain[0];
+  const lhsGen = _generate(lhs, ctx);
+  const rhsGen = foldLogical(op, chain.slice(1), ctx);
+  if (isPureRef(lhs, ctx) || isProvablyBool(lhs)) {
+    return condForLogical(op, lhsGen, rhsGen, lhs);
+  }
+  const v = gensymInScope(ctx, "v");
+  const ref = `$$${v}`;
+  return {
+    $let: {
+      vars: { [v]: lhsGen },
+      // The bound value is a runtime value — we don't have an AST for it,
+      // so we can't ask isProvablyBool. Always wrap in jsBool for the cond.
+      in: condForLogical(op, ref, rhsGen, null)
+    }
+  };
+}
+function condForLogical(op, lhs, rhs, lhsExpr) {
+  const cond = lhsExpr ? jsBoolIfNeeded(lhsExpr, lhs) : jsBool(lhs);
+  return op === "&&" ? { $cond: [cond, rhs, lhs] } : { $cond: [cond, lhs, rhs] };
+}
+function generateInExpr(left, right, ctx, pos) {
+  if (right.type === "StringLiteral" || right.type === "NumberLiteral" || right.type === "BooleanLiteral" || right.type === "NullLiteral") {
+    throw new CodegenError(
+      "Right-hand side of 'in' must be an array literal, object literal, or field reference, not a scalar value",
+      pos
+    );
+  }
+  if (right.type === "ObjectLiteral") {
+    return { $in: [_generate(left, ctx), keyArrayForObjectLiteral(right.entries, ctx)] };
+  }
+  return { $in: [_generate(left, ctx), _generate(right, ctx)] };
+}
+function keyArrayForObjectLiteral(entries, ctx) {
+  if (entries.every((e) => e.type === "KeyValueEntry" && e.key.kind === "static")) {
+    return entries.map((e) => e.key.name);
+  }
+  const operands = [];
+  let currentChunk = null;
+  const flush = () => {
+    if (currentChunk !== null) {
+      operands.push(currentChunk);
+      currentChunk = null;
+    }
+  };
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      flush();
+      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: "kv", in: "$$kv.k" } });
+      continue;
+    }
+    if (currentChunk === null) currentChunk = [];
+    currentChunk.push(entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx));
+  }
+  flush();
+  if (operands.length === 1) return operands[0];
+  return { $concatArrays: operands };
+}
+function generateAdd(left, right, ctx) {
+  const exprs = [];
+  collectExprChain("+", left, exprs);
+  exprs.push(right);
+  const isString = exprs.some((e) => isStringProducing(e));
+  if (isString) {
+    return {
+      $concat: exprs.map((e) => {
+        const gen = _generate(e, ctx);
+        return chainHasOptional(e) ? wrapIfNull(gen, "") : gen;
+      })
+    };
+  }
+  return { $add: exprs.map((e) => _generate(e, ctx)) };
+}
+function collectExprChain(op, expr, out) {
+  if (expr.type === "BinaryExpr" && expr.op === op) {
+    collectExprChain(op, expr.left, out);
+    out.push(expr.right);
+  } else {
+    out.push(expr);
+  }
+}
+function generateUnaryExpr(op, operand, ctx, _pos) {
+  if (op === "!") {
+    if (operand.type === "UnaryExpr" && operand.op === "!") {
+      return jsBool(_generate(operand.operand, ctx));
+    }
+    return { $not: jsBoolIfNeeded(operand, _generate(operand, ctx)) };
+  }
+  if (op === "~") {
+    return { $bitNot: _generate(operand, ctx) };
+  }
+  if (operand.type === "NumberLiteral") {
+    return -operand.value;
+  }
+  return { $multiply: [_generate(operand, ctx), -1] };
+}
+function generateArrayLiteral(elements, ctx, pos) {
+  for (const el of elements) {
+    if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      throw new CodegenError(
+        `${el.type === "AssignExpr" ? "Assignment" : "delete"} is a statement, not a value, and is only valid at the top level or as a pipeline-array element. If this array is meant to be a pipeline, ensure its first element is a stage like \`$match(...)\`.`,
+        el.pos
+      );
+    }
+    if (el.type === "LetDecl") {
+      throw new CodegenError(
+        "`let` is a pipeline statement, not a value, and is only valid as a pipeline-array element. If this array is meant to be a pipeline, ensure its first element is a stage like `$match(...)`.",
+        el.pos
+      );
+    }
+  }
+  void pos;
+  const hasSpread = elements.some((el) => el.type === "SpreadElement");
+  if (!hasSpread) {
+    return elements.map((el) => _generate(el, ctx));
+  }
+  const operands = [];
+  let buffer = [];
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    operands.push(buffer.map((el) => _generate(el, ctx)));
+    buffer = [];
+  };
+  for (const el of elements) {
+    if (el.type === "SpreadElement") {
+      flushBuffer();
+      const argVal = _generate(el.argument, ctx);
+      operands.push(chainHasOptional(el.argument) ? wrapIfNull(argVal, []) : argVal);
+    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+      continue;
+    } else {
+      buffer.push(el);
+    }
+  }
+  flushBuffer();
+  if (operands.length === 1) return operands[0];
+  return { $concatArrays: operands };
+}
+function generateObjectLiteral(entries, ctx, _pos) {
+  const hasSpread = entries.some((e) => e.type === "SpreadElement");
+  if (!hasSpread) {
+    const hasComputed = entries.some((e) => e.type === "KeyValueEntry" && e.key.kind === "computed");
+    if (!hasComputed) {
+      return generateStaticObjectEntries(entries, ctx);
+    }
+    return generateComputedKeyObject(entries, ctx);
+  }
+  const operands = [];
+  let staticBuffer = [];
+  const flushBuffer = () => {
+    if (staticBuffer.length === 0) return;
+    const hasComputed = staticBuffer.some((e) => e.key.kind === "computed");
+    operands.push(
+      hasComputed ? generateComputedKeyObject(staticBuffer, ctx) : generateStaticObjectEntries(staticBuffer, ctx)
+    );
+    staticBuffer = [];
+  };
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      flushBuffer();
+      operands.push(_generate(entry.argument, ctx));
+    } else {
+      staticBuffer.push(entry);
+    }
+  }
+  flushBuffer();
+  if (operands.length === 1) return operands[0];
+  return { $mergeObjects: operands };
+}
+function arrayToObjectOfLiteralPairs(pairs) {
+  return { $arrayToObject: [pairs] };
+}
+function generateComputedKeyObject(entries, ctx) {
+  const pairs = entries.map((entry) => {
+    const k = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
+    return { k, v: _generate(entry.value, ctx) };
+  });
+  return arrayToObjectOfLiteralPairs(pairs);
+}
+function generateStaticObjectEntries(entries, ctx) {
+  const result = {};
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      throw new CodegenError("Spread elements in objects are not supported in MQL output", entry.pos);
+    }
+    if (entry.key.kind === "computed") {
+      throw new CodegenError(
+        "Computed object keys are not allowed here \u2014 operator argument keys must be literal names",
+        entry.pos
+      );
+    }
+    if (entry.key.name.charCodeAt(0) === 36 && entry.value.type !== "ArrayLiteral") {
+      if (lookupOperator(entry.key.name)?.shape.kind === "array") {
+        throw listOperandError(entry.key.name, entry.value.pos);
+      }
+    }
+    result[entry.key.name] = _generate(entry.value, ctx);
+  }
+  return result;
+}
+function checkOperatorContext(name, ctx, pos) {
+  const def = lookupOperator(name);
+  if (def?.category === "window") {
+    if (ctx.accumulatorContext !== "window-output") {
+      throw new CodegenError(
+        `${name} is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: ${name}(...) } }) to compute it per-document over a window.`,
+        pos
+      );
+    }
+    return;
+  }
+  if (def?.accumulatorOnly) {
+    if (ctx.accumulatorContext === void 0) {
+      throw new CodegenError(
+        `${name} is an accumulator operator \u2014 only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: ${name}(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.`,
+        pos
+      );
+    }
+  }
+}
+function generateOperatorCall(name, style, args, ctx, pos) {
+  checkOperatorContext(name, ctx, pos);
+  assertNoSpread(args, name, pos);
+  if (name === "$literal" && args.length === 1 && args[0].type !== "SpreadElement") {
+    const inner = _generate(args[0], { ...ctx, insideLiteral: true });
+    return { $literal: inner };
+  }
+  if (style === "object") {
+    const objArg = args[0];
+    if (!objArg || objArg.type !== "ObjectLiteral") {
+      throw new CodegenError(`Object-style call to ${name} must have exactly one object argument`, pos);
+    }
+    const def2 = lookupOperator(name);
+    if (def2?.shape.kind === "object") {
+      return { [name]: generateStaticObjectEntries(objArg.entries, ctx) };
+    }
+    return { [name]: generateObjectLiteral(objArg.entries, ctx, objArg.pos) };
+  }
+  if (name === "$let" && args.length === 2 && args[1]?.type === "Lambda") {
+    const varsExpr = args[0];
+    if (!varsExpr || varsExpr.type !== "ObjectLiteral") {
+      throw new CodegenError("$let first argument must be an object literal", varsExpr?.pos ?? pos);
+    }
+    const lambdaExpr = args[1];
+    if (lambdaExpr.type !== "Lambda") throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
+    if (lambdaExpr.body === void 0) {
+      throw new CodegenError(
+        "$let second argument cannot be a block-body arrow \u2014 only '$$$.<coll>.find/filter(...)' accepts block bodies.",
+        lambdaExpr.pos
+      );
+    }
+    const vars = generateStaticObjectEntries(varsExpr.entries, ctx);
+    const bodyCtx = extendCtx(ctx, lambdaExpr.params);
+    return { $let: { vars, in: _generate(lambdaExpr.body, bodyCtx) } };
+  }
+  if (name === "$arrayToObject" && style === "positional" && args.length === 1 && args[0].type === "ArrayLiteral") {
+    return arrayToObjectOfLiteralPairs(_generate(args[0], ctx));
+  }
+  const def = lookupOperator(name);
+  if (!def) {
+    return generateUnknownOperator(name, args, ctx);
+  }
+  const { shape } = def;
+  switch (shape.kind) {
+    case "none": {
+      return { [name]: {} };
+    }
+    case "single": {
+      if (args.length !== 1) {
+        throw new CodegenError(`Operator ${name} expects exactly 1 argument, got ${args.length}`, pos);
+      }
+      return { [name]: _generate(args[0], ctx) };
+    }
+    case "array": {
+      if (args.length === 0) {
+        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
+      }
+      if (args.length === 1) {
+        const only = args[0];
+        if (only.type !== "ArrayLiteral") {
+          throw listOperandError(name, only.pos);
+        }
+        return { [name]: _generate(only, ctx) };
+      }
+      return { [name]: generateVariadicArgs(args, ctx) };
+    }
+    case "flex": {
+      if (args.length === 0) {
+        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
+      }
+      if (args.length === 1) {
+        return { [name]: _generate(args[0], ctx) };
+      }
+      return { [name]: generateVariadicArgs(args, ctx) };
+    }
+    case "object": {
+      if (args.length === 0) {
+        throw new CodegenError(`Operator ${name} expects at least 1 argument`, pos);
+      }
+      const keys = shape.keys;
+      const obj2 = {};
+      for (let i = 0; i < args.length; i++) {
+        const key = keys[i];
+        if (!key) {
+          throw new CodegenError(
+            `Operator ${name} received more positional arguments than expected (max ${keys.length})`,
+            args[i].pos
+          );
+        }
+        obj2[key] = _generate(args[i], ctx);
+      }
+      return { [name]: obj2 };
+    }
+  }
+}
+function generateUnknownOperator(name, args, ctx) {
+  if (args.length === 0) {
+    return { [name]: {} };
+  }
+  if (args.length === 1) {
+    const only = args[0];
+    if (only.type === "ObjectLiteral") {
+      return { [name]: generateStaticObjectEntries(only.entries, ctx) };
+    }
+    return { [name]: _generate(only, ctx) };
+  }
+  return { [name]: generateVariadicArgs(args, ctx) };
+}
+function generateVariadicArgs(args, ctx) {
+  const hasSpread = args.some((a) => a.type === "SpreadElement");
+  if (!hasSpread) {
+    return args.map((a) => _generate(a, ctx));
+  }
+  if (args.length === 1) {
+    const only = args[0];
+    return _generate(only.argument, ctx);
+  }
+  const parts = args.map((a) => a.type === "SpreadElement" ? _generate(a.argument, ctx) : [_generate(a, ctx)]);
+  return { $concatArrays: parts };
+}
+function listOperandError(name, pos) {
+  return new CodegenError(
+    `${name} operates on a list of operands \u2014 pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,
+    pos
+  );
+}
+var SPREAD_JS_ALTERNATIVE = {
+  $min: "use the JS form Math.min(...arr)",
+  $max: "use the JS form Math.max(...arr)",
+  $concatArrays: "use array spread ([...a, ...b]) or .concat()",
+  $mergeObjects: "use object spread ({ ...a, ...b }) or Object.assign(...docs)"
+};
+function assertNoSpread(args, name, callPos) {
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      const alt = SPREAD_JS_ALTERNATIVE[name];
+      const fix = alt ? `${alt}, or pass a single array (${name}([a, b]))` : `pass operands directly (${name}(a, b)) or as a single array (${name}([a, b]))`;
+      throw new CodegenError(`Spread (...) is not supported in ${name}(...) \u2014 ${fix}.`, a.pos ?? callPos);
+    }
+  }
+}
+function generateTemplateLiteral(quasis, expressions, ctx) {
+  if (expressions.length === 0) {
+    return quasis[0] ?? "";
+  }
+  const parts = [];
+  for (let i = 0; i < expressions.length; i++) {
+    if (quasis[i] !== "") parts.push(quasis[i]);
+    const expr = expressions[i];
+    const gen = _generate(expr, ctx);
+    const wrappedGen = chainHasOptional(expr) ? wrapIfNull(gen, "") : gen;
+    parts.push(isStringProducing(expr) ? wrappedGen : { $toString: wrappedGen });
+  }
+  const tail = quasis[expressions.length];
+  if (tail !== "") parts.push(tail);
+  return { $concat: parts };
+}
+function generateMethodCall(object, method, args, ctx, callPos, optional = false) {
+  if (object.type === "NewSet") {
+    return generateSetMethodCall(object, method, args, ctx);
+  }
+  if (object.type === "RegexLiteral") {
+    return generateRegexMethodCall(object, method, args, ctx);
+  }
+  const rawObj = _generate(object, ctx);
+  const wrapReceiver = optional || chainHasOptional(object);
+  const neutral = wrapReceiver ? neutralForMethod(method, object) : void 0;
+  const genObj = neutral !== void 0 ? wrapIfNull(rawObj, neutral) : rawObj;
+  switch (method) {
+    // ── String methods ──────────────────────────────────────────────────────
+    case "trim":
+      return { $trim: { input: genObj } };
+    case "trimStart":
+    case "trimLeft":
+      return { $ltrim: { input: genObj } };
+    case "trimEnd":
+    case "trimRight":
+      return { $rtrim: { input: genObj } };
+    case "toLowerCase":
+      return { $toLower: genObj };
+    case "toUpperCase":
+      return { $toUpper: genObj };
+    case "substr": {
+      const exprArgs = exprArgsOnly(args, "substr");
+      checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
+      if (exprArgs.length === 1) {
+        return { $substrCP: [genObj, _generate(exprArgs[0], ctx), { $strLenCP: genObj }] };
+      }
+      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+    }
+    case "substring": {
+      const exprArgs = exprArgsOnly(args, "substring");
+      checkArity("substring", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
+      if (exprArgs.length === 0) return genObj;
+      const start = clampNonNegativeIndex(exprArgs[0], ctx);
+      if (exprArgs.length === 1) {
+        return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+      }
+      const end = clampNonNegativeIndex(exprArgs[1], ctx);
+      return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
+    }
+    case "charAt": {
+      const exprArgs = exprArgsOnly(args, "charAt");
+      checkArity("charAt", { sig: "index", exact: 1 }, exprArgs.length, callPos);
+      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), 1] };
+    }
+    case "split": {
+      const exprArgs = exprArgsOnly(args, "split");
+      checkArity("split", { sig: "separator", exact: 1 }, exprArgs.length, callPos);
+      return { $split: [genObj, _generate(exprArgs[0], ctx)] };
+    }
+    case "startsWith": {
+      const exprArgs = exprArgsOnly(args, "startsWith");
+      checkArity("startsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
+      return { $eq: [{ $indexOfCP: [genObj, _generate(exprArgs[0], ctx)] }, 0] };
+    }
+    case "endsWith": {
+      const exprArgs = exprArgsOnly(args, "endsWith");
+      checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
+      const needle = _generate(exprArgs[0], ctx);
+      return {
+        $eq: [
+          { $substrCP: [genObj, { $subtract: [{ $strLenCP: genObj }, { $strLenCP: needle }] }, { $strLenCP: needle }] },
+          needle
+        ]
+      };
+    }
+    case "indexOf": {
+      const exprArgs = exprArgsOnly(args, "indexOf");
+      checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      const needle = _generate(exprArgs[0], ctx);
+      if (isArrayProducing(object)) {
+        return { $indexOfArray: [genObj, needle] };
+      }
+      if (isStringProducing(object)) {
+        return { $indexOfCP: [genObj, needle] };
+      }
+      return { $cond: [{ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] }] };
+    }
+    case "lastIndexOf": {
+      const exprArgs = exprArgsOnly(args, "lastIndexOf");
+      checkArity("lastIndexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      if (isStringProducing(object)) {
+        throw new CodegenError(
+          `.lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.`,
+          callPos
+        );
+      }
+      const needle = _generate(exprArgs[0], ctx);
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj },
+          in: {
+            $let: {
+              vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] } },
+              in: {
+                $cond: [
+                  { $eq: ["$$jsmqlRevIdx", -1] },
+                  -1,
+                  { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] }
+                ]
+              }
+            }
+          }
+        }
+      };
+    }
+    case "replace": {
+      const exprArgs = exprArgsOnly(args, "replace");
+      checkArity("replace", { sig: "find, replacement", exact: 2 }, exprArgs.length, callPos);
+      return {
+        $replaceOne: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) }
+      };
+    }
+    case "replaceAll": {
+      const exprArgs = exprArgsOnly(args, "replaceAll");
+      checkArity("replaceAll", { sig: "find, replacement", exact: 2 }, exprArgs.length, callPos);
+      return {
+        $replaceAll: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) }
+      };
+    }
+    case "includes": {
+      const exprArgs = exprArgsOnly(args, "includes");
+      checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      const needle = _generate(exprArgs[0], ctx);
+      if (isArrayProducing(object)) {
+        return { $in: [needle, genObj] };
+      }
+      if (isStringProducing(object)) {
+        return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
+      }
+      return {
+        $cond: [{ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] }]
+      };
+    }
+    case "match": {
+      const exprArgs = exprArgsOnly(args, "match");
+      checkArity("match", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
+      const pattern = exprArgs[0];
+      if (pattern.type === "RegexLiteral") {
+        const result = { input: genObj, regex: pattern.pattern };
+        const opts = mongoRegexOptions(pattern.flags);
+        if (opts) result["options"] = opts;
+        return { $regexMatch: result };
+      }
+      return { $regexMatch: { input: genObj, regex: _generate(pattern, ctx) } };
+    }
+    case "matchAll": {
+      const exprArgs = exprArgsOnly(args, "matchAll");
+      checkArity("matchAll", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
+      const pattern = exprArgs[0];
+      if (pattern.type === "RegexLiteral") {
+        if (!pattern.flags.includes("g")) {
+          throw new CodegenError(
+            `.matchAll() requires a regex with the 'g' flag (matching JS's TypeError on non-global regex)`,
+            callPos
+          );
+        }
+        const result = { input: genObj, regex: pattern.pattern };
+        const opts = mongoRegexOptions(pattern.flags);
+        if (opts) result["options"] = opts;
+        return { $regexFindAll: result };
+      }
+      return { $regexFindAll: { input: genObj, regex: _generate(pattern, ctx) } };
+    }
+    case "search": {
+      const exprArgs = exprArgsOnly(args, "search");
+      checkArity("search", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
+      const pattern = exprArgs[0];
+      const searchOpts = pattern.type === "RegexLiteral" ? mongoRegexOptions(pattern.flags) : "";
+      const findCall = pattern.type === "RegexLiteral" ? {
+        $regexFind: searchOpts ? { input: genObj, regex: pattern.pattern, options: searchOpts } : { input: genObj, regex: pattern.pattern }
+      } : { $regexFind: { input: genObj, regex: _generate(pattern, ctx) } };
+      return { $ifNull: [{ $getField: { field: "idx", input: findCall } }, -1] };
+    }
+    case "padStart":
+    case "padEnd": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "targetLength[, padString]", allowed: [1, 2] }, exprArgs.length, callPos);
+      const target = _generate(exprArgs[0], ctx);
+      const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
+      const padReduce = {
+        $reduce: {
+          input: { $range: [0, { $subtract: [target, { $strLenCP: "$$s" }] }] },
+          initialValue: "",
+          in: { $concat: ["$$value", pad] }
+        }
+      };
+      const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
+      return {
+        $let: {
+          vars: { s: genObj },
+          in: { $cond: [{ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }] }
+        }
+      };
+    }
+    case "repeat": {
+      const exprArgs = exprArgsOnly(args, "repeat");
+      checkArity("repeat", { sig: "count", exact: 1 }, exprArgs.length, callPos);
+      const count = _generate(exprArgs[0], ctx);
+      return { $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", genObj] } } };
+    }
+    // ── Array methods (no lambda) ───────────────────────────────────────────
+    case "at": {
+      const exprArgs = exprArgsOnly(args, "at");
+      checkArity("at", { sig: "index", exact: 1 }, exprArgs.length, callPos);
+      return { $arrayElemAt: [genObj, _generate(exprArgs[0], ctx)] };
+    }
+    case "slice": {
+      const exprArgs = exprArgsOnly(args, "slice");
+      checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
+      if (isStringProducing(object)) return sliceString(genObj, exprArgs, ctx);
+      if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
+      return { $cond: [{ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx)] };
+    }
+    case "toReversed": {
+      checkArity(method, { sig: "", none: true }, args.length, callPos);
+      return { $reverseArray: genObj };
+    }
+    case "toSorted": {
+      if (args.length === 0) {
+        return { $sortArray: { input: genObj, sortBy: 1 } };
+      }
+      const exprArgs = exprArgsOnly(args, "toSorted");
+      checkArity("toSorted", { sig: "keyFn", allowed: [0, 1] }, exprArgs.length, callPos);
+      const sortBy = lambdaToSortBy(exprArgs[0], "toSorted");
+      return { $sortArray: { input: genObj, sortBy } };
+    }
+    case "toSpliced": {
+      const exprArgs = exprArgsOnly(args, "toSpliced");
+      checkArity("toSpliced", { sig: "start[, deleteCount, ...items]", atLeast: 1 }, exprArgs.length, callPos);
+      const startArg = exprArgs[0];
+      if (isNegativeLiteral(startArg)) {
+        throw new CodegenError(
+          `.toSpliced() with a negative start index isn't supported \u2014 MongoDB $slice's position arg is non-negative.`,
+          startArg.pos
+        );
+      }
+      const start = _generate(startArg, ctx);
+      const hasDeleteCount = exprArgs.length >= 2;
+      const deleteCountArg = hasDeleteCount ? exprArgs[1] : null;
+      if (deleteCountArg && isNegativeLiteral(deleteCountArg)) {
+        throw new CodegenError(
+          `.toSpliced() with a negative deleteCount isn't supported \u2014 MongoDB $slice's length arg is non-negative.`,
+          deleteCountArg.pos
+        );
+      }
+      const items = exprArgs.slice(2).map((a) => _generate(a, ctx));
+      const tailStart = hasDeleteCount ? { $add: ["$$jsmqlStart", _generate(deleteCountArg, ctx)] } : "$$jsmqlStart";
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj, jsmqlStart: start },
+          in: {
+            $let: {
+              vars: { jsmqlTailStart: tailStart },
+              in: {
+                $concatArrays: [
+                  { $slice: ["$$jsmqlArr", 0, "$$jsmqlStart"] },
+                  items,
+                  {
+                    $slice: [
+                      "$$jsmqlArr",
+                      "$$jsmqlTailStart",
+                      { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }] }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      };
+    }
+    case "with": {
+      const exprArgs = exprArgsOnly(args, "with");
+      checkArity("with", { sig: "index, value", exact: 2 }, exprArgs.length, callPos);
+      const idxArg = exprArgs[0];
+      if (isNegativeLiteral(idxArg)) {
+        throw new CodegenError(
+          `.with() with a negative index isn't supported \u2014 MongoDB $slice's position arg is non-negative.`,
+          idxArg.pos
+        );
+      }
+      const idx = _generate(idxArg, ctx);
+      const value = _generate(exprArgs[1], ctx);
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj, jsmqlIdx: idx, jsmqlVal: value },
+          in: {
+            $concatArrays: [
+              { $slice: ["$$jsmqlArr", 0, "$$jsmqlIdx"] },
+              ["$$jsmqlVal"],
+              {
+                $slice: [
+                  "$$jsmqlArr",
+                  { $add: ["$$jsmqlIdx", 1] },
+                  { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }] }
+                ]
+              }
+            ]
+          }
+        }
+      };
+    }
+    case "findLast": {
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "findLast");
+      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      if (lambda.params.length <= 1) {
+        return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
+      }
+      return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] }, 1] };
+    }
+    case "findIndex":
+    case "findLastIndex": {
+      const lambda = requireLambda(exprArgsOnly(args, method), method, callPos);
+      if (lambda.params.length >= 3) {
+        throw new CodegenError(
+          `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
+          lambda.pos
+        );
+      }
+      const bodyCtx = extendCtx(ctx, lambda.params);
+      const vars = { [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] } };
+      if (lambda.params[1]) {
+        vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
+      }
+      const predicate = jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx));
+      const cond = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
+      return {
+        $reduce: {
+          input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+          initialValue: -1,
+          in: { $let: { vars, in: { $cond: [cond, { $arrayElemAt: ["$$this", 0] }, "$$value"] } } }
+        }
+      };
+    }
+    case "concat": {
+      checkArity("concat", { sig: "...items", atLeast: 1 }, args.length, callPos);
+      const tail = args.map((a) => a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx));
+      if (isArrayProducing(object)) {
+        return { $concatArrays: [genObj, ...tail] };
+      }
+      if (isStringProducing(object)) {
+        return { $concat: [genObj, ...tail] };
+      }
+      return { $cond: [{ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] }] };
+    }
+    case "join": {
+      const exprArgs = exprArgsOnly(args, "join");
+      checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
+      const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
+      return {
+        $reduce: {
+          input: genObj,
+          initialValue: "",
+          in: {
+            $cond: [
+              { $eq: ["$$value", ""] },
+              { $toString: "$$this" },
+              { $concat: ["$$value", sep, { $toString: "$$this" }] }
+            ]
+          }
+        }
+      };
+    }
+    case "toString": {
+      checkArity("toString", { sig: "", none: true }, args.length, callPos);
+      if (isArrayProducing(object)) {
+        return {
+          $reduce: {
+            input: genObj,
+            initialValue: "",
+            in: {
+              $cond: [
+                { $eq: ["$$value", ""] },
+                { $toString: "$$this" },
+                { $concat: ["$$value", ",", { $toString: "$$this" }] }
+              ]
+            }
+          }
+        };
+      }
+      if (isStringProducing(object)) {
+        return genObj;
+      }
+      return { $toString: genObj };
+    }
+    case "flat": {
+      const exprArgs = exprArgsOnly(args, "flat");
+      checkArity("flat", { sig: "depth", allowed: [0, 1] }, exprArgs.length, callPos);
+      if (exprArgs.length === 1) {
+        const arg = exprArgs[0];
+        if (arg.type !== "NumberLiteral" || arg.value !== 1) {
+          throw new CodegenError(
+            `.flat() only supports depth=1 (the default). MongoDB has no recursive flatten primitive.`,
+            callPos
+          );
+        }
+      }
+      return { $reduce: { input: genObj, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } };
+    }
+    case "flatMap": {
+      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap");
+      return {
+        $reduce: {
+          input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(_generate(lambda.body, iter.bodyCtx)) } },
+          initialValue: [],
+          in: { $concatArrays: ["$$value", "$$this"] }
+        }
+      };
+    }
+    // ── Array methods (lambda) ──────────────────────────────────────────────
+    case "map": {
+      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "map");
+      return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(_generate(lambda.body, iter.bodyCtx)) } };
+    }
+    case "filter": {
+      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "filter");
+      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      if (lambda.params.length <= 1) {
+        return { $filter: { input: iter.input, as: iter.asName, cond } };
+      }
+      return {
+        $map: {
+          input: { $filter: { input: iter.input, as: iter.asName, cond } },
+          as: "jsmqlPair",
+          in: { $arrayElemAt: ["$$jsmqlPair", 1] }
+        }
+      };
+    }
+    case "find": {
+      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "find");
+      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      if (lambda.params.length <= 1) {
+        return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
+      }
+      return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] }, 1] };
+    }
+    case "some": {
+      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "some");
+      return {
+        $anyElementTrue: {
+          $map: {
+            input: iter.input,
+            as: iter.asName,
+            in: iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)))
+          }
+        }
+      };
+    }
+    case "every": {
+      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos);
+      const iter = arrayIterInput(lambda, genObj, ctx, "every");
+      return {
+        $allElementsTrue: {
+          $map: {
+            input: iter.input,
+            as: iter.asName,
+            in: iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)))
+          }
+        }
+      };
+    }
+    case "reduce":
+    case "reduceRight": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "lambda, initialValue", exact: 2 }, exprArgs.length, callPos);
+      const lambda = requireLambda(exprArgs, method, callPos);
+      if (lambda.params.length < 2 || lambda.params.length > 3) {
+        throw new CodegenError(
+          `.${method}() lambda must have 2 or 3 parameters (accumulator, element[, index])`,
+          callPos
+        );
+      }
+      const accType = isObjectProducing(exprArgs[1]) && isObjectProducing(lambda.body) ? "object" : isArrayProducing(exprArgs[1]) && isArrayProducing(lambda.body) ? "array" : void 0;
+      const nextBindingTypes = new Map(ctx.bindingTypes ?? []);
+      if (accType) nextBindingTypes.set(lambda.params[0], accType);
+      else nextBindingTypes.delete(lambda.params[0]);
+      const has3 = lambda.params.length === 3;
+      const reduceCtx = {
+        lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, ...lambda.params]),
+        reduceRemap: has3 ? /* @__PURE__ */ new Map([[lambda.params[0], "value"]]) : /* @__PURE__ */ new Map([
+          [lambda.params[0], "value"],
+          [lambda.params[1], "this"]
+        ]),
+        pipelineLets: ctx.pipelineLets,
+        droppedLets: ctx.droppedLets,
+        bindingTypes: nextBindingTypes
+      };
+      const baseBody = _generate(lambda.body, reduceCtx);
+      const inExpr = has3 ? {
+        $let: {
+          vars: {
+            [safeVarName(lambda.params[1])]: { $arrayElemAt: ["$$this", 1] },
+            [safeVarName(lambda.params[2])]: { $arrayElemAt: ["$$this", 0] }
+          },
+          in: baseBody
+        }
+      } : baseBody;
+      let input = genObj;
+      if (has3) {
+        input = { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } };
+      }
+      if (method === "reduceRight") {
+        input = { $reverseArray: input };
+      }
+      return { $reduce: { input, initialValue: _generate(exprArgs[1], ctx), in: inExpr } };
+    }
+    // ── Date methods ────────────────────────────────────────────────────────
+    case "getFullYear":
+      return { $year: genObj };
+    case "getMonth":
+      return { $subtract: [{ $month: genObj }, 1] };
+    case "getDate":
+      return { $dayOfMonth: genObj };
+    case "getDay":
+      return { $subtract: [{ $dayOfWeek: genObj }, 1] };
+    case "getHours":
+      return { $hour: genObj };
+    case "getMinutes":
+      return { $minute: genObj };
+    case "getSeconds":
+      return { $second: genObj };
+    case "getMilliseconds":
+      return { $millisecond: genObj };
+    case "getTime":
+      return { $toLong: genObj };
+    case "toISOString":
+      return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
+    // ── DX shims: mutating Array methods ────────────────────────────────────
+    // These all mutate the receiver in JavaScript. In expression position
+    // jsmql is immutable, so we surface a tailored "use the immutable
+    // equivalent" message. At statement position (a top-level pipeline
+    // statement on a field-path receiver), `tryRewriteMutatorCall` rewrites
+    // the call to `$.<field> = $.<field>.<immutable>(...)` before codegen
+    // sees it — so reaching these throws means the user used a mutator in
+    // expression position.
+    case "sort":
+      throw new CodegenError(
+        `.sort() mutates the array in JavaScript. In expression position, use '.toSorted()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
+        callPos
+      );
+    case "reverse":
+      throw new CodegenError(
+        `.reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
+        callPos
+      );
+    case "splice":
+      throw new CodegenError(
+        `.splice() mutates the array in JavaScript. In expression position, use '.toSpliced(start, deleteCount, ...items)' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
+        callPos
+      );
+    case "push":
+      throw new CodegenError(
+        `.push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
+        callPos
+      );
+    case "pop":
+      throw new CodegenError(
+        `.pop() mutates the array in JavaScript. In expression position, use '.at(-1)' to read the last element or '.slice(0, -1)' for everything-but-last \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to drop the last element.`,
+        callPos
+      );
+    case "shift":
+      throw new CodegenError(
+        `.shift() mutates the array in JavaScript. In expression position, use '.at(0)' to read the first element or '.slice(1)' for everything-but-first \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to drop the first element.`,
+        callPos
+      );
+    case "unshift":
+      throw new CodegenError(
+        `.unshift() mutates the array in JavaScript. In expression position, use '.concat()' with the new items first or spread '[...newItems, ...arr]' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to prepend in place.`,
+        callPos
+      );
+    case "fill":
+      throw new CodegenError(
+        `.fill() mutates the array in JavaScript. In expression position there is no direct immutable replacement (build from a $range or pass a pre-filled array as a parameter) \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to fill the field in place.`,
+        callPos
+      );
+    case "copyWithin":
+      throw new CodegenError(
+        `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. Call it at statement position (top-level on a '$.<field>' receiver) to copy-within the field in place, or compose '.slice()' calls with '$concatArrays' for an inline expression.`,
+        callPos
+      );
+    // ── DX shims: iterator / void / locale methods ──────────────────────────
+    // None of these have a sensible lowering to an MQL expression. Throw a
+    // pointed error explaining why, with a workaround when one exists.
+    case "forEach":
+      throw new CodegenError(
+        `.forEach() returns undefined in JavaScript; jsmql expressions must produce a value. Use '.map(...)' to transform, or move side-effecting work outside the query.`,
+        callPos
+      );
+    case "entries":
+      throw new CodegenError(
+        `.entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array.`,
+        callPos
+      );
+    case "keys":
+      throw new CodegenError(
+        `.keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.`,
+        callPos
+      );
+    case "values":
+      throw new CodegenError(
+        `.values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence \u2014 use it directly.`,
+        callPos
+      );
+    case "toLocaleString":
+      throw new CodegenError(
+        `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
+        callPos
+      );
+    default: {
+      const hint = didYouMean(method, KNOWN_METHODS);
+      throw new CodegenError(`Unknown method '.${method}()'.${hint}`, callPos);
+    }
+  }
+}
+function isNegativeLiteral(e) {
+  if (e.type === "NumberLiteral") return e.value < 0;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") {
+    return e.operand.value > 0;
+  }
+  return false;
+}
+function arrayIterInput(lambda, genObj, ctx, method) {
+  const params = lambda.params;
+  if (params.length >= 3) {
+    throw new CodegenError(
+      `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
+      lambda.pos
+    );
+  }
+  if (params.length <= 1) {
+    return {
+      input: genObj,
+      asName: params[0] ? safeVarName(params[0]) : "v",
+      bodyCtx: extendCtx(ctx, params),
+      wrap: (body) => body
+    };
+  }
+  return {
+    input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+    asName: "jsmqlPair",
+    bodyCtx: extendCtx(ctx, params),
+    wrap: (body) => ({
+      $let: {
+        vars: {
+          [safeVarName(params[0])]: { $arrayElemAt: ["$$jsmqlPair", 1] },
+          [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] }
+        },
+        in: body
+      }
+    })
+  };
+}
+function lambdaToSortBy(arg, method) {
+  if (arg.type !== "Lambda") {
+    throw new CodegenError(
+      `.${method}() supports 0 or 1 arguments \u2014 an optional key function 'x => x.path' or 'x => -x.path'. For comparator-style sorts use $op($sortArray, { input, sortBy }).`,
+      arg.pos
+    );
+  }
+  if (arg.body === void 0) {
+    throw new CodegenError(
+      `.${method}() does not accept a block-body arrow \u2014 pass an expression-body key function like 'x => x.field'.`,
+      arg.pos
+    );
+  }
+  if (arg.params.length !== 1) {
+    throw new CodegenError(
+      `.${method}() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).`,
+      arg.pos
+    );
+  }
+  const param = arg.params[0];
+  let body = arg.body;
+  let direction = 1;
+  if (body.type === "UnaryExpr" && body.op === "-") {
+    direction = -1;
+    body = body.operand;
+  }
+  const path = paramKeyPath(body, param);
+  if (path === null) {
+    throw new CodegenError(
+      `.${method}() key function body must be '${param}.<field>' (optionally negated). For more complex sort criteria use $op($sortArray, { input, sortBy }).`,
+      arg.body.pos
+    );
+  }
+  return { [path]: direction };
+}
+function paramKeyPath(expr, param) {
+  if (expr.type === "ParamRef" && expr.name === param) {
+    return null;
+  }
+  if (expr.type === "MemberAccess") {
+    const base = paramKeyPath(expr.object, param);
+    if (expr.object.type === "ParamRef" && expr.object.name === param) {
+      return expr.member;
+    }
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+var MUTATING_ARRAY_METHODS = /* @__PURE__ */ new Set([
+  "sort",
+  "reverse",
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "splice",
+  "fill",
+  "copyWithin"
+]);
+function isWritableFieldPath(expr) {
+  if (expr.type === "FieldRef") return expr.path !== "";
+  if (expr.type === "MemberAccess") return isWritableFieldPath(expr.object);
+  return false;
+}
+function tryRewriteMutatorCall(expr) {
+  if (expr.type !== "MethodCall") return { kind: "passthrough" };
+  if (!MUTATING_ARRAY_METHODS.has(expr.method)) return { kind: "passthrough" };
+  if (!isWritableFieldPath(expr.object)) return { kind: "passthrough" };
+  const value = buildMutatorRhs(expr.method, expr.object, expr.args, expr.pos);
+  return { kind: "rewrite", assign: { type: "AssignExpr", target: expr.object, value, pos: expr.pos } };
+}
+function buildMutatorRhs(method, object, args, pos) {
+  switch (method) {
+    case "sort":
+      return { type: "MethodCall", object, method: "toSorted", args, pos };
+    case "reverse":
+      checkArity("reverse", { sig: "", none: true }, args.length, pos);
+      return { type: "MethodCall", object, method: "toReversed", args: [], pos };
+    case "splice":
+      return { type: "MethodCall", object, method: "toSpliced", args, pos };
+    case "push": {
+      const items = args.map((a) => a);
+      const itemsArr = { type: "ArrayLiteral", elements: items, pos };
+      return { type: "OperatorCall", name: "$concatArrays", style: "positional", args: [object, itemsArr], pos };
+    }
+    case "unshift": {
+      const items = args.map((a) => a);
+      const itemsArr = { type: "ArrayLiteral", elements: items, pos };
+      return { type: "OperatorCall", name: "$concatArrays", style: "positional", args: [itemsArr, object], pos };
+    }
+    case "pop": {
+      checkArity("pop", { sig: "", none: true }, args.length, pos);
+      const sizeExpr = mkOpCall("$size", [object], pos);
+      const minus1 = { type: "BinaryExpr", op: "-", left: sizeExpr, right: mkNumber(1, pos), pos };
+      const clamped = mkOpCall("$max", [mkNumber(0, pos), minus1], pos);
+      return mkOpCall("$slice", [object, mkNumber(0, pos), clamped], pos);
+    }
+    case "shift": {
+      checkArity("shift", { sig: "", none: true }, args.length, pos);
+      const sizeExpr = mkOpCall("$size", [object], pos);
+      return mkOpCall("$slice", [object, mkNumber(1, pos), sizeExpr], pos);
+    }
+    case "fill":
+      return buildFillRhs(object, args, pos);
+    case "copyWithin":
+      return buildCopyWithinRhs(object, args, pos);
+  }
+  return internalError(`tryRewriteMutatorCall: unhandled method '${method}'`, pos);
+}
+function buildCopyWithinRhs(object, args, pos) {
+  checkArity("copyWithin", { sig: "target, start[, end]", allowed: [2, 3] }, args.length, pos);
+  const lits = args.map((a) => {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`.copyWithin(target, start[, end]) does not accept spread arguments.`, a.pos);
+    }
+    if (a.type !== "NumberLiteral" || !Number.isInteger(a.value) || a.value < 0) {
+      throw new CodegenError(
+        `.copyWithin(target, start[, end]) requires non-negative integer literals; got '${a.type}'. Computed or negative arguments aren't supported \u2014 JS's negative-indexing isn't representable here.`,
+        a.pos
+      );
+    }
+    return a.value;
+  });
+  const target = lits[0];
+  const start = lits[1];
+  const endLit = lits.length === 3 ? lits[2] : null;
+  const lenExpr = endLit !== null ? mkNumber(Math.max(0, endLit - start), pos) : mkOpCall(
+    "$max",
+    [mkNumber(0, pos), mkOpCall("$subtract", [mkOpCall("$size", [object], pos), mkNumber(start, pos)], pos)],
+    pos
+  );
+  const suffixStartExpr = endLit !== null ? mkNumber(target + Math.max(0, endLit - start), pos) : mkOpCall("$add", [mkNumber(target, pos), lenExpr], pos);
+  const suffixLenExpr = mkOpCall(
+    "$max",
+    [mkNumber(0, pos), mkOpCall("$subtract", [mkOpCall("$size", [object], pos), suffixStartExpr], pos)],
+    pos
+  );
+  const prefix = mkOpCall("$slice", [object, mkNumber(0, pos), mkNumber(target, pos)], pos);
+  const copied = mkOpCall("$slice", [object, mkNumber(start, pos), lenExpr], pos);
+  const suffix = mkOpCall("$slice", [object, suffixStartExpr, suffixLenExpr], pos);
+  return mkOpCall("$concatArrays", [prefix, copied, suffix], pos);
+}
+function mkOpCall(name, args, pos) {
+  return { type: "OperatorCall", name, style: "positional", args, pos };
+}
+function mkNumber(value, pos) {
+  return { type: "NumberLiteral", value, pos };
+}
+function buildFillRhs(object, args, pos) {
+  checkArity("fill", { sig: "value[, start[, end]]", allowed: [1, 2, 3] }, args.length, pos);
+  const exprArgs = [];
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`Spread (...) is not supported as an argument to .fill()`, a.pos);
+    }
+    exprArgs.push(a);
+  }
+  const v = exprArgs[0];
+  const startArg = exprArgs[1];
+  const endArg = exprArgs[2];
+  const zero = mkNumber(0, pos);
+  if (startArg === void 0 && endArg === void 0) {
+    const unusedAndV = { type: "Lambda", params: ["jsmqlFillUnused"], body: v, pos };
+    return { type: "MethodCall", object, method: "map", args: [unusedAndV], pos };
+  }
+  const sizeOf = () => mkOpCall("$size", [object], pos);
+  const normalize = (e, defaultIfUndef) => {
+    if (e === void 0) return defaultIfUndef();
+    if (e.type === "NumberLiteral" && e.value >= 0) return e;
+    const isNeg = { type: "BinaryExpr", op: "<", left: e, right: zero, pos };
+    const fromTail = { type: "BinaryExpr", op: "+", left: sizeOf(), right: e, pos };
+    const clamped = mkOpCall("$max", [zero, fromTail], pos);
+    return { type: "TernaryExpr", condition: isNeg, consequent: clamped, alternate: e, pos };
+  };
+  const s0Init = normalize(startArg, () => zero);
+  const e0Init = normalize(endArg, () => sizeOf());
+  const sRef = { type: "ParamRef", name: "jsmqlFillStart", pos };
+  const eRef = { type: "ParamRef", name: "jsmqlFillEnd", pos };
+  const xRef = { type: "ParamRef", name: "x", pos };
+  const iRef = { type: "ParamRef", name: "i", pos };
+  const condition = {
+    type: "BinaryExpr",
+    op: "&&",
+    left: { type: "BinaryExpr", op: ">=", left: iRef, right: sRef, pos },
+    right: { type: "BinaryExpr", op: "<", left: iRef, right: eRef, pos },
+    pos
+  };
+  const mapBody = { type: "TernaryExpr", condition, consequent: v, alternate: xRef, pos };
+  const mapLambda = { type: "Lambda", params: ["x", "i"], body: mapBody, pos };
+  const mapCall = { type: "MethodCall", object, method: "map", args: [mapLambda], pos };
+  const iifeCallee = { type: "Lambda", params: ["jsmqlFillStart", "jsmqlFillEnd"], body: mapCall, pos };
+  return { type: "CallExpression", callee: iifeCallee, args: [s0Init, e0Init], pos };
+}
+var KNOWN_METHODS = new Set(Object.keys(METHODS));
+function exprArgsOnly(args, method) {
+  return args.map((a) => {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`Spread (...) is not supported as an argument to .${method}()`, a.pos);
+    }
+    return a;
+  });
+}
+function checkArity(method, spec, count, callPos, prefix = ".") {
+  const ok = spec.none !== void 0 ? count === 0 : spec.exact !== void 0 ? count === spec.exact : spec.allowed !== void 0 ? spec.allowed.includes(count) : count >= spec.atLeast;
+  if (ok) return;
+  let quantity;
+  if (spec.none !== void 0) {
+    quantity = "takes no arguments";
+  } else if (spec.exact !== void 0) {
+    quantity = `requires exactly ${spec.exact} argument${spec.exact === 1 ? "" : "s"}`;
+  } else if (spec.allowed !== void 0) {
+    quantity = `requires ${formatCountList(spec.allowed)} arguments`;
+  } else {
+    quantity = `requires at least ${spec.atLeast} argument${spec.atLeast === 1 ? "" : "s"}`;
+  }
+  throw new CodegenError(`${prefix}${method}(${spec.sig}) ${quantity}, got ${count}`, callPos);
+}
+function formatCountList(ns) {
+  if (ns.length === 2) return `${ns[0]} or ${ns[1]}`;
+  return `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
+}
+function requireLambda(args, method, callerPos) {
+  const first = args[0];
+  if (first?.type === "TypeCastRef") {
+    return {
+      type: "Lambda",
+      params: ["v"],
+      body: {
+        type: "TypeCast",
+        cast: first.cast,
+        arg: { type: "ParamRef", name: "v", pos: first.pos },
+        pos: first.pos
+      },
+      pos: first.pos
+    };
+  }
+  if (first?.type === "MathCallRef") {
+    return {
+      type: "Lambda",
+      params: ["v"],
+      body: {
+        type: "MathCall",
+        method: first.method,
+        args: [{ type: "ParamRef", name: "v", pos: first.pos }],
+        pos: first.pos
+      },
+      pos: first.pos
+    };
+  }
+  if (!first || first.type !== "Lambda") {
+    throw new CodegenError(
+      `.${method}() requires a lambda as its first argument, e.g. x => x > 0`,
+      first?.pos ?? callerPos
+    );
+  }
+  if (first.body === void 0) {
+    throw new CodegenError(
+      `.${method}() does not accept a block-body arrow \u2014 only '$$$.<coll>.find/filter(...)' does. Use an expression-body arrow like \`x => x > 0\`.`,
+      first.pos
+    );
+  }
+  return first;
+}
+function generateCallExpression(callee, args, ctx, pos) {
+  if (callee.type !== "Lambda") {
+    throw new CodegenError(
+      `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE \u2192 $let). For named operators use $opName(...); for methods use receiver.method(...).`,
+      pos
+    );
+  }
+  if (callee.body === void 0) {
+    throw new CodegenError(
+      `IIFE callee cannot be a block-body arrow \u2014 only '$$$.<coll>.find/filter(...)' accepts block bodies.`,
+      callee.pos
+    );
+  }
+  if (callee.params.length !== args.length) {
+    throw new CodegenError(
+      `IIFE: expected ${callee.params.length} argument(s) for params (${callee.params.join(", ")}), got ${args.length}`,
+      pos
+    );
+  }
+  const vars = {};
+  for (let i = 0; i < callee.params.length; i++) {
+    const a = args[i];
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`IIFE: spread arguments are not supported (use $op($let, ...) instead)`, a.pos);
+    }
+    vars[callee.params[i]] = _generate(a, ctx);
+  }
+  const bodyCtx = extendCtx(ctx, callee.params);
+  return { $let: { vars, in: _generate(callee.body, bodyCtx) } };
+}
+function generateTypeCast(cast, arg, ctx, _pos) {
+  const val = _generate(arg, ctx);
+  switch (cast) {
+    case "Number":
+    case "parseFloat":
+      return { $toDouble: val };
+    case "String":
+      return { $toString: val };
+    case "Boolean":
+      return jsBoolIfNeeded(arg, val);
+    case "parseInt":
+      return { $toInt: val };
+  }
+}
+function generateMathConst(name) {
+  switch (name) {
+    case "PI":
+      return Math.PI;
+    case "E":
+      return Math.E;
+  }
+}
+function generateMathCall(method, args, ctx, pos) {
+  switch (method) {
+    case "abs":
+      return { $abs: oneArg(method, args, ctx, pos) };
+    case "ceil":
+      return { $ceil: oneArg(method, args, ctx, pos) };
+    case "floor":
+      return { $floor: oneArg(method, args, ctx, pos) };
+    case "round":
+      return { $round: [oneArg(method, args, ctx, pos), 0] };
+    case "sqrt":
+      return { $sqrt: oneArg(method, args, ctx, pos) };
+    case "exp":
+      return { $exp: oneArg(method, args, ctx, pos) };
+    case "log":
+      return { $ln: oneArg(method, args, ctx, pos) };
+    case "log2":
+      return { $log: [oneArg(method, args, ctx, pos), 2] };
+    case "log10":
+      return { $log10: oneArg(method, args, ctx, pos) };
+    case "trunc":
+      return { $trunc: oneArg(method, args, ctx, pos) };
+    case "sign":
+      return { $cmp: [oneArg(method, args, ctx, pos), 0] };
+    case "cbrt":
+      return { $pow: [oneArg(method, args, ctx, pos), { $divide: [1, 3] }] };
+    case "pow": {
+      const exprArgs = exprArgsOnly(args, "pow");
+      checkArity("pow", { sig: "base, exponent", exact: 2 }, exprArgs.length, pos, "Math.");
+      return { $pow: [_generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+    }
+    case "min":
+    case "max": {
+      checkArity(method, { sig: "...values", atLeast: 1 }, args.length, pos, "Math.");
+      const op = method === "min" ? "$min" : "$max";
+      if (args.length === 1 && args[0].type !== "SpreadElement") {
+        return { [op]: _generate(args[0], ctx) };
+      }
+      return { [op]: generateVariadicArgs(args, ctx) };
+    }
+    case "hypot": {
+      const exprArgs = exprArgsOnly(args, "hypot");
+      checkArity("hypot", { sig: "...values", atLeast: 1 }, exprArgs.length, pos, "Math.");
+      const squares = exprArgs.map((a) => ({ $pow: [_generate(a, ctx), 2] }));
+      return { $sqrt: { $add: squares } };
+    }
+    case "random":
+      checkArity("random", { sig: "", none: true }, args.length, pos, "Math.");
+      return { $rand: {} };
+    case "sin":
+      return { $sin: oneArg(method, args, ctx, pos) };
+    case "cos":
+      return { $cos: oneArg(method, args, ctx, pos) };
+    case "tan":
+      return { $tan: oneArg(method, args, ctx, pos) };
+    case "asin":
+      return { $asin: oneArg(method, args, ctx, pos) };
+    case "acos":
+      return { $acos: oneArg(method, args, ctx, pos) };
+    case "atan":
+      return { $atan: oneArg(method, args, ctx, pos) };
+    case "atan2": {
+      const exprArgs = exprArgsOnly(args, "atan2");
+      checkArity("atan2", { sig: "y, x", exact: 2 }, exprArgs.length, pos, "Math.");
+      return { $atan2: [_generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+    }
+    case "sinh":
+      return { $sinh: oneArg(method, args, ctx, pos) };
+    case "cosh":
+      return { $cosh: oneArg(method, args, ctx, pos) };
+    case "tanh":
+      return { $tanh: oneArg(method, args, ctx, pos) };
+    case "asinh":
+      return { $asinh: oneArg(method, args, ctx, pos) };
+    case "acosh":
+      return { $acosh: oneArg(method, args, ctx, pos) };
+    case "atanh":
+      return { $atanh: oneArg(method, args, ctx, pos) };
+  }
+}
+function oneArg(method, args, ctx, pos) {
+  const exprArgs = exprArgsOnly(args, method);
+  checkArity(method, { sig: "value", exact: 1 }, exprArgs.length, pos, "Math.");
+  return _generate(exprArgs[0], ctx);
+}
+function generateObjectCall(method, args, ctx, pos) {
+  const genWith = (arg, neutral) => {
+    const gen = _generate(arg, ctx);
+    return chainHasOptional(arg) ? wrapIfNull(gen, neutral) : gen;
+  };
+  switch (method) {
+    case "keys": {
+      const exprArgs = exprArgsOnly(args, "Object.keys");
+      checkArity("keys", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.k" } };
+    }
+    case "values": {
+      const exprArgs = exprArgsOnly(args, "Object.values");
+      checkArity("values", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.v" } };
+    }
+    case "entries": {
+      const exprArgs = exprArgsOnly(args, "Object.entries");
+      checkArity("entries", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
+      return { $objectToArray: genWith(exprArgs[0], {}) };
+    }
+    case "fromEntries": {
+      const exprArgs = exprArgsOnly(args, "Object.fromEntries");
+      checkArity("fromEntries", { sig: "entries", exact: 1 }, exprArgs.length, pos, "Object.");
+      return { $arrayToObject: genWith(exprArgs[0], []) };
+    }
+    case "assign": {
+      checkArity("assign", { sig: "...sources", atLeast: 1 }, args.length, pos, "Object.");
+      return { $mergeObjects: generateVariadicArgs(args, ctx) };
+    }
+    case "groupBy": {
+      const exprArgs = exprArgsOnly(args, "Object.groupBy");
+      checkArity("groupBy", { sig: "items, x => key", exact: 2 }, exprArgs.length, pos, "Object.");
+      const input = exprArgs[0];
+      const lambda = exprArgs[1];
+      if (lambda.type !== "Lambda" || lambda.params.length !== 1) {
+        throw new CodegenError(
+          `Object.groupBy() requires a single-parameter arrow function as the discriminator`,
+          lambda.pos
+        );
+      }
+      if (lambda.body === void 0) {
+        throw new CodegenError(
+          `Object.groupBy() does not accept a block-body arrow \u2014 only '$$$.<coll>.find/filter(...)' does.`,
+          lambda.pos
+        );
+      }
+      const keyCtx = {
+        lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, lambda.params[0]]),
+        reduceRemap: /* @__PURE__ */ new Map([[lambda.params[0], "this"]]),
+        pipelineLets: ctx.pipelineLets,
+        droppedLets: ctx.droppedLets,
+        bindingTypes: ctx.bindingTypes
+      };
+      const keyBody = _generate(lambda.body, keyCtx);
+      const keyExpr = isStringProducing(lambda.body) ? keyBody : { $toString: keyBody };
+      return {
+        $reduce: {
+          input: _generate(input, ctx),
+          initialValue: {},
+          in: {
+            $let: {
+              vars: { key: keyExpr },
+              in: {
+                $mergeObjects: [
+                  "$$value",
+                  {
+                    $arrayToObject: [
+                      [
+                        [
+                          "$$key",
+                          {
+                            $concatArrays: [
+                              { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
+                              ["$$this"]
+                            ]
+                          }
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      };
+    }
+  }
+}
+function generateNewDate(args, ctx) {
+  if (args.length === 0) return { $toDate: "$$NOW" };
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      return generateDateFromParts(arg.args, ctx, "UTC");
+    }
+    return { $toDate: _generate(arg, ctx) };
+  }
+  return generateDateFromParts(
+    args,
+    ctx,
+    /*timezone*/
+    null
+  );
+}
+function generateDateUTC(args, ctx) {
+  return { $toLong: generateDateFromParts(args, ctx, "UTC") };
+}
+function generateDateFromParts(args, ctx, timezone) {
+  const parts = { year: _generate(args[0], ctx) };
+  if (args.length >= 2) {
+    const monthAst = args[1];
+    if (monthAst.type === "NumberLiteral") {
+      parts.month = monthAst.value + 1;
+    } else {
+      parts.month = { $add: [_generate(monthAst, ctx), 1] };
+    }
+  }
+  const slots = ["day", "hour", "minute", "second", "millisecond"];
+  for (let i = 2; i < args.length && i - 2 < slots.length; i++) {
+    parts[slots[i - 2]] = _generate(args[i], ctx);
+  }
+  if (timezone !== null) parts.timezone = timezone;
+  return { $dateFromParts: parts };
+}
+function generateArrayFrom(input, mapFn, ctx, pos) {
+  if (input.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `Array.from() only supports the {length: n} form: Array.from({length: n}, (_, i) => \u2026). For other inputs use $op($range, \u2026) or .map().`,
+      input.pos
+    );
+  }
+  if (input.entries.length !== 1) {
+    throw new CodegenError(`Array.from({length: n}) \u2014 exactly one 'length' entry is required`, input.pos);
+  }
+  const entry = input.entries[0];
+  if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static" || entry.key.name !== "length") {
+    throw new CodegenError(`Array.from() only supports {length: n}; saw a different object shape`, entry.pos);
+  }
+  const lengthExpr = _generate(entry.value, ctx);
+  if (mapFn === null) {
+    return { $range: [0, lengthExpr] };
+  }
+  if (mapFn.type !== "Lambda") {
+    throw new CodegenError(`Array.from() second argument must be an arrow function (e.g. (_, i) => i * 2)`, mapFn.pos);
+  }
+  if (mapFn.body === void 0) {
+    throw new CodegenError(
+      `Array.from() does not accept a block-body arrow \u2014 only '$$$.<coll>.find/filter(...)' does.`,
+      mapFn.pos
+    );
+  }
+  if (mapFn.params.length !== 2) {
+    throw new CodegenError(
+      `Array.from() map function must take 2 parameters (element, index) \u2014 element is always null in the {length} form`,
+      mapFn.pos
+    );
+  }
+  void pos;
+  const [elemParam, idxParam] = mapFn.params;
+  const bodyCtx = extendCtx(ctx, mapFn.params);
+  return {
+    $map: {
+      input: { $range: [0, lengthExpr] },
+      as: safeVarName(idxParam),
+      in: { $let: { vars: { [safeVarName(elemParam)]: null }, in: _generate(mapFn.body, bodyCtx) } }
+    }
+  };
+}
+function generateNumberStatic(method, arg, ctx) {
+  const val = _generate(arg, ctx);
+  const pos = arg.pos;
+  switch (method) {
+    case "isInteger":
+      return {
+        $cond: [
+          { $in: [{ $type: val }, ["int", "long"]] },
+          true,
+          { $cond: [{ $in: [{ $type: val }, ["double", "decimal"]] }, { $eq: [val, { $trunc: val }] }, false] }
+        ]
+      };
+    case "isNaN":
+      return { $ne: [val, val] };
+    case "isFinite":
+      throw new CodegenError(
+        `Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.`,
+        pos
+      );
+  }
+}
+function generateSetMethodCall(receiver, method, args, ctx) {
+  const pos = receiver.pos;
+  const genSetInner = (inner) => {
+    const gen = _generate(inner, ctx);
+    return chainHasOptional(inner) ? wrapIfNull(gen, []) : gen;
+  };
+  const lhs = receiver.arg ? genSetInner(receiver.arg) : [];
+  const exprArgs = exprArgsOnly(args, `Set.${method}`);
+  const requireSetArg = () => {
+    checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, pos, "Set.");
+    const arg = exprArgs[0];
+    if (arg.type !== "NewSet") {
+      throw new CodegenError(
+        `Set.${method}()'s argument must be a 'new Set(...)' expression, not a plain value`,
+        arg.pos
+      );
+    }
+    return arg.arg ? genSetInner(arg.arg) : [];
+  };
+  switch (method) {
+    case "intersection":
+      return { $setIntersection: [lhs, requireSetArg()] };
+    case "union":
+      return { $setUnion: [lhs, requireSetArg()] };
+    case "difference":
+      return { $setDifference: [lhs, requireSetArg()] };
+    case "isSubsetOf":
+      return { $setIsSubset: [lhs, requireSetArg()] };
+    case "isSupersetOf":
+      return { $setIsSubset: [requireSetArg(), lhs] };
+    case "symmetricDifference":
+    case "isDisjointFrom":
+      throw new CodegenError(
+        `Set.${method}() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed`,
+        pos
+      );
+    default: {
+      const setHint = didYouMean(method, SET_METHODS);
+      throw new CodegenError(`Unknown Set method '.${method}()'.${setHint} Supported: ${SET_METHODS.join(", ")}.`, pos);
+    }
+  }
+}
+function generateRegexMethodCall(regex, method, args, ctx) {
+  const pos = regex.pos;
+  const exprArgs = exprArgsOnly(args, `regex.${method}`);
+  checkArity(method, { sig: "str", exact: 1 }, exprArgs.length, pos, "regex.");
+  const input = _generate(exprArgs[0], ctx);
+  const opName = method === "test" ? "$regexMatch" : method === "exec" ? "$regexFind" : null;
+  if (!opName) {
+    const regexHint = didYouMean(method, ["test", "exec"]);
+    throw new CodegenError(
+      `Unknown regex method '.${method}()'.${regexHint} Supported: regex.test(str), regex.exec(str).`,
+      pos
+    );
+  }
+  const obj2 = { input, regex: regex.pattern };
+  const opts = mongoRegexOptions(regex.flags);
+  if (opts) obj2["options"] = opts;
+  return { [opName]: obj2 };
+}
+function generateUpdateFilter(prog, ctx = EMPTY_CTX) {
+  if (prog.ops.length === 0) {
+    throw new CodegenError("UpdateOp program must contain at least one assignment or delete", prog.pos);
+  }
+  const groups = groupUpdateOps(prog.ops);
+  const stages = groups.map((g) => generateUpdateOpGroup(g, ctx));
+  if (stages.length === 1) return stages[0];
+  return stages;
+}
+function generateUpdateOpGroups(ops, ctx = EMPTY_CTX) {
+  const groups = groupUpdateOps(ops);
+  return groups.map((g) => generateUpdateOpGroup(g, ctx));
+}
+function groupUpdateOps(ops) {
+  const groups = [];
+  let current = [];
+  let writes = /* @__PURE__ */ new Set();
+  let kind = null;
+  for (const m of ops) {
+    const myKind = m.type === "AssignExpr" ? "assign" : "delete";
+    const writePath = updateOpWritePath(m);
+    const reads = m.type === "AssignExpr" ? collectUpdateOpReads(m.value) : null;
+    let mustBreak = false;
+    if (kind !== null && kind !== myKind) {
+      mustBreak = true;
+    }
+    if (!mustBreak) {
+      for (const w of writes) {
+        if (pathsCollide(w, writePath)) {
+          mustBreak = true;
+          break;
+        }
+      }
+    }
+    if (!mustBreak && reads !== null) {
+      for (const r of reads) {
+        for (const w of writes) {
+          if (pathsCollide(w, r)) {
+            mustBreak = true;
+            break;
+          }
+        }
+        if (mustBreak) break;
+      }
+    }
+    if (mustBreak && current.length > 0) {
+      groups.push(current);
+      current = [];
+      writes = /* @__PURE__ */ new Set();
+    }
+    current.push(m);
+    writes.add(writePath);
+    kind = myKind;
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+function generateUpdateOpGroup(group, ctx) {
+  if (group.length === 0) {
+    internalError("empty update op group");
+  }
+  if (group[0].type === "AssignExpr") {
+    const fields = {};
+    for (const m of group) {
+      if (m.type !== "AssignExpr") {
+        internalError("mixed-kind update op group");
+      }
+      const path = updateOpWritePath(m);
+      if (Object.prototype.hasOwnProperty.call(fields, path)) {
+        internalError(`field '${path}' written twice in same group`);
+      }
+      fields[path] = _generate(m.value, ctx);
+    }
+    return { $set: fields };
+  }
+  const paths = [];
+  for (const m of group) {
+    if (m.type !== "DeleteStmt") {
+      internalError("mixed-kind update op group");
+    }
+    paths.push(updateOpWritePath(m));
+  }
+  return paths.length === 1 ? { $unset: paths[0] } : { $unset: paths };
+}
+function updateOpWritePath(m) {
+  return targetToPath(m.target);
+}
+function targetToPath(target) {
+  if (target.type === "FieldRef") return target.path;
+  if (target.type === "MemberAccess") {
+    return `${targetToPath(target.object)}.${target.member}`;
+  }
+  if (target.type === "ParamRef") {
+    throw new CodegenError(
+      `Cannot assign to bare identifier '${target.name}'. Reassignable \`let\` bindings exist only inside a pipeline \u2014 add a \`;\` to enter pipeline mode and declare it first (\`let ${target.name} = \u2026\`). To write a document field, use a field path: \`$.${target.name} = \u2026\`.`,
+      target.pos
+    );
+  }
+  internalError("update op target is not a field path (parser should have rejected)");
+}
+function collectUpdateOpReads(expr) {
+  const out = /* @__PURE__ */ new Set();
+  collectReadsInto(expr, out);
+  return out;
+}
+function collectReadsInto(expr, out) {
+  const path = tryFieldPath(expr);
+  if (path !== null) {
+    out.add(path);
+    return;
+  }
+  switch (expr.type) {
+    case "FieldRef":
+      out.add(expr.path);
+      return;
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "UndefinedLiteral":
+    case "RegexLiteral":
+    case "ParamRef":
+    case "MathConst":
+    case "MathCallRef":
+    case "DateNow":
+    case "TypeCastRef":
+      return;
+    case "ArrayLiteral":
+      for (const el of expr.elements) {
+        if (el.type === "SpreadElement") collectReadsInto(el.argument, out);
+        else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+        } else collectReadsInto(el, out);
+      }
+      return;
+    case "ObjectLiteral":
+      for (const e of expr.entries) {
+        if (e.type === "SpreadElement") {
+          collectReadsInto(e.argument, out);
+        } else {
+          if (e.key.kind === "computed") collectReadsInto(e.key.expr, out);
+          collectReadsInto(e.value, out);
+        }
+      }
+      return;
+    case "TemplateLiteral":
+      for (const e of expr.expressions) collectReadsInto(e, out);
+      return;
+    case "BinaryExpr":
+      collectReadsInto(expr.left, out);
+      collectReadsInto(expr.right, out);
+      return;
+    case "UnaryExpr":
+      collectReadsInto(expr.operand, out);
+      return;
+    case "TernaryExpr":
+      collectReadsInto(expr.condition, out);
+      collectReadsInto(expr.consequent, out);
+      collectReadsInto(expr.alternate, out);
+      return;
+    case "IndexAccess":
+      collectReadsInto(expr.object, out);
+      collectReadsInto(expr.index, out);
+      return;
+    case "MemberAccess":
+      collectReadsInto(expr.object, out);
+      return;
+    case "MethodCall":
+      collectReadsInto(expr.object, out);
+      collectArgsInto(expr.args, out);
+      return;
+    case "CallExpression":
+      collectReadsInto(expr.callee, out);
+      collectArgsInto(expr.args, out);
+      return;
+    case "Lambda":
+      if (expr.body !== void 0) collectReadsInto(expr.body, out);
+      return;
+    case "TypeofExpr":
+      collectReadsInto(expr.operand, out);
+      return;
+    case "NewDate":
+      for (const a of expr.args) collectReadsInto(a, out);
+      return;
+    case "NewSet":
+      if (expr.arg) collectReadsInto(expr.arg, out);
+      return;
+    case "TypeCast":
+      collectReadsInto(expr.arg, out);
+      return;
+    case "MathCall":
+    case "ObjectCall":
+      collectArgsInto(expr.args, out);
+      return;
+    case "ArrayFrom":
+      collectReadsInto(expr.input, out);
+      if (expr.mapFn) collectReadsInto(expr.mapFn, out);
+      return;
+    case "NumberStatic":
+      collectReadsInto(expr.arg, out);
+      return;
+    case "OperatorCall":
+      collectArgsInto(expr.args, out);
+      return;
+    case "DateUTC":
+      for (const a of expr.args) collectReadsInto(a, out);
+      return;
+  }
+}
+function collectArgsInto(args, out) {
+  for (const a of args) {
+    if (a.type === "SpreadElement") collectReadsInto(a.argument, out);
+    else collectReadsInto(a, out);
+  }
+}
+function tryFieldPath(expr) {
+  if (expr.type === "FieldRef") return expr.path;
+  if (expr.type === "MemberAccess") {
+    const base = tryFieldPath(expr.object);
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+function pathsCollide(a, b) {
+  if (a === b) return true;
+  if (a.length < b.length && b.startsWith(a) && b.charCodeAt(a.length) === 46) {
+    return true;
+  }
+  if (b.length < a.length && a.startsWith(b) && a.charCodeAt(b.length) === 46) {
+    return true;
+  }
+  return false;
+}
+
+// src/stages.ts
+var STAGES = {
+  $addFields: {
+    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    subPipelineFields: []
+  },
+  $bucket: {
+    description: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
+    subPipelineFields: []
+  },
+  $bucketAuto: {
+    description: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
+    subPipelineFields: []
+  },
+  $changeStream: {
+    description: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
+    subPipelineFields: [],
+    position: "first"
+  },
+  $changeStreamSplitLargeEvent: {
+    description: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
+    subPipelineFields: [],
+    position: "last"
+  },
+  $collStats: {
+    description: "Returns statistics regarding a collection or view.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true },
+    forbiddenIn: ["facet"]
+  },
+  $count: {
+    description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
+    subPipelineFields: []
+  },
+  $currentOp: {
+    description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
+    subPipelineFields: [],
+    // Server/deployment-level: must be run on the admin database
+    // (`db.getSiblingDB("admin").aggregate(...)`), not the current database.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $densify: {
+    description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
+    subPipelineFields: []
+  },
+  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [], position: "first" },
+  $facet: {
+    description: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    // Every value in the body object is itself a sub-pipeline.
+    subPipelineFields: ["*"],
+    // $facet cannot be nested inside another $facet.
+    forbiddenIn: ["facet"]
+  },
+  $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
+  $geoNear: {
+    description: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
+    subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"]
+  },
+  $graphLookup: {
+    description: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
+    subPipelineFields: []
+  },
+  $group: {
+    description: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
+    subPipelineFields: []
+  },
+  $indexStats: {
+    description: "Returns statistics regarding the use of each index for the collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"]
+  },
+  $limit: {
+    description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
+    subPipelineFields: []
+  },
+  $listLocalSessions: {
+    description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
+    subPipelineFields: [],
+    // Server-level: run on the admin database (`db.aggregate(...)`).
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $listSampledQueries: {
+    description: "Lists sampled queries for all collections or a specific collection.",
+    subPipelineFields: [],
+    // Cluster-level: run on the admin database.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $listSearchIndexes: {
+    description: "Returns information about existing Atlas Search indexes on a specified collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true }
+  },
+  $listSessions: {
+    description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
+    subPipelineFields: [],
+    // Cluster-level: reads the cluster-wide config.system.sessions collection.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $lookup: {
+    description: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
+    subPipelineFields: ["pipeline"]
+  },
+  $match: {
+    description: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
+    subPipelineFields: []
+  },
+  $merge: {
+    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"]
+  },
+  $out: {
+    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"]
+  },
+  $planCacheStats: {
+    description: "Returns plan cache information for a collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"]
+  },
+  $project: {
+    description: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    subPipelineFields: []
+  },
+  $rankFusion: {
+    description: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    subPipelineFields: []
+  },
+  $redact: {
+    description: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
+    subPipelineFields: []
+  },
+  $replaceRoot: {
+    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    subPipelineFields: []
+  },
+  $replaceWith: {
+    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    subPipelineFields: []
+  },
+  $sample: { description: "Randomly selects the specified number of documents from its input.", subPipelineFields: [] },
+  $scoreFusion: {
+    description: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    subPipelineFields: []
+  },
+  $search: {
+    description: "Performs a full-text search of the field or fields in an Atlas collection.",
+    subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"]
+  },
+  $searchMeta: {
+    description: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
+    subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"]
+  },
+  $set: {
+    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    subPipelineFields: []
+  },
+  $setWindowFields: {
+    description: "Groups documents into windows and applies one or more operators to the documents in each window.",
+    subPipelineFields: []
+  },
+  $shardedDataDistribution: {
+    description: "Provides data and size distribution information on sharded collections.",
+    subPipelineFields: [],
+    diagnostic: { scope: "cluster", options: false }
+  },
+  $skip: {
+    description: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
+    subPipelineFields: []
+  },
+  $sort: {
+    description: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
+    subPipelineFields: []
+  },
+  $sortByCount: {
+    description: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
+    subPipelineFields: []
+  },
+  $unionWith: {
+    description: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
+    subPipelineFields: ["pipeline"]
+  },
+  $unset: { description: "Removes or excludes fields from documents.", subPipelineFields: [] },
+  $unwind: {
+    description: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
+    subPipelineFields: []
+  },
+  $vectorSearch: {
+    description: "Performs an ANN or ENN search on a vector in the specified field.",
+    subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"]
+  }
+};
+function lookupStage(name) {
+  return Object.prototype.hasOwnProperty.call(STAGES, name) ? STAGES[name] : void 0;
+}
+function stageMustBeFirst(def) {
+  return def.position === "first" || def.diagnostic !== void 0;
+}
+function stageMustBeLast(def) {
+  return def.position === "last";
+}
+function stageForbiddenIn(def, container) {
+  return def.forbiddenIn?.includes(container) ?? false;
+}
+
+// src/match-translation.ts
+function mergeTranslatedQuery(t, ctx) {
+  const queryEmpty = Object.keys(t.query).length === 0;
+  if (t.residual === null) return queryEmpty ? null : t.query;
+  const exprBody = generateWithCtx(t.residual, ctx);
+  if (queryEmpty) return { $expr: exprBody };
+  return { ...t.query, $expr: exprBody };
+}
+function translateMatchBody(body, ctx = {}) {
+  return translate(body, ctx);
+}
+function translate(expr, ctx) {
+  if (expr.type === "BinaryExpr" && expr.op === "&&") {
+    const allFold = extractIncludesChain(expr);
+    if (allFold !== null) {
+      return { query: { [allFold.field]: { $all: allFold.values } }, residual: null };
+    }
+    return combineAnd(translate(expr.left, ctx), translate(expr.right, ctx));
+  }
+  if (expr.type === "BinaryExpr" && expr.op === "||") {
+    return combineOr(translate(expr.left, ctx), translate(expr.right, ctx), expr);
+  }
+  const leaf = translateLeaf(expr, ctx);
+  if (leaf === null) return { query: {}, residual: expr };
+  return { query: leaf, residual: null };
+}
+function combineAnd(left, right) {
+  return { query: mergeQuery(left.query, right.query), residual: combineResidualsAnd(left.residual, right.residual) };
+}
+function combineOr(left, right, original) {
+  if (left.residual !== null || right.residual !== null) {
+    return { query: {}, residual: original };
+  }
+  if (isEmpty(left.query) || isEmpty(right.query)) {
+    return { query: {}, residual: original };
+  }
+  return { query: { $or: [left.query, right.query] }, residual: null };
+}
+function mergeQuery(a, b) {
+  if (isEmpty(a)) return b;
+  if (isEmpty(b)) return a;
+  const clauses = [];
+  const collect = (doc) => {
+    for (const k of Object.keys(doc)) {
+      if (k === "$and" && Array.isArray(doc[k])) {
+        for (const inner of doc[k]) {
+          for (const ik of Object.keys(inner)) {
+            clauses.push({ key: ik, value: inner[ik] });
+          }
+        }
+      } else {
+        clauses.push({ key: k, value: doc[k] });
+      }
+    }
+  };
+  collect(a);
+  collect(b);
+  const counts = /* @__PURE__ */ new Map();
+  for (const c of clauses) counts.set(c.key, (counts.get(c.key) ?? 0) + 1);
+  const out = {};
+  let andClauses = null;
+  for (const c of clauses) {
+    if ((counts.get(c.key) ?? 0) > 1) {
+      if (andClauses === null) {
+        andClauses = [];
+        out.$and = andClauses;
+      }
+      andClauses.push({ [c.key]: c.value });
+    } else {
+      out[c.key] = c.value;
+    }
+  }
+  return out;
+}
+function isEmpty(q) {
+  return Object.keys(q).length === 0;
+}
+function combineResidualsAnd(a, b) {
+  if (a === null) return b;
+  if (b === null) return a;
+  return { type: "BinaryExpr", op: "&&", left: a, right: b, pos: a.pos };
+}
+function translateLeaf(expr, ctx) {
+  if (expr.type === "MethodCall") {
+    const m = translateBooleanMethodCall(expr, ctx);
+    if (m !== null) return m;
+  }
+  if (expr.type !== "BinaryExpr") return null;
+  const op = expr.op;
+  if (isEqualityOp(op)) {
+    if (op === "===" || op === "!==") {
+      const typed = translateTypeofPredicate(expr.left, expr.right, op);
+      if (typed !== null) return typed;
+      const undef = translateUndefinedPredicate(expr.left, expr.right, op);
+      if (undef !== null) return undef;
+      if (isLengthVsNatural(expr.left, expr.right)) return null;
+      const md = translateModulo(expr.left, expr.right, op);
+      if (md !== null) return md;
+    }
+    return translateEquality(expr.left, expr.right, op, ctx);
+  }
+  if (isOrderedOp(op)) {
+    if (isLengthVsNatural(expr.left, expr.right)) return null;
+    return translateOrderedCompare(expr.left, expr.right, op, ctx);
+  }
+  return null;
+}
+function translateBooleanMethodCall(expr, ctx) {
+  if (expr.method === "includes") return translateIncludesCall(expr, ctx);
+  if (expr.method === "match") return translateMatchCall(expr);
+  if (expr.method === "some") return translateSomeCall(expr, ctx);
+  return null;
+}
+function translateIncludesCall(expr, ctx) {
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") return null;
+  const recvField = asFieldPath2(expr.object);
+  if (recvField !== null) {
+    const lit = anyEqualityLiteral(arg, ctx);
+    if (lit !== null) return { [recvField]: lit.value };
+  }
+  if (expr.object.type === "ArrayLiteral") {
+    const argField = asFieldPath2(arg);
+    if (argField === null) return null;
+    const values = [];
+    for (const el of expr.object.elements) {
+      if (el.type === "SpreadElement") return null;
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") return null;
+      const lit = anyEqualityLiteral(el, ctx);
+      if (lit === null) return null;
+      values.push(lit.value);
+    }
+    return { [argField]: { $in: values } };
+  }
+  return null;
+}
+function extractIncludesChain(expr) {
+  if (expr.type === "BinaryExpr" && expr.op === "&&") {
+    const left = extractIncludesChain(expr.left);
+    if (left === null) return null;
+    const right = extractIncludesChain(expr.right);
+    if (right === null) return null;
+    if (left.field !== right.field) return null;
+    return { field: left.field, values: [...left.values, ...right.values] };
+  }
+  if (expr.type !== "MethodCall" || expr.method !== "includes") return null;
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath2(expr.object);
+  if (field === null) return null;
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") return null;
+  const lit = anyEqualityLiteral(
+    arg,
+    /*ctx*/
+    {}
+  );
+  if (lit === null) return null;
+  return { field, values: [lit.value] };
+}
+function translateMatchCall(expr) {
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath2(expr.object);
+  if (field === null) return null;
+  const arg = expr.args[0];
+  if (arg.type !== "RegexLiteral") return null;
+  const re = new RegExp(arg.pattern, arg.flags);
+  return { [field]: re };
+}
+function translateSomeCall(expr, ctx) {
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath2(expr.object);
+  if (field === null) return null;
+  const lam = expr.args[0];
+  if (lam.type !== "Lambda" || lam.params.length !== 1) return null;
+  if (lam.body === void 0) return null;
+  const param = lam.params[0];
+  const rewritten = rewriteParamAsRoot(lam.body, param);
+  if (rewritten === null) return null;
+  const inner = translate(rewritten, ctx);
+  if (inner.residual !== null) return null;
+  if (isEmpty(inner.query)) return null;
+  return { [field]: { $elemMatch: inner.query } };
+}
+function rewriteParamAsRoot(expr, param) {
+  if (expr.type === "ParamRef" && expr.name === param) return null;
+  if (expr.type === "MemberAccess") {
+    const innerField = paramMemberAsField(expr, param);
+    if (innerField !== null) return { type: "FieldRef", path: innerField, pos: expr.pos };
+    const newObj = rewriteParamAsRoot(expr.object, param);
+    if (newObj === null) return null;
+    return { ...expr, object: newObj };
+  }
+  if (expr.type === "BinaryExpr") {
+    const left = rewriteParamAsRoot(expr.left, param);
+    if (left === null) return null;
+    const right = rewriteParamAsRoot(expr.right, param);
+    if (right === null) return null;
+    return { ...expr, left, right };
+  }
+  if (expr.type === "UnaryExpr") {
+    const operand = rewriteParamAsRoot(expr.operand, param);
+    if (operand === null) return null;
+    return { ...expr, operand };
+  }
+  if (expr.type === "MethodCall") {
+    const obj2 = rewriteParamAsRoot(expr.object, param);
+    if (obj2 === null) return null;
+    return { ...expr, object: obj2 };
+  }
+  if (expr.type === "TypeofExpr") {
+    const operand = rewriteParamAsRoot(expr.operand, param);
+    if (operand === null) return null;
+    return { ...expr, operand };
+  }
+  return expr;
+}
+function paramMemberAsField(expr, param) {
+  if (expr.object.type === "ParamRef" && expr.object.name === param) return expr.member;
+  if (expr.object.type === "MemberAccess") {
+    const base = paramMemberAsField(expr.object, param);
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+function translateUndefinedPredicate(left, right, op) {
+  const undefSide = left.type === "UndefinedLiteral" ? right : right.type === "UndefinedLiteral" ? left : null;
+  if (undefSide === null) return null;
+  const field = asFieldPath2(undefSide);
+  if (field === null) return null;
+  if (op === "===") return { [field]: { $exists: false } };
+  return { [field]: { $exists: true } };
+}
+function isLengthAccess(expr) {
+  return expr.type === "MemberAccess" && expr.member === "length";
+}
+function isLengthVsNatural(left, right) {
+  return isLengthAccess(left) && isIntegerLiteral(right) || isLengthAccess(right) && isIntegerLiteral(left);
+}
+function isIntegerLiteral(expr) {
+  return expr.type === "NumberLiteral" && Number.isInteger(expr.value) && expr.value >= 0;
+}
+function fieldQueryOrNegated(field, positive, op) {
+  return { [field]: op === "===" ? positive : { $not: positive } };
+}
+function translateModulo(left, right, op) {
+  const oriented = orientModuloAndInt(left, right);
+  if (oriented === null) return null;
+  return fieldQueryOrNegated(oriented.field, { $mod: [oriented.divisor, oriented.remainder] }, op);
+}
+function orientModuloAndInt(left, right) {
+  const lm = asModuloFieldAndDivisor(left);
+  if (lm !== null && isIntegerLiteral(right)) {
+    return {
+      field: lm.field,
+      divisor: lm.divisor,
+      remainder: right.value
+    };
+  }
+  const rm = asModuloFieldAndDivisor(right);
+  if (rm !== null && isIntegerLiteral(left)) {
+    return {
+      field: rm.field,
+      divisor: rm.divisor,
+      remainder: left.value
+    };
+  }
+  return null;
+}
+function asModuloFieldAndDivisor(expr) {
+  if (expr.type !== "BinaryExpr" || expr.op !== "%") return null;
+  const field = asFieldPath2(expr.left);
+  if (field === null) return null;
+  if (!isIntegerLiteral(expr.right)) return null;
+  return { field, divisor: expr.right.value };
+}
+var BSON_TYPE_ALIASES = /* @__PURE__ */ new Set([
+  "double",
+  "string",
+  "object",
+  "array",
+  "binData",
+  "undefined",
+  "objectId",
+  "bool",
+  "date",
+  "null",
+  "regex",
+  "dbPointer",
+  "javascript",
+  "symbol",
+  "javascriptWithScope",
+  "int",
+  "timestamp",
+  "long",
+  "decimal",
+  "minKey",
+  "maxKey",
+  "number"
+]);
+var JS_TO_BSON_TYPE = /* @__PURE__ */ new Map([["boolean", "bool"]]);
+function translateTypeofPredicate(left, right, op) {
+  const oriented = orientTypeofAndString(left, right);
+  if (oriented === null) return null;
+  const { field, alias: rawAlias } = oriented;
+  const alias = JS_TO_BSON_TYPE.get(rawAlias) ?? rawAlias;
+  if (!BSON_TYPE_ALIASES.has(alias)) return null;
+  return fieldQueryOrNegated(field, { $type: alias }, op);
+}
+function orientTypeofAndString(left, right) {
+  const lt = asTypeofFieldPath(left);
+  if (lt !== null && right.type === "StringLiteral") {
+    return { field: lt, alias: right.value };
+  }
+  const rt = asTypeofFieldPath(right);
+  if (rt !== null && left.type === "StringLiteral") {
+    return { field: rt, alias: left.value };
+  }
+  return null;
+}
+function asTypeofFieldPath(expr) {
+  if (expr.type !== "TypeofExpr") return null;
+  return asFieldPath2(expr.operand);
+}
+function translateEquality(left, right, op, ctx) {
+  if (op === "==" || op === "!=") {
+    if (left.type !== "NullLiteral" && right.type !== "NullLiteral") return null;
+    return translateLooseNull(left, right, op);
+  }
+  if (left.type === "NullLiteral" || right.type === "NullLiteral") {
+    return translateStrictNull(left, right, op);
+  }
+  const oriented = orientFieldLiteral(left, right, (e) => anyEqualityLiteral(e, ctx));
+  if (oriented === null) return null;
+  const { field, value } = oriented;
+  if (op === "===") return { [field]: value };
+  return { [field]: { $ne: value } };
+}
+function translateLooseNull(left, right, op) {
+  const fieldExpr = left.type === "NullLiteral" ? right : left;
+  const field = asFieldPath2(fieldExpr);
+  if (field === null) return null;
+  if (op === "==") return { [field]: null };
+  return { [field]: { $ne: null } };
+}
+function translateStrictNull(left, right, op) {
+  const fieldExpr = left.type === "NullLiteral" ? right : left;
+  const field = asFieldPath2(fieldExpr);
+  if (field === null) return null;
+  if (op === "===") return { [field]: { $type: "null" } };
+  return { [field]: { $not: { $type: "null" } } };
+}
+function translateOrderedCompare(left, right, op, ctx) {
+  const leftField = asFieldPath2(left);
+  const rightField = asFieldPath2(right);
+  let field;
+  let value;
+  let effectiveOp = op;
+  if (leftField !== null && rightField === null) {
+    const lit = anyOrderedLiteral(right, ctx);
+    if (lit === null) return null;
+    field = leftField;
+    value = lit.value;
+  } else if (leftField === null && rightField !== null) {
+    const lit = anyOrderedLiteral(left, ctx);
+    if (lit === null) return null;
+    field = rightField;
+    value = lit.value;
+    effectiveOp = flipOrderedOp(op);
+  } else {
+    return null;
+  }
+  return { [field]: { [orderedOpToMql(effectiveOp)]: value } };
+}
+function orientFieldLiteral(left, right, getLit) {
+  const leftField = asFieldPath2(left);
+  if (leftField !== null) {
+    const rightLit = getLit(right);
+    if (rightLit !== null) return { field: leftField, value: rightLit.value };
+  }
+  const rightField = asFieldPath2(right);
+  if (rightField !== null) {
+    const leftLit = getLit(left);
+    if (leftLit !== null) return { field: rightField, value: leftLit.value };
+  }
+  return null;
+}
+function isEqualityOp(op) {
+  return op === "===" || op === "==" || op === "!==" || op === "!=";
+}
+function isOrderedOp(op) {
+  return op === ">" || op === ">=" || op === "<" || op === "<=";
+}
+function orderedOpToMql(op) {
+  return mqlForBinaryOp(op);
+}
+function flipOrderedOp(op) {
+  if (op === ">") return "<";
+  if (op === ">=") return "<=";
+  if (op === "<") return ">";
+  return ">=";
+}
+function anyEqualityLiteral(expr, ctx) {
+  switch (expr.type) {
+    case "NumberLiteral":
+      return { value: expr.value };
+    case "StringLiteral":
+      return { value: expr.value };
+    case "BooleanLiteral":
+      return { value: expr.value };
+    case "NullLiteral":
+      return { value: null };
+    case "ParamRef":
+      return paramRefAsLiteral(
+        expr,
+        ctx,
+        /*orderedOnly*/
+        false
+      );
+    case "NewDate":
+      return evaluateStaticDate(expr);
+    default:
+      return null;
+  }
+}
+function anyOrderedLiteral(expr, ctx) {
+  switch (expr.type) {
+    case "NumberLiteral":
+      return { value: expr.value };
+    case "StringLiteral":
+      return { value: expr.value };
+    case "ParamRef":
+      return paramRefAsLiteral(
+        expr,
+        ctx,
+        /*orderedOnly*/
+        true
+      );
+    case "NewDate":
+      return evaluateStaticDate(expr);
+    default:
+      return null;
+  }
+}
+function evaluateStaticDate(expr) {
+  const args = expr.args;
+  if (args.length === 0) return null;
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      const utcArgs = staticNumberArgs(arg.args);
+      if (utcArgs === null) return null;
+      const ms = Date.UTC(...utcArgs);
+      return finalizeDate(new Date(ms));
+    }
+    if (arg.type === "NumberLiteral") return finalizeDate(new Date(arg.value));
+    if (arg.type === "StringLiteral") return finalizeDate(new Date(arg.value));
+    return null;
+  }
+  const numericArgs = staticNumberArgs(args);
+  if (numericArgs === null) return null;
+  return finalizeDate(new Date(...numericArgs));
+}
+function staticNumberArgs(args) {
+  const out = [];
+  for (const a of args) {
+    if (a.type !== "NumberLiteral") return null;
+    out.push(a.value);
+  }
+  return out;
+}
+function finalizeDate(d) {
+  if (Number.isNaN(d.getTime())) return null;
+  return { value: d };
+}
+function paramRefAsLiteral(expr, ctx, orderedOnly) {
+  if (!ctx.bindings?.has(expr.name)) return null;
+  const value = ctx.bindings.get(expr.name);
+  if (orderedOnly) {
+    if (typeof value !== "number" && typeof value !== "string" && !(value instanceof Date)) return null;
+  } else {
+    if (!isQueryDocLiteralValue(value)) return null;
+  }
+  return { value };
+}
+function isQueryDocLiteralValue(value) {
+  if (value === null) return true;
+  const t = typeof value;
+  if (t === "number" || t === "string" || t === "boolean") return true;
+  return isOpaqueBsonValue(value);
+}
+function asFieldPath2(expr) {
+  if (expr.type === "FieldRef") return expr.path;
+  if (expr.type === "MemberAccess") {
+    const base = asFieldPath2(expr.object);
+    if (base !== null) return `${base}.${expr.member}`;
+  }
+  return null;
+}
+
+// src/union-translation.ts
+function detectUnionPush(expr) {
+  if (expr.type !== "MethodCall") return null;
+  if (expr.method !== "push") return null;
+  if (expr.object.type !== "CollectionRef") return null;
+  return { pos: expr.object.pos, callPos: expr.pos, args: expr.args };
+}
+function containsUnionPush(node, _ctx = EMPTY_CTX) {
+  return walkContainsPush(node);
+}
+function walkContainsPush(node) {
+  if (node.type === "Pipeline") return node.stmts.some(walkContainsPush);
+  if (node.type === "UpdateFilter") return node.ops.some(walkContainsPush);
+  if (node.type === "AssignExpr") return walkContainsPush(node.value);
+  if (node.type === "DeleteStmt") return false;
+  if (node.type === "LetDecl") return walkContainsPush(node.value);
+  const expr = node;
+  if (detectUnionPush(expr) !== null) return true;
+  if (expr.type === "MethodCall") {
+    if (walkContainsPush(expr.object)) return true;
+    return walkArgsContainPush(expr.args);
+  }
+  if (expr.type === "CallExpression") {
+    if (walkContainsPush(expr.callee)) return true;
+    return walkArgsContainPush(expr.args);
+  }
+  if (expr.type === "OperatorCall" || expr.type === "MathCall" || expr.type === "ObjectCall") {
+    return walkArgsContainPush(expr.args);
+  }
+  if (expr.type === "MemberAccess") return walkContainsPush(expr.object);
+  if (expr.type === "IndexAccess") return walkContainsPush(expr.object) || walkContainsPush(expr.index);
+  if (expr.type === "BinaryExpr") return walkContainsPush(expr.left) || walkContainsPush(expr.right);
+  if (expr.type === "UnaryExpr") return walkContainsPush(expr.operand);
+  if (expr.type === "TernaryExpr") {
+    return walkContainsPush(expr.condition) || walkContainsPush(expr.consequent) || walkContainsPush(expr.alternate);
+  }
+  if (expr.type === "Lambda") {
+    if (expr.body !== void 0) return walkContainsPush(expr.body);
+    if (expr.block !== void 0) return walkContainsPush(expr.block);
+    return false;
+  }
+  if (expr.type === "ArrayLiteral") {
+    for (const el of expr.elements) {
+      if (el.type === "SpreadElement") {
+        if (walkContainsPush(el.argument)) return true;
+      } else if (walkContainsPush(el)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (expr.type === "ObjectLiteral") {
+    for (const entry of expr.entries) {
+      if (entry.type === "SpreadElement") {
+        if (walkContainsPush(entry.argument)) return true;
+      } else {
+        if (entry.key.kind === "computed" && walkContainsPush(entry.key.expr)) return true;
+        if (walkContainsPush(entry.value)) return true;
+      }
+    }
+    return false;
+  }
+  if (expr.type === "TemplateLiteral") return expr.expressions.some(walkContainsPush);
+  if (expr.type === "TypeofExpr") return walkContainsPush(expr.operand);
+  if (expr.type === "NewDate") return expr.args.some(walkContainsPush);
+  if (expr.type === "NewSet") return expr.arg ? walkContainsPush(expr.arg) : false;
+  if (expr.type === "TypeCast") return walkContainsPush(expr.arg);
+  if (expr.type === "ArrayFrom")
+    return walkContainsPush(expr.input) || (expr.mapFn ? walkContainsPush(expr.mapFn) : false);
+  if (expr.type === "NumberStatic") return walkContainsPush(expr.arg);
+  if (expr.type === "DateUTC") return expr.args.some(walkContainsPush);
+  return false;
+}
+function walkArgsContainPush(args) {
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      if (walkContainsPush(a.argument)) return true;
+    } else if (walkContainsPush(a)) {
+      return true;
+    }
+  }
+  return false;
+}
+function lowerUnionPush(call, outerCtx, lowerBlock2) {
+  if (call.args.length === 0) {
+    throw new CodegenError(
+      `$$.push() requires at least one argument \u2014 a document literal (\`{...}\`), a spread of \`$$$.<coll>[.filter(pred)]\`, or \`$$$.<coll>.find(pred)\`.`,
+      call.callPos
+    );
+  }
+  const stages = [];
+  let inlineBatch = [];
+  const flushInline = () => {
+    if (inlineBatch.length === 0) return;
+    stages.push({ $unionWith: { pipeline: [{ $documents: inlineBatch }] } });
+    inlineBatch = [];
+  };
+  for (const arg of call.args) {
+    if (arg.type === "SpreadElement") {
+      flushInline();
+      stages.push(lowerSpreadArg(arg, outerCtx, lowerBlock2));
+      continue;
+    }
+    if (arg.type === "ObjectLiteral") {
+      inlineBatch.push(generateWithCtx(arg, outerCtx));
+      continue;
+    }
+    const lookupCall = detectLookupCall(arg, outerCtx);
+    if (lookupCall !== null) {
+      if (lookupCall.method === "filter") {
+        const recv = formatReceiver(lookupCall);
+        throw new CodegenError(
+          `$$.push(...) was given \`${recv}.filter(pred)\` without \`...\` \u2014 that would push the whole array as a single document. Use \`$$.push(...${recv}.filter(pred))\` to append every matching document, or switch to \`.find(pred)\` if you meant the first match.`,
+          arg.pos
+        );
+      }
+      validateLookupShape(arg);
+      flushInline();
+      stages.push(lowerFindAsUnion(lookupCall, outerCtx, lowerBlock2));
+      continue;
+    }
+    rejectNonDocumentArg(arg);
+  }
+  flushInline();
+  return stages;
+}
+function lowerSpreadArg(arg, outerCtx, lowerBlock2) {
+  const inner = arg.argument;
+  if (inner.type === "MethodCall" && inner.method === "find" && inner.object.type !== "FieldRef") {
+    const lookup2 = detectLookupCall(inner, outerCtx);
+    if (lookup2 !== null) {
+      const recv = formatReceiver(lookup2);
+      throw new CodegenError(
+        `$$.push(...arg) was given \`...${recv}.find(pred)\` \u2014 \`.find\` returns a single document, not an array, so spreading isn't meaningful (JS would \`TypeError\`). Drop the \`...\` to append the matched document, or switch to \`...${recv}.filter(pred)\` to append every match.`,
+        inner.pos
+      );
+    }
+  }
+  const lookup = detectLookupCall(inner, outerCtx);
+  if (lookup !== null && lookup.method === "filter") {
+    validateLookupShape(inner);
+    return buildUnionWith(
+      lookup,
+      outerCtx,
+      lowerBlock2,
+      /* limitOne */
+      false
+    );
+  }
+  const target = extractLookupTarget(inner, outerCtx);
+  if (target !== null) {
+    if (target.db !== void 0) {
+      return { $unionWith: { coll: { db: target.db, coll: target.collection } } };
+    }
+    return { $unionWith: target.collection };
+  }
+  throw new CodegenError(
+    `$$.push(...arg) \u2014 spread argument must be \`$$$.<coll>\`, \`$$$.<coll>.filter(pred)\`, or the cross-DB \`$$$$.<db>.<coll>[.filter(pred)]\` form. Spreading anything else isn't meaningful for collection union.`,
+    inner.pos
+  );
+}
+function lowerFindAsUnion(call, outerCtx, lowerBlock2) {
+  return buildUnionWith(
+    call,
+    outerCtx,
+    lowerBlock2,
+    /* limitOne */
+    true
+  );
+}
+function buildUnionWith(call, outerCtx, lowerBlock2, limitOne) {
+  const pipeline = translateUnionPredicate(call, outerCtx, lowerBlock2);
+  if (limitOne) pipeline.push({ $limit: 1 });
+  const from = call.db !== void 0 ? { db: call.db, coll: call.collection } : call.collection;
+  if (pipeline.length === 0) {
+    return { $unionWith: from };
+  }
+  if (typeof from === "string") {
+    return { $unionWith: { coll: from, pipeline } };
+  }
+  return { $unionWith: { coll: from, pipeline } };
+}
+function translateUnionPredicate(call, outerCtx, lowerBlock2) {
+  return lowerLambdaPredicate(call.lambda, outerCtx, lowerBlock2, {
+    freshCtx: freshSubPipelineCtx,
+    onLocalRef: () => {
+      throw new CodegenError(correlatedPushPredicateMessage(call), call.lambda.pos);
+    },
+    missingBody: () => {
+      throw new CodegenError(
+        `.${call.method}(predicate) lambda is missing a body \u2014 internal parser bug; please report.`,
+        call.lambda.pos
+      );
+    }
+  });
+}
+function correlatedPushPredicateMessage(call) {
+  const recv = formatReceiver(call);
+  return `$$.push(...${recv}.${call.method}(pred)) \u2014 predicate references the local document (\`$.<field>\`), but MongoDB's \`$unionWith\` has no \`let\` slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a \`$match(...)\` stage before \`$$.push(...)\`.`;
+}
+function rejectNonDocumentArg(arg) {
+  let hint = "";
+  if (arg.type === "NumberLiteral" || arg.type === "StringLiteral" || arg.type === "BooleanLiteral") {
+    hint = ` Got a ${arg.type.replace(/Literal$/, "").toLowerCase()} literal \u2014 collections only hold documents.`;
+  } else if (arg.type === "NullLiteral") {
+    hint = " Got `null` \u2014 collections only hold documents.";
+  } else if (arg.type === "FieldRef" || arg.type === "ParamRef") {
+    hint = " To append a runtime-supplied document, accept it as a `jsmql.compile` parameter binding and wrap as `$$.push($.<doc>)`. Note: $$.push doesn't accept bare field paths \u2014 wrap inside an inline `{ ... }` if you want to project specific fields.";
+  }
+  throw new CodegenError(
+    `$$.push(...) argument must be a document literal (\`{ ... }\`), a \`$$$.<coll>.find(pred)\` scalar, or a spread of \`$$$.<coll>[.filter(pred)]\`.${hint}`,
+    arg.pos ?? 0
+  );
+}
+function formatReceiver(call) {
+  return call.db !== void 0 ? `$$$$.${call.db}.${call.collection}` : `$$$.${call.collection}`;
+}
+
+// src/stream-methods.ts
+var SLICE = {
+  name: "slice",
+  validate(args, callPos) {
+    if (args.length === 0 || args.length > 2) {
+      throw new CodegenError(`.slice(start[, end]) takes 1 or 2 arguments, got ${args.length}.`, callPos);
+    }
+    for (const arg of args) {
+      if (arg.type === "SpreadElement") {
+        throw new CodegenError(`.slice(start[, end]) does not accept spread arguments.`, arg.pos);
+      }
+      if (arg.type !== "NumberLiteral") {
+        throw new CodegenError(
+          `.slice(start[, end]) requires non-negative integer literals; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams in v1 \u2014 write the literal in source.`,
+          arg.pos
+        );
+      }
+      if (arg.value < 0 || !Number.isInteger(arg.value)) {
+        throw new CodegenError(
+          `.slice(start[, end]) requires non-negative integer literals; got ${arg.value}. Negative indices and fractional values aren't supported on streams.`,
+          arg.pos
+        );
+      }
+    }
+    if (args.length === 2) {
+      const start = args[0].value;
+      const end = args[1].value;
+      if (end < start) {
+        throw new CodegenError(`.slice(start, end) requires end >= start (got start=${start}, end=${end}).`, callPos);
+      }
+    }
+  },
+  lower(args, _ctx, _callPos) {
+    const start = args[0].value;
+    const stages = [];
+    if (start > 0) stages.push({ $skip: start });
+    if (args.length === 2) {
+      const end = args[1].value;
+      stages.push({ $limit: end - start });
+    }
+    return { stages };
+  }
+};
+var CONCAT = {
+  name: "concat",
+  validate(args, callPos) {
+    if (args.length === 0) {
+      throw new CodegenError(
+        `.concat(...) requires at least one argument \u2014 a document literal ('{...}'), a spread of '$$$.<coll>[.filter(pred)]', or '$$$.<coll>.find(pred)'.`,
+        callPos
+      );
+    }
+  },
+  lower(args, ctx, callPos, lowerBlock2) {
+    const stages = lowerUnionPush({ pos: callPos, callPos, args: [...args] }, ctx, lowerBlock2);
+    return { stages };
+  }
+};
+var MAP = {
+  name: "map",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.map(d => <expr>) takes exactly one argument (a single-parameter arrow), got ${args.length}.`,
+        callPos
+      );
+    }
+    const arg = args[0];
+    if (arg.type === "SpreadElement") {
+      throw new CodegenError(`.map(...) does not accept a spread argument \u2014 pass a '(d) => <expr>' arrow.`, arg.pos);
+    }
+    if (arg.type !== "Lambda") {
+      throw new CodegenError(
+        `.map(d => <expr>) requires an arrow function as its argument, e.g. '.map(d => ({ id: d._id, name: d.name }))'.`,
+        arg.pos
+      );
+    }
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `.map(d => <expr>) takes a single-parameter arrow (got ${arg.params.length}). MongoDB streams have no per-doc index, so '(d, i) => \u2026' isn't meaningful here.`,
+        arg.pos
+      );
+    }
+    if (arg.body === void 0) {
+      throw new CodegenError(
+        `.map(d => <expr>) requires an expression body. Block-body arrows ('d => { \u2026 }') aren't supported here \u2014 split into separate stages ($set, $project, \u2026) instead.`,
+        arg.pos
+      );
+    }
+  },
+  lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
+    const lambda = args[0];
+    const param = lambda.params[0];
+    const body = lambda.body;
+    if (containsUnionPush(body)) {
+      throw new CodegenError(
+        `'$$.push(...)' inside a '.map(d => \u2026)' body isn't meaningful \u2014 '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
+        lambda.pos
+      );
+    }
+    const { rewritten, letVars } = extractLetsFromExpr(body, param);
+    if (Object.keys(letVars).length > 0) {
+      const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
+      throw new CodegenError(
+        `'$.<field>' inside '.map(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+        lambda.pos
+      );
+    }
+    const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, ctx, allocSlot, lowerBlock2);
+    const expr = generateWithCtx(rewritten2, ctx);
+    return { stages: [...prologue, { $replaceWith: expr }], clearLets: true };
+  }
+};
+function classifyComparatorPath(expr, paramA, paramB) {
+  let cur = expr;
+  const segments = [];
+  while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
+    if (cur.type === "MemberAccess") {
+      segments.unshift(cur.member);
+      cur = cur.object;
+      continue;
+    }
+    if (cur.type === "IndexAccess" && cur.index.type === "StringLiteral") {
+      segments.unshift(cur.index.value);
+      cur = cur.object;
+      continue;
+    }
+    return null;
+  }
+  if (cur.type !== "ParamRef") return null;
+  const which = cur.name === paramA ? "a" : cur.name === paramB ? "b" : null;
+  if (which === null) return null;
+  if (segments.length === 0) return null;
+  return { param: which, path: segments.join(".") };
+}
+function parseComparatorBody(body, paramA, paramB, callPos) {
+  if (body.type === "BinaryExpr" && body.op === "||") {
+    const left = parseComparatorBody(body.left, paramA, paramB, callPos);
+    const right = parseComparatorBody(body.right, paramA, paramB, callPos);
+    return { ...left, ...right };
+  }
+  if (body.type === "BinaryExpr" && body.op === "-") {
+    const leftPath = classifyComparatorPath(body.left, paramA, paramB);
+    const rightPath = classifyComparatorPath(body.right, paramA, paramB);
+    if (leftPath !== null && rightPath !== null && leftPath.path === rightPath.path) {
+      if (leftPath.param === "a" && rightPath.param === "b") return { [leftPath.path]: 1 };
+      if (leftPath.param === "b" && rightPath.param === "a") return { [leftPath.path]: -1 };
+    }
+  }
+  throw new CodegenError(
+    `.toSorted((${paramA}, ${paramB}) => \u2026) accepts only '${paramA}.<field> - ${paramB}.<field>' (ascending) or '${paramB}.<field> - ${paramA}.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.`,
+    body.pos ?? callPos
+  );
+}
+var TO_SORTED = {
+  name: "toSorted",
+  validate(args, callPos) {
+    if (args.length === 0) {
+      throw new CodegenError(
+        `.toSorted(<comparator>) requires a comparator arrow \u2014 MongoDB streams have no natural document ordering. Write '.toSorted((a, b) => a.<field> - b.<field>)' for ascending, 'b.<field> - a.<field>' for descending.`,
+        callPos
+      );
+    }
+    if (args.length > 1) {
+      throw new CodegenError(`.toSorted(<comparator>) takes exactly one argument, got ${args.length}.`, callPos);
+    }
+    const arg = args[0];
+    if (arg.type === "SpreadElement") {
+      throw new CodegenError(`.toSorted(...) does not accept a spread argument.`, arg.pos);
+    }
+    if (arg.type !== "Lambda") {
+      throw new CodegenError(
+        `.toSorted(<comparator>) requires an arrow function, e.g. '.toSorted((a, b) => a.age - b.age)'.`,
+        arg.pos
+      );
+    }
+    if (arg.params.length !== 2) {
+      throw new CodegenError(
+        `.toSorted(<comparator>) requires a two-parameter arrow '(a, b) => \u2026' (got ${arg.params.length} params).`,
+        arg.pos
+      );
+    }
+    if (arg.body === void 0) {
+      throw new CodegenError(`.toSorted(<comparator>) requires an expression body, not a block.`, arg.pos);
+    }
+  },
+  lower(args, _ctx, callPos, _lowerBlock) {
+    const lambda = args[0];
+    const [paramA, paramB] = lambda.params;
+    const body = lambda.body;
+    const spec = parseComparatorBody(body, paramA, paramB, callPos);
+    return { stages: [{ $sort: spec }] };
+  }
+};
+var TO_REVERSED = {
+  name: "toReversed",
+  validate(args, callPos) {
+    if (args.length !== 0) {
+      throw new CodegenError(`.toReversed() takes no arguments, got ${args.length}.`, callPos);
+    }
+  },
+  lower(_args, _ctx, callPos, _lowerBlock, prevStages) {
+    const last = prevStages[prevStages.length - 1];
+    const sortSpec = last !== void 0 ? last["$sort"] : void 0;
+    if (sortSpec === void 0) {
+      throw new CodegenError(
+        `.toReversed() needs a preceding $sort (from a '.toSorted(...)' call or a '$sort' stage) to invert \u2014 MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or place '.toReversed()' after a sort.`,
+        callPos
+      );
+    }
+    const flipped = {};
+    for (const key of Object.keys(sortSpec)) {
+      const dir = sortSpec[key];
+      if (dir !== 1 && dir !== -1) {
+        throw new CodegenError(
+          `.toReversed() can only invert a '$sort' with numeric 1/-1 directions (preceding stage has '${key}: ${String(dir)}'). Inverting non-direction sort specs (text-meta, custom expressions) isn't supported.`,
+          callPos
+        );
+      }
+      flipped[key] = dir === 1 ? -1 : 1;
+    }
+    return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
+  }
+};
+function paramFieldPath(expr, param) {
+  const segments = [];
+  let cur = expr;
+  while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
+    if (cur.type === "MemberAccess") {
+      segments.unshift(cur.member);
+      cur = cur.object;
+      continue;
+    }
+    if (cur.type === "IndexAccess" && cur.index.type === "StringLiteral") {
+      segments.unshift(cur.index.value);
+      cur = cur.object;
+      continue;
+    }
+    return null;
+  }
+  if (cur.type !== "ParamRef") return null;
+  if (cur.name !== param) return null;
+  if (segments.length === 0) return null;
+  return segments.join(".");
+}
+var FLAT_MAP = {
+  name: "flatMap",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.flatMap(d => d.<path>) takes exactly one argument (a single-parameter arrow), got ${args.length}.`,
+        callPos
+      );
+    }
+    const arg = args[0];
+    if (arg.type === "SpreadElement") {
+      throw new CodegenError(`.flatMap(...) does not accept a spread argument.`, arg.pos);
+    }
+    if (arg.type !== "Lambda") {
+      throw new CodegenError(
+        `.flatMap(d => d.<path>) requires an arrow function \u2014 in v1 the body must be a bare field-path on the lambda param (e.g. 'd.items', 'd.profile.tags').`,
+        arg.pos
+      );
+    }
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `.flatMap(d => d.<path>) requires a single-parameter arrow (got ${arg.params.length} params).`,
+        arg.pos
+      );
+    }
+    if (arg.body === void 0) {
+      throw new CodegenError(`.flatMap(d => d.<path>) requires an expression body, not a block.`, arg.pos);
+    }
+  },
+  lower(args, _ctx, callPos, _lowerBlock, _prevStages) {
+    const lambda = args[0];
+    const param = lambda.params[0];
+    const body = lambda.body;
+    const path = paramFieldPath(body, param);
+    if (path === null) {
+      throw new CodegenError(
+        `.flatMap(d => \u2026) v1 only supports a bare field-path body on the lambda param (e.g. '.flatMap(d => d.items)'). Complex bodies (e.g. '.flatMap(d => d.items.map(...))') aren't supported yet \u2014 hoist the transformation to a separate stage above the chain.`,
+        body.pos ?? callPos
+      );
+    }
+    return { stages: [{ $unwind: `$${path}` }] };
+  }
+};
+function classifyAccumulatorExpr(body, isAccRef, dParam) {
+  if (body.type === "BinaryExpr" && body.op === "+") {
+    const otherSide = isAccRef(body.left) ? body.right : isAccRef(body.right) ? body.left : null;
+    if (otherSide !== null) {
+      if (otherSide.type === "NumberLiteral" && otherSide.value === 1) {
+        return { kind: "sum", value: 1 };
+      }
+      const path = paramFieldPath(otherSide, dParam);
+      if (path !== null) return { kind: "sum", value: `$${path}` };
+    }
+  }
+  if (body.type === "MathCall" && (body.method === "max" || body.method === "min") && body.args.length === 2) {
+    const [a0, a1] = body.args;
+    if (a0.type === "SpreadElement" || a1.type === "SpreadElement") return null;
+    const a0e = a0;
+    const a1e = a1;
+    const otherSide = isAccRef(a0e) ? a1e : isAccRef(a1e) ? a0e : null;
+    if (otherSide !== null) {
+      const path = paramFieldPath(otherSide, dParam);
+      if (path !== null) return { kind: body.method, value: path };
+    }
+  }
+  if (body.type === "BinaryExpr" && body.op === "??") {
+    if (isAccRef(body.left)) {
+      const path = paramFieldPath(body.right, dParam);
+      if (path !== null) return { kind: "first", value: path };
+    }
+  }
+  {
+    const path = paramFieldPath(body, dParam);
+    if (path !== null) return { kind: "last", value: path };
+  }
+  if (body.type === "ArrayLiteral" && body.elements.length === 2) {
+    const [first, second] = body.elements;
+    if (first.type === "SpreadElement" && isAccRef(first.argument) && second.type !== "SpreadElement") {
+      if (second.type === "AssignExpr" || second.type === "DeleteStmt" || second.type === "LetDecl") return null;
+      const path = paramFieldPath(second, dParam);
+      if (path !== null) return { kind: "push", value: path };
+    }
+  }
+  if (body.type === "MethodCall" && body.method === "concat" && body.args.length === 1) {
+    if (isAccRef(body.object)) {
+      const arg = body.args[0];
+      if (arg.type !== "SpreadElement") {
+        const path = paramFieldPath(arg, dParam);
+        if (path !== null) return { kind: "push", value: path };
+      }
+    }
+  }
+  return null;
+}
+function classifyReduceBody(body, accParam, dParam) {
+  return classifyAccumulatorExpr(body, (e) => e.type === "ParamRef" && e.name === accParam, dParam);
+}
+function detectReduceWrap(value) {
+  if (value.type !== "ArrayLiteral") return null;
+  if (value.elements.length !== 1) return null;
+  const el = value.elements[0];
+  if (el.type === "ObjectLiteral") return detectScalarReduceWrap(el);
+  if (el.type === "MethodCall" && el.method === "reduce" && el.object.type === "CollectionRef") {
+    if (el.args.length === 2 && el.args[1].type === "ArrayLiteral") return null;
+    return detectObjectReducerWrap(el);
+  }
+  return null;
+}
+function detectScalarReduceWrap(docEl) {
+  if (docEl.entries.length === 0) return null;
+  for (const entry of docEl.entries) {
+    if (entry.type !== "KeyValueEntry") return null;
+    if (entry.key.kind !== "static") return null;
+    const ev = entry.value;
+    if (ev.type !== "MethodCall") return null;
+    if (ev.method !== "reduce") return null;
+    if (ev.object.type !== "CollectionRef") return null;
+  }
+  const out = [];
+  for (const entry of docEl.entries) {
+    if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") continue;
+    const ev = entry.value;
+    validateReduceCallBasics(ev);
+    ensureLiteralInit(ev);
+    const lambda = ev.args[0];
+    const [accParam, dParam] = lambda.params;
+    const body = lambda.body;
+    const accumulator = classifyReduceBody(body, accParam, dParam);
+    if (accumulator === null) {
+      throw new CodegenError(
+        `$$.reduce((${accParam}, ${dParam}) => \u2026) v1 supports only these reducer shapes: '${accParam} + ${dParam}.<field>' (\u2192 $sum), '${accParam} + 1' (\u2192 $sum: 1, count), 'Math.max(${accParam}, ${dParam}.<field>)' (\u2192 $max), 'Math.min(${accParam}, ${dParam}.<field>)' (\u2192 $min). Other shapes aren't supported yet \u2014 write the $group stage by hand.`,
+        body.pos ?? ev.pos
+      );
+    }
+    out.push({ key: entry.key.name, accumulator, pos: entry.pos });
+  }
+  return out;
+}
+function detectObjectReducerWrap(reduceCall) {
+  validateReduceCallBasics(reduceCall);
+  const lambda = reduceCall.args[0];
+  const initArg = reduceCall.args[1];
+  const [accParam, dParam] = lambda.params;
+  const body = lambda.body;
+  if (body.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `'$$ = [$$.reduce(...)]' requires the reducer to return an object literal \u2014 '(${accParam}, ${dParam}) => ({ ...${accParam}, <key>: <expr>, ... })'. For scalar reducers, use the object-wrap form instead: '$$ = [{ <key>: $$.reduce((acc, d) => \u2026, <literal-init>) }];'.`,
+      body.pos
+    );
+  }
+  if (initArg.type === "SpreadElement" || initArg.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `'$$ = [$$.reduce(<reducer>, <init>)]' with an object-returning reducer requires an object init that names each accumulator key \u2014 got '${initArg.type}'. Write '{ <key1>: <init1>, <key2>: <init2>, ... }' matching the keys returned by the reducer body.`,
+      "pos" in initArg ? initArg.pos : reduceCall.pos
+    );
+  }
+  return classifyObjectReducer(reduceCall, body, initArg, accParam, dParam);
+}
+function classifyObjectReducer(reduceCall, body, init, accParam, dParam) {
+  const bodyEntries = [];
+  let seenNamedEntry = false;
+  for (const entry of body.entries) {
+    if (entry.type === "SpreadElement") {
+      if (seenNamedEntry) {
+        throw new CodegenError(
+          `Object-reducer body's '...${accParam}' spread must be the first entry, not after named keys.`,
+          entry.pos
+        );
+      }
+      const sp = entry.argument;
+      if (sp.type !== "ParamRef" || sp.name !== accParam) {
+        throw new CodegenError(
+          `Object-reducer body may only spread the accumulator parameter ('...${accParam}'). Spreads of other expressions aren't supported in v1.`,
+          entry.pos
+        );
+      }
+      continue;
+    }
+    seenNamedEntry = true;
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(
+        `Object-reducer body entry must have a static key. Computed keys ('[expr]: \u2026') aren't supported in v1.`,
+        entry.pos
+      );
+    }
+    bodyEntries.push({ key: entry.key.name, value: entry.value, pos: entry.pos });
+  }
+  if (bodyEntries.length === 0) {
+    throw new CodegenError(
+      `Object-reducer body must declare at least one '<key>: <reducer-expr>' entry (got an empty or spread-only object).`,
+      body.pos
+    );
+  }
+  const initKeys = /* @__PURE__ */ new Set();
+  for (const entry of init.entries) {
+    if (entry.type !== "KeyValueEntry") {
+      throw new CodegenError(
+        `The init object passed to $$.reduce must be a literal '{ <key>: <init>, ... }' \u2014 spreads aren't supported in v1.`,
+        entry.pos
+      );
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(`The init object's keys must be static (no computed '[expr]:' keys).`, entry.pos);
+    }
+    initKeys.add(entry.key.name);
+  }
+  const bodyKeys = new Set(bodyEntries.map((e) => e.key));
+  const missingInInit = Array.from(bodyKeys).filter((k) => !initKeys.has(k));
+  const missingInBody = Array.from(initKeys).filter((k) => !bodyKeys.has(k));
+  if (missingInInit.length > 0 || missingInBody.length > 0) {
+    const parts = [];
+    if (missingInInit.length > 0) parts.push(`init is missing keys [${missingInInit.join(", ")}]`);
+    if (missingInBody.length > 0) parts.push(`body is missing keys [${missingInBody.join(", ")}]`);
+    throw new CodegenError(
+      `Object-reducer body and init must declare the same keys (${parts.join("; ")}). Each key needs a starting value in init and a per-doc update in the body.`,
+      reduceCall.pos
+    );
+  }
+  const out = [];
+  for (const entry of bodyEntries) {
+    const accumulator = classifyAccumulatorExpr(
+      entry.value,
+      (e) => e.type === "MemberAccess" && e.object.type === "ParamRef" && e.object.name === accParam && e.member === entry.key,
+      dParam
+    );
+    if (accumulator === null) {
+      throw new CodegenError(
+        `Object-reducer entry '${entry.key}: \u2026' \u2014 v1 supports only: '${accParam}.${entry.key} + ${dParam}.<field>' (\u2192 $sum), '${accParam}.${entry.key} + 1' (\u2192 $sum: 1, count), 'Math.max(${accParam}.${entry.key}, ${dParam}.<field>)' (\u2192 $max), 'Math.min(${accParam}.${entry.key}, ${dParam}.<field>)' (\u2192 $min). Each entry must reference '${accParam}.${entry.key}' as the accumulator side.`,
+        entry.value.pos ?? entry.pos
+      );
+    }
+    out.push({ key: entry.key, accumulator, pos: entry.pos });
+  }
+  return out;
+}
+function validateReduceCallBasics(call) {
+  if (call.args.length !== 2) {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <expr>, <init>) takes exactly two arguments (the reducer arrow and the initial value), got ${call.args.length}.`,
+      call.pos
+    );
+  }
+  const [arg0, arg1] = call.args;
+  if (arg0.type === "SpreadElement") {
+    throw new CodegenError(`$$.reduce(...) does not accept spread arguments.`, arg0.pos);
+  }
+  if (arg1.type === "SpreadElement") {
+    throw new CodegenError(`$$.reduce(...) does not accept spread arguments.`, arg1.pos);
+  }
+  if (arg0.type !== "Lambda") {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <expr>, <init>) requires an arrow function as the first argument.`,
+      arg0.pos
+    );
+  }
+  if (arg0.params.length !== 2) {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <expr>, <init>) requires a two-parameter arrow '(acc, d) => \u2026' (got ${arg0.params.length} params).`,
+      arg0.pos
+    );
+  }
+  if (arg0.body === void 0) {
+    throw new CodegenError(`$$.reduce(...) requires an expression body, not a block.`, arg0.pos);
+  }
+}
+function ensureLiteralInit(call) {
+  const arg1 = call.args[1];
+  const isLiteral = arg1.type === "NumberLiteral" || arg1.type === "StringLiteral" || arg1.type === "BooleanLiteral" || arg1.type === "NullLiteral" || arg1.type === "BigIntLiteral";
+  if (!isLiteral) {
+    throw new CodegenError(
+      `$$.reduce((acc, d) => <scalar-expr>, <init>) \u2014 the initial value must be a literal (number, string, boolean, null) for the scalar wrap form. For object-returning reducers, use '$$ = [$$.reduce((acc, d) => ({ ...acc, ... }), { ... })];' instead.`,
+      "pos" in arg1 ? arg1.pos : call.pos
+    );
+  }
+}
+function detectDictBuildWrap(value) {
+  if (value.type !== "ArrayLiteral") return null;
+  if (value.elements.length !== 1) return null;
+  const el = value.elements[0];
+  if (el.type !== "MethodCall" || el.method !== "reduce" || el.object.type !== "CollectionRef") return null;
+  if (el.args.length !== 2) return null;
+  const lambda = el.args[0];
+  const init = el.args[1];
+  if (lambda.type === "SpreadElement" || init.type === "SpreadElement") return null;
+  if (lambda.type !== "Lambda" || lambda.params.length !== 2 || lambda.body === void 0) return null;
+  if (init.type !== "ObjectLiteral" || init.entries.length !== 0) return null;
+  const body = lambda.body;
+  if (body.type !== "ObjectLiteral") return null;
+  const [accParam, dParam] = lambda.params;
+  let seenComputed = false;
+  let result = null;
+  for (const entry of body.entries) {
+    if (entry.type === "SpreadElement") {
+      if (seenComputed) return null;
+      if (entry.argument.type !== "ParamRef" || entry.argument.name !== accParam) return null;
+      continue;
+    }
+    if (seenComputed) return null;
+    if (entry.key.kind !== "computed") return null;
+    const keyPath = paramFieldPath(entry.key.expr, dParam);
+    if (keyPath === null) return null;
+    const valuePath = paramFieldOrBareParam(entry.value, dParam);
+    if (valuePath === void 0) return null;
+    result = { keyPath, valuePath, lambdaPos: lambda.pos };
+    seenComputed = true;
+  }
+  return result;
+}
+function paramFieldOrBareParam(expr, param) {
+  if (expr.type === "ParamRef" && expr.name === param) return null;
+  const path = paramFieldPath(expr, param);
+  if (path !== null) return path;
+  return void 0;
+}
+function lowerDictBuildWrap(wrap) {
+  const v = wrap.valuePath === null ? "$$ROOT" : `$${wrap.valuePath}`;
+  return [
+    { $group: { _id: null, __jsmqlDict: { $push: { k: `$${wrap.keyPath}`, v } } } },
+    { $replaceWith: { $arrayToObject: "$__jsmqlDict" } }
+  ];
+}
+function lowerReduceWrap(entries) {
+  const groupBody = { _id: null };
+  const replaceBody = {};
+  for (const entry of entries) {
+    const acc2 = entry.accumulator;
+    const op = acc2.kind === "sum" ? "$sum" : acc2.kind === "max" ? "$max" : acc2.kind === "min" ? "$min" : acc2.kind === "first" ? "$first" : acc2.kind === "last" ? "$last" : "$push";
+    const v = acc2.kind === "sum" ? acc2.value : `$${acc2.value}`;
+    groupBody[entry.key] = { [op]: v };
+    replaceBody[entry.key] = `$${entry.key}`;
+  }
+  return [{ $group: groupBody }, { $replaceWith: replaceBody }];
+}
+function isArrayInitReduce(el) {
+  return el.type === "MethodCall" && el.method === "reduce" && el.object.type === "CollectionRef" && el.args.length === 2 && el.args[1].type === "ArrayLiteral";
+}
+function detectArrayReducerWrap(value) {
+  if (value.type === "ArrayLiteral") {
+    if (value.elements.length !== 1) return null;
+    if (!isArrayInitReduce(value.elements[0])) return null;
+    throw new CodegenError(
+      `A reducer seeded with '[]' already produces a stream, so don't wrap it in '[ ]' \u2014 assign it directly: '$$ = $$.reduce((acc, d) => \u2026, [])'.`,
+      value.pos
+    );
+  }
+  if (!isArrayInitReduce(value)) return null;
+  const el = value;
+  const initArg = el.args[1];
+  if (initArg.type === "ArrayLiteral" && initArg.elements.length !== 0) {
+    throw new CodegenError(
+      `'$$ = $$.reduce(<reducer>, <init>)' with an array-returning reducer requires the init to be '[]' \u2014 a non-empty seed array isn't supported (no MQL accumulator preserves the JS-faithful "start with these elements" semantic).`,
+      initArg.pos
+    );
+  }
+  validateReduceCallBasics(el);
+  const lambda = el.args[0];
+  const [accParam, dParam] = lambda.params;
+  const body = lambda.body;
+  const classified = classifyArrayReducerBody(body, accParam, dParam);
+  if (classified === null) {
+    throw new CodegenError(
+      `Array-returning reducer body \u2014 v1 supports only:
+  \u2022 Unconditional map:  '(${accParam}, ${dParam}) => ${accParam}.concat(${dParam}.<field>)'  \u2192  '$replaceWith: "$<field>"'
+  \u2022 Filter + map:       '(${accParam}, ${dParam}) => (<cond> ? ${accParam}.concat(${dParam}.<field>) : ${accParam})'  \u2192  '$match(<cond>) + $replaceWith: "$<field>"'
+  \u2022 The '${dParam}' itself (bare param) instead of '${dParam}.<field>' projects the whole doc (no '$replaceWith').
+Other shapes \u2014 '${accParam}.concat([${dParam}.<x>, ${dParam}.<y>])', '[...${accParam}, ${dParam}.<x>]', non-ternary branches \u2014 aren't supported yet.`,
+      body.pos
+    );
+  }
+  return { ...classified, dParam, lambdaPos: lambda.pos };
+}
+function classifyArrayReducerBody(body, accParam, dParam) {
+  if (body.type === "TernaryExpr") {
+    if (body.alternate.type !== "ParamRef" || body.alternate.name !== accParam) return null;
+    const project2 = classifyConcatCall(body.consequent, accParam, dParam);
+    if (project2 === null) return null;
+    return { project: project2, condition: body.condition };
+  }
+  const project = classifyConcatCall(body, accParam, dParam);
+  if (project !== null) return { project, condition: null };
+  return null;
+}
+function classifyConcatCall(expr, accParam, dParam) {
+  if (expr.type !== "MethodCall") return null;
+  if (expr.method !== "concat") return null;
+  if (expr.object.type !== "ParamRef" || expr.object.name !== accParam) return null;
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") return null;
+  if (arg.type === "ParamRef" && arg.name === dParam) return { kind: "identity" };
+  const path = paramFieldPath(arg, dParam);
+  if (path !== null) return { kind: "field", path };
+  return null;
+}
+var STREAM_METHODS = {
+  slice: SLICE,
+  concat: CONCAT,
+  map: MAP,
+  toSorted: TO_SORTED,
+  toReversed: TO_REVERSED,
+  flatMap: FLAT_MAP
+  // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
+  // returns a scalar / object / array in JS depending on the reducer. A
+  // scalar/object result must be wrapped into a stream-shaped RHS; an
+  // array-returning reducer already IS a stream and is assigned unbracketed.
+  // The chain walker's `unknownStreamMethod` helper special-cases `.reduce`
+  // with an actionable hint, and the forms are implemented above:
+  //   • `detectReduceWrap`         — scalar-into-object `$$ = [{ k: $$.reduce(…) }]` & object-returning `$$ = [$$.reduce(…, {})]` ($group + $replaceWith)
+  //   • `detectArrayReducerWrap`   — array-returning `$$ = $$.reduce(…, [])`, unbracketed ($match + $replaceWith); the bracketed form throws
+};
+function lookupStreamMethod(name) {
+  return STREAM_METHODS[name] ?? null;
+}
+function streamMethodNames() {
+  return Object.keys(STREAM_METHODS);
+}
+function collectStreamChain(expr) {
+  const methods = [];
+  let cur = expr;
+  while (cur.type === "MethodCall") {
+    methods.push(cur);
+    cur = cur.object;
+  }
+  methods.reverse();
+  return { root: cur, methods };
+}
+
+// src/lookup-translation.ts
+var EMPTY_ENCLOSING = { foreignParams: [], inScopeLetNames: /* @__PURE__ */ new Set() };
+function rewriteEnclosingForeignParams(expr, params) {
+  if (params.length === 0) return expr;
+  const paramSet = new Set(params);
+  function walk(node) {
+    const path = matchEnclosingParamPath(node, paramSet);
+    if (path !== null) {
+      if (path.segments.length === 0) {
+        throw new CodegenError(
+          `Bare lambda parameter '${path.param}' from an enclosing lookup is not yet supported \u2014 use \`${path.param}.<field>\` to reference a field of the enclosing foreign document.`,
+          node.pos
+        );
+      }
+      return { type: "FieldRef", path: path.segments.join("."), pos: node.pos };
+    }
+    return walkChildren(node);
+  }
+  function walkChildren(node) {
+    switch (node.type) {
+      case "BinaryExpr":
+        return { ...node, left: walk(node.left), right: walk(node.right) };
+      case "UnaryExpr":
+        return { ...node, operand: walk(node.operand) };
+      case "TernaryExpr":
+        return {
+          ...node,
+          condition: walk(node.condition),
+          consequent: walk(node.consequent),
+          alternate: walk(node.alternate)
+        };
+      case "MemberAccess":
+        return { ...node, object: walk(node.object) };
+      case "IndexAccess":
+        return { ...node, object: walk(node.object), index: walk(node.index) };
+      case "MethodCall":
+        return { ...node, object: walk(node.object), args: node.args.map(walkArg) };
+      case "CallExpression":
+        return { ...node, callee: walk(node.callee), args: node.args.map(walkArg) };
+      case "OperatorCall":
+        return { ...node, args: node.args.map(walkArg) };
+      case "Lambda":
+        if (node.body !== void 0) return { ...node, body: walk(node.body) };
+        return node;
+      case "ArrayLiteral":
+        return {
+          ...node,
+          elements: node.elements.map((el) => {
+            if (el.type === "SpreadElement") return { ...el, argument: walk(el.argument) };
+            if (el.type === "AssignExpr") return { ...el, target: walk(el.target), value: walk(el.value) };
+            if (el.type === "DeleteStmt") return { ...el, target: walk(el.target) };
+            if (el.type === "LetDecl") return { ...el, value: walk(el.value) };
+            return walk(el);
+          })
+        };
+      case "ObjectLiteral":
+        return {
+          ...node,
+          entries: node.entries.map((entry) => {
+            if (entry.type === "SpreadElement") return { ...entry, argument: walk(entry.argument) };
+            return {
+              ...entry,
+              key: entry.key.kind === "computed" ? { kind: "computed", expr: walk(entry.key.expr) } : entry.key,
+              value: walk(entry.value)
+            };
+          })
+        };
+      case "TemplateLiteral":
+        return { ...node, expressions: node.expressions.map(walk) };
+      case "TypeofExpr":
+        return { ...node, operand: walk(node.operand) };
+      case "NewDate":
+        return { ...node, args: node.args.map(walk) };
+      case "NewSet":
+        return { ...node, arg: node.arg !== null ? walk(node.arg) : null };
+      case "TypeCast":
+        return { ...node, arg: walk(node.arg) };
+      case "MathCall":
+        return { ...node, args: node.args.map(walkArg) };
+      case "ObjectCall":
+        return { ...node, args: node.args.map(walkArg) };
+      case "ArrayFrom":
+        return { ...node, input: walk(node.input), mapFn: node.mapFn !== null ? walk(node.mapFn) : null };
+      case "NumberStatic":
+        return { ...node, arg: walk(node.arg) };
+      case "DateUTC":
+        return { ...node, args: node.args.map(walk) };
+      default:
+        return node;
+    }
+  }
+  function walkArg(arg) {
+    if (arg.type === "SpreadElement") return { ...arg, argument: walk(arg.argument) };
+    return walk(arg);
+  }
+  return walk(expr);
+}
+function matchEnclosingParamPath(node, params) {
+  if (node.type === "ParamRef" && params.has(node.name)) {
+    return { param: node.name, segments: [] };
+  }
+  if (node.type === "MemberAccess") {
+    const inner = matchEnclosingParamPath(node.object, params);
+    if (inner !== null) return { param: inner.param, segments: [...inner.segments, node.member] };
+  }
+  if (node.type === "IndexAccess" && node.index.type === "StringLiteral") {
+    const inner = matchEnclosingParamPath(node.object, params);
+    if (inner !== null) return { param: inner.param, segments: [...inner.segments, node.index.value] };
+  }
+  return null;
+}
+function staticAccess(node, ctx) {
+  if (node.type === "MemberAccess") return { name: node.member, object: node.object };
+  if (node.type === "IndexAccess") {
+    if (node.index.type === "StringLiteral") {
+      return { name: node.index.value, object: node.object };
+    }
+    if (node.index.type === "ParamRef") {
+      const bindings = ctx.bindings;
+      if (bindings === void 0 || !bindings.has(node.index.name)) return null;
+      const bound = bindings.get(node.index.name);
+      if (typeof bound !== "string") {
+        throw new CodegenError(
+          `'$$$[${node.index.name}]' / '$$$$[${node.index.name}]' parameter binding must be a string (got ${typeof bound}); collection / database names are compile-time constants in MongoDB's $lookup.from.`,
+          node.index.pos
+        );
+      }
+      return { name: bound, object: node.object };
+    }
+  }
+  return null;
+}
+function extractLookupTarget(receiver, ctx) {
+  const outer = staticAccess(receiver, ctx);
+  if (outer === null) return null;
+  if (outer.object.type === "DatabaseRef") {
+    return { pos: outer.object.pos, collection: outer.name };
+  }
+  const inner = staticAccess(outer.object, ctx);
+  if (inner === null) return null;
+  if (inner.object.type !== "ClusterRef") return null;
+  return { pos: inner.object.pos, db: inner.name, collection: outer.name };
+}
+function detectLookupCall(expr, ctx) {
+  if (expr.type !== "MethodCall") return null;
+  if (expr.method !== "find" && expr.method !== "filter") return null;
+  const target = extractLookupTarget(expr.object, ctx);
+  if (target === null) return null;
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type !== "Lambda") return null;
+  return {
+    pos: target.pos,
+    callPos: expr.pos,
+    db: target.db,
+    collection: target.collection,
+    method: expr.method,
+    lambda: arg
+  };
+}
+function containsLookupCall(node, ctx = EMPTY_CTX) {
+  return walkContainsLookup(node, ctx);
+}
+function walkContainsLookup(node, ctx) {
+  if (node.type === "Pipeline") {
+    return node.stmts.some((s) => walkContainsLookup(s, ctx));
+  }
+  if (node.type === "UpdateFilter") {
+    return node.ops.some((op) => walkContainsLookup(op, ctx));
+  }
+  if (node.type === "AssignExpr") return walkContainsLookup(node.value, ctx);
+  if (node.type === "DeleteStmt") return false;
+  if (node.type === "LetDecl") return walkContainsLookup(node.value, ctx);
+  const expr = node;
+  if (detectLookupCall(expr, ctx) !== null) return true;
+  if (expr.type === "MethodCall") {
+    if (walkContainsLookup(expr.object, ctx)) return true;
+    return walkArgsContainLookup(expr.args, ctx);
+  }
+  if (expr.type === "CallExpression") {
+    if (walkContainsLookup(expr.callee, ctx)) return true;
+    return walkArgsContainLookup(expr.args, ctx);
+  }
+  if (expr.type === "OperatorCall") return walkArgsContainLookup(expr.args, ctx);
+  if (expr.type === "MathCall" || expr.type === "ObjectCall") return walkArgsContainLookup(expr.args, ctx);
+  if (expr.type === "MemberAccess") return walkContainsLookup(expr.object, ctx);
+  if (expr.type === "IndexAccess") return walkContainsLookup(expr.object, ctx) || walkContainsLookup(expr.index, ctx);
+  if (expr.type === "BinaryExpr") return walkContainsLookup(expr.left, ctx) || walkContainsLookup(expr.right, ctx);
+  if (expr.type === "UnaryExpr") return walkContainsLookup(expr.operand, ctx);
+  if (expr.type === "TernaryExpr") {
+    return walkContainsLookup(expr.condition, ctx) || walkContainsLookup(expr.consequent, ctx) || walkContainsLookup(expr.alternate, ctx);
+  }
+  if (expr.type === "Lambda") {
+    if (expr.body !== void 0) return walkContainsLookup(expr.body, ctx);
+    if (expr.block !== void 0) return walkContainsLookup(expr.block, ctx);
+    return false;
+  }
+  if (expr.type === "ArrayLiteral") {
+    for (const el of expr.elements) {
+      if (el.type === "SpreadElement") {
+        if (walkContainsLookup(el.argument, ctx)) return true;
+      } else if (walkContainsLookup(el, ctx)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (expr.type === "ObjectLiteral") {
+    for (const entry of expr.entries) {
+      if (entry.type === "SpreadElement") {
+        if (walkContainsLookup(entry.argument, ctx)) return true;
+      } else {
+        if (entry.key.kind === "computed" && walkContainsLookup(entry.key.expr, ctx)) return true;
+        if (walkContainsLookup(entry.value, ctx)) return true;
+      }
+    }
+    return false;
+  }
+  if (expr.type === "TemplateLiteral") return expr.expressions.some((e) => walkContainsLookup(e, ctx));
+  if (expr.type === "TypeofExpr") return walkContainsLookup(expr.operand, ctx);
+  if (expr.type === "NewDate") return expr.args.some((a) => walkContainsLookup(a, ctx));
+  if (expr.type === "NewSet") return expr.arg ? walkContainsLookup(expr.arg, ctx) : false;
+  if (expr.type === "TypeCast") return walkContainsLookup(expr.arg, ctx);
+  if (expr.type === "ArrayFrom")
+    return walkContainsLookup(expr.input, ctx) || (expr.mapFn ? walkContainsLookup(expr.mapFn, ctx) : false);
+  if (expr.type === "NumberStatic") return walkContainsLookup(expr.arg, ctx);
+  if (expr.type === "DateUTC") return expr.args.some((a) => walkContainsLookup(a, ctx));
+  return false;
+}
+function walkArgsContainLookup(args, ctx) {
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      if (walkContainsLookup(a.argument, ctx)) return true;
+    } else if (walkContainsLookup(a, ctx)) return true;
+  }
+  return false;
+}
+function classifyLookupReceiver(receiver) {
+  let node = receiver;
+  for (; ; ) {
+    if (node.type === "DatabaseRef") return { spelling: "$$$.<coll>" };
+    if (node.type === "ClusterRef") return { spelling: "$$$$.<db>.<coll>" };
+    if (node.type === "MemberAccess" || node.type === "IndexAccess") {
+      node = node.object;
+      continue;
+    }
+    return null;
+  }
+}
+function validateLookupShape(expr) {
+  if (expr.type !== "MethodCall") return;
+  const shape = classifyLookupReceiver(expr.object);
+  if (shape === null) return;
+  const spell = shape.spelling;
+  if (expr.method !== "find" && expr.method !== "filter") {
+    const hint = didYouMean(expr.method, ["find", "filter"], (s) => `.${s}`);
+    throw new CodegenError(
+      `'${spell}' supports .find(pred) and .filter(pred), not .${expr.method}().${hint} For richer queries, use a block-body lambda: \`${spell}.filter(o => { $match(...); $sort(...); ... })\`.`,
+      expr.pos
+    );
+  }
+  if (expr.args.length !== 1) {
+    throw new CodegenError(
+      `.${expr.method}(predicate) takes exactly one argument (a single-parameter arrow), got ${expr.args.length}.`,
+      expr.pos
+    );
+  }
+  const arg = expr.args[0];
+  if (arg.type !== "Lambda") {
+    throw new CodegenError(
+      `.${expr.method}(predicate) requires an arrow predicate, e.g. \`.${expr.method}(o => o._id === $.userId)\`.`,
+      "pos" in arg ? arg.pos : expr.pos
+    );
+  }
+  if (arg.params.length !== 1) {
+    throw new CodegenError(
+      `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
+      arg.pos
+    );
+  }
+}
+var LET_NAMESPACE = "__jsmql";
+function createSlotAllocator() {
+  let n = 0;
+  return () => {
+    n += 1;
+    return `${LET_NAMESPACE}.__lookup${n}`;
+  };
+}
+function classifyPath(expr, foreignParam, outerLets) {
+  if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
+  if (expr.type === "ParamRef") {
+    if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
+    if (outerLets !== void 0 && outerLets.has(expr.name)) {
+      const fieldPath = outerLets.get(expr.name);
+      if (fieldPath !== void 0) {
+        return { kind: "outerLet", segments: [expr.name], fieldPath };
+      }
+    }
+    return null;
+  }
+  if (expr.type === "MemberAccess") {
+    const inner = classifyPath(expr.object, foreignParam, outerLets);
+    if (inner === null) return null;
+    if (inner.kind === "outerLet") {
+      return {
+        kind: "outerLet",
+        segments: [...inner.segments, expr.member],
+        fieldPath: `${inner.fieldPath}.${expr.member}`
+      };
+    }
+    return { kind: inner.kind, segments: [...inner.segments, expr.member] };
+  }
+  if (expr.type === "IndexAccess" && expr.index.type === "StringLiteral") {
+    const inner = classifyPath(expr.object, foreignParam, outerLets);
+    if (inner === null) return null;
+    if (inner.kind === "outerLet") {
+      return {
+        kind: "outerLet",
+        segments: [...inner.segments, expr.index.value],
+        fieldPath: `${inner.fieldPath}.${expr.index.value}`
+      };
+    }
+    return { kind: inner.kind, segments: [...inner.segments, expr.index.value] };
+  }
+  return null;
+}
+function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+  const { lambda } = call;
+  const foreignParam = lambda.params[0];
+  const outerLets = outerCtx.pipelineLets;
+  if (lambda.body !== void 0) {
+    const preRewritten = rewriteEnclosingForeignParams(lambda.body, enclosing.foreignParams);
+    if (enclosing.foreignParams.length === 0) {
+      const basic = tryBasicForm(preRewritten, foreignParam, outerLets);
+      if (basic !== null) return basic;
+    }
+    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const innerEnclosing = {
+      foreignParams: [...enclosing.foreignParams, foreignParam],
+      inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+    };
+    const localAllocSlot = createSlotAllocator();
+    const { stages: nestedStages, rewritten: lookupFree } = extractLookupCalls(
+      rewritten,
+      outerCtx,
+      localAllocSlot,
+      lowerBlock2,
+      innerEnclosing
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const matchBody = generateWithCtx(lookupFree, subCtx);
+    return { kind: "pipeline", letVars, pipeline: [...nestedStages, { $match: { $expr: matchBody } }] };
+  }
+  if (lambda.block !== void 0) {
+    if (enclosing.foreignParams.length > 0 || containsLookupCall(lambda.block, outerCtx)) {
+      throw new CodegenError(
+        `Nested lookup inside another lookup's block-body lambda is not yet supported. Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
+        lambda.pos
+      );
+    }
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
+    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
+    const stages = lowerBlock2(rewritten, subCtx);
+    return { kind: "pipeline", letVars, pipeline: stages };
+  }
+  throw new CodegenError(
+    `.${call.method}(predicate) lambda is missing a body \u2014 internal parser bug; please report.`,
+    lambda.pos
+  );
+}
+function makeSubPipelineCtx(outerCtx, letVarNames) {
+  const fresh = freshSubPipelineCtx(outerCtx);
+  if (letVarNames.length === 0) return fresh;
+  return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
+}
+function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+  const foreignParam = lambda.params[0];
+  const outerLets = outerCtx.pipelineLets;
+  if (lambda.body !== void 0) {
+    const preRewritten = rewriteEnclosingForeignParams(lambda.body, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const innerEnclosing = {
+      foreignParams: [...enclosing.foreignParams, foreignParam],
+      inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+    };
+    const localAllocSlot = createSlotAllocator();
+    const { stages: nestedStages, rewritten: lookupFree } = extractLookupCalls(
+      rewritten,
+      outerCtx,
+      localAllocSlot,
+      lowerBlock2,
+      innerEnclosing
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return { letVars, pipelineBody: [...nestedStages, { $match: { $expr: generateWithCtx(lookupFree, subCtx) } }] };
+  }
+  if (lambda.block !== void 0) {
+    if (enclosing.foreignParams.length > 0) {
+      throw new CodegenError(
+        `Nested lookup inside another lookup's block-body lambda is not yet supported. Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
+        lambda.pos
+      );
+    }
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
+    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
+    return { letVars, pipelineBody: lowerBlock2(rewritten, subCtx) };
+  }
+  throw new CodegenError(`Predicate lambda is missing a body \u2014 internal parser bug; please report.`, lambda.pos);
+}
+function predicateReferencesOuterDoc(lambda, outerCtx) {
+  if (lambda.params.length !== 1) return false;
+  const foreignParam = lambda.params[0];
+  const outerLets = outerCtx.pipelineLets;
+  if (lambda.body !== void 0) {
+    const { letVars } = extractLetsFromExpr(lambda.body, foreignParam, outerLets);
+    return Object.keys(letVars).length > 0;
+  }
+  if (lambda.block !== void 0) {
+    const { letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
+    return Object.keys(letVars).length > 0;
+  }
+  return false;
+}
+function tryBasicForm(body, foreignParam, outerLets) {
+  if (body.type !== "BinaryExpr") return null;
+  if (body.op !== "===") return null;
+  const leftPath = classifyPath(body.left, foreignParam, outerLets);
+  const rightPath = classifyPath(body.right, foreignParam, outerLets);
+  if (leftPath === null || rightPath === null) return null;
+  function localFieldFor(p) {
+    if (p.kind === "local" && p.segments.length > 0) return p.segments.join(".");
+    if (p.kind === "outerLet") return p.fieldPath;
+    return null;
+  }
+  if (leftPath.kind === "foreign" && leftPath.segments.length > 0) {
+    const local = localFieldFor(rightPath);
+    if (local !== null) {
+      return { kind: "basic", foreignField: leftPath.segments.join("."), localField: local };
+    }
+  }
+  if (rightPath.kind === "foreign" && rightPath.segments.length > 0) {
+    const local = localFieldFor(leftPath);
+    if (local !== null) {
+      return { kind: "basic", foreignField: rightPath.segments.join("."), localField: local };
+    }
+  }
+  return null;
+}
+function createLetAllocator() {
+  const byPath = /* @__PURE__ */ new Map();
+  const used = /* @__PURE__ */ new Set();
+  const out = {};
+  function uniqueName(preferred) {
+    if (!used.has(preferred)) return preferred;
+    let n = 2;
+    let candidate = `${preferred}_${n}`;
+    while (used.has(candidate)) {
+      n += 1;
+      candidate = `${preferred}_${n}`;
+    }
+    return candidate;
+  }
+  return {
+    allocateForLocalPath(segments) {
+      const dotted = segments.join(".");
+      const existing = byPath.get(dotted);
+      if (existing !== void 0) return existing;
+      const base = safeVarName(segments[segments.length - 1]);
+      const name = uniqueName(base);
+      used.add(name);
+      byPath.set(dotted, name);
+      out[name] = `$${dotted}`;
+      return name;
+    },
+    allocateForOuterLet(segments, fieldPath) {
+      const existing = byPath.get(fieldPath);
+      if (existing !== void 0) return existing;
+      const base = safeVarName(segments[segments.length - 1]);
+      const name = uniqueName(base);
+      used.add(name);
+      byPath.set(fieldPath, name);
+      out[name] = `$${fieldPath}`;
+      return name;
+    },
+    letVars: () => out
+  };
+}
+function extractLetsFromExpr(body, foreignParam, outerLets) {
+  const allocator = createLetAllocator();
+  const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
+  return { rewritten, letVars: allocator.letVars() };
+}
+function extractLetsFromPipeline(block, foreignParam, outerLets) {
+  const allocator = createLetAllocator();
+  const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
+  return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
+}
+function matchStagesFromTranslation(t, subCtx) {
+  const merged = mergeTranslatedQuery(t, subCtx);
+  return merged === null ? [] : [{ $match: merged }];
+}
+function lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, opts) {
+  const param = lambda.params[0];
+  if (lambda.body !== void 0) {
+    const { rewritten, letVars } = extractLetsFromExpr(lambda.body, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    const t = translateMatchBody(rewritten, { bindings: subCtx.bindings });
+    return matchStagesFromTranslation(t, subCtx);
+  }
+  if (lambda.block !== void 0) {
+    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    return lowerBlock2(rewritten, subCtx);
+  }
+  return opts.missingBody();
+}
+function transformStmt(stmt, foreignParam, allocator, outerLets) {
+  if (stmt.type === "LetDecl") {
+    return {
+      type: "LetDecl",
+      name: stmt.name,
+      value: transformExpr(stmt.value, foreignParam, allocator, outerLets),
+      kind: stmt.kind,
+      pos: stmt.pos
+    };
+  }
+  if (stmt.type === "UpdateFilter") {
+    const ops = stmt.ops.map((op) => {
+      if (op.type === "AssignExpr") {
+        return {
+          type: "AssignExpr",
+          target: transformExpr(op.target, foreignParam, allocator, outerLets),
+          value: transformExpr(op.value, foreignParam, allocator, outerLets),
+          pos: op.pos
+        };
+      }
+      return { type: "DeleteStmt", target: transformExpr(op.target, foreignParam, allocator, outerLets), pos: op.pos };
+    });
+    return { type: "UpdateFilter", ops, pos: stmt.pos };
+  }
+  return transformExpr(stmt, foreignParam, allocator, outerLets);
+}
+function transformExpr(expr, foreignParam, allocator, outerLets) {
+  const classified = classifyPath(expr, foreignParam, outerLets);
+  if (classified !== null) {
+    if (classified.kind === "local") {
+      const letVar = allocator.allocateForLocalPath(classified.segments);
+      return { type: "ParamRef", name: letVar, pos: expr.pos };
+    }
+    if (classified.kind === "outerLet") {
+      const letVar = allocator.allocateForOuterLet(classified.segments, classified.fieldPath);
+      return { type: "ParamRef", name: letVar, pos: expr.pos };
+    }
+    if (classified.segments.length === 0) {
+      throw new CodegenError(
+        `Bare lambda parameter '${foreignParam}' in a $lookup predicate is not yet supported \u2014 use \`${foreignParam}.<field>\` to reference a foreign document field.`,
+        expr.pos
+      );
+    }
+    return { type: "FieldRef", path: classified.segments.join("."), pos: expr.pos };
+  }
+  return mapChildren(expr, foreignParam, allocator, outerLets);
+}
+function mapChildren(expr, foreignParam, allocator, outerLets) {
+  switch (expr.type) {
+    case "FieldRef":
+    case "CollectionRef":
+    case "DatabaseRef":
+    case "ClusterRef":
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "UndefinedLiteral":
+    case "RegexLiteral":
+    case "ParamRef":
+    case "TypeCastRef":
+    case "MathConst":
+    case "MathCallRef":
+    case "DateNow":
+      return expr;
+    case "BinaryExpr":
+      return {
+        type: "BinaryExpr",
+        op: expr.op,
+        left: transformExpr(expr.left, foreignParam, allocator, outerLets),
+        right: transformExpr(expr.right, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "UnaryExpr":
+      return {
+        type: "UnaryExpr",
+        op: expr.op,
+        operand: transformExpr(expr.operand, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "TernaryExpr":
+      return {
+        type: "TernaryExpr",
+        condition: transformExpr(expr.condition, foreignParam, allocator, outerLets),
+        consequent: transformExpr(expr.consequent, foreignParam, allocator, outerLets),
+        alternate: transformExpr(expr.alternate, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "MemberAccess":
+      return {
+        type: "MemberAccess",
+        object: transformExpr(expr.object, foreignParam, allocator, outerLets),
+        member: expr.member,
+        pos: expr.pos,
+        ...expr.optional && { optional: true }
+      };
+    case "IndexAccess":
+      return {
+        type: "IndexAccess",
+        object: transformExpr(expr.object, foreignParam, allocator, outerLets),
+        index: transformExpr(expr.index, foreignParam, allocator, outerLets),
+        pos: expr.pos,
+        ...expr.optional && { optional: true }
+      };
+    case "MethodCall":
+      return {
+        type: "MethodCall",
+        object: transformExpr(expr.object, foreignParam, allocator, outerLets),
+        method: expr.method,
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
+        pos: expr.pos,
+        ...expr.optional && { optional: true }
+      };
+    case "CallExpression":
+      return {
+        type: "CallExpression",
+        callee: transformExpr(expr.callee, foreignParam, allocator, outerLets),
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "OperatorCall":
+      return {
+        type: "OperatorCall",
+        name: expr.name,
+        style: expr.style,
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "Lambda":
+      if (expr.body !== void 0) {
+        return {
+          type: "Lambda",
+          params: expr.params,
+          body: transformExpr(expr.body, foreignParam, allocator, outerLets),
+          pos: expr.pos
+        };
+      }
+      return expr;
+    case "ArrayLiteral":
+      return {
+        type: "ArrayLiteral",
+        elements: expr.elements.map((el) => {
+          if (el.type === "SpreadElement") {
+            return {
+              type: "SpreadElement",
+              argument: transformExpr(el.argument, foreignParam, allocator, outerLets),
+              pos: el.pos
+            };
+          }
+          if (el.type === "AssignExpr") {
+            return {
+              type: "AssignExpr",
+              target: transformExpr(el.target, foreignParam, allocator, outerLets),
+              value: transformExpr(el.value, foreignParam, allocator, outerLets),
+              pos: el.pos
+            };
+          }
+          if (el.type === "DeleteStmt") {
+            return {
+              type: "DeleteStmt",
+              target: transformExpr(el.target, foreignParam, allocator, outerLets),
+              pos: el.pos
+            };
+          }
+          if (el.type === "LetDecl") {
+            return {
+              type: "LetDecl",
+              name: el.name,
+              value: transformExpr(el.value, foreignParam, allocator, outerLets),
+              kind: el.kind,
+              pos: el.pos
+            };
+          }
+          return transformExpr(el, foreignParam, allocator, outerLets);
+        }),
+        pos: expr.pos
+      };
+    case "ObjectLiteral":
+      return {
+        type: "ObjectLiteral",
+        entries: expr.entries.map((entry) => {
+          if (entry.type === "SpreadElement") {
+            return {
+              type: "SpreadElement",
+              argument: transformExpr(entry.argument, foreignParam, allocator, outerLets),
+              pos: entry.pos
+            };
+          }
+          const kv = {
+            type: "KeyValueEntry",
+            key: entry.key.kind === "computed" ? { kind: "computed", expr: transformExpr(entry.key.expr, foreignParam, allocator, outerLets) } : entry.key,
+            value: transformExpr(entry.value, foreignParam, allocator, outerLets),
+            pos: entry.pos
+          };
+          return kv;
+        }),
+        pos: expr.pos
+      };
+    case "TemplateLiteral":
+      return {
+        type: "TemplateLiteral",
+        quasis: expr.quasis,
+        expressions: expr.expressions.map((e) => transformExpr(e, foreignParam, allocator, outerLets)),
+        pos: expr.pos
+      };
+    case "TypeofExpr":
+      return {
+        type: "TypeofExpr",
+        operand: transformExpr(expr.operand, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "NewDate":
+      return {
+        type: "NewDate",
+        args: expr.args.map((a) => transformExpr(a, foreignParam, allocator, outerLets)),
+        pos: expr.pos
+      };
+    case "NewSet":
+      return {
+        type: "NewSet",
+        arg: expr.arg !== null ? transformExpr(expr.arg, foreignParam, allocator, outerLets) : null,
+        pos: expr.pos
+      };
+    case "TypeCast":
+      return {
+        type: "TypeCast",
+        cast: expr.cast,
+        arg: transformExpr(expr.arg, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "MathCall":
+      return {
+        type: "MathCall",
+        method: expr.method,
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "ObjectCall":
+      return {
+        type: "ObjectCall",
+        method: expr.method,
+        args: transformCallArgs(expr.args, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "ArrayFrom":
+      return {
+        type: "ArrayFrom",
+        input: transformExpr(expr.input, foreignParam, allocator, outerLets),
+        mapFn: expr.mapFn !== null ? transformExpr(expr.mapFn, foreignParam, allocator, outerLets) : null,
+        pos: expr.pos
+      };
+    case "NumberStatic":
+      return {
+        type: "NumberStatic",
+        method: expr.method,
+        arg: transformExpr(expr.arg, foreignParam, allocator, outerLets),
+        pos: expr.pos
+      };
+    case "DateUTC":
+      return {
+        type: "DateUTC",
+        args: expr.args.map((a) => transformExpr(a, foreignParam, allocator, outerLets)),
+        pos: expr.pos
+      };
+  }
+}
+function transformCallArgs(args, foreignParam, allocator, outerLets) {
+  return args.map((a) => {
+    if (a.type === "SpreadElement") {
+      return {
+        type: "SpreadElement",
+        argument: transformExpr(a.argument, foreignParam, allocator, outerLets),
+        pos: a.pos
+      };
+    }
+    return transformExpr(a, foreignParam, allocator, outerLets);
+  });
+}
+function lowerLookup(call, as, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+  const pred = translatePredicate(call, outerCtx, lowerBlock2, enclosing);
+  const from = call.db !== void 0 ? { db: call.db, coll: call.collection } : call.collection;
+  const stages = [];
+  if (pred.kind === "basic") {
+    stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
+  } else {
+    stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
+  }
+  if (call.method === "find") {
+    stages.push({ $set: { [as]: { $first: `$${as}` } } });
+  }
+  return stages;
+}
+function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+  validateLookupShape(expr);
+  if (expr.type === "MemberAccess" && expr.member === "length") {
+    const innerCall = detectLookupCall(expr.object, outerCtx);
+    if (innerCall !== null) {
+      if (innerCall.method === "find") {
+        throw new CodegenError(
+          `.length on a .find() result is not meaningful \u2014 .find returns scalar-or-null. Use .filter(...).length to count matching documents, or chain a field access (.find(...).<field>) to read a property of the matched doc.`,
+          expr.pos
+        );
+      }
+      const slot = allocSlot();
+      const stages = lowerLookup(innerCall, slot, outerCtx, lowerBlock2, enclosing);
+      stages.push({ $set: { [slot]: { $size: `$${slot}` } } });
+      return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
+    }
+  }
+  if (expr.type === "MethodCall" && expr.method === "reduce") {
+    const innerCall = detectLookupCall(expr.object, outerCtx);
+    if (innerCall !== null) {
+      if (innerCall.method === "find") {
+        throw new CodegenError(
+          `.reduce() on a .find() result is not meaningful \u2014 .find returns a scalar-or-null. Use .filter(...) before .reduce(), or read the scalar directly.`,
+          expr.pos
+        );
+      }
+      const slot = allocSlot();
+      const stages = lowerLookup(innerCall, slot, outerCtx, lowerBlock2, enclosing);
+      const reduceCall = {
+        type: "MethodCall",
+        object: { type: "FieldRef", path: slot, pos: expr.pos },
+        method: "reduce",
+        args: expr.args,
+        pos: expr.pos
+      };
+      const reduceExpr = generateWithCtx(reduceCall, outerCtx);
+      stages.push({ $set: { [slot]: reduceExpr } });
+      return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
+    }
+  }
+  const direct = detectLookupCall(expr, outerCtx);
+  if (direct !== null) {
+    const slot = allocSlot();
+    const stages = lowerLookup(direct, slot, outerCtx, lowerBlock2, enclosing);
+    return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
+  }
+  const chained = tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing);
+  if (chained !== null) return chained;
+  return descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing);
+}
+function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+  if (expr.type !== "MethodCall") return null;
+  const methods = [];
+  let cur = expr;
+  while (cur.type === "MethodCall") {
+    methods.push(cur);
+    cur = cur.object;
+  }
+  methods.reverse();
+  if (methods.length < 2) return null;
+  const head = methods[0];
+  const direct = detectLookupCall(head, outerCtx);
+  if (direct === null) return null;
+  if (direct.method !== "filter") return null;
+  for (let i = 1; i < methods.length; i++) {
+    if (lookupStreamMethod(methods[i].method) === null) return null;
+  }
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
+  const innerCtx = freshSubPipelineCtx(outerCtx);
+  for (let i = 1; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) return null;
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
+    if (result.replacesPreviousStage) pipelineBody.pop();
+    pipelineBody.push(...result.stages);
+  }
+  const slot = allocSlot();
+  const from = direct.db !== void 0 ? { db: direct.db, coll: direct.collection } : direct.collection;
+  return {
+    stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }],
+    rewritten: { type: "FieldRef", path: slot, pos: expr.pos }
+  };
+}
+function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+  const stages = [];
+  const rewriteChild = (child) => {
+    const r = extractLookupCalls(child, outerCtx, allocSlot, lowerBlock2, enclosing);
+    for (const s of r.stages) stages.push(s);
+    return r.rewritten;
+  };
+  switch (expr.type) {
+    case "FieldRef":
+    case "CollectionRef":
+    case "DatabaseRef":
+    case "ClusterRef":
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "UndefinedLiteral":
+    case "RegexLiteral":
+    case "ParamRef":
+    case "TypeCastRef":
+    case "MathConst":
+    case "MathCallRef":
+    case "DateNow":
+      return { stages, rewritten: expr };
+    case "BinaryExpr":
+      return {
+        stages,
+        rewritten: {
+          type: "BinaryExpr",
+          op: expr.op,
+          left: rewriteChild(expr.left),
+          right: rewriteChild(expr.right),
+          pos: expr.pos
+        }
+      };
+    case "UnaryExpr":
+      return {
+        stages,
+        rewritten: { type: "UnaryExpr", op: expr.op, operand: rewriteChild(expr.operand), pos: expr.pos }
+      };
+    case "TernaryExpr":
+      return {
+        stages,
+        rewritten: {
+          type: "TernaryExpr",
+          condition: rewriteChild(expr.condition),
+          consequent: rewriteChild(expr.consequent),
+          alternate: rewriteChild(expr.alternate),
+          pos: expr.pos
+        }
+      };
+    case "MemberAccess":
+      return {
+        stages,
+        rewritten: {
+          type: "MemberAccess",
+          object: rewriteChild(expr.object),
+          member: expr.member,
+          pos: expr.pos,
+          ...expr.optional && { optional: true }
+        }
+      };
+    case "IndexAccess":
+      return {
+        stages,
+        rewritten: {
+          type: "IndexAccess",
+          object: rewriteChild(expr.object),
+          index: rewriteChild(expr.index),
+          pos: expr.pos,
+          ...expr.optional && { optional: true }
+        }
+      };
+    case "MethodCall":
+      return {
+        stages,
+        rewritten: {
+          type: "MethodCall",
+          object: rewriteChild(expr.object),
+          method: expr.method,
+          args: rewriteCallArgs(expr.args, rewriteChild),
+          pos: expr.pos,
+          ...expr.optional && { optional: true }
+        }
+      };
+    case "CallExpression":
+      return {
+        stages,
+        rewritten: {
+          type: "CallExpression",
+          callee: rewriteChild(expr.callee),
+          args: rewriteCallArgs(expr.args, rewriteChild),
+          pos: expr.pos
+        }
+      };
+    case "OperatorCall":
+      return {
+        stages,
+        rewritten: {
+          type: "OperatorCall",
+          name: expr.name,
+          style: expr.style,
+          args: rewriteCallArgs(expr.args, rewriteChild),
+          pos: expr.pos
+        }
+      };
+    case "Lambda":
+      return { stages, rewritten: expr };
+    case "ArrayLiteral":
+      return {
+        stages,
+        rewritten: {
+          type: "ArrayLiteral",
+          elements: expr.elements.map((el) => {
+            if (el.type === "SpreadElement")
+              return { type: "SpreadElement", argument: rewriteChild(el.argument), pos: el.pos };
+            if (el.type === "AssignExpr")
+              return {
+                type: "AssignExpr",
+                target: rewriteChild(el.target),
+                value: rewriteChild(el.value),
+                pos: el.pos
+              };
+            if (el.type === "DeleteStmt") return { type: "DeleteStmt", target: rewriteChild(el.target), pos: el.pos };
+            if (el.type === "LetDecl")
+              return { type: "LetDecl", name: el.name, value: rewriteChild(el.value), kind: el.kind, pos: el.pos };
+            return rewriteChild(el);
+          }),
+          pos: expr.pos
+        }
+      };
+    case "ObjectLiteral":
+      return {
+        stages,
+        rewritten: {
+          type: "ObjectLiteral",
+          entries: expr.entries.map((entry) => {
+            if (entry.type === "SpreadElement")
+              return { type: "SpreadElement", argument: rewriteChild(entry.argument), pos: entry.pos };
+            const kv = {
+              type: "KeyValueEntry",
+              key: entry.key.kind === "computed" ? { kind: "computed", expr: rewriteChild(entry.key.expr) } : entry.key,
+              value: rewriteChild(entry.value),
+              pos: entry.pos
+            };
+            return kv;
+          }),
+          pos: expr.pos
+        }
+      };
+    case "TemplateLiteral":
+      return {
+        stages,
+        rewritten: {
+          type: "TemplateLiteral",
+          quasis: expr.quasis,
+          expressions: expr.expressions.map(rewriteChild),
+          pos: expr.pos
+        }
+      };
+    case "TypeofExpr":
+      return { stages, rewritten: { type: "TypeofExpr", operand: rewriteChild(expr.operand), pos: expr.pos } };
+    case "NewDate":
+      return { stages, rewritten: { type: "NewDate", args: expr.args.map(rewriteChild), pos: expr.pos } };
+    case "NewSet":
+      return {
+        stages,
+        rewritten: { type: "NewSet", arg: expr.arg !== null ? rewriteChild(expr.arg) : null, pos: expr.pos }
+      };
+    case "TypeCast":
+      return { stages, rewritten: { type: "TypeCast", cast: expr.cast, arg: rewriteChild(expr.arg), pos: expr.pos } };
+    case "MathCall":
+      return {
+        stages,
+        rewritten: {
+          type: "MathCall",
+          method: expr.method,
+          args: rewriteCallArgs(expr.args, rewriteChild),
+          pos: expr.pos
+        }
+      };
+    case "ObjectCall":
+      return {
+        stages,
+        rewritten: {
+          type: "ObjectCall",
+          method: expr.method,
+          args: rewriteCallArgs(expr.args, rewriteChild),
+          pos: expr.pos
+        }
+      };
+    case "ArrayFrom":
+      return {
+        stages,
+        rewritten: {
+          type: "ArrayFrom",
+          input: rewriteChild(expr.input),
+          mapFn: expr.mapFn !== null ? rewriteChild(expr.mapFn) : null,
+          pos: expr.pos
+        }
+      };
+    case "NumberStatic":
+      return {
+        stages,
+        rewritten: { type: "NumberStatic", method: expr.method, arg: rewriteChild(expr.arg), pos: expr.pos }
+      };
+    case "DateUTC":
+      return { stages, rewritten: { type: "DateUTC", args: expr.args.map(rewriteChild), pos: expr.pos } };
+  }
+}
+function rewriteCallArgs(args, rewrite) {
+  return args.map((a) => {
+    if (a.type === "SpreadElement") return { type: "SpreadElement", argument: rewrite(a.argument), pos: a.pos };
+    return rewrite(a);
+  });
+}
+
+// src/facet-translation.ts
+function detectFacetShape(value) {
+  if (value.type !== "ObjectLiteral") return null;
+  if (value.entries.length === 0) return null;
+  let hasFilter = false;
+  for (const entry of value.entries) {
+    if (entry.type !== "KeyValueEntry") continue;
+    if (asCollectionFilterLambda(entry.value) !== null) {
+      hasFilter = true;
+      break;
+    }
+  }
+  if (!hasFilter) return null;
+  const facets = [];
+  for (const entry of value.entries) {
+    if (entry.type !== "KeyValueEntry") {
+      throw new CodegenError(
+        `\`$ = { ... }\` $facet pattern: spread entries are not allowed. Every value must be \`$$.filter(<predicate>)\`.`,
+        entry.pos
+      );
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(
+        `\`$ = { ... }\` $facet pattern: computed keys are not allowed. Facet names are stage output keys and must be static identifiers.`,
+        entry.pos
+      );
+    }
+    const lambda = asCollectionFilterLambda(entry.value);
+    if (lambda === null) {
+      throw new CodegenError(
+        `\`$ = { ... }\` $facet pattern: every value must be \`$$.filter(<predicate>)\`. Entry '${entry.key.name}' is something else. Either convert it to \`$$.filter(<predicate>)\` or move it out of the object.`,
+        entry.value.pos
+      );
+    }
+    facets.push({ key: entry.key.name, lambda, pos: entry.pos });
+  }
+  return facets;
+}
+function asCollectionFilterLambda(expr) {
+  if (expr.type !== "MethodCall") return null;
+  if (expr.method !== "filter") return null;
+  if (expr.object.type !== "CollectionRef") return null;
+  if (expr.args.length !== 1) return null;
+  const arg = expr.args[0];
+  if (arg.type !== "Lambda") return null;
+  return arg;
+}
+function lowerFacet(facets, outerCtx, lowerBlock2) {
+  const body = {};
+  const seen = /* @__PURE__ */ new Set();
+  for (const f of facets) {
+    if (seen.has(f.key)) {
+      throw new CodegenError(
+        `\`$ = { ... }\` $facet pattern: duplicate key '${f.key}'. Facet names must be unique.`,
+        f.pos
+      );
+    }
+    seen.add(f.key);
+    body[f.key] = lowerFacetEntry(f.lambda, outerCtx, lowerBlock2);
+  }
+  return [{ $facet: body }];
+}
+function lowerFacetEntry(lambda, outerCtx, lowerBlock2) {
+  if (lambda.params.length !== 1) {
+    throw new CodegenError(
+      `\`$$.filter(<predicate>)\` inside \`$ = { ... }\` $facet must take exactly one parameter \u2014 write \`$$.filter(o => \u2026)\` (the param name is your choice). The param represents each input document inside the facet sub-pipeline.`,
+      lambda.pos
+    );
+  }
+  return lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, {
+    freshCtx: freshFacetCtx,
+    onLocalRef: rejectLocalRef,
+    missingBody: () => {
+      throw new CodegenError(
+        `\`$$.filter(p)\` lambda is missing a body \u2014 internal parser bug; please report.`,
+        lambda.pos
+      );
+    }
+  });
+}
+function rejectLocalRef(letVars, param, pos) {
+  const sample = Object.values(letVars)[0];
+  const samplePath = sample.replace(/^\$+/, "");
+  throw new CodegenError(
+    `\`$.<field>\` inside \`$$.filter(p)\` in a \`$ = { ... }\` $facet is not supported \u2014 use the lambda parameter (e.g. \`${param}.${samplePath}\`) to reference the current document. Inside a facet sub-pipeline, the lambda param IS the current document; \`$.<field>\` would mean the same thing and adding a second spelling for it would only invite drift.`,
+    pos
+  );
+}
+
+// src/stage-validation.ts
+function litNumber(e) {
+  if (e.type === "NumberLiteral") return e.value;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") return -e.operand.value;
+  return null;
+}
+function litString(e) {
+  return e.type === "StringLiteral" ? e.value : null;
+}
+function litBool(e) {
+  return e.type === "BooleanLiteral" ? e.value : null;
+}
+function describeLiteral(e) {
+  switch (e.type) {
+    case "NumberLiteral":
+      return "a number";
+    case "BigIntLiteral":
+      return "a bigint";
+    case "StringLiteral":
+      return "a string";
+    case "BooleanLiteral":
+      return "a boolean";
+    case "NullLiteral":
+      return "null";
+    case "ArrayLiteral":
+      return "an array";
+    case "ObjectLiteral":
+      return "an object";
+    case "RegexLiteral":
+      return "a regular expression";
+    default:
+      return null;
+  }
+}
+function objectInfo(e) {
+  if (e.type !== "ObjectLiteral") return null;
+  const byKey = /* @__PURE__ */ new Map();
+  let hasSpread = false;
+  for (const entry of e.entries) {
+    if (entry.type === "SpreadElement") {
+      hasSpread = true;
+      continue;
+    }
+    if (entry.key.kind !== "static") return null;
+    byKey.set(entry.key.name, entry.value);
+  }
+  return { byKey, hasSpread };
+}
+function arrayElements(e) {
+  if (e.type !== "ArrayLiteral") return null;
+  const out = [];
+  for (const el of e.elements) {
+    if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+      return null;
+    }
+    out.push(el);
+  }
+  return out;
+}
+function requireKeys(stage, info, bodyPos, keys) {
+  if (info.hasSpread) return;
+  for (const k of keys) {
+    if (!info.byKey.has(k)) {
+      throw new CodegenError(`'${stage}' requires the '${k}' field, but it is missing.`, bodyPos);
+    }
+  }
+}
+function requireObjectBody(stage, body, required = []) {
+  const info = objectInfo(body);
+  if (info === null) return null;
+  requireKeys(stage, info, body.pos, required);
+  return info;
+}
+function checkEnum(stage, field, value, allowed) {
+  const s = litString(value);
+  if (s === null || allowed.includes(s)) return;
+  const near = closestNameTo(s, allowed);
+  const hint = near !== null ? ` Did you mean '${near}'?` : "";
+  throw new CodegenError(`'${stage}' ${field} must be one of: ${allowed.join(", ")} \u2014 got '${s}'.${hint}`, value.pos);
+}
+function nonConstantDesc(e) {
+  return e.type === "FieldRef" ? "a field reference" : "a runtime expression";
+}
+function requireConstantArray(label, value) {
+  if (value.type === "ArrayLiteral" || value.type === "ParamRef") return;
+  const desc = describeLiteral(value);
+  throw new CodegenError(
+    `'${label}' must be a constant array \u2014 got ${desc ?? nonConstantDesc(value)}, which the server can't accept here. Use a literal array.`,
+    value.pos
+  );
+}
+function checkIntBound(stage, body, opts) {
+  const n = litNumber(body);
+  if (n === null) {
+    const desc = describeLiteral(body);
+    if (desc !== null) {
+      throw new CodegenError(`'${stage}' expects an integer, but got ${desc}.`, body.pos);
+    }
+    if (body.type !== "ParamRef") {
+      throw new CodegenError(
+        `'${stage}' must be ${opts.label} and a compile-time constant \u2014 got ${nonConstantDesc(body)}, which the server can't accept here. Use a literal value.`,
+        body.pos
+      );
+    }
+    return;
+  }
+  if (!Number.isInteger(n)) {
+    throw new CodegenError(`'${stage}' must be an integer, but got ${n}.`, body.pos);
+  }
+  if (n < opts.min) {
+    throw new CodegenError(`'${stage}' must be ${opts.label}, but got ${n}.`, body.pos);
+  }
+}
+function rejectNonDocumentNewRoot(stage, value) {
+  const desc = describeLiteral(value);
+  if (desc !== null && value.type !== "ObjectLiteral") {
+    if (value.type === "StringLiteral" && value.value.startsWith("$")) return;
+    throw new CodegenError(
+      `'${stage}' must resolve to a document, but got ${desc}. Wrap it, e.g. '{ value: \u2026 }'.`,
+      value.pos
+    );
+  }
+}
+var MATCH_DISALLOWED = {
+  $near: "use the '$geoNear' stage (it must be the first stage), or '$geoWithin' with '$center'/'$centerSphere'",
+  $nearSphere: "use the '$geoNear' stage (it must be the first stage), or '$geoWithin' with '$centerSphere'",
+  $where: "use '$expr' with a query expression (or '$function' for server-side JS)"
+};
+function findMatchOperator(body, names) {
+  if (body.type === "ObjectLiteral") {
+    for (const entry of body.entries) {
+      if (entry.type !== "KeyValueEntry") continue;
+      if (entry.key.kind === "static" && names.has(entry.key.name)) {
+        return { name: entry.key.name, pos: entry.pos };
+      }
+      const found = findMatchOperator(entry.value, names);
+      if (found !== null) return found;
+    }
+  } else if (body.type === "ArrayLiteral") {
+    for (const el of body.elements) {
+      if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+        continue;
+      }
+      const found = findMatchOperator(el, names);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+var DISALLOWED_SET = new Set(Object.keys(MATCH_DISALLOWED));
+var TEXT_SET = /* @__PURE__ */ new Set(["$text"]);
+function validateMatchPlacement(body, opts) {
+  if (body.type !== "ObjectLiteral") return;
+  const disallowed = findMatchOperator(body, DISALLOWED_SET);
+  if (disallowed !== null) {
+    throw new CodegenError(
+      `'${disallowed.name}' is not allowed inside an aggregation '$match' \u2014 ${MATCH_DISALLOWED[disallowed.name]}.`,
+      disallowed.pos
+    );
+  }
+  if (opts.isTopLevel && !opts.isFirstStage) {
+    const text = findMatchOperator(body, TEXT_SET);
+    if (text !== null) {
+      throw new CodegenError(
+        `A '$match' that uses '$text' must be the first stage in a pipeline. Move it to the front.`,
+        text.pos
+      );
+    }
+  }
+}
+var MERGE_WHEN_MATCHED = ["replace", "keepExisting", "merge", "fail"];
+var MERGE_WHEN_NOT_MATCHED = ["insert", "discard", "fail"];
+var FILL_METHODS = ["linear", "locf"];
+var BUCKET_AUTO_GRANULARITY = [
+  "R5",
+  "R10",
+  "R20",
+  "R40",
+  "R80",
+  "1-2-5",
+  "E6",
+  "E12",
+  "E24",
+  "E48",
+  "E96",
+  "E192",
+  "POWERSOF2"
+];
+function validateCount(body) {
+  const s = litString(body);
+  if (s === null) {
+    const desc = describeLiteral(body);
+    if (desc !== null) throw new CodegenError(`'$count' expects a field-name string, but got ${desc}.`, body.pos);
+    return;
+  }
+  if (s.length === 0) throw new CodegenError(`'$count' field name must be a non-empty string.`, body.pos);
+  if (s.startsWith("$")) throw new CodegenError(`'$count' field name cannot start with '$' (got '${s}').`, body.pos);
+  if (s.includes(".")) throw new CodegenError(`'$count' field name cannot contain '.' (got '${s}').`, body.pos);
+}
+function validateSort(body) {
+  const info = requireObjectBody("$sort", body);
+  if (info === null) return;
+  if (info.byKey.size > 32 && !info.hasSpread) {
+    throw new CodegenError(`'$sort' accepts at most 32 keys, but got ${info.byKey.size}.`, body.pos);
+  }
+  for (const [key, value] of info.byKey) {
+    const n = litNumber(value);
+    if (n !== null && n !== 1 && n !== -1) {
+      throw new CodegenError(
+        `'$sort' direction for '${key}' must be 1 (ascending) or -1 (descending), but got ${n}.`,
+        value.pos
+      );
+    }
+    const str = litString(value);
+    const bool = litBool(value);
+    if (str !== null || bool !== null) {
+      const got = str !== null ? `'${str}'` : String(bool);
+      throw new CodegenError(
+        `'$sort' direction for '${key}' must be 1 (ascending) or -1 (descending), but got ${got}.`,
+        value.pos
+      );
+    }
+  }
+}
+function validateProject(body) {
+  const info = requireObjectBody("$project", body);
+  if (info === null) return;
+  if (info.byKey.size === 0 && !info.hasSpread) {
+    throw new CodegenError(`'$project' specification must name at least one field.`, body.pos);
+  }
+  let includeKey = null;
+  let excludeKey = null;
+  for (const [key, value] of info.byKey) {
+    if (key === "_id") continue;
+    const n = litNumber(value);
+    const b = litBool(value);
+    if (n === 0 || b === false) excludeKey = key;
+    else if (n === 1 || b === true) includeKey = key;
+  }
+  if (includeKey !== null && excludeKey !== null) {
+    throw new CodegenError(
+      `'$project' cannot mix field inclusion ('${includeKey}: 1') and exclusion ('${excludeKey}: 0') \u2014 only '_id' may be excluded in an inclusion projection. Use one mode: list fields to keep, or fields to drop.`,
+      body.pos
+    );
+  }
+}
+function validateUnset(body) {
+  const s = litString(body);
+  if (s !== null) {
+    if (s.length === 0) throw new CodegenError(`'$unset' field name must be a non-empty string.`, body.pos);
+    return;
+  }
+  const els = arrayElements(body);
+  if (els === null) return;
+  if (els.length === 0) throw new CodegenError(`'$unset' field-name array must not be empty.`, body.pos);
+  for (const el of els) {
+    if (litString(el) === null && describeLiteral(el) !== null) {
+      throw new CodegenError(`'$unset' field-name array must contain only strings.`, el.pos);
+    }
+  }
+}
+function validateUnwind(body) {
+  const s = litString(body);
+  if (s !== null) {
+    if (!s.startsWith("$")) {
+      throw new CodegenError(`'$unwind' path must be a field path starting with '$' (got '${s}').`, body.pos);
+    }
+    return;
+  }
+  const info = requireObjectBody("$unwind", body);
+  if (info === null) return;
+  const path = info.byKey.get("path");
+  if (path !== void 0) {
+    const ps = litString(path);
+    if (ps !== null && !ps.startsWith("$")) {
+      throw new CodegenError(`'$unwind' path must be a field path starting with '$' (got '${ps}').`, path.pos);
+    }
+  }
+  const idx = info.byKey.get("includeArrayIndex");
+  if (idx !== void 0) {
+    const is = litString(idx);
+    if (is !== null && is.startsWith("$")) {
+      throw new CodegenError(`'$unwind' includeArrayIndex name cannot start with '$' (got '${is}').`, idx.pos);
+    }
+  }
+  const preserve = info.byKey.get("preserveNullAndEmptyArrays");
+  if (preserve !== void 0 && litBool(preserve) === null) {
+    const desc = describeLiteral(preserve);
+    if (desc !== null) {
+      throw new CodegenError(`'$unwind' preserveNullAndEmptyArrays must be a boolean, but got ${desc}.`, preserve.pos);
+    }
+  }
+}
+function validateSample(body) {
+  const info = requireObjectBody("$sample", body, ["size"]);
+  if (info === null) return;
+  const size = info.byKey.get("size");
+  if (size !== void 0) checkIntBound("$sample size", size, { min: 0, label: "a non-negative integer" });
+}
+function validateBucket(body) {
+  const info = requireObjectBody("$bucket", body, ["groupBy", "boundaries"]);
+  if (info === null) return;
+  const boundaries = info.byKey.get("boundaries");
+  if (boundaries === void 0) return;
+  requireConstantArray("$bucket boundaries", boundaries);
+  const els = arrayElements(boundaries);
+  if (els === null) return;
+  if (els.length < 2) {
+    throw new CodegenError(`'$bucket' boundaries must list at least 2 values, but got ${els.length}.`, boundaries.pos);
+  }
+  const nums = els.map(litNumber);
+  if (nums.every((n) => n !== null)) {
+    for (let i = 1; i < nums.length; i++) {
+      if (nums[i] <= nums[i - 1]) {
+        throw new CodegenError(
+          `'$bucket' boundaries must be in strictly ascending order (${nums[i - 1]} is not < ${nums[i]}).`,
+          boundaries.pos
+        );
+      }
+    }
+    return;
+  }
+  const strs = els.map(litString);
+  if (strs.every((s) => s !== null)) {
+    for (let i = 1; i < strs.length; i++) {
+      if (strs[i] <= strs[i - 1]) {
+        throw new CodegenError(`'$bucket' boundaries must be in strictly ascending order.`, boundaries.pos);
+      }
+    }
+    return;
+  }
+  const allLiteral = els.every((e) => describeLiteral(e) !== null);
+  if (allLiteral && (nums.some((n) => n !== null) || strs.some((s) => s !== null))) {
+    const mixed = nums.some((n) => n !== null) && strs.some((s) => s !== null);
+    if (mixed) {
+      throw new CodegenError(`'$bucket' boundaries must all be the same type.`, boundaries.pos);
+    }
+  }
+}
+function validateBucketAuto(body) {
+  const info = requireObjectBody("$bucketAuto", body, ["groupBy", "buckets"]);
+  if (info === null) return;
+  const buckets = info.byKey.get("buckets");
+  if (buckets !== void 0) checkIntBound("$bucketAuto buckets", buckets, { min: 1, label: "a positive integer" });
+  const granularity = info.byKey.get("granularity");
+  if (granularity !== void 0) checkEnum("$bucketAuto", "granularity", granularity, BUCKET_AUTO_GRANULARITY);
+}
+function validateSetWindowFields(body) {
+  const info = requireObjectBody("$setWindowFields", body, ["output"]);
+  if (info === null) return;
+  const output = info.byKey.get("output");
+  if (output === void 0) return;
+  const outInfo = objectInfo(output);
+  if (outInfo === null) return;
+  for (const [, fieldSpec] of outInfo.byKey) {
+    const specInfo = objectInfo(fieldSpec);
+    if (specInfo === null) continue;
+    const window = specInfo.byKey.get("window");
+    if (window === void 0) continue;
+    const winInfo = objectInfo(window);
+    if (winInfo === null) continue;
+    if (winInfo.byKey.has("documents") && winInfo.byKey.has("range")) {
+      throw new CodegenError(
+        `'$setWindowFields' window cannot specify both 'documents' and 'range' \u2014 they are mutually exclusive.`,
+        window.pos
+      );
+    }
+  }
+}
+function validateFill(body) {
+  const info = requireObjectBody("$fill", body, ["output"]);
+  if (info === null) return;
+  const output = info.byKey.get("output");
+  if (output === void 0) return;
+  const outInfo = objectInfo(output);
+  if (outInfo === null) return;
+  let needsSortBy = false;
+  for (const [field, fieldSpec] of outInfo.byKey) {
+    const specInfo = objectInfo(fieldSpec);
+    if (specInfo === null) continue;
+    const hasValue = specInfo.byKey.has("value");
+    const method = specInfo.byKey.get("method");
+    if (hasValue && method !== void 0) {
+      throw new CodegenError(
+        `'$fill' output field '${field}' cannot specify both 'value' and 'method' \u2014 they are mutually exclusive.`,
+        fieldSpec.pos
+      );
+    }
+    if (method !== void 0) {
+      checkEnum("$fill", `output field '${field}' method`, method, FILL_METHODS);
+      const ms = litString(method);
+      if (ms === "linear" || ms === "locf") needsSortBy = true;
+    }
+  }
+  if (needsSortBy && !info.hasSpread && !info.byKey.has("sortBy")) {
+    throw new CodegenError(
+      `'$fill' requires 'sortBy' when an output field uses the 'linear' or 'locf' method.`,
+      body.pos
+    );
+  }
+}
+function validateGraphLookup(body) {
+  const info = requireObjectBody("$graphLookup", body, [
+    "from",
+    "startWith",
+    "connectFromField",
+    "connectToField",
+    "as"
+  ]);
+  if (info === null) return;
+  const maxDepth = info.byKey.get("maxDepth");
+  if (maxDepth !== void 0)
+    checkIntBound("$graphLookup maxDepth", maxDepth, { min: 0, label: "a non-negative integer" });
+}
+function validateMerge(body) {
+  const info = requireObjectBody("$merge", body, ["into"]);
+  if (info === null) return;
+  const whenMatched = info.byKey.get("whenMatched");
+  if (whenMatched !== void 0 && litString(whenMatched) !== null) {
+    checkEnum("$merge", "whenMatched", whenMatched, MERGE_WHEN_MATCHED);
+  }
+  const whenNotMatched = info.byKey.get("whenNotMatched");
+  if (whenNotMatched !== void 0) checkEnum("$merge", "whenNotMatched", whenNotMatched, MERGE_WHEN_NOT_MATCHED);
+}
+function validateLookup(body) {
+  const info = requireObjectBody("$lookup", body, ["from", "as"]);
+  if (info === null) return;
+  const pipeline = info.byKey.get("pipeline");
+  if (pipeline !== void 0) requireConstantArray("$lookup pipeline", pipeline);
+}
+function validateUnionWith(body) {
+  const info = requireObjectBody("$unionWith", body);
+  if (info === null) return;
+  if (info.hasSpread) return;
+  if (!info.byKey.has("coll") && !info.byKey.has("pipeline")) {
+    throw new CodegenError(`'$unionWith' requires a 'coll' and/or a 'pipeline'.`, body.pos);
+  }
+}
+function validateReplaceRoot(body) {
+  const info = requireObjectBody("$replaceRoot", body, ["newRoot"]);
+  if (info === null) return;
+  const newRoot = info.byKey.get("newRoot");
+  if (newRoot !== void 0) rejectNonDocumentNewRoot("$replaceRoot newRoot", newRoot);
+}
+function validateGroup(body) {
+  requireObjectBody("$group", body, ["_id"]);
+}
+function validateGeoNear(body) {
+  requireObjectBody("$geoNear", body, ["near"]);
+}
+function validateDocuments(body) {
+  if (body.type === "ArrayLiteral") return;
+  const desc = describeLiteral(body);
+  if (desc !== null) {
+    throw new CodegenError(`'$documents' expects an array of documents, but got ${desc}.`, body.pos);
+  }
+}
+var STAGE_BODY_VALIDATORS = {
+  $limit: (b) => checkIntBound("$limit", b, { min: 1, label: "a positive integer" }),
+  $skip: (b) => checkIntBound("$skip", b, { min: 0, label: "a non-negative integer" }),
+  $sample: validateSample,
+  $count: validateCount,
+  $sort: validateSort,
+  $project: validateProject,
+  $unset: validateUnset,
+  $unwind: validateUnwind,
+  $bucket: validateBucket,
+  $bucketAuto: validateBucketAuto,
+  $setWindowFields: validateSetWindowFields,
+  $fill: validateFill,
+  $group: validateGroup,
+  $lookup: validateLookup,
+  $unionWith: validateUnionWith,
+  $graphLookup: validateGraphLookup,
+  $merge: validateMerge,
+  $replaceRoot: validateReplaceRoot,
+  $replaceWith: (b) => rejectNonDocumentNewRoot("$replaceWith", b),
+  $geoNear: validateGeoNear,
+  $documents: validateDocuments
+};
+function validateStageBody(stageName, body) {
+  const validator = STAGE_BODY_VALIDATORS[stageName];
+  if (validator !== void 0) validator(body);
+}
+
+// src/out-translation.ts
+function classifyStep(node, ctx) {
+  if (node.type === "MemberAccess") return { ok: true, name: node.member, object: node.object };
+  if (node.type === "IndexAccess") {
+    if (node.index.type === "StringLiteral") {
+      return { ok: true, name: node.index.value, object: node.object };
+    }
+    if (node.index.type === "ParamRef" && ctx?.bindings?.has(node.index.name)) {
+      const value = ctx.bindings.get(node.index.name);
+      if (typeof value === "string") {
+        return { ok: true, name: value, object: node.object };
+      }
+      return { ok: false, indexPos: node.index.pos, reason: "non-string-binding" };
+    }
+    return { ok: false, indexPos: node.index.pos, reason: "computed" };
+  }
+  return null;
+}
+function detectOutAssign(op, ctx) {
+  const t = op.target;
+  const leaf = findContextRefLeaf(t);
+  if (leaf === null) return null;
+  if (leaf.type === "DatabaseRef") {
+    const step = classifyStep(t, ctx);
+    if (step === null) {
+      throw new CodegenError(
+        `'$$$' alone isn't a $out target \u2014 write '$$$.<coll>' (or '$$$["<coll>"]') to write to a collection in the local database.`,
+        t.pos
+      );
+    }
+    if (!step.ok) {
+      const why = step.reason === "non-string-binding" ? `the parameter binding must be a string (collection name is statically determined at compile time)` : `not a runtime expression`;
+      throw new CodegenError(
+        `'$out' target must be a literal collection name \u2014 use '$$$.<coll>' or '$$$["<coll>"]', ${why}. If you need a parameterised target, use 'jsmql.compile' and pass the name in.`,
+        step.indexPos
+      );
+    }
+    if (step.object.type !== "DatabaseRef") {
+      throw new CodegenError(
+        `'$$$.<a>.<b>' has too many segments for a same-database $out target \u2014 use '$$$$.<db>.<coll>' (four $) for a cross-database write, or '$$$.<coll>' (three $) for the local database.`,
+        t.pos
+      );
+    }
+    return { kind: "same-db", coll: step.name, pos: t.pos };
+  }
+  const outer = classifyStep(t, ctx);
+  if (outer === null) {
+    throw new CodegenError(
+      `'$$$$' alone isn't a $out target \u2014 write '$$$$.<db>.<coll>' (or its bracket equivalents) to write to a collection in another database.`,
+      t.pos
+    );
+  }
+  if (!outer.ok) {
+    const why = outer.reason === "non-string-binding" ? `the parameter binding must be a string (collection name is statically determined at compile time)` : `not a runtime expression`;
+    throw new CodegenError(
+      `'$out' target must be a literal collection name \u2014 use '$$$$.<db>.<coll>' or bracketed equivalents, ${why}. If you need a parameterised target, use 'jsmql.compile' and pass the name in.`,
+      outer.indexPos
+    );
+  }
+  const inner = classifyStep(outer.object, ctx);
+  if (inner === null) {
+    throw new CodegenError(
+      `'$$$$.<x>' is missing the collection \u2014 write '$$$$.<db>.<coll>' (db, then collection), or use '$$$.<coll>' (three $) for the local database.`,
+      t.pos
+    );
+  }
+  if (!inner.ok) {
+    const why = inner.reason === "non-string-binding" ? `the parameter binding must be a string (database name is statically determined at compile time)` : `not a runtime expression`;
+    throw new CodegenError(
+      `'$out' target must be a literal database name \u2014 use '$$$$.<db>.<coll>' or bracketed equivalents, ${why}. If you need a parameterised target, use 'jsmql.compile' and pass the name in.`,
+      inner.indexPos
+    );
+  }
+  if (inner.object.type !== "ClusterRef") {
+    throw new CodegenError(
+      `'$$$$.<a>.<b>.<c>' has too many segments for a $out target \u2014 '$out' writes to one collection in one database, so '$$$$.<db>.<coll>' is the deepest form.`,
+      t.pos
+    );
+  }
+  return { kind: "cross-db", db: inner.name, coll: outer.name, pos: t.pos };
+}
+function findContextRefLeaf(node) {
+  let cur = node;
+  for (; ; ) {
+    if (cur.type === "DatabaseRef") return { type: "DatabaseRef" };
+    if (cur.type === "ClusterRef") return { type: "ClusterRef" };
+    if (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
+      cur = cur.object;
+      continue;
+    }
+    return null;
+  }
+}
+function lowerOutChain(rhs, outerCtx, lowerBlock2, allocSlot) {
+  if (rhs.type === "CollectionRef") return [];
+  if (rhs.type === "MethodCall") {
+    return walkChain(rhs, outerCtx, lowerBlock2, allocSlot);
+  }
+  throw new CodegenError(
+    `The right-hand side of '$$$.<coll> = \u2026' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.`,
+    rhs.pos
+  );
+}
+function walkChain(call, outerCtx, lowerBlock2, allocSlot) {
+  if (call.type !== "MethodCall") {
+    if (call.type === "CollectionRef") {
+      return [];
+    }
+    throw new CodegenError(
+      `The right-hand side of '$$$.<coll> = \u2026' must be a chain rooted at '$$' (the current pipeline). '$$$.<coll> = $$', '$$$.<coll> = $$.filter(<predicate>)' are the supported shapes today.`,
+      call.pos
+    );
+  }
+  const prefix = call.object.type === "CollectionRef" ? [] : walkChain(call.object, outerCtx, lowerBlock2, allocSlot);
+  const here = lowerChainMethod(call, outerCtx, lowerBlock2, prefix, allocSlot);
+  if (here.replacesPreviousStage) prefix.pop();
+  prefix.push(...here.stages);
+  return prefix;
+}
+function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
+  if (call.method === "filter") {
+    return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock2) };
+  }
+  const def = lookupStreamMethod(call.method);
+  if (def !== null) {
+    def.validate(call.args, call.pos);
+    const result = def.lower(call.args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
+    return { stages: result.stages, replacesPreviousStage: result.replacesPreviousStage };
+  }
+  const equivalent = STAGE_EQUIVALENT_HINT[call.method];
+  const hint = equivalent !== void 0 ? ` Use '${equivalent}' as a separate stage before the '$out' instead.` : ` Add the equivalent stage call (e.g. '$sort({ \u2026 })', '$skip(N)', '$limit(N)') before the '$out' instead.`;
+  throw new CodegenError(`'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${hint}`, call.pos);
+}
+var STAGE_EQUIVALENT_HINT = {
+  map: "$project({...}) or $addFields({...})",
+  sort: "$sort({ field: 1 | -1 })",
+  slice: "$skip(N); $limit(M)",
+  reduce: "$group({ ... })",
+  flatMap: "$unwind",
+  flat: "$unwind"
+};
+function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
+  if (call.args.length !== 1) {
+    throw new CodegenError(
+      `'$$.filter(<predicate>)' expects exactly one arrow predicate, got ${call.args.length}.`,
+      call.pos
+    );
+  }
+  const arg = call.args[0];
+  if (arg.type !== "Lambda") {
+    throw new CodegenError(
+      `'$$.filter(<predicate>)' requires an arrow predicate, e.g. \`$$$.coll = $$.filter(d => d.active)\`.`,
+      "pos" in arg ? arg.pos : call.pos
+    );
+  }
+  if (arg.params.length !== 1) {
+    throw new CodegenError(
+      `'$$.filter(<predicate>)' takes a single-parameter arrow (the current document), got ${arg.params.length}.`,
+      arg.pos
+    );
+  }
+  return lowerLambdaPredicate(arg, outerCtx, lowerBlock2, {
+    freshCtx: freshSubPipelineCtx,
+    onLocalRef: (_letVars, param, pos) => {
+      throw new CodegenError(
+        `\`$.<field>\` inside '$$.filter(<predicate>)' in a '$out' chain is not supported \u2014 the lambda's parameter \`${param}\` IS the current document. Write \`${param}.<field>\` instead.`,
+        pos
+      );
+    },
+    missingBody: () => {
+      throw new CodegenError(
+        `'$$.filter(<predicate>)' lambda is missing a body \u2014 internal parser bug; please report.`,
+        arg.pos
+      );
+    }
+  });
+}
+function lowerOut(op, target, outerCtx, lowerBlock2, allocSlot) {
+  const prefix = lowerOutChain(op.value, outerCtx, lowerBlock2, allocSlot);
+  const body = target.kind === "same-db" ? target.coll : { db: target.db, coll: target.coll };
+  prefix.push({ $out: body });
+  return prefix;
+}
+function containsOutAssign(node) {
+  return walkContainsOut(node);
+}
+function walkContainsOut(node) {
+  if (node.type === "Pipeline") return node.stmts.some(walkContainsOut);
+  if (node.type === "UpdateFilter") return node.ops.some(walkContainsOut);
+  if (node.type === "AssignExpr") {
+    if (findContextRefLeaf(node.target) !== null) {
+      return true;
+    }
+    return false;
+  }
+  if (node.type === "DeleteStmt") return false;
+  if (node.type === "LetDecl") return false;
+  if (node.type === "ArrayLiteral") {
+    for (const el of node.elements) {
+      if (el.type === "SpreadElement") continue;
+      if (walkContainsOut(el)) return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+// src/system-stage-translation.ts
+var REF_SCOPE = {
+  CollectionRef: "collection",
+  DatabaseRef: "database",
+  ClusterRef: "cluster"
+};
+var SCOPE_PREFIX = { collection: "$$", database: "$$$", cluster: "$$$$" };
+var SCOPE_DRIVER = {
+  collection: "db.coll.aggregate()",
+  database: "db.aggregate()",
+  cluster: "the admin database"
+};
+var RESERVED_COLLECTION_METHODS = /* @__PURE__ */ new Set(["push", "filter"]);
+var DIAGNOSTICS_BY_METHOD = /* @__PURE__ */ new Map();
+var METHODS_BY_SCOPE = /* @__PURE__ */ new Map([
+  ["collection", []],
+  ["database", []],
+  ["cluster", []]
+]);
+for (const [stageName, def] of Object.entries(STAGES)) {
+  if (def.diagnostic === void 0) continue;
+  const method = stageName.slice(1);
+  const entry = { stageName, scope: def.diagnostic.scope, options: def.diagnostic.options };
+  DIAGNOSTICS_BY_METHOD.set(method, entry);
+  METHODS_BY_SCOPE.get(def.diagnostic.scope).push(method);
+}
+function isSystemStageCall(expr) {
+  if (expr.type !== "MethodCall") return false;
+  const scope = REF_SCOPE[expr.object.type];
+  if (scope === void 0) return false;
+  if (scope !== "collection") return true;
+  if (RESERVED_COLLECTION_METHODS.has(expr.method)) return false;
+  if (DIAGNOSTICS_BY_METHOD.has(expr.method)) return true;
+  return closestNameTo(expr.method, DIAGNOSTICS_BY_METHOD.keys()) !== null;
+}
+function resolveSystemStageCall(expr) {
+  if (expr.type !== "MethodCall") {
+    throw new CodegenError("jsmql internal error (please report): resolveSystemStageCall on a non-MethodCall.", 0);
+  }
+  const scope = REF_SCOPE[expr.object.type];
+  const prefix = SCOPE_PREFIX[scope];
+  const method = expr.method;
+  const refPos = expr.object.pos;
+  const def = DIAGNOSTICS_BY_METHOD.get(method);
+  if (def === void 0) {
+    const hint = didYouMean(
+      method,
+      DIAGNOSTICS_BY_METHOD.keys(),
+      (s) => `${SCOPE_PREFIX[DIAGNOSTICS_BY_METHOD.get(s).scope]}.${s}(...)`
+    );
+    const here = METHODS_BY_SCOPE.get(scope);
+    const base = here.length > 0 ? `'${prefix}' (${scope} reference) supports the ${scope}-scoped system stages: ${formatList(here)}.` : `'${prefix}' (${scope} reference) has no diagnostic source stages \u2014 collection diagnostics use '$$', server/cluster diagnostics use '$$$$'.`;
+    throw new CodegenError(`'${prefix}.${method}(...)' is not a known diagnostic stage. ${base}${hint}`, refPos);
+  }
+  if (def.scope !== scope) {
+    throw new CodegenError(
+      `'${method}' is a ${def.scope}-scoped system stage \u2014 write '${SCOPE_PREFIX[def.scope]}.${method}(...)' (the '${SCOPE_PREFIX[def.scope]}' ${def.scope} reference, run on ${SCOPE_DRIVER[def.scope]}), not '${prefix}'.`,
+      refPos
+    );
+  }
+  if (expr.args.length > 1) {
+    throw new CodegenError(
+      `'${prefix}.${method}(...)' takes ${def.options ? "at most one options object" : "no options"}, but got ${expr.args.length} arguments.`,
+      expr.pos
+    );
+  }
+  if (expr.args.length === 0) {
+    return { stageName: def.stageName, scope, optionsExpr: null, callPos: expr.pos };
+  }
+  const arg = expr.args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`'${prefix}.${method}(...)' does not accept a spread argument.`, arg.argument.pos);
+  }
+  if (!def.options) {
+    throw new CodegenError(`'${prefix}.${method}()' takes no options \u2014 call it with no arguments.`, arg.pos);
+  }
+  if (arg.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `'${prefix}.${method}(...)' expects an options object literal (e.g. \`${prefix}.${method}({ ... })\`), not a ${describeArg(arg)}.`,
+      arg.pos
+    );
+  }
+  return { stageName: def.stageName, scope, optionsExpr: arg, callPos: expr.pos };
+}
+function notFirstStageMessage(call) {
+  const prefix = SCOPE_PREFIX[call.scope];
+  const method = call.stageName.slice(1);
+  return `'${prefix}.${method}(...)' produces the pipeline's source documents (\`${call.stageName}\`), so it must be the first stage. Move it to the front of the pipeline.`;
+}
+function describeArg(arg) {
+  if (arg.type === "NumberLiteral" || arg.type === "StringLiteral" || arg.type === "BooleanLiteral") {
+    return `${arg.type.replace(/Literal$/, "").toLowerCase()} literal`;
+  }
+  if (arg.type === "NullLiteral") return "`null`";
+  if (arg.type === "ArrayLiteral") return "array";
+  return "non-object expression";
+}
+function formatList(methods) {
+  return methods.map((m) => `.${m}()`).join(", ");
+}
+
+// src/pipeline.ts
+var RESHAPE_CLEARING_STAGES = /* @__PURE__ */ new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith", "$facet"]);
+var LET_NAMESPACE2 = "__jsmql";
+function shouldSkipTrailingNamespaceUnset(stages) {
+  if (stages.length === 0) return false;
+  const last = stages[stages.length - 1];
+  if (last === null || typeof last !== "object") return false;
+  const keys = Object.keys(last);
+  if (keys.length !== 1) return false;
+  return RESHAPE_CLEARING_STAGES.has(keys[0]);
+}
+function isStageCandidate(el) {
+  if (el.type === "SpreadElement") return false;
+  if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+    return true;
+  }
+  if (el.type === "ObjectLiteral") {
+    if (el.entries.length === 0) return false;
+    const first = el.entries[0];
+    if (first.type !== "KeyValueEntry") return false;
+    if (first.key.kind !== "static") return false;
+    return first.key.name.startsWith("$");
+  }
+  if (el.type === "OperatorCall") return true;
+  if (el.type === "MethodCall" && detectUnionPush(el) !== null) return true;
+  if (el.type === "MethodCall" && isSystemStageCall(el)) return true;
+  return false;
+}
+function asStageShape(el) {
+  if (el.type === "SpreadElement") return null;
+  if (el.type === "ObjectLiteral") {
+    if (el.entries.length !== 1) return null;
+    const entry = el.entries[0];
+    if (entry.type !== "KeyValueEntry") return null;
+    if (entry.key.kind !== "static") return null;
+    if (!lookupStage(entry.key.name)) return null;
+    return { name: entry.key.name, body: entry.value };
+  }
+  if (el.type === "OperatorCall") {
+    if (!lookupStage(el.name)) return null;
+    if (el.args.length !== 1) return null;
+    const arg = el.args[0];
+    if (arg.type === "SpreadElement") return null;
+    return { name: el.name, body: arg };
+  }
+  return null;
+}
+function isPipelineAst(ast) {
+  if (ast.type !== "ArrayLiteral") return false;
+  if (ast.elements.length === 0) return false;
+  return isStageCandidate(ast.elements[0]);
+}
+function makePipelineValidator(container) {
+  let terminal = null;
+  return {
+    checkBeforeElement(pos) {
+      if (terminal !== null) throw makeAfterTerminalError(terminal, pos);
+    },
+    checkStage(name, pos, userIndex, body) {
+      const def = lookupStage(name);
+      if (def === void 0) return;
+      if (container !== "top" && stageForbiddenIn(def, container)) {
+        throw new CodegenError(forbiddenInContextMessage(name, container), pos);
+      }
+      if (stageMustBeFirst(def) && userIndex > 0) {
+        throw new CodegenError(mustBeFirstLiteralMessage(name), pos);
+      }
+      if (stageMustBeLast(def)) terminal = { stageName: name, pos, viaSugar: false };
+      if (name === "$match") {
+        validateMatchPlacement(body, { isTopLevel: container === "top", isFirstStage: userIndex === 0 });
+      }
+    },
+    markSugarOut(pos) {
+      terminal = { stageName: "$out", pos, viaSugar: true };
+    }
+  };
+}
+function makeAfterTerminalError(terminal, afterPos) {
+  if (terminal.viaSugar) {
+    return new CodegenError(
+      `'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = \u2026' write (at position ${terminal.pos}), or remove it.`,
+      afterPos
+    );
+  }
+  return new CodegenError(
+    `'${terminal.stageName}' must be the last stage in a pipeline \u2014 nothing can run after it. Move it to the end of the pipeline, or remove the stage(s) that follow it.`,
+    afterPos
+  );
+}
+function mustBeFirstLiteralMessage(stageName) {
+  return `'${stageName}' must be the first stage in a pipeline \u2014 it produces the pipeline's source documents, so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`;
+}
+function forbiddenInContextMessage(stageName, container) {
+  const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
+  return `'${stageName}' is not allowed inside a '${owner}' sub-pipeline. Move it to the outer (top-level) pipeline.`;
+}
+function containerKindFor(stageName) {
+  if (stageName === "$facet") return "facet";
+  if (stageName === "$unionWith") return "unionWith";
+  return "lookup";
+}
+function generatePipeline(ast, startCtx = EMPTY_CTX) {
+  if (ast.type !== "ArrayLiteral") {
+    internalError("generatePipeline expects an ArrayLiteral AST");
+  }
+  const out = [];
+  let updateBuffer = [];
+  let ctx = { ...startCtx, pipelineContext: true };
+  let everHadLet = false;
+  const validator = makePipelineValidator("top");
+  const tracking = makeSlotTracking();
+  const flushUpdateOps = () => {
+    if (updateBuffer.length === 0) return;
+    for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
+    updateBuffer = [];
+  };
+  ast.elements.forEach((rawEl, i) => {
+    validator.checkBeforeElement(rawEl.pos);
+    let el = rawEl;
+    if (el.type === "MethodCall") {
+      const rewrite = tryRewriteMutatorCall(el);
+      if (rewrite.kind === "rewrite") el = rewrite.assign;
+    }
+    if (el.type === "AssignExpr") {
+      const r = tryLowerAssignSugar(el, ctx, out, flushUpdateOps, tracking.alloc, lowerBlock, out.length === 0);
+      if (r.handled) {
+        ctx = r.ctx;
+        if (r.outPos !== null) validator.markSugarOut(r.outPos);
+        return;
+      }
+      updateBuffer.push(r.bufferOp);
+      return;
+    }
+    if (el.type === "DeleteStmt") {
+      if (el.target.type === "FieldRef" && el.target.path === "") {
+        throw new CodegenError(
+          `Cannot 'delete $' \u2014 bare '$' is the whole document. Use '$ = <newDoc>' to replace it, or 'delete $.<field>' to drop a single field.`,
+          el.pos
+        );
+      }
+      updateBuffer.push(el);
+      return;
+    }
+    if (el.type === "LetDecl") {
+      flushUpdateOps();
+      const direct = detectLookupCall(el.value, ctx);
+      if (direct !== null) {
+        validateLookupShape(el.value);
+        const slot = `${LET_NAMESPACE2}.${el.name}`;
+        const stages = lowerLookup(direct, slot, ctx, lowerBlock);
+        for (const s of stages) out.push(s);
+        ctx = extendCtxLets(ctx, el.name, slot);
+        everHadLet = true;
+        return;
+      }
+      const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, tracking.alloc, lowerBlock);
+      for (const s of prologue) out.push(s);
+      const stage = lowerLetDecl({ type: "LetDecl", name: el.name, value: rewritten, kind: el.kind, pos: el.pos }, ctx);
+      out.push(stage.set);
+      ctx = stage.ctx;
+      everHadLet = true;
+      return;
+    }
+    flushUpdateOps();
+    ctx = lowerStatementTail(el, i, ctx, out, validator, tracking.alloc, lowerBlock);
+  });
+  flushUpdateOps();
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
+  return out;
+}
+function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
+  const out = [];
+  let ctx = { ...startCtx, pipelineContext: true };
+  let everHadLet = false;
+  const validator = makePipelineValidator(container);
+  const tracking = makeSlotTracking();
+  p.stmts.forEach((rawStmt, i) => {
+    validator.checkBeforeElement(rawStmt.pos);
+    let stmt = rawStmt;
+    if (stmt.type === "MethodCall") {
+      const rewrite = tryRewriteMutatorCall(stmt);
+      if (rewrite.kind === "rewrite") {
+        stmt = { type: "UpdateFilter", ops: [rewrite.assign], pos: rewrite.assign.pos };
+      }
+    }
+    if (stmt.type === "LetDecl") {
+      const direct = detectLookupCall(stmt.value, ctx);
+      if (direct !== null) {
+        validateLookupShape(stmt.value);
+        const slot = `${LET_NAMESPACE2}.${stmt.name}`;
+        const stages = lowerLookup(direct, slot, ctx, lowerBlock);
+        for (const s of stages) out.push(s);
+        ctx = extendCtxLets(ctx, stmt.name, slot);
+        everHadLet = true;
+        return;
+      }
+      const { stages: prologue, rewritten } = extractLookupCalls(stmt.value, ctx, tracking.alloc, lowerBlock);
+      for (const s of prologue) out.push(s);
+      const stage = lowerLetDecl(
+        { type: "LetDecl", name: stmt.name, value: rewritten, kind: stmt.kind, pos: stmt.pos },
+        ctx
+      );
+      out.push(stage.set);
+      ctx = stage.ctx;
+      everHadLet = true;
+      return;
+    }
+    if (stmt.type === "UpdateFilter") {
+      const result = lowerUpdateFilterWithLookups(stmt, ctx, tracking.alloc, lowerBlock, out.length);
+      for (const s of result.stages) out.push(s);
+      ctx = result.ctx;
+      if (result.terminal !== null) validator.markSugarOut(result.terminal.pos);
+      return;
+    }
+    ctx = lowerStatementTail(stmt, i, ctx, out, validator, tracking.alloc, lowerBlock);
+  });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
+  return out;
+}
+function lowerLetDecl(decl, ctx) {
+  if (ctx.pipelineLets?.has(decl.name)) {
+    throw new CodegenError(
+      `\`${decl.kind} ${decl.name}\` is already declared earlier in this pipeline. Re-declaration in the same scope is not allowed \u2014 ${decl.kind === "const" ? "" : "reassign it (`" + decl.name + " = \u2026`), "}pick a different name, or rebind after a reshape stage (\`$group\`, \`$replaceRoot\`, \u2026).`,
+      decl.pos
+    );
+  }
+  if (ctx.bindings?.has(decl.name)) {
+    throw new CodegenError(
+      `\`${decl.kind} ${decl.name}\` shadows a function-form parameter binding of the same name. Rename one \u2014 parameter bindings are compile-time constants supplied at call time, \`${decl.kind}\` bindings are per-document values derived from a stage expression; mixing them under one name would be ambiguous.`,
+      decl.pos
+    );
+  }
+  const fieldPath = `${LET_NAMESPACE2}.${decl.name}`;
+  const value = generateWithCtx(decl.value, ctx);
+  return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind) };
+}
+function isReplaceRootAssign(op) {
+  return op.target.type === "FieldRef" && op.target.path === "";
+}
+function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
+  if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
+    throw new CodegenError(
+      `Cannot use compound assignment / increment on bare '$' \u2014 '$' is the whole document, not a scalar. Use '$ = { ...$, ...overrides }' to merge fields into the root or '$ = <newRoot>' to replace it outright.`,
+      el.pos
+    );
+  }
+  rejectNonDocumentReplaceRoot(el.value);
+  const direct = detectLookupCall(el.value, ctx);
+  if (direct !== null) {
+    validateLookupShape(el.value);
+    if (direct.method === "filter") {
+      throw new CodegenError(
+        `Cannot replace root with an array \u2014 '.filter(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.filter(...) }'.`,
+        el.value.pos
+      );
+    }
+    const slot = allocSlot();
+    const pred = translatePredicate(direct, ctx, lowerBlockFn);
+    const from = direct.db !== void 0 ? { db: direct.db, coll: direct.collection } : direct.collection;
+    const stages = [];
+    if (pred.kind === "basic") {
+      stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
+    } else {
+      stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } });
+    }
+    stages.push({ $replaceWith: { $first: `$${slot}` } });
+    return stages;
+  }
+  const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, allocSlot, lowerBlockFn);
+  const out = [...prologue];
+  out.push({ $replaceWith: generateWithCtx(rewritten, ctx) });
+  return out;
+}
+function rejectNonDocumentReplaceRoot(value) {
+  if (value.type === "ArrayLiteral") {
+    throw new CodegenError(
+      `Cannot replace root with an array. Use '.find(...)' for a single doc, or wrap: '$ = { items: [...] }'.`,
+      value.pos
+    );
+  }
+  const literalKind = value.type === "NumberLiteral" ? "number" : value.type === "BigIntLiteral" ? "bigint" : value.type === "StringLiteral" ? "string" : value.type === "BooleanLiteral" ? "boolean" : value.type === "NullLiteral" ? "null" : value.type === "RegexLiteral" ? "regex" : null;
+  if (literalKind !== null) {
+    throw new CodegenError(
+      `Cannot replace root with a ${literalKind} \u2014 the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?`,
+      value.pos
+    );
+  }
+}
+function isReplaceStreamAssign(op) {
+  return op.target.type === "CollectionRef";
+}
+function lowerReplaceStream(el, outerCtx, lowerBlockFn, allocSlot, isFirstStage) {
+  if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
+    throw new CodegenError(
+      `Cannot use compound assignment / increment on '$$' \u2014 '$$' is the document stream, not a scalar. Use '$$ = $$.filter(<predicate>)' to narrow the stream or '$$ = $$$.<coll>.filter(<predicate>)' to switch source.`,
+      el.pos
+    );
+  }
+  const v = el.value;
+  const dictBuild = detectDictBuildWrap(v);
+  if (dictBuild !== null) {
+    return { stages: lowerDictBuildWrap(dictBuild), clearLets: true };
+  }
+  const reduceWrap = detectReduceWrap(v);
+  if (reduceWrap !== null) {
+    return { stages: lowerReduceWrap(reduceWrap), clearLets: true };
+  }
+  const arrayReducer = detectArrayReducerWrap(v);
+  if (arrayReducer !== null) {
+    return { stages: lowerArrayReducerWrap(arrayReducer, outerCtx, lowerBlockFn), clearLets: true };
+  }
+  const chain = collectStreamChain(v);
+  if (chain.root.type === "CollectionRef" && chain.methods.length > 0) {
+    return lowerChainOnStream(chain.methods, outerCtx, lowerBlockFn, allocSlot, v);
+  }
+  if (chain.methods.length > 0) {
+    const target = extractLookupTarget(chain.root, outerCtx);
+    if (target !== null) {
+      return lowerChainOnCollection(chain.methods, target, outerCtx, lowerBlockFn, allocSlot, v);
+    }
+  }
+  if (v.type === "ArrayLiteral") {
+    if (v.elements.length === 0) {
+      return { stages: [{ $match: { $expr: false } }], clearLets: false };
+    }
+    if (isFirstStage) {
+      const docs = extractDocumentsLiteral(v);
+      if (docs !== null) {
+        return { stages: [{ $documents: docs }], clearLets: true };
+      }
+    } else if (isAllObjectLiteralElements(v)) {
+      throw new CodegenError(
+        `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, \u2026)' instead, which lowers to '$unionWith'.`,
+        v.pos
+      );
+    }
+  }
+  rejectInvalidReplaceStream(v, outerCtx);
+}
+function extractDocumentsLiteral(arr) {
+  const out = [];
+  for (const el of arr.elements) {
+    if (el.type !== "ObjectLiteral") return null;
+    out.push(generateWithCtx(el, EMPTY_CTX));
+  }
+  return out;
+}
+function isAllObjectLiteralElements(arr) {
+  for (const el of arr.elements) {
+    if (el.type !== "ObjectLiteral") return false;
+  }
+  return true;
+}
+function lowerChainOnStream(methods, outerCtx, lowerBlockFn, allocSlot, rhs) {
+  const stages = [];
+  const clearLets = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
+  return { stages, clearLets };
+}
+function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) {
+  let clearLets = false;
+  let i = 0;
+  if (methods[0].method === "filter") {
+    const m = methods[0];
+    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
+      rejectInvalidReplaceStream(rhs, ctx);
+    }
+    const matchStages = lowerStreamFilterPredicate(m.args[0], ctx, lowerBlockFn);
+    target.push(...matchStages);
+    i = 1;
+  }
+  for (; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) {
+      throw unknownStreamMethod(m, "$$");
+    }
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
+    if (result.replacesPreviousStage) target.pop();
+    target.push(...result.stages);
+    if (result.clearLets) clearLets = true;
+  }
+  return clearLets;
+}
+function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSlot, rhs) {
+  if (methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda" && predicateReferencesOuterDoc(methods[0].args[0], outerCtx)) {
+    return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
+  }
+  const innerCtx = freshSubPipelineCtx(outerCtx);
+  const inner = [];
+  let i = 0;
+  if (methods[0].method === "filter") {
+    const m = methods[0];
+    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
+      rejectInvalidReplaceStream(rhs, outerCtx);
+    }
+    const matchStages = lowerStreamFilterPredicate(m.args[0], innerCtx, lowerBlockFn);
+    inner.push(...matchStages);
+    i = 1;
+  }
+  for (; i < methods.length; i++) {
+    const m = methods[i];
+    const def = lookupStreamMethod(m.method);
+    if (def === null) {
+      throw unknownStreamMethod(m, "$$$.<coll>");
+    }
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
+    if (result.replacesPreviousStage) inner.pop();
+    inner.push(...result.stages);
+  }
+  const from = target.db !== void 0 ? { db: target.db, coll: target.collection } : target.collection;
+  const stages = [{ $match: { $expr: false } }];
+  if (inner.length === 0) {
+    if (typeof from === "string") {
+      stages.push({ $unionWith: from });
+    } else {
+      stages.push({ $unionWith: { coll: from } });
+    }
+  } else {
+    stages.push({ $unionWith: { coll: from, pipeline: inner } });
+  }
+  return { stages, clearLets: true };
+}
+function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
+  const filterMethod = methods[0];
+  const restMethods = methods.slice(1);
+  const lambda = filterMethod.args[0];
+  const slot = allocSlot();
+  const from = target.db !== void 0 ? { db: target.db, coll: target.collection } : target.collection;
+  let lookupStage2;
+  if (restMethods.length === 0) {
+    const fakeCall = {
+      pos: filterMethod.pos,
+      callPos: filterMethod.pos,
+      db: target.db,
+      collection: target.collection,
+      method: "filter",
+      lambda
+    };
+    const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
+    if (pred.kind === "basic") {
+      lookupStage2 = { $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } };
+    } else {
+      lookupStage2 = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
+    }
+  } else {
+    const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
+    const innerCtx = freshSubPipelineCtx(outerCtx);
+    for (const m of restMethods) {
+      const def = lookupStreamMethod(m.method);
+      if (def === null) {
+        throw unknownStreamMethod(m, "$$$.<coll>");
+      }
+      def.validate(m.args, m.pos);
+      const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
+      if (result.replacesPreviousStage) pipelineBody.pop();
+      pipelineBody.push(...result.stages);
+    }
+    lookupStage2 = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
+  }
+  return { stages: [lookupStage2, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
+}
+function unknownStreamMethod(m, receiver) {
+  if (m.method === "find" || m.method === "findLast" || m.method === "at") {
+    const alt = m.method === "at" ? `'${receiver}.slice(n, n + 1)'` : `'${receiver}.filter(<pred>).slice(0, 1)'`;
+    const findHint = receiver === "$$$.<coll>" ? ` (For replacing the current document with a single matched foreign doc, write '$ = $$$.<coll>.find(<pred>)' instead \u2014 that's a separate lookup form.)` : "";
+    return new CodegenError(
+      `'.${m.method}(...)' is not allowed in a chain on '${receiver}' \u2014 '.${m.method}' returns a single element in JS, but pipelines are arrays. Use ${alt} for the equivalent "first match" / "n-th" shape.${findHint}`,
+      m.pos
+    );
+  }
+  if (m.method === "reduce") {
+    return new CodegenError(
+      `'.reduce(...)' is not a chain method on '${receiver}' \u2014 in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS:
+  \u2022 Scalar reducer:  '$$ = [{ <key>: $$.reduce((acc, d) => \u2026, <literal-init>) }];' \u2014 each entry becomes a '$group' accumulator; output is a single-doc stream of your named keys.
+  \u2022 Object reducer:  '$$ = [$$.reduce((acc, d) => ({ ...acc, <key1>: <expr1>, <key2>: <expr2> }), { <key1>: <init1>, <key2>: <init2> })];' \u2014 same MQL output as the scalar form, keyed accumulators declared inline.
+  \u2022 Array reducer:   '$$ = $$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), []);' \u2014 a '[]'-seeded reducer already returns a stream, so assign it directly (no '[ ]'); lowers to '$match' (when the body is a ternary) + '$replaceWith: "$<field>"'. Each input doc that passes <cond> becomes its <field> sub-doc.
+Pick the wrap shape that matches what your reducer would return in plain JS.`,
+      m.pos
+    );
+  }
+  const names = streamMethodNames();
+  const isStream = receiver === "$$";
+  const hint = didYouMean(m.method, isStream ? ["filter", "push", ...names] : ["filter", ...names], (s) => `.${s}`);
+  const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
+  const pushNote = isStream ? ` ('.push(...)' appends documents as a statement \u2192 $unionWith.)` : "";
+  return new CodegenError(
+    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.${pushNote}`,
+    m.pos
+  );
+}
+function lowerArrayReducerWrap(wrap, outerCtx, lowerBlockFn) {
+  const stages = [];
+  if (wrap.condition !== null) {
+    const fakeLambda = { type: "Lambda", params: [wrap.dParam], body: wrap.condition, pos: wrap.lambdaPos };
+    stages.push(...lowerStreamFilterPredicate(fakeLambda, outerCtx, lowerBlockFn));
+  }
+  if (wrap.project.kind === "field") {
+    stages.push({ $replaceWith: `$${wrap.project.path}` });
+  }
+  return stages;
+}
+function lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlockFn) {
+  if (lambda.params.length !== 1) {
+    throw new CodegenError(
+      `'.filter(<predicate>)' on the RHS of '$$ = \u2026' must take exactly one parameter \u2014 write '.filter(o => \u2026)' (the param name is your choice). The param represents each document.`,
+      lambda.pos
+    );
+  }
+  return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
+    freshCtx: (ctx) => ctx,
+    onLocalRef: rejectLocalRefInStreamFilter,
+    missingBody: () => {
+      throw new CodegenError(
+        `'.filter(<predicate>)' lambda is missing a body \u2014 internal parser bug; please report.`,
+        lambda.pos
+      );
+    }
+  });
+}
+function rejectLocalRefInStreamFilter(letVars, param, pos) {
+  const sample = Object.values(letVars)[0];
+  const samplePath = sample.replace(/^\$+/, "");
+  throw new CodegenError(
+    `'$.<field>' inside the '.filter(<predicate>)' of '$$ = \u2026' is not supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each document. Inside this filter, the lambda parameter IS the document being matched.`,
+    pos
+  );
+}
+function rejectInvalidReplaceStream(value, ctx) {
+  if (value.type === "ArrayLiteral") {
+    throw new CodegenError(
+      `'$$ = [<expr>]' didn't match any supported wrap pattern. Recognised shapes: '$$ = [{ <key>: $$.reduce(\u2026, <literal-init>), \u2026 }]' (scalar accumulators \u2192 '$group' + '$replaceWith'), '$$ = [$$.reduce((acc, d) => ({ ...acc, <key>: <expr>, \u2026 }), { <key>: <init>, \u2026 })]' (object-returning reducer, same lowering), '$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<k>]: <expr>, \u2026 }), {})]' (dict-build reducer \u2192 '$group' + '$arrayToObject'), or '$$ = [$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), [])]' (array-returning reducer \u2192 '$match' + '$replaceWith'). For a literal-doc seeder at stage 0, use '$$ = [{...}, {...}]' (lowers to '$documents'). To append docs mid-pipeline, use '$$.push({...}, {...}, \u2026)'.`,
+      value.pos
+    );
+  }
+  if (value.type === "TernaryExpr") {
+    throw new CodegenError(
+      `'$$ = <ternary>' (conditional stream branching) is not a supported form \u2014 a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = \u2026' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+      value.pos
+    );
+  }
+  if (value.type === "MethodCall") {
+    const onCollection = value.object.type === "CollectionRef";
+    const onDatabase = extractLookupTarget(value.object, ctx) !== null;
+    if (onCollection || onDatabase) {
+      const hint = didYouMean(value.method, ["filter"], (s) => `.${s}`);
+      const recv = onCollection ? "$$" : "$$$.<coll>";
+      const intent = onCollection ? "narrow the current stream" : "switch source to another collection";
+      throw new CodegenError(
+        `'$$ = \u2026' RHS supports only '${recv}.filter(<predicate>)' \u2014 '.${value.method}(...)' is not allowed here.${hint} Use '${recv}.filter(<predicate>)' to ${intent}, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.`,
+        value.pos
+      );
+    }
+  }
+  if (value.type === "CollectionRef" || value.type === "DatabaseRef") {
+    throw new CodegenError(
+      `'$$ = \u2026' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => \u2026)' to narrow the current stream or '$$$.<coll>.filter(o => \u2026)' to switch source.`,
+      value.pos
+    );
+  }
+  throw new CodegenError(
+    `'$$ = \u2026' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+    value.pos
+  );
+}
+function lowerSystemStageStmt(call, ctx) {
+  const body = call.optionsExpr === null ? {} : generateStageBody(call.stageName, call.optionsExpr, ctx);
+  return { [call.stageName]: body };
+}
+function lowerStageElement(el, index, ctx) {
+  const stage = asStageShape(el);
+  if (!stage) {
+    const pos = el.pos ?? 0;
+    throw new CodegenError(formatNotAStageError(el, index), pos);
+  }
+  const body = generateStageBody(stage.name, stage.body, ctx);
+  const nextCtx = RESHAPE_CLEARING_STAGES.has(stage.name) ? clearCtxLets(ctx, stage.name) : ctx;
+  return { stage: { [stage.name]: body }, ctx: nextCtx };
+}
+function generateStageBody(stageName, body, ctx) {
+  validateStageBody(stageName, body);
+  if (stageName === "$match") {
+    if (body.type === "ObjectLiteral") {
+      return generateBodyObject(body, stageName, ctx);
+    }
+    const t = translateMatchBody(body, { bindings: ctx.bindings });
+    return mergeTranslatedQuery(t, ctx) ?? {};
+  }
+  if (stageName === "$unwind") {
+    if (body.type === "ObjectLiteral") return generateBodyObject(body, stageName, ctx);
+    return generateWithCtx(body, ctx);
+  }
+  if (body.type === "ObjectLiteral") {
+    return generateBodyObject(body, stageName, ctx);
+  }
+  return generateWithCtx(body, ctx);
+}
+function generateBodyObject(body, stageName, ctx) {
+  const stage = lookupStage(stageName);
+  const allValuesArePipelines = stage.subPipelineFields.includes("*");
+  const pipelineSlot = new Set(stage.subPipelineFields);
+  const out = {};
+  for (const entry of body.entries) {
+    if (entry.type !== "KeyValueEntry") {
+      throw new CodegenError(`Spread entries are not allowed in ${stageName} body`, entry.pos);
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(`Computed keys are not allowed in ${stageName} body`, entry.pos);
+    }
+    const key = entry.key.name;
+    const isPipelineSlot = allValuesArePipelines || pipelineSlot.has(key);
+    if (isPipelineSlot && isPipelineAst(entry.value)) {
+      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx), containerKindFor(stageName));
+      continue;
+    }
+    const nestedScope = NESTED_ACCUMULATOR_OUTPUT[stageName];
+    if (nestedScope !== void 0 && key === "output" && entry.value.type === "ObjectLiteral") {
+      out[key] = generateNestedAccumulatorObject(entry.value, ctx, nestedScope);
+      continue;
+    }
+    const slotCtx = accumulatorCtxFor(stageName, key, ctx);
+    out[key] = generateWithCtx(entry.value, slotCtx);
+  }
+  return out;
+}
+var NESTED_ACCUMULATOR_OUTPUT = {
+  $bucket: "group",
+  $bucketAuto: "group",
+  $setWindowFields: "window-output"
+};
+function accumulatorCtxFor(stageName, key, ctx) {
+  if (stageName === "$group" && key !== "_id") {
+    return { ...ctx, accumulatorContext: "group" };
+  }
+  return ctx;
+}
+function generateNestedAccumulatorObject(body, ctx, scope) {
+  const scopedCtx = { ...ctx, accumulatorContext: scope };
+  const out = {};
+  for (const entry of body.entries) {
+    if (entry.type !== "KeyValueEntry") {
+      throw new CodegenError(`Spread entries are not allowed in an accumulator-output object`, entry.pos);
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(`Computed keys are not allowed in an accumulator-output object`, entry.pos);
+    }
+    out[entry.key.name] = generateWithCtx(entry.value, scopedCtx);
+  }
+  return out;
+}
+function generatePipelineWithCtx(ast, startCtx, container) {
+  if (ast.type !== "ArrayLiteral") {
+    internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
+  }
+  for (const el of ast.elements) {
+    if (el.type !== "SpreadElement") {
+      const innerPush = el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" ? null : detectUnionPush(el);
+      if (innerPush !== null) {
+        throw new CodegenError(
+          `'$$.push(...)' inside a sub-pipeline ('$lookup.pipeline', '$unionWith.pipeline', '$facet.*') is not supported \u2014 $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.`,
+          innerPush.pos
+        );
+      }
+    }
+  }
+  const out = [];
+  let updateBuffer = [];
+  let ctx = { ...startCtx, pipelineContext: true };
+  let everHadLet = ctxHasLets(startCtx);
+  const validator = makePipelineValidator(container);
+  const flushUpdateOps = () => {
+    if (updateBuffer.length === 0) return;
+    for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
+    updateBuffer = [];
+  };
+  ast.elements.forEach((el, i) => {
+    validator.checkBeforeElement(el.pos);
+    if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      updateBuffer.push(el);
+      return;
+    }
+    if (el.type === "LetDecl") {
+      flushUpdateOps();
+      const stage = lowerLetDecl(el, ctx);
+      out.push(stage.set);
+      ctx = stage.ctx;
+      everHadLet = true;
+      return;
+    }
+    flushUpdateOps();
+    const shape = asStageShape(el);
+    if (shape !== null) validator.checkStage(shape.name, el.pos, i, shape.body);
+    const result = lowerStageElement(el, i, ctx);
+    out.push(result.stage);
+    ctx = result.ctx;
+  });
+  flushUpdateOps();
+  if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
+  return out;
+}
+function formatNotAStageError(el, index) {
+  if (el.type !== "SpreadElement") {
+    if (el.type === "ObjectLiteral") {
+      if (el.entries.length === 1) {
+        const entry = el.entries[0];
+        if (entry.type === "KeyValueEntry" && entry.key.kind === "static") {
+          const name = entry.key.name;
+          if (!lookupStage(name)) {
+            return formatUnknownStage(name, index);
+          }
+        }
+      } else if (el.entries.length > 1) {
+        return `Element ${index} of pipeline must be a single-key stage object (e.g. \`{ $match: ... }\`), but found an object with ${el.entries.length} keys.`;
+      }
+    }
+    if (el.type === "OperatorCall" && !lookupStage(el.name)) {
+      return formatUnknownStage(el.name, index);
+    }
+    if (looksLikePredicate(el)) {
+      return `Element ${index} of pipeline is not a stage call. To filter documents on a predicate, wrap it as \`$match(...)\` \u2014 e.g. \`$match($.age > 18)\`. Pipeline statements must be stage calls; available stages: ${formatStageList()}.`;
+    }
+  }
+  return `Element ${index} of pipeline is not a recognised stage. Expected \`{ $stage: ... }\` or \`$stage(...)\` where $stage is one of: ${formatStageList()}.`;
+}
+function looksLikePredicate(el) {
+  if (el.type === "BinaryExpr") {
+    const op = el.op;
+    return op === "===" || op === "==" || op === "!==" || op === "!=" || op === "<" || op === "<=" || op === ">" || op === ">=" || op === "&&" || op === "||";
+  }
+  if (el.type === "UnaryExpr" && el.op === "!") return true;
+  return false;
+}
+function formatUnknownStage(name, index) {
+  const suffix = didYouMean(name, Object.keys(STAGES), (s) => s);
+  return `Element ${index} of pipeline: '${name}' is not a known aggregation stage.${suffix}`;
+}
+function formatStageList() {
+  const all = Object.keys(STAGES).sort();
+  const head = all.slice(0, 12).join(", ");
+  return `${head}, \u2026 (${all.length} total)`;
+}
+var lowerBlock = (block, ctx) => {
+  for (const stmt of block.stmts) {
+    const innerPush = stmt.type === "LetDecl" ? null : stmt.type === "UpdateFilter" ? null : detectUnionPush(stmt);
+    if (innerPush !== null) {
+      throw new CodegenError(
+        `'$$.push(...)' inside a lookup's block-body lambda is not supported \u2014 $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.`,
+        innerPush.pos
+      );
+    }
+  }
+  return generateImplicitPipeline(block, ctx);
+};
+function makeSlotTracking() {
+  const base = createSlotAllocator();
+  let touched = false;
+  return {
+    alloc: () => {
+      touched = true;
+      return base();
+    },
+    used: () => touched
+  };
+}
+function tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlockFn, isFirst) {
+  if (op.target.type === "ParamRef") {
+    const name = op.target.name;
+    if (ctx.pipelineConstNames?.has(name)) {
+      throw new CodegenError(
+        `Cannot reassign \`${name}\` \u2014 it is a \`const\` binding. Declare it with \`let ${name} = \u2026\` instead if its value needs to change.`,
+        op.pos
+      );
+    }
+    const letPath = ctx.pipelineLets?.get(name);
+    if (letPath !== void 0) {
+      flush();
+      const { stages: stages2, rewritten: rewritten2 } = extractLookupCalls(op.value, ctx, allocSlot, lowerBlockFn);
+      for (const s of stages2) out.push(s);
+      out.push({ $set: { [letPath]: generateWithCtx(rewritten2, ctx) } });
+      return { handled: true, ctx, outPos: null };
+    }
+    const droppedBy = ctx.droppedLets?.get(name);
+    if (droppedBy !== void 0) {
+      throw new CodegenError(
+        `\`${name}\` is a \`let\` binding and can't be reassigned after \`${droppedBy}\` \u2014 the stage replaces the document. Rebind it after the stage with \`let ${name} = \u2026\`.`,
+        op.pos
+      );
+    }
+    throw new CodegenError(
+      `Cannot assign to bare identifier '${name}' \u2014 it isn't a \`let\` binding in scope. Declare it first with \`let ${name} = \u2026\`, or write \`$.${name} = \u2026\` to set a document field.`,
+      op.pos
+    );
+  }
+  if (isReplaceStreamAssign(op)) {
+    flush();
+    const result = lowerReplaceStream(op, ctx, lowerBlockFn, allocSlot, isFirst);
+    for (const s of result.stages) out.push(s);
+    return { handled: true, ctx: result.clearLets ? clearCtxLets(ctx, "$unionWith") : ctx, outPos: null };
+  }
+  if (isReplaceRootAssign(op)) {
+    const facets = detectFacetShape(op.value);
+    if (facets !== null) {
+      flush();
+      for (const s of lowerFacet(facets, ctx, lowerBlockFn)) out.push(s);
+      return { handled: true, ctx: clearCtxLets(ctx, "$facet"), outPos: null };
+    }
+    flush();
+    for (const s of lowerReplaceRoot(op, ctx, allocSlot, lowerBlockFn)) out.push(s);
+    return { handled: true, ctx: clearCtxLets(ctx, "$replaceWith"), outPos: null };
+  }
+  const outTarget = detectOutAssign(op, ctx);
+  if (outTarget !== null) {
+    flush();
+    for (const s of lowerOut(op, outTarget, ctx, lowerBlockFn, allocSlot)) out.push(s);
+    return { handled: true, ctx, outPos: op.pos };
+  }
+  const direct = detectLookupCall(op.value, ctx);
+  if (direct !== null) {
+    validateLookupShape(op.value);
+    flush();
+    const asPath = updateOpWritePath(op);
+    for (const s of lowerLookup(direct, asPath, ctx, lowerBlockFn)) out.push(s);
+    return { handled: true, ctx, outPos: null };
+  }
+  const { stages, rewritten } = extractLookupCalls(op.value, ctx, allocSlot, lowerBlockFn);
+  if (stages.length > 0) {
+    flush();
+    for (const s of stages) out.push(s);
+  }
+  return { handled: false, bufferOp: { type: "AssignExpr", target: op.target, value: rewritten, pos: op.pos } };
+}
+function lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlockFn) {
+  if (el.type !== "SpreadElement") {
+    const pushCall = detectUnionPush(el);
+    if (pushCall !== null) {
+      for (const s of lowerUnionPush(pushCall, ctx, lowerBlockFn)) out.push(s);
+      return ctx;
+    }
+    if (el.type === "MethodCall" && isSystemStageCall(el)) {
+      const sys = resolveSystemStageCall(el);
+      if (out.length > 0) throw new CodegenError(notFirstStageMessage(sys), sys.callPos);
+      out.push(lowerSystemStageStmt(sys, ctx));
+      return ctx;
+    }
+    const streamChain = collectStreamChain(el);
+    if (streamChain.root.type === "CollectionRef" && streamChain.methods.length > 0) {
+      const clearLets = applyStreamMethods(
+        streamChain.methods,
+        out,
+        ctx,
+        lowerBlockFn,
+        allocSlot,
+        el
+      );
+      return clearLets ? clearCtxLets(ctx, "$unionWith") : ctx;
+    }
+  }
+  const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);
+  const shape = asStageShape(rewrittenEl);
+  if (shape !== null) validator.checkStage(shape.name, rewrittenEl.pos ?? el.pos, i, shape.body);
+  const result = lowerStageElement(rewrittenEl, i, ctx);
+  out.push(result.stage);
+  return result.ctx;
+}
+function lowerUpdateFilterWithLookups(stmt, startCtx, allocSlot, lowerBlockFn, globalStageIndex = 0) {
+  const out = [];
+  let buffer = [];
+  let ctx = startCtx;
+  let terminal = null;
+  const flush = () => {
+    if (buffer.length === 0) return;
+    for (const stage of generateUpdateOpGroups(buffer, ctx)) out.push(stage);
+    buffer = [];
+  };
+  for (const op of stmt.ops) {
+    if (terminal !== null) throw makeAfterTerminalError(terminal, op.pos);
+    if (op.type === "AssignExpr") {
+      const r = tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlockFn, globalStageIndex + out.length === 0);
+      if (r.handled) {
+        ctx = r.ctx;
+        if (r.outPos !== null) terminal = { stageName: "$out", pos: r.outPos, viaSugar: true };
+        continue;
+      }
+      buffer.push(r.bufferOp);
+      continue;
+    }
+    if (op.target.type === "FieldRef" && op.target.path === "") {
+      throw new CodegenError(
+        `Cannot 'delete $' \u2014 bare '$' is the whole document. Use '$ = <newDoc>' to replace it, or 'delete $.<field>' to drop a single field.`,
+        op.pos
+      );
+    }
+    buffer.push(op);
+  }
+  flush();
+  return { stages: out, ctx, terminal };
+}
+function extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out) {
+  if (el.type === "OperatorCall") {
+    const args = el.args.map((arg) => {
+      if (arg.type === "SpreadElement") {
+        const { stages: stages2, rewritten: rewritten2 } = extractLookupCalls(arg.argument, ctx, allocSlot, lowerBlockFn);
+        for (const s of stages2) out.push(s);
+        return { type: "SpreadElement", argument: rewritten2, pos: arg.pos };
+      }
+      const { stages, rewritten } = extractLookupCalls(arg, ctx, allocSlot, lowerBlockFn);
+      for (const s of stages) out.push(s);
+      return rewritten;
+    });
+    return { type: "OperatorCall", name: el.name, style: el.style, args, pos: el.pos };
+  }
+  if (el.type === "ObjectLiteral") {
+    const entries = el.entries.map((entry) => {
+      if (entry.type === "SpreadElement") {
+        const { stages: stages2, rewritten: rewritten2 } = extractLookupCalls(entry.argument, ctx, allocSlot, lowerBlockFn);
+        for (const s of stages2) out.push(s);
+        return { type: "SpreadElement", argument: rewritten2, pos: entry.pos };
+      }
+      const { stages, rewritten } = extractLookupCalls(entry.value, ctx, allocSlot, lowerBlockFn);
+      for (const s of stages) out.push(s);
+      return { type: "KeyValueEntry", key: entry.key, value: rewritten, pos: entry.pos };
+    });
+    return { type: "ObjectLiteral", entries, pos: el.pos };
+  }
+  return el;
+}
+
+// src/index.ts
+var JsmqlInterpolationError = class extends Error {
+  constructor(message, slot, key) {
+    super(message);
+    this.name = "JsmqlInterpolationError";
+    this.slot = slot;
+    this.key = key;
+  }
+};
+function isTemplateStringsArray(x) {
+  return Array.isArray(x) && Array.isArray(x.raw);
+}
+function fnSource(fn) {
+  return Function.prototype.toString.call(fn).trim();
+}
+function withFunctionInput(src, body) {
+  try {
+    return body(new Parser(src).parseFunctionInput());
+  } catch (err) {
+    throw augmentForFunctionInput(err);
+  }
+}
+function dispatchInput(input, values, apiName, lower) {
+  if (isTemplateStringsArray(input)) {
+    let src = "";
+    const routedBindings = /* @__PURE__ */ new Map();
+    for (let i = 0; i < input.length; i++) {
+      src += input[i];
+      if (i < values.length) {
+        src += stringifyInterpolation(values[i], i + 1, routedBindings);
+      }
+    }
+    const ctx = routedBindings.size > 0 ? withBindings(EMPTY_CTX, routedBindings) : EMPTY_CTX;
+    return lower(new Parser(src).parse(), ctx);
+  }
+  if (typeof input === "function") {
+    return withFunctionInput(fnSource(input), ({ program, bindings }) => {
+      if (bindings.length > 0) {
+        throw new FunctionInputError(
+          `${apiName}() in its one-shot form does not accept a parameter-bindings destructure. Use \`jsmql.compile(fn)(params)\` to supply values to a parameterised query, or remove the destructure pattern from the arrow's first slot.`
+        );
+      }
+      return lower(program, EMPTY_CTX);
+    });
+  }
+  if (typeof input === "string") {
+    return lower(new Parser(input).parse(), EMPTY_CTX);
+  }
+  const ty = input === null ? "null" : typeof input;
+  throw new TypeError(`${apiName}() expects a string, an arrow function, or a template literal \u2014 got ${ty}.`);
+}
+function jsmqlDispatch(input, ...values) {
+  return dispatchInput(input, values, "jsmql", lowerWithCtx);
+}
+function exprDispatch(input, ...values) {
+  return dispatchInput(input, values, "jsmql.expr", lowerExprWithCtx);
+}
+function filterDispatch(input, ...values) {
+  return dispatchInput(input, values, "jsmql.filter", lowerFilterStrict);
+}
+function pipelineDispatch(input, ...values) {
+  return dispatchInput(input, values, "jsmql.pipeline", lowerPipelineStrict);
+}
+function updateDispatch(input, ...values) {
+  return dispatchInput(input, values, "jsmql.update", lowerUpdateStrict);
+}
+function makeCompile(lower, apiName) {
+  function compile(input) {
+    let src;
+    if (typeof input === "function") {
+      src = fnSource(input);
+    } else if (typeof input === "string") {
+      src = input.trim();
+    } else {
+      const ty = input === null ? "null" : typeof input;
+      throw new TypeError(`${apiName}() expects an arrow function or a string containing one \u2014 got ${ty}.`);
+    }
+    const { program, bindings } = withFunctionInput(src, (r) => r);
+    return (params) => {
+      const resolved = /* @__PURE__ */ new Map();
+      for (const b of bindings) {
+        if (!Object.prototype.hasOwnProperty.call(params, b.key)) {
+          const expected = b.key === b.name ? b.key : `${b.key}' (bound to '${b.name}' in the function body)`;
+          throw new UnknownIdentifierError(expected);
+        }
+        const value = params[b.key];
+        validateInterpolatable(value, 0, b.key);
+        resolved.set(b.name, value);
+      }
+      const ctx = withBindings(EMPTY_CTX, resolved);
+      return lower(program, ctx);
+    };
+  }
+  return compile;
+}
+var compileFunction = makeCompile(lowerWithCtx, "jsmql.compile");
+function validateInput(input, ...values) {
+  try {
+    if (isTemplateStringsArray(input)) {
+      jsmql(input, ...values);
+    } else if (typeof input === "function") {
+      validateCompileForm(fnSource(input));
+    } else if (typeof input === "string" && isCompileFormArrow(input)) {
+      validateCompileForm(input);
+    } else {
+      jsmql(input);
+    }
+    return { valid: true, errors: [] };
+  } catch (err) {
+    return errorToValidationResult(err);
+  }
+}
+function validateCompileForm(src) {
+  withFunctionInput(src, ({ program, bindings }) => {
+    const resolved = /* @__PURE__ */ new Map();
+    for (const b of bindings) resolved.set(b.name, null);
+    lowerWithCtx(program, withBindings(EMPTY_CTX, resolved));
+  });
+}
+function isCompileFormArrow(src) {
+  let lex;
+  try {
+    lex = new Lexer(src);
+  } catch {
+    return false;
+  }
+  const first = lex.next();
+  if (first.type === TokenType.Ident && (first.value === "async" || first.value === "function")) return true;
+  if (first.type !== TokenType.LParen) return false;
+  let depth = 1;
+  while (depth > 0) {
+    const t = lex.next();
+    if (t.type === TokenType.EOF) return false;
+    if (t.type === TokenType.LParen) depth++;
+    else if (t.type === TokenType.RParen) depth--;
+  }
+  return lex.next().type === TokenType.Arrow;
+}
+var jsmql = Object.assign(jsmqlDispatch, {
+  compile: compileFunction,
+  validate: validateInput,
+  expr: Object.assign(exprDispatch, { compile: makeCompile(lowerExprWithCtx, "jsmql.expr.compile") }),
+  filter: Object.assign(filterDispatch, { compile: makeCompile(lowerFilterStrict, "jsmql.filter.compile") }),
+  pipeline: Object.assign(pipelineDispatch, {
+    compile: makeCompile(lowerPipelineStrict, "jsmql.pipeline.compile")
+  }),
+  update: Object.assign(updateDispatch, { compile: makeCompile(lowerUpdateStrict, "jsmql.update.compile") })
+});
+var OPAQUE_INTERP_MARKER = "\uE000";
+function isFieldRefShapedString(value) {
+  return typeof value === "string" && value.length > 0 && value.charCodeAt(0) === 36;
+}
+function stringifyInterpolation(value, slot, routedBindings) {
+  if (!needsBindingRoute(value)) {
+    validateInterpolatable(value, slot);
+    return JSON.stringify(value);
+  }
+  const state = { counter: 0, seen: /* @__PURE__ */ new WeakSet() };
+  const substituted = substituteRoutedValues(value, slot, routedBindings, state);
+  validateInterpolatable(substituted, slot);
+  const jsonWithMarkers = JSON.stringify(substituted);
+  const markerPattern = new RegExp(`"${OPAQUE_INTERP_MARKER}([A-Za-z_][A-Za-z0-9_]*)${OPAQUE_INTERP_MARKER}"`, "g");
+  return jsonWithMarkers.replace(markerPattern, (match, name) => routedBindings.has(name) ? name : match);
+}
+function needsBindingRoute(value, seen) {
+  if (isOpaqueBsonValue(value) || isFieldRefShapedString(value)) return true;
+  if (value === null || typeof value !== "object") return false;
+  const s = seen ?? /* @__PURE__ */ new WeakSet();
+  if (s.has(value)) return false;
+  s.add(value);
+  if (Array.isArray(value)) {
+    for (const v of value) if (needsBindingRoute(v, s)) return true;
+    return false;
+  }
+  for (const v of Object.values(value)) if (needsBindingRoute(v, s)) return true;
+  return false;
+}
+function substituteRoutedValues(value, slot, bindings, state) {
+  if (isOpaqueBsonValue(value) || isFieldRefShapedString(value)) {
+    state.counter += 1;
+    const name = `__jsmql_interp_${slot}_${state.counter}`;
+    bindings.set(name, value);
+    return `${OPAQUE_INTERP_MARKER}${name}${OPAQUE_INTERP_MARKER}`;
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (state.seen.has(value)) return value;
+  state.seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((v) => substituteRoutedValues(v, slot, bindings, state));
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = substituteRoutedValues(v, slot, bindings, state);
+  }
+  return out;
+}
+function validateInterpolatable(value, slot, key) {
+  const where = key !== void 0 ? `parameter '${key}'` : `interpolation slot ${slot}`;
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new JsmqlInterpolationError(
+      `jsmql ${where}: ${value} is not a valid JSON value (NaN and \xB1Infinity have no JSON representation). Replace with null or a finite number.`,
+      slot,
+      key
+    );
+  }
+  let json;
+  try {
+    json = JSON.stringify(value);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new JsmqlInterpolationError(`jsmql ${where} could not be serialised: ${reason}`, slot, key);
+  }
+  if (json === void 0) {
+    const ty = value === void 0 ? "undefined" : typeof value;
+    throw new JsmqlInterpolationError(
+      `jsmql ${where} has type '${ty}', which has no JSON representation. Pass a string, number, boolean, null, array, or plain object instead.`,
+      slot,
+      key
+    );
+  }
+}
+function lowerProgram(ast, ctx, lowerExpr) {
+  if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
+  if (ast.type === "UpdateFilter") return generateUpdateFilter(ast, ctx);
+  if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
+  return lowerExpr(ast, ctx);
+}
+function lowerWithCtx(ast, ctx) {
+  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) !== null) {
+    const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
+  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && (isCollectionMethodCall(ast) || isSystemStageCall(ast))) {
+    const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
+  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast)) {
+    const rewrite = tryRewriteMutatorCall(ast);
+    if (rewrite.kind === "rewrite") {
+      const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+      return generateImplicitPipeline(synthetic, ctx);
+    }
+  }
+  if (ast.type === "UpdateFilter" && containsLookupCall(ast, ctx)) {
+    const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
+  if (ast.type === "UpdateFilter" && containsOutAssign(ast)) {
+    const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
+  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) === null && containsLookupCall(ast, ctx)) {
+    throw new CodegenError(
+      "Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
+      ast.pos
+    );
+  }
+  const result = lowerProgram(ast, ctx, generateFilter);
+  if (ast.type === "UpdateFilter" && !Array.isArray(result)) {
+    return [result];
+  }
+  return result;
+}
+function lowerExprWithCtx(ast, ctx) {
+  rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
+  rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
+  rejectOutOutsidePipeline(ast, "jsmql.expr");
+  return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, c));
+}
+function lowerFilterStrict(ast, ctx) {
+  rejectLookupOutsidePipeline(ast, "jsmql.filter", ctx);
+  rejectUnionPushOutsidePipeline(ast, "jsmql.filter");
+  rejectOutOutsidePipeline(ast, "jsmql.filter");
+  if (ast.type === "Pipeline") {
+    throw new CodegenError(
+      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      ast.pos
+    );
+  }
+  if (ast.type === "UpdateFilter") {
+    throw new CodegenError(
+      "jsmql.filter() expects a Filter, but received an update-op chain (e.g. `$.x = \u2026`, `delete $.x`). Update-op chains compile to `$set` / `$unset` stages \u2014 call jsmql.update() or jsmql() for the Pipeline form.",
+      ast.pos
+    );
+  }
+  if (isPipelineAst(ast)) {
+    throw new CodegenError(
+      "jsmql.filter() expects a Filter, but received a Pipeline array (`[{ $stage: ... }, ...]`). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      ast.pos
+    );
+  }
+  const stageName = detectStageIntent(ast);
+  if (stageName !== null) {
+    const hint = stageName === "$match" ? " \u2014 or, if you wanted a Filter, drop the `$match(...)` wrapper and pass the predicate directly to jsmql.filter()." : ".";
+    throw new CodegenError(
+      `jsmql.filter() expects a Filter, but received a top-level '${stageName}' stage call. Call jsmql.pipeline() or jsmql() for Pipeline output${hint}`,
+      ast.pos
+    );
+  }
+  return generateFilter(ast, ctx);
+}
+function lowerPipelineStrict(ast, ctx) {
+  return lowerToPipelineStages(ast, ctx, "jsmql.pipeline");
+}
+function lowerUpdateStrict(ast, ctx) {
+  if (containsLookupCall(ast, ctx)) {
+    throw new CodegenError(
+      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter(...)'): MongoDB's aggregation-pipeline update form only accepts " + Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") + ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
+      ast.pos
+    );
+  }
+  if (containsUnionPush(ast)) {
+    throw new CodegenError(
+      "jsmql.update() does not allow '$$.push(...)' (collection union): MongoDB's aggregation-pipeline update form only accepts " + Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") + ". Run the union in a regular aggregation pipeline (jsmql.pipeline()) \u2014 '$unionWith' isn't allowed inside an update.",
+      ast.pos
+    );
+  }
+  const stages = lowerToPipelineStages(ast, ctx, "jsmql.update");
+  for (let i = 0; i < stages.length; i++) {
+    const stageName = Object.keys(stages[i])[0];
+    if (!UPDATE_PIPELINE_STAGES.has(stageName)) {
+      const allowed = Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ");
+      throw new CodegenError(
+        `jsmql.update() rejected '${stageName}' (stage ${i}): MongoDB's aggregation-pipeline update form only accepts ${allowed}. Use jsmql.pipeline() if you need other stages.`,
+        ast.pos
+      );
+    }
+  }
+  return stages;
+}
+function rejectLookupOutsidePipeline(ast, apiName, ctx) {
+  if (containsLookupCall(ast, ctx)) {
+    throw new CodegenError(
+      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter(...)') \u2014 joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.`,
+      ast.pos
+    );
+  }
+}
+function rejectUnionPushOutsidePipeline(ast, apiName) {
+  if (containsUnionPush(ast)) {
+    throw new CodegenError(
+      `${apiName}() does not allow '$$.push(...)' \u2014 collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.`,
+      ast.pos
+    );
+  }
+}
+function rejectOutOutsidePipeline(ast, apiName) {
+  if (containsOutAssign(ast)) {
+    throw new CodegenError(
+      `${apiName}() does not allow '$out' sugar ('$$$.<coll> = \u2026' / '$$$$.<db>.<coll> = \u2026') \u2014 '$out' is a pipeline stage. Use jsmql() (in Pipeline mode \u2014 add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' stages.`,
+      ast.pos
+    );
+  }
+}
+function lowerToPipelineStages(ast, ctx, apiName) {
+  if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
+  if (ast.type === "UpdateFilter") {
+    if (containsOutAssign(ast)) {
+      const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+      return generateImplicitPipeline(synthetic, ctx);
+    }
+    const result = generateUpdateFilter(ast, ctx);
+    return Array.isArray(result) ? result : [result];
+  }
+  if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
+  if (detectStageIntent(ast) !== null || isSystemStageCall(ast)) {
+    const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
+  throw new CodegenError(
+    `${apiName}() expects a Pipeline (one or more aggregation stages \u2014 \`;\`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filter() or jsmql() for Filter output, or wrap the predicate as \`$match(...)\` to make it a Pipeline.`,
+    ast.pos
+  );
+}
+var UPDATE_PIPELINE_STAGES = /* @__PURE__ */ new Set([
+  "$addFields",
+  "$project",
+  "$replaceRoot",
+  "$replaceWith",
+  "$set",
+  "$unset"
+]);
+function generateFilter(ast, ctx) {
+  if (ast.type === "ObjectLiteral") {
+    return generateWithCtx(ast, ctx);
+  }
+  const t = translateMatchBody(ast, { bindings: ctx.bindings });
+  return mergeTranslatedQuery(t, ctx) ?? {};
+}
+function isCollectionMethodCall(ast) {
+  return ast.type === "MethodCall" && ast.object.type === "CollectionRef";
+}
+function detectStageIntent(ast) {
+  if (ast.type === "OperatorCall" && lookupStage(ast.name) !== void 0) {
+    return ast.name;
+  }
+  if (ast.type === "ObjectLiteral" && ast.entries.length === 1) {
+    const entry = ast.entries[0];
+    if (entry.type === "KeyValueEntry" && entry.key.kind === "static" && lookupStage(entry.key.name) !== void 0) {
+      return entry.key.name;
+    }
+  }
+  return null;
+}
+function errorToValidationResult(err) {
+  if (err instanceof ParseError || err instanceof LexError) {
+    return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }] };
+  }
+  if (err instanceof CodegenError) {
+    return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "CODEGEN_ERROR" }] };
+  }
+  if (err instanceof FunctionInputError) {
+    return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }] };
+  }
+  if (err instanceof JsmqlInterpolationError) {
+    return { valid: false, errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }] };
+  }
+  if (err instanceof RangeError || err instanceof TypeError) {
+    return { valid: false, errors: [{ message: err.message, pos: 0, code: "SYNTAX_ERROR" }] };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return { valid: false, errors: [{ message: `internal error: ${message}`, pos: 0, code: "CODEGEN_ERROR" }] };
+}
+function augmentForFunctionInput(err) {
+  if (err instanceof UnknownIdentifierError) {
+    err.message = `${err.message}
+If '${err.identifier}' is a binding you want to supply at call time, use jsmql.compile(fn)({ ${err.identifier}: \u2026 }) and add it to the params destructure: ({ ${err.identifier} }, $) => \u2026
+If '${err.identifier}' is a value from outer scope, use the jsmql\`\` template tag: jsmql\`\u2026 \${${err.identifier}} \u2026\``;
+  }
+  return err;
+}
+export {
+  FunctionInputError,
+  JsmqlInterpolationError,
+  jsmql
+};

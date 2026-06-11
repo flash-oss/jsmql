@@ -987,15 +987,15 @@
       </section>
     </main>
 
-    <!-- jsmql-bundle:start — sync-playground.mjs injects the esbuild bundle of src/index.ts here when generating playground.html; this skeleton stays bundle-free -->
-    <!-- jsmql-bundle:end -->
-
     <!-- jsmql-examples:start — sync-playground.mjs injects the realistic-examples manifest here when generating playground.html; this skeleton ships an empty list -->
     <script type="application/json" id="examples-data">[]</script>
     <!-- jsmql-examples:end -->
 
     <script type="module">
-      const { jsmql } = globalThis.JSMQL;
+      // Pure-ESM library bundle, committed at dist/jsmql.js and rebuilt by
+      // scripts/sync-playground.mjs. Served over http(s) (local server / GitHub
+      // Pages) — module imports don't load over file://.
+      import { jsmql } from "./dist/jsmql.js";
 
       const inputEl = document.getElementById("input");
       const outputEl = document.getElementById("output");

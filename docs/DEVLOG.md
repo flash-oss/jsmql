@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-11 — chore: playground imports a committed `dist/jsmql.js` bundle; drop DEF-021 (src-watching hook)
+
+The playground no longer inlines the jsmql bundle into the generated `playground.html`. Instead, `scripts/sync-playground.mjs` emits a committed, git-tracked **pure-ESM** library bundle at **`dist/jsmql.js`** (unminified esbuild bundle of `src/index.ts`, `export { jsmql, … }`, no UI/harness code — `import`-able by Node/Deno/Bun/browsers), and `playground.html` loads it with `<script type="module"> import { jsmql } from "./dist/jsmql.js"`. The script now injects only the examples region into the HTML; it writes/stages each artifact independently (idempotent per file). `.gitignore` un-ignores just `dist/jsmql.js` (`dist/*` + `!dist/jsmql.js`), and `_config.yml` stops excluding `dist` so GitHub Pages publishes the one committed `.js` alongside the page.
+
+Two intended trade-offs: `playground.html` is no longer a self-sufficient single file (it needs its sibling bundle), and — because it's a true ES-module import — it must be **served over http(s)** (local static server / GitHub Pages); double-clicking via `file://` no longer works (browsers block module imports over `file://`). This was the user's chosen alternative to **DEF-021** (a `src/`-watching background watcher), which is dropped: the bundle is a normal build artifact refreshed by `prebuild` / the PostToolUse hook / a manual `npm run sync:playground` after `src/` edits — no background process. DEF-021 was design-only (no live tags); its §A row is removed. Files: [scripts/sync-playground.mjs](../scripts/sync-playground.mjs), [playground_skeleton.html](../playground_skeleton.html), [.gitignore](../.gitignore), [_config.yml](../_config.yml), [docs/DEFERRED.md](DEFERRED.md), [CLAUDE.md](../CLAUDE.md), [scripts/CLAUDE.md](../scripts/CLAUDE.md).
+
+---
+
 ## 2026-06-11 — feat: reassignable `let` + read-only `const` bindings (closes DEF-009)
 
 Two changes that ship together. **(1)** `let` bindings are now **reassignable**: a later bare-identifier statement `name = …` re-`$set`s the binding's `__jsmql.<name>` slot, exactly like JavaScript. `let p = $.price; p = p * 0.9;` → two `$set` stages (the RHS `p` resolves to `$__jsmql.p` through `ctx.pipelineLets`, so the read-after-write is correct). `+=`/`-=`/`++`/… desugar to a `BinaryExpr` RHS in the parser and flow through the same path for free. Each reassignment is its own `$set` (read-after-write needs separate stages) — verified on mongod 8.x that the emitted pipeline runs and yields the expected values. **(2)** `const` is the read-only sibling: it declares and reads identically to `let`, but a reassignment throws *Cannot reassign `x` — it is a `const` binding. Declare it with `let x = …` …*.

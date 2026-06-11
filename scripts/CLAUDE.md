@@ -16,11 +16,11 @@ See [`docs/specs/ops-generation.md`](../docs/specs/ops-generation.md) for the ge
 
 ### `sync-playground.mjs`
 
-Generates `playground.html` from `playground_skeleton.html` by injecting two regions: a minified esbuild IIFE bundle of `src/index.ts` (exposed as `globalThis.JSMQL`) and a JSON island of realistic examples extracted from `test/realistic.test.ts`. Output is the same self-sufficient file users can ship on its own — the only external dependency is the CodeMirror CDN.
+Produces two committed artifacts. (1) **`dist/jsmql.js`** — an unminified **pure-ESM** esbuild bundle of `src/index.ts` (`export { jsmql, … }`, library only, no UI/harness code), so it's `import`-able by Node/Deno/Bun/browsers. It's the only file checked in under `dist/` (see `.gitignore`) and the only build output GitHub Pages publishes (see `_config.yml`). (2) **`playground.html`** — generated from `playground_skeleton.html` by injecting one region, a JSON island of realistic examples extracted from `test/realistic.test.ts`. The page imports the bundle via `<script type="module"> import { jsmql } from "./dist/jsmql.js"`, so it must be **served over http(s)** (local static server / GitHub Pages) — a module import won't load over `file://`. External deps: the CodeMirror CDN + the sibling `dist/jsmql.js`.
 
-`playground_skeleton.html` is the hand-authored UI source (markup, CSS, behaviour); the two regions sit empty between their markers there. `playground.html` is a **pure build artifact** — never hand-edit it; edit the skeleton and re-run the sync. Because the script reads the skeleton and only ever writes `playground.html`, changes to `src/` or `test/realistic.test.ts` (which feed only the two regions) can never clobber playground UI work. A `playground.html` merge conflict is therefore always resolvable by re-running the sync against the merged skeleton.
+`playground_skeleton.html` is the hand-authored UI source (markup, CSS, behaviour); the examples region sits empty between its markers there. `playground.html` is a **pure build artifact** — never hand-edit it; edit the skeleton and re-run the sync. Because the script reads the skeleton and only ever writes `playground.html` (never the skeleton), changes to `src/` or `test/realistic.test.ts` can never clobber playground UI work. A `playground.html` merge conflict is therefore always resolvable by re-running the sync against the merged skeleton.
 
-Runs as `prebuild`, so `npm run build` always produces a synced playground. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`, staging the updated `playground.html` for the next commit. Outside Claude Code, run `npm run sync:playground` after editing the skeleton, `src/`, or the test file. Idempotent — exits 0 without writing if `playground.html` is already in sync.
+Runs as `prebuild`, so `npm run build` always refreshes both artifacts. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`, staging the updated outputs for the next commit. `src/` edits do **not** trigger the hook (deliberately watcher-free) — run `npm run sync:playground` manually after them. Idempotent per file: each artifact is (re)written and staged only when its contents change.
 
 ### `build-cjs.mjs`
 
@@ -32,7 +32,7 @@ Auto-resolves `git merge` conflicts on `docs/DEVLOG.md`. Splits both sides on `-
 
 ### `hook-post-edit-realistic.sh`
 
-PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-playground.mjs` when Claude Code's Edit/Write tool touches `test/realistic.test.ts` (the example source) or `playground_skeleton.html` (the playground UI source). Keeps the generated `playground.html` in sync within a single commit. (Despite the name, it dispatches on both files — kept for the stable settings.json reference.)
+PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-playground.mjs` when Claude Code's Edit/Write tool touches `test/realistic.test.ts` (the example source) or `playground_skeleton.html` (the playground UI source). Keeps the generated `playground.html` (and, since it re-runs the bundle, `dist/jsmql.js`) in sync within a single commit. (Despite the name, it dispatches on both files — kept for the stable settings.json reference.) It does **not** fire on `src/` edits — those need a manual `npm run sync:playground` to refresh `dist/jsmql.js`.
 
 ## Conventions
 

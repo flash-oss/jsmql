@@ -1,28 +1,27 @@
 #!/usr/bin/env node
 /**
- * Generate `playground.html` from `playground_skeleton.html` so the result is
- * self-sufficient — distributable as a single file with no sibling assets
- * except the CodeMirror CDN.
+ * Produce the two committed playground artifacts from their sources:
  *
- * `playground_skeleton.html` is the hand-authored source for the entire
- * playground UI (markup, CSS, behaviour). `playground.html` is a pure build
- * artifact: the skeleton with two regions injected. Because this script reads
- * the skeleton and only ever WRITES `playground.html`, changes to `src/` or
- * `test/realistic.test.ts` (which feed only those two regions) can never
- * overwrite UI work — UI development edits the skeleton, not the artifact.
+ *   1. `dist/jsmql.js` — the jsmql library bundled from `src/index.ts` via
+ *      esbuild as a single unminified **pure ES module** (`export { jsmql, … }`,
+ *      no harness/UI code). Git-tracked (the only checked-in file under dist/,
+ *      see .gitignore) and published by GitHub Pages (see _config.yml). The
+ *      playground imports it with `<script type="module"> import { jsmql } from
+ *      "./dist/jsmql.js"`. Because it's an ES module import, the playground must
+ *      be served over http(s) — it does not load over `file://`.
  *
- * Two regions are injected (they sit empty between markers in the skeleton):
+ *   2. `playground.html` — generated from `playground_skeleton.html` (the
+ *      hand-authored UI source: markup, CSS, behaviour) with one region
+ *      injected: the realistic-examples manifest, extracted by enumerating
+ *      every top-level `describe()` / first-`it()` pair in
+ *      `test/realistic.test.ts` and reading the first `jsmql(...)` or
+ *      `jsmql.expr(...)` call inside. Embedded as a JSON-script tag between the
+ *      `<!-- jsmql-examples:start … -->` / `<!-- jsmql-examples:end -->` markers.
  *
- *   1. The jsmql library, bundled from `src/index.ts` via esbuild as an IIFE
- *      that exposes `globalThis.JSMQL`. Lives between the
- *      `<!-- jsmql-bundle:start … -->` / `<!-- jsmql-bundle:end -->` markers.
- *
- *   2. The realistic-examples manifest, extracted by enumerating every
- *      top-level `describe()` / first-`it()` pair in `test/realistic.test.ts`
- *      and reading the first `jsmql(...)` or `jsmql.expr(...)` call inside.
- *      Embedded as a JSON-script tag between the
- *      `<!-- jsmql-examples:start … -->` / `<!-- jsmql-examples:end -->`
- *      markers.
+ * Because this script reads the skeleton and only ever WRITES `playground.html`
+ * (never back to the skeleton), changes to `src/` or `test/realistic.test.ts`
+ * can never overwrite UI work — UI development edits the skeleton, not the
+ * artifact.
  *
  * The example-discovery uses a Node loader hook (`sync-playground-loader.mjs`)
  * to map `import { describe, it } from "vitest"` onto a mock
@@ -38,21 +37,21 @@
  * and warns on `describe`s where no query can be extracted.
  *
  * Hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script
- * whenever Claude Code edits `test/realistic.test.ts`, so the embedded
- * examples stay current within a single commit. Also runs as `prebuild`, so
- * `npm run build` always produces a synced `playground.html`. Outside Claude
- * Code, run manually after editing src/ or the test file:
+ * whenever Claude Code edits `test/realistic.test.ts` or
+ * `playground_skeleton.html`, so both artifacts stay current within a single
+ * commit. Also runs as `prebuild`, so `npm run build` always refreshes them.
+ * `src/` edits do NOT trigger the hook — run manually after editing src/:
  *
  *   npm run sync:playground
  *
- * Idempotent: if the rewritten HTML is byte-identical to what's on disk, the
- * script exits 0 without writing or staging.
+ * Idempotent per file: each artifact is (re)written and staged only when its
+ * contents actually change; if neither changed the script exits 0 silently.
  */
 
 import ts from "typescript";
 import { build } from "esbuild";
 import { register } from "node:module";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -66,6 +65,11 @@ const ENTRY = path.join(ROOT, "src/index.ts");
 // edits the skeleton; `playground.html` is a pure build artifact.
 const SKELETON = path.join(ROOT, "playground_skeleton.html");
 const HTML = path.join(ROOT, "playground.html");
+// The committed, git-tracked pure-ESM library bundle the playground imports
+// (`<script type="module"> import { jsmql } from "./dist/jsmql.js"`). It's the
+// only file under dist/ that's checked in (see .gitignore) and the only build
+// output GitHub Pages publishes alongside playground.html (see _config.yml).
+const BUNDLE = path.join(ROOT, "dist/jsmql.js");
 
 // ── Vitest loader registration ────────────────────────────────────────────────
 // Must happen BEFORE any `import()` that would resolve "vitest" — so before
@@ -88,8 +92,6 @@ const SHIM_URL = pathToFileURL(
 const { STAGES } = await import(pathToFileURL(path.join(ROOT, "src/stages.ts")).href);
 const STAGE_NAMES = new Set(Object.keys(STAGES));
 
-const BUNDLE_START = "<!-- jsmql-bundle:start";
-const BUNDLE_END = "<!-- jsmql-bundle:end -->";
 const EXAMPLES_START = "<!-- jsmql-examples:start";
 const EXAMPLES_END = "<!-- jsmql-examples:end -->";
 
@@ -427,17 +429,16 @@ async function bundleJsmql() {
   const result = await build({
     entryPoints: [ENTRY],
     bundle: true,
-    format: "iife",
-    globalName: "JSMQL",
+    format: "esm",
     target: "es2022",
     platform: "browser",
-    minify: true,
+    minify: false,
     legalComments: "none",
     write: false,
   });
   const out = result.outputFiles?.[0];
   if (!out) fail("esbuild produced no output");
-  return out.text.trimEnd();
+  return out.text.trimEnd() + "\n";
 }
 
 function replaceRegion(html, startMarker, endMarker, replacement) {
@@ -449,20 +450,6 @@ function replaceRegion(html, startMarker, endMarker, replacement) {
   const lineEnd = html.indexOf("\n", endIdx);
   if (lineEnd === -1) fail(`marker ${endMarker} must be followed by a newline`);
   return html.slice(0, lineStart) + replacement + html.slice(lineEnd + 1);
-}
-
-function buildBundleRegion(bundleSrc) {
-  if (bundleSrc.includes("</script")) {
-    fail("bundle contains a literal </script sequence — refusing to embed");
-  }
-  return [
-    "    <!-- jsmql-bundle:start (generated by scripts/sync-playground.mjs — do not edit) -->",
-    "    <script>",
-    "      " + bundleSrc,
-    "    </script>",
-    "    <!-- jsmql-bundle:end -->",
-    "",
-  ].join("\n");
 }
 
 function buildExamplesRegion(describes) {
@@ -482,32 +469,45 @@ if (skipped.length) {
 
 const itCount = describes.reduce((sum, d) => sum + d.its.length, 0);
 
-const bundleSrc = await bundleJsmql();
+const inGitRepo = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: ROOT, stdio: "ignore" }).status === 0;
 
-let html = readFileSync(SKELETON, "utf8");
-html = replaceRegion(html, BUNDLE_START, BUNDLE_END, buildBundleRegion(bundleSrc));
-html = replaceRegion(html, EXAMPLES_START, EXAMPLES_END, buildExamplesRegion(describes));
-
-let existing = null;
-try {
-  existing = readFileSync(HTML, "utf8");
-} catch {
-  // First run — `playground.html` doesn't exist yet; `existing` stays null.
+// Write `file` only when its contents change (avoids needless mtime churn and
+// git-staging), then stage it. Returns true if it was (re)written.
+function writeAndStage(file, contents) {
+  let existing = null;
+  try {
+    existing = readFileSync(file, "utf8");
+  } catch {
+    // Not on disk yet (first run) — `existing` stays null so we write.
+  }
+  if (existing === contents) return false;
+  writeFileSync(file, contents);
+  if (inGitRepo) {
+    const add = spawnSync("git", ["add", path.relative(ROOT, file)], { cwd: ROOT, stdio: "inherit" });
+    if (add.status !== 0) fail(`git add ${path.relative(ROOT, file)} failed`);
+  }
+  return true;
 }
 
-if (existing === html) {
-  console.log(`sync-playground: ${describes.length} describes (${itCount} its) already in sync (no change)`);
+// 1. The committed pure-ESM library bundle (dist/jsmql.js).
+const bundleSrc = await bundleJsmql();
+mkdirSync(path.dirname(BUNDLE), { recursive: true });
+const bundleChanged = writeAndStage(BUNDLE, bundleSrc);
+
+// 2. playground.html — skeleton with only the examples region injected.
+const html = replaceRegion(
+  readFileSync(SKELETON, "utf8"),
+  EXAMPLES_START,
+  EXAMPLES_END,
+  buildExamplesRegion(describes),
+);
+const htmlChanged = writeAndStage(HTML, html);
+
+if (!bundleChanged && !htmlChanged) {
+  console.log(`sync-playground: ${describes.length} describes (${itCount} its) + bundle already in sync (no change)`);
   process.exit(0);
 }
 
-writeFileSync(HTML, html);
-
-const inGitRepo = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: ROOT, stdio: "ignore" }).status === 0;
-if (inGitRepo) {
-  const add = spawnSync("git", ["add", path.relative(ROOT, HTML)], { cwd: ROOT, stdio: "inherit" });
-  if (add.status !== 0) fail("git add playground.html failed");
-}
-
 console.log(
-  `sync-playground: embedded ${describes.length} describes (${itCount} its) and ${(bundleSrc.length / 1024).toFixed(1)} kB of jsmql bundle → playground.html`,
+  `sync-playground: wrote ${(bundleSrc.length / 1024).toFixed(1)} kB → dist/jsmql.js and ${describes.length} describes (${itCount} its) → playground.html`,
 );

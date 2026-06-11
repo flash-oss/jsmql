@@ -165,18 +165,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only — small win
 - **Effort.** S
 
-### DEF-021 — src-watching playground hook
-
-- **What's blocked.** Edits to `src/*.ts` outside Claude Code need a manual `npm run sync:playground` (or `npm run build`) to re-embed the bundle. The PostToolUse hook only fires on `test/realistic.test.ts` edits.
-- **Target lowering.** No code change in jsmql itself. Add a watcher (chokidar or similar) in `scripts/` and a `npm run watch:playground` script.
-- **Why blocked.** Tooling concern, not core. Easy.
-- **Attempted approaches.** None.
-- **Success criteria.** `npm run watch:playground` re-runs the sync on every `src/*.ts` change.
-- **Rejection site(s).** `DEVLOG.md:830` (historical).
-- **Spec.** None.
-- **Status.** design-only — tooling
-- **Effort.** S
-
 ### DEF-022 — `Number.isFinite($.x)` (Infinity / NaN comparison)
 
 - **What's blocked.** `Number.isFinite($.x)` is rejected because jsmql has no syntax for `Infinity` / `NaN` literals to compare against.
