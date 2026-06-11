@@ -86,15 +86,19 @@ export type GenerateCtx = {
    */
   bindings?: ReadonlyMap<string, unknown>;
   /**
-   * Static type of selected in-scope lambda bindings. Currently populated only
-   * by the `.reduce()` codegen when both `initialValue` and the lambda body
-   * are statically the same compound type — see the reduce case below. Read by
-   * the `IndexAccess` codegen to skip the runtime `$cond` on `$isArray` when
-   * the receiver is a `ParamRef` whose name is in this map. Keyed by the
-   * user-facing param name (pre-`reduceRemap`), so the lookup happens on the
-   * raw AST `ParamRef.name` before any MQL variable-name remap.
+   * Static type of selected in-scope bindings. Populated by (a) the `.reduce()`
+   * codegen when both `initialValue` and the lambda body are statically the
+   * same compound type — see the reduce case below; and (b) pipeline `const`
+   * declarations whose initializer has a provable static type (`extendCtxLets`
+   * via `staticBindingType`). Read by the `IndexAccess` codegen two ways: to
+   * skip the runtime `$cond` on `$isArray` when the *receiver* is a `ParamRef`
+   * of known compound type, and — when the *key* is a `ParamRef` of type
+   * `"string"` — to know `obj[k]` is a property getter (never a numeric array
+   * index) and emit `$getField` directly. Keyed by the user-facing param name
+   * (pre-`reduceRemap`), so the lookup happens on the raw AST `ParamRef.name`
+   * before any MQL variable-name remap.
    */
-  bindingTypes?: ReadonlyMap<string, "object" | "array">;
+  bindingTypes?: ReadonlyMap<string, "object" | "array" | "string">;
   /**
    * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
    * literals. Set by the `$literal(...)` operator codegen on the recursive
@@ -159,13 +163,23 @@ export function extendCtxLets(
   name: string,
   fieldPath: string,
   kind: "let" | "const" = "let",
+  type?: "object" | "array" | "string",
 ): GenerateCtx {
   const next = new Map(ctx.pipelineLets ?? []);
   next.set(name, fieldPath);
-  if (kind !== "const") return { ...ctx, pipelineLets: next };
+  // Record the binding's static type only for `const`: it is read-only, so the
+  // type can't drift via a later `<name> = …` reassignment (a `let` can, so we
+  // leave `let` untracked and it keeps the conservative runtime dispatch).
+  let bindingTypes = ctx.bindingTypes;
+  if (kind === "const" && type) {
+    const bt = new Map(ctx.bindingTypes ?? []);
+    bt.set(name, type);
+    bindingTypes = bt;
+  }
+  if (kind !== "const") return { ...ctx, pipelineLets: next, bindingTypes };
   const consts = new Set(ctx.pipelineConstNames ?? []);
   consts.add(name);
-  return { ...ctx, pipelineLets: next, pipelineConstNames: consts };
+  return { ...ctx, pipelineLets: next, pipelineConstNames: consts, bindingTypes };
 }
 
 /** Drop all pipeline lets, moving them to `droppedLets` with the stage name. */
@@ -208,6 +222,7 @@ export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
+    bindingTypes: outer.bindingTypes,
     pipelineContext: outer.pipelineContext,
   };
 }
@@ -396,6 +411,18 @@ function isArrayProducing(expr: Expr): boolean {
 
 function isObjectProducing(expr: Expr): boolean {
   return expr.type === "ObjectLiteral";
+}
+
+/**
+ * The provable static type of an expression, or `undefined` when it can't be
+ * pinned at compile time. Used by `pipeline.ts` to type `const` bindings so the
+ * `IndexAccess` codegen can resolve `obj[k]` precisely (see `bindingTypes`).
+ */
+export function staticBindingType(expr: Expr): "object" | "array" | "string" | undefined {
+  if (isArrayProducing(expr)) return "array";
+  if (isObjectProducing(expr)) return "object";
+  if (isStringProducing(expr)) return "string";
+  return undefined;
 }
 
 function isStringProducing(expr: Expr): boolean {
@@ -904,18 +931,31 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
+      const containerType = expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : undefined;
       const known: "object" | "array" | undefined = isArrayProducing(expr.object)
         ? "array"
-        : expr.object.type === "ParamRef"
-          ? ctx.bindingTypes?.get(expr.object.name)
+        : containerType === "array" || containerType === "object"
+          ? containerType
           : undefined;
+      // A provably-string key can never be a numeric array index, so `obj[k]` is
+      // unambiguously an object property getter — emit `$getField` directly and
+      // skip the `$isArray`/`$arrayElemAt` dual guard. This wins even over a
+      // known-array receiver: JS reads `arr["x"]` as a property lookup (e.g.
+      // `[1,2]["length"]`), and `$arrayElemAt` *rejects* a string index outright
+      // ("second argument must be a numeric value, but is string"), whereas
+      // `$getField` on an array input is accepted and yields missing — the
+      // faithful, server-valid lowering (HR3). Covers a literal / `.toLowerCase()`-
+      // style string key and a `const k = "…"` binding typed `"string"`.
+      const keyIsString =
+        isStringProducing(expr.index) ||
+        (expr.index.type === "ParamRef" && ctx.bindingTypes?.get(expr.index.name) === "string");
+      if (known === "object" || keyIsString) {
+        const obj = optional ? wrapIfNull(rawObj, {}) : rawObj;
+        return { $getField: { field: idx, input: obj } };
+      }
       if (known === "array") {
         const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
         return { $arrayElemAt: [obj, idx] };
-      }
-      if (known === "object") {
-        const obj = optional ? wrapIfNull(rawObj, {}) : rawObj;
-        return { $getField: { field: idx, input: obj } };
       }
       const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
       return { $cond: [{ $isArray: obj }, { $arrayElemAt: [obj, idx] }, { $getField: { field: idx, input: obj } }] };

@@ -405,9 +405,10 @@ $.items.map(x => x.id)[0]     // known array → { $arrayElemAt: [{ $map: ... },
 [1, 2, 3][$.idx]              // known array → { $arrayElemAt: [[1, 2, 3], "$idx"] }
 ```
 
-For a bare `$.field`, jsmql can't tell at compile time whether you mean array indexing
-or object dynamic-key lookup, so it emits a runtime `$cond` on `$isArray` that picks
-the right form at query time:
+For a bare `$.field` indexed by a **non-string** key (a number, or a field whose type
+isn't known), jsmql can't tell at compile time whether you mean array indexing or object
+dynamic-key lookup, so it emits a runtime `$cond` on `$isArray` that picks the right form
+at query time:
 
 ```js
 $.items[0]
@@ -416,16 +417,19 @@ $.items[0]
 //       { $arrayElemAt: ["$items", 0] },
 //       { $getField: { field: 0, input: "$items" } }
 //     ] }
-
-$.config["host"]
-// → { $cond: [
-//       { $isArray: "$config" },
-//       { $arrayElemAt: ["$config", "host"] },
-//       { $getField: { field: "host", input: "$config" } }
-//     ] }
 ```
 
-If you want compact output, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
+When the key is **provably a string** — a string literal, a `.toLowerCase()`-style
+string-returning expression, or a `const k = "…"` binding — it can only be an object
+property name (a string is never a numeric array index), so jsmql skips the dispatch and
+emits `$getField` directly:
+
+```js
+$.config["host"]              // → { $getField: { field: "host", input: "$config" } }
+$.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" }, input: "$scores" } }
+```
+
+If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
 A string-literal key on the **bare root** `$` is the simplest case: the root document is never an array, so there's nothing to dispatch on and it lowers to a plain field reference. `$["x"]` is just `$.x`. This is how you name a field that isn't a bare identifier — a name containing a dot, dash, space, etc. — and how you read a nested `length` field without `.length` folding to the string-or-array length operator:
 
@@ -1057,8 +1061,9 @@ $.name.trim().length                // { $strLenCP: ... }       — known string
 $.csv.split(",").length             // { $size: ... }           — known array  → $size
 $.field.length                      // { $cond: [{ $isArray: "$field" }, { $size: ... }, { $strLenCP: ... }] }
                                     //                          — unknown type → runtime dispatch
-$.field["length"]                   // RAW access — a property called "length", NOT the length operator
-                                    //   (only dot .length is interpreted; see Bracket Access)
+$.field["length"]                   // { $getField: { field: "length", input: "$field" } }
+                                    //   RAW access — a property called "length", NOT the length operator;
+                                    //   a string key → $getField (only dot .length is interpreted; see Bracket Access)
 
 // Chaining
 $.name.trim().toLowerCase()         // { $toLower: { $trim: { input: "$name" } } }

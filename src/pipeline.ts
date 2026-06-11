@@ -33,6 +33,7 @@ import {
   CodegenError,
   EMPTY_CTX,
   extendCtxLets,
+  staticBindingType,
   clearCtxLets,
   ctxHasLets,
   freshSubPipelineCtx,
@@ -501,7 +502,10 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
   }
   const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
   const value = generateWithCtx(decl.value, ctx);
-  return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind) };
+  return {
+    set: { $set: { [fieldPath]: value } },
+    ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind, staticBindingType(decl.value)),
+  };
 }
 
 /**

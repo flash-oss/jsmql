@@ -513,24 +513,9 @@ describe("$match translation — .length vs natural number → string-or-array $
 
   it('`["length"]` is RAW access — never folded to a length (only dot .length is)', () => {
     // Bracket access reads a property called "length", so it can't be a $size
-    // peephole; it residualises to $expr with the runtime array-or-object dispatch.
+    // peephole; "length" is a string key (never a numeric index) → $getField.
     expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $cond: [
-                  { $isArray: "$items" },
-                  { $arrayElemAt: ["$items", "length"] },
-                  { $getField: { field: "length", input: "$items" } },
-                ],
-              },
-              3,
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $getField: { field: "length", input: "$items" } }, 3] } } },
     ]);
     // A string-literal key on the bare root is a plain field reference.
     expect(jsmql('[$match($["cart.field.length"] === 5)]')).toEqual([

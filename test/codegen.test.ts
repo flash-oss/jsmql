@@ -918,14 +918,26 @@ describe("bracket access", () => {
       ],
     });
   });
-  it("string-literal key on bare field → runtime $cond (the $getField branch is the right one for objects)", () => {
-    expect(jsmql.expr('$.config["host"]')).toEqual({
-      $cond: [
-        { $isArray: "$config" },
-        { $arrayElemAt: ["$config", "host"] },
-        { $getField: { field: "host", input: "$config" } },
-      ],
+  it("string-literal key on bare field → $getField directly (a string key is never a numeric array index)", () => {
+    // A provably-string key means object property access — emit $getField and
+    // skip the $isArray/$arrayElemAt guard, which would otherwise make MongoDB
+    // reject the string index whenever the receiver is an array at runtime.
+    expect(jsmql.expr('$.config["host"]')).toEqual({ $getField: { field: "host", input: "$config" } });
+  });
+  it("string-producing key expression on bare field → $getField directly", () => {
+    // `.toLowerCase()` is statically a string, so the key can't be an array
+    // index — same compact $getField lowering as a literal key.
+    expect(jsmql.expr("$.map[$.key.toLowerCase()]")).toEqual({
+      $getField: { field: { $toLower: "$key" }, input: "$map" },
     });
+  });
+  it("const-string-bound key → $getField directly (binding tracked as string)", () => {
+    // `const k = "host"` makes `obj[k]` a property getter; the IndexAccess
+    // codegen reads the binding's static type from bindingTypes.
+    expect(jsmql.pipeline('const k = "host";\n$ = { v: $.config[k] };')).toEqual([
+      { $set: { "__jsmql.k": "host" } },
+      { $replaceWith: { v: { $getField: { field: "$__jsmql.k", input: "$config" } } } },
+    ]);
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
     // `$["x"]` is just `$.x`; the bracket form is the escape hatch for field
@@ -1135,16 +1147,15 @@ describe("string methods", () => {
   });
   it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
     // Bracket access never folds to $size/$strLenCP — it reads a property called
-    // "length" like any other key. Bare receiver → runtime $cond dispatch.
-    expect(jsmql.expr('$.items["length"]')).toEqual({
-      $cond: [
-        { $isArray: "$items" },
-        { $arrayElemAt: ["$items", "length"] },
-        { $getField: { field: "length", input: "$items" } },
-      ],
+    // "length" like any other key. "length" is a string literal, so it can't be
+    // a numeric array index → $getField directly (no $isArray dispatch).
+    expect(jsmql.expr('$.items["length"]')).toEqual({ $getField: { field: "length", input: "$items" } });
+    // Even a known-array receiver takes $getField for a string key: the old
+    // $arrayElemAt-with-string shape is server-rejected, while $getField on an
+    // array input is accepted and yields missing (matches JS property lookup).
+    expect(jsmql.expr('$.csv.split(",")["length"]')).toEqual({
+      $getField: { field: "length", input: { $split: ["$csv", ","] } },
     });
-    // Known-array receiver → $arrayElemAt with the literal key (not $size).
-    expect(jsmql.expr('$.csv.split(",")["length"]')).toEqual({ $arrayElemAt: [{ $split: ["$csv", ","] }, "length"] });
   });
   it("chained trim then toLowerCase", () => {
     expect(jsmql.expr("$.name.trim().toLowerCase()")).toEqual({ $toLower: { $trim: { input: "$name" } } });
