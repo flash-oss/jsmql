@@ -70,6 +70,7 @@
     "@types/node": "^25.7.0",
     "esbuild": "^0.28.0",
     "js-yaml": "^4.1.0",
+    "mongodb": "^7.3.0",
     "mongoose": "*",
     "oxfmt": "^0.47.0",
     "typescript": "^6.0.0",

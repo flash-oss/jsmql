@@ -46,7 +46,21 @@ A passing `toEqual(...)` only proves jsmql *emits* a given document — **not** 
 
 **The rule:** every expected MQL in a test (the right-hand side of `toEqual`, and the output of any `jsmql(...)` you assert on) must be something `db.coll.aggregate(...)` / `find(...)` / `updateMany(...)` would accept on a real MongoDB. If you're knowingly asserting a *deliberately* invalid shape (e.g. an unknown-operator passthrough fixture, or a synthetic probe like `literal-passthrough.test.ts`'s sentinel calls), say so in a comment so it isn't mistaken for an endorsed-valid shape.
 
-**How to check when unsure.** A local server is the authority (`mongod` + the `mongodb` driver are available in this repo's toolchain). Spin up a throwaway `mongod`, then for each output run `coll.aggregate(pipeline)`, `coll.find(filter)`, `coll.updateMany({}, update)`, or — for a bare `jsmql.expr` fragment — `coll.aggregate([{ $addFields: { __v: <expr> } }])` (use `$addFields`, **not** `$project`: `$project` reinterprets `{}`/`0`/`true` values as projection flags and yields false positives). Treat Atlas-only stages (`$search`, `$vectorSearch`, …), admin/cluster diagnostics (`$currentOp`, …), and index/topology-dependent rejections as environment limitations, not jsmql bugs.
+**How to check when unsure.** A local server is the authority. **Drive it with the `mongodb` driver (a `devDependency`), not `mongosh`** — the official Node driver is what jsmql's users actually feed MQL to, so it's the faithful authority and it round-trips JSON cleanly. Write a short probe script under `tmp/` **inside the repo** (so `import { MongoClient } from "mongodb"` resolves — a script outside the project tree fails with `ERR_MODULE_NOT_FOUND`), connect to `mongodb://127.0.0.1:27017`, then for each output run `coll.aggregate(pipeline)`, `coll.find(filter)`, `coll.updateMany({}, update)`, or — for a bare `jsmql.expr` fragment — `coll.aggregate([{ $addFields: { __v: <expr> } }])` (use `$addFields`, **not** `$project`: `$project` reinterprets `{}`/`0`/`true` values as projection flags and yields false positives). Minimal probe:
+
+```js
+// tmp/probe.mjs  →  node tmp/probe.mjs
+import { MongoClient } from "mongodb";
+const c = new MongoClient("mongodb://127.0.0.1:27017");
+await c.connect();
+const coll = c.db("jsmql_probe").collection("t");
+await coll.deleteMany({});
+await coll.insertOne({ /* a representative doc */ });
+console.log(await coll.aggregate([{ $addFields: { __v: /* <expr from jsmql.expr> */ } }]).toArray());
+await c.close();
+```
+
+Treat Atlas-only stages (`$search`, `$vectorSearch`, …), admin/cluster diagnostics (`$currentOp`, …), and index/topology-dependent rejections as environment limitations, not jsmql bugs.
 
 **Known server-rejection traps to watch for** (a `toEqual` that produces any of these is a red flag):
 - **`$$` variable names that don't start with a lowercase ASCII letter.** MongoDB rejects user-variable names beginning with `_`, `$`, or an uppercase letter ("starts with an invalid character for a user variable name"). Watch `$let`/`$map`/`$reduce` `as`/`vars` and `$lookup.let` keys — especially auto-derived ones (a lookup `let` named after an `_id` field, internal gensyms).
