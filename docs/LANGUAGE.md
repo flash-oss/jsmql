@@ -1916,7 +1916,7 @@ The `delete` keyword is statement-only — unlike JavaScript, it does not return
 
 Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`).
 
-> **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith` and the `$facet` variant below). Stages that write elsewhere — `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)` — use distinct LHS prefixes so the write destination is visible at a glance.
+> **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith`, the [fan-out](#fan-out-one-document-to-many-documents) form, and the `$facet` variant below). Stages that write elsewhere — `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)` — use distinct LHS prefixes so the write destination is visible at a glance.
 
 ```js
 // Lift an embedded sub-document to the top level
@@ -1949,13 +1949,48 @@ Compile-time rejections (each with an actionable hint):
 
 | RHS | Why it's rejected |
 |---|---|
-| `$ = [1, 2]` | Arrays aren't documents. Wrap with `$ = { items: [...] }`, or pick `.find()` over `.filter()` for a join. |
+| `$ = []` | An empty array would discard every document. Fan out a data-dependent array (`$ = $.items.filter(...)`) to drop docs conditionally, or use `$$ = []` to empty the stream. |
+| `$ = [1, 2]`, `$ = ["a"]` | Each fanned-out element becomes a document root, so elements must be documents — wrap them: `$ = [{ value: ... }]`. |
 | `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | Scalars aren't documents. Wrap with `$ = { value: ... }`. |
-| `$ = $$$.users.filter(...)` | `.filter()` returns an array; use `.find()` for a single doc. |
+| `$ = undefined` | `undefined` is only meaningful in `$match` position. Use `null` for the present-but-null case, or move the comparison into `$match`. |
+| `$ = $$$.users.filter(...)` | `.filter()` on a collection is a join that returns an array; use `.find()` for a single doc. |
 | `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields. |
 | `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
 
 `$replaceWith` is a **reshape-clearing stage** — any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
+
+#### Fan-out: one document to many documents
+
+When the RHS is **provably an array** — an array literal, or an array-typed expression like `.map()`, `.filter()`, or `Object.entries()` — `$ = …` fans out: each input document produces one output document **per array element** (via `$unwind`).
+
+```js
+// Explode an array literal: 1 input doc → 2 output docs
+jsmql("$ = [{ kind: 'a' }, { kind: 'b' }];")
+// → [
+//     { $set: { "__jsmql.__lookup1": [{ kind: "a" }, { kind: "b" }] } },
+//     { $unwind: "$__jsmql.__lookup1" },
+//     { $replaceWith: "$__jsmql.__lookup1" }
+//   ]
+
+// Explode each order's line-items into per-item documents
+jsmql("$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku }));")
+// → $set the $map into a slot, then $unwind + $replaceWith
+
+// Turn a sub-document into one {k, v} document per key
+jsmql("$ = Object.entries($.scores);")
+// → $set the $objectToArray into a slot, then $unwind + $replaceWith
+```
+
+A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan out a field, spread it into a literal: **`$ = [...$.items]`**.
+
+**Conditional drop falls out for free.** `$unwind` emits nothing for an empty array, so fanning out a possibly-empty array drops exactly the documents whose array came out empty and fans out the rest:
+
+```js
+// Docs with no qualifying item are dropped; the rest fan out per qualifying item
+jsmql("$ = $.items.filter(x => x.qty > 0);")
+```
+
+This is the idiomatic way to conditionally drop documents. (To empty the *whole* stream unconditionally, that's a different operation — `$$ = []`.)
 
 #### `$facet` via `$ = { key: $$.filter(p), … }`
 

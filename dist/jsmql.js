@@ -3215,13 +3215,19 @@ function extendCtx(ctx, params) {
     accumulatorContext: ctx.accumulatorContext
   };
 }
-function extendCtxLets(ctx, name, fieldPath, kind = "let") {
+function extendCtxLets(ctx, name, fieldPath, kind = "let", type) {
   const next = new Map(ctx.pipelineLets ?? []);
   next.set(name, fieldPath);
-  if (kind !== "const") return { ...ctx, pipelineLets: next };
+  let bindingTypes = ctx.bindingTypes;
+  if (kind === "const" && type) {
+    const bt = new Map(ctx.bindingTypes ?? []);
+    bt.set(name, type);
+    bindingTypes = bt;
+  }
+  if (kind !== "const") return { ...ctx, pipelineLets: next, bindingTypes };
   const consts = new Set(ctx.pipelineConstNames ?? []);
   consts.add(name);
-  return { ...ctx, pipelineLets: next, pipelineConstNames: consts };
+  return { ...ctx, pipelineLets: next, pipelineConstNames: consts, bindingTypes };
 }
 function clearCtxLets(ctx, droppedByStage) {
   if (!ctx.pipelineLets || ctx.pipelineLets.size === 0) return ctx;
@@ -3241,6 +3247,7 @@ function freshFacetCtx(outer) {
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
+    bindingTypes: outer.bindingTypes,
     pipelineContext: outer.pipelineContext
   };
 }
@@ -3389,6 +3396,12 @@ function isArrayProducing(expr) {
 }
 function isObjectProducing(expr) {
   return expr.type === "ObjectLiteral";
+}
+function staticBindingType(expr) {
+  if (isArrayProducing(expr)) return "array";
+  if (isObjectProducing(expr)) return "object";
+  if (isStringProducing(expr)) return "string";
+  return void 0;
 }
 function isStringProducing(expr) {
   switch (expr.type) {
@@ -3662,14 +3675,16 @@ function _generateBody(expr, ctx) {
       const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
-      const known = isArrayProducing(expr.object) ? "array" : expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : void 0;
+      const containerType = expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : void 0;
+      const known = isArrayProducing(expr.object) ? "array" : containerType === "array" || containerType === "object" ? containerType : void 0;
+      const keyIsString = isStringProducing(expr.index) || expr.index.type === "ParamRef" && ctx.bindingTypes?.get(expr.index.name) === "string";
+      if (known === "object" || keyIsString) {
+        const obj3 = optional ? wrapIfNull(rawObj, {}) : rawObj;
+        return { $getField: { field: idx, input: obj3 } };
+      }
       if (known === "array") {
         const obj3 = optional ? wrapIfNull(rawObj, []) : rawObj;
         return { $arrayElemAt: [obj3, idx] };
-      }
-      if (known === "object") {
-        const obj3 = optional ? wrapIfNull(rawObj, {}) : rawObj;
-        return { $getField: { field: idx, input: obj3 } };
       }
       const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
       return { $cond: [{ $isArray: obj2 }, { $arrayElemAt: [obj2, idx] }, { $getField: { field: idx, input: obj2 } }] };
@@ -9665,7 +9680,10 @@ function lowerLetDecl(decl, ctx) {
   }
   const fieldPath = `${LET_NAMESPACE2}.${decl.name}`;
   const value = generateWithCtx(decl.value, ctx);
-  return { set: { $set: { [fieldPath]: value } }, ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind) };
+  return {
+    set: { $set: { [fieldPath]: value } },
+    ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind, staticBindingType(decl.value))
+  };
 }
 function isReplaceRootAssign(op) {
   return op.target.type === "FieldRef" && op.target.path === "";
@@ -9676,6 +9694,16 @@ function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
       `Cannot use compound assignment / increment on bare '$' \u2014 '$' is the whole document, not a scalar. Use '$ = { ...$, ...overrides }' to merge fields into the root or '$ = <newRoot>' to replace it outright.`,
       el.pos
     );
+  }
+  if (el.value.type === "ArrayLiteral") {
+    if (el.value.elements.length === 0) {
+      throw new CodegenError(
+        `Cannot fan out an empty array \u2014 '$ = []' would discard every document. To drop documents conditionally, fan out a data-dependent array (e.g. '$ = $.items.filter(...)'); to empty the stream, use '$$ = []'.`,
+        el.value.pos
+      );
+    }
+    rejectScalarFanOutElements(el.value);
+    return lowerFanOut(el.value, ctx, allocSlot, lowerBlockFn);
   }
   rejectNonDocumentReplaceRoot(el.value);
   const direct = detectLookupCall(el.value, ctx);
@@ -9699,18 +9727,55 @@ function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
     stages.push({ $replaceWith: { $first: `$${slot}` } });
     return stages;
   }
+  if (staticBindingType(el.value) === "array") {
+    return lowerFanOut(el.value, ctx, allocSlot, lowerBlockFn);
+  }
   const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, allocSlot, lowerBlockFn);
   const out = [...prologue];
   out.push({ $replaceWith: generateWithCtx(rewritten, ctx) });
   return out;
 }
-function rejectNonDocumentReplaceRoot(value) {
-  if (value.type === "ArrayLiteral") {
-    throw new CodegenError(
-      `Cannot replace root with an array. Use '.find(...)' for a single doc, or wrap: '$ = { items: [...] }'.`,
-      value.pos
-    );
+function lowerFanOut(arr, ctx, allocSlot, lowerBlockFn) {
+  const { stages: prologue, rewritten } = extractLookupCalls(arr, ctx, allocSlot, lowerBlockFn);
+  const slot = allocSlot();
+  return [
+    ...prologue,
+    { $set: { [slot]: generateWithCtx(rewritten, ctx) } },
+    { $unwind: `$${slot}` },
+    { $replaceWith: `$${slot}` }
+  ];
+}
+function rejectScalarFanOutElements(arr) {
+  for (const el of arr.elements) {
+    const kind = scalarFanOutElementKind(el);
+    if (kind !== null) {
+      throw new CodegenError(
+        `Cannot fan out an array of ${kind} \u2014 each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?`,
+        el.pos
+      );
+    }
   }
+}
+function scalarFanOutElementKind(el) {
+  switch (el.type) {
+    case "NumberLiteral":
+      return "number";
+    case "BigIntLiteral":
+      return "bigint";
+    case "StringLiteral":
+    case "TemplateLiteral":
+      return "string";
+    case "BooleanLiteral":
+      return "boolean";
+    case "NullLiteral":
+      return "null";
+    case "RegexLiteral":
+      return "regex";
+    default:
+      return null;
+  }
+}
+function rejectNonDocumentReplaceRoot(value) {
   const literalKind = value.type === "NumberLiteral" ? "number" : value.type === "BigIntLiteral" ? "bigint" : value.type === "StringLiteral" ? "string" : value.type === "BooleanLiteral" ? "boolean" : value.type === "NullLiteral" ? "null" : value.type === "RegexLiteral" ? "regex" : null;
   if (literalKind !== null) {
     throw new CodegenError(

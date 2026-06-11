@@ -303,8 +303,63 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(jsmql.expr("$mergeObjects($, { x: 1 })")).toEqual({ $mergeObjects: ["$$ROOT", { x: 1 }] });
   });
 
-  it("rejects array RHS with an actionable error", () => {
-    expect(() => jsmql("[ $ = [1, 2] ]")).toThrow(/Cannot replace root with an array.*\$ = \{ items: \[\.\.\.\] \}/);
+  it("fans out an array-literal of documents (one output doc per element)", () => {
+    expect(jsmql("[ $ = [{ a: 1 }, { b: 2 }] ]")).toEqual([
+      { $set: { "__jsmql.__lookup1": [{ a: 1 }, { b: 2 }] } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+
+  it("fans out a spread field (`$ = [...$.items]`)", () => {
+    expect(jsmql("[ $ = [...$.items] ]")).toEqual([
+      { $set: { "__jsmql.__lookup1": "$items" } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+
+  it("fans out a provably-array expression (`.map`)", () => {
+    expect(jsmql("[ $ = $.items.map(x => ({ sku: x.sku })) ]")).toEqual([
+      { $set: { "__jsmql.__lookup1": { $map: { input: "$items", as: "x", in: { sku: "$$x.sku" } } } } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+
+  it("fans out `Object.entries(...)` into {k, v} documents", () => {
+    expect(jsmql("[ $ = Object.entries($.scores) ]")).toEqual([
+      { $set: { "__jsmql.__lookup1": { $objectToArray: "$scores" } } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+
+  it("a possibly-empty filter fan-out drops docs whose array is empty (per-document drop)", () => {
+    // `$unwind` of an empty array emits no document — so docs with no matching
+    // element are dropped, while others fan out. This is how a conditional drop
+    // is spelled (rather than a stream-wide `$$ = []`).
+    expect(jsmql("[ $ = $.items.filter(x => x.qty > 0) ]")).toEqual([
+      { $set: { "__jsmql.__lookup1": { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } } } },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+
+  it("a bare field-ref RHS stays a single-doc `$replaceWith` (not provably an array)", () => {
+    // `$.items` carries no compile-time type, so it is NOT fanned out — to fan
+    // out a field the user writes `$ = [...$.items]`.
+    expect(jsmql("[ $ = $.items ]")).toEqual([{ $replaceWith: "$items" }]);
+  });
+
+  it("rejects an empty array RHS, pointing at the conditional and stream-drop forms", () => {
+    expect(() => jsmql("[ $ = [] ]")).toThrow(
+      /Cannot fan out an empty array.*\$ = \$\.items\.filter\(\.\.\.\).*\$\$ = \[\]/,
+    );
+  });
+
+  it("rejects an array of scalar literals (elements must be documents)", () => {
+    expect(() => jsmql("[ $ = [1, 2] ]")).toThrow(/Cannot fan out an array of number.*\$ = \[\{ value: \.\.\. \}\]/);
   });
 
   it("rejects scalar number RHS with an actionable error", () => {
@@ -338,7 +393,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(r.valid).toBe(false);
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
     expect(r.errors[0].pos).toBeGreaterThan(0);
-    expect(r.errors[0].message).toMatch(/Cannot replace root with an array/);
+    expect(r.errors[0].message).toMatch(/Cannot fan out an array of number/);
   });
 
   it("clears `let` scope after `$ = …` (subsequent reference errors precisely)", () => {

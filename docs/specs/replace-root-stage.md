@@ -1,4 +1,4 @@
-# `$ = <expr>` → `$replaceWith` / `$facet` stage
+# `$ = <expr>` → `$replaceWith` / `$facet` / fan-out stage(s)
 
 ## Overview
 
@@ -6,6 +6,11 @@
 stage. The LHS is the bare `$` token — the document itself, the same role
 MQL's `$$ROOT` plays — and the assignment reads as "replace the current
 document with this expression."
+
+When the RHS is **provably an array** (an array literal, or an array-typed
+expression like `.map()` / `.filter()` / `Object.entries()`), the same surface
+instead *fans out*: one input document becomes one output document **per array
+element**. See [Fan-out variant](#fan-out-variant).
 
 We lower to `$replaceWith` (the shorter MQL spelling) rather than
 `$replaceRoot: { newRoot: <expr> }` (the legacy spelling). They are exact
@@ -54,6 +59,7 @@ about what the statement does to the document.
 | `$ = { ...$, x: 1 }` | `{ $replaceWith: { $mergeObjects: ["$$ROOT", { x: 1 }] } }` |
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, as: "__jsmql.__lookupN" } }`, `{ $replaceWith: { $first: "$__jsmql.__lookupN" } }`, trailing `{ $unset: "__jsmql" }` |
 | `$ = $.foo + $$$.coll.find(pred).count` (buried lookup) | Prologue `$lookup` + `$set $first` stages for the buried lookup, then `{ $replaceWith: <rewritten-expr> }` |
+| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (provably array) | `{ $set: { "__jsmql.__lookupN": <array> } }`, `{ $unwind: "$__jsmql.__lookupN" }`, `{ $replaceWith: "$__jsmql.__lookupN" }` — see [Fan-out variant](#fan-out-variant) |
 
 For the direct-lookup variant we deliberately skip the `$set { slot: $first slot }`
 step that `lowerLookup` emits for the assignment-target form (`$.users = …`).
@@ -124,6 +130,57 @@ Spread entries (`...rest`) and computed keys are also rejected in strict mode.
 
 **Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is no longer an error — it lowers to `$match` as stream-chain sugar for `$$ = $$.filter(...)` (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains)). The `$ = { key: $$.filter(p), … }` object form is still what triggers `$facet`; the difference is the assignment target (`$ =` vs a bare statement). The old `validateUnionPushShape` statement-position hook that rejected bare `$$.filter(...)` was removed once the bare form became valid.
 
+## Fan-out variant
+
+When the RHS of `$ = …` is **provably an array**, the statement fans out: one
+input document produces one output document per array element. `$unwind` needs
+a materialised field path (it can't unwind an inline array expression), so the
+array is first parked in a fresh compiler slot via `$set`, unwound, then each
+element becomes the new root via `$replaceWith`:
+
+```
+$ = [{ a: 1 }, { b: 2 }];
+// → [
+//   { $set:         { "__jsmql.__lookup1": [{ a: 1 }, { b: 2 }] } },
+//   { $unwind:      "$__jsmql.__lookup1" },
+//   { $replaceWith: "$__jsmql.__lookup1" },
+// ]
+```
+
+`lowerFanOut(arr, ctx, allocSlot, lowerBlockFn)` runs `extractLookupCalls` over
+the array first (buried `$$$.coll.find(...)` lookups materialise as prologue
+stages), then emits the three-stage sequence above. Like the direct-lookup
+variant it reuses the `allocSlot()` machinery and the closing `$replaceWith`
+discards the `__jsmql` namespace, so the trailing-`$unset` skip already applies.
+
+**What counts as "provably an array"** is exactly
+`staticBindingType(value) === "array"` (in `src/codegen.ts`): array literals,
+array-returning methods (`.map`, `.filter`, `.flatMap`, `.split`, `.slice` of an
+array, …), array operators, and `Object.entries/keys/values`. A bare field ref
+`$ = $.items` is **not** provably an array (field paths carry no compile-time
+type), so it stays a single-doc `$replaceWith`. To fan out a field, spread it
+into a literal: `$ = [...$.items]`.
+
+**Dispatch order** in `lowerReplaceRoot`: the compound-assign guard runs first;
+then array *literals* are validated and fanned out; then the direct-lookup check
+(so `$$$.coll.filter(...)` keeps its dedicated error rather than being swept into
+the generic fan-out); then non-literal provably-array RHS fans out; then the
+scalar-literal rejections; then the default `$replaceWith`.
+
+**Per-document drop is emergent, not a special case.** Default `$unwind` emits
+no document for an empty/missing array, so fanning out a possibly-empty array
+drops exactly the documents whose array came out empty and fans out the rest:
+
+```
+$ = $.items.filter(x => x.qty > 0);   // docs with no qualifying item are dropped
+```
+
+This is the idiomatic conditional-drop. There is deliberately **no** "drop"
+lowering for `$ = []` or `$ = undefined` — both are rejected/unchanged (see
+[Validation](#validation)); the "empty the whole stream" intent is already
+spelled `$$ = []` (see [replace-stream](#)/`$$ = <expr>`), and one behaviour with
+two spellings is a footgun we avoid.
+
 ## Detection
 
 `isReplaceRootAssign(op)` (in `src/pipeline.ts`) recognises the shape:
@@ -147,15 +204,22 @@ existing invariants for those helpers are untouched.
 
 ## Validation
 
-`lowerReplaceRoot` rejects four shapes before any stage is emitted, each
+`lowerReplaceRoot` rejects these shapes before any stage is emitted, each
 with a message that names a concrete fix:
 
 | Trigger | Message excerpt |
 |---|---|
 | `BinaryExpr` whose `.left === target` by reference identity (compound desugar `$++`, `$ += 5`, `$--`, `$ *= 2`, etc.) | `Cannot use compound assignment / increment on bare '$' — '$' is the whole document, not a scalar. Use '$ = { ...$, ...overrides }' to merge fields into the root or '$ = <newRoot>' to replace it outright.` |
-| `ArrayLiteral` RHS (e.g. `$ = [1, 2]`) | `Cannot replace root with an array. Use '.find(...)' for a single doc, or wrap: '$ = { items: [...] }'.` |
+| Empty array literal RHS (`$ = []`) | `Cannot fan out an empty array — '$ = []' would discard every document. To drop documents conditionally, fan out a data-dependent array (e.g. '$ = $.items.filter(...)'); to empty the stream, use '$$ = []'.` |
+| Array literal with a provably-scalar element (`$ = [1, 2]`, `$ = ["a"]`) | `Cannot fan out an array of <kind> — each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?` |
 | Number / BigInt / String / Boolean / Null / Regex literal RHS | `Cannot replace root with a <kind> — the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?` |
 | Direct `$$$.<coll>.filter(pred)` RHS (array result) | `Cannot replace root with an array — '.filter(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.filter(...) }'.` |
+
+`$ = undefined` is not handled here — it falls through to codegen's existing
+`UndefinedLiteral` rejection (`'undefined' is only meaningful in '$match'
+position …`). `$ = null` stays a scalar-literal rejection (the row above). A
+non-empty array literal of documents, or a non-literal provably-array
+expression, is **not** rejected — it [fans out](#fan-out-variant).
 
 Compound-desugar detection works by referential identity rather than a
 parser flag: `parsePrefixIncDec` (`src/parser.ts:860`), the postfix branch
@@ -216,12 +280,16 @@ src/
                            asFieldPath() both special-case empty path →
                            "$$ROOT". No other call site touches FieldRef.
   pipeline.ts              Updated. Adds isReplaceRootAssign,
-                           lowerReplaceRoot, rejectNonDocumentReplaceRoot.
+                           lowerReplaceRoot, rejectNonDocumentReplaceRoot,
+                           and the fan-out helpers lowerFanOut /
+                           rejectScalarFanOutElements / scalarFanOutElementKind.
                            Wires the interception into generatePipeline,
                            lowerUpdateFilterWithLookups. Inserts the bare-$
                            DeleteStmt rejection in two places.
                            lowerUpdateFilterWithLookups now returns
                            { stages, ctx } so the let-clearing flows out.
+                           Imports staticBindingType from codegen.ts to gate
+                           the non-literal fan-out branch.
   lookup-translation.ts    No change. translatePredicate is already exported
                            and is reused by lowerReplaceRoot's direct-lookup
                            branch.

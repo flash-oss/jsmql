@@ -265,6 +265,37 @@ $ = { ...$, computedScore: $.points * 1.1 };
   });
 });
 
+describe("explode order line-items into per-item documents (`$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // Flatten each paid order into one document per line item, carrying the
+    // order id and a computed revenue. When the `$ = <expr>` RHS is provably an
+    // array (here `.map(...)`), jsmql fans it out: materialise into a slot,
+    // `$unwind`, then `$replaceWith` each element as the new root — one input
+    // document becomes N output documents.
+    expect(
+      jsmql`
+$match($.status === "paid");
+$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));
+      `,
+    ).toEqual([
+      { $match: { status: "paid" } },
+      {
+        $set: {
+          "__jsmql.__lookup1": {
+            $map: {
+              input: "$lineItems",
+              as: "li",
+              in: { orderId: "$_id", sku: "$$li.sku", revenue: { $multiply: ["$$li.qty", "$$li.price"] } },
+            },
+          },
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+});
+
 describe("invoice finalisation pipeline", { features: ["Update filters"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.invoices.aggregate(jsmql(...))" }, () => {
     expect(

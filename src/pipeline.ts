@@ -550,6 +550,21 @@ function lowerReplaceRoot(
       el.pos,
     );
   }
+  // `$ = [<docs>]` and other provably-array RHS fan out: one output document per
+  // element, via `$set` into a temp slot → `$unwind` → `$replaceWith`. Array
+  // literals are validated element-wise here; non-literal array expressions
+  // (`.map`, `Object.entries`, …) are handled after the lookup check below.
+  if (el.value.type === "ArrayLiteral") {
+    if (el.value.elements.length === 0) {
+      throw new CodegenError(
+        `Cannot fan out an empty array — '$ = []' would discard every document. To drop documents conditionally, fan out a data-dependent array (e.g. '$ = $.items.filter(...)'); to empty the stream, use '$$ = []'.`,
+        el.value.pos,
+      );
+    }
+    rejectScalarFanOutElements(el.value);
+    return lowerFanOut(el.value, ctx, allocSlot, lowerBlockFn);
+  }
+
   rejectNonDocumentReplaceRoot(el.value);
 
   const direct = detectLookupCall(el.value, ctx);
@@ -575,26 +590,92 @@ function lowerReplaceRoot(
     return stages;
   }
 
+  // Non-literal provably-array RHS (`.map`, `.filter`, `Object.entries`, array
+  // operators, …) fans out too — same lowering as the array-literal case.
+  if (staticBindingType(el.value) === "array") {
+    return lowerFanOut(el.value, ctx, allocSlot, lowerBlockFn);
+  }
+
   const { stages: prologue, rewritten } = extractLookupCalls(el.value, ctx, allocSlot, lowerBlockFn);
   const out: object[] = [...prologue];
   out.push({ $replaceWith: generateWithCtx(rewritten, ctx) });
   return out;
 }
 
+type ArrayLiteralNode = Extract<Expr, { type: "ArrayLiteral" }>;
+
 /**
- * Reject RHS shapes that the user wouldn't have meant as a new document root.
- * Permissive by design — anything that *might* be a document (FieldRef,
- * MemberAccess, ObjectLiteral, OperatorCall, MethodCall, BinaryExpr, ternaries,
- * `$let`-style helpers) passes through; MongoDB validates document-shape at
- * runtime if our static check missed something.
+ * Lower a provably-array `$ = <arr>` to a fan-out: materialise the array into a
+ * compiler-owned slot, `$unwind` it (one output document per element — empty
+ * arrays drop the document, standard `$unwind` behaviour), then `$replaceWith`
+ * each element as the new root. `$unwind` needs a field path, so the inline
+ * array can't be unwound directly — hence the `$set` into a slot. Buried lookups
+ * inside the array materialise as prologue stages first.
+ */
+function lowerFanOut(
+  arr: Expr,
+  ctx: GenerateCtx,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+): object[] {
+  const { stages: prologue, rewritten } = extractLookupCalls(arr, ctx, allocSlot, lowerBlockFn);
+  const slot = allocSlot();
+  return [
+    ...prologue,
+    { $set: { [slot]: generateWithCtx(rewritten, ctx) } },
+    { $unwind: `$${slot}` },
+    { $replaceWith: `$${slot}` },
+  ];
+}
+
+/**
+ * Each fanned-out element becomes a document root, so a provably-scalar element
+ * (`$ = [1, 2]`, `$ = ["a"]`, …) can never be a valid root — reject it up front
+ * with an actionable message rather than emitting MQL the server will refuse.
+ * Spreads, object literals, field refs, ternaries, and calls are trusted (the
+ * server validates document-shape at runtime if our static check missed it).
+ */
+function rejectScalarFanOutElements(arr: ArrayLiteralNode): void {
+  for (const el of arr.elements) {
+    const kind = scalarFanOutElementKind(el);
+    if (kind !== null) {
+      throw new CodegenError(
+        `Cannot fan out an array of ${kind} — each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?`,
+        el.pos,
+      );
+    }
+  }
+}
+
+function scalarFanOutElementKind(el: ArrayElement): string | null {
+  switch (el.type) {
+    case "NumberLiteral":
+      return "number";
+    case "BigIntLiteral":
+      return "bigint";
+    case "StringLiteral":
+    case "TemplateLiteral":
+      return "string";
+    case "BooleanLiteral":
+      return "boolean";
+    case "NullLiteral":
+      return "null";
+    case "RegexLiteral":
+      return "regex";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Reject scalar-literal RHS shapes that the user wouldn't have meant as a new
+ * document root. Permissive by design — anything that *might* be a document
+ * (FieldRef, MemberAccess, ObjectLiteral, OperatorCall, MethodCall, BinaryExpr,
+ * ternaries, `$let`-style helpers) passes through; MongoDB validates
+ * document-shape at runtime if our static check missed something. Array RHS is
+ * handled earlier by the fan-out path in `lowerReplaceRoot`, not here.
  */
 function rejectNonDocumentReplaceRoot(value: Expr): void {
-  if (value.type === "ArrayLiteral") {
-    throw new CodegenError(
-      `Cannot replace root with an array. Use '.find(...)' for a single doc, or wrap: '$ = { items: [...] }'.`,
-      value.pos,
-    );
-  }
   const literalKind =
     value.type === "NumberLiteral"
       ? "number"
