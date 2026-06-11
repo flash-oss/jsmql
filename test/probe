@@ -1,0 +1,151 @@
+#!/usr/bin/env node
+// test/probe — run MQL against the local mongod and print the server's JSON result.
+// One reusable runner instead of a fresh tmp/*.mjs per check.
+// See test/CLAUDE.md "Verify MQL against a running MongoDB".
+//
+// Input: MQL JSON as a positional arg, or on stdin if no positional is given.
+//   echo '[{"$match":{"age":{"$gt":18}}}]' | ./test/probe
+//   ./test/probe '{"$gt":["$age",18]}' --doc '{"age":20}'
+//   node ../src/cli.ts --pipeline '$.age > 18' | ./test/probe   # pipe jsmql's MQL straight in
+//
+// Shape is auto-detected; override with a flag:
+//   --pipeline   db.coll.aggregate(<array>)
+//   --filter     db.coll.find(<object>)
+//   --expr       db.coll.aggregate([{ $addFields: { __v: <object> } }])  — a bare jsmql.expr fragment
+//   --update     db.coll.updateMany({}, <object>) then show the resulting docs
+// Auto: array → --pipeline; object whose top-level keys ALL start with '$' → --expr
+//       (so an update doc like {$set:…} must pass --update explicitly); otherwise → --filter.
+//
+// Other options:
+//   --doc <json>   seed doc(s) before running — object or JSON array, repeatable. Default: {}
+//   --uri <uri>    mongod connection string. Default mongodb://127.0.0.1:27017
+//   -o <file>      write output to <file> instead of stdout
+//   -h, --help     show this help
+//
+// Output goes to stdout (or -o <file>) as relaxed extended JSON. The server's own
+// rejection message is printed verbatim when mongod refuses the shape — that refusal
+// IS the signal you're probing for.
+
+import { readFileSync, writeFileSync } from "node:fs";
+import * as mongodb from "mongodb";
+const { MongoClient, BSON } = mongodb;
+const EJSON = BSON.EJSON; // mongodb re-exports the bson namespace; EJSON handles $date/$oid/etc.
+
+const HELP = readFileSync(new URL(import.meta.url), "utf8")
+  .split("\n")
+  .filter((l) => l.startsWith("//"))
+  .map((l) => l.slice(3))
+  .join("\n");
+
+function fail(msg) {
+  process.stderr.write(msg + "\n");
+  process.exit(1);
+}
+
+// --- arg parsing -----------------------------------------------------------
+const argv = process.argv.slice(2);
+const opts = { docs: [], uri: "mongodb://127.0.0.1:27017", out: null, mode: null };
+const positionals = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  switch (a) {
+    case "-h":
+    case "--help":
+      process.stdout.write(HELP + "\n");
+      process.exit(0);
+    case "--pipeline":
+    case "--filter":
+    case "--expr":
+    case "--update":
+      opts.mode = a.slice(2);
+      break;
+    case "--doc":
+      opts.docs.push(argv[++i] ?? fail("--doc needs a JSON value"));
+      break;
+    case "--uri":
+      opts.uri = argv[++i] ?? fail("--uri needs a value");
+      break;
+    case "-o":
+    case "--out":
+      opts.out = argv[++i] ?? fail("-o needs a file path");
+      break;
+    default:
+      if (a.startsWith("-")) fail(`Unknown option '${a}'. Run with --help.`);
+      positionals.push(a);
+  }
+}
+
+const parse = (s, what) => {
+  try {
+    return EJSON.parse(s, { relaxed: true });
+  } catch (e) {
+    fail(`Invalid JSON in ${what}: ${e.message}`);
+  }
+};
+
+// --- read the MQL ----------------------------------------------------------
+const raw = positionals.length > 0 ? positionals.join(" ") : readFileSync(0, "utf8");
+if (!raw.trim()) fail("No MQL given (pass a positional argument or pipe it on stdin). Run with --help.");
+const mql = parse(raw, "MQL input");
+
+// --- decide the shape ------------------------------------------------------
+let mode = opts.mode;
+if (!mode) {
+  if (Array.isArray(mql)) mode = "pipeline";
+  else if (mql && typeof mql === "object") {
+    const keys = Object.keys(mql);
+    mode = keys.length > 0 && keys.every((k) => k.startsWith("$")) ? "expr" : "filter";
+  } else {
+    fail("MQL must be a JSON array (pipeline) or object (filter / expr / update).");
+  }
+}
+
+// --- seed docs --------------------------------------------------------------
+const seed = opts.docs.length === 0
+  ? [{}]
+  : opts.docs.flatMap((d) => {
+    const parsed = parse(d, "--doc");
+    return Array.isArray(parsed) ? parsed : [parsed];
+  });
+
+// --- run it -----------------------------------------------------------------
+const client = new MongoClient(opts.uri, { serverSelectionTimeoutMS: 2000 });
+let result;
+try {
+  await client.connect();
+} catch (e) {
+  fail(
+    `Could not connect to mongod at ${opts.uri}: ${e.message}\n` +
+      "Start a local server first — see https://www.mongodb.com/docs/manual/administration/install-community/",
+  );
+}
+try {
+  const coll = client.db("jsmql_probe").collection("probe");
+  await coll.deleteMany({});
+  if (seed.length) await coll.insertMany(seed.map((d) => ({ ...d })));
+
+  if (mode === "pipeline") {
+    result = await coll.aggregate(mql).toArray();
+  } else if (mode === "filter") {
+    result = await coll.find(mql).toArray();
+  } else if (mode === "expr") {
+    result = await coll.aggregate([{ $addFields: { __v: mql } }]).toArray();
+  } else {
+    const res = await coll.updateMany({}, mql);
+    result = {
+      matchedCount: res.matchedCount,
+      modifiedCount: res.modifiedCount,
+      docs: await coll.find({}).toArray(),
+    };
+  }
+} catch (e) {
+  // The server rejecting the shape is a real probe result — report it, don't crash silently.
+  fail(`mongod rejected the ${mode}: ${e.message}`);
+} finally {
+  await client.close();
+}
+
+// --- emit -------------------------------------------------------------------
+const text = EJSON.stringify(result, null, 2, { relaxed: true }) + "\n";
+if (opts.out) writeFileSync(opts.out, text);
+else process.stdout.write(text);
