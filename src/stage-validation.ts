@@ -61,6 +61,23 @@ function rejectNonDocumentNewRoot(stage: string, value: Expr): void {
   }
 }
 
+/**
+ * Reject a non-object LITERAL body where the stage requires an object spec
+ * (`$group`, `$project`, `$addFields`, …). A field ref / runtime expression /
+ * param no-ops (the literal-gating invariant) — only a literal of a clearly
+ * non-object kind (string / number / array / …) is a certain violation. NOT for
+ * `$merge` / `$unionWith` (a bare string is a valid collection name) or
+ * expression-bodied stages (`$replaceWith`, `$sortByCount`). `fix` is the
+ * suggested correct form, appended to the message.
+ */
+function requireObjectStageBody(stage: string, body: Expr, fix: string = ""): void {
+  if (body.type === "ObjectLiteral") return;
+  const desc = describeLiteral(body);
+  if (desc === null) return; // non-literal — leave it for the server / runtime
+  const tail = fix ? ` ${fix}` : "";
+  throw new CodegenError(`'${stage}' expects an object body, but got ${desc}.${tail}`, body.pos);
+}
+
 // ── $match query-operator placement ─────────────────────────────────────────────
 //
 // A raw `$match` object body passes through verbatim, so query operators are
@@ -167,6 +184,7 @@ function validateCount(body: Expr): void {
 }
 
 function validateSort(body: Expr): void {
+  requireObjectStageBody("$sort", body, "Sort by a field, e.g. $sort({ field: 1 }).");
   const info = requireObjectBody("$sort", body);
   if (info === null) return;
   if (info.byKey.size > 32 && !info.hasSpread) {
@@ -196,6 +214,7 @@ function validateSort(body: Expr): void {
 }
 
 function validateProject(body: Expr): void {
+  requireObjectStageBody("$project", body, "List fields, e.g. $project({ field: 1 }).");
   const info = requireObjectBody("$project", body);
   if (info === null) return;
   if (info.byKey.size === 0 && !info.hasSpread) {
@@ -226,7 +245,16 @@ function validateUnset(body: Expr): void {
     return;
   }
   const els = arrayElements(body);
-  if (els === null) return;
+  if (els === null) {
+    // Not a string, not a plain array literal. A literal of another kind
+    // (number/object/bool) is certainly wrong; a field ref / array-with-spread /
+    // expression no-ops.
+    const desc = describeLiteral(body);
+    if (desc !== null && body.type !== "ArrayLiteral") {
+      throw new CodegenError(`'$unset' expects a field-name string or an array of strings, but got ${desc}.`, body.pos);
+    }
+    return;
+  }
   if (els.length === 0) throw new CodegenError(`'$unset' field-name array must not be empty.`, body.pos);
   for (const el of els) {
     if (litString(el) === null && describeLiteral(el) !== null) {
@@ -269,6 +297,7 @@ function validateUnwind(body: Expr): void {
 }
 
 function validateSample(body: Expr): void {
+  requireObjectStageBody("$sample", body, "Sample N documents, e.g. $sample({ size: 100 }).");
   const info = requireObjectBody("$sample", body, ["size"]);
   if (info === null) return;
   const size = info.byKey.get("size");
@@ -276,6 +305,7 @@ function validateSample(body: Expr): void {
 }
 
 function validateBucket(body: Expr): void {
+  requireObjectStageBody("$bucket", body, "e.g. $bucket({ groupBy: <expr>, boundaries: [...] }).");
   const info = requireObjectBody("$bucket", body, ["groupBy", "boundaries"]);
   if (info === null) return;
   const boundaries = info.byKey.get("boundaries");
@@ -319,6 +349,7 @@ function validateBucket(body: Expr): void {
 }
 
 function validateBucketAuto(body: Expr): void {
+  requireObjectStageBody("$bucketAuto", body, "e.g. $bucketAuto({ groupBy: <expr>, buckets: 5 }).");
   const info = requireObjectBody("$bucketAuto", body, ["groupBy", "buckets"]);
   if (info === null) return;
   const buckets = info.byKey.get("buckets");
@@ -328,6 +359,7 @@ function validateBucketAuto(body: Expr): void {
 }
 
 function validateSetWindowFields(body: Expr): void {
+  requireObjectStageBody("$setWindowFields", body, "e.g. $setWindowFields({ sortBy: {...}, output: {...} }).");
   const info = requireObjectBody("$setWindowFields", body, ["output"]);
   if (info === null) return;
   const output = info.byKey.get("output");
@@ -351,6 +383,7 @@ function validateSetWindowFields(body: Expr): void {
 }
 
 function validateFill(body: Expr): void {
+  requireObjectStageBody("$fill", body, "e.g. $fill({ output: { field: { method: 'linear' } }, sortBy: {...} }).");
   const info = requireObjectBody("$fill", body, ["output"]);
   if (info === null) return;
   const output = info.byKey.get("output");
@@ -384,6 +417,11 @@ function validateFill(body: Expr): void {
 }
 
 function validateGraphLookup(body: Expr): void {
+  requireObjectStageBody(
+    "$graphLookup",
+    body,
+    "$graphLookup takes an object spec, e.g. $graphLookup({ from, startWith, connectFromField, connectToField, as }).",
+  );
   const info = requireObjectBody("$graphLookup", body, [
     "from",
     "startWith",
@@ -410,6 +448,11 @@ function validateMerge(body: Expr): void {
 }
 
 function validateLookup(body: Expr): void {
+  requireObjectStageBody(
+    "$lookup",
+    body,
+    "$lookup takes an object spec, e.g. $lookup({ from, localField, foreignField, as }).",
+  );
   const info = requireObjectBody("$lookup", body, ["from", "as"]);
   if (info === null) return;
   const pipeline = info.byKey.get("pipeline");
@@ -428,6 +471,7 @@ function validateUnionWith(body: Expr): void {
 }
 
 function validateReplaceRoot(body: Expr): void {
+  requireObjectStageBody("$replaceRoot", body, "e.g. $replaceRoot({ newRoot: <document> }).");
   const info = requireObjectBody("$replaceRoot", body, ["newRoot"]);
   if (info === null) return;
   const newRoot = info.byKey.get("newRoot");
@@ -435,11 +479,32 @@ function validateReplaceRoot(body: Expr): void {
 }
 
 function validateGroup(body: Expr): void {
+  requireObjectStageBody("$group", body, `Group by a field, e.g. $group({ _id: "$field" }).`);
   requireObjectBody("$group", body, ["_id"]);
 }
 
 function validateGeoNear(body: Expr): void {
+  requireObjectStageBody(
+    "$geoNear",
+    body,
+    "e.g. $geoNear({ near: { type: 'Point', coordinates: [...] }, distanceField: '...' }).",
+  );
   requireObjectBody("$geoNear", body, ["near"]);
+}
+
+// $addFields / $set take a `{ field: <expr>, … }` spec; a scalar/array literal
+// body is certainly wrong. (No required keys — an empty object is valid.)
+function validateAddFields(stage: string, body: Expr): void {
+  requireObjectStageBody(stage, body, `Add fields, e.g. ${stage}({ name: <expr> }).`);
+}
+
+function validateDensify(body: Expr): void {
+  requireObjectStageBody(
+    "$densify",
+    body,
+    "e.g. $densify({ field: '...', range: { step: 1, unit: '...', bounds: '...' } }).",
+  );
+  requireObjectBody("$densify", body, ["field", "range"]);
 }
 
 function validateDocuments(body: Expr): void {
@@ -459,12 +524,15 @@ const STAGE_BODY_VALIDATORS: Record<string, BodyValidator> = {
   $count: validateCount,
   $sort: validateSort,
   $project: validateProject,
+  $addFields: (b) => validateAddFields("$addFields", b),
+  $set: (b) => validateAddFields("$set", b),
   $unset: validateUnset,
   $unwind: validateUnwind,
   $bucket: validateBucket,
   $bucketAuto: validateBucketAuto,
   $setWindowFields: validateSetWindowFields,
   $fill: validateFill,
+  $densify: validateDensify,
   $group: validateGroup,
   $lookup: validateLookup,
   $unionWith: validateUnionWith,

@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-12 — fix: object-bodied stages reject a non-object literal body (`$group("externalId")` → throw)
+
+`$group("externalId")` compiled to `{ $group: "externalId" }` — which `mongod` rejects ("a group's fields must be specified in an object") — instead of throwing. The per-stage validators bailed silently on a non-object body (`requireObjectBody` → `objectInfo` returns null on a string, so the validator no-oped). Now a new `requireObjectStageBody` guard (in [src/stage-validation.ts](../src/stage-validation.ts)) throws on a body that is a literal of a non-object kind (string / number / array / …) with an actionable "expects an object body … e.g. …" message, for **every** object-bodied stage: `$group`, `$project`, `$sort`, `$sample`, `$addFields`/`$set` (new validators), `$bucket`/`$bucketAuto`, `$setWindowFields`, `$fill`, `$densify` (new), `$graphLookup`, `$replaceRoot`, `$geoNear`, `$lookup`. `$unset` likewise now rejects a non-string/non-array literal body. Verified on `mongod`: the old emitted shapes (`{ $group: "externalId" }`, `{ $addFields: 5 }`, `{ $sample: 5 }`) are all server-rejected; the valid object forms run.
+
+Per the literal-gating invariant the guard is a no-op on a field-ref / runtime-expression body (it could resolve to a value) and on `$merge`/`$unionWith` (a bare string is a valid collection name) — only a certain-wrong literal throws. Files: [src/stage-validation.ts](../src/stage-validation.ts), [docs/specs/pipeline-validation.md](specs/pipeline-validation.md), [test/stage-validation.test.ts](../test/stage-validation.test.ts).
+
+---
+
 ## 2026-06-12 — feat: operator-argument validation subsystem; none-shape ops reject arguments
 
 New compile-time validator for value-position `$op(...)` calls — the mirror of the stage-body validator. [src/operator-validation.ts](../src/operator-validation.ts) exposes `validateOperatorArgs(name, style, args, pos)`, called from `generateOperatorCall` ([src/codegen.ts](../src/codegen.ts)) after the spread guard and before shape dispatch. It is driven by a new optional `args?: ArgRules` dimension on `OperatorDef` ([src/operators.ts](../src/operators.ts)), attached with a `withArgs(def, rules)` wrapper (the sibling of `acc(...)`, so no factory signature changed). It reuses the shared [literal-gate](../src/literal-gate.ts) helpers and routes arity errors through the exported `checkArity`, so `$op(...)` errors read identically to the `.foo()` JS-method family. **Key difference from the stage validator: no constant-only inversion** — operator arg slots accept runtime expressions, so a non-literal is never a certain violation. See [docs/specs/operator-validation.md](specs/operator-validation.md).

@@ -106,7 +106,9 @@ small, literal-gated validator per stage:
 | `$count` | literal field name: non-empty, no `$` prefix, no `.` |
 | `$sort` | ≤ 32 keys; literal direction ∈ {1, -1} — a literal string (`"desc"`) or boolean direction is also rejected (a `{ $meta: … }` object is not a literal, so it passes the gate) |
 | `$project` | non-empty; no inclusion/exclusion mixing (except `_id`) |
-| `$unset` | non-empty string / non-empty array of strings |
+| `$addFields` / `$set` | object body (a scalar/array literal body is rejected) |
+| `$densify` | object body; required `field`+`range` |
+| `$unset` | non-empty string / non-empty array of strings (a non-string/non-array literal is rejected) |
 | `$unwind` | string-form path starts with `$`; `includeArrayIndex` not `$`-prefixed; `preserveNullAndEmptyArrays` boolean |
 | `$bucket` | required `groupBy`+`boundaries`; literal boundaries ≥ 2, strictly ascending, same type |
 | `$bucketAuto` | required `groupBy`+`buckets`; literal `buckets` positive integer; `granularity` enum |
@@ -124,6 +126,17 @@ small, literal-gated validator per stage:
 Enum checks (`$merge.whenMatched`, `$fill.method`, `$bucketAuto.granularity`) run
 the value through `closestNameTo` for a `Did you mean '…'?` suggestion. Required-key
 checks skip when the body carries a spread (the key might be in it).
+
+**Object-body guard (`requireObjectStageBody`).** Every object-bodied stage
+(`$group`, `$project`, `$sort`, `$sample`, `$addFields`/`$set`, `$bucket*`,
+`$setWindowFields`, `$fill`, `$densify`, `$graphLookup`, `$replaceRoot`,
+`$geoNear`, `$lookup`) rejects a body that is a literal of a non-object kind
+(`$group("externalId")` → `{ $group: "externalId" }`, which the server rejects)
+with an actionable "expects an object body … e.g. …" message. Per the gate, a
+field-ref / runtime-expression body still compiles. This guard is **not** applied
+to `$merge` / `$unionWith` (a bare string is a valid collection name) or to the
+expression-bodied stages (`$replaceWith`, `$sortByCount`, `$unwind`, `$count`,
+`$limit`/`$skip`), which have their own type rules above.
 
 ## Part 3 — `$match` query-operator placement (`validateMatchPlacement`)
 

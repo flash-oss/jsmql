@@ -51,6 +51,38 @@ describe("stage body validation — $count", () => {
   });
 });
 
+describe("stage body validation — non-object body (wrong-literal-kind)", () => {
+  // The flagship: an object-bodied stage given a scalar/array literal body
+  // (which the server always rejects) now throws instead of emitting it.
+  it("$group rejects a non-object literal body", () => {
+    expect(() => jsmql('[ $group("externalId") ]')).toThrow(
+      /'\$group' expects an object body, but got a string\. Group by a field/,
+    );
+    expect(() => jsmql("[ $group(5) ]")).toThrow(/'\$group' expects an object body, but got a number/);
+    expect(() => jsmql("[ $group([1, 2]) ]")).toThrow(/'\$group' expects an object body, but got an array/);
+  });
+  it("$addFields / $set reject a scalar body", () => {
+    expect(() => jsmql("[ $addFields(5) ]")).toThrow(/'\$addFields' expects an object body, but got a number/);
+    expect(() => jsmql('[ $set("x") ]')).toThrow(/'\$set' expects an object body, but got a string/);
+  });
+  it("$project / $sort / $sample reject a scalar body", () => {
+    expect(() => jsmql('[ $project("name") ]')).toThrow(/'\$project' expects an object body/);
+    expect(() => jsmql("[ $sort(1) ]")).toThrow(/'\$sort' expects an object body/);
+    expect(() => jsmql("[ $sample(5) ]")).toThrow(/'\$sample' expects an object body/);
+  });
+  it("$unset rejects a non-string / non-array literal body", () => {
+    expect(() => jsmql("[ $unset(5) ]")).toThrow(/'\$unset' expects a field-name string or an array of strings/);
+  });
+  // The literal-gating invariant holds: a field-ref / runtime-expression body is
+  // NOT a certain violation here (it could resolve to a value), so it compiles.
+  it("does not throw on a non-literal body (gate)", () => {
+    expect(jsmql("[ $addFields({ x: $.y }) ]")).toEqual([{ $addFields: { x: "$y" } }]);
+    expect(jsmql('[ $group({ _id: "$externalId" }) ]')).toEqual([{ $group: { _id: "$externalId" } }]);
+    expect(jsmql('[ $unset("a") ]')).toEqual([{ $unset: "a" }]);
+    expect(jsmql('[ $unset(["a", "b"]) ]')).toEqual([{ $unset: ["a", "b"] }]);
+  });
+});
+
 describe("stage body validation — $sort", () => {
   it("rejects a direction that isn't 1 or -1", () => {
     expect(() => jsmql("[ $sort({ a: 2 }) ]")).toThrow(/direction for 'a' must be 1 .* or -1/);
