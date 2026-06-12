@@ -414,7 +414,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
                 as: "it",
                 in: {
                   $and: [
-                    { $ne: ["$$it", null] },
+                    { $ne: [{ $ifNull: ["$$it", null] }, null] },
                     { $ne: ["$$it", false] },
                     { $ne: ["$$it", ""] },
                     { $ne: ["$$it", 0] },

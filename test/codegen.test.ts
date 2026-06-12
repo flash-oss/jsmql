@@ -5,7 +5,9 @@ import { jsmql } from "../src/index.ts";
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
 // expected outputs for `&&`, `||`, `!`, `?:`, `Boolean()`, and predicate-
 // method bodies wherever the operand is not provably boolean.
-const truthy = (v: unknown) => ({ $and: [{ $ne: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
+const truthy = (v: unknown) => ({
+  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+});
 
 describe("basic literals", () => {
   it("passes number through", () => {
@@ -770,6 +772,25 @@ describe("comparison operators", () => {
   });
   it("in", () => {
     expect(jsmql.expr('$.status in ["active", "pending"]')).toEqual({ $in: ["$status", ["active", "pending"]] });
+  });
+});
+
+describe("jsBool truthiness normalizes missing → null", () => {
+  // A missing field is NOT `== null` under MongoDB's $eq/$ne (`$eq:["$absent",null]`
+  // is false), so a bare `$ne:[v,null]` would treat a missing value as truthy —
+  // unlike JS, where `undefined` is falsy. jsBool wraps the null-check operand in
+  // `$ifNull(v, null)` so missing collapses to null first. Verified on mongod:
+  // `arr.filter(x => x.name)` drops elements whose `name` is absent.
+  it("the truthy null-clause is $ifNull-normalized (catches missing AND null)", () => {
+    expect(jsmql.expr("$.items.filter(x => x.name)")).toEqual({
+      $filter: { input: "$items", as: "x", cond: truthy("$$x.name") },
+    });
+    // The first clause must be the $ifNull form, not a bare $ne.
+    expect(truthy("$$x.name").$and[0]).toEqual({ $ne: [{ $ifNull: ["$$x.name", null] }, null] });
+  });
+  it("&&/||/ternary share the same normalized coercion", () => {
+    expect(jsmql.expr("$.a ? $.b : $.c")).toEqual({ $cond: [truthy("$a"), "$b", "$c"] });
+    expect(jsmql.expr("!$.a")).toEqual({ $not: truthy("$a") });
   });
 });
 

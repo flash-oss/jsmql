@@ -50,7 +50,7 @@ describe("$out — RHS chain: $$.filter(<predicate>) → $match + $out", () => {
           $expr: {
             $not: {
               $and: [
-                { $ne: ["$active", null] },
+                { $ne: [{ $ifNull: ["$active", null] }, null] },
                 { $ne: ["$active", false] },
                 { $ne: ["$active", ""] },
                 { $ne: ["$active", 0] },

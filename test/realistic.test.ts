@@ -22,7 +22,9 @@ import "../src/ops.ts";
 declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?: string; features?: string[] } }
 
 // JS-truthiness coercion jsmql emits for `&&`/`||`/ternary conditions.
-const truthy = (v: unknown) => ({ $and: [{ $ne: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
+const truthy = (v: unknown) => ({
+  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+});
 
 describe("snapshot one user, then pivot to their 5 most-recent orders", { features: ["Pipelines"] }, () => {
   it(
@@ -682,7 +684,7 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
         $cond: [
           {
             $and: [
-              { $ne: ["$active", null] },
+              { $ne: [{ $ifNull: ["$active", null] }, null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -822,7 +824,7 @@ describe("reorder alert with ** and unary !", { features: ["Arithmetic and Math"
           {
             $not: {
               $and: [
-                { $ne: ["$discontinued", null] },
+                { $ne: [{ $ifNull: ["$discontinued", null] }, null] },
                 { $ne: ["$discontinued", false] },
                 { $ne: ["$discontinued", ""] },
                 { $ne: ["$discontinued", 0] },
@@ -1020,7 +1022,12 @@ describe("full display name via .filter(Boolean).join", { features: ["Array meth
               input: ["$firstName", "$middleName", "$lastName"],
               as: "v",
               cond: {
-                $and: [{ $ne: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }],
+                $and: [
+                  { $ne: [{ $ifNull: ["$$v", null] }, null] },
+                  { $ne: ["$$v", false] },
+                  { $ne: ["$$v", ""] },
+                  { $ne: ["$$v", 0] },
+                ],
               },
             },
           },
@@ -1058,7 +1065,7 @@ describe("full address with conditional inclusion + filter + join", { features: 
                   $cond: [
                     {
                       $and: [
-                        { $ne: ["$building", null] },
+                        { $ne: [{ $ifNull: ["$building", null] }, null] },
                         { $ne: ["$building", false] },
                         { $ne: ["$building", ""] },
                         { $ne: ["$building", 0] },
@@ -1077,7 +1084,12 @@ describe("full address with conditional inclusion + filter + join", { features: 
               ],
               as: "v",
               cond: {
-                $and: [{ $ne: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }],
+                $and: [
+                  { $ne: [{ $ifNull: ["$$v", null] }, null] },
+                  { $ne: ["$$v", false] },
+                  { $ne: ["$$v", ""] },
+                  { $ne: ["$$v", 0] },
+                ],
               },
             },
           },
@@ -1850,7 +1862,7 @@ $$$$.exports.email_contacts = $$;
                 $cond: [
                   {
                     $and: [
-                      { $ne: ["$active", null] },
+                      { $ne: [{ $ifNull: ["$active", null] }, null] },
                       { $ne: ["$active", false] },
                       { $ne: ["$active", ""] },
                       { $ne: ["$active", 0] },

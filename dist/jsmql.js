@@ -3544,8 +3544,13 @@ function isProvablyBool(expr) {
 function jsBool(value) {
   return {
     $and: [
-      { $ne: [value, null] },
-      // catches null AND missing — MongoDB treats them equal in $ne
+      // Catches both `null` and *missing*. A bare `$ne: [value, null]` does NOT
+      // catch missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct
+      // from null (`$eq: ["$absent", null]` is false), so `arr.filter(x => x.f)`
+      // would wrongly keep elements where `f` is absent. `$ifNull` collapses
+      // missing → null first, matching JS where `undefined` is falsy. The other
+      // three clauses compare the raw value (false/""/0 are never "missing").
+      { $ne: [{ $ifNull: [value, null] }, null] },
       { $ne: [value, false] },
       { $ne: [value, ""] },
       { $ne: [value, 0] }

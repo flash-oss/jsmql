@@ -716,7 +716,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) â€
             $cond: [
               {
                 $and: [
-                  { $ne: ["$active", null] },
+                  { $ne: [{ $ifNull: ["$active", null] }, null] },
                   { $ne: ["$active", false] },
                   { $ne: ["$active", ""] },
                   { $ne: ["$active", 0] },
