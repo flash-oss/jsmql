@@ -1487,6 +1487,11 @@
           if (v instanceof Date) return compact(v);
           const s = compact(v);
           if (c + s.length <= 80) return s;
+          // A scalar (string / number / boolean / null) can't be broken across
+          // lines — its compact form IS its only form. Without this guard a
+          // long string falls into the object branch below and `Object.keys`
+          // walks its character indices, rendering "abc" as { "0": "a", … }.
+          if (v === null || typeof v !== "object") return s;
           const pad = " ".repeat(i + 2);
           const close = "\n" + " ".repeat(i);
           if (Array.isArray(v))
