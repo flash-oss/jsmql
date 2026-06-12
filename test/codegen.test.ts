@@ -211,6 +211,29 @@ describe("zero-arg operators", () => {
   it("$rand", () => {
     expect(jsmql.expr("$rand()")).toEqual({ $rand: {} });
   });
+
+  it("$createObjectId() / $count() emit the empty-object form", () => {
+    expect(jsmql.expr("$createObjectId()")).toEqual({ $createObjectId: {} });
+    expect(jsmql.expr("$count()")).toEqual({ $count: {} });
+  });
+
+  // A none-shape operator silently dropped any args it was given (emitting a
+  // valid-but-not-what-the-user-meant `{ $op: {} }`). Reject them instead.
+  it("rejects arguments to a none-shape operator", () => {
+    expect(() => jsmql.expr("$rand(1, 2)")).toThrow(/\$rand\(\) takes no arguments, got 2/);
+    expect(() => jsmql.expr("$createObjectId($.x)")).toThrow(/\$createObjectId\(\) takes no arguments, got 1/);
+    expect(() => jsmql.expr("$count(5)")).toThrow(/\$count\(\) takes no arguments, got 1/);
+    // object-style is rejected too — the arg count is 1, not 0.
+    expect(() => jsmql.expr("$rand({ x: 1 })")).toThrow(/\$rand\(\) takes no arguments, got 1/);
+  });
+
+  // The window ranking ops compute position from the $setWindowFields ordering,
+  // so a passed field is always a mistake — point at sortBy.
+  it("redirects window ranking ops to the $setWindowFields sortBy", () => {
+    expect(() => jsmql("$setWindowFields({ sortBy: { t: 1 }, output: { r: $rank($.x) } });")).toThrow(
+      /\$rank\(\) takes no arguments, got 1\. Its value is computed from the '\$setWindowFields' sortBy/,
+    );
+  });
 });
 
 describe("unknown operators (fallthrough)", () => {

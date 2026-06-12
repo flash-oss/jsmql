@@ -25,7 +25,8 @@ a template literal, a computed key, or a spread, the check becomes a no-op and
 the MQL is emitted unchanged. This is how comprehensive coverage coexists with
 rule #1: we never throw on a value we cannot statically pin down. (See the
 helper gate — `litNumber` / `litString` / `litBool` / `describeLiteral` /
-`objectInfo` / `arrayElements` — in `src/stage-validation.ts`.)
+`objectInfo` / `arrayElements` — in `src/literal-gate.ts`, shared with the
+operator-argument validator; see [operator-validation.md](operator-validation.md).)
 
 **The constant-only-slot exception (HR3).** A few slots MUST hold a compile-time
 constant — `$limit` / `$skip` / `$sample.size` / `$bucketAuto.buckets` /
@@ -35,7 +36,7 @@ reference or runtime expression is *itself* the 100%-certain violation (the
 server rejects `{ $limit: "$n" }`, `{ $lookup: { pipeline: "$x" } }`, …), so it
 throws. A compile-bound `ParamRef` is exempt — it inlines to a literal at codegen,
 so it may be a valid constant. Implemented by `checkIntBound` (numeric slots) and
-`requireConstantArray` (array slots) in `src/stage-validation.ts`.
+`requireConstantArray` (array slots) in `src/literal-gate.ts`.
 
 ## Part 1 — Structural stage placement (`src/pipeline.ts`)
 

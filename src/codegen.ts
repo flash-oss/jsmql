@@ -1,4 +1,5 @@
 import { lookupOperator } from "./operators.ts";
+import { validateOperatorArgs } from "./operator-validation.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
@@ -1772,6 +1773,9 @@ function generateOperatorCall(
   // (`$op(...arr)`) is not supported on any operator — pass operands as
   // separate args or as a single array literal.
   assertNoSpread(args, name, pos);
+  // Literal-gated argument validation (arity / required keys / enums / types).
+  // Runs after the spread guard, before shape dispatch; see operator-validation.ts.
+  validateOperatorArgs(name, style, args, pos);
   // Special case: $literal(value) — the argument is wrapped verbatim and
   // MongoDB does not re-evaluate it at query time. Recurse with the
   // `insideLiteral` flag so nested `"$..."` strings don't get a second
@@ -3133,7 +3137,7 @@ type Arity = { sig: string; exact?: number; allowed?: readonly number[]; atLeast
  * that count spread args). `prefix` is `"."` for instance methods (the default)
  * or `"Math."` / `"Object."` / `"Set."` / `"regex."` for the static families.
  */
-function checkArity(method: string, spec: Arity, count: number, callPos: number, prefix: string = "."): void {
+export function checkArity(method: string, spec: Arity, count: number, callPos: number, prefix: string = "."): void {
   const ok =
     spec.none !== undefined
       ? count === 0

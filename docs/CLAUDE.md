@@ -31,6 +31,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/method-dispatch.md` | `.foo()` method-call dispatch, lambda scoping, regex/template/optional-chaining lexing |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body rule |
 | `specs/pipeline-validation.md` | Compile-time validation: structural stage placement + per-stage body shape + `$match` operator placement |
+| `specs/operator-validation.md` | Compile-time validation of `$op(...)` arguments: arity, object required/unknown keys, enums, literal types (the value-position mirror of pipeline-validation) |
 | `specs/filter-mode.md` | No-semicolon top-level dispatch: a bare expression → a Filter document |
 | `specs/match-query-translation.md` | The `$match`/Filter expression-body → query-language translator |
 | `specs/update-filter.md` | Assignment + `delete` statements → `$set` / `$unset` stages |

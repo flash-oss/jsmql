@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-12 — feat: operator-argument validation subsystem; none-shape ops reject arguments
+
+New compile-time validator for value-position `$op(...)` calls — the mirror of the stage-body validator. [src/operator-validation.ts](../src/operator-validation.ts) exposes `validateOperatorArgs(name, style, args, pos)`, called from `generateOperatorCall` ([src/codegen.ts](../src/codegen.ts)) after the spread guard and before shape dispatch. It is driven by a new optional `args?: ArgRules` dimension on `OperatorDef` ([src/operators.ts](../src/operators.ts)), attached with a `withArgs(def, rules)` wrapper (the sibling of `acc(...)`, so no factory signature changed). It reuses the shared [literal-gate](../src/literal-gate.ts) helpers and routes arity errors through the exported `checkArity`, so `$op(...)` errors read identically to the `.foo()` JS-method family. **Key difference from the stage validator: no constant-only inversion** — operator arg slots accept runtime expressions, so a non-literal is never a certain violation. See [docs/specs/operator-validation.md](specs/operator-validation.md).
+
+First check shipped (this commit): **none-shape operators reject arguments.** `$rand` / `$createObjectId` / `$count` / `$rank` / `$denseRank` / `$documentNumber` take zero arguments, but codegen silently *dropped* any it was given — emitting a valid-but-unintended `{ $op: {} }` and hiding the user's misconception that the argument mattered (`$rand(1, 2)` → `{ $rand: {} }`). Now any argument throws (`$rand() takes no arguments, got 2`); the window ranking ops add a redirect to the `$setWindowFields` sortBy, where their order actually comes from. Arg count is always statically known, so this never produces a false positive. The `ArgRules` type declares the full forward surface (arity / type / object-key / enum / structural rules) that subsequent commits fill in per operator. Files: [src/operators.ts](../src/operators.ts), [src/operator-validation.ts](../src/operator-validation.ts), [src/codegen.ts](../src/codegen.ts), [docs/specs/operator-validation.md](specs/operator-validation.md), [test/codegen.test.ts](../test/codegen.test.ts).
+
+---
+
 ## 2026-06-12 — refactor: extract the literal-gating helpers into `src/literal-gate.ts`
 
 The literal-inspection + shared-check helpers that uphold the literal-gating invariant (`litNumber` / `litString` / `litBool` / `describeLiteral` / `objectInfo` / `arrayElements` / `requireKeys` / `requireObjectBody` / `checkEnum` / `checkIntBound` / `nonConstantDesc` / `requireConstantArray`) were file-local in [src/stage-validation.ts](../src/stage-validation.ts). They are now in a new shared module [src/literal-gate.ts](../src/literal-gate.ts), imported back by `stage-validation.ts` unchanged. Pure move, no behaviour change (2166 tests still pass).

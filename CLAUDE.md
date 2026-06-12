@@ -97,6 +97,8 @@ src/
   system-stage-translation.ts  `$$.indexStats()` / `$$$$.currentOp(…)` / … → diagnostic / system source stages. See docs/specs/system-stages.md.
   stream-methods.ts            Registry of chainable array-shaped methods on a `$$ = …` RHS (plus the `.reduce` wrap forms). See docs/specs/stream-methods.md.
   stage-validation.ts          Per-stage body-shape validation (literal-gated) + `$match` placement rules. See docs/specs/pipeline-validation.md.
+  literal-gate.ts              Shared literal-gating helpers (litNumber/objectInfo/requireObjectBody/checkEnum/checkIntBound/…) used by both validators. See docs/specs/pipeline-validation.md § literal-gating invariant.
+  operator-validation.ts       Per-operator `$op(...)` argument validation (literal-gated): arity, object keys, enums, literal types. See docs/specs/operator-validation.md.
   ops.ts          GENERATED ambient `declare global` types (`@koresar/jsmql/ops`). See docs/specs/ops-generation.md.
 docs/
   LANGUAGE.md     User-facing language reference (canonical for user-visible behaviour + examples).

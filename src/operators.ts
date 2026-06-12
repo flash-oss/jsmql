@@ -9,6 +9,56 @@ export type FlexShape = { kind: "flex" };
 
 export type OperatorShape = SingleShape | ArrayShape | ObjectShape | NoneShape | FlexShape;
 
+// ── Argument-validation metadata (the `args` dimension) ──────────────────────
+// Optional per-operator rules that drive the literal-gated operator-argument
+// validator in src/operator-validation.ts (the mirror of stage-validation.ts).
+// Every field is optional and only consulted for the call shapes it applies to;
+// an operator with no `args` is validated by shape alone (arity for none/single/
+// array). See docs/specs/operator-validation.md.
+
+/** The BSON type family a literal arg must belong to (a literal of another family is a certain violation). */
+export type ArgType =
+  | "number"
+  | "integer"
+  | "int-or-long"
+  | "string"
+  | "bool"
+  | "object"
+  | "array"
+  | "date"
+  | "timestamp"
+  | "number-or-date";
+
+/** A named, shared enum set resolved in operator-validation.ts, or an inline literal set. */
+export type EnumRef = readonly string[] | "timeUnit" | "weekday" | "bsonTypeName" | "regexFlags" | "metaKeyword";
+
+export type ArgRules = {
+  // ARITY of the effective operand list (positional count when >1, else the
+  // single array-literal's element count). For array/flex shapes; none-shape
+  // arity (0) is derived from the shape and needs no rule. `sig` is the human
+  // signature for the message (e.g. "dividend, divisor").
+  arity?: { exact?: number; allowed?: readonly number[]; atLeast?: number; sig?: string };
+  // Per-operand / per-slot literal TYPE (DEF-029 lives here). A field ref / op
+  // call / param NO-OPs the check (only literals are judged).
+  singleType?: ArgType; // single-shape arg
+  elementType?: ArgType; // every literal element of a variadic list
+  positionalTypes?: readonly ArgType[]; // fixed positional slots
+  // OBJECT-body rules (object form / object-shape positional). `required ∪
+  // optional` is the closed key set; an out-of-set key throws didYouMean unless
+  // `closedKeys: false`.
+  required?: readonly string[];
+  optional?: readonly string[];
+  closedKeys?: boolean;
+  enums?: Record<string, EnumRef>;
+  keyTypes?: Record<string, ArgType>;
+  keyIntBounds?: Record<string, { min?: number; max?: number }>;
+  // Structural key-group rules.
+  exactlyOneOf?: readonly string[];
+  atLeastOneOf?: readonly string[];
+  mutuallyExclusive?: readonly (readonly string[])[];
+  branches?: { key: string; required: readonly string[] };
+};
+
 export const OPERATOR_CATEGORIES = [
   "arithmetic",
   "array",
@@ -45,6 +95,8 @@ export type OperatorDef = {
   // that have *both* expression and accumulator forms ($sum, $avg, $max, …) are
   // unrestricted and leave this unset.
   accumulatorOnly?: boolean;
+  // Optional argument-validation rules (see ArgRules). Attached via withArgs(...).
+  args?: ArgRules;
 };
 
 const SINGLE: SingleShape = { kind: "single" };
@@ -71,6 +123,12 @@ function obj(category: OperatorCategory, description: string, ...keys: string[])
 // `$setWindowFields` output). Wraps any of the shape factories: `acc(single(...))`.
 function acc(def: OperatorDef): OperatorDef {
   return { ...def, accumulatorOnly: true };
+}
+// Attach argument-validation rules to a built def. Composes with any factory
+// and with acc(...): `withArgs(single("arithmetic", "…"), { singleType: "number" })`,
+// `acc(withArgs(obj("array", "…", "output", "sortBy"), { required: [...] }))`.
+function withArgs(def: OperatorDef, rules: ArgRules): OperatorDef {
+  return { ...def, args: rules };
 }
 
 export const OPERATORS: Record<string, OperatorDef> = {
