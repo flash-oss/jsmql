@@ -400,6 +400,40 @@ describe("operator literal-type validation — date slots (was DEF-029)", () => 
   });
 });
 
+describe("operator literal-type validation — numeric / bitwise / object / array / timestamp", () => {
+  it("numeric ops reject a literal non-number (no coercion)", () => {
+    expect(() => jsmql.expr('$abs("x")')).toThrow(/'\$abs' expects a number, but got a string/);
+    expect(() => jsmql.expr("$sqrt(true)")).toThrow(/'\$sqrt' expects a number, but got a boolean/);
+    expect(() => jsmql.expr('$multiply($.a, "x")')).toThrow(/'\$multiply' expects a number, but got a string/);
+    expect(() => jsmql.expr('$add($.price, "x")')).toThrow(/'\$add' expects a number or a date, but got a string/);
+  });
+
+  it("bitwise ops reject a non-integer number / non-number", () => {
+    expect(() => jsmql.expr("$bitNot(5.5)")).toThrow(/'\$bitNot' expects an integer, but got a number/);
+    expect(() => jsmql.expr("$bitAnd($.a, 2.5)")).toThrow(/'\$bitAnd' expects an integer, but got a number/);
+    expect(() => jsmql.expr('$bitNot("x")')).toThrow(/'\$bitNot' expects an integer, but got a string/);
+  });
+
+  it("object / array / timestamp shape mismatches are rejected", () => {
+    expect(() => jsmql.expr('$mergeObjects("hello")')).toThrow(/'\$mergeObjects' expects a document, but got a string/);
+    expect(() => jsmql.expr("$objectToArray(5)")).toThrow(/'\$objectToArray' expects a document, but got a number/);
+    expect(() => jsmql.expr('$size("hello")')).toThrow(/'\$size' expects an array, but got a string/);
+    expect(() => jsmql.expr("$reverseArray(5)")).toThrow(/'\$reverseArray' expects an array, but got a number/);
+    expect(() => jsmql("$group({ _id: 1, t: $tsSecond('x') });")).toThrow(
+      /'\$tsSecond' expects a timestamp, but got a string/,
+    );
+  });
+
+  it("the gate holds: field refs, $-string field paths, and valid literals compile", () => {
+    expect(jsmql.expr("$abs($.delta)")).toEqual({ $abs: "$delta" });
+    expect(jsmql.expr('$abs("$delta")')).toEqual({ $abs: "$delta" }); // $-string = field ref
+    expect(jsmql.expr("$add($.price, 10)")).toEqual({ $add: ["$price", 10] });
+    expect(jsmql.expr("$bitNot($.flags)")).toEqual({ $bitNot: "$flags" });
+    expect(jsmql.expr("$mergeObjects($.a, { x: 1 })")).toEqual({ $mergeObjects: ["$a", { x: 1 }] });
+    expect(jsmql.expr("$size($.items)")).toEqual({ $size: "$items" });
+  });
+});
+
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
@@ -465,7 +499,9 @@ describe("array literals", () => {
   });
 
   it("nested array", () => {
-    expect(jsmql.expr("$abs([1, 2])")).toEqual({ $abs: [1, 2] });
+    // `$foo` is an unknown-op shape probe (no arg validation) — this exercises
+    // array-literal codegen, not operator semantics.
+    expect(jsmql.expr("$foo([1, [2, 3]])")).toEqual({ $foo: [1, [2, 3]] });
   });
 });
 
@@ -3698,8 +3734,10 @@ describe("computed object keys", () => {
   // object"); two pairs hit "takes exactly 1 argument". The wrapped shapes below
   // are verified to run on MongoDB 8.2 (HR3). The `$arrayToObject([...])` escape
   // hatch keeps whatever pair shape the user typed (array-pairs here), just wrapped.
+  // (`$foo` is an unknown-op shape probe — it carries no arg-type validation, so
+  // these exercise the computed-key → $arrayToObject lowering, not op semantics.)
   it("single computed key", () => {
-    expect(jsmql.expr("$abs({ [$.k]: 1 })")).toEqual({ $abs: { $arrayToObject: [[{ k: "$k", v: 1 }]] } });
+    expect(jsmql.expr("$foo({ [$.k]: 1 })")).toEqual({ $foo: { $arrayToObject: [[{ k: "$k", v: 1 }]] } });
   });
   it("$arrayToObject escape hatch with a literal pairs array wraps the same way", () => {
     expect(jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toEqual({
@@ -3714,8 +3752,8 @@ describe("computed object keys", () => {
     expect(jsmql.expr("$arrayToObject($.pairs)")).toEqual({ $arrayToObject: "$pairs" });
   });
   it("mixed static and computed keys", () => {
-    expect(jsmql.expr("$abs({ a: 1, [$.k]: 2 })")).toEqual({
-      $abs: {
+    expect(jsmql.expr("$foo({ a: 1, [$.k]: 2 })")).toEqual({
+      $foo: {
         $arrayToObject: [
           [
             { k: "a", v: 1 },

@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-12 — feat: literal-type validation on numeric / bitwise / object / array / timestamp slots
+
+Extends the literal-type checker (shipped for date slots alongside the DEF-029 close) to the rest of the verified type families: single-shape numeric ops (`$abs`/`$sqrt`/`$sigmoid`/the trig family — `singleType: "number"`), variadic numeric (`$multiply`) and numeric-or-date (`$add`/`$subtract` — `elementType`), bitwise int-or-long (`$bitNot` single; `$bitAnd`/`$bitOr`/`$bitXor` elements), `$mergeObjects`/`$objectToArray` (object), `$size`/`$reverseArray` (array), and `$tsSecond`/`$tsIncrement` (timestamp). The fixed-binary arithmetic ops ($divide/$mod/$pow/$log/$atan2/$round/$trunc) gained `elementType: "number"` alongside their arity rule. Each reject was verified on a running `mongod` — including that MongoDB does **not** coerce (`$abs("5")` and `$add(1, true)` are both rejected). The gate holds: a field ref / `$`-string field path / `new Date(…)` / `null` compiles untouched. Three pre-existing codegen tests used `$abs([…])`/`$abs({…})` as a generic single-arg wrapper to probe array/object-literal codegen — an invalid-MQL fixture — and were switched to the `$foo` unknown-op shape probe. Files: [src/operators.ts](../src/operators.ts), [docs/specs/operator-validation.md](specs/operator-validation.md), [test/codegen.test.ts](../test/codegen.test.ts).
+
+---
+
 ## 2026-06-12 — feat: literal-type validation on date slots; close DEF-029
 
 Closes **DEF-029**. A literal non-date in a date slot (`$year("2020-01-01")`, `$dateAdd({ startDate: "2020-01-01", … })`, `$dateTrunc({ date: "2020", … })`) compiled to MQL the server rejects ("can't convert from BSON type string to Date"). The operator-arg validator now carries a literal-type checker (`literalKind` + `checkArgType`, driven by `singleType` / `elementType` / `positionalTypes` / `keyTypes` on `ArgRules`) and the date accessors get `singleType: "date"`, the date operators `keyTypes` (`startDate`/`endDate`/`date` → date, `amount` → int-or-long, `timezone` → string, `binSize` → number). The §A DEF-029 row is deleted and every `[DEF-029]` tag stripped in this commit (the drift gates require both).
