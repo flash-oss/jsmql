@@ -1340,6 +1340,112 @@ describe("bracket access", () => {
   });
 });
 
+describe("lambda element-type inference (array-method param typed from a provable element type)", () => {
+  // A lambda iterating an array with a provable uniform element type gets its
+  // *element* param typed in bindingTypes — mirroring reduce-accumulator
+  // narrowing — so `element[k]` lowers precisely. The headline win: a
+  // string-element key is never a numeric index, so `obj[element]` → $getField
+  // directly, dropping the runtime $isArray guard (and its dead, server-
+  // rejected $arrayElemAt-with-string-index branch).
+  it("map over a string-literal array → element key → $getField (the reported case)", () => {
+    expect(jsmql.expr('["sender", "recipient"].map(party => $.cre.result[party])')).toEqual({
+      $map: {
+        input: ["sender", "recipient"],
+        as: "party",
+        in: { $getField: { field: "$$party", input: "$cre.result" } },
+      },
+    });
+  });
+  it("filter over a string-literal array → element key → $getField", () => {
+    expect(jsmql.expr('["a", "b"].filter(k => $.m[k])')).toEqual({
+      $filter: {
+        input: ["a", "b"],
+        as: "k",
+        cond: {
+          $and: [
+            { $ne: [{ $ifNull: [{ $getField: { field: "$$k", input: "$m" } }, null] }, null] },
+            { $ne: [{ $getField: { field: "$$k", input: "$m" } }, false] },
+            { $ne: [{ $getField: { field: "$$k", input: "$m" } }, ""] },
+            { $ne: [{ $getField: { field: "$$k", input: "$m" } }, 0] },
+          ],
+        },
+      },
+    });
+  });
+  it("reduce element param is typed from the input array → element key → $getField", () => {
+    expect(jsmql.expr('["a", "b"].reduce((acc, k) => acc + $.m[k], "")')).toEqual({
+      $reduce: {
+        input: ["a", "b"],
+        initialValue: "",
+        in: { $add: ["$$value", { $getField: { field: "$$this", input: "$m" } }] },
+      },
+    });
+  });
+  it('.split(",") yields string elements → element key → $getField', () => {
+    expect(jsmql.expr('$.csv.split(",").map(k => $.m[k])')).toEqual({
+      $map: { input: { $split: ["$csv", ","] }, as: "k", in: { $getField: { field: "$$k", input: "$m" } } },
+    });
+  });
+  it("object-literal elements type the element as object → element[k] → $getField", () => {
+    expect(jsmql.expr("[{ a: 1 }, { b: 2 }].map(o => o[$.k])")).toEqual({
+      $map: { input: [{ a: 1 }, { b: 2 }], as: "o", in: { $getField: { field: "$k", input: "$$o" } } },
+    });
+  });
+  it("NON-string element type (numbers) keeps the runtime $isArray guard", () => {
+    // A numeric element is a plausible array index, so the dispatch must stay.
+    expect(jsmql.expr("[1, 2, 3].map(i => $.m[i])")).toEqual({
+      $map: {
+        input: [1, 2, 3],
+        as: "i",
+        in: {
+          $cond: {
+            if: { $isArray: "$m" },
+            then: { $arrayElemAt: ["$m", "$$i"] },
+            else: { $getField: { field: "$$i", input: "$m" } },
+          },
+        },
+      },
+    });
+  });
+  it("unknown element type (non-literal input) keeps the runtime $isArray guard", () => {
+    expect(jsmql.expr("$.tags.map(t => $.m[t])")).toEqual({
+      $map: {
+        input: "$tags",
+        as: "t",
+        in: {
+          $cond: {
+            if: { $isArray: "$m" },
+            then: { $arrayElemAt: ["$m", "$$t"] },
+            else: { $getField: { field: "$$t", input: "$m" } },
+          },
+        },
+      },
+    });
+  });
+  it("only the element param is typed — the index param is a number and keeps the guard", () => {
+    // `(element, index)`: `element` is string, `index` is a number, so `$.m[i]`
+    // must NOT collapse to $getField.
+    expect(jsmql.expr('["a", "b"].map((k, i) => $.m[i])')).toEqual({
+      $map: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: ["a", "b"] }] }, ["a", "b"]] } },
+        as: "jsmqlPair",
+        in: {
+          $let: {
+            vars: { k: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+            in: {
+              $cond: {
+                if: { $isArray: "$m" },
+                then: { $arrayElemAt: ["$m", "$$i"] },
+                else: { $getField: { field: "$$i", input: "$m" } },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+});
+
 describe("grouped expressions", () => {
   it("grouping changes precedence", () => {
     expect(jsmql.expr("($.a + $.b) * 2")).toEqual({ $multiply: [{ $add: ["$a", "$b"] }, 2] });

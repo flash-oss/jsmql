@@ -329,13 +329,11 @@ $ = ["sender", "recipient"].map(party => {
                   in: {
                     $let: {
                       vars: {
-                        leg: {
-                          $cond: {
-                            if: { $isArray: { $ifNull: ["$legs", []] } },
-                            then: { $arrayElemAt: [{ $ifNull: ["$legs", []] }, "$$party"] },
-                            else: { $getField: { field: "$$party", input: { $ifNull: ["$legs", []] } } },
-                          },
-                        },
+                        // `party` iterates a string-literal array, so it's typed
+                        // `string`; `$.legs?.[party]` is then an unambiguous object
+                        // getter → `$getField` directly (no `$isArray` guard). The
+                        // optional-chain fallback is `{}` (the object neutral).
+                        leg: { $getField: { field: "$$party", input: { $ifNull: ["$legs", {}] } } },
                       },
                       in: {
                         $let: {

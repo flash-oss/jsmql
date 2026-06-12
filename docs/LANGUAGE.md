@@ -420,14 +420,21 @@ $.items[0]
 ```
 
 When the key is **provably a string** — a string literal, a `.toLowerCase()`-style
-string-returning expression, or a `const k = "…"` binding — it can only be an object
-property name (a string is never a numeric array index), so jsmql skips the dispatch and
-emits `$getField` directly:
+string-returning expression, a `const k = "…"` binding, or **a lambda parameter iterating
+an array whose elements are all strings** — it can only be an object property name (a string
+is never a numeric array index), so jsmql skips the dispatch and emits `$getField` directly:
 
 ```js
 $.config["host"]              // → { $getField: { field: "host", input: "$config" } }
 $.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" }, input: "$scores" } }
+
+// `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
+["sender", "recipient"].map(party => $.cre.result[party])
+// → { $map: { input: ["sender","recipient"], as: "party",
+//             in: { $getField: { field: "$$party", input: "$cre.result" } } } }
 ```
+
+The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `String.split(",")` and `Object.keys(o)` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
 
 If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 

@@ -170,6 +170,29 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
 }
 
 /**
+ * `extendCtx` for an array-method lambda, additionally typing the lambda's
+ * *element* parameter (`params[0]`) from the input array's static element type
+ * (`arrayElementType`). This lets `element[k]` / a provably-string element key
+ * lower precisely — e.g. `["sender","recipient"].map(p => $.x[p])` emits
+ * `$getField` directly instead of the runtime `$isArray` guard whose dead
+ * `$arrayElemAt`-with-string-index branch some servers reject. Mirrors the
+ * reduce-accumulator narrowing. Any lambda param shadowing an outer same-named
+ * binding has that stale type cleared (the index param `params[1]` is a number,
+ * never the element type, so it is only ever cleared — never set).
+ */
+function elementTypedCtx(ctx: GenerateCtx, params: string[], inputExpr: Expr | undefined): GenerateCtx {
+  const base = extendCtx(ctx, params);
+  if (params.length === 0) return base;
+  const elementType = inputExpr ? arrayElementType(inputExpr) : undefined;
+  const shadows = params.some((p) => ctx.bindingTypes?.has(p));
+  if (!elementType && !shadows) return base;
+  const bindingTypes = new Map(ctx.bindingTypes ?? []);
+  for (const p of params) bindingTypes.delete(p);
+  if (elementType) bindingTypes.set(params[0], elementType);
+  return { ...base, bindingTypes };
+}
+
+/**
  * Add a new pipeline let to the context. Returns a fresh ctx; never mutates.
  * `kind: "const"` also records the name as read-only (reassignment rejected).
  */
@@ -438,6 +461,48 @@ export function staticBindingType(expr: Expr): "object" | "array" | "string" | u
   if (isObjectProducing(expr)) return "object";
   if (isStringProducing(expr)) return "string";
   return undefined;
+}
+
+/**
+ * The provable static type of the *elements* of an array-valued expression,
+ * when uniform — so a lambda iterating it (`arr.map(x => …)`) can type its
+ * element parameter the way `.reduce()` already types its accumulator and the
+ * pipeline types a `const`. `["a","b"]` → `"string"`, `[[1],[2]]` → `"array"`,
+ * `[{},{}]` → `"object"`; `$.csv.split(",")` and `Object.keys(o)` → `"string"`.
+ * Mixed-type, empty, spread-bearing, or otherwise-unknown inputs → `undefined`,
+ * leaving the `IndexAccess` dispatch conservative (the runtime `$isArray` guard).
+ */
+function arrayElementType(expr: Expr): "object" | "array" | "string" | undefined {
+  switch (expr.type) {
+    case "ArrayLiteral": {
+      let elementType: "object" | "array" | "string" | undefined;
+      for (const el of expr.elements) {
+        // Only plain value elements carry a static type; a spread or a
+        // pipeline-only statement node leaves the element set open-ended.
+        if (
+          el.type === "SpreadElement" ||
+          el.type === "AssignExpr" ||
+          el.type === "DeleteStmt" ||
+          el.type === "LetDecl"
+        ) {
+          return undefined;
+        }
+        const t = staticBindingType(el);
+        if (t === undefined) return undefined;
+        if (elementType === undefined) elementType = t;
+        else if (elementType !== t) return undefined;
+      }
+      return elementType; // undefined for `[]` (no elements to type)
+    }
+    case "MethodCall":
+      // String.prototype.split always yields a string[].
+      return expr.method === "split" ? "string" : undefined;
+    case "ObjectCall":
+      // Object.keys → array of field-name strings.
+      return expr.method === "keys" ? "string" : undefined;
+    default:
+      return undefined;
+  }
 }
 
 function isStringProducing(expr: Expr): boolean {
@@ -2386,7 +2451,7 @@ function generateMethodCall(
     }
     case "findLast": {
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "findLast");
+      const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
@@ -2402,7 +2467,7 @@ function generateMethodCall(
           lambda.pos,
         );
       }
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const bodyCtx = elementTypedCtx(ctx, lambda.params, object);
       // Reduce over [(index, element), ...] pairs. $let rebinds the user-named
       // params to the pair components so the predicate body's $$<param>
       // references resolve correctly. For findIndex we want the *first* match —
@@ -2494,7 +2559,7 @@ function generateMethodCall(
     }
     case "flatMap": {
       const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap");
+      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap", object);
       return {
         $reduce: {
           input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } },
@@ -2507,12 +2572,12 @@ function generateMethodCall(
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
       const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "map");
+      const iter = arrayIterInput(lambda, genObj, ctx, "map", object);
       return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } };
     }
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "filter");
+      const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $filter: { input: iter.input, as: iter.asName, cond } };
@@ -2528,7 +2593,7 @@ function generateMethodCall(
     }
     case "find": {
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "find");
+      const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
@@ -2538,7 +2603,7 @@ function generateMethodCall(
     }
     case "some": {
       const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "some");
+      const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
       return {
         $anyElementTrue: {
           $map: {
@@ -2551,7 +2616,7 @@ function generateMethodCall(
     }
     case "every": {
       const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "every");
+      const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
       return {
         $allElementsTrue: {
           $map: {
@@ -2589,6 +2654,14 @@ function generateMethodCall(
       const nextBindingTypes = new Map(ctx.bindingTypes ?? []);
       if (accType) nextBindingTypes.set(lambda.params[0], accType);
       else nextBindingTypes.delete(lambda.params[0]);
+      // The element parameter (params[1]) inherits the input array's static
+      // element type, mirroring the map-family narrowing. The optional index
+      // parameter (params[2]) is a number — only ever cleared, so an outer
+      // same-named binding can't leak in.
+      const elemType = arrayElementType(object);
+      if (elemType) nextBindingTypes.set(lambda.params[1], elemType);
+      else nextBindingTypes.delete(lambda.params[1]);
+      if (lambda.params[2]) nextBindingTypes.delete(lambda.params[2]);
       const has3 = lambda.params.length === 3;
       // 2-param: acc → value, element → this (status quo).
       // 3-param: acc → value still, but element + index come from $$this being
@@ -2777,6 +2850,7 @@ function arrayIterInput(
   genObj: unknown,
   ctx: GenerateCtx,
   method: string,
+  inputExpr?: Expr,
 ): { input: unknown; asName: string; bodyCtx: GenerateCtx; wrap: (body: unknown) => unknown } {
   const params = lambda.params;
   if (params.length >= 3) {
@@ -2785,18 +2859,14 @@ function arrayIterInput(
       lambda.pos,
     );
   }
+  const bodyCtx = elementTypedCtx(ctx, params, inputExpr);
   if (params.length <= 1) {
-    return {
-      input: genObj,
-      asName: params[0] ? safeVarName(params[0]) : "v",
-      bodyCtx: extendCtx(ctx, params),
-      wrap: (body) => body,
-    };
+    return { input: genObj, asName: params[0] ? safeVarName(params[0]) : "v", bodyCtx, wrap: (body) => body };
   }
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
     asName: "jsmqlPair",
-    bodyCtx: extendCtx(ctx, params),
+    bodyCtx,
     wrap: (body) => ({
       $let: {
         vars: {

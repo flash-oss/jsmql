@@ -3842,6 +3842,17 @@ function extendCtx(ctx, params) {
     aggExpr: ctx.aggExpr
   };
 }
+function elementTypedCtx(ctx, params, inputExpr) {
+  const base = extendCtx(ctx, params);
+  if (params.length === 0) return base;
+  const elementType = inputExpr ? arrayElementType(inputExpr) : void 0;
+  const shadows = params.some((p) => ctx.bindingTypes?.has(p));
+  if (!elementType && !shadows) return base;
+  const bindingTypes = new Map(ctx.bindingTypes ?? []);
+  for (const p of params) bindingTypes.delete(p);
+  if (elementType) bindingTypes.set(params[0], elementType);
+  return { ...base, bindingTypes };
+}
 function extendCtxLets(ctx, name, fieldPath, kind = "let", type) {
   const next = new Map(ctx.pipelineLets ?? []);
   next.set(name, fieldPath);
@@ -4029,6 +4040,29 @@ function staticBindingType(expr) {
   if (isObjectProducing(expr)) return "object";
   if (isStringProducing(expr)) return "string";
   return void 0;
+}
+function arrayElementType(expr) {
+  switch (expr.type) {
+    case "ArrayLiteral": {
+      let elementType;
+      for (const el of expr.elements) {
+        if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+          return void 0;
+        }
+        const t = staticBindingType(el);
+        if (t === void 0) return void 0;
+        if (elementType === void 0) elementType = t;
+        else if (elementType !== t) return void 0;
+      }
+      return elementType;
+    }
+    case "MethodCall":
+      return expr.method === "split" ? "string" : void 0;
+    case "ObjectCall":
+      return expr.method === "keys" ? "string" : void 0;
+    default:
+      return void 0;
+  }
 }
 function isStringProducing(expr) {
   switch (expr.type) {
@@ -4309,7 +4343,8 @@ function _generateBody(expr, ctx) {
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
       const containerType = expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : void 0;
-      const known = isArrayProducing(expr.object) ? "array" : containerType === "array" || containerType === "object" ? containerType : void 0;
+      const isBareRoot = expr.object.type === "FieldRef" && expr.object.path === "";
+      const known = isArrayProducing(expr.object) ? "array" : isObjectProducing(expr.object) || isBareRoot ? "object" : containerType === "array" || containerType === "object" ? containerType : void 0;
       const keyIsString = isStringProducing(expr.index) || expr.index.type === "ParamRef" && ctx.bindingTypes?.get(expr.index.name) === "string";
       if (known === "object" || keyIsString) {
         const obj3 = optional ? wrapIfNull(rawObj, {}) : rawObj;
@@ -5228,7 +5263,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "findLast": {
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "findLast");
+      const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, -1] };
@@ -5244,7 +5279,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           lambda.pos
         );
       }
-      const bodyCtx = extendCtx(ctx, lambda.params);
+      const bodyCtx = elementTypedCtx(ctx, lambda.params, object);
       const vars = { [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] } };
       if (lambda.params[1]) {
         vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
@@ -5322,7 +5357,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "flatMap": {
       const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap");
+      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap", object);
       return {
         $reduce: {
           input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } },
@@ -5334,12 +5369,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
       const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "map");
+      const iter = arrayIterInput(lambda, genObj, ctx, "map", object);
       return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } };
     }
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "filter");
+      const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $filter: { input: iter.input, as: iter.asName, cond: cond2 } };
@@ -5354,7 +5389,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "find": {
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "find");
+      const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, 0] };
@@ -5363,7 +5398,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "some": {
       const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "some");
+      const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
       return {
         $anyElementTrue: {
           $map: {
@@ -5376,7 +5411,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "every": {
       const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos);
-      const iter = arrayIterInput(lambda, genObj, ctx, "every");
+      const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
       return {
         $allElementsTrue: {
           $map: {
@@ -5402,6 +5437,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const nextBindingTypes = new Map(ctx.bindingTypes ?? []);
       if (accType) nextBindingTypes.set(lambda.params[0], accType);
       else nextBindingTypes.delete(lambda.params[0]);
+      const elemType = arrayElementType(object);
+      if (elemType) nextBindingTypes.set(lambda.params[1], elemType);
+      else nextBindingTypes.delete(lambda.params[1]);
+      if (lambda.params[2]) nextBindingTypes.delete(lambda.params[2]);
       const has3 = lambda.params.length === 3;
       const reduceCtx = {
         lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, ...lambda.params]),
@@ -5547,7 +5586,7 @@ function isNegativeLiteral(e) {
   }
   return false;
 }
-function arrayIterInput(lambda, genObj, ctx, method) {
+function arrayIterInput(lambda, genObj, ctx, method, inputExpr) {
   const params = lambda.params;
   if (params.length >= 3) {
     throw new CodegenError(
@@ -5555,18 +5594,19 @@ function arrayIterInput(lambda, genObj, ctx, method) {
       lambda.pos
     );
   }
+  const bodyCtx = elementTypedCtx(ctx, params, inputExpr);
   if (params.length <= 1) {
     return {
       input: genObj,
       asName: params[0] ? safeVarName(params[0]) : "v",
-      bodyCtx: extendCtx(ctx, params),
+      bodyCtx,
       wrap: (body) => body
     };
   }
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
     asName: "jsmqlPair",
-    bodyCtx: extendCtx(ctx, params),
+    bodyCtx,
     wrap: (body) => ({
       $let: {
         vars: {
