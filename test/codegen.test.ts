@@ -434,6 +434,36 @@ describe("operator literal-type validation — numeric / bitwise / object / arra
   });
 });
 
+describe("do-not-over-validate — server-accepted shapes must compile (coverage proof)", () => {
+  // Every shape here is ACCEPTED by mongod (verified), so jsmql must NOT reject
+  // it. These lock the gaps closed: a future arity/range rule that threw on one
+  // of them would be a regression (a false positive on valid MQL).
+  it("variadic ops accept an empty operand list (no min-arity)", () => {
+    expect(jsmql.expr("$and([])")).toEqual({ $and: [] });
+    expect(jsmql.expr("$or([])")).toEqual({ $or: [] });
+    expect(jsmql.expr("$concat([])")).toEqual({ $concat: [] });
+  });
+
+  it("set ops accept a single set (no minimum-2 arity)", () => {
+    expect(jsmql.expr("$setUnion([$.a])")).toEqual({ $setUnion: ["$a"] });
+    expect(jsmql.expr("$setIntersection([$.a])")).toEqual({ $setIntersection: ["$a"] });
+  });
+
+  it("$covariancePop / $covarianceSamp accept 1/2/3 operands (no fixed arity)", () => {
+    const win = (operands: string) =>
+      `$setWindowFields({ sortBy: { a: 1 }, output: { c: $covariancePop(${operands}) } });`;
+    expect(() => jsmql(win("[$.a]"))).not.toThrow();
+    expect(() => jsmql(win("$.a, $.b"))).not.toThrow();
+    expect(() => jsmql(win("$.a, $.b, $.c"))).not.toThrow();
+  });
+
+  it("$dateFromParts does not range-check numeric parts (the server overflows them)", () => {
+    expect(jsmql.expr("$dateFromParts({ year: 2020, month: 13 })")).toEqual({
+      $dateFromParts: { year: 2020, month: 13 },
+    });
+  });
+});
+
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });

@@ -864,14 +864,29 @@ jsmql("[ $limit(-5) ]")
 
 jsmql("[ $sort({ x: 1 }), $match({ $text: { $search: 'mongo' } }) ]")
 // ✗ A '$match' that uses '$text' must be the first stage in a pipeline.
+
+jsmql.expr("$dateAdd({ startDate: $.t, unit: 'fortnight' })")
+// ✗ '$dateAdd' requires the 'amount' field, but it is missing.   (+ unit enum, on the next pass)
+
+jsmql.expr("$dateAdd({ startdate: $.t, unit: 'day', amount: 1 })")
+// ✗ '$dateAdd' has no parameter 'startdate'. Did you mean 'startDate'? Valid keys: startDate, unit, amount, timezone.
+
+jsmql.expr("$divide(6, 2, 1)")
+// ✗ $divide(dividend, divisor) requires exactly 2 arguments, got 3.
+
+jsmql.expr("$year('2020-01-01')")
+// ✗ '$year' expects a date, but got a string. Use a field path or new Date(…).
 ```
 
 What's checked: stage **placement** (source stages like `$collStats`/`$geoNear`/`$changeStream`
 must be first; `$out`/`$merge` must be last; stages forbidden inside `$facet`/`$lookup`/`$unionWith`
 sub-pipelines), stage **body shape** (literal type/range/enum/required-key/mutual-exclusivity
 rules — e.g. `$count('')`, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo),
-and `$match` query operators (`$text` placement; `$near`/`$where` bans). Use `jsmql.validate(...)`
-to get these as a list of `{ message, pos }` instead of a throw.
+`$match` query operators (`$text` placement; `$near`/`$where` bans), and **operator arguments**
+(operand count — `$divide` takes 2; required and unknown object keys with a `Did you mean '…'?`;
+enum slots — `unit`/`startOfWeek`/`$convert.to`/regex flags; and literal types — a non-date in a
+date slot, a non-number in `$abs`, …). Use `jsmql.validate(...)` to get these as a list of
+`{ message, pos }` instead of a throw.
 
 **Only certain mistakes throw.** If the offending value is a field reference or expression
 jsmql can't evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`), the MQL is

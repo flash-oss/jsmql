@@ -2748,6 +2748,9 @@ function obj(category, description, ...keys) {
 function acc(def) {
   return { ...def, accumulatorOnly: true };
 }
+function withArgs(def, rules) {
+  return { ...def, args: rules };
+}
 var OPERATORS = {
   // ── Arithmetic ─────────────────────────────────────────────────────────────
   $abs: single("arithmetic", "Returns the absolute value of a number."),
@@ -3001,10 +3004,8 @@ var OPERATORS = {
     "input"
   ),
   // ── Date ───────────────────────────────────────────────────────────────────
-  // [DEF-029] The registry encodes arg *shapes*, not arg *types*: a literal
-  // non-date in a date-typed slot (`$dateDiff({ startDate: "2020-01-01" })`,
-  // `$year("x")`, …) passes through to server-invalid MQL. Closing this needs
-  // arg-type metadata here + an operator-arg validator. See docs/DEFERRED.md.
+  // Argument *types* (date slots, integer amounts, …) are validated via the
+  // `args` rules below + src/operator-validation.ts — see OPERATOR_ARG_RULES.
   $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
   $dateDiff: obj(
     "date",
@@ -3236,8 +3237,575 @@ var OPERATORS = {
     "default"
   )
 };
+var OPERATOR_ARG_RULES = {
+  // ── Arity: fixed / bounded operand counts (array & flex shapes) ──
+  // Only EXACT and BOUNDED-RANGE counts are declared — never an open min on a
+  // variadic op ($add/$or/$concat/$setUnion accept any count, so they get no
+  // rule; see the coverage-proof tests). $ifNull's min-2 is the one verified
+  // lower bound. `sig` is the human signature shown in the arity message.
+  $divide: { arity: { exact: 2, sig: "dividend, divisor" }, elementType: "number" },
+  $mod: { arity: { exact: 2, sig: "dividend, divisor" }, elementType: "number" },
+  $pow: { arity: { exact: 2, sig: "base, exponent" }, elementType: "number" },
+  $log: { arity: { exact: 2, sig: "number, base" }, elementType: "number" },
+  $subtract: { arity: { exact: 2, sig: "minuend, subtrahend" }, elementType: "number-or-date" },
+  $atan2: { arity: { exact: 2, sig: "y, x" }, elementType: "number" },
+  $cmp: { arity: { exact: 2, sig: "expr1, expr2" } },
+  $round: { arity: { allowed: [1, 2], sig: "number[, place]" }, elementType: "number" },
+  $trunc: { arity: { allowed: [1, 2], sig: "number[, place]" }, elementType: "number" },
+  $split: { arity: { exact: 2, sig: "string, delimiter" } },
+  $strcasecmp: { arity: { exact: 2, sig: "expr1, expr2" } },
+  $substr: { arity: { exact: 3, sig: "string, start, length" } },
+  $substrBytes: { arity: { exact: 3, sig: "string, byteIndex, byteCount" } },
+  $substrCP: { arity: { exact: 3, sig: "string, cpIndex, cpCount" } },
+  $indexOfBytes: { arity: { allowed: [2, 3, 4], sig: "string, substring[, start[, end]]" } },
+  $indexOfCP: { arity: { allowed: [2, 3, 4], sig: "string, substring[, start[, end]]" } },
+  $arrayElemAt: { arity: { exact: 2, sig: "array, index" } },
+  $indexOfArray: { arity: { allowed: [2, 3, 4], sig: "array, value[, start[, end]]" } },
+  $range: { arity: { allowed: [2, 3], sig: "start, end[, step]" } },
+  $slice: { arity: { allowed: [2, 3], sig: "array, [position, ]count" } },
+  $ifNull: { arity: { atLeast: 2, sig: "expr, replacement[, \u2026]" } },
+  $setDifference: { arity: { exact: 2, sig: "set1, set2" } },
+  $setIsSubset: { arity: { exact: 2, sig: "set1, set2" } },
+  // ── Comparison (agg-only arity: the 1-arg / array form is the valid QUERY form) ──
+  $eq: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $ne: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $gt: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $gte: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $lt: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $lte: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  // ── Literal types: numeric / bitwise / object / array / timestamp (all mongod-verified) ──
+  // Single-shape numeric (a literal string/bool/array/object is rejected).
+  $abs: { singleType: "number" },
+  $ceil: { singleType: "number" },
+  $floor: { singleType: "number" },
+  $exp: { singleType: "number" },
+  $ln: { singleType: "number" },
+  $log10: { singleType: "number" },
+  $sqrt: { singleType: "number" },
+  $sigmoid: { singleType: "number" },
+  $sin: { singleType: "number" },
+  $cos: { singleType: "number" },
+  $tan: { singleType: "number" },
+  $asin: { singleType: "number" },
+  $acos: { singleType: "number" },
+  $atan: { singleType: "number" },
+  $sinh: { singleType: "number" },
+  $cosh: { singleType: "number" },
+  $tanh: { singleType: "number" },
+  $asinh: { singleType: "number" },
+  $acosh: { singleType: "number" },
+  $atanh: { singleType: "number" },
+  $degreesToRadians: { singleType: "number" },
+  $radiansToDegrees: { singleType: "number" },
+  // Variadic numeric / numeric-or-date (each literal operand).
+  $multiply: { elementType: "number" },
+  $add: { elementType: "number-or-date" },
+  // Bitwise: int or long only (a non-integer number or a string is rejected).
+  $bitNot: { singleType: "int-or-long" },
+  $bitAnd: { elementType: "int-or-long" },
+  $bitOr: { elementType: "int-or-long" },
+  $bitXor: { elementType: "int-or-long" },
+  // Object / array / timestamp shape requirements.
+  $mergeObjects: { elementType: "object" },
+  $objectToArray: { singleType: "object" },
+  $size: { singleType: "array" },
+  $reverseArray: { singleType: "array" },
+  $tsSecond: { singleType: "timestamp" },
+  $tsIncrement: { singleType: "timestamp" },
+  // ── Conditional ──
+  $cond: { required: ["if", "then", "else"] },
+  $switch: { required: ["branches"], optional: ["default"] },
+  // ── String ──
+  $ltrim: { required: ["input"], optional: ["chars"] },
+  $rtrim: { required: ["input"], optional: ["chars"] },
+  $trim: { required: ["input"], optional: ["chars"] },
+  $regexFind: { required: ["input", "regex"], optional: ["options"], enums: { options: "regexFlags" } },
+  $regexFindAll: { required: ["input", "regex"], optional: ["options"], enums: { options: "regexFlags" } },
+  $regexMatch: { required: ["input", "regex"], optional: ["options"], enums: { options: "regexFlags" } },
+  $replaceAll: { required: ["input", "find", "replacement"] },
+  $replaceOne: { required: ["input", "find", "replacement"] },
+  // ── Array ──
+  $filter: { required: ["input", "cond"], optional: ["as", "limit"] },
+  $firstN: { required: ["input", "n"] },
+  $lastN: { required: ["input", "n"] },
+  $maxN: { required: ["input", "n"] },
+  $minN: { required: ["input", "n"] },
+  $map: { required: ["input", "in"], optional: ["as"] },
+  $reduce: { required: ["input", "initialValue", "in"] },
+  $sortArray: { required: ["input", "sortBy"] },
+  $zip: { required: ["inputs"], optional: ["useLongestLength", "defaults"] },
+  // ── Object ──
+  $getField: { required: ["field"], optional: ["input"] },
+  $setField: { required: ["field", "input", "value"] },
+  $unsetField: { required: ["field", "input"] },
+  // ── Type ──
+  $convert: { required: ["input", "to"], optional: ["onError", "onNull"], enums: { to: "bsonTypeName" } },
+  // ── Date accessors (single-shape) — a literal non-date is certainly wrong ──
+  $year: { singleType: "date" },
+  $month: { singleType: "date" },
+  $dayOfMonth: { singleType: "date" },
+  $dayOfWeek: { singleType: "date" },
+  $dayOfYear: { singleType: "date" },
+  $hour: { singleType: "date" },
+  $minute: { singleType: "date" },
+  $second: { singleType: "date" },
+  $millisecond: { singleType: "date" },
+  $week: { singleType: "date" },
+  $isoDayOfWeek: { singleType: "date" },
+  $isoWeek: { singleType: "date" },
+  $isoWeekYear: { singleType: "date" },
+  // ── Date operators (object-shape) ── date / amount / timezone slot types
+  $dateAdd: {
+    required: ["startDate", "unit", "amount"],
+    optional: ["timezone"],
+    enums: { unit: "timeUnit" },
+    keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" }
+  },
+  $dateSubtract: {
+    required: ["startDate", "unit", "amount"],
+    optional: ["timezone"],
+    enums: { unit: "timeUnit" },
+    keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" }
+  },
+  $dateDiff: {
+    required: ["startDate", "endDate", "unit"],
+    optional: ["startOfWeek", "timezone"],
+    enums: { unit: "timeUnit", startOfWeek: "weekday" },
+    keyTypes: { startDate: "date", endDate: "date", timezone: "string" }
+  },
+  // year-or-isoWeekYear is a structural rule (deferred); list the full key set so unknown-key works.
+  $dateFromParts: {
+    optional: [
+      "year",
+      "isoWeekYear",
+      "month",
+      "isoWeek",
+      "day",
+      "isoDayOfWeek",
+      "hour",
+      "minute",
+      "second",
+      "millisecond",
+      "timezone"
+    ]
+  },
+  $dateFromString: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"] },
+  $dateToParts: {
+    required: ["date"],
+    optional: ["timezone", "iso8601"],
+    keyTypes: { date: "date", timezone: "string" }
+  },
+  $dateToString: {
+    required: ["date"],
+    optional: ["format", "timezone", "onNull"],
+    keyTypes: { date: "date", timezone: "string" }
+  },
+  $dateTrunc: {
+    required: ["date", "unit"],
+    optional: ["binSize", "timezone", "startOfWeek"],
+    enums: { unit: "timeUnit", startOfWeek: "weekday" },
+    keyTypes: { date: "date", binSize: "number", timezone: "string" }
+  },
+  // ── Variable ──
+  $let: { required: ["vars", "in"] },
+  // ── Custom aggregation ──
+  $function: { required: ["body", "args", "lang"], enums: { lang: ["js"] } },
+  $accumulator: {
+    required: ["init", "accumulate", "accumulateArgs", "merge", "lang"],
+    optional: ["initArgs", "finalize"],
+    enums: { lang: ["js"] }
+  },
+  // ── Accumulators (object-shape) ──
+  $median: { required: ["input", "method"], enums: { method: ["approximate"] } },
+  $percentile: { required: ["input", "p", "method"], enums: { method: ["approximate"] } },
+  $bottom: { required: ["output", "sortBy"] },
+  $bottomN: { required: ["output", "sortBy", "n"] },
+  $top: { required: ["output", "sortBy"] },
+  $topN: { required: ["output", "sortBy", "n"] },
+  // ── Window (object-shape) ──
+  $derivative: { required: ["input"], optional: ["unit"], enums: { unit: "timeUnit" } },
+  $integral: { required: ["input"], optional: ["unit"], enums: { unit: "timeUnit" } },
+  $expMovingAvg: { required: ["input"], optional: ["N", "alpha"] },
+  $shift: { required: ["output", "by"], optional: ["default"] }
+};
+for (const [name, rules] of Object.entries(OPERATOR_ARG_RULES)) {
+  if (OPERATORS[name] !== void 0) OPERATORS[name] = withArgs(OPERATORS[name], rules);
+}
 function lookupOperator(name) {
   return OPERATORS[name];
+}
+
+// src/literal-gate.ts
+function litNumber(e) {
+  if (e.type === "NumberLiteral") return e.value;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") return -e.operand.value;
+  return null;
+}
+function litString(e) {
+  return e.type === "StringLiteral" ? e.value : null;
+}
+function litBool(e) {
+  return e.type === "BooleanLiteral" ? e.value : null;
+}
+function describeLiteral(e) {
+  switch (e.type) {
+    case "NumberLiteral":
+      return "a number";
+    case "BigIntLiteral":
+      return "a bigint";
+    case "StringLiteral":
+      return "a string";
+    case "BooleanLiteral":
+      return "a boolean";
+    case "NullLiteral":
+      return "null";
+    case "ArrayLiteral":
+      return "an array";
+    case "ObjectLiteral":
+      return "an object";
+    case "RegexLiteral":
+      return "a regular expression";
+    default:
+      return null;
+  }
+}
+function objectInfo(e) {
+  if (e.type !== "ObjectLiteral") return null;
+  const byKey = /* @__PURE__ */ new Map();
+  let hasSpread = false;
+  for (const entry of e.entries) {
+    if (entry.type === "SpreadElement") {
+      hasSpread = true;
+      continue;
+    }
+    if (entry.key.kind !== "static") return null;
+    byKey.set(entry.key.name, entry.value);
+  }
+  return { byKey, hasSpread };
+}
+function arrayElements(e) {
+  if (e.type !== "ArrayLiteral") return null;
+  const out = [];
+  for (const el of e.elements) {
+    if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+      return null;
+    }
+    out.push(el);
+  }
+  return out;
+}
+function requireKeys(stage, info, bodyPos, keys) {
+  if (info.hasSpread) return;
+  for (const k of keys) {
+    if (!info.byKey.has(k)) {
+      throw new CodegenError(`'${stage}' requires the '${k}' field, but it is missing.`, bodyPos);
+    }
+  }
+}
+function requireObjectBody(stage, body, required = []) {
+  const info = objectInfo(body);
+  if (info === null) return null;
+  requireKeys(stage, info, body.pos, required);
+  return info;
+}
+function checkEnum(stage, field, value, allowed) {
+  const s = litString(value);
+  if (s === null || allowed.includes(s)) return;
+  const near = closestNameTo(s, allowed);
+  const hint = near !== null ? ` Did you mean '${near}'?` : "";
+  throw new CodegenError(`'${stage}' ${field} must be one of: ${allowed.join(", ")} \u2014 got '${s}'.${hint}`, value.pos);
+}
+function nonConstantDesc(e) {
+  return e.type === "FieldRef" ? "a field reference" : "a runtime expression";
+}
+function requireConstantArray(label, value) {
+  if (value.type === "ArrayLiteral" || value.type === "ParamRef") return;
+  const desc = describeLiteral(value);
+  throw new CodegenError(
+    `'${label}' must be a constant array \u2014 got ${desc ?? nonConstantDesc(value)}, which the server can't accept here. Use a literal array.`,
+    value.pos
+  );
+}
+function checkIntBound(stage, body, opts) {
+  const n = litNumber(body);
+  if (n === null) {
+    const desc = describeLiteral(body);
+    if (desc !== null) {
+      throw new CodegenError(`'${stage}' expects an integer, but got ${desc}.`, body.pos);
+    }
+    if (body.type !== "ParamRef") {
+      throw new CodegenError(
+        `'${stage}' must be ${opts.label} and a compile-time constant \u2014 got ${nonConstantDesc(body)}, which the server can't accept here. Use a literal value.`,
+        body.pos
+      );
+    }
+    return;
+  }
+  if (!Number.isInteger(n)) {
+    throw new CodegenError(`'${stage}' must be an integer, but got ${n}.`, body.pos);
+  }
+  if (n < opts.min) {
+    throw new CodegenError(`'${stage}' must be ${opts.label}, but got ${n}.`, body.pos);
+  }
+}
+
+// src/operator-validation.ts
+var TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
+var WEEKDAY = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+var BSON_TYPE_NAME = [
+  "double",
+  "string",
+  "object",
+  "array",
+  "binData",
+  "objectId",
+  "bool",
+  "date",
+  "null",
+  "regex",
+  "dbPointer",
+  "javascript",
+  "symbol",
+  "javascriptWithScope",
+  "int",
+  "timestamp",
+  "long",
+  "decimal",
+  "minKey",
+  "maxKey"
+];
+var REGEX_FLAGS = "imxs";
+function checkArgEnum(name, key, value, ref) {
+  const lit = litString(value);
+  if (lit !== null && lit.startsWith("$")) return;
+  if (ref === "regexFlags") {
+    const s = litString(value);
+    if (s === null) return;
+    for (const ch of s) {
+      if (!REGEX_FLAGS.includes(ch)) {
+        throw new CodegenError(
+          `'${name}' ${key} has an invalid regex flag '${ch}'. MongoDB allows only i, m, x, s \u2014 a JavaScript 'g' or 'y' flag is not supported.`,
+          value.pos
+        );
+      }
+    }
+    return;
+  }
+  if (ref === "weekday") {
+    const s = litString(value);
+    if (s === null || WEEKDAY.includes(s.toLowerCase())) return;
+    const near = closestNameTo(s.toLowerCase(), WEEKDAY);
+    throw new CodegenError(
+      `'${name}' ${key} must be a weekday (${WEEKDAY.join(", ")}) \u2014 got '${s}'.` + (near !== null ? ` Did you mean '${near}'?` : ""),
+      value.pos
+    );
+  }
+  const allowed = ref === "timeUnit" ? TIME_UNIT : ref === "bsonTypeName" ? BSON_TYPE_NAME : ref;
+  checkEnum(name, key, value, allowed);
+}
+function literalKind(e) {
+  switch (e.type) {
+    case "NumberLiteral":
+      return "number";
+    case "UnaryExpr":
+      return e.op === "-" && e.operand.type === "NumberLiteral" ? "number" : null;
+    case "StringLiteral":
+      return e.value.startsWith("$") ? null : "string";
+    case "BooleanLiteral":
+      return "bool";
+    case "NullLiteral":
+      return "null";
+    case "ArrayLiteral":
+      return "array";
+    case "ObjectLiteral":
+      return "object";
+    case "RegexLiteral":
+      return "regex";
+    case "BigIntLiteral":
+      return "bigint";
+    default:
+      return null;
+  }
+}
+var KIND_NOUN = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  null: "null",
+  array: "an array",
+  object: "an object",
+  regex: "a regular expression",
+  bigint: "a bigint"
+};
+function typeMatches(kind, e, expected) {
+  switch (expected) {
+    case "number":
+    case "number-or-date":
+      return kind === "number" || kind === "bigint";
+    case "integer":
+    case "int-or-long": {
+      if (kind === "bigint") return true;
+      const n = litNumber(e);
+      return n !== null && Number.isInteger(n);
+    }
+    case "string":
+      return kind === "string";
+    case "bool":
+      return kind === "bool";
+    case "array":
+      return kind === "array";
+    case "object":
+      return kind === "object";
+    case "date":
+    case "timestamp":
+      return false;
+  }
+}
+function typeNoun(expected) {
+  switch (expected) {
+    case "number":
+      return "expects a number";
+    case "integer":
+    case "int-or-long":
+      return "expects an integer";
+    case "number-or-date":
+      return "expects a number or a date";
+    case "string":
+      return "expects a string";
+    case "bool":
+      return "expects a boolean";
+    case "array":
+      return "expects an array";
+    case "object":
+      return "expects a document";
+    case "date":
+      return "expects a date";
+    case "timestamp":
+      return "expects a timestamp";
+  }
+}
+function typeHint(expected) {
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  return "";
+}
+function checkArgType(name, slot, value, expected) {
+  const kind = literalKind(value);
+  if (kind === null || kind === "null") return;
+  if (typeMatches(kind, value, expected)) return;
+  const slotPart = slot ? ` ${slot}` : "";
+  throw new CodegenError(
+    `'${name}'${slotPart} ${typeNoun(expected)}, but got ${KIND_NOUN[kind]}.${typeHint(expected)}`,
+    value.pos
+  );
+}
+function operandExprs(args) {
+  if (args.length === 1 && args[0].type === "ArrayLiteral") {
+    return arrayElements(args[0]) ?? [];
+  }
+  return args;
+}
+function validateOperatorArgs(name, style, args, pos, ctx) {
+  const def = lookupOperator(name);
+  if (def === void 0) return;
+  if (def.shape.kind === "none") {
+    if (args.length === 0) return;
+    if (def.category === "window") {
+      throw new CodegenError(
+        `${name}() takes no arguments, got ${args.length}. Its value is computed from the '$setWindowFields' sortBy ordering \u2014 set sortBy on the stage, don't pass a field.`,
+        pos
+      );
+    }
+    checkArity(name, { sig: "", none: true }, args.length, pos, "");
+    return;
+  }
+  const rules = def.args;
+  if (rules === void 0) return;
+  if (rules.arity !== void 0 && (def.shape.kind === "array" || def.shape.kind === "flex")) {
+    const a = rules.arity;
+    if (!a.aggOnly || ctx.aggExpr === true) {
+      const count = operandCount(def.shape.kind, args);
+      if (count !== null) {
+        checkArity(name, { sig: a.sig ?? "", exact: a.exact, allowed: a.allowed, atLeast: a.atLeast }, count, pos, "");
+      }
+    }
+  }
+  if (rules.singleType !== void 0 && def.shape.kind === "single" && args.length >= 1) {
+    checkArgType(name, "", args[0], rules.singleType);
+  }
+  if (def.shape.kind === "array" || def.shape.kind === "flex") {
+    if (rules.elementType !== void 0) {
+      for (const el of operandExprs(args)) checkArgType(name, "", el, rules.elementType);
+    }
+    if (rules.positionalTypes !== void 0) {
+      const ops = operandExprs(args);
+      rules.positionalTypes.forEach((t, i) => {
+        if (ops[i] !== void 0) checkArgType(name, "", ops[i], t);
+      });
+    }
+  }
+  if (def.shape.kind === "object") {
+    validateObjectKeys(name, def.shape.keys, rules, style, args, pos);
+  }
+}
+function operandCount(shape, args) {
+  if (args.length === 1 && args[0].type === "ArrayLiteral") {
+    const els = arrayElements(args[0]);
+    return els === null ? null : els.length;
+  }
+  if (shape === "array" && args.length <= 1) return null;
+  return args.length;
+}
+function validateObjectKeys(name, shapeKeys, rules, style, args, pos) {
+  const required = rules.required ?? [];
+  const enums = rules.enums;
+  if (required.length === 0 && (rules.optional ?? []).length === 0 && enums === void 0) return;
+  let presentKeys;
+  let hasSpread = false;
+  let valueOf;
+  if (style === "object") {
+    const info = objectInfo(args[0]);
+    if (info === null) return;
+    presentKeys = [...info.byKey.keys()];
+    hasSpread = info.hasSpread;
+    valueOf = (k) => info.byKey.get(k);
+  } else {
+    presentKeys = shapeKeys.slice(0, args.length);
+    valueOf = (k) => {
+      const i = shapeKeys.indexOf(k);
+      return i >= 0 && i < args.length ? args[i] : void 0;
+    };
+  }
+  const closedSet = [...required, ...rules.optional ?? []];
+  if (style === "object" && !hasSpread && rules.closedKeys !== false) {
+    for (const k of presentKeys) {
+      if (!closedSet.includes(k)) {
+        throw new CodegenError(
+          `'${name}' has no parameter '${k}'.${didYouMean(k, closedSet, (s) => s)} Valid keys: ${closedSet.join(", ")}.`,
+          valueOf(k)?.pos ?? pos
+        );
+      }
+    }
+  }
+  if (!hasSpread) {
+    for (const k of required) {
+      if (!presentKeys.includes(k)) {
+        throw new CodegenError(`'${name}' requires the '${k}' field, but it is missing.`, pos);
+      }
+    }
+  }
+  if (enums !== void 0) {
+    for (const [key, ref] of Object.entries(enums)) {
+      const v = valueOf(key);
+      if (v !== void 0) checkArgEnum(name, key, v, ref);
+    }
+  }
+  if (rules.keyTypes !== void 0) {
+    for (const [key, t] of Object.entries(rules.keyTypes)) {
+      const v = valueOf(key);
+      if (v !== void 0) checkArgType(name, key, v, t);
+    }
+  }
 }
 
 // src/codegen.ts
@@ -3270,7 +3838,8 @@ function extendCtx(ctx, params) {
     bindingTypes: ctx.bindingTypes,
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
-    accumulatorContext: ctx.accumulatorContext
+    accumulatorContext: ctx.accumulatorContext,
+    aggExpr: ctx.aggExpr
   };
 }
 function extendCtxLets(ctx, name, fieldPath, kind = "let", type) {
@@ -4201,6 +4770,7 @@ function checkOperatorContext(name, ctx, pos) {
 function generateOperatorCall(name, style, args, ctx, pos) {
   checkOperatorContext(name, ctx, pos);
   assertNoSpread(args, name, pos);
+  validateOperatorArgs(name, style, args, pos, ctx);
   if (name === "$literal" && args.length === 1 && args[0].type !== "SpreadElement") {
     const inner = _generate(args[0], { ...ctx, insideLiteral: true });
     return { $literal: inner };
@@ -8764,118 +9334,6 @@ function rejectLocalRef(letVars, param, pos) {
 }
 
 // src/stage-validation.ts
-function litNumber(e) {
-  if (e.type === "NumberLiteral") return e.value;
-  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") return -e.operand.value;
-  return null;
-}
-function litString(e) {
-  return e.type === "StringLiteral" ? e.value : null;
-}
-function litBool(e) {
-  return e.type === "BooleanLiteral" ? e.value : null;
-}
-function describeLiteral(e) {
-  switch (e.type) {
-    case "NumberLiteral":
-      return "a number";
-    case "BigIntLiteral":
-      return "a bigint";
-    case "StringLiteral":
-      return "a string";
-    case "BooleanLiteral":
-      return "a boolean";
-    case "NullLiteral":
-      return "null";
-    case "ArrayLiteral":
-      return "an array";
-    case "ObjectLiteral":
-      return "an object";
-    case "RegexLiteral":
-      return "a regular expression";
-    default:
-      return null;
-  }
-}
-function objectInfo(e) {
-  if (e.type !== "ObjectLiteral") return null;
-  const byKey = /* @__PURE__ */ new Map();
-  let hasSpread = false;
-  for (const entry of e.entries) {
-    if (entry.type === "SpreadElement") {
-      hasSpread = true;
-      continue;
-    }
-    if (entry.key.kind !== "static") return null;
-    byKey.set(entry.key.name, entry.value);
-  }
-  return { byKey, hasSpread };
-}
-function arrayElements(e) {
-  if (e.type !== "ArrayLiteral") return null;
-  const out = [];
-  for (const el of e.elements) {
-    if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
-      return null;
-    }
-    out.push(el);
-  }
-  return out;
-}
-function requireKeys(stage, info, bodyPos, keys) {
-  if (info.hasSpread) return;
-  for (const k of keys) {
-    if (!info.byKey.has(k)) {
-      throw new CodegenError(`'${stage}' requires the '${k}' field, but it is missing.`, bodyPos);
-    }
-  }
-}
-function requireObjectBody(stage, body, required = []) {
-  const info = objectInfo(body);
-  if (info === null) return null;
-  requireKeys(stage, info, body.pos, required);
-  return info;
-}
-function checkEnum(stage, field, value, allowed) {
-  const s = litString(value);
-  if (s === null || allowed.includes(s)) return;
-  const near = closestNameTo(s, allowed);
-  const hint = near !== null ? ` Did you mean '${near}'?` : "";
-  throw new CodegenError(`'${stage}' ${field} must be one of: ${allowed.join(", ")} \u2014 got '${s}'.${hint}`, value.pos);
-}
-function nonConstantDesc(e) {
-  return e.type === "FieldRef" ? "a field reference" : "a runtime expression";
-}
-function requireConstantArray(label, value) {
-  if (value.type === "ArrayLiteral" || value.type === "ParamRef") return;
-  const desc = describeLiteral(value);
-  throw new CodegenError(
-    `'${label}' must be a constant array \u2014 got ${desc ?? nonConstantDesc(value)}, which the server can't accept here. Use a literal array.`,
-    value.pos
-  );
-}
-function checkIntBound(stage, body, opts) {
-  const n = litNumber(body);
-  if (n === null) {
-    const desc = describeLiteral(body);
-    if (desc !== null) {
-      throw new CodegenError(`'${stage}' expects an integer, but got ${desc}.`, body.pos);
-    }
-    if (body.type !== "ParamRef") {
-      throw new CodegenError(
-        `'${stage}' must be ${opts.label} and a compile-time constant \u2014 got ${nonConstantDesc(body)}, which the server can't accept here. Use a literal value.`,
-        body.pos
-      );
-    }
-    return;
-  }
-  if (!Number.isInteger(n)) {
-    throw new CodegenError(`'${stage}' must be an integer, but got ${n}.`, body.pos);
-  }
-  if (n < opts.min) {
-    throw new CodegenError(`'${stage}' must be ${opts.label}, but got ${n}.`, body.pos);
-  }
-}
 function rejectNonDocumentNewRoot(stage, value) {
   const desc = describeLiteral(value);
   if (desc !== null && value.type !== "ObjectLiteral") {
@@ -8885,6 +9343,13 @@ function rejectNonDocumentNewRoot(stage, value) {
       value.pos
     );
   }
+}
+function requireObjectStageBody(stage, body, fix = "") {
+  if (body.type === "ObjectLiteral") return;
+  const desc = describeLiteral(body);
+  if (desc === null) return;
+  const tail = fix ? ` ${fix}` : "";
+  throw new CodegenError(`'${stage}' expects an object body, but got ${desc}.${tail}`, body.pos);
 }
 var MATCH_DISALLOWED = {
   $near: "use the '$geoNear' stage (it must be the first stage), or '$geoWithin' with '$center'/'$centerSphere'",
@@ -8963,6 +9428,7 @@ function validateCount(body) {
   if (s.includes(".")) throw new CodegenError(`'$count' field name cannot contain '.' (got '${s}').`, body.pos);
 }
 function validateSort(body) {
+  requireObjectStageBody("$sort", body, "Sort by a field, e.g. $sort({ field: 1 }).");
   const info = requireObjectBody("$sort", body);
   if (info === null) return;
   if (info.byKey.size > 32 && !info.hasSpread) {
@@ -8988,6 +9454,7 @@ function validateSort(body) {
   }
 }
 function validateProject(body) {
+  requireObjectStageBody("$project", body, "List fields, e.g. $project({ field: 1 }).");
   const info = requireObjectBody("$project", body);
   if (info === null) return;
   if (info.byKey.size === 0 && !info.hasSpread) {
@@ -9016,7 +9483,13 @@ function validateUnset(body) {
     return;
   }
   const els = arrayElements(body);
-  if (els === null) return;
+  if (els === null) {
+    const desc = describeLiteral(body);
+    if (desc !== null && body.type !== "ArrayLiteral") {
+      throw new CodegenError(`'$unset' expects a field-name string or an array of strings, but got ${desc}.`, body.pos);
+    }
+    return;
+  }
   if (els.length === 0) throw new CodegenError(`'$unset' field-name array must not be empty.`, body.pos);
   for (const el of els) {
     if (litString(el) === null && describeLiteral(el) !== null) {
@@ -9057,12 +9530,14 @@ function validateUnwind(body) {
   }
 }
 function validateSample(body) {
+  requireObjectStageBody("$sample", body, "Sample N documents, e.g. $sample({ size: 100 }).");
   const info = requireObjectBody("$sample", body, ["size"]);
   if (info === null) return;
   const size = info.byKey.get("size");
   if (size !== void 0) checkIntBound("$sample size", size, { min: 0, label: "a non-negative integer" });
 }
 function validateBucket(body) {
+  requireObjectStageBody("$bucket", body, "e.g. $bucket({ groupBy: <expr>, boundaries: [...] }).");
   const info = requireObjectBody("$bucket", body, ["groupBy", "boundaries"]);
   if (info === null) return;
   const boundaries = info.byKey.get("boundaries");
@@ -9103,6 +9578,7 @@ function validateBucket(body) {
   }
 }
 function validateBucketAuto(body) {
+  requireObjectStageBody("$bucketAuto", body, "e.g. $bucketAuto({ groupBy: <expr>, buckets: 5 }).");
   const info = requireObjectBody("$bucketAuto", body, ["groupBy", "buckets"]);
   if (info === null) return;
   const buckets = info.byKey.get("buckets");
@@ -9111,6 +9587,7 @@ function validateBucketAuto(body) {
   if (granularity !== void 0) checkEnum("$bucketAuto", "granularity", granularity, BUCKET_AUTO_GRANULARITY);
 }
 function validateSetWindowFields(body) {
+  requireObjectStageBody("$setWindowFields", body, "e.g. $setWindowFields({ sortBy: {...}, output: {...} }).");
   const info = requireObjectBody("$setWindowFields", body, ["output"]);
   if (info === null) return;
   const output = info.byKey.get("output");
@@ -9133,6 +9610,7 @@ function validateSetWindowFields(body) {
   }
 }
 function validateFill(body) {
+  requireObjectStageBody("$fill", body, "e.g. $fill({ output: { field: { method: 'linear' } }, sortBy: {...} }).");
   const info = requireObjectBody("$fill", body, ["output"]);
   if (info === null) return;
   const output = info.byKey.get("output");
@@ -9165,6 +9643,11 @@ function validateFill(body) {
   }
 }
 function validateGraphLookup(body) {
+  requireObjectStageBody(
+    "$graphLookup",
+    body,
+    "$graphLookup takes an object spec, e.g. $graphLookup({ from, startWith, connectFromField, connectToField, as })."
+  );
   const info = requireObjectBody("$graphLookup", body, [
     "from",
     "startWith",
@@ -9188,6 +9671,11 @@ function validateMerge(body) {
   if (whenNotMatched !== void 0) checkEnum("$merge", "whenNotMatched", whenNotMatched, MERGE_WHEN_NOT_MATCHED);
 }
 function validateLookup(body) {
+  requireObjectStageBody(
+    "$lookup",
+    body,
+    "$lookup takes an object spec, e.g. $lookup({ from, localField, foreignField, as })."
+  );
   const info = requireObjectBody("$lookup", body, ["from", "as"]);
   if (info === null) return;
   const pipeline = info.byKey.get("pipeline");
@@ -9202,16 +9690,34 @@ function validateUnionWith(body) {
   }
 }
 function validateReplaceRoot(body) {
+  requireObjectStageBody("$replaceRoot", body, "e.g. $replaceRoot({ newRoot: <document> }).");
   const info = requireObjectBody("$replaceRoot", body, ["newRoot"]);
   if (info === null) return;
   const newRoot = info.byKey.get("newRoot");
   if (newRoot !== void 0) rejectNonDocumentNewRoot("$replaceRoot newRoot", newRoot);
 }
 function validateGroup(body) {
+  requireObjectStageBody("$group", body, `Group by a field, e.g. $group({ _id: "$field" }).`);
   requireObjectBody("$group", body, ["_id"]);
 }
 function validateGeoNear(body) {
+  requireObjectStageBody(
+    "$geoNear",
+    body,
+    "e.g. $geoNear({ near: { type: 'Point', coordinates: [...] }, distanceField: '...' })."
+  );
   requireObjectBody("$geoNear", body, ["near"]);
+}
+function validateAddFields(stage, body) {
+  requireObjectStageBody(stage, body, `Add fields, e.g. ${stage}({ name: <expr> }).`);
+}
+function validateDensify(body) {
+  requireObjectStageBody(
+    "$densify",
+    body,
+    "e.g. $densify({ field: '...', range: { step: 1, unit: '...', bounds: '...' } })."
+  );
+  requireObjectBody("$densify", body, ["field", "range"]);
 }
 function validateDocuments(body) {
   if (body.type === "ArrayLiteral") return;
@@ -9227,12 +9733,15 @@ var STAGE_BODY_VALIDATORS = {
   $count: validateCount,
   $sort: validateSort,
   $project: validateProject,
+  $addFields: (b) => validateAddFields("$addFields", b),
+  $set: (b) => validateAddFields("$set", b),
   $unset: validateUnset,
   $unwind: validateUnwind,
   $bucket: validateBucket,
   $bucketAuto: validateBucketAuto,
   $setWindowFields: validateSetWindowFields,
   $fill: validateFill,
+  $densify: validateDensify,
   $group: validateGroup,
   $lookup: validateLookup,
   $unionWith: validateUnionWith,
@@ -9886,10 +10395,10 @@ function scalarFanOutElementKind(el) {
   }
 }
 function rejectNonDocumentReplaceRoot(value) {
-  const literalKind = value.type === "NumberLiteral" ? "number" : value.type === "BigIntLiteral" ? "bigint" : value.type === "StringLiteral" ? "string" : value.type === "BooleanLiteral" ? "boolean" : value.type === "NullLiteral" ? "null" : value.type === "RegexLiteral" ? "regex" : null;
-  if (literalKind !== null) {
+  const literalKind2 = value.type === "NumberLiteral" ? "number" : value.type === "BigIntLiteral" ? "bigint" : value.type === "StringLiteral" ? "string" : value.type === "BooleanLiteral" ? "boolean" : value.type === "NullLiteral" ? "null" : value.type === "RegexLiteral" ? "regex" : null;
+  if (literalKind2 !== null) {
     throw new CodegenError(
-      `Cannot replace root with a ${literalKind} \u2014 the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?`,
+      `Cannot replace root with a ${literalKind2} \u2014 the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?`,
       value.pos
     );
   }
@@ -10199,10 +10708,11 @@ function generateStageBody(stageName, body, ctx) {
     if (body.type === "ObjectLiteral") return generateBodyObject(body, stageName, ctx);
     return generateWithCtx(body, ctx);
   }
+  const aggCtx = { ...ctx, aggExpr: true };
   if (body.type === "ObjectLiteral") {
-    return generateBodyObject(body, stageName, ctx);
+    return generateBodyObject(body, stageName, aggCtx);
   }
-  return generateWithCtx(body, ctx);
+  return generateWithCtx(body, aggCtx);
 }
 function generateBodyObject(body, stageName, ctx) {
   const stage = lookupStage(stageName);
@@ -10801,7 +11311,7 @@ function lowerExprWithCtx(ast, ctx) {
   rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
   rejectOutOutsidePipeline(ast, "jsmql.expr");
-  return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, c));
+  return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, { ...c, aggExpr: true }));
 }
 function lowerFilterStrict(ast, ctx) {
   rejectLookupOutsidePipeline(ast, "jsmql.filter", ctx);
