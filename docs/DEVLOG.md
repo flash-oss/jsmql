@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-12 — refactor: extract the literal-gating helpers into `src/literal-gate.ts`
+
+The literal-inspection + shared-check helpers that uphold the literal-gating invariant (`litNumber` / `litString` / `litBool` / `describeLiteral` / `objectInfo` / `arrayElements` / `requireKeys` / `requireObjectBody` / `checkEnum` / `checkIntBound` / `nonConstantDesc` / `requireConstantArray`) were file-local in [src/stage-validation.ts](../src/stage-validation.ts). They are now in a new shared module [src/literal-gate.ts](../src/literal-gate.ts), imported back by `stage-validation.ts` unchanged. Pure move, no behaviour change (2166 tests still pass).
+
+The motivation is the new **operator-argument validator** (`src/operator-validation.ts`, landing next): it must enforce the *same* literal-gating invariant — never throw on a value it can't statically pin down — using the *same* helpers and the *same* error wording (so `$op(...)` arg errors read identically to stage-body errors). Sharing one gate module is what keeps the two validators from drifting; the helpers were always registry-agnostic (each takes a `stage`/`label` string), so no signature changed. Files: [src/literal-gate.ts](../src/literal-gate.ts), [src/stage-validation.ts](../src/stage-validation.ts).
+
+---
+
 ## 2026-06-12 — feat: block-body arrows with local `const`/`let` (`x => { const a = …; return … }` → nested `$let`)
 
 A lambda body may now be an **expression block** — `(x) => { const a = …; const b = f(a); return g(a, b); }` — anywhere a lambda is a value: the array methods (`.map`/`.filter`/`.reduce`/`.flatMap`/`.find`/`.some`/`.every`/…), the `$let(vars, fn)` escape hatch, the IIFE form, `Object.groupBy`, and `Array.from`. Each declaration lowers to one `$let` binding, **right-folded in source order**, so a later `const` can read an earlier one (MongoDB's `$let.vars` are mutually invisible, so a single shared block won't do). This is a faithful 1:1 lowering — every `const`/`let` becomes exactly one `$let`, deterministically; it is **not** the rejected "$let-as-optimisation" (no dependency analysis, no value-preserving rewrite the compiler chose). Motivated by a real query reconciling per-leg risk recommendations (per-party SSTM-vs-CRE comparison) that read awkwardly without local bindings. Verified end-to-end on a running `mongod`: the full reconstructed query fans out one document per qualifying leg with the correct field values.
