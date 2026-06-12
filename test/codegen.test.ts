@@ -357,6 +357,49 @@ describe("operator enum validation (closed string sets)", () => {
   });
 });
 
+describe("operator literal-type validation — date slots (was DEF-029)", () => {
+  it("rejects a literal non-date in a date-accessor argument", () => {
+    expect(() => jsmql.expr('$year("2020-01-01")')).toThrow(
+      /'\$year' expects a date, but got a string\. Use a field path or new Date\(…\)\./,
+    );
+    expect(() => jsmql.expr("$hour(5)")).toThrow(/'\$hour' expects a date, but got a number/);
+  });
+
+  it("rejects a literal non-date / bad amount / bad timezone in $dateAdd", () => {
+    expect(() => jsmql.expr('$dateAdd({ startDate: "2020-01-01", unit: "day", amount: 1 })')).toThrow(
+      /'\$dateAdd' startDate expects a date/,
+    );
+    expect(() => jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: "3" })')).toThrow(
+      /'\$dateAdd' amount expects an integer, but got a string/,
+    );
+    expect(() => jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: 3.5 })')).toThrow(
+      /'\$dateAdd' amount expects an integer, but got a number/,
+    );
+    expect(() => jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: 1, timezone: 5 })')).toThrow(
+      /'\$dateAdd' timezone expects a string, but got a number/,
+    );
+  });
+
+  it("rejects a literal non-date in $dateDiff / $dateTrunc", () => {
+    expect(() => jsmql.expr('$dateDiff({ startDate: "2020", endDate: $.b, unit: "day" })')).toThrow(
+      /'\$dateDiff' startDate expects a date/,
+    );
+    expect(() => jsmql.expr('$dateTrunc({ date: "2020", unit: "day" })')).toThrow(/'\$dateTrunc' date expects a date/);
+  });
+
+  it("allows a field ref, a $-string field path, and new Date(...) in a date slot (gate)", () => {
+    expect(jsmql.expr("$year($.createdAt)")).toEqual({ $year: "$createdAt" });
+    expect(jsmql.expr('$year("$createdAt")')).toEqual({ $year: "$createdAt" }); // HR1: a $-string is a field ref
+    expect(jsmql.expr('$dateAdd({ startDate: new Date("2020-01-01"), unit: "day", amount: 1 })')).toEqual({
+      $dateAdd: { startDate: { $toDate: "2020-01-01" }, unit: "day", amount: 1 },
+    });
+    // a negative integer amount is fine
+    expect(jsmql.expr("$dateAdd({ startDate: $.t, unit: 'day', amount: -3 })")).toEqual({
+      $dateAdd: { startDate: "$t", unit: "day", amount: -3 },
+    });
+  });
+});
+
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });

@@ -21,8 +21,8 @@
 import type { CallArg, Expr } from "./ast.ts";
 import { checkArity, CodegenError, type GenerateCtx } from "./codegen.ts";
 import { closestNameTo, didYouMean } from "./levenshtein.ts";
-import { arrayElements, checkEnum, litString, objectInfo } from "./literal-gate.ts";
-import type { ArgRules, EnumRef } from "./operators.ts";
+import { arrayElements, checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
+import type { ArgRules, ArgType, EnumRef } from "./operators.ts";
 import { lookupOperator } from "./operators.ts";
 
 // Shared, closed enum sets resolved by name from an operator's `enums` rule.
@@ -58,6 +58,10 @@ const REGEX_FLAGS = "imxs"; // MongoDB allows only these regex option flags (a J
 
 /** Validate a literal-string slot against an enum ref. No-op on a non-literal (gate). */
 function checkArgEnum(name: string, key: string, value: Expr, ref: EnumRef): void {
+  // HR1: a source `"$x"` is the field reference `$x` (a runtime value), not a
+  // literal enum value — these slots accept a runtime expression, so no-op.
+  const lit = litString(value);
+  if (lit !== null && lit.startsWith("$")) return;
   if (ref === "regexFlags") {
     const s = litString(value);
     if (s === null) return;
@@ -85,6 +89,133 @@ function checkArgEnum(name: string, key: string, value: Expr, ref: EnumRef): voi
   }
   const allowed = ref === "timeUnit" ? TIME_UNIT : ref === "bsonTypeName" ? BSON_TYPE_NAME : ref;
   checkEnum(name, key, value, allowed);
+}
+
+// ── Literal-type checking (date / numeric / bitwise / object / timestamp slots) ──
+// The BSON-ish kind of a fully-static literal expression, or null for anything
+// non-literal (field ref / op call / `new Date(…)` / param / template) — those
+// no-op (the gate). `null` (the JS literal) is its own kind: MongoDB accepts it
+// in these slots (yields null), so it is treated as always-valid.
+type LiteralKind = "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint";
+
+function literalKind(e: Expr): LiteralKind | null {
+  switch (e.type) {
+    case "NumberLiteral":
+      return "number";
+    case "UnaryExpr":
+      return e.op === "-" && e.operand.type === "NumberLiteral" ? "number" : null;
+    case "StringLiteral":
+      // HR1: a source `"$x"` IS the field reference `$x` (a runtime value of any
+      // type), not a literal string — so it's not a certain type violation.
+      return e.value.startsWith("$") ? null : "string";
+    case "BooleanLiteral":
+      return "bool";
+    case "NullLiteral":
+      return "null";
+    case "ArrayLiteral":
+      return "array";
+    case "ObjectLiteral":
+      return "object";
+    case "RegexLiteral":
+      return "regex";
+    case "BigIntLiteral":
+      return "bigint";
+    default:
+      return null;
+  }
+}
+
+const KIND_NOUN: Record<LiteralKind, string> = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  null: "null",
+  array: "an array",
+  object: "an object",
+  regex: "a regular expression",
+  bigint: "a bigint",
+};
+
+/** Does literal `kind` (with value `e`) satisfy the `expected` arg type? */
+function typeMatches(kind: LiteralKind, e: Expr, expected: ArgType): boolean {
+  switch (expected) {
+    case "number":
+    case "number-or-date": // a date has no literal form, so only a number literal can match
+      return kind === "number" || kind === "bigint";
+    case "integer":
+    case "int-or-long": {
+      if (kind === "bigint") return true;
+      const n = litNumber(e);
+      return n !== null && Number.isInteger(n);
+    }
+    case "string":
+      return kind === "string";
+    case "bool":
+      return kind === "bool";
+    case "array":
+      return kind === "array";
+    case "object":
+      return kind === "object";
+    case "date":
+    case "timestamp":
+      return false; // no literal form — only a field ref / `new Date(…)` (non-literal) is valid
+  }
+}
+
+function typeNoun(expected: ArgType): string {
+  switch (expected) {
+    case "number":
+      return "expects a number";
+    case "integer":
+    case "int-or-long":
+      return "expects an integer";
+    case "number-or-date":
+      return "expects a number or a date";
+    case "string":
+      return "expects a string";
+    case "bool":
+      return "expects a boolean";
+    case "array":
+      return "expects an array";
+    case "object":
+      return "expects a document";
+    case "date":
+      return "expects a date";
+    case "timestamp":
+      return "expects a timestamp";
+  }
+}
+
+function typeHint(expected: ArgType): string {
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  return "";
+}
+
+/**
+ * Reject a literal of a type the slot can never accept (no MongoDB coercion).
+ * A non-literal (field ref / `new Date(…)` / op call / param) and a `null`
+ * literal no-op — only a certain-wrong literal throws. `slot` is the key name
+ * (object form) or "" for a single/positional operand.
+ */
+function checkArgType(name: string, slot: string, value: Expr, expected: ArgType): void {
+  const kind = literalKind(value);
+  if (kind === null || kind === "null") return;
+  if (typeMatches(kind, value, expected)) return;
+  const slotPart = slot ? ` ${slot}` : "";
+  throw new CodegenError(
+    `'${name}'${slotPart} ${typeNoun(expected)}, but got ${KIND_NOUN[kind]}.${typeHint(expected)}`,
+    value.pos,
+  );
+}
+
+/** The operand expressions of an array/flex call: the single array literal's
+ *  elements, or the positional args (spread already rejected upstream). */
+function operandExprs(args: CallArg[]): Expr[] {
+  if (args.length === 1 && (args[0] as Expr).type === "ArrayLiteral") {
+    return arrayElements(args[0] as Expr) ?? [];
+  }
+  return args as Expr[];
 }
 
 /**
@@ -145,7 +276,23 @@ export function validateOperatorArgs(
     }
   }
 
-  // ── object-shape: required / unknown keys ────────────────────────────────────
+  // ── literal-type checks (single / array / flex operands) ─────────────────────
+  if (rules.singleType !== undefined && def.shape.kind === "single" && args.length >= 1) {
+    checkArgType(name, "", args[0] as Expr, rules.singleType);
+  }
+  if (def.shape.kind === "array" || def.shape.kind === "flex") {
+    if (rules.elementType !== undefined) {
+      for (const el of operandExprs(args)) checkArgType(name, "", el, rules.elementType);
+    }
+    if (rules.positionalTypes !== undefined) {
+      const ops = operandExprs(args);
+      rules.positionalTypes.forEach((t, i) => {
+        if (ops[i] !== undefined) checkArgType(name, "", ops[i], t);
+      });
+    }
+  }
+
+  // ── object-shape: required / unknown keys + key enums / types ────────────────
   // Only object-shape operators have named-key wire format; a `flex`/`single`
   // operator given a lone object literal treats it as a VALUE, not named keys.
   if (def.shape.kind === "object") {
@@ -247,6 +394,15 @@ function validateObjectKeys(
     for (const [key, ref] of Object.entries(enums)) {
       const v = valueOf(key);
       if (v !== undefined) checkArgEnum(name, key, v, ref);
+    }
+  }
+
+  // Typed slots: a literal of a type the slot can never accept throws (date
+  // slots, $dateAdd.amount integer, …); a non-literal value no-ops.
+  if (rules.keyTypes !== undefined) {
+    for (const [key, t] of Object.entries(rules.keyTypes)) {
+      const v = valueOf(key);
+      if (v !== undefined) checkArgType(name, key, v, t);
     }
   }
 }

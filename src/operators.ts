@@ -42,8 +42,8 @@ export type ArgRules = {
   // aggregation-expression position — as a query predicate `{ field: { $gt: v } }`
   // a single operand (or an array) is the valid single-value query form.
   arity?: { exact?: number; allowed?: readonly number[]; atLeast?: number; sig?: string; aggOnly?: boolean };
-  // Per-operand / per-slot literal TYPE (DEF-029 lives here). A field ref / op
-  // call / param NO-OPs the check (only literals are judged).
+  // Per-operand / per-slot literal TYPE (date slots, numeric ops, …). A field
+  // ref / op call / param NO-OPs the check (only literals are judged).
   singleType?: ArgType; // single-shape arg
   elementType?: ArgType; // every literal element of a variadic list
   positionalTypes?: readonly ArgType[]; // fixed positional slots
@@ -399,10 +399,8 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Date ───────────────────────────────────────────────────────────────────
-  // [DEF-029] The registry encodes arg *shapes*, not arg *types*: a literal
-  // non-date in a date-typed slot (`$dateDiff({ startDate: "2020-01-01" })`,
-  // `$year("x")`, …) passes through to server-invalid MQL. Closing this needs
-  // arg-type metadata here + an operator-arg validator. See docs/DEFERRED.md.
+  // Argument *types* (date slots, integer amounts, …) are validated via the
+  // `args` rules below + src/operator-validation.ts — see OPERATOR_ARG_RULES.
   $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
   $dateDiff: obj(
     "date",
@@ -720,13 +718,38 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
   $unsetField: { required: ["field", "input"] },
   // ── Type ──
   $convert: { required: ["input", "to"], optional: ["onError", "onNull"], enums: { to: "bsonTypeName" } },
-  // ── Date ──
-  $dateAdd: { required: ["startDate", "unit", "amount"], optional: ["timezone"], enums: { unit: "timeUnit" } },
-  $dateSubtract: { required: ["startDate", "unit", "amount"], optional: ["timezone"], enums: { unit: "timeUnit" } },
+  // ── Date accessors (single-shape) — a literal non-date is certainly wrong ──
+  $year: { singleType: "date" },
+  $month: { singleType: "date" },
+  $dayOfMonth: { singleType: "date" },
+  $dayOfWeek: { singleType: "date" },
+  $dayOfYear: { singleType: "date" },
+  $hour: { singleType: "date" },
+  $minute: { singleType: "date" },
+  $second: { singleType: "date" },
+  $millisecond: { singleType: "date" },
+  $week: { singleType: "date" },
+  $isoDayOfWeek: { singleType: "date" },
+  $isoWeek: { singleType: "date" },
+  $isoWeekYear: { singleType: "date" },
+  // ── Date operators (object-shape) ── date / amount / timezone slot types
+  $dateAdd: {
+    required: ["startDate", "unit", "amount"],
+    optional: ["timezone"],
+    enums: { unit: "timeUnit" },
+    keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
+  },
+  $dateSubtract: {
+    required: ["startDate", "unit", "amount"],
+    optional: ["timezone"],
+    enums: { unit: "timeUnit" },
+    keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
+  },
   $dateDiff: {
     required: ["startDate", "endDate", "unit"],
     optional: ["startOfWeek", "timezone"],
     enums: { unit: "timeUnit", startOfWeek: "weekday" },
+    keyTypes: { startDate: "date", endDate: "date", timezone: "string" },
   },
   // year-or-isoWeekYear is a structural rule (deferred); list the full key set so unknown-key works.
   $dateFromParts: {
@@ -745,12 +768,21 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
     ],
   },
   $dateFromString: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"] },
-  $dateToParts: { required: ["date"], optional: ["timezone", "iso8601"] },
-  $dateToString: { required: ["date"], optional: ["format", "timezone", "onNull"] },
+  $dateToParts: {
+    required: ["date"],
+    optional: ["timezone", "iso8601"],
+    keyTypes: { date: "date", timezone: "string" },
+  },
+  $dateToString: {
+    required: ["date"],
+    optional: ["format", "timezone", "onNull"],
+    keyTypes: { date: "date", timezone: "string" },
+  },
   $dateTrunc: {
     required: ["date", "unit"],
     optional: ["binSize", "timezone", "startOfWeek"],
     enums: { unit: "timeUnit", startOfWeek: "weekday" },
+    keyTypes: { date: "date", binSize: "number", timezone: "string" },
   },
   // ── Variable ──
   $let: { required: ["vars", "in"] },

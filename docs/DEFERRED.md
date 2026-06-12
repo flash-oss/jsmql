@@ -203,18 +203,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-029 — Reject a literal non-date in a date-typed operator argument
-
-- **What's blocked.** Date operators require a Date in their date slots, but the operator registry encodes only argument *shapes*, not argument *types* — so a literal string/number in a date slot passes through to server-invalid MQL: `$dateDiff({ startDate: "2020-01-01", … })` → "requires 'startDate' to be a date, but got string"; likewise `$dateAdd`/`$dateSubtract` `startDate`, `$dateTrunc` `date`, and the single-arg date accessors (`$year("x")`, `$month`, …). A field ref (`$year($.d)`) is fine (it may be a date), and `new Date("…")` folds to a real Date — only a literal non-date is certainly wrong.
-- **Why deferred (not yet an HR3 case).** HR3 rejects what the compiler can tell *from what it knows* — and the registry has no notion of date-typed args, so the compiler currently can't know. Closing this means **adding argument-type metadata to the operator registry** (a new dimension beyond `shape`/`category`) plus an operator-arg validator, which is a separate subsystem from the stage-body validator. The stage-slot half of the original gap (the constant-only `$limit`/`$bucket.boundaries`/`$lookup.pipeline`/… slots) shipped — see DEVLOG.
-- **Target lowering.** Annotate date-typed args in `src/operators.ts` (`[DEF-029]`), then reject a literal non-Date in those slots with an actionable message (e.g. "wrap it in `new Date(...)`").
-- **Success criteria.** `$dateDiff({ startDate: "2020-01-01", … })` throws a clear compile-time error; field refs and `new Date(...)` still pass; tests in `test/codegen.test.ts`.
-- **Rejection site(s).** `src/operators.ts` date operators (tagged `[DEF-029]`); a new operator-arg validator.
-- **Status.** open
-- **Effort.** M
-
----
-
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.

@@ -159,5 +159,40 @@ $convert({ input: $.s, to: "intt" })  → ✗ "Did you mean 'int'?"   ($convert 
 $regexMatch({ …, options: "gi" })    → ✗ "invalid regex flag 'g'"
 ```
 
-_Further checks (literal types) are added per the rollout; this section grows
-with them._
+### literal-type slots (`singleType` / `elementType` / `positionalTypes` / `keyTypes`)
+A literal of a type the slot can never accept (no MongoDB coercion) throws.
+`ArgType` is one of `number` / `integer` / `int-or-long` / `string` / `bool` /
+`object` / `array` / `date` / `timestamp` / `number-or-date`. The gate is strict:
+only a **certain-wrong literal** throws —
+
+- A **`$`-prefixed string** (`"$createdAt"`) is a field reference (HR1), not a
+  string value, so it no-ops (it may resolve to any type) — `$year("$createdAt")`
+  is valid.
+- **`new Date(…)`** lowers to `{ $toDate: … }` (an op call, non-literal) → no-op,
+  so it's valid in a `date` slot. `null` is accepted by MongoDB (yields null) → no-op.
+- `date` / `timestamp` have **no literal form**, so *any* literal in such a slot is
+  wrong (this is the DEF-029 date check); `number`/`int-or-long` reject a literal
+  string/bool/array/object (and `int-or-long` a non-integer number).
+- **string slots are NOT type-checked** — MongoDB coerces inconsistently
+  (`$toUpper(5)` is accepted but `$strLenBytes(5)` is rejected), so a `string`
+  rule would risk false positives; it's used only on slots verified to reject a
+  non-string (e.g. date-operator `timezone`).
+
+Wired (all verified on `mongod`): date accessors (`$year`/`$month`/…) `singleType:
+"date"`; date operators' `keyTypes` (`startDate`/`date`/`endDate` → date, `amount`
+→ int-or-long, `timezone` → string, `binSize` → number); numeric ops `number`;
+bitwise `int-or-long`; `$mergeObjects`/`$objectToArray` `object`; `$size`/
+`$reverseArray` `array`; `$tsSecond`/`$tsIncrement` `timestamp`.
+
+```
+$year("2020-01-01")     → ✗ "expects a date, but got a string. Use a field path or new Date(…)."
+$dateAdd({ …, amount: "3" })  → ✗ "amount expects an integer, but got a string"
+$abs("x")               → ✗ "expects a number, but got a string"
+$year("$createdAt")     → { $year: "$createdAt" }    ($-string = field ref → valid)
+$year(new Date("…"))    → { $year: { $toDate: "…" } }  (non-literal → valid)
+```
+
+Operators whose rules can't be exercised on a local mongod (Queryable-Encryption
+`$encStr*`, server-8.1+ `$hash`/`$hexHash`) and the version-dependent single-shape
+`$meta` keyword set are not type/enum-checked (HR3: jsmql throws only what it can
+confirm).
