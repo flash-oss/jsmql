@@ -651,9 +651,11 @@ export const OPERATORS: Record<string, OperatorDef> = {
 // `required ∪ optional` is the CLOSED key set used for object-form unknown-key
 // detection — list EVERY valid key (incl. ones absent from the positional `keys`
 // array, e.g. $dateFromParts' ISO parts), or set `closedKeys: false` to opt out.
-// Omitted operators ($encStr* — Queryable-Encryption-gated; $hash/$hexHash —
-// server 8.1+) are unverifiable on a local mongod and intentionally left
-// unvalidated for now (see docs/DEFERRED.md).
+// Omitted operators ($encStr* — Queryable-Encryption / FCV-gated; $hash/$hexHash
+// — not recognised on the local mongod build) can't be confirmed against a
+// server, so per HR3 they carry no rules (the server still rejects bad input at
+// runtime). $meta's keyword set is single-shape + version-dependent, so it is
+// likewise not enum-checked.
 const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
   // ── Arity: fixed / bounded operand counts (array & flex shapes) ──
   // Only EXACT and BOUNDED-RANGE counts are declared — never an open min on a
