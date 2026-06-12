@@ -412,11 +412,11 @@ at query time:
 
 ```js
 $.items[0]
-// → { $cond: [
-//       { $isArray: "$items" },
-//       { $arrayElemAt: ["$items", 0] },
-//       { $getField: { field: 0, input: "$items" } }
-//     ] }
+// → { $cond: {
+//       if: { $isArray: "$items" },
+//       then: { $arrayElemAt: ["$items", 0] },
+//       else: { $getField: { field: 0, input: "$items" } }
+//     } }
 ```
 
 When the key is **provably a string** — a string literal, a `.toLowerCase()`-style
@@ -970,7 +970,7 @@ $.building && $.building + ","      // includes the suffix only when $.building 
 ### Conditional
 
 ```js
-$.age >= 18 ? "adult" : "minor"     // { $cond: [{ $gte: ["$age", 18] }, "adult", "minor"] }
+$.age >= 18 ? "adult" : "minor"     // { $cond: { if: { $gte: ["$age", 18] }, then: "adult", else: "minor" } }
 $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 ```
 
@@ -1059,7 +1059,7 @@ $.note.padEnd(10)                  // (default pad char is space)
 // Property access — DOT access is interpreted, BRACKET access is raw
 $.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
 $.csv.split(",").length             // { $size: ... }           — known array  → $size
-$.field.length                      // { $cond: [{ $isArray: "$field" }, { $size: ... }, { $strLenCP: ... }] }
+$.field.length                      // { $cond: { if: { $isArray: "$field" }, then: { $size: ... }, else: { $strLenCP: ... } } }
                                     //                          — unknown type → runtime dispatch
 $.field["length"]                   // { $getField: { field: "length", input: "$field" } }
                                     //   RAW access — a property called "length", NOT the length operator;
@@ -1117,11 +1117,11 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 
 ```js
 $.tags.includes("active")
-// → { $cond: [
-//       { $isArray: "$tags" },
-//       { $in: ["active", "$tags"] },
-//       { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] }
-//     ] }
+// → { $cond: {
+//       if: { $isArray: "$tags" },
+//       then: { $in: ["active", "$tags"] },
+//       else: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] }
+//     } }
 ```
 
 If you know the type at design time and want compact output, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` for string, `$.tags.slice().includes(...)` for array), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
@@ -2381,7 +2381,7 @@ jsmql(`[{ $match: $.deletedAt === undefined }]`);
 jsmql(`[{ $match: typeof $.x === "boolean" }]`);
 // → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
 jsmql(`[{ $match: $.items.length === 3 }]`);
-// → [{ $match: { $expr: { $eq: [{ $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }] }, 3] } } }]
+// → [{ $match: { $expr: { $eq: [{ $cond: { if: { $isArray: "$items" }, then: { $size: "$items" }, else: { $strLenCP: "$items" } } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).
 //   Compared against a non-natural value (=== 3.5, === "x"), `.length` reads as a literal field
 //   path instead → { "items.length": 3.5 }. To read a field literally named `length` against a

@@ -66,7 +66,7 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | `.padStart(n[, ch])` | `$let` + `$cond` + `$reduce`($range) — pad-string concatenated *before* receiver |
 | `.padEnd(n[, ch])` | mirror of padStart, pad string concatenated *after* receiver |
 | `.repeat(n)` | `$reduce` over `$range(0, n)` concatenating receiver |
-| `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: [{ $isArray: expr }, { $size: expr }, { $strLenCP: expr }] }` otherwise |
+| `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: { if: { $isArray: expr }, then: { $size: expr }, else: { $strLenCP: expr } } }` otherwise |
 
 ### Array methods (no lambda)
 

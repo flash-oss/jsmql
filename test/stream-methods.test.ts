@@ -713,8 +713,8 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) â€
       {
         $match: {
           $expr: {
-            $cond: [
-              {
+            $cond: {
+              if: {
                 $and: [
                   { $ne: ["$active", null] },
                   { $ne: ["$active", false] },
@@ -722,9 +722,9 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) â€
                   { $ne: ["$active", 0] },
                 ],
               },
-              "$contactDetails.email",
-              "$active",
-            ],
+              then: "$contactDetails.email",
+              else: "$active",
+            },
           },
         },
       },
