@@ -44,8 +44,14 @@ function callSource(name: string, def: OperatorDef): string {
       // Fill every positional slot (each maps to a named key) with the sentinel.
       return `${name}(${def.shape.keys.map(() => q).join(", ")})`;
     case "single":
-    case "flex":
       return `${name}(${q})`;
+    case "flex":
+      // flex defaults to the single-value form (1 arg); but an arity rule
+      // dictates the count — the comparison ops ($eq/$gt/…) need exactly 2 in
+      // the aggregation position this probe builds.
+      return `${name}(${Array(def.args?.arity ? arrayArgCount(def) : 1)
+        .fill(q)
+        .join(", ")})`;
   }
 }
 

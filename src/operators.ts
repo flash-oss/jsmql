@@ -37,7 +37,10 @@ export type ArgRules = {
   // single array-literal's element count). For array/flex shapes; none-shape
   // arity (0) is derived from the shape and needs no rule. `sig` is the human
   // signature for the message (e.g. "dividend, divisor").
-  arity?: { exact?: number; allowed?: readonly number[]; atLeast?: number; sig?: string };
+  // `aggOnly` (the comparison operators): the arity is enforced only in
+  // aggregation-expression position — as a query predicate `{ field: { $gt: v } }`
+  // a single operand (or an array) is the valid single-value query form.
+  arity?: { exact?: number; allowed?: readonly number[]; atLeast?: number; sig?: string; aggOnly?: boolean };
   // Per-operand / per-slot literal TYPE (DEF-029 lives here). A field ref / op
   // call / param NO-OPs the check (only literals are judged).
   singleType?: ArgType; // single-shape arg
@@ -681,6 +684,13 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
   $ifNull: { arity: { atLeast: 2, sig: "expr, replacement[, …]" } },
   $setDifference: { arity: { exact: 2, sig: "set1, set2" } },
   $setIsSubset: { arity: { exact: 2, sig: "set1, set2" } },
+  // ── Comparison (agg-only arity: the 1-arg / array form is the valid QUERY form) ──
+  $eq: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $ne: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $gt: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $gte: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $lt: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
+  $lte: { arity: { exact: 2, sig: "expr1, expr2", aggOnly: true } },
   // ── Conditional ──
   $cond: { required: ["if", "then", "else"] },
   $switch: { required: ["branches"], optional: ["default"] },

@@ -64,14 +64,21 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$gt($.age, 18)")).toEqual({ $gt: ["$age", 18] });
   });
 
-  // Comparison operators + $in are dual-form (`flex`): a single argument is the
-  // valid query-operator shape `{ field: { $gt: v } }`; two args are the
-  // aggregation operands `{ $gt: [a, b] }` (HR2 — see docs/LANG_RULES.md). A
-  // single arg must NOT error or array-wrap.
-  it("comparison single arg → query single-value form (HR2)", () => {
-    expect(jsmql.expr("$gt($.x)")).toEqual({ $gt: "$x" });
-    expect(jsmql.expr("$eq(5)")).toEqual({ $eq: 5 });
-    expect(jsmql.expr("$lte($.score)")).toEqual({ $lte: "$score" });
+  // Comparison operators are dual-form (`flex`): the single-argument shape is
+  // the valid QUERY predicate `{ field: { $gt: v } }`; two args are the
+  // aggregation operands `{ $gt: [a, b] }` (HR2 — see docs/LANG_RULES.md). In
+  // aggregation-expression position the single-value form is INVALID (the server
+  // needs exactly two operands), so the `$op` escape hatch rejects it there…
+  it("comparison single arg is rejected in aggregation position (needs 2 operands)", () => {
+    expect(() => jsmql.expr("$gt($.x)")).toThrow(/\$gt\(expr1, expr2\) requires exactly 2 arguments, got 1/);
+    expect(() => jsmql.expr("$eq(5)")).toThrow(/\$eq\(expr1, expr2\) requires exactly 2 arguments, got 1/);
+    expect(() => jsmql.expr("$lte($.score)")).toThrow(/\$lte\(expr1, expr2\) requires exactly 2 arguments, got 1/);
+  });
+
+  // …but the single-value form still compiles as a query predicate under a field.
+  it("comparison single arg → valid query single-value form under a field (HR2)", () => {
+    expect(jsmql("{ x: $gt($.y) }")).toEqual({ x: { $gt: "$y" } });
+    expect(jsmql("{ score: $lte(80) }")).toEqual({ score: { $lte: 80 } });
   });
 
   it("$in dual form: single array → query, two args → aggregation", () => {
@@ -268,6 +275,34 @@ describe("operator arity validation (array / flex shapes)", () => {
     expect(jsmql.expr("$round($.x)")).toEqual({ $round: "$x" }); // flex 1-arg ok
     expect(jsmql.expr("$round($.x, 2)")).toEqual({ $round: ["$x", 2] });
     expect(jsmql.expr("$slice($.a, 0, 3)")).toEqual({ $slice: ["$a", 0, 3] });
+  });
+});
+
+describe("comparison-operator arity is aggregation-only (query single-value form stays valid)", () => {
+  // In aggregation position $eq/$ne/$gt/$gte/$lt/$lte need exactly 2 operands;
+  // the 1-arg / array forms are the valid QUERY predicate forms, so the check
+  // fires ONLY when the operator is in aggregation-expression position.
+  it("rejects non-2 operand counts in aggregation position (jsmql.expr + stage body)", () => {
+    expect(() => jsmql.expr("$gt($.a)")).toThrow(/requires exactly 2 arguments, got 1/);
+    expect(() => jsmql.expr("$gt($.a, $.b, $.c)")).toThrow(/requires exactly 2 arguments, got 3/);
+    expect(() => jsmql("$project({ r: $lt($.a) });")).toThrow(/requires exactly 2 arguments, got 1/);
+    expect(() => jsmql("$addFields({ r: $eq($.a, $.b, $.c) });")).toThrow(/requires exactly 2 arguments, got 3/);
+  });
+
+  it("allows the single-value / array form as a query predicate (not aggregation)", () => {
+    expect(jsmql("{ age: $gt($.x) }")).toEqual({ age: { $gt: "$x" } });
+    expect(jsmql("{ tier: $eq(5) }")).toEqual({ tier: { $eq: 5 } });
+    expect(jsmql("$match({ age: $gte($.threshold) });")).toEqual([{ $match: { age: { $gte: "$threshold" } } }]);
+  });
+
+  it("the valid 2-operand aggregation form is unaffected", () => {
+    expect(jsmql.expr("$gt($.a, $.b)")).toEqual({ $gt: ["$a", "$b"] });
+    expect(jsmql("$project({ r: $eq($.a, $.b) });")).toEqual([{ $project: { r: { $eq: ["$a", "$b"] } } }]);
+  });
+
+  it("accumulator-dual flex ops ($max/$min/$sum) keep their valid 1-arg form in aggregation", () => {
+    expect(jsmql.expr("$max($.scores)")).toEqual({ $max: "$scores" });
+    expect(jsmql.expr("$sum($.amount)")).toEqual({ $sum: "$amount" });
   });
 });
 

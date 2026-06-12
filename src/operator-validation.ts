@@ -19,7 +19,7 @@
 // after assertNoSpread, before shape dispatch. See docs/specs/operator-validation.md.
 
 import type { CallArg, Expr } from "./ast.ts";
-import { checkArity, CodegenError } from "./codegen.ts";
+import { checkArity, CodegenError, type GenerateCtx } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { arrayElements, objectInfo } from "./literal-gate.ts";
 import type { ArgRules } from "./operators.ts";
@@ -31,7 +31,13 @@ import { lookupOperator } from "./operators.ts";
  * operator doesn't declare. Throws a `CodegenError` (with the offending node's
  * `.pos`) on a 100%-certain violation.
  */
-export function validateOperatorArgs(name: string, style: "positional" | "object", args: CallArg[], pos: number): void {
+export function validateOperatorArgs(
+  name: string,
+  style: "positional" | "object",
+  args: CallArg[],
+  pos: number,
+  ctx: GenerateCtx,
+): void {
   const def = lookupOperator(name);
   if (def === undefined) return; // unknown operator — codegen passes it through
 
@@ -63,10 +69,17 @@ export function validateOperatorArgs(name: string, style: "positional" | "object
   // be checked; HR2). Degenerate cases (an array op given 0 or 1 non-array arg)
   // return null and defer to codegen's own list-operand / "at least 1" errors.
   if (rules.arity !== undefined && (def.shape.kind === "array" || def.shape.kind === "flex")) {
-    const count = operandCount(def.shape.kind, args);
-    if (count !== null) {
-      const a = rules.arity;
-      checkArity(name, { sig: a.sig ?? "", exact: a.exact, allowed: a.allowed, atLeast: a.atLeast }, count, pos, "");
+    const a = rules.arity;
+    // `aggOnly` rules (the comparison operators $eq/$gt/…) apply ONLY in
+    // aggregation-expression position: there `$gt($.x)` (1 operand) and
+    // `$gt(a, b, c)` (3) are certain errors, but as a query predicate
+    // (`{ field: { $gt: v } }` / `{ field: { $gt: [a, b, c] } }`) both shapes
+    // are valid. Outside agg position we can't be certain, so we skip.
+    if (!a.aggOnly || ctx.aggExpr === true) {
+      const count = operandCount(def.shape.kind, args);
+      if (count !== null) {
+        checkArity(name, { sig: a.sig ?? "", exact: a.exact, allowed: a.allowed, atLeast: a.atLeast }, count, pos, "");
+      }
     }
   }
 

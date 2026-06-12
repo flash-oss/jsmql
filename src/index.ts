@@ -826,7 +826,11 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   // caller asked for a raw building block, the bare `{ $set: … }` shape is
   // exactly what fits inside a hand-written `$set` / `$addFields` stage or
   // gets passed to a doc-form update operation that wants literal semantics.
-  return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, c) as object);
+  // The bare-expression branch of `jsmql.expr` IS an aggregation expression, so
+  // mark it `aggExpr` — this is where a comparison op's single-value query form
+  // (`$gt($.x)`) is actually invalid. (The Pipeline / UpdateFilter branches set
+  // their own per-stage context and ignore this.)
+  return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, { ...c, aggExpr: true }) as object);
 }
 
 /**

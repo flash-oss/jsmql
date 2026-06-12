@@ -1290,11 +1290,15 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
   }
 
   // Other stages: if the body is an object literal, walk its entries so we
-  // can spot sub-pipeline slots; otherwise generate directly.
+  // can spot sub-pipeline slots; otherwise generate directly. These bodies are
+  // aggregation expressions (not query documents — that's `$match` above), so
+  // mark `aggExpr` to enable the comparison-operator arity check. Sub-pipeline
+  // slots reset to a fresh ctx (so a nested `$match` isn't mis-marked).
+  const aggCtx: GenerateCtx = { ...ctx, aggExpr: true };
   if (body.type === "ObjectLiteral") {
-    return generateBodyObject(body, stageName, ctx);
+    return generateBodyObject(body, stageName, aggCtx);
   }
-  return generateWithCtx(body, ctx);
+  return generateWithCtx(body, aggCtx);
 }
 
 /**

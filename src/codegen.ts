@@ -137,6 +137,18 @@ export type GenerateCtx = {
    *   - unset / undefined: neither — outside any aggregation accumulator scope.
    */
   accumulatorContext?: "group" | "window-output";
+  /**
+   * True when codegen is in **aggregation-expression** position — `jsmql.expr`,
+   * and every non-`$match` stage body (set in pipeline.ts). It is NOT set in
+   * query field-value position (a raw filter / `$match` object), where a
+   * comparison operator like `{ $gt: v }` is the valid single-value *query* form.
+   * Used only by the operator-arg validator to gate the comparison operators'
+   * exact-2 arity: in agg position `$gt($.x)` (1 operand) is a certain error,
+   * but `{ age: $gt($.x) }` in a query is valid. Default-off is the HR3-safe
+   * direction — a missed agg position just under-validates (the server still
+   * rejects it); it never produces a false positive on valid query code.
+   */
+  aggExpr?: boolean;
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -153,6 +165,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
     accumulatorContext: ctx.accumulatorContext,
+    aggExpr: ctx.aggExpr,
   };
 }
 
@@ -1775,7 +1788,7 @@ function generateOperatorCall(
   assertNoSpread(args, name, pos);
   // Literal-gated argument validation (arity / required keys / enums / types).
   // Runs after the spread guard, before shape dispatch; see operator-validation.ts.
-  validateOperatorArgs(name, style, args, pos);
+  validateOperatorArgs(name, style, args, pos, ctx);
   // Special case: $literal(value) — the argument is wrapped verbatim and
   // MongoDB does not re-evaluate it at query time. Recurse with the
   // `insideLiteral` flag so nested `"$..."` strings don't get a second

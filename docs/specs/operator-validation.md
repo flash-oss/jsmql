@@ -111,5 +111,28 @@ $divide([6, 2])    → { $divide: [6, 2] }   (valid)
 $add(1, 2, 3, 4)   → { $add: [1, 2, 3, 4] }  (variadic — unconstrained)
 ```
 
-_Further checks (flex-comparison arity, enums, literal types) are added per the
-rollout; this section grows with them._
+### comparison operators — aggregation-only arity
+`$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte` are `flex` and dual-purpose: in an
+aggregation expression they take **exactly two** operands (`{ $gt: [a, b] }`), but
+as a **query predicate** under a field (`{ field: { $gt: v } }`) a single value —
+or even an array (`{ field: { $gt: [1, 2, 3] } }`, comparing against the array) —
+is valid. So their `exact: 2` arity carries `aggOnly: true` and is enforced
+**only** when `ctx.aggExpr` is set.
+
+`aggExpr` is set in aggregation-expression position — `jsmql.expr`, and every
+non-`$match` stage body (pipeline.ts) — and is **unset** in query field-value
+position (a raw filter / `$match` object). Default-off is the HR3-safe direction:
+a missed agg position merely under-validates (the server still rejects the bad
+shape), and it never false-positives on valid query code. The accumulator-dual
+flex ops (`$max`/`$min`/`$sum`/`$avg`/`$stdDev*`) get **no** arity rule — their
+single-argument form is the legitimate accumulator form.
+
+```
+$project({ r: $gt($.a) })   → ✗ "$gt(expr1, expr2) requires exactly 2 arguments, got 1"  (agg)
+jsmql.expr("$gt($.a, $.b, $.c)")  → ✗ requires exactly 2, got 3                           (agg)
+{ age: $gt($.x) }           → { age: { $gt: "$x" } }   (query predicate — valid)
+$max($.scores)              → { $max: "$scores" }      (accumulator dual — valid)
+```
+
+_Further checks (enums, literal types) are added per the rollout; this section
+grows with them._
