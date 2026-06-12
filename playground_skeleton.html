@@ -617,6 +617,67 @@
         min-width: 0;
       }
 
+      /* Optional "Variables" editor: a free-form JS object literal whose keys
+         become bindings supplied to `jsmql.compile()` (see `parseVars` /
+         `buildArrow` below). Empty → the playground uses the plain entry points
+         exactly as before; non-empty → it routes through their `.compile(...)`
+         builders. The purple `--update` accent marks it as the parameterising
+         (compile) concept, distinct from the kind-coloured usage-bar above it. */
+      .vars-section {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--border);
+        border-left: 3px solid var(--update);
+        background: var(--sidebar-bg);
+      }
+
+      .vars-header {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 7px 12px 5px;
+        font-size: 11px;
+        min-width: 0;
+      }
+
+      .vars-header .vars-title {
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+        color: var(--update);
+        flex-shrink: 0;
+      }
+
+      .vars-header .vars-hint {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .vars-section.error .vars-hint {
+        color: var(--error);
+      }
+
+      /* The vars editor never takes the panel's flex-stretch (that's the query
+         editor's job) — it grows with its content up to a cap, then scrolls. */
+      .vars-editor {
+        border-top: 1px solid var(--border);
+      }
+
+      .vars-editor .CodeMirror {
+        flex: none;
+        height: auto;
+        min-height: 44px;
+        max-height: 132px;
+        background: var(--panel);
+        font-size: 12px;
+      }
+
       .label {
         padding: 8px 12px;
         font-size: 11px;
@@ -966,6 +1027,21 @@
           <span class="usage-label">MongoDB call:</span>
           <code class="usage-code" id="usage-code"></code>
         </div>
+        <div class="vars-section" id="vars-section">
+          <div class="vars-header">
+            <span class="vars-title">Variables</span>
+            <span class="vars-hint" id="vars-hint">optional — bound via jsmql.compile()</span>
+          </div>
+          <div class="vars-editor">
+            <textarea
+              id="vars-input"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              autocorrect="off"
+            ></textarea>
+          </div>
+        </div>
         <textarea
           id="input"
           spellcheck="false"
@@ -1014,7 +1090,22 @@
       const usageEl = document.getElementById("usage-bar");
       const usageCodeEl = document.getElementById("usage-code");
 
+      const varsEl = document.getElementById("vars-input");
+      const varsSection = document.getElementById("vars-section");
+      const varsHint = document.getElementById("vars-hint");
+
       const inputCm = CodeMirror.fromTextArea(inputEl, {
+        mode: { name: "javascript" },
+        theme: "neo",
+        lineWrapping: true,
+        tabSize: 2,
+        indentUnit: 2,
+      });
+
+      // The optional Variables editor. Its contents are a JS object literal
+      // (NOT JSON — `new Date(...)`, unquoted keys, etc. are all fine) whose
+      // keys become `jsmql.compile()` bindings. See `parseVars` / `render`.
+      const varsCm = CodeMirror.fromTextArea(varsEl, {
         mode: { name: "javascript" },
         theme: "neo",
         lineWrapping: true,
@@ -1065,6 +1156,17 @@
         expression: jsmql.expr,
         pipeline: jsmql.pipeline,
       };
+      // The parameterised counterpart of each entry point. When the Variables
+      // editor names ≥1 binding, `render()` dispatches through these instead:
+      // `COMPILE_FNS[mode](arrowSrc)(paramsObject)` (see `buildArrow`). The keys
+      // match MODE_FNS so the active compile mode maps straight across.
+      const COMPILE_FNS = {
+        auto: jsmql.compile,
+        filter: jsmql.filter.compile,
+        update: jsmql.update.compile,
+        expression: jsmql.expr.compile,
+        pipeline: jsmql.pipeline.compile,
+      };
       const modeToggleEl = document.getElementById("mode-toggle");
       const modeButtons = modeToggleEl.querySelectorAll("button");
       let currentMode = "auto";
@@ -1077,6 +1179,10 @@
       // Filter document → `find`).
       let currentColl = "collection";
       let lastOutputIsPipeline = false;
+      // Binding names from the Variables editor (empty when no variables are in
+      // play). Set at the top of every `render()`; read by `usageForMode` so the
+      // call-site hint shows the `.compile(...)({ … })` form when variables exist.
+      let currentVarKeys = [];
 
       // The example manifest only records the `jsmql` / `jsmql.expr` call
       // each example was authored with; map that to a toggle mode.
@@ -1090,19 +1196,23 @@
       // `aggregate` from the actual output shape.
       function usageForMode(mode) {
         const c = currentColl;
+        // With variables, the entry point becomes its `.compile(...)` builder
+        // invoked with the params object — `jsmql.filter.compile(...)({ age })`.
+        const params = currentVarKeys.length ? `({ ${currentVarKeys.join(", ")} })` : "";
+        const e = (name) => (currentVarKeys.length ? `${name}.compile(...)${params}` : `${name}(...)`);
         switch (mode) {
           case "filter":
-            return `db.${c}.find(jsmql.filter(...))`;
+            return `db.${c}.find(${e("jsmql.filter")})`;
           case "update":
-            return `db.${c}.updateOne(filter, jsmql.update(...))`;
+            return `db.${c}.updateOne(filter, ${e("jsmql.update")})`;
           case "expression":
-            return `db.${c}.aggregate([{ $addFields: { value: jsmql.expr(...) } }])`;
+            return `db.${c}.aggregate([{ $addFields: { value: ${e("jsmql.expr")} } }])`;
           case "pipeline":
-            return `db.${c}.aggregate(jsmql.pipeline(...))`;
+            return `db.${c}.aggregate(${e("jsmql.pipeline")})`;
           default:
             return lastOutputIsPipeline
-              ? `db.${c}.aggregate(jsmql(...))`
-              : `db.${c}.find(jsmql(...))`;
+              ? `db.${c}.aggregate(${e("jsmql")})`
+              : `db.${c}.find(${e("jsmql")})`;
         }
       }
 
@@ -1425,6 +1535,7 @@
         // refresh after the grid columns change so the editors re-measure.
         requestAnimationFrame(() => {
           inputCm.refresh();
+          varsCm.refresh();
           outputCm.refresh();
         });
       }
@@ -1511,9 +1622,76 @@
         return go(root, 0, 0);
       }
 
+      // A variable name must be a plain JS identifier — the destructure
+      // `({ name }) => …` we build for `jsmql.compile` only binds those. A
+      // leading `$` would be read by the parser as the ops-hint slot, not a
+      // binding, so reject it with a clear message instead of a confusing
+      // downstream "unknown identifier".
+      const VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+      // Parse the free-form Variables editor into a params object. Empty (or a
+      // bare `{}` with no keys) means "no variables" → the playground uses the
+      // plain entry points exactly as before. Otherwise the text is evaluated as
+      // a JS object literal — NOT JSON, so `new Date(...)`, unquoted keys, etc.
+      // all work, mirroring what a developer would pass to jsmql.compile() at a
+      // real call site. Returns { keys, obj } on success, { error } on failure.
+      function parseVars(text) {
+        const trimmed = text.trim();
+        if (trimmed === "") return { keys: [], obj: null };
+        let obj;
+        try {
+          // The user's own input, evaluated client-side — same trust model as
+          // a browser console. Wrapped in parens so `{…}` reads as an object
+          // literal, not a block.
+          obj = new Function("return (" + trimmed + "\n)")();
+        } catch (err) {
+          return { error: "Could not evaluate the variables object: " + err.message };
+        }
+        if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+          return {
+            error: 'Variables must be a plain object literal, e.g. { age: 18, since: new Date("2026-01-01") }.',
+          };
+        }
+        const keys = Object.keys(obj);
+        if (keys.length === 0) return { keys: [], obj: null };
+        for (const k of keys) {
+          if (!VAR_NAME_RE.test(k)) {
+            return {
+              error: `Variable name '${k}' must be a plain identifier (letters, digits, underscore; no leading $).`,
+            };
+          }
+        }
+        return { keys, obj };
+      }
+
+      // Wrap the query into a compile-form arrow string for `jsmql.compile()`:
+      // `({ a, b }) => { <query> }`. A block body reproduces the exact AST the
+      // plain entry points parse from `<query>` for every shape (bare predicate,
+      // `;`-separated pipeline, update-op chain, raw filter doc). `prefixLen`
+      // lets `render()` map arrow-relative error offsets back to the query
+      // editor for highlighting.
+      function buildArrow(keys, query) {
+        const prefix = `({ ${keys.join(", ")} }) => { `;
+        return { src: prefix + query + " }", prefixLen: prefix.length };
+      }
+
       function render() {
         clearActiveOnUserEdit();
         const src = inputCm.getValue();
+
+        // Resolve the Variables editor first — it decides whether we dispatch
+        // through the plain entry points or their `.compile(...)` builders, and
+        // feeds the call-site hint.
+        const vars = parseVars(varsCm.getValue());
+        currentVarKeys = vars.error ? [] : vars.keys;
+        const varsActive = currentVarKeys.length > 0;
+        varsSection.classList.toggle("error", Boolean(vars.error));
+        varsHint.textContent = vars.error
+          ? vars.error
+          : varsActive
+            ? `bound via jsmql.compile() — ${currentVarKeys.length} var${currentVarKeys.length === 1 ? "" : "s"}`
+            : "optional — bound via jsmql.compile()";
+
         if (src.trim() === "") {
           clearErrorMarker();
           outputCm.setValue("");
@@ -1529,7 +1707,29 @@
           setMode("auto", { rerender: false });
           return;
         }
-        const result = jsmql.validate(src);
+
+        // A malformed variables object blocks compilation: the query may be
+        // fine, but we can't bind values to it. Surface the precise vars error
+        // rather than silently dropping the variables (which would then misfire
+        // as "unknown identifier" on the names the user clearly meant to bind).
+        if (vars.error) {
+          clearErrorMarker();
+          outputCm.setOption("mode", null);
+          outputCm.setValue("Variables error\n\n" + vars.error);
+          outputPanel.classList.add("error");
+          updateUsageBar();
+          return;
+        }
+
+        const arrow = varsActive ? buildArrow(currentVarKeys, src) : null;
+        // Map a position in the (wrapped) arrow source back to the query editor.
+        // Identity when no variables are in play.
+        const toQueryPos = (pos) => (varsActive ? pos - arrow.prefixLen : pos);
+
+        // Validate the wrapped arrow when variables are in play (`jsmql.validate`
+        // accepts a compile-form arrow string and resolves the bindings to null
+        // placeholders), otherwise the raw query.
+        const result = jsmql.validate(varsActive ? arrow.src : src);
         if (result.valid) {
           clearErrorMarker();
           // Dispatch through the entry point the compile-mode toggle selects.
@@ -1538,8 +1738,10 @@
           // (jsmql.expr-authored) render correctly — without the strict
           // dispatch they would go through `jsmql()` and pick up the find-
           // filter wrap (`{ $expr: <agg> }`) instead of the bare aggregation
-          // expression. See docs/specs/filter-mode.md for the dispatch.
-          const compile = MODE_FNS[currentMode] || jsmql;
+          // expression. See docs/specs/filter-mode.md for the dispatch. With
+          // variables the matching `.compile(...)` builder is bound to the
+          // params object instead.
+          //
           // `jsmql.validate` checks the source against the shape-detecting
           // `jsmql()` semantics, so a strict-shape entry point (filter /
           // update / pipeline) can still throw here when the input would
@@ -1549,16 +1751,18 @@
           // panel rather than letting the exception strand stale output.
           let out;
           try {
-            out = compile(src);
+            out = varsActive
+              ? (COMPILE_FNS[currentMode] || jsmql.compile)(arrow.src)(vars.obj)
+              : (MODE_FNS[currentMode] || jsmql)(src);
           } catch (err) {
-            const pos = typeof err.pos === "number" ? err.pos : 0;
-            if (typeof err.pos === "number" && err.code === "SYNTAX_ERROR") {
+            const pos = toQueryPos(typeof err.pos === "number" ? err.pos : 0);
+            if (typeof err.pos === "number" && err.code === "SYNTAX_ERROR" && pos >= 0) {
               highlightErrorAt(pos);
             } else {
               clearErrorMarker();
             }
             outputCm.setOption("mode", null);
-            outputCm.setValue(`${err.name || "Error"} at position ${pos}\n\n${err.message}`);
+            outputCm.setValue(`${err.name || "Error"} at position ${Math.max(0, pos)}\n\n${err.message}`);
             outputPanel.classList.add("error");
             updateUsageBar();
             return;
@@ -1573,18 +1777,21 @@
           updateUsageBar();
         } else {
           const e = result.errors[0];
+          const pos = toQueryPos(e.pos);
           // CODEGEN_ERROR carries pos: 0 as a placeholder, not a real
-          // location — only highlight when the position is meaningful.
-          if (e.code === "SYNTAX_ERROR") highlightErrorAt(e.pos);
+          // location — only highlight when the position is meaningful and
+          // falls within the query (not the auto-generated arrow prefix).
+          if (e.code === "SYNTAX_ERROR" && pos >= 0) highlightErrorAt(pos);
           else clearErrorMarker();
           outputCm.setOption("mode", null);
-          outputCm.setValue(`${e.code} at position ${e.pos}\n\n${e.message}`);
+          outputCm.setValue(`${e.code} at position ${Math.max(0, pos)}\n\n${e.message}`);
           outputPanel.classList.add("error");
           updateUsageBar();
         }
       }
 
       inputCm.on("change", render);
+      varsCm.on("change", render);
       prettify.addEventListener("change", render);
 
       let copyResetTimer = null;
