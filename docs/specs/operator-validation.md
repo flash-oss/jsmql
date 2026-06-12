@@ -134,5 +134,30 @@ jsmql.expr("$gt($.a, $.b, $.c)")  → ✗ requires exactly 2, got 3             
 $max($.scores)              → { $max: "$scores" }      (accumulator dual — valid)
 ```
 
-_Further checks (enums, literal types) are added per the rollout; this section
-grows with them._
+### object-shape — enum slots
+An operator's `enums` rule (`{ key: EnumRef }`) checks a literal-string slot
+value against a closed set; a non-literal value no-ops (gate). Runs in both call
+forms. The named sets (in operator-validation.ts):
+
+| EnumRef | Set | Matching |
+|---|---|---|
+| `timeUnit` | year…millisecond | case-sensitive lowercase (mongod rejects `Day`) |
+| `weekday` | monday…sunday | **case-insensitive** (mongod accepts `Monday`) |
+| `bsonTypeName` | the full `$type`/`$convert` alias set | case-sensitive; a numeric type code is a non-string → skipped |
+| `regexFlags` | charset `i`,`m`,`x`,`s` | per-character (a JS `g`/`y` flag throws) |
+| inline `string[]` | e.g. `["approximate"]`, `["js"]` | case-sensitive |
+
+Wired on: `$dateAdd`/`$dateSubtract`/`$dateDiff`/`$dateTrunc` `unit`; `$dateDiff`/
+`$dateTrunc` `startOfWeek`; `$convert` `to`; `$regex*` `options`; `$median`/
+`$percentile` `method`; `$function`/`$accumulator` `lang`. All verified on `mongod`.
+(`$meta`'s keyword set is single-shape + version-dependent — deferred.)
+
+```
+$dateAdd({ …, unit: "fortnight" })   → ✗ "unit must be one of: year, …, millisecond — got 'fortnight'"
+$dateTrunc({ …, startOfWeek: "Monday" })  → valid (weekday case-insensitive)
+$convert({ input: $.s, to: "intt" })  → ✗ "Did you mean 'int'?"   ($convert to: 16 → valid, numeric)
+$regexMatch({ …, options: "gi" })    → ✗ "invalid regex flag 'g'"
+```
+
+_Further checks (literal types) are added per the rollout; this section grows
+with them._

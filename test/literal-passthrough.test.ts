@@ -32,6 +32,21 @@ function arrayArgCount(def: OperatorDef): number {
   return a.exact ?? a.allowed?.[0] ?? a.atLeast ?? 2;
 }
 
+// A valid sample value for an enum'd slot, so the pass-through probe stays
+// arg-valid (the enum check would reject the `$f` sentinel). The non-enum slots
+// still carry the sentinel — those are what the pass-through assertion checks.
+const ENUM_SAMPLE: Record<string, string> = {
+  timeUnit: "day",
+  weekday: "monday",
+  bsonTypeName: "string",
+  regexFlags: "i",
+};
+function slotLiteral(def: OperatorDef, key: string): string {
+  const ref = def.args?.enums?.[key];
+  if (ref !== undefined) return JSON.stringify(Array.isArray(ref) ? ref[0] : ENUM_SAMPLE[ref]);
+  return JSON.stringify(SENTINEL);
+}
+
 /** Build a minimal `$op(...)` call source from the operator's registry shape. */
 function callSource(name: string, def: OperatorDef): string {
   const q = JSON.stringify(SENTINEL);
@@ -41,8 +56,9 @@ function callSource(name: string, def: OperatorDef): string {
     case "array":
       return `${name}(${Array(arrayArgCount(def)).fill(q).join(", ")})`;
     case "object":
-      // Fill every positional slot (each maps to a named key) with the sentinel.
-      return `${name}(${def.shape.keys.map(() => q).join(", ")})`;
+      // Fill every positional slot (each maps to a named key); enum'd slots get a
+      // valid sample value, the rest the `$`-string sentinel under test.
+      return `${name}(${def.shape.keys.map((k) => slotLiteral(def, k)).join(", ")})`;
     case "single":
       return `${name}(${q})`;
     case "flex":

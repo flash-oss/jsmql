@@ -20,10 +20,72 @@
 
 import type { CallArg, Expr } from "./ast.ts";
 import { checkArity, CodegenError, type GenerateCtx } from "./codegen.ts";
-import { didYouMean } from "./levenshtein.ts";
-import { arrayElements, objectInfo } from "./literal-gate.ts";
-import type { ArgRules } from "./operators.ts";
+import { closestNameTo, didYouMean } from "./levenshtein.ts";
+import { arrayElements, checkEnum, litString, objectInfo } from "./literal-gate.ts";
+import type { ArgRules, EnumRef } from "./operators.ts";
 import { lookupOperator } from "./operators.ts";
+
+// Shared, closed enum sets resolved by name from an operator's `enums` rule.
+// timeUnit is case-SENSITIVE lowercase (mongod rejects "Day"); weekday is
+// case-INSENSITIVE (mongod accepts "Monday"/"monday"); bsonTypeName is the full
+// $type/$convert alias set (verified recognised by $convert.to on mongod).
+const TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] as const;
+const WEEKDAY = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+// Keep in sync with the BSON type aliases MongoDB accepts; bump when a new type lands.
+const BSON_TYPE_NAME = [
+  "double",
+  "string",
+  "object",
+  "array",
+  "binData",
+  "objectId",
+  "bool",
+  "date",
+  "null",
+  "regex",
+  "dbPointer",
+  "javascript",
+  "symbol",
+  "javascriptWithScope",
+  "int",
+  "timestamp",
+  "long",
+  "decimal",
+  "minKey",
+  "maxKey",
+] as const;
+const REGEX_FLAGS = "imxs"; // MongoDB allows only these regex option flags (a JS 'g'/'y' is rejected).
+
+/** Validate a literal-string slot against an enum ref. No-op on a non-literal (gate). */
+function checkArgEnum(name: string, key: string, value: Expr, ref: EnumRef): void {
+  if (ref === "regexFlags") {
+    const s = litString(value);
+    if (s === null) return;
+    for (const ch of s) {
+      if (!REGEX_FLAGS.includes(ch)) {
+        throw new CodegenError(
+          `'${name}' ${key} has an invalid regex flag '${ch}'. MongoDB allows only i, m, x, s ` +
+            `— a JavaScript 'g' or 'y' flag is not supported.`,
+          value.pos,
+        );
+      }
+    }
+    return;
+  }
+  if (ref === "weekday") {
+    // Case-insensitive (mongod accepts "Monday" / "monday" / "MONDAY").
+    const s = litString(value);
+    if (s === null || WEEKDAY.includes(s.toLowerCase() as (typeof WEEKDAY)[number])) return;
+    const near = closestNameTo(s.toLowerCase(), WEEKDAY);
+    throw new CodegenError(
+      `'${name}' ${key} must be a weekday (${WEEKDAY.join(", ")}) — got '${s}'.` +
+        (near !== null ? ` Did you mean '${near}'?` : ""),
+      value.pos,
+    );
+  }
+  const allowed = ref === "timeUnit" ? TIME_UNIT : ref === "bsonTypeName" ? BSON_TYPE_NAME : ref;
+  checkEnum(name, key, value, allowed);
+}
 
 /**
  * Validate an operator call's arguments against its shape + `args` rules.
@@ -127,22 +189,28 @@ function validateObjectKeys(
   pos: number,
 ): void {
   const required = rules.required ?? [];
-  if (required.length === 0 && (rules.optional ?? []).length === 0) return;
+  const enums = rules.enums;
+  if (required.length === 0 && (rules.optional ?? []).length === 0 && enums === undefined) return;
 
   let presentKeys: readonly string[];
   let hasSpread = false;
-  let posOf: ((k: string) => number) | null = null;
+  // The value expression for a named key, in either call form (undefined if absent).
+  let valueOf: (k: string) => Expr | undefined;
 
   if (style === "object") {
     const info = objectInfo(args[0] as Expr); // parser guarantees args[0] is an object literal here
     if (info === null) return; // computed key / non-object → gate no-op
     presentKeys = [...info.byKey.keys()];
     hasSpread = info.hasSpread;
-    posOf = (k) => info.byKey.get(k)?.pos ?? pos;
+    valueOf = (k) => info.byKey.get(k);
   } else {
     // Positional: codegen maps args[i] → shapeKeys[i], so the present keys are
     // the leading `args.length` names. (No spread, no unknown keys possible.)
     presentKeys = shapeKeys.slice(0, args.length);
+    valueOf = (k) => {
+      const i = shapeKeys.indexOf(k);
+      return i >= 0 && i < args.length ? (args[i] as Expr) : undefined;
+    };
   }
 
   const closedSet = [...required, ...(rules.optional ?? [])];
@@ -158,7 +226,7 @@ function validateObjectKeys(
         throw new CodegenError(
           `'${name}' has no parameter '${k}'.${didYouMean(k, closedSet, (s) => s)} ` +
             `Valid keys: ${closedSet.join(", ")}.`,
-          posOf!(k),
+          valueOf(k)?.pos ?? pos,
         );
       }
     }
@@ -170,6 +238,15 @@ function validateObjectKeys(
       if (!presentKeys.includes(k)) {
         throw new CodegenError(`'${name}' requires the '${k}' field, but it is missing.`, pos);
       }
+    }
+  }
+
+  // Enum slots: a literal-string value outside the closed set throws (didYouMean);
+  // a non-literal value no-ops (the gate). Runs in both call forms.
+  if (enums !== undefined) {
+    for (const [key, ref] of Object.entries(enums)) {
+      const v = valueOf(key);
+      if (v !== undefined) checkArgEnum(name, key, v, ref);
     }
   }
 }

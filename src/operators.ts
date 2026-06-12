@@ -29,8 +29,9 @@ export type ArgType =
   | "timestamp"
   | "number-or-date";
 
-/** A named, shared enum set resolved in operator-validation.ts, or an inline literal set. */
-export type EnumRef = readonly string[] | "timeUnit" | "weekday" | "bsonTypeName" | "regexFlags" | "metaKeyword";
+/** A named, shared enum set resolved in operator-validation.ts, or an inline literal set.
+ *  `weekday` matches case-insensitively; `regexFlags` is a per-character charset check. */
+export type EnumRef = readonly string[] | "timeUnit" | "weekday" | "bsonTypeName" | "regexFlags";
 
 export type ArgRules = {
   // ARITY of the effective operand list (positional count when >1, else the
@@ -698,9 +699,9 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
   $ltrim: { required: ["input"], optional: ["chars"] },
   $rtrim: { required: ["input"], optional: ["chars"] },
   $trim: { required: ["input"], optional: ["chars"] },
-  $regexFind: { required: ["input", "regex"], optional: ["options"] },
-  $regexFindAll: { required: ["input", "regex"], optional: ["options"] },
-  $regexMatch: { required: ["input", "regex"], optional: ["options"] },
+  $regexFind: { required: ["input", "regex"], optional: ["options"], enums: { options: "regexFlags" } },
+  $regexFindAll: { required: ["input", "regex"], optional: ["options"], enums: { options: "regexFlags" } },
+  $regexMatch: { required: ["input", "regex"], optional: ["options"], enums: { options: "regexFlags" } },
   $replaceAll: { required: ["input", "find", "replacement"] },
   $replaceOne: { required: ["input", "find", "replacement"] },
   // ── Array ──
@@ -718,11 +719,15 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
   $setField: { required: ["field", "input", "value"] },
   $unsetField: { required: ["field", "input"] },
   // ── Type ──
-  $convert: { required: ["input", "to"], optional: ["onError", "onNull"] },
+  $convert: { required: ["input", "to"], optional: ["onError", "onNull"], enums: { to: "bsonTypeName" } },
   // ── Date ──
-  $dateAdd: { required: ["startDate", "unit", "amount"], optional: ["timezone"] },
-  $dateSubtract: { required: ["startDate", "unit", "amount"], optional: ["timezone"] },
-  $dateDiff: { required: ["startDate", "endDate", "unit"], optional: ["startOfWeek", "timezone"] },
+  $dateAdd: { required: ["startDate", "unit", "amount"], optional: ["timezone"], enums: { unit: "timeUnit" } },
+  $dateSubtract: { required: ["startDate", "unit", "amount"], optional: ["timezone"], enums: { unit: "timeUnit" } },
+  $dateDiff: {
+    required: ["startDate", "endDate", "unit"],
+    optional: ["startOfWeek", "timezone"],
+    enums: { unit: "timeUnit", startOfWeek: "weekday" },
+  },
   // year-or-isoWeekYear is a structural rule (deferred); list the full key set so unknown-key works.
   $dateFromParts: {
     optional: [
@@ -742,25 +747,30 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
   $dateFromString: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"] },
   $dateToParts: { required: ["date"], optional: ["timezone", "iso8601"] },
   $dateToString: { required: ["date"], optional: ["format", "timezone", "onNull"] },
-  $dateTrunc: { required: ["date", "unit"], optional: ["binSize", "timezone", "startOfWeek"] },
+  $dateTrunc: {
+    required: ["date", "unit"],
+    optional: ["binSize", "timezone", "startOfWeek"],
+    enums: { unit: "timeUnit", startOfWeek: "weekday" },
+  },
   // ── Variable ──
   $let: { required: ["vars", "in"] },
   // ── Custom aggregation ──
-  $function: { required: ["body", "args", "lang"] },
+  $function: { required: ["body", "args", "lang"], enums: { lang: ["js"] } },
   $accumulator: {
     required: ["init", "accumulate", "accumulateArgs", "merge", "lang"],
     optional: ["initArgs", "finalize"],
+    enums: { lang: ["js"] },
   },
   // ── Accumulators (object-shape) ──
-  $median: { required: ["input", "method"] },
-  $percentile: { required: ["input", "p", "method"] },
+  $median: { required: ["input", "method"], enums: { method: ["approximate"] } },
+  $percentile: { required: ["input", "p", "method"], enums: { method: ["approximate"] } },
   $bottom: { required: ["output", "sortBy"] },
   $bottomN: { required: ["output", "sortBy", "n"] },
   $top: { required: ["output", "sortBy"] },
   $topN: { required: ["output", "sortBy", "n"] },
   // ── Window (object-shape) ──
-  $derivative: { required: ["input"], optional: ["unit"] },
-  $integral: { required: ["input"], optional: ["unit"] },
+  $derivative: { required: ["input"], optional: ["unit"], enums: { unit: "timeUnit" } },
+  $integral: { required: ["input"], optional: ["unit"], enums: { unit: "timeUnit" } },
   $expMovingAvg: { required: ["input"], optional: ["N", "alpha"] },
   $shift: { required: ["output", "by"], optional: ["default"] },
 };

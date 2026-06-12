@@ -306,6 +306,57 @@ describe("comparison-operator arity is aggregation-only (query single-value form
   });
 });
 
+describe("operator enum validation (closed string sets)", () => {
+  it("rejects a bad timeUnit (case-sensitive lowercase)", () => {
+    expect(() => jsmql.expr('$dateAdd({ startDate: $.t, unit: "fortnight", amount: 5 })')).toThrow(
+      /'\$dateAdd' unit must be one of: year, .* millisecond — got 'fortnight'/,
+    );
+    expect(() => jsmql.expr('$dateTrunc({ date: $.t, unit: "Day" })')).toThrow(/unit must be one of/);
+  });
+
+  it("rejects a bad startOfWeek but accepts any case (weekday is case-insensitive)", () => {
+    expect(() => jsmql.expr('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day", startOfWeek: "funday" })')).toThrow(
+      /startOfWeek must be a weekday .* Did you mean 'sunday'\?/,
+    );
+    // mongod accepts "Monday"/"monday"/"MONDAY" — so jsmql must not reject them.
+    expect(jsmql.expr('$dateTrunc({ date: $.t, unit: "week", startOfWeek: "Monday" })')).toEqual({
+      $dateTrunc: { date: "$t", unit: "week", startOfWeek: "Monday" },
+    });
+  });
+
+  it("rejects a bad $convert target type but allows a numeric type code", () => {
+    expect(() => jsmql.expr('$convert({ input: $.s, to: "intt" })')).toThrow(
+      /'\$convert' to must be one of: .* — got 'intt'\. Did you mean 'int'\?/,
+    );
+    expect(jsmql.expr('$convert({ input: $.s, to: "int" })')).toEqual({ $convert: { input: "$s", to: "int" } });
+    expect(jsmql.expr("$convert({ input: $.s, to: 16 })")).toEqual({ $convert: { input: "$s", to: 16 } });
+  });
+
+  it("rejects a JS-only regex flag (g/y) via the charset check", () => {
+    expect(() => jsmql.expr('$regexMatch({ input: $.s, regex: "a", options: "gi" })')).toThrow(
+      /'\$regexMatch' options has an invalid regex flag 'g'/,
+    );
+    expect(jsmql.expr('$regexMatch({ input: $.s, regex: "a", options: "im" })')).toEqual({
+      $regexMatch: { input: "$s", regex: "a", options: "im" },
+    });
+  });
+
+  it("rejects bad method / lang enums", () => {
+    expect(() => jsmql("$group({ _id: 1, m: $median({ input: $.v, method: 'exact' }) });")).toThrow(
+      /method must be one of: approximate — got 'exact'/,
+    );
+    expect(() => jsmql.expr('$function({ body: "function(){}", args: [], lang: "python" })')).toThrow(
+      /lang must be one of: js — got 'python'/,
+    );
+  });
+
+  it("the gate holds: a runtime (non-literal) enum slot compiles", () => {
+    expect(jsmql.expr("$dateAdd({ startDate: $.t, unit: $.u, amount: 5 })")).toEqual({
+      $dateAdd: { startDate: "$t", unit: "$u", amount: 5 },
+    });
+  });
+});
+
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });

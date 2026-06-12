@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-12 — feat: enum validation on operator slots (timeUnit, weekday, BSON type, regex flags, method, lang)
+
+A closed-string-set slot outside its allowed values (`$dateAdd unit: "fortnight"`, `$convert to: "intt"`, regex `options: "g"`, `$median method: "exact"`, `$function lang: "python"`) compiled to MQL the server rejects with an opaque `FailedToParse`. The operator-arg validator now checks these via an `enums` rule per operator. Each enum's exact behaviour was verified on `mongod` and encoded accordingly: **timeUnit** is case-sensitive lowercase (the server rejects `"Day"`); **weekday** (`startOfWeek`) is **case-insensitive** (`"Monday"` is valid, so the check lowercases before comparing — a case-sensitive check would have been a false positive); **bsonTypeName** is the full `$type`/`$convert` alias set (all recognised by `$convert.to`, even `minKey`/`maxKey`), and a numeric type code is a non-string so it's skipped; **regexFlags** is a per-character charset check over `i`,`m`,`x`,`s` (a JS `g`/`y` flag is named in the error); inline sets cover `method: ["approximate"]` and `lang: ["js"]`. Typo'd values get a `didYouMean` suggestion (`"intt"` → `int`, `"funday"` → `sunday`). The gate holds — a runtime/field-ref slot value compiles untouched. `$meta`'s keyword enum is deferred (single-shape + version-dependent set). Files: [src/operators.ts](../src/operators.ts), [src/operator-validation.ts](../src/operator-validation.ts), [docs/specs/operator-validation.md](specs/operator-validation.md), [test/codegen.test.ts](../test/codegen.test.ts), [test/literal-passthrough.test.ts](../test/literal-passthrough.test.ts) (enum slots seeded with valid sample values).
+
+---
+
 ## 2026-06-12 — feat: comparison operators require exactly 2 operands in aggregation position
 
 `$gt($.x)` (one operand) and `$gt($.a, $.b, $.c)` (three) compiled to `{ $gt: … }` shapes the server rejects in an aggregation expression ("$gt takes exactly 2 arguments"). The six comparison operators (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`) now carry an **aggregation-only** exact-2 arity rule. The "aggregation-only" part is the crux: as a **query predicate** under a field, the single-value form `{ field: { $gt: v } }` — and even the array form `{ field: { $gt: [1, 2, 3] } }`, comparing against the array — is valid MQL (verified on `mongod`), so a blanket reject would be a false positive on valid query code (e.g. `jsmql("{ age: $gt($.x) }")`).
