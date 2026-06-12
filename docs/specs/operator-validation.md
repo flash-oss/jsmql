@@ -87,5 +87,29 @@ $dateAdd({ startDate: $.t, unit: "day", amount: 1 })   → { $dateAdd: { … } }
 $mergeObjects({ a: 1, bogus: 2 })            → { $mergeObjects: { a: 1, bogus: 2 } }  (flex → value, no key check)
 ```
 
-_Further checks (array arity, flex-comparison arity, enums, literal types) are
-added per the rollout; this section grows with them._
+### array / flex — fixed & bounded arity
+For `array`- and `flex`-shape operators that declare `arity` (in
+`OPERATOR_ARG_RULES`), the **effective operand count** is checked: the positional
+arg count, OR — for the `$op([a, b, …])` single-array-literal form (HR2) — the
+array's element count. Routed through the shared `checkArity` formatter so the
+message matches the `.foo()` method family. Degenerate cases defer to codegen: an
+array op given a lone non-array scalar keeps its `listOperandError` ("operates on
+a list — write `$op(a, b)` or `$op([a, b])`"), and 0 args its "at least 1".
+
+Only **exact** counts (`$divide`/`$cmp`/`$substrCP`/`$arrayElemAt`/…) and
+**bounded ranges** (`$indexOf*` 2–4, `$range`/`$slice` 2–3, `$round`/`$trunc`
+1–2) are declared, plus `$ifNull`'s verified min-2. Open-ended variadic operators
+(`$add`/`$multiply`/`$concat`/`$setUnion`/…) get **no** rule — they accept any
+count, so a min-arity check would be a false positive (locked by coverage-proof
+tests).
+
+```
+$divide(6, 2, 1)   → ✗ "$divide(dividend, divisor) requires exactly 2 arguments, got 3"
+$cmp([1, 2, 3])    → ✗ (single-array form counted: 3 ≠ 2)
+$divide(10)        → ✗ list-operand error (codegen) — not the arity message
+$divide([6, 2])    → { $divide: [6, 2] }   (valid)
+$add(1, 2, 3, 4)   → { $add: [1, 2, 3, 4] }  (variadic — unconstrained)
+```
+
+_Further checks (flex-comparison arity, enums, literal types) are added per the
+rollout; this section grows with them._

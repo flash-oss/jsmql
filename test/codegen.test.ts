@@ -238,6 +238,39 @@ describe("operator object-form argument validation (required / unknown keys)", (
   });
 });
 
+describe("operator arity validation (array / flex shapes)", () => {
+  it("rejects a wrong fixed arity (both positional and single-array forms)", () => {
+    expect(() => jsmql.expr("$divide(6, 2, 1)")).toThrow(
+      /\$divide\(dividend, divisor\) requires exactly 2 arguments, got 3/,
+    );
+    expect(() => jsmql.expr("$cmp([1, 2, 3])")).toThrow(/\$cmp\(expr1, expr2\) requires exactly 2 arguments, got 3/);
+    expect(() => jsmql.expr("$substrCP($.s, 0, 2, 3)")).toThrow(/requires exactly 3 arguments, got 4/);
+    expect(() => jsmql.expr("$arrayElemAt($.a, 0, 1)")).toThrow(/requires exactly 2 arguments, got 3/);
+  });
+
+  it("rejects a count outside a bounded range", () => {
+    expect(() => jsmql.expr("$slice([$.a])")).toThrow(/\$slice\(.*\) requires 2 or 3 arguments, got 1/);
+    expect(() => jsmql.expr("$ifNull([$.x])")).toThrow(/\$ifNull\(.*\) requires at least 2 arguments, got 1/);
+  });
+
+  it("a single non-array arg to a list operator keeps the list-operand error (codegen owns it)", () => {
+    expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
+  });
+
+  it("variadic operators stay unconstrained ($add / $setUnion / $concat)", () => {
+    expect(jsmql.expr("$add(1, 2, 3, 4)")).toEqual({ $add: [1, 2, 3, 4] });
+    expect(jsmql.expr("$setUnion($.a, $.b, $.c)")).toEqual({ $setUnion: ["$a", "$b", "$c"] });
+  });
+
+  it("valid fixed / ranged / single-array forms compile", () => {
+    expect(jsmql.expr("$divide(6, 2)")).toEqual({ $divide: [6, 2] });
+    expect(jsmql.expr("$divide([6, 2])")).toEqual({ $divide: [6, 2] });
+    expect(jsmql.expr("$round($.x)")).toEqual({ $round: "$x" }); // flex 1-arg ok
+    expect(jsmql.expr("$round($.x, 2)")).toEqual({ $round: ["$x", 2] });
+    expect(jsmql.expr("$slice($.a, 0, 3)")).toEqual({ $slice: ["$a", 0, 3] });
+  });
+});
+
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });

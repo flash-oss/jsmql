@@ -653,6 +653,34 @@ export const OPERATORS: Record<string, OperatorDef> = {
 // server 8.1+) are unverifiable on a local mongod and intentionally left
 // unvalidated for now (see docs/DEFERRED.md).
 const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
+  // ── Arity: fixed / bounded operand counts (array & flex shapes) ──
+  // Only EXACT and BOUNDED-RANGE counts are declared — never an open min on a
+  // variadic op ($add/$or/$concat/$setUnion accept any count, so they get no
+  // rule; see the coverage-proof tests). $ifNull's min-2 is the one verified
+  // lower bound. `sig` is the human signature shown in the arity message.
+  $divide: { arity: { exact: 2, sig: "dividend, divisor" } },
+  $mod: { arity: { exact: 2, sig: "dividend, divisor" } },
+  $pow: { arity: { exact: 2, sig: "base, exponent" } },
+  $log: { arity: { exact: 2, sig: "number, base" } },
+  $subtract: { arity: { exact: 2, sig: "minuend, subtrahend" } },
+  $atan2: { arity: { exact: 2, sig: "y, x" } },
+  $cmp: { arity: { exact: 2, sig: "expr1, expr2" } },
+  $round: { arity: { allowed: [1, 2], sig: "number[, place]" } },
+  $trunc: { arity: { allowed: [1, 2], sig: "number[, place]" } },
+  $split: { arity: { exact: 2, sig: "string, delimiter" } },
+  $strcasecmp: { arity: { exact: 2, sig: "expr1, expr2" } },
+  $substr: { arity: { exact: 3, sig: "string, start, length" } },
+  $substrBytes: { arity: { exact: 3, sig: "string, byteIndex, byteCount" } },
+  $substrCP: { arity: { exact: 3, sig: "string, cpIndex, cpCount" } },
+  $indexOfBytes: { arity: { allowed: [2, 3, 4], sig: "string, substring[, start[, end]]" } },
+  $indexOfCP: { arity: { allowed: [2, 3, 4], sig: "string, substring[, start[, end]]" } },
+  $arrayElemAt: { arity: { exact: 2, sig: "array, index" } },
+  $indexOfArray: { arity: { allowed: [2, 3, 4], sig: "array, value[, start[, end]]" } },
+  $range: { arity: { allowed: [2, 3], sig: "start, end[, step]" } },
+  $slice: { arity: { allowed: [2, 3], sig: "array, [position, ]count" } },
+  $ifNull: { arity: { atLeast: 2, sig: "expr, replacement[, …]" } },
+  $setDifference: { arity: { exact: 2, sig: "set1, set2" } },
+  $setIsSubset: { arity: { exact: 2, sig: "set1, set2" } },
   // ── Conditional ──
   $cond: { required: ["if", "then", "else"] },
   $switch: { required: ["branches"], optional: ["default"] },

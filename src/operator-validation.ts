@@ -21,7 +21,7 @@
 import type { CallArg, Expr } from "./ast.ts";
 import { checkArity, CodegenError } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
-import { objectInfo } from "./literal-gate.ts";
+import { arrayElements, objectInfo } from "./literal-gate.ts";
 import type { ArgRules } from "./operators.ts";
 import { lookupOperator } from "./operators.ts";
 
@@ -57,12 +57,43 @@ export function validateOperatorArgs(name: string, style: "positional" | "object
   const rules = def.args;
   if (rules === undefined) return;
 
+  // ── arity (array / flex shapes) ──────────────────────────────────────────────
+  // The effective operand count is the positional arg count, OR — when called as
+  // `$op([a, b, …])` — the single array-literal's element count (both forms must
+  // be checked; HR2). Degenerate cases (an array op given 0 or 1 non-array arg)
+  // return null and defer to codegen's own list-operand / "at least 1" errors.
+  if (rules.arity !== undefined && (def.shape.kind === "array" || def.shape.kind === "flex")) {
+    const count = operandCount(def.shape.kind, args);
+    if (count !== null) {
+      const a = rules.arity;
+      checkArity(name, { sig: a.sig ?? "", exact: a.exact, allowed: a.allowed, atLeast: a.atLeast }, count, pos, "");
+    }
+  }
+
   // ── object-shape: required / unknown keys ────────────────────────────────────
   // Only object-shape operators have named-key wire format; a `flex`/`single`
   // operator given a lone object literal treats it as a VALUE, not named keys.
   if (def.shape.kind === "object") {
     validateObjectKeys(name, def.shape.keys, rules, style, args, pos);
   }
+}
+
+/**
+ * The effective operand count for an array/flex operator call, or null when the
+ * count can't be the basis of an arity check here:
+ *   - `$op([a, b])`        → the array literal's element count (the operand list)
+ *   - `$op(a, b, …)` (≥2)  → the positional arg count
+ *   - array op, 0 / 1 non-array arg → null (codegen owns those errors: a list op
+ *     rejects a lone scalar with `listOperandError`, and 0 args with "at least 1")
+ *   - a single array literal carrying a spread → null (can't count statically)
+ */
+function operandCount(shape: "array" | "flex", args: CallArg[]): number | null {
+  if (args.length === 1 && (args[0] as Expr).type === "ArrayLiteral") {
+    const els = arrayElements(args[0] as Expr);
+    return els === null ? null : els.length;
+  }
+  if (shape === "array" && args.length <= 1) return null;
+  return args.length;
 }
 
 /**

@@ -23,6 +23,15 @@ import { STAGES } from "../src/stages.ts";
 
 const SENTINEL = "$f"; // a `$`-prefixed string that MUST survive verbatim in a pipeline
 
+/** The operand count a synthetic array-shape call must supply to satisfy any
+ *  declared arity rule (exact, the low end of an allowed range, or a min); 2
+ *  otherwise. Keeps the pass-through probe arity-valid so it reaches codegen. */
+function arrayArgCount(def: OperatorDef): number {
+  const a = def.args?.arity;
+  if (a === undefined) return 2;
+  return a.exact ?? a.allowed?.[0] ?? a.atLeast ?? 2;
+}
+
 /** Build a minimal `$op(...)` call source from the operator's registry shape. */
 function callSource(name: string, def: OperatorDef): string {
   const q = JSON.stringify(SENTINEL);
@@ -30,7 +39,7 @@ function callSource(name: string, def: OperatorDef): string {
     case "none":
       return `${name}()`;
     case "array":
-      return `${name}(${q}, ${q})`;
+      return `${name}(${Array(arrayArgCount(def)).fill(q).join(", ")})`;
     case "object":
       // Fill every positional slot (each maps to a named key) with the sentinel.
       return `${name}(${def.shape.keys.map(() => q).join(", ")})`;
@@ -41,10 +50,11 @@ function callSource(name: string, def: OperatorDef): string {
 }
 
 // Place the call in a stage whose context the operator is legal in. NOTE: these
-// are deliberately minimal synthetic calls (a single `$f` sentinel per slot) —
-// they exercise `$literal` pass-through, NOT operator arity/type validity, so an
-// individual call here is not necessarily *runnable* MQL (e.g. `$substr` wants 3
-// args). We do supply a `sortBy` for the window branch so the common ranking
+// are deliberately minimal synthetic calls (a single `$f` sentinel per slot,
+// arity-padded via `arrayArgCount`) — they exercise `$literal` pass-through, NOT
+// operator type validity, so an individual call here is not necessarily
+// *runnable* MQL (the sentinel is the wrong BSON type for most slots). We do
+// supply a `sortBy` for the window branch so the common ranking
 // operators stay runnable; the loop's contract is strictly "no spurious
 // `$literal`", asserted on the emitted shape — see test/CLAUDE.md.
 function stageSourceFor(name: string, def: OperatorDef, call: string): string {
