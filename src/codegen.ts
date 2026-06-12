@@ -965,11 +965,25 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
       const containerType = expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : undefined;
+      // A receiver that is provably never an array — the bare root document
+      // (`$` → `$$ROOT`, always a BSON object) or an object literal — makes
+      // `obj[k]` an unambiguous property getter for *any* key, so emit
+      // `$getField` and skip the `$isArray` dual guard. This generalises the
+      // string-literal-on-root shortcut above (`$["x"]` → `$x`) to a computed
+      // key: `$[k]` reads field `k` from the document. Without this the guard's
+      // dead `$arrayElemAt` branch carries the key as an array index, and a
+      // non-numeric index there is rejected at pipeline-optimization time
+      // ("$arrayElemAt's second argument must be a numeric value, but is
+      // string") on engines that don't prune the unreachable branch — a latent
+      // HR3 violation that only surfaces on some servers.
+      const isBareRoot = expr.object.type === "FieldRef" && expr.object.path === "";
       const known: "object" | "array" | undefined = isArrayProducing(expr.object)
         ? "array"
-        : containerType === "array" || containerType === "object"
-          ? containerType
-          : undefined;
+        : isObjectProducing(expr.object) || isBareRoot
+          ? "object"
+          : containerType === "array" || containerType === "object"
+            ? containerType
+            : undefined;
       // A provably-string key can never be a numeric array index, so `obj[k]` is
       // unambiguously an object property getter — emit `$getField` directly and
       // skip the `$isArray`/`$arrayElemAt` dual guard. This wins even over a

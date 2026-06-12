@@ -1269,6 +1269,28 @@ describe("bracket access", () => {
     expect(jsmql.expr('$["weird-name"]')).toBe("$weird-name");
     expect(jsmql.expr('$["field.length"] * $.field.width')).toEqual({ $multiply: ["$field.length", "$field.width"] });
   });
+  it("computed (non-literal) key on the bare root $ → $getField, not the $isArray guard", () => {
+    // The bare root is always a BSON object, so a computed key is an
+    // unambiguous field getter — `$getField` with `input: $$ROOT`. The old
+    // `$isArray` dual guard's dead `$arrayElemAt` branch carried the key as an
+    // array index; a non-numeric index there is rejected at *pipeline-
+    // optimization* time ("$arrayElemAt's second argument must be a numeric
+    // value, but is string") on engines that don't prune unreachable branches.
+    expect(jsmql.expr("$[$.fieldName]")).toEqual({ $getField: { field: "$fieldName", input: "$$ROOT" } });
+    // The reported case: indexing the root by a value read from a const map
+    // (`$[SSTM_PROP[party]]`). Both getters resolve to a string field name.
+    expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toEqual([
+      { $set: { "__jsmql.M": { a: "x" } } },
+      {
+        $replaceWith: {
+          v: { $getField: { field: { $getField: { field: "k", input: "$__jsmql.M" } }, input: "$$ROOT" } },
+        },
+      },
+    ]);
+  });
+  it("computed key on an object literal → $getField (object literals are never arrays)", () => {
+    expect(jsmql.expr("({ a: 1, b: 2 })[$.k]")).toEqual({ $getField: { field: "$k", input: { a: 1, b: 2 } } });
+  });
   it("chained bracket access on bare field → nested $cond", () => {
     expect(jsmql.expr("$.m[$.r][$.c]")).toEqual({
       $cond: {

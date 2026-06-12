@@ -431,13 +431,16 @@ $.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" },
 
 If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
-A string-literal key on the **bare root** `$` is the simplest case: the root document is never an array, so there's nothing to dispatch on and it lowers to a plain field reference. `$["x"]` is just `$.x`. This is how you name a field that isn't a bare identifier — a name containing a dot, dash, space, etc. — and how you read a nested `length` field without `.length` folding to the string-or-array length operator:
+The **bare root** `$` is the simplest case: the root document is always an object and never an array, so there's nothing to dispatch on for *any* key. A string-literal key lowers to a plain field reference — `$["x"]` is just `$.x` — and a computed key lowers straight to `$getField`. This is how you name a field that isn't a bare identifier — a name containing a dot, dash, space, etc. — and how you read a nested `length` field without `.length` folding to the string-or-array length operator:
 
 ```js
 $["cart.field.length"]              // → "$cart.field.length"   — the nested `length` field, raw
 $["weird-name"]                     // → "$weird-name"
 $["cart.field.length"] * $.cart.field.width   // → { $multiply: ["$cart.field.length", "$cart.field.width"] }
+$[$.fieldName]                      // → { $getField: { field: "$fieldName", input: "$$ROOT" } }   — computed key, no $isArray dispatch
 ```
+
+(An object literal receiver follows the same rule — `({ a: 1 })[$.k]` → `{ $getField: { field: "$k", input: { a: 1 } } }` — since an object literal is never an array either.)
 
 ### Optional Chaining
 
