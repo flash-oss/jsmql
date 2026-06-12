@@ -61,5 +61,31 @@ $setWindowFields({ …, output: { r: $rank($.x) } })
 $rand()                              → { $rand: {} }   (unchanged)
 ```
 
-_Further checks (object-form required/unknown keys, array arity, enums, literal
-types) are added per the rollout in [the plan]; this section grows with them._
+### object-shape — required & unknown keys
+Applies to `shape === "object"` operators that declare `args` rules (a `flex` /
+`single` operator given a lone object treats it as a *value*, so this never
+fires for them). The rules table is `OPERATOR_ARG_RULES` in
+[`src/operators.ts`](../../src/operators.ts); `required ∪ optional` is the closed
+key set.
+
+- **Unknown-key (object form only), checked first** — a key outside the closed
+  set throws with a `didYouMean` suggestion. Checking before required means a
+  typo of a required key (`iff` for `if`) is reported as the unknown key with the
+  suggestion, not as a confusing "requires 'if'".
+- **Required-key** — a declared `required` key that is absent throws
+  `'$op' requires the 'k' field, but it is missing.`. For the **positional** call
+  form the present keys are `shape.keys.slice(0, argCount)` (codegen maps args to
+  keys in order), so a too-short positional call is caught too; positional calls
+  can't carry unknown keys.
+- **Gate** — a spread in the object body suppresses both checks; a computed key
+  makes the body un-inspectable and no-ops.
+
+```
+$dateAdd({ startDate: $.t, amount: 5 })      → ✗ requires the 'unit' field
+$cond({ iff: $.a, then: 1, else: 2 })        → ✗ has no parameter 'iff'. Did you mean 'if'?
+$dateAdd({ startDate: $.t, unit: "day", amount: 1 })   → { $dateAdd: { … } }   (valid)
+$mergeObjects({ a: 1, bogus: 2 })            → { $mergeObjects: { a: 1, bogus: 2 } }  (flex → value, no key check)
+```
+
+_Further checks (array arity, flex-comparison arity, enums, literal types) are
+added per the rollout; this section grows with them._

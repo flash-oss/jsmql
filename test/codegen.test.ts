@@ -195,6 +195,49 @@ describe("object-shape operators (positional → object mapping)", () => {
   });
 });
 
+describe("operator object-form argument validation (required / unknown keys)", () => {
+  it("rejects a missing required key", () => {
+    expect(() => jsmql.expr("$dateAdd({ startDate: $.t, amount: 5 })")).toThrow(
+      /'\$dateAdd' requires the 'unit' field, but it is missing/,
+    );
+    expect(() => jsmql.expr("$cond({ if: $.a, then: 1 })")).toThrow(/'\$cond' requires the 'else' field/);
+    expect(() => jsmql.expr("$filter({ input: $.a })")).toThrow(/'\$filter' requires the 'cond' field/);
+    expect(() => jsmql.expr("$convert({ input: $.v })")).toThrow(/'\$convert' requires the 'to' field/);
+  });
+
+  it("rejects an unknown key with a didYouMean suggestion", () => {
+    expect(() => jsmql.expr("$cond({ iff: $.a, then: 1, else: 2 })")).toThrow(
+      /'\$cond' has no parameter 'iff'\. Did you mean 'if'\? Valid keys: if, then, else\./,
+    );
+    expect(() => jsmql.expr('$dateAdd({ startdate: $.t, unit: "day", amount: 1 })')).toThrow(
+      /'\$dateAdd' has no parameter 'startdate'\. Did you mean 'startDate'\?/,
+    );
+  });
+
+  it("a typo of a REQUIRED key is reported as the unknown key (not 'requires …')", () => {
+    // unknown-key runs before required-key, so a near typo names the suggestion.
+    expect(() => jsmql.expr("$filter({ input: $.a, conds: $.x })")).toThrow(
+      /'\$filter' has no parameter 'conds'\. Did you mean 'cond'\?/,
+    );
+  });
+
+  it("valid object-form and positional calls still compile", () => {
+    expect(jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: 1, timezone: "UTC" })')).toEqual({
+      $dateAdd: { startDate: "$t", unit: "day", amount: 1, timezone: "UTC" },
+    });
+    expect(jsmql.expr("$filter({ input: $.a, cond: $.keep, as: 'i', limit: 3 })")).toEqual({
+      $filter: { input: "$a", cond: "$keep", as: "i", limit: 3 },
+    });
+    // positional form is keyed by position, so it cannot have unknown keys
+    expect(jsmql.expr('$dateTrunc($.t, "day")')).toEqual({ $dateTrunc: { date: "$t", unit: "day" } });
+  });
+
+  it("non-object-shape operators given an object literal treat it as a VALUE (no key check)", () => {
+    // $mergeObjects is flex — a lone object is its operand, not named keys.
+    expect(jsmql.expr("$mergeObjects({ a: 1, bogus: 2 })")).toEqual({ $mergeObjects: { a: 1, bogus: 2 } });
+  });
+});
+
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
@@ -3852,14 +3895,18 @@ describe("$accumulator and $function (custom aggregation)", () => {
       $function: { body: "function(x) { return x * 2; }", args: ["$value"], lang: "js" },
     });
   });
-  it("$accumulator object-style with subset of keys (Wave 5 #22: requires $group context)", () => {
+  it("$accumulator object-style inside $group (Wave 5 #22: requires $group context)", () => {
+    // accumulateArgs is REQUIRED ($accumulator rejects its absence — verified on
+    // mongod), so include it: the operator-arg validator now enforces the full
+    // required-key set.
     const out = jsmql(
-      '[$group({ _id: null, total: $accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", merge: "function(a, b) { return a + b; }", lang: "js" }) })]',
+      '[$group({ _id: null, total: $accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", accumulateArgs: [$.v], merge: "function(a, b) { return a + b; }", lang: "js" }) })]',
     ) as Array<{ $group: { total: unknown } }>;
     expect(out[0].$group.total).toEqual({
       $accumulator: {
         init: "function() { return 0; }",
         accumulate: "function(s, v) { return s + v; }",
+        accumulateArgs: ["$v"],
         merge: "function(a, b) { return a + b; }",
         lang: "js",
       },

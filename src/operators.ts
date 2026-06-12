@@ -641,6 +641,96 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 };
 
+// ── Argument-validation rules ────────────────────────────────────────────────
+// Per-operator ArgRules, attached to the OPERATORS entries above via withArgs at
+// module load (one reviewable block beats inline withArgs on 40+ multi-line
+// rows). Consumed by src/operator-validation.ts; see docs/specs/operator-validation.md.
+//
+// `required ∪ optional` is the CLOSED key set used for object-form unknown-key
+// detection — list EVERY valid key (incl. ones absent from the positional `keys`
+// array, e.g. $dateFromParts' ISO parts), or set `closedKeys: false` to opt out.
+// Omitted operators ($encStr* — Queryable-Encryption-gated; $hash/$hexHash —
+// server 8.1+) are unverifiable on a local mongod and intentionally left
+// unvalidated for now (see docs/DEFERRED.md).
+const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
+  // ── Conditional ──
+  $cond: { required: ["if", "then", "else"] },
+  $switch: { required: ["branches"], optional: ["default"] },
+  // ── String ──
+  $ltrim: { required: ["input"], optional: ["chars"] },
+  $rtrim: { required: ["input"], optional: ["chars"] },
+  $trim: { required: ["input"], optional: ["chars"] },
+  $regexFind: { required: ["input", "regex"], optional: ["options"] },
+  $regexFindAll: { required: ["input", "regex"], optional: ["options"] },
+  $regexMatch: { required: ["input", "regex"], optional: ["options"] },
+  $replaceAll: { required: ["input", "find", "replacement"] },
+  $replaceOne: { required: ["input", "find", "replacement"] },
+  // ── Array ──
+  $filter: { required: ["input", "cond"], optional: ["as", "limit"] },
+  $firstN: { required: ["input", "n"] },
+  $lastN: { required: ["input", "n"] },
+  $maxN: { required: ["input", "n"] },
+  $minN: { required: ["input", "n"] },
+  $map: { required: ["input", "in"], optional: ["as"] },
+  $reduce: { required: ["input", "initialValue", "in"] },
+  $sortArray: { required: ["input", "sortBy"] },
+  $zip: { required: ["inputs"], optional: ["useLongestLength", "defaults"] },
+  // ── Object ──
+  $getField: { required: ["field"], optional: ["input"] },
+  $setField: { required: ["field", "input", "value"] },
+  $unsetField: { required: ["field", "input"] },
+  // ── Type ──
+  $convert: { required: ["input", "to"], optional: ["onError", "onNull"] },
+  // ── Date ──
+  $dateAdd: { required: ["startDate", "unit", "amount"], optional: ["timezone"] },
+  $dateSubtract: { required: ["startDate", "unit", "amount"], optional: ["timezone"] },
+  $dateDiff: { required: ["startDate", "endDate", "unit"], optional: ["startOfWeek", "timezone"] },
+  // year-or-isoWeekYear is a structural rule (deferred); list the full key set so unknown-key works.
+  $dateFromParts: {
+    optional: [
+      "year",
+      "isoWeekYear",
+      "month",
+      "isoWeek",
+      "day",
+      "isoDayOfWeek",
+      "hour",
+      "minute",
+      "second",
+      "millisecond",
+      "timezone",
+    ],
+  },
+  $dateFromString: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"] },
+  $dateToParts: { required: ["date"], optional: ["timezone", "iso8601"] },
+  $dateToString: { required: ["date"], optional: ["format", "timezone", "onNull"] },
+  $dateTrunc: { required: ["date", "unit"], optional: ["binSize", "timezone", "startOfWeek"] },
+  // ── Variable ──
+  $let: { required: ["vars", "in"] },
+  // ── Custom aggregation ──
+  $function: { required: ["body", "args", "lang"] },
+  $accumulator: {
+    required: ["init", "accumulate", "accumulateArgs", "merge", "lang"],
+    optional: ["initArgs", "finalize"],
+  },
+  // ── Accumulators (object-shape) ──
+  $median: { required: ["input", "method"] },
+  $percentile: { required: ["input", "p", "method"] },
+  $bottom: { required: ["output", "sortBy"] },
+  $bottomN: { required: ["output", "sortBy", "n"] },
+  $top: { required: ["output", "sortBy"] },
+  $topN: { required: ["output", "sortBy", "n"] },
+  // ── Window (object-shape) ──
+  $derivative: { required: ["input"], optional: ["unit"] },
+  $integral: { required: ["input"], optional: ["unit"] },
+  $expMovingAvg: { required: ["input"], optional: ["N", "alpha"] },
+  $shift: { required: ["output", "by"], optional: ["default"] },
+};
+
+for (const [name, rules] of Object.entries(OPERATOR_ARG_RULES)) {
+  if (OPERATORS[name] !== undefined) OPERATORS[name] = withArgs(OPERATORS[name], rules);
+}
+
 export function lookupOperator(name: string): OperatorDef | undefined {
   // name already includes leading $
   return OPERATORS[name];

@@ -57,11 +57,22 @@ Trailing optional keys may be omitted:
 $trim($.name)         →  { $trim: { input: "$name" } }
 ```
 
-**Object-style** — a single object literal is passed through as-is:
+**Object-style** — a single object literal naming the keys:
 ```
 $trim({ input: $.name, chars: " " })   →  { $trim: { input: "$name", chars: " " } }
 ```
-The keys in the object literal are not validated against the registry — they are passed through verbatim. This allows passing optional or undocumented keys.
+**Object-style keys are validated against the registry's closed key set** when the
+operator declares `args` rules (`required ∪ optional`; see
+[operator-validation.md](operator-validation.md)). A missing required key throws,
+and an unrecognised key throws with a `didYouMean` suggestion
+(`$dateAdd({ startdate, … })` → "has no parameter 'startdate'. Did you mean
+'startDate'?"). This catches the common typo/omission footguns the server would
+otherwise reject. Escape hatches for genuinely-undocumented keys: set
+`closedKeys: false` on the operator's `ArgRules`, or call an unknown (not-in-registry)
+operator name, which still passes through unvalidated. The check is literal-gated —
+an object body with a spread is left alone (codegen handles the spread case
+separately), and a non-object-shape operator given a lone object treats it as a
+*value*, never named keys (`$mergeObjects({ a: 1 })`).
 
 ### `none` → `{ $op: {} }`
 The operator takes no arguments (e.g. `$rand`).
@@ -128,8 +139,12 @@ This makes jsmql forward-compatible with new MongoDB operators that are not yet 
 4. Lift the `description` from the YAML's `description` field. Trim to one sentence.
 5. Pick a `category` from `OPERATOR_CATEGORIES`.
 6. Add the entry to `OPERATORS` in `src/operators.ts`.
-7. Add a test case in `test/codegen.test.ts`.
-8. Update `docs/LANGUAGE.md` if the operator is user-facing.
+7. For an `object`-shape operator, add an `OPERATOR_ARG_RULES` row (`required` /
+   `optional` — the closed key set; plus `enums` / `keyTypes` where they apply)
+   so its keys are validated. See [operator-validation.md](operator-validation.md).
+   Verify any new throw against a running `mongod` (HR3).
+8. Add a test case in `test/codegen.test.ts`.
+9. Update `docs/LANGUAGE.md` if the operator is user-facing.
 
 ## Spec drift protection
 
