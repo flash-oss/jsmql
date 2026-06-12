@@ -1,4 +1,4 @@
-import { Lexer, TokenType, type Token } from "./lexer.ts";
+import { Lexer, TokenType, formatActualToken, type Token } from "./lexer.ts";
 import { didYouMean } from "./levenshtein.ts";
 import {
   MATH_METHODS as MATH_METHOD_NAMES,
@@ -24,6 +24,7 @@ import type {
   AssignExpr,
   DeleteStmt,
   LetDecl,
+  ExprBlock,
   UpdateOp,
   UpdateFilter,
   Pipeline,
@@ -1246,10 +1247,16 @@ export class Parser {
           //   - `$$.filter(...)` (rooted directly at CollectionRef) — the
           //     facet entry's sub-pipeline body. See
           //     docs/specs/replace-root-stage.md (#facet pattern).
-          const allowBlockBody =
+          //   Everywhere else a `=> { … }` arrow body is an *expression* block
+          //   (`{ const a = …; return <expr>; }`) lowered to nested `$let` —
+          //   see docs/specs/method-dispatch.md. JS-faithful: `=> {` always
+          //   opens a block; an object return needs `=> ({ … })`.
+          const blockKind: "pipeline" | "expr" =
             ((member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left)) ||
-            (member.value === "filter" && left.type === "CollectionRef");
-          const args = this.parseMethodCallArgs(allowBlockBody);
+            (member.value === "filter" && left.type === "CollectionRef")
+              ? "pipeline"
+              : "expr";
+          const args = this.parseMethodCallArgs(blockKind);
           left = {
             type: "MethodCall",
             object: left,
@@ -1276,16 +1283,16 @@ export class Parser {
   }
 
   /** Parse method call argument list: "(" [argOrLambda (, argOrLambda)*] ")" */
-  private parseMethodCallArgs(allowBlockBody: boolean = false): CallArg[] {
+  private parseMethodCallArgs(blockKind: "pipeline" | "expr" = "expr"): CallArg[] {
     this.lexer.expect(TokenType.LParen);
     if (this.lexer.peek().type === TokenType.RParen) {
       this.lexer.next();
       return [];
     }
-    const args: CallArg[] = [this.parseCallArg(allowBlockBody)];
+    const args: CallArg[] = [this.parseCallArg(blockKind)];
     while (this.lexer.peek().type === TokenType.Comma) {
       this.lexer.next();
-      args.push(this.parseCallArg(allowBlockBody));
+      args.push(this.parseCallArg(blockKind));
     }
     this.lexer.expect(TokenType.RParen);
     return args;
@@ -1297,31 +1304,33 @@ export class Parser {
    *   - lambda forms (x => ..., (x) => ..., (x, y) => ...)
    *   - any expression
    */
-  private parseCallArg(allowBlockBody: boolean = false): CallArg {
+  private parseCallArg(blockKind: "pipeline" | "expr" = "expr"): CallArg {
     if (this.lexer.peek().type === TokenType.Spread) {
       const spreadTok = this.lexer.next();
       const argument = this.parseExpression();
       const spread: SpreadElement = { type: "SpreadElement", argument, pos: spreadTok.pos };
       return spread;
     }
-    return this.parseArgOrLambda(allowBlockBody);
+    return this.parseArgOrLambda(blockKind);
   }
 
   /**
    * Parse an argument that might be a lambda expression.
    * Checks for lambda patterns before falling back to parseExpression().
-   * When `allowBlockBody` is true, the lambda body may be a `{ stmt; stmt; }`
-   * block (only set inside `$$$.<coll>.find/filter(...)`); otherwise `=> {`
-   * keeps its current meaning (object-literal start via parseObjectLiteral).
+   * `blockKind` selects what a `=> { … }` body means: `"pipeline"` (only inside
+   * `$$$.<coll>.find/filter(...)` and `$$.filter(...)`) parses a statement block
+   * → `Pipeline`; `"expr"` (the default everywhere else) parses an
+   * expression-block → `ExprBlock`. JS-faithful: `=> {` always opens a block;
+   * an object return needs `=> ({ … })`.
    */
-  private parseArgOrLambda(allowBlockBody: boolean = false): Expr {
+  private parseArgOrLambda(blockKind: "pipeline" | "expr" = "expr"): Expr {
     // x => expr  (unparenthesized single param)
     if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
-      return this.parseLambdaUnparen(allowBlockBody);
+      return this.parseLambdaUnparen(blockKind);
     }
     // (x) => expr  or  (x, y) => expr  or  () => expr
     if (this.isLambdaStart()) {
-      return this.parseLambdaParen(allowBlockBody);
+      return this.parseLambdaParen(blockKind);
     }
     return this.parseExpression();
   }
@@ -1567,7 +1576,8 @@ export class Parser {
       t.type === TokenType.New ||
       t.type === TokenType.Typeof ||
       t.type === TokenType.Let ||
-      t.type === TokenType.Const
+      t.type === TokenType.Const ||
+      t.type === TokenType.Return
     );
   }
 
@@ -1595,19 +1605,23 @@ export class Parser {
   }
 
   /** Parse "x => expr" — single unparenthesized parameter */
-  private parseLambdaUnparen(allowBlockBody: boolean = false): Expr {
+  private parseLambdaUnparen(blockKind: "pipeline" | "expr" = "expr"): Expr {
     const paramTok = this.lexer.next(); // consume Ident
     this.lexer.next(); // consume =>
-    if (allowBlockBody && this.lexer.peek().type === TokenType.LBrace) {
-      const block = this.parseLambdaBlockBody();
-      return { type: "Lambda", params: [paramTok.value], block, pos: paramTok.pos };
+    if (this.lexer.peek().type === TokenType.LBrace) {
+      if (blockKind === "pipeline") {
+        const block = this.parseLambdaBlockBody();
+        return { type: "Lambda", params: [paramTok.value], block, pos: paramTok.pos };
+      }
+      const exprBlock = this.parseExprBlockBody();
+      return { type: "Lambda", params: [paramTok.value], exprBlock, pos: paramTok.pos };
     }
     const body = this.parseExpression();
     return { type: "Lambda", params: [paramTok.value], body, pos: paramTok.pos };
   }
 
   /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
-  private parseLambdaParen(allowBlockBody: boolean = false): Expr {
+  private parseLambdaParen(blockKind: "pipeline" | "expr" = "expr"): Expr {
     const lparen = this.lexer.next(); // consume (
     const params: string[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
@@ -1619,9 +1633,13 @@ export class Parser {
     }
     this.lexer.expect(TokenType.RParen);
     this.lexer.expect(TokenType.Arrow);
-    if (allowBlockBody && this.lexer.peek().type === TokenType.LBrace) {
-      const block = this.parseLambdaBlockBody();
-      return { type: "Lambda", params, block, pos: lparen.pos };
+    if (this.lexer.peek().type === TokenType.LBrace) {
+      if (blockKind === "pipeline") {
+        const block = this.parseLambdaBlockBody();
+        return { type: "Lambda", params, block, pos: lparen.pos };
+      }
+      const exprBlock = this.parseExprBlockBody();
+      return { type: "Lambda", params, exprBlock, pos: lparen.pos };
     }
     const body = this.parseExpression();
     return { type: "Lambda", params, body, pos: lparen.pos };
@@ -1659,6 +1677,53 @@ export class Parser {
     }
     this.lexer.next(); // consume `}`
     return { type: "Pipeline", stmts, pos: openBrace.pos };
+  }
+
+  /**
+   * Parse the expression-block body of an arrow:
+   * `{ (const|let <name> = <expr>;)* return <expr>; }`. Codegen lowers it to a
+   * right-folded nest of `$let`. This is the JS-faithful meaning of `=> { … }`
+   * everywhere outside the lookup-callback positions (which use
+   * `parseLambdaBlockBody`); an object return must be written `=> ({ … })`.
+   * See docs/specs/method-dispatch.md.
+   */
+  private parseExprBlockBody(): ExprBlock {
+    const open = this.lexer.next(); // consume `{`
+    const decls: LetDecl[] = [];
+    while (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
+      const decl = this.parseLetDecl();
+      decls.push(decl);
+      const semi = this.lexer.peek();
+      if (semi.type !== TokenType.Semi) {
+        throw new ParseError(
+          `Expected ';' after the \`${decl.kind} ${decl.name}\` declaration at position ${semi.pos}, got ${formatActualToken(semi)}. ` +
+            `Each declaration in a block-body arrow ends with ';', and the block ends with a single \`return\`.`,
+          semi.pos,
+        );
+      }
+      this.lexer.next(); // consume `;`
+    }
+    const ret = this.lexer.peek();
+    if (ret.type !== TokenType.Return) {
+      throw new ParseError(
+        `A block-body arrow must end with a \`return <expr>\` statement at position ${ret.pos}, got ${formatActualToken(ret)}. ` +
+          `Write \`x => { const a = …; return <expr>; }\`, or \`x => (<expr>)\` to return an object/expression directly.`,
+        ret.pos,
+      );
+    }
+    this.lexer.next(); // consume `return`
+    const retExpr = this.parseExpression();
+    if (this.lexer.peek().type === TokenType.Semi) this.lexer.next(); // optional trailing `;`
+    const close = this.lexer.peek();
+    if (close.type !== TokenType.RBrace) {
+      throw new ParseError(
+        `Expected '}' to close the block-body arrow at position ${close.pos}, got ${formatActualToken(close)}. ` +
+          `Only \`const\`/\`let\` declarations may precede the single \`return\`.`,
+        close.pos,
+      );
+    }
+    this.lexer.next(); // consume `}`
+    return { type: "ExprBlock", decls, ret: retExpr, pos: open.pos };
   }
 
   /** "new Date()" / "new Date(expr)" or "new Set()" / "new Set(expr)" */

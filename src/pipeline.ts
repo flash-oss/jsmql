@@ -1947,6 +1947,13 @@ function findFirstLookupInExpr(expr: Expr): number | null {
   }
   if (expr.type === "Lambda") {
     if (expr.body !== undefined) return findFirstLookupInExpr(expr.body);
+    if (expr.exprBlock !== undefined) {
+      for (const d of expr.exprBlock.decls) {
+        const a = findFirstLookupInExpr(d.value);
+        if (a !== null) return a;
+      }
+      return findFirstLookupInExpr(expr.exprBlock.ret);
+    }
     if (expr.block !== undefined) {
       for (const stmt of expr.block.stmts) {
         if (stmt.type === "UpdateFilter") {

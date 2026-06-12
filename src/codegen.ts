@@ -17,6 +17,7 @@ import type {
   AssignExpr,
   UpdateOp,
   UpdateFilter,
+  ExprBlock,
 } from "./ast.ts";
 
 export class CodegenError extends Error {
@@ -1788,15 +1789,15 @@ function generateOperatorCall(
     }
     const lambdaExpr = args[1];
     if (lambdaExpr.type !== "Lambda") throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
-    if (lambdaExpr.body === undefined) {
+    if (lambdaExpr.block !== undefined) {
       throw new CodegenError(
-        "$let second argument cannot be a block-body arrow — only '$$$.<coll>.find/filter(...)' accepts block bodies.",
+        "$let second argument cannot be a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block `() => { const a = …; return a; }`.",
         lambdaExpr.pos,
       );
     }
     const vars = generateStaticObjectEntries(varsExpr.entries, ctx);
     const bodyCtx = extendCtx(ctx, lambdaExpr.params);
-    return { $let: { vars, in: _generate(lambdaExpr.body, bodyCtx) } };
+    return { $let: { vars, in: genLambdaBody(lambdaExpr, bodyCtx) } };
   }
 
   // $arrayToObject([pairs]) — a literal pairs-array argument must be wrapped one
@@ -2343,7 +2344,7 @@ function generateMethodCall(
     case "findLast": {
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast");
-      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
       }
@@ -2368,7 +2369,7 @@ function generateMethodCall(
       if (lambda.params[1]) {
         vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
       }
-      const predicate = jsBoolIfNeeded(lambda.body, _generate(lambda.body, bodyCtx));
+      const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
       const cond = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
@@ -2457,7 +2458,7 @@ function generateMethodCall(
       const iter = arrayIterInput(lambda, genObj, ctx, "flatMap");
       return {
         $reduce: {
-          input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(_generate(lambda.body, iter.bodyCtx)) } },
+          input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } },
           initialValue: [],
           in: { $concatArrays: ["$$value", "$$this"] },
         },
@@ -2468,12 +2469,12 @@ function generateMethodCall(
     case "map": {
       const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
       const iter = arrayIterInput(lambda, genObj, ctx, "map");
-      return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(_generate(lambda.body, iter.bodyCtx)) } };
+      return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } };
     }
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter");
-      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $filter: { input: iter.input, as: iter.asName, cond } };
       }
@@ -2489,7 +2490,7 @@ function generateMethodCall(
     case "find": {
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
       const iter = arrayIterInput(lambda, genObj, ctx, "find");
-      const cond = iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx)));
+      const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
       }
@@ -2504,7 +2505,7 @@ function generateMethodCall(
           $map: {
             input: iter.input,
             as: iter.asName,
-            in: iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx))),
+            in: iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx))),
           },
         },
       };
@@ -2517,7 +2518,7 @@ function generateMethodCall(
           $map: {
             input: iter.input,
             as: iter.asName,
-            in: iter.wrap(jsBoolIfNeeded(lambda.body, _generate(lambda.body, iter.bodyCtx))),
+            in: iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx))),
           },
         },
       };
@@ -2541,9 +2542,9 @@ function generateMethodCall(
       // type is invariant across iterations; the IndexAccess case reads this
       // to skip the runtime $isArray dispatch.
       const accType: "object" | "array" | undefined =
-        isObjectProducing(exprArgs[1]) && isObjectProducing(lambda.body)
+        isObjectProducing(exprArgs[1]) && isObjectProducing(lambdaResult(lambda))
           ? "object"
-          : isArrayProducing(exprArgs[1]) && isArrayProducing(lambda.body)
+          : isArrayProducing(exprArgs[1]) && isArrayProducing(lambdaResult(lambda))
             ? "array"
             : undefined;
       const nextBindingTypes = new Map(ctx.bindingTypes ?? []);
@@ -2565,7 +2566,7 @@ function generateMethodCall(
         droppedLets: ctx.droppedLets,
         bindingTypes: nextBindingTypes,
       };
-      const baseBody = _generate(lambda.body, reduceCtx);
+      const baseBody = genLambdaBody(lambda, reduceCtx);
       const inExpr = has3
         ? {
             $let: {
@@ -2733,7 +2734,7 @@ function isNegativeLiteral(e: Expr): boolean {
  *   the receiver into every iteration, which has no real use case.
  */
 function arrayIterInput(
-  lambda: { params: string[]; body: Expr; pos: number },
+  lambda: { params: string[]; pos: number },
   genObj: unknown,
   ctx: GenerateCtx,
   method: string,
@@ -3154,11 +3155,60 @@ function formatCountList(ns: readonly number[]): string {
   return `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
 }
 
+// ── Lambda bodies (expression body or expr-block → nested $let) ───────────────
+
+type LambdaLike = { params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number };
+
+/**
+ * The expression whose value the lambda yields: the bare body, or the `return`
+ * expression of an expr-block. Used for static type inference (string/array/
+ * object/boolean producing-ness) at the consumer sites.
+ */
+function lambdaResult(lambda: LambdaLike): Expr {
+  return lambda.exprBlock ? lambda.exprBlock.ret : lambda.body!;
+}
+
+/**
+ * Generate the value of a lambda body, threading `ctx`. An expression body is
+ * generated directly; an expr-block `{ const a = …; return <e>; }` is lowered
+ * by [generateExprBlock] to a right-folded nest of `$let`.
+ */
+function genLambdaBody(lambda: LambdaLike, ctx: GenerateCtx): unknown {
+  return lambda.exprBlock ? generateExprBlock(lambda.exprBlock, ctx) : _generate(lambda.body!, ctx);
+}
+
+/**
+ * Lower an expr-block body to nested `$let`. Right-fold so each declaration's
+ * initialiser — and the final `return` — sees every PRIOR declaration as a
+ * `$$name` variable (MongoDB's `$let.vars` are mutually invisible, hence one
+ * `$let` per decl rather than a single shared `vars` block). This is a faithful
+ * 1:1 lowering of the user's `const`/`let` bindings, not an optimisation. See
+ * docs/specs/method-dispatch.md.
+ */
+function generateExprBlock(block: ExprBlock, ctx: GenerateCtx): unknown {
+  const seen = new Set<string>();
+  const fold = (i: number, c: GenerateCtx): unknown => {
+    if (i === block.decls.length) return _generate(block.ret, c);
+    const decl = block.decls[i];
+    if (seen.has(decl.name)) {
+      throw new CodegenError(
+        `\`${decl.kind} ${decl.name}\` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.`,
+        decl.pos,
+      );
+    }
+    seen.add(decl.name);
+    const value = _generate(decl.value, c); // initialiser sees only prior decls
+    const inner = extendCtx(c, [decl.name]); // decl.name now resolves to $$name
+    return { $let: { vars: { [safeVarName(decl.name)]: value }, in: fold(i + 1, inner) } };
+  };
+  return fold(0, ctx);
+}
+
 function requireLambda(
   args: Expr[],
   method: string,
   callerPos: number,
-): { type: "Lambda"; params: string[]; body: Expr; pos: number } {
+): { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number } {
   const first = args[0];
   // Bare type-cast callback: `.filter(Boolean)` desugars to `.filter(v => Boolean(v))`.
   if (first?.type === "TypeCastRef") {
@@ -3194,13 +3244,13 @@ function requireLambda(
       first?.pos ?? callerPos,
     );
   }
-  if (first.body === undefined) {
+  if (first.block !== undefined) {
     throw new CodegenError(
-      `.${method}() does not accept a block-body arrow — only '$$$.<coll>.find/filter(...)' does. Use an expression-body arrow like \`x => x > 0\`.`,
+      `.${method}() does not accept a statement-block body (a sub-pipeline of stages) — that form is only for '$$$.<coll>.find/filter(...)' and '$$.filter(...)'. Use an expression \`x => x > 0\`, or a value-returning block \`x => { const y = …; return y; }\`.`,
       first.pos,
     );
   }
-  return first as { type: "Lambda"; params: string[]; body: Expr; pos: number };
+  return first as { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number };
 }
 
 // ── Call expressions (IIFE → $let) ────────────────────────────────────────────
@@ -3221,9 +3271,9 @@ function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx,
       pos,
     );
   }
-  if (callee.body === undefined) {
+  if (callee.block !== undefined) {
     throw new CodegenError(
-      `IIFE callee cannot be a block-body arrow — only '$$$.<coll>.find/filter(...)' accepts block bodies.`,
+      `IIFE callee cannot be a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = …; return y; }\`.`,
       callee.pos,
     );
   }
@@ -3242,7 +3292,7 @@ function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx,
     vars[callee.params[i]] = _generate(a, ctx);
   }
   const bodyCtx = extendCtx(ctx, callee.params);
-  return { $let: { vars, in: _generate(callee.body, bodyCtx) } };
+  return { $let: { vars, in: genLambdaBody(callee, bodyCtx) } };
 }
 
 // ── Type casts ────────────────────────────────────────────────────────────────
@@ -3411,9 +3461,9 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
           lambda.pos,
         );
       }
-      if (lambda.body === undefined) {
+      if (lambda.block !== undefined) {
         throw new CodegenError(
-          `Object.groupBy() does not accept a block-body arrow — only '$$$.<coll>.find/filter(...)' does.`,
+          `Object.groupBy() does not accept a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression \`x => x.key\`, or a value-returning block.`,
           lambda.pos,
         );
       }
@@ -3427,8 +3477,8 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
         droppedLets: ctx.droppedLets,
         bindingTypes: ctx.bindingTypes,
       };
-      const keyBody = _generate(lambda.body, keyCtx);
-      const keyExpr = isStringProducing(lambda.body) ? keyBody : { $toString: keyBody };
+      const keyBody = genLambdaBody(lambda, keyCtx);
+      const keyExpr = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
       return {
         $reduce: {
           input: _generate(input, ctx),
@@ -3559,9 +3609,9 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
   if (mapFn.type !== "Lambda") {
     throw new CodegenError(`Array.from() second argument must be an arrow function (e.g. (_, i) => i * 2)`, mapFn.pos);
   }
-  if (mapFn.body === undefined) {
+  if (mapFn.block !== undefined) {
     throw new CodegenError(
-      `Array.from() does not accept a block-body arrow — only '$$$.<coll>.find/filter(...)' does.`,
+      `Array.from() does not accept a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression \`(_, i) => i * 2\`, or a value-returning block.`,
       mapFn.pos,
     );
   }
@@ -3578,7 +3628,7 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
     $map: {
       input: { $range: [0, lengthExpr] },
       as: safeVarName(idxParam),
-      in: { $let: { vars: { [safeVarName(elemParam)]: null }, in: _generate(mapFn.body, bodyCtx) } },
+      in: { $let: { vars: { [safeVarName(elemParam)]: null }, in: genLambdaBody(mapFn, bodyCtx) } },
     },
   };
 }
@@ -3934,11 +3984,16 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
       collectArgsInto(expr.args, out);
       return;
     case "Lambda":
-      // collectReadsInto runs on coalesced update-op RHS chains; block-form
-      // lambdas only appear inside `$$$.<coll>.find/filter(...)`, which is
-      // intercepted before this walker runs — so a block-form here is
-      // unreachable. Defensive guard: skip the body if absent.
+      // A coalesced update-op RHS may embed a lambda — e.g.
+      // `$.x = $.items.map(i => { const y = i * 2; return y; })`. Walk both the
+      // expression body and the expr-block (decl initialisers + return). The
+      // statement-block (`block`) form only appears inside lookup callbacks,
+      // which are intercepted before this walker runs.
       if (expr.body !== undefined) collectReadsInto(expr.body, out);
+      if (expr.exprBlock !== undefined) {
+        for (const d of expr.exprBlock.decls) collectReadsInto(d.value, out);
+        collectReadsInto(expr.exprBlock.ret, out);
+      }
       return;
     case "TypeofExpr":
       collectReadsInto(expr.operand, out);

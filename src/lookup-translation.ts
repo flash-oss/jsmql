@@ -134,6 +134,17 @@ function rewriteEnclosingForeignParams(expr: Expr, params: ReadonlyArray<string>
         return { ...node, args: node.args.map(walkArg) };
       case "Lambda":
         if (node.body !== undefined) return { ...node, body: walk(node.body) };
+        if (node.exprBlock !== undefined) {
+          return {
+            ...node,
+            exprBlock: {
+              type: "ExprBlock",
+              decls: node.exprBlock.decls.map((d) => ({ ...d, value: walk(d.value) })),
+              ret: walk(node.exprBlock.ret),
+              pos: node.exprBlock.pos,
+            },
+          };
+        }
         return node;
       case "ArrayLiteral":
         return {
@@ -402,6 +413,12 @@ function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
   }
   if (expr.type === "Lambda") {
     if (expr.body !== undefined) return walkContainsLookup(expr.body, ctx);
+    if (expr.exprBlock !== undefined) {
+      return (
+        expr.exprBlock.decls.some((d) => walkContainsLookup(d.value, ctx)) ||
+        walkContainsLookup(expr.exprBlock.ret, ctx)
+      );
+    }
     if (expr.block !== undefined) return walkContainsLookup(expr.block, ctx);
     return false;
   }
@@ -1170,8 +1187,24 @@ function mapChildren(
           pos: expr.pos,
         };
       }
-      // Block-body in a nested position would be unusual (only the outermost
-      // lookup-callback parses a block body). Pass through unchanged.
+      if (expr.exprBlock !== undefined) {
+        return {
+          type: "Lambda",
+          params: expr.params,
+          exprBlock: {
+            type: "ExprBlock",
+            decls: expr.exprBlock.decls.map((d) => ({
+              ...d,
+              value: transformExpr(d.value, foreignParam, allocator, outerLets),
+            })),
+            ret: transformExpr(expr.exprBlock.ret, foreignParam, allocator, outerLets),
+            pos: expr.exprBlock.pos,
+          },
+          pos: expr.pos,
+        };
+      }
+      // Statement-block body in a nested position would be unusual (only the
+      // outermost lookup-callback parses a statement block). Pass through.
       return expr;
     case "ArrayLiteral":
       return {

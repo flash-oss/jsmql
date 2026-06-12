@@ -150,8 +150,10 @@ object_entry   = "..." expression
 
 template_literal = "`" template_chunk ("${" expression "}" template_chunk)* "`"
 
-lambda_unparen = IDENT "=>" expression                       (* x => expr *)
-lambda_paren   = "(" [IDENT ("," IDENT)*] ")" "=>" expression  (* (x, y) => expr *)
+lambda_unparen = IDENT "=>" lambda_body                      (* x => expr | x => { … } *)
+lambda_paren   = "(" [IDENT ("," IDENT)*] ")" "=>" lambda_body  (* (x, y) => … *)
+lambda_body    = expr_block | expression
+expr_block     = "{" (let_decl ";")* "return" expression [";"] "}"   (* lowers to nested $let *)
 
 math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
 MATH_METHOD    = (* see `MathMethod` in src/ast.ts *)
@@ -311,6 +313,15 @@ Lambdas are first-class expressions valid in:
 - Operator call arguments: `$let({ vars }, (x) => body)`
 
 A lambda appearing anywhere else (e.g. as a standalone expression) is a codegen error.
+
+### Body: expression or block (JS-faithful `=> {`)
+
+A lambda body is either an expression (`x => x * 2`) or a **statement-laden block** (`x => { … }`). jsmql follows JavaScript exactly: `=> {` **always** opens a block, so an object return must be parenthesised — `x => ({ k: v })`, never `x => { k: v }` (the latter is a labeled-statement block in JS). Two block grammars exist, selected by position:
+
+- **Expression block** (`expr_block` above) — the default everywhere a lambda is a value (array methods, `$let`, IIFE, `Object.groupBy`, `Array.from`). It is `(const|let <name> = <expr>;)* return <expr>;` and lowers to a right-folded nest of `$let` (see [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let)). A bare `=> { k: v }` is rejected (no `return`), pointing at `=> ({ k: v })`; re-declaring a name, or omitting `return`, are likewise actionable errors.
+- **Statement block** (`block_body`, the `$lookup`/facet sub-pipeline form) — only inside `$$$.<coll>.find/filter(...)` and `$$.filter(...)`. Its statements are stages/update ops, not a single `return`. See [lookup-stage.md](lookup-stage.md).
+
+The parser threads a `blockKind` (`"expr"` default, `"pipeline"` for the lookup positions) from the method-call dispatch to decide which to parse. `return` is a reserved keyword (lexed as its own token; still usable as a property name / object key, matching JS).
 
 ## `$let` with lambda
 

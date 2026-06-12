@@ -1828,6 +1828,129 @@ describe("$let with lambda", () => {
       $let: { vars: { d: { $multiply: ["$price", 0.1] } }, in: { $subtract: ["$price", "$$d"] } },
     });
   });
+  it("$let with a block-body lambda nests an inner $let per decl", () => {
+    expect(jsmql.expr("$let({ p: $.price }, (p) => { const tax = p * 0.1; return p + tax; })")).toEqual({
+      $let: {
+        vars: { p: "$price" },
+        in: { $let: { vars: { tax: { $multiply: ["$$p", 0.1] } }, in: { $add: ["$$p", "$$tax"] } } },
+      },
+    });
+  });
+});
+
+// Block-body arrows `(x) => { const a = …; return <expr>; }` lower to a
+// right-folded nest of $let — one binding per decl, in source order, so each
+// decl's initialiser and the return see all prior decls as $$name. JS-faithful:
+// `=> {` always opens a block; an object return needs `=> ({ … })`.
+// See docs/specs/method-dispatch.md.
+describe("block-body arrow lambdas (→ nested $let)", () => {
+  it(".map() with a single-decl block", () => {
+    expect(jsmql.expr("$.items.map(x => { const y = x * 2; return y; })")).toEqual({
+      $map: { input: "$items", as: "x", in: { $let: { vars: { y: { $multiply: ["$$x", 2] } }, in: "$$y" } } },
+    });
+  });
+
+  it(".map() with sequential decls (b references a) → nested $let", () => {
+    expect(jsmql.expr("$.items.map(x => { const a = x + 1; const b = a * 2; return b; })")).toEqual({
+      $map: {
+        input: "$items",
+        as: "x",
+        in: {
+          $let: {
+            vars: { a: { $add: ["$$x", 1] } },
+            in: { $let: { vars: { b: { $multiply: ["$$a", 2] } }, in: "$$b" } },
+          },
+        },
+      },
+    });
+  });
+
+  it(".filter() block predicate is wrapped in jsBool around the whole $let", () => {
+    expect(jsmql.expr("$.items.filter(x => { const ok = x.active; return ok; })")).toEqual({
+      $filter: { input: "$items", as: "x", cond: truthy({ $let: { vars: { ok: "$$x.active" }, in: "$$ok" } }) },
+    });
+  });
+
+  it(".reduce() body may be a block", () => {
+    expect(jsmql.expr("$.nums.reduce((acc, n) => { const step = n + 1; return acc + step; }, 0)")).toEqual({
+      $reduce: {
+        input: "$nums",
+        initialValue: 0,
+        in: { $let: { vars: { step: { $add: ["$$this", 1] } }, in: { $add: ["$$value", "$$step"] } } },
+      },
+    });
+  });
+
+  it("a block with no decls is just `{ return <expr>; }`", () => {
+    expect(jsmql.expr("$.items.map(x => { return x.name; })")).toEqual({
+      $map: { input: "$items", as: "x", in: "$$x.name" },
+    });
+  });
+
+  it("non-lowercase decl names are made $$-safe consistently (binding + reference)", () => {
+    expect(jsmql.expr("$.items.map(x => { const _tmp = x * 2; return _tmp; })")).toEqual({
+      $map: { input: "$items", as: "x", in: { $let: { vars: { v_tmp: { $multiply: ["$$x", 2] } }, in: "$$v_tmp" } } },
+    });
+  });
+
+  it("nested block-body lambdas compose", () => {
+    expect(
+      jsmql.expr("$.rows.map(r => { const xs = r.vals.map(v => { const d = v * 2; return d; }); return xs; })"),
+    ).toEqual({
+      $map: {
+        input: "$rows",
+        as: "r",
+        in: {
+          $let: {
+            vars: {
+              xs: {
+                $map: {
+                  input: "$$r.vals",
+                  as: "v",
+                  in: { $let: { vars: { d: { $multiply: ["$$v", 2] } }, in: "$$d" } },
+                },
+              },
+            },
+            in: "$$xs",
+          },
+        },
+      },
+    });
+  });
+
+  it("2-param block body composes with the (element,index) pair $let", () => {
+    expect(jsmql.expr("$.items.map((x, i) => { const tagged = i; return tagged; })")).toEqual({
+      $map: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] } },
+        as: "jsmqlPair",
+        in: {
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+            in: { $let: { vars: { tagged: "$$i" }, in: "$$tagged" } },
+          },
+        },
+      },
+    });
+  });
+
+  it("rejects re-declaration of the same name in one block", () => {
+    expect(() => jsmql.expr("$.items.map(x => { const a = 1; const a = 2; return a; })")).toThrow(
+      /already declared earlier/,
+    );
+  });
+
+  it("rejects a block with no `return`", () => {
+    expect(() => jsmql.expr("$.items.map(x => { const a = 1; })")).toThrow(/must end with a `return <expr>`/);
+  });
+
+  it("JS-faithful: a bare-brace object body is a block (object return needs parens)", () => {
+    // `x => { k: x }` is a labeled-statement block in JS, not an object — jsmql
+    // rejects it (no `return`); the object form is `x => ({ k: x })`.
+    expect(() => jsmql.expr("$.items.map(x => { k: x })")).toThrow(/return/);
+    expect(jsmql.expr("$.items.map(x => ({ k: x }))")).toEqual({
+      $map: { input: "$items", as: "x", in: { k: "$$x" } },
+    });
+  });
 });
 
 describe("immutable array methods", () => {

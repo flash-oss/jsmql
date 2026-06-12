@@ -41,6 +41,18 @@ export type UpdateOp = AssignExpr | DeleteStmt;
 export type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const"; pos: number };
 
 /**
+ * Expression-block body of an arrow function: zero or more `const`/`let`
+ * declarations followed by a single `return <expr>` —
+ * `x => { const a = …; const b = f(a); return g(a, b); }`. Distinct from a
+ * lookup-callback `block: Pipeline` (whose statements are stages/update ops).
+ * Codegen ([generateExprBlock]) lowers it to a right-folded nest of `$let` —
+ * one binding per decl, in source order, so each decl's initialiser and the
+ * `return` expression see all prior decls as `$$name`. See
+ * `docs/specs/method-dispatch.md`.
+ */
+export type ExprBlock = { type: "ExprBlock"; decls: LetDecl[]; ret: Expr; pos: number };
+
+/**
  * Top-level **update filter**: one or more assignments and/or deletes,
  * separated by `,` in source. Lowers to a MongoDB Update Filter document
  * (the `{ $set: …, $unset: … }` shape passed as the second argument to
@@ -128,7 +140,7 @@ export type Expr =
   | { type: "MemberAccess"; object: Expr; member: string; pos: number; optional?: boolean }
   | { type: "MethodCall"; object: Expr; method: string; args: CallArg[]; pos: number; optional?: boolean }
   | { type: "CallExpression"; callee: Expr; args: CallArg[]; pos: number }
-  | { type: "Lambda"; params: string[]; body?: Expr; block?: Pipeline; pos: number }
+  | { type: "Lambda"; params: string[]; body?: Expr; block?: Pipeline; exprBlock?: ExprBlock; pos: number }
   | { type: "TypeofExpr"; operand: Expr; pos: number }
   | { type: "NewDate"; args: Expr[]; pos: number }
   | { type: "NewSet"; arg: Expr | null; pos: number }

@@ -8,6 +8,8 @@ are rewritten to the materialised field paths.
 
 User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 
+> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let).
+
 ## Why it exists
 
 The construct sits above the existing [update ops](update-filter.md) machinery (`$.x = …`)

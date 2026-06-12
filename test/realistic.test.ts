@@ -21,6 +21,9 @@ import "../src/ops.ts";
 // prettier-ignore
 declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?: string; features?: string[] } }
 
+// JS-truthiness coercion jsmql emits for `&&`/`||`/ternary conditions.
+const truthy = (v: unknown) => ({ $and: [{ $ne: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
+
 describe("snapshot one user, then pivot to their 5 most-recent orders", { features: ["Pipelines"] }, () => {
   it(
     "narrow + `let` snapshot + correlated source-switch — three lines that would be ~30 of MQL",
@@ -286,6 +289,74 @@ $ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.p
               input: "$lineItems",
               as: "li",
               in: { orderId: "$_id", sku: "$$li.sku", revenue: { $multiply: ["$$li.qty", "$$li.price"] } },
+            },
+          },
+        },
+      },
+      { $unwind: "$__jsmql.__lookup1" },
+      { $replaceWith: "$__jsmql.__lookup1" },
+    ]);
+  });
+});
+
+describe("fan out per-party risk bands (block-body arrow → nested `$let`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" }, () => {
+    // For each transaction leg, derive intermediate values with local `const`s
+    // and emit one document per qualifying leg. A block-body arrow
+    // `party => { const … ; return … }` lowers to a right-folded nest of `$let`
+    // (one binding per `const`, in source order — so `score` can read `leg`).
+    // The `? … : null` + `.filter(Boolean)` drops legs with no risk score, and
+    // `$ = <array>` fans the survivors out into one document each.
+    expect(
+      jsmql`
+$ = ["sender", "recipient"].map(party => {
+  const leg = $.legs?.[party];
+  const score = leg?.riskScore;
+  return score ? { party, score, band: score > 50 ? "high" : "low" } : null;
+}).filter(Boolean);
+      `,
+    ).toEqual([
+      {
+        $set: {
+          "__jsmql.__lookup1": {
+            $filter: {
+              input: {
+                $map: {
+                  input: ["sender", "recipient"],
+                  as: "party",
+                  in: {
+                    $let: {
+                      vars: {
+                        leg: {
+                          $cond: [
+                            { $isArray: { $ifNull: ["$legs", []] } },
+                            { $arrayElemAt: [{ $ifNull: ["$legs", []] }, "$$party"] },
+                            { $getField: { field: "$$party", input: { $ifNull: ["$legs", []] } } },
+                          ],
+                        },
+                      },
+                      in: {
+                        $let: {
+                          vars: { score: "$$leg.riskScore" },
+                          in: {
+                            $cond: [
+                              truthy("$$score"),
+                              {
+                                party: "$$party",
+                                score: "$$score",
+                                band: { $cond: [{ $gt: ["$$score", 50] }, "high", "low"] },
+                              },
+                              null,
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              as: "v",
+              cond: truthy("$$v"),
             },
           },
         },

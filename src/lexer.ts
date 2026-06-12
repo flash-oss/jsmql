@@ -91,6 +91,7 @@ export const TokenType = {
   Delete: "Delete", // delete
   Let: "Let", // let
   Const: "Const", // const (alias for let — see docs/specs/let-bindings.md)
+  Return: "Return", // return (only inside a block-body arrow — see docs/specs/method-dispatch.md)
 
   // Identifier
   Ident: "Ident",
@@ -174,6 +175,7 @@ export const TOKEN_DISPLAY: Record<TokenType, string> = {
   Delete: "'delete'",
   Let: "'let'",
   Const: "'const'",
+  Return: "'return'",
   Ident: "an identifier",
   EOF: "end of input",
 };
@@ -893,6 +895,8 @@ export class Lexer {
         return { type: TokenType.Let, value: "let", pos };
       case "const":
         return { type: TokenType.Const, value: "const", pos };
+      case "return":
+        return { type: TokenType.Return, value: "return", pos };
       default:
         return { type: TokenType.Ident, value: ident, pos };
     }

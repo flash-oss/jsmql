@@ -1321,6 +1321,26 @@ $.items.map(price => price * $.taxRate)
 // price refers to the loop variable; $.taxRate refers to the document field
 ```
 
+### Block bodies with local `const` (→ `$let`)
+
+A lambda can have a **block body** that declares local `const` / `let` bindings and ends with a `return`. Each binding becomes a MongoDB `$let` variable, so you can name intermediate values and reuse them — just like in JavaScript:
+
+```js
+$.legs.map(leg => {
+  const score = leg.riskScore;
+  const band = score > 50 ? "high" : "low";
+  return { id: leg.id, score, band };
+})
+// → { $map: { input: "$legs", as: "leg", in:
+//      { $let: { vars: { score: "$$leg.riskScore" }, in:
+//        { $let: { vars: { band: { $cond: [{ $gt: ["$$score", 50] }, "high", "low"] } }, in:
+//          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
+```
+
+Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works in `.map`, `.filter`, `.reduce`, `.flatMap`, `.find`/`.some`/`.every`, the `$let(vars, fn)` form, IIFEs, `Object.groupBy`, and `Array.from`.
+
+> **⚠️ JavaScript gotcha — `=> {` is always a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error (it has no `return`) — jsmql points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
+
 ### Immediately-invoked arrow functions (IIFE → `$let`)
 
 A call expression whose callee is an arrow-function literal compiles to MongoDB's `$let`. This is the JS-natural way to bind a name and avoid recomputing a sub-expression:

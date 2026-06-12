@@ -183,7 +183,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 
 ## Highlights
 
-- **JS you already know** — operators, ternaries, template literals, optional chaining, spread, computed keys, numeric separators, `Math.*`, `Date`, `typeof`, `instanceof`, comments. If `node --check` accepts it, jsmql does too.
+- **JS you already know** — operators, ternaries, template literals, optional chaining, spread, computed keys, numeric separators, `Math.*`, `Date`, `typeof`, `instanceof`, comments, and block-body arrows with local `const`s (`x => { const y = …; return … }` → nested `$let`). If `node --check` accepts it, jsmql does too.
 - **182 operators, full coverage** — every aggregation expression and accumulator from the official MongoDB MQL spec, including Bitwise and Window categories. Unknown operators pass through, so new MongoDB releases work day one.
 - **Plain MQL passes through.** Drop hand-written MQL JSON inline — `{ $gt: ["$age", 18] }`, a whole stage, a whole pipeline — and jsmql compiles it to itself. Mix the two freely, migrate one expression at a time, or paste verbatim from the MongoDB docs.
 - **Filter vs Pipeline picked automatically** — a top-level stage call / update op / statement, or any `;`-separated input, lowers as a `Pipeline`; everything else lowers as a `Filter`, with index-safe predicates translated to query-document form. See [docs/LANGUAGE.md → Output dispatch](docs/LANGUAGE.md#output-dispatch-filter-vs-pipeline).

@@ -135,6 +135,23 @@ Per-method shape under 2 params:
 
 `.reduce` / `.reduceRight` accept 2 or 3 params: `(acc, x[, i])`. With 3 params, `input` becomes the zipped `$range × expr` (for `.reduceRight`, `$reverseArray` wraps the zip so indices reflect the original array). The accumulator still rides through `reduceRemap` (`acc` → `$$value`); the element and index come from a `$let` wrap that rebinds `params[1]` to `$arrayElemAt($$this, 1)` and `params[2]` to `$arrayElemAt($$this, 0)`.
 
+### Block-body arrows (→ nested `$let`)
+
+A lambda body may be an **expression block** — `(x) => { const a = …; const b = f(a); return g(a, b); }` — anywhere a lambda is accepted as a value: the array methods above, `$let(vars, fn)`, the IIFE `(…)=>…)(…)` form, `Object.groupBy`, and `Array.from`'s map function. The parser represents it as an `ExprBlock` AST node (`{ decls: LetDecl[]; ret: Expr }`) on the `Lambda` — distinct from the lookup-callback `block: Pipeline` (whose statements are stages/update ops, lowered to a `$lookup` sub-pipeline).
+
+`generateExprBlock` (`codegen.ts`) lowers it to a **right-folded nest of `$let`** — one binding per declaration, in source order:
+
+```
+{ const a = A; const b = B; return R; }
+→ { $let: { vars: { a: A }, in: { $let: { vars: { b: B }, in: R } } } }
+```
+
+One `$let` per decl (rather than a single shared `vars` block) is required because MongoDB's `$let.vars` are mutually invisible — a later var cannot read an earlier one. Nesting puts each prior decl in scope (as `$$name`) for the next decl's initialiser and for the `return`. Variable names are added to `lambdaParams` via `extendCtx` and emitted/referenced through `safeVarName`, so the binding key and every `$$name` reference always agree (incl. the `v`-prefix rewrite for non-`[a-z]`-leading names). This is a **faithful 1:1 lowering** of the user's `const`/`let` bindings — every binding becomes exactly one `$let`, deterministically; it is not the rejected "$let-as-optimisation" (no dependency analysis, no value-preserving rewrite the compiler chose).
+
+The consumer sites use two helpers: `genLambdaBody(lambda, ctx)` (generates the body — expression or expr-block) and `lambdaResult(lambda)` (the expression whose value the lambda yields — the bare body or the block's `ret` — used for static type inference: `jsBoolIfNeeded` on predicate methods, the object/array narrowing in `.reduce`, the string check in `Object.groupBy`). For a predicate method the `jsBoolIfNeeded` truthiness wrap is applied around the whole `$let` (which evaluates to `ret`), so `arr.filter(x => { const ok = x.active; return ok; })` keeps JS truthy/falsy semantics.
+
+**Disambiguation (JS-faithful).** `=> {` always opens a block; an object return needs `=> ({ … })`. `parseExprBlockBody` requires the block to be `(const|let <name> = <expr>;)* return <expr>;` — a bare `=> { k: v }` is a labeled-statement block in JS, so jsmql rejects it (no `return`) and points at `=> ({ k: v })`. Re-declaring a name in one block, or a block with no `return`, are rejected with actionable errors. The lookup-callback positions (`$$$.<coll>.find/filter`, `$$.filter`) keep their statement-block grammar via a `blockKind: "pipeline" | "expr"` flag threaded from the method-call dispatch (`"expr"` is the default everywhere else). `.toSorted`/`.sort` key functions still reject any block body — their structural path needs a bare `x => x.field` expression.
+
 ### Mutators at statement position
 
 The in-place JS array mutators — `.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`, `.copyWithin()` — work at **statement position** on a writable field-path receiver, lowering to a `$set` stage that re-assigns the field. At **expression position** they keep throwing the tailored DX errors (which also mention the statement-position option). `.copyWithin(target, start[, end])` accepts non-negative integer literals (no negative-indexing); the two-arg form treats `end` as the array's `$size` at runtime.
@@ -236,9 +253,9 @@ The IndexAccess case below consumes this to skip the runtime dispatch for `acc[k
 
 The intercept:
 1. Validates that args[0] is an `ObjectLiteral`
-2. Extracts the lambda params and body
+2. Extracts the lambda params and body (an expression body **or** an expr-block — see [Block-body arrows](#block-body-arrows--nested-let); only the lookup `block: Pipeline` form is rejected here)
 3. Generates `vars` in the current ctx (vars are bound, not yet in scope)
-4. Generates `in` in an extended ctx with the lambda params added
+4. Generates `in` via `genLambdaBody` in an extended ctx with the lambda params added
 
 ## Regex literals — context-sensitive lexing
 
