@@ -789,17 +789,17 @@ describe("jsBool truthiness normalizes missing → null", () => {
     expect(truthy("$$x.name").$and[0]).toEqual({ $ne: [{ $ifNull: ["$$x.name", null] }, null] });
   });
   it("&&/||/ternary share the same normalized coercion", () => {
-    expect(jsmql.expr("$.a ? $.b : $.c")).toEqual({ $cond: [truthy("$a"), "$b", "$c"] });
+    expect(jsmql.expr("$.a ? $.b : $.c")).toEqual({ $cond: { if: truthy("$a"), then: "$b", else: "$c" } });
     expect(jsmql.expr("!$.a")).toEqual({ $not: truthy("$a") });
   });
 });
 
 describe("logical operators", () => {
   it("&& on field refs returns operand (JS semantics)", () => {
-    expect(jsmql.expr("$.a && $.b")).toEqual({ $cond: [truthy("$a"), "$b", "$a"] });
+    expect(jsmql.expr("$.a && $.b")).toEqual({ $cond: { if: truthy("$a"), then: "$b", else: "$a" } });
   });
   it("|| on field refs returns operand (JS semantics)", () => {
-    expect(jsmql.expr("$.a || $.b")).toEqual({ $cond: [truthy("$a"), "$a", "$b"] });
+    expect(jsmql.expr("$.a || $.b")).toEqual({ $cond: { if: truthy("$a"), then: "$a", else: "$b" } });
   });
   it("&& on bool comparisons stays as $and (no operand-preservation needed)", () => {
     expect(jsmql.expr("$.a > 0 && $.b > 0")).toEqual({ $and: [{ $gt: ["$a", 0] }, { $gt: ["$b", 0] }] });
@@ -818,26 +818,28 @@ describe("logical operators", () => {
   });
   it("&& with non-pure-ref LHS uses $let to bind once", () => {
     expect(jsmql.expr("($.a + $.b) && $.c")).toEqual({
-      $let: { vars: { v: { $add: ["$a", "$b"] } }, in: { $cond: [truthy("$$v"), "$c", "$$v"] } },
+      $let: { vars: { v: { $add: ["$a", "$b"] } }, in: { $cond: { if: truthy("$$v"), then: "$c", else: "$$v" } } },
     });
   });
   it("|| short-circuit chain with default (user's idiom)", () => {
-    expect(jsmql.expr('$.nickname || "anonymous"')).toEqual({ $cond: [truthy("$nickname"), "$nickname", "anonymous"] });
+    expect(jsmql.expr('$.nickname || "anonymous"')).toEqual({
+      $cond: { if: truthy("$nickname"), then: "$nickname", else: "anonymous" },
+    });
   });
 });
 
 describe("ternary", () => {
   it("basic ternary with bool condition (no jsBool wrap)", () => {
     expect(jsmql.expr("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
-      $cond: [{ $gte: ["$age", 18] }, "adult", "minor"],
+      $cond: { if: { $gte: ["$age", 18] }, then: "adult", else: "minor" },
     });
   });
   it("ternary with non-bool condition wraps in jsBool", () => {
-    expect(jsmql.expr('$.name ? "yes" : "no"')).toEqual({ $cond: [truthy("$name"), "yes", "no"] });
+    expect(jsmql.expr('$.name ? "yes" : "no"')).toEqual({ $cond: { if: truthy("$name"), then: "yes", else: "no" } });
   });
   it("nested ternary (right-associative) wraps each non-bool condition", () => {
     expect(jsmql.expr("$.a ? 'x' : $.b ? 'y' : 'z'")).toEqual({
-      $cond: [truthy("$a"), "x", { $cond: [truthy("$b"), "y", "z"] }],
+      $cond: { if: truthy("$a"), then: "x", else: { $cond: { if: truthy("$b"), then: "y", else: "z" } } },
     });
   });
 });
@@ -885,12 +887,12 @@ describe("operator flattening", () => {
   });
   it("&& on non-bool operands folds right into nested $cond (operand-preserving)", () => {
     expect(jsmql.expr("$.a && $.b && $.c")).toEqual({
-      $cond: [truthy("$a"), { $cond: [truthy("$b"), "$c", "$b"] }, "$a"],
+      $cond: { if: truthy("$a"), then: { $cond: { if: truthy("$b"), then: "$c", else: "$b" } }, else: "$a" },
     });
   });
   it("|| on non-bool operands folds right (operand-preserving)", () => {
     expect(jsmql.expr("$.a || $.b || $.c")).toEqual({
-      $cond: [truthy("$a"), "$a", { $cond: [truthy("$b"), "$b", "$c"] }],
+      $cond: { if: truthy("$a"), then: "$a", else: { $cond: { if: truthy("$b"), then: "$b", else: "$c" } } },
     });
   });
   it("?? flattened to $ifNull (4 operands)", () => {
@@ -927,16 +929,20 @@ describe("bracket access", () => {
     // Bare $.items receiver — type unknown — dispatch at runtime to handle
     // either array (numeric index) or object (dynamic key) at query time.
     expect(jsmql.expr("$.items[0]")).toEqual({
-      $cond: [{ $isArray: "$items" }, { $arrayElemAt: ["$items", 0] }, { $getField: { field: 0, input: "$items" } }],
+      $cond: {
+        if: { $isArray: "$items" },
+        then: { $arrayElemAt: ["$items", 0] },
+        else: { $getField: { field: 0, input: "$items" } },
+      },
     });
   });
   it("field index on bare field → runtime $cond", () => {
     expect(jsmql.expr("$.items[$.idx]")).toEqual({
-      $cond: [
-        { $isArray: "$items" },
-        { $arrayElemAt: ["$items", "$idx"] },
-        { $getField: { field: "$idx", input: "$items" } },
-      ],
+      $cond: {
+        if: { $isArray: "$items" },
+        then: { $arrayElemAt: ["$items", "$idx"] },
+        else: { $getField: { field: "$idx", input: "$items" } },
+      },
     });
   });
   it("string-literal key on bare field → $getField directly (a string key is never a numeric array index)", () => {
@@ -971,29 +977,41 @@ describe("bracket access", () => {
   });
   it("chained bracket access on bare field → nested $cond", () => {
     expect(jsmql.expr("$.m[$.r][$.c]")).toEqual({
-      $cond: [
-        {
+      $cond: {
+        if: {
           $isArray: {
-            $cond: [{ $isArray: "$m" }, { $arrayElemAt: ["$m", "$r"] }, { $getField: { field: "$r", input: "$m" } }],
+            $cond: {
+              if: { $isArray: "$m" },
+              then: { $arrayElemAt: ["$m", "$r"] },
+              else: { $getField: { field: "$r", input: "$m" } },
+            },
           },
         },
-        {
+        then: {
           $arrayElemAt: [
             {
-              $cond: [{ $isArray: "$m" }, { $arrayElemAt: ["$m", "$r"] }, { $getField: { field: "$r", input: "$m" } }],
+              $cond: {
+                if: { $isArray: "$m" },
+                then: { $arrayElemAt: ["$m", "$r"] },
+                else: { $getField: { field: "$r", input: "$m" } },
+              },
             },
             "$c",
           ],
         },
-        {
+        else: {
           $getField: {
             field: "$c",
             input: {
-              $cond: [{ $isArray: "$m" }, { $arrayElemAt: ["$m", "$r"] }, { $getField: { field: "$r", input: "$m" } }],
+              $cond: {
+                if: { $isArray: "$m" },
+                then: { $arrayElemAt: ["$m", "$r"] },
+                else: { $getField: { field: "$r", input: "$m" } },
+              },
             },
           },
         },
-      ],
+      },
     });
   });
   it("bracket access on known-array operator result stays compact", () => {
@@ -1021,16 +1039,18 @@ describe("operator precedence", () => {
   });
   it("comparison before && (mixed-bool chain folds operand-preserving)", () => {
     expect(jsmql.expr("$.age > 18 && $.active")).toEqual({
-      $cond: [{ $gt: ["$age", 18] }, "$active", { $gt: ["$age", 18] }],
+      $cond: { if: { $gt: ["$age", 18] }, then: "$active", else: { $gt: ["$age", 18] } },
     });
   });
   it("&& before ||", () => {
     expect(jsmql.expr("$.a || $.b && $.c")).toEqual({
-      $cond: [truthy("$a"), "$a", { $cond: [truthy("$b"), "$c", "$b"] }],
+      $cond: { if: truthy("$a"), then: "$a", else: { $cond: { if: truthy("$b"), then: "$c", else: "$b" } } },
     });
   });
   it("! before && (LHS is provably bool, no $let)", () => {
-    expect(jsmql.expr("!$.a && $.b")).toEqual({ $cond: [{ $not: truthy("$a") }, "$b", { $not: truthy("$a") }] });
+    expect(jsmql.expr("!$.a && $.b")).toEqual({
+      $cond: { if: { $not: truthy("$a") }, then: "$b", else: { $not: truthy("$a") } },
+    });
   });
 });
 
@@ -1063,11 +1083,11 @@ describe("field path regression (FieldRef stops at first segment)", () => {
       $getField: {
         field: "name",
         input: {
-          $cond: [
-            { $isArray: "$items" },
-            { $arrayElemAt: ["$items", 0] },
-            { $getField: { field: 0, input: "$items" } },
-          ],
+          $cond: {
+            if: { $isArray: "$items" },
+            then: { $arrayElemAt: ["$items", 0] },
+            else: { $getField: { field: 0, input: "$items" } },
+          },
         },
       },
     });
@@ -1113,7 +1133,11 @@ describe("string methods", () => {
   });
   it("indexOf on bare field → runtime $cond on $isArray", () => {
     expect(jsmql.expr('$.name.indexOf("@")')).toEqual({
-      $cond: [{ $isArray: "$name" }, { $indexOfArray: ["$name", "@"] }, { $indexOfCP: ["$name", "@"] }],
+      $cond: {
+        if: { $isArray: "$name" },
+        then: { $indexOfArray: ["$name", "@"] },
+        else: { $indexOfCP: ["$name", "@"] },
+      },
     });
   });
   it("indexOf on known string → $indexOfCP", () => {
@@ -1131,7 +1155,11 @@ describe("string methods", () => {
   });
   it("includes on bare field → runtime $cond on $isArray", () => {
     expect(jsmql.expr('$.email.includes("@")')).toEqual({
-      $cond: [{ $isArray: "$email" }, { $in: ["@", "$email"] }, { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] }],
+      $cond: {
+        if: { $isArray: "$email" },
+        then: { $in: ["@", "$email"] },
+        else: { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] },
+      },
     });
   });
   it("includes on known string → string form", () => {
@@ -1163,7 +1191,7 @@ describe("string methods", () => {
   });
   it("length on unknown field → runtime dispatch", () => {
     expect(jsmql.expr("$.items.length")).toEqual({
-      $cond: [{ $isArray: "$items" }, { $size: "$items" }, { $strLenCP: "$items" }],
+      $cond: { if: { $isArray: "$items" }, then: { $size: "$items" }, else: { $strLenCP: "$items" } },
     });
   });
   it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
@@ -1246,16 +1274,16 @@ describe("array methods (no lambda)", () => {
   });
   it("slice(start) on bare $.field → runtime $cond on $isArray", () => {
     expect(jsmql.expr("$.items.slice(2)")).toEqual({
-      $cond: [
-        { $isArray: "$items" },
-        { $slice: ["$items", 2] },
-        { $substrCP: ["$items", 2, { $subtract: [{ $strLenCP: "$items" }, 2] }] },
-      ],
+      $cond: {
+        if: { $isArray: "$items" },
+        then: { $slice: ["$items", 2] },
+        else: { $substrCP: ["$items", 2, { $subtract: [{ $strLenCP: "$items" }, 2] }] },
+      },
     });
   });
   it("slice(start, end) on bare $.field → runtime $cond on $isArray", () => {
     expect(jsmql.expr("$.items.slice(0, 3)")).toEqual({
-      $cond: [{ $isArray: "$items" }, { $slice: ["$items", 0, 3] }, { $substrCP: ["$items", 0, 3] }],
+      $cond: { if: { $isArray: "$items" }, then: { $slice: ["$items", 0, 3] }, else: { $substrCP: ["$items", 0, 3] } },
     });
   });
   it("slice(start, end) on known array → $slice", () => {
@@ -1371,11 +1399,11 @@ describe("reduce accumulator type narrowing", () => {
         input: "$xs",
         initialValue: {},
         in: {
-          $cond: [
-            { $isArray: "$$value" },
-            { $arrayElemAt: ["$$value", 0] },
-            { $getField: { field: 0, input: "$$value" } },
-          ],
+          $cond: {
+            if: { $isArray: "$$value" },
+            then: { $arrayElemAt: ["$$value", 0] },
+            else: { $getField: { field: 0, input: "$$value" } },
+          },
         },
       },
     });
@@ -1391,11 +1419,11 @@ describe("reduce accumulator type narrowing", () => {
             "$$value",
             {
               k: {
-                $cond: [
-                  { $isArray: "$$value" },
-                  { $arrayElemAt: ["$$value", 0] },
-                  { $getField: { field: 0, input: "$$value" } },
-                ],
+                $cond: {
+                  if: { $isArray: "$$value" },
+                  then: { $arrayElemAt: ["$$value", 0] },
+                  else: { $getField: { field: 0, input: "$$value" } },
+                },
               },
             },
           ],
@@ -1416,11 +1444,11 @@ describe("reduce accumulator type narrowing", () => {
             "$$value",
             {
               k: {
-                $cond: [
-                  { $isArray: "$$this" },
-                  { $arrayElemAt: ["$$this", 0] },
-                  { $getField: { field: 0, input: "$$this" } },
-                ],
+                $cond: {
+                  if: { $isArray: "$$this" },
+                  then: { $arrayElemAt: ["$$this", 0] },
+                  else: { $getField: { field: 0, input: "$$this" } },
+                },
               },
             },
           ],
@@ -1522,11 +1550,11 @@ describe("bare type-cast callbacks", () => {
         input: { $filter: { input: "$parts", as: "v", cond: truthy("$$v") } },
         initialValue: "",
         in: {
-          $cond: [
-            { $eq: ["$$value", ""] },
-            { $toString: "$$this" },
-            { $concat: ["$$value", " ", { $toString: "$$this" }] },
-          ],
+          $cond: {
+            if: { $eq: ["$$value", ""] },
+            then: { $toString: "$$this" },
+            else: { $concat: ["$$value", " ", { $toString: "$$this" }] },
+          },
         },
       },
     });
@@ -1810,7 +1838,7 @@ describe("bitwise infix operators", () => {
   it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
     // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
     expect(jsmql.expr("$.a | $.b && $.c")).toEqual({
-      $let: { vars: { v: { $bitOr: ["$a", "$b"] } }, in: { $cond: [truthy("$$v"), "$c", "$$v"] } },
+      $let: { vars: { v: { $bitOr: ["$a", "$b"] } }, in: { $cond: { if: truthy("$$v"), then: "$c", else: "$$v" } } },
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
@@ -2002,7 +2030,7 @@ describe("immutable array methods", () => {
         in: {
           $let: {
             vars: { x: { $arrayElemAt: ["$$this", 1] } },
-            in: { $cond: [truthy("$$x.active"), { $arrayElemAt: ["$$this", 0] }, "$$value"] },
+            in: { $cond: { if: truthy("$$x.active"), then: { $arrayElemAt: ["$$this", 0] }, else: "$$value" } },
           },
         },
       },
@@ -2020,11 +2048,11 @@ describe("array method additions", () => {
           $let: {
             vars: { x: { $arrayElemAt: ["$$this", 1] } },
             in: {
-              $cond: [
-                { $and: [{ $eq: ["$$value", -1] }, truthy("$$x.active")] },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
-              ],
+              $cond: {
+                if: { $and: [{ $eq: ["$$value", -1] }, truthy("$$x.active")] },
+                then: { $arrayElemAt: ["$$this", 0] },
+                else: "$$value",
+              },
             },
           },
         },
@@ -2039,11 +2067,11 @@ describe("array method additions", () => {
           $let: {
             vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] } },
             in: {
-              $cond: [
-                { $eq: ["$$jsmqlRevIdx", -1] },
-                -1,
-                { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
-              ],
+              $cond: {
+                if: { $eq: ["$$jsmqlRevIdx", -1] },
+                then: -1,
+                else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
+              },
             },
           },
         },
@@ -2143,11 +2171,11 @@ describe("array method additions", () => {
         input: { $map: { input: "$xs", as: "x", in: { $add: ["$$x", 1] } } },
         initialValue: "",
         in: {
-          $cond: [
-            { $eq: ["$$value", ""] },
-            { $toString: "$$this" },
-            { $concat: ["$$value", ",", { $toString: "$$this" }] },
-          ],
+          $cond: {
+            if: { $eq: ["$$value", ""] },
+            then: { $toString: "$$this" },
+            else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+          },
         },
       },
     });
@@ -2244,11 +2272,11 @@ describe("array callbacks support (element, index)", () => {
           $let: {
             vars: { x: { $arrayElemAt: ["$$this", 1] }, i: { $arrayElemAt: ["$$this", 0] } },
             in: {
-              $cond: [
-                { $and: [{ $eq: ["$$value", -1] }, { $eq: ["$$x", "$$i"] }] },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
-              ],
+              $cond: {
+                if: { $and: [{ $eq: ["$$value", -1] }, { $eq: ["$$x", "$$i"] }] },
+                then: { $arrayElemAt: ["$$this", 0] },
+                else: "$$value",
+              },
             },
           },
         },
@@ -2520,11 +2548,17 @@ describe("regex method variants", () => {
 describe("Number static predicates", () => {
   it("Number.isInteger(x)", () => {
     expect(jsmql.expr("Number.isInteger($.n)")).toEqual({
-      $cond: [
-        { $in: [{ $type: "$n" }, ["int", "long"]] },
-        true,
-        { $cond: [{ $in: [{ $type: "$n" }, ["double", "decimal"]] }, { $eq: ["$n", { $trunc: "$n" }] }, false] },
-      ],
+      $cond: {
+        if: { $in: [{ $type: "$n" }, ["int", "long"]] },
+        then: true,
+        else: {
+          $cond: {
+            if: { $in: [{ $type: "$n" }, ["double", "decimal"]] },
+            then: { $eq: ["$n", { $trunc: "$n" }] },
+            else: false,
+          },
+        },
+      },
     });
   });
   it("Number.isNaN(x)", () => {
@@ -2541,10 +2575,10 @@ describe("string padding methods", () => {
       $let: {
         vars: { s: "$code" },
         in: {
-          $cond: [
-            { $gte: [{ $strLenCP: "$$s" }, 5] },
-            "$$s",
-            {
+          $cond: {
+            if: { $gte: [{ $strLenCP: "$$s" }, 5] },
+            then: "$$s",
+            else: {
               $concat: [
                 {
                   $reduce: {
@@ -2556,7 +2590,7 @@ describe("string padding methods", () => {
                 "$$s",
               ],
             },
-          ],
+          },
         },
       },
     });
@@ -2794,11 +2828,13 @@ describe(".slice on strings", () => {
     expect(jsmql.expr("String($.s).slice($.i)")).toEqual({
       $substrCP: [
         { $toString: "$s" },
-        { $cond: [{ $lt: ["$i", 0] }, { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, "$i"] },
+        { $cond: { if: { $lt: ["$i", 0] }, then: { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, else: "$i" } },
         {
           $subtract: [
             { $strLenCP: { $toString: "$s" } },
-            { $cond: [{ $lt: ["$i", 0] }, { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, "$i"] },
+            {
+              $cond: { if: { $lt: ["$i", 0] }, then: { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, else: "$i" },
+            },
           ],
         },
       ],
@@ -2967,7 +3003,11 @@ describe("array .includes()", () => {
   });
   it("bare $.field → runtime $cond on $isArray (works for either type)", () => {
     expect(jsmql.expr("$.field.includes($.x)")).toEqual({
-      $cond: [{ $isArray: "$field" }, { $in: ["$x", "$field"] }, { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] }],
+      $cond: {
+        if: { $isArray: "$field" },
+        then: { $in: ["$x", "$field"] },
+        else: { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] },
+      },
     });
   });
 });
@@ -3061,11 +3101,11 @@ describe("optional chaining (?.)", () => {
   });
   it(".slice on optional receiver wraps with [] then runtime-dispatches", () => {
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
-      $cond: [
-        { $isArray: { $ifNull: ["$user.posts", []] } },
-        { $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
-        { $substrCP: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
-      ],
+      $cond: {
+        if: { $isArray: { $ifNull: ["$user.posts", []] } },
+        then: { $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
+        else: { $substrCP: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
+      },
     });
   });
 
@@ -3082,11 +3122,11 @@ describe("optional chaining (?.)", () => {
     // `$.tags?.includes(y)` — MethodCall.optional=true. Wrap with [] since
     // includes-on-unknown dispatches via $cond; [] sends it to the array branch.
     expect(jsmql.expr("$.tags?.includes('vip')")).toEqual({
-      $cond: [
-        { $isArray: { $ifNull: ["$tags", []] } },
-        { $in: ["vip", { $ifNull: ["$tags", []] }] },
-        { $gte: [{ $indexOfCP: [{ $ifNull: ["$tags", []] }, "vip"] }, 0] },
-      ],
+      $cond: {
+        if: { $isArray: { $ifNull: ["$tags", []] } },
+        then: { $in: ["vip", { $ifNull: ["$tags", []] }] },
+        else: { $gte: [{ $indexOfCP: [{ $ifNull: ["$tags", []] }, "vip"] }, 0] },
+      },
     });
   });
 
@@ -3112,11 +3152,11 @@ describe("optional chaining (?.)", () => {
     // unknown receiver dispatches to runtime $cond between $size and $strLenCP;
     // wrap with [] so $isArray succeeds and $size([]) returns 0.
     expect(jsmql.expr("$.user?.tags.length")).toEqual({
-      $cond: [
-        { $isArray: { $ifNull: ["$user.tags", []] } },
-        { $size: { $ifNull: ["$user.tags", []] } },
-        { $strLenCP: { $ifNull: ["$user.tags", []] } },
-      ],
+      $cond: {
+        if: { $isArray: { $ifNull: ["$user.tags", []] } },
+        then: { $size: { $ifNull: ["$user.tags", []] } },
+        else: { $strLenCP: { $ifNull: ["$user.tags", []] } },
+      },
     });
   });
 
@@ -3151,11 +3191,11 @@ describe("optional chaining (?.)", () => {
   // Bracket access — `obj?.[idx]` wraps with [] for the runtime $cond dispatch.
   it("optional bracket access on bare field wraps with []", () => {
     expect(jsmql.expr("$.scoresByLevel?.[$.level]")).toEqual({
-      $cond: [
-        { $isArray: { $ifNull: ["$scoresByLevel", []] } },
-        { $arrayElemAt: [{ $ifNull: ["$scoresByLevel", []] }, "$level"] },
-        { $getField: { field: "$level", input: { $ifNull: ["$scoresByLevel", []] } } },
-      ],
+      $cond: {
+        if: { $isArray: { $ifNull: ["$scoresByLevel", []] } },
+        then: { $arrayElemAt: [{ $ifNull: ["$scoresByLevel", []] }, "$level"] },
+        else: { $getField: { field: "$level", input: { $ifNull: ["$scoresByLevel", []] } } },
+      },
     });
   });
   it("optional bracket access on known array wraps with []", () => {
@@ -3219,7 +3259,11 @@ describe("array .indexOf", () => {
   });
   it("on bare field → runtime $cond on $isArray", () => {
     expect(jsmql.expr('$.email.indexOf("@")')).toEqual({
-      $cond: [{ $isArray: "$email" }, { $indexOfArray: ["$email", "@"] }, { $indexOfCP: ["$email", "@"] }],
+      $cond: {
+        if: { $isArray: "$email" },
+        then: { $indexOfArray: ["$email", "@"] },
+        else: { $indexOfCP: ["$email", "@"] },
+      },
     });
   });
 });
@@ -3238,7 +3282,11 @@ describe("array .concat", () => {
   });
   it("on bare field → runtime $cond on $isArray", () => {
     expect(jsmql.expr("$.parts.concat($.tail)")).toEqual({
-      $cond: [{ $isArray: "$parts" }, { $concatArrays: ["$parts", "$tail"] }, { $concat: ["$parts", "$tail"] }],
+      $cond: {
+        if: { $isArray: "$parts" },
+        then: { $concatArrays: ["$parts", "$tail"] },
+        else: { $concat: ["$parts", "$tail"] },
+      },
     });
   });
 });
@@ -3250,11 +3298,11 @@ describe(".join", () => {
         input: "$tags",
         initialValue: "",
         in: {
-          $cond: [
-            { $eq: ["$$value", ""] },
-            { $toString: "$$this" },
-            { $concat: ["$$value", ",", { $toString: "$$this" }] },
-          ],
+          $cond: {
+            if: { $eq: ["$$value", ""] },
+            then: { $toString: "$$this" },
+            else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+          },
         },
       },
     });
@@ -3265,11 +3313,11 @@ describe(".join", () => {
         input: "$tags",
         initialValue: "",
         in: {
-          $cond: [
-            { $eq: ["$$value", ""] },
-            { $toString: "$$this" },
-            { $concat: ["$$value", " | ", { $toString: "$$this" }] },
-          ],
+          $cond: {
+            if: { $eq: ["$$value", ""] },
+            then: { $toString: "$$this" },
+            else: { $concat: ["$$value", " | ", { $toString: "$$this" }] },
+          },
         },
       },
     });

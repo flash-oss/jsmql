@@ -328,11 +328,11 @@ describe("$match translation — .includes() → $in / array-element", () => {
       {
         $match: {
           $expr: {
-            $cond: [
-              { $isArray: "$tags" },
-              { $in: ["$target", "$tags"] },
-              { $gte: [{ $indexOfCP: ["$tags", "$target"] }, 0] },
-            ],
+            $cond: {
+              if: { $isArray: "$tags" },
+              then: { $in: ["$target", "$tags"] },
+              else: { $gte: [{ $indexOfCP: ["$tags", "$target"] }, 0] },
+            },
           },
         },
       },
@@ -477,7 +477,7 @@ describe("$match translation — .length vs natural number → string-or-array $
   // so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch — which,
   // unlike the old array-only `$size` peephole, also matches strings.
   const lenCond = (path: string) => ({
-    $cond: [{ $isArray: `$${path}` }, { $size: `$${path}` }, { $strLenCP: `$${path}` }],
+    $cond: { if: { $isArray: `$${path}` }, then: { $size: `$${path}` }, else: { $strLenCP: `$${path}` } },
   });
 
   it("translates `$.arr.length === N` to the string-or-array $cond", () => {

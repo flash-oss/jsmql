@@ -262,7 +262,13 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
           from: "users",
           let: { v_id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $cond: [{ $eq: ["$refId", "$$v_id"] }, "$active", { $eq: ["$refId", "$$v_id"] }] } } },
+            {
+              $match: {
+                $expr: {
+                  $cond: { if: { $eq: ["$refId", "$$v_id"] }, then: "$active", else: { $eq: ["$refId", "$$v_id"] } },
+                },
+              },
+            },
           ],
           as: "u",
         },

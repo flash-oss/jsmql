@@ -116,6 +116,14 @@ scripts/
 
 ## Rules
 
+### Plans must include worked examples
+Every implementation plan that touches the language surface MUST include both a
+**simple** and a **complex** JSMQL input example together with its exact emitted
+MQL output. Derive the MQL from the real lowering (read the code, or for existing
+surface confirm it with `node src/cli.ts`), never guess it. Input→output examples
+are how the developer assesses DX and feasibility — a plan without them is
+incomplete.
+
 ### Single source of truth — link, don't restate
 Every fact has **one** canonical home. Everywhere else is a one-line pointer (`See docs/specs/<f>.md`), never a second copy. This is what keeps doc/spec drift from happening: a behaviour change then touches the owner + the code, not six prose paragraphs that silently diverge.
 

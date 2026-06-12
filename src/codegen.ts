@@ -640,6 +640,20 @@ function foldedSubtract(a: unknown, b: unknown): unknown {
 }
 
 /**
+ * Emit a `$cond` in MongoDB's object form `{ if, then, else }` rather than the
+ * positional array `[if, then, else]`. Both are valid MQL, but the named-key
+ * form is far easier to read in emitted output — a DX win for anyone inspecting
+ * what jsmql produced. Every internal `$cond` jsmql emits goes through here.
+ */
+function cond(
+  ifExpr: unknown,
+  thenExpr: unknown,
+  elseExpr: unknown,
+): { $cond: { if: unknown; then: unknown; else: unknown } } {
+  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
+}
+
+/**
  * Normalise a JS-style `.slice` index against a string length. JS treats
  * negative indices as `len + idx`; MQL `$substrCP` rejects negatives. Folds
  * literal negatives into `$strLenCP - n` at compile time; non-literals expand
@@ -658,7 +672,7 @@ function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unk
     return foldedSubtract({ $strLenCP: genObj }, node.operand.value);
   }
   const gen = _generate(node, ctx);
-  return { $cond: [{ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen] };
+  return cond({ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen);
 }
 
 /** Lower `.slice` on a known-array (or fallback) receiver to MQL `$slice`. */
@@ -902,13 +916,11 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return generateUnaryExpr(expr.op, expr.operand, ctx, expr.pos);
 
     case "TernaryExpr":
-      return {
-        $cond: [
-          jsBoolIfNeeded(expr.condition, _generate(expr.condition, ctx)),
-          _generate(expr.consequent, ctx),
-          _generate(expr.alternate, ctx),
-        ],
-      };
+      return cond(
+        jsBoolIfNeeded(expr.condition, _generate(expr.condition, ctx)),
+        _generate(expr.consequent, ctx),
+        _generate(expr.alternate, ctx),
+      );
 
     case "IndexAccess": {
       // `obj[idx]` and `obj?.[idx]` produce the same AST shape; only the
@@ -965,7 +977,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         return { $arrayElemAt: [obj, idx] };
       }
       const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-      return { $cond: [{ $isArray: obj }, { $arrayElemAt: [obj, idx] }, { $getField: { field: idx, input: obj } }] };
+      return cond({ $isArray: obj }, { $arrayElemAt: [obj, idx] }, { $getField: { field: idx, input: obj } });
     }
 
     case "RegexLiteral":
@@ -1145,7 +1157,7 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
   if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
   const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-  return { $cond: [{ $isArray: obj }, { $size: obj }, { $strLenCP: obj }] };
+  return cond({ $isArray: obj }, { $size: obj }, { $strLenCP: obj });
 }
 
 // Method-name → "neutral input for the operator this method lowers to".
@@ -1376,8 +1388,8 @@ function foldLogical(op: "&&" | "||", chain: Expr[], ctx: GenerateCtx): unknown 
 }
 
 function condForLogical(op: "&&" | "||", lhs: unknown, rhs: unknown, lhsExpr: Expr | null): unknown {
-  const cond = lhsExpr ? jsBoolIfNeeded(lhsExpr, lhs) : jsBool(lhs);
-  return op === "&&" ? { $cond: [cond, rhs, lhs] } : { $cond: [cond, lhs, rhs] };
+  const test = lhsExpr ? jsBoolIfNeeded(lhsExpr, lhs) : jsBool(lhs);
+  return op === "&&" ? cond(test, rhs, lhs) : cond(test, lhs, rhs);
 }
 
 // ── `in` operator ─────────────────────────────────────────────────────────────
@@ -2096,7 +2108,7 @@ function generateMethodCall(
       if (isStringProducing(object)) {
         return { $indexOfCP: [genObj, needle] };
       }
-      return { $cond: [{ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] }] };
+      return cond({ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] });
     }
     case "lastIndexOf": {
       const exprArgs = exprArgsOnly(args, "lastIndexOf");
@@ -2116,13 +2128,9 @@ function generateMethodCall(
           in: {
             $let: {
               vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] } },
-              in: {
-                $cond: [
-                  { $eq: ["$$jsmqlRevIdx", -1] },
-                  -1,
-                  { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
-                ],
-              },
+              in: cond({ $eq: ["$$jsmqlRevIdx", -1] }, -1, {
+                $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"],
+              }),
             },
           },
         },
@@ -2154,9 +2162,7 @@ function generateMethodCall(
       if (isStringProducing(object)) {
         return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
       }
-      return {
-        $cond: [{ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] }],
-      };
+      return cond({ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] });
     }
     case "match": {
       const exprArgs = exprArgsOnly(args, "match");
@@ -2227,7 +2233,7 @@ function generateMethodCall(
       return {
         $let: {
           vars: { s: genObj },
-          in: { $cond: [{ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }] },
+          in: cond({ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }),
         },
       };
     }
@@ -2252,7 +2258,7 @@ function generateMethodCall(
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
       if (isStringProducing(object)) return sliceString(genObj, exprArgs, ctx);
       if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
-      return { $cond: [{ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx)] };
+      return cond({ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx));
     }
     case "toReversed": {
       checkArity(method, { sig: "", none: true }, args.length, callPos);
@@ -2376,12 +2382,12 @@ function generateMethodCall(
         vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
       }
       const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
-      const cond = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
+      const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
           input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
           initialValue: -1,
-          in: { $let: { vars, in: { $cond: [cond, { $arrayElemAt: ["$$this", 0] }, "$$value"] } } },
+          in: { $let: { vars, in: cond(test, { $arrayElemAt: ["$$this", 0] }, "$$value") } },
         },
       };
     }
@@ -2396,7 +2402,7 @@ function generateMethodCall(
       if (isStringProducing(object)) {
         return { $concat: [genObj, ...tail] };
       }
-      return { $cond: [{ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] }] };
+      return cond({ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] });
     }
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
@@ -2408,13 +2414,11 @@ function generateMethodCall(
         $reduce: {
           input: genObj,
           initialValue: "",
-          in: {
-            $cond: [
-              { $eq: ["$$value", ""] },
-              { $toString: "$$this" },
-              { $concat: ["$$value", sep, { $toString: "$$this" }] },
-            ],
-          },
+          in: cond(
+            { $eq: ["$$value", ""] },
+            { $toString: "$$this" },
+            { $concat: ["$$value", sep, { $toString: "$$this" }] },
+          ),
         },
       };
     }
@@ -2428,13 +2432,11 @@ function generateMethodCall(
           $reduce: {
             input: genObj,
             initialValue: "",
-            in: {
-              $cond: [
-                { $eq: ["$$value", ""] },
-                { $toString: "$$this" },
-                { $concat: ["$$value", ",", { $toString: "$$this" }] },
-              ],
-            },
+            in: cond(
+              { $eq: ["$$value", ""] },
+              { $toString: "$$this" },
+              { $concat: ["$$value", ",", { $toString: "$$this" }] },
+            ),
           },
         };
       }
@@ -3061,7 +3063,7 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
     if (e === undefined) return defaultIfUndef();
     // Compile-time fast path: a non-negative number literal needs no
     // normalisation — pass it through verbatim. Avoids emitting a runtime
-    // `$cond: [{ $lt: [n, 0] }, …, n]` whose test is statically false.
+    // `$cond` (`if: { $lt: [n, 0] }`, …, `else: n`) whose test is statically false.
     if (e.type === "NumberLiteral" && e.value >= 0) return e;
     // `e < 0 ? max(0, size + e) : e`
     const isNeg: Expr = { type: "BinaryExpr", op: "<", left: e, right: zero, pos };
@@ -3649,13 +3651,11 @@ function generateNumberStatic(method: NumberStaticMethod, arg: Expr, ctx: Genera
       // BSON has separate int/long/decimal/double types. Match JS: any numeric
       // value with no fractional part is an integer. Long and int are always
       // integers; double/decimal are integers iff trunc(x) === x.
-      return {
-        $cond: [
-          { $in: [{ $type: val }, ["int", "long"]] },
-          true,
-          { $cond: [{ $in: [{ $type: val }, ["double", "decimal"]] }, { $eq: [val, { $trunc: val }] }, false] },
-        ],
-      };
+      return cond(
+        { $in: [{ $type: val }, ["int", "long"]] },
+        true,
+        cond({ $in: [{ $type: val }, ["double", "decimal"]] }, { $eq: [val, { $trunc: val }] }, false),
+      );
     case "isNaN":
       // NaN is the only IEEE 754 value where x !== x.
       return { $ne: [val, val] };
