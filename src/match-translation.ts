@@ -273,7 +273,8 @@ function translateIncludesCall(expr: Expr & { type: "MethodCall" }, ctx: Transla
       // literal, so we reject and fall through to the expression-form
       // translation, which produces the precise error if needed.
       if (el.type === "SpreadElement") return null;
-      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") return null;
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl")
+        return null;
       const lit = anyEqualityLiteral(el, ctx);
       if (lit === null) return null;
       values.push(lit.value);

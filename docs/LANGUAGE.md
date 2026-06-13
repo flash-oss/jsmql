@@ -1385,6 +1385,48 @@ Either single-param paren style works: `(x => body)(arg)` and `((x) => body)(arg
 
 The body of the IIFE can reference outer `$.fields` freely; only the lambda parameters are rebound.
 
+### Reusable functions
+
+Inside a pipeline you can give an arrow function a **name** (`const f = (a) => …`) and call it by that name — a named IIFE. The declaration itself emits nothing; each call expands the body inline as its own `$let`, so a helper declared once can be reused across many fields without storing anything in the document:
+
+```js
+const money = (n) => Math.round(n * 100) / 100;
+$ = {
+  subtotal: money($.price * $.qty),
+  tax:      money($.price * $.qty * $.taxRate),
+  total:    money($.price * $.qty * (1 + $.taxRate)),
+};
+// → [{ $replaceWith: {
+//       subtotal: { $let: { vars: { n: { $multiply: ["$price", "$qty"] } },
+//                           in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] } } },
+//       tax:      { $let: { vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } }, in: { …same… } } },
+//       total:    { $let: { vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } }, in: { …same… } } },
+//   } }]
+```
+
+A real-world example — a formatter declared once, reused for sender and recipient:
+
+```js
+const addressToString = (a) => {
+  return [a.building && a.building + ",", a.streetNo, a.street, a.suburb, a.state, a.country, a.postcode]
+    .filter(Boolean)
+    .join(" ");
+};
+$ = {
+  senderAddress:    addressToString($.sender.address),
+  recipientAddress: addressToString($.recipient.address),
+};
+```
+
+Notes:
+
+- **Both `=>` styles and a block body work** — `x => …`, `(x) => …`, and `(x) => { const t = …; return …; }`. A block body uses the same local-`const` rules described above.
+- **Bodies can close over the document.** Beyond their parameters, a function body may read `$.fields` and in-scope `let` bindings.
+- **Functions compose** — one function may call another declared earlier in the same pipeline.
+- **Pipeline-only.** A function is a pipeline statement (it needs the `;` that puts the source in pipeline mode), exactly like [`let`](#local-bindings-let). Declare functions at the top level of the pipeline, not inside an arrow body.
+- **Re-lowered per call.** Calling a function twice produces two independent `$let` blocks — there's no shared definition stored anywhere, and a declared-but-uncalled function adds nothing to the output.
+- Calling an undeclared name, the wrong argument count, recursion, or using a function as a value (rather than calling it) each produce an actionable error. The `function` keyword isn't a declaration form here — use an arrow.
+
 ---
 
 ## Math Functions

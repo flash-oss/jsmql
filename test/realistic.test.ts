@@ -1471,6 +1471,47 @@ describe("discount breakdown — bind once, reuse across fields", { features: ["
   );
 });
 
+describe("order pricing — declare a helper once, reuse across fields", { features: ["Reusable functions"] }, () => {
+  // A reusable `money()` rounding helper, declared at the top of the pipeline
+  // and applied to three derived monetary fields. Each call site re-lowers the
+  // body inline as its own `$let` — no helper is stored in the document.
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    expect(
+      jsmql(`
+const money = (n) => Math.round(n * 100) / 100;
+$ = {
+  subtotal: money($.price * $.qty),
+  tax: money($.price * $.qty * $.taxRate),
+  total: money($.price * $.qty * (1 + $.taxRate)),
+};
+      `),
+    ).toEqual([
+      {
+        $replaceWith: {
+          subtotal: {
+            $let: {
+              vars: { n: { $multiply: ["$price", "$qty"] } },
+              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+            },
+          },
+          tax: {
+            $let: {
+              vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
+              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+            },
+          },
+          total: {
+            $let: {
+              vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } },
+              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
 describe("$round of $sum as a plain expression", { features: ["Escape hatch"] }, () => {
   it(
     "compiles to the expected MQL",

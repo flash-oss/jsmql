@@ -24,6 +24,7 @@ import type {
   AssignExpr,
   DeleteStmt,
   LetDecl,
+  FuncDecl,
   ExprBlock,
   UpdateOp,
   UpdateFilter,
@@ -179,6 +180,7 @@ export class Parser {
     if (!sawSemi) {
       const only = stmts[0];
       if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
+      if (only.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(only.name, only.pos);
       return only;
     }
     return { type: "Pipeline", stmts, pos: stmts[0].pos };
@@ -537,6 +539,7 @@ export class Parser {
     if (!sawSemi) {
       const only = stmts[0];
       if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
+      if (only.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(only.name, only.pos);
       return only;
     }
     return { type: "Pipeline", stmts, pos: stmts[0].pos };
@@ -559,6 +562,7 @@ export class Parser {
       throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
     }
     if (stmt.type === "LetDecl") this.throwLetOutsidePipeline(stmt.name, stmt.pos);
+    if (stmt.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(stmt.name, stmt.pos);
     return stmt;
   }
 
@@ -605,12 +609,23 @@ export class Parser {
   private collectStatement(): PipelineStmt {
     const first = this.lexer.peek();
 
+    // `function foo(...) { … }` — the `function` keyword declaration form is
+    // deferred [DEF-030]; arrows are the reusable-function syntax. Surface a
+    // friendly redirect instead of a cryptic "unexpected token".
+    if (first.type === TokenType.Ident && first.value === "function") {
+      throw new ParseError(
+        `The \`function\` keyword isn't supported here — declare a reusable function with an arrow: ` +
+          `\`const foo = (a) => …;\`, then call \`foo(...)\`.`,
+        first.pos,
+      );
+    }
+
     // `let <ident> = <expr>` (or the `const` alias) — pipeline-scoped local
-    // binding. Only legal in a pipeline context; codegen errors if it shows up
-    // in expression-mode input (no `;` boundary and not inside a bracketed
-    // pipeline).
+    // binding, OR (when the initialiser is an arrow function) a reusable
+    // function declaration. Both are only legal in a pipeline context; codegen
+    // / the no-`;` post-checks error if one shows up in expression-mode input.
     if (first.type === TokenType.Let || first.type === TokenType.Const) {
-      return this.parseLetDecl();
+      return this.parseDeclStatement();
     }
 
     // Tokens that can ONLY start a update op program: `delete`, `++`, `--`.
@@ -680,9 +695,49 @@ export class Parser {
       );
     }
     this.lexer.next(); // consume `=`
-    const value = this.parseExpression();
+    // An unparenthesized single-param arrow RHS (`const f = x => …`) isn't
+    // recognised by `parseExpression` (only the parenthesized `(x) => …` form
+    // is, via parsePrimary's `isLambdaStart`). Detect it here so idiomatic
+    // single-param function declarations parse — parseDeclStatement then forks
+    // the Lambda value into a FuncDecl.
+    const value =
+      this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow
+        ? this.parseLambdaUnparen()
+        : this.parseExpression();
     const kind = kw === "const" ? "const" : "let";
     return { type: "LetDecl", name: ident.value, value, kind, pos: kwTok.pos };
+  }
+
+  /**
+   * Parse a `let`/`const` declaration in a pipeline-statement position, forking
+   * an arrow-function initialiser into a reusable `FuncDecl` (see ast.ts). A
+   * non-arrow initialiser stays a value-binding `LetDecl`. The fork is purely
+   * syntactic (RHS is an arrow ⇒ function), so the same input always produces
+   * the same node. Used by `collectStatement` and `parseArrayLiteral`; the
+   * block-body-arrow path (`parseExprBlockBody`) deliberately does NOT fork —
+   * functions are top-level-only. See docs/specs/reusable-functions.md.
+   */
+  private parseDeclStatement(): LetDecl | FuncDecl {
+    const decl = this.parseLetDecl();
+    if (decl.value.type === "Lambda") {
+      return { type: "FuncDecl", name: decl.name, lambda: decl.value, kind: decl.kind, pos: decl.pos };
+    }
+    return decl;
+  }
+
+  /**
+   * Raised when a reusable function declaration appears at the top of an input
+   * that turns out to be expression-mode (no `;`, not a bracketed pipeline).
+   * Like `let`, a function is a pipeline statement — there's nothing to call it
+   * from in a bare expression.
+   */
+  private throwFuncDeclOutsidePipeline(name: string, pos: number): never {
+    throw new ParseError(
+      `A reusable function declaration (\`const ${name} = (…) => …\`) is only valid inside a pipeline. ` +
+        `Add at least one more statement separated by \`;\` that calls \`${name}\` ` +
+        `(e.g. \`const ${name} = …; $ = { … }\`), or use the bracketed form \`[ const ${name} = …, … ]\`.`,
+      pos,
+    );
   }
 
   // ── UpdateOp program ─────────────────────────────────────────────────────
@@ -1692,6 +1747,17 @@ export class Parser {
     const decls: LetDecl[] = [];
     while (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
       const decl = this.parseLetDecl();
+      if (decl.value.type === "Lambda") {
+        // A nested arrow-valued binding inside an arrow body is a nested
+        // function. Reusable functions are top-level-only — redirect here
+        // rather than letting it fall through to the generic "Lambda
+        // expression cannot be used here" codegen error.
+        throw new ParseError(
+          `Reusable functions must be declared at the top level of a pipeline, not inside an arrow body. ` +
+            `Move \`${decl.kind} ${decl.name} = (…) => …\` out of the \`=> { … }\` block.`,
+          decl.pos,
+        );
+      }
       decls.push(decl);
       const semi = this.lexer.peek();
       if (semi.type !== TokenType.Semi) {
@@ -2012,10 +2078,11 @@ export class Parser {
         // turns out not to be a pipeline.
         elements.push(this.parseDeleteStmt());
       } else if (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
-        // `let x = expr` (or the `const` alias) as a pipeline element. Codegen
-        // rejects it if the array is not a pipeline (parallel to
+        // `let x = expr` (or the `const` alias) as a pipeline element — or a
+        // reusable function declaration when the initialiser is an arrow.
+        // Codegen rejects either if the array is not a pipeline (parallel to
         // AssignExpr/DeleteStmt handling).
-        elements.push(this.parseLetDecl());
+        elements.push(this.parseDeclStatement());
       } else if (this.peekIncDecOp() !== null) {
         // Prefix `++$.x` / `--$.x` as a pipeline element.
         elements.push(this.parsePrefixIncDec());

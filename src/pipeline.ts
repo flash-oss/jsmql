@@ -20,6 +20,7 @@ import type {
   AssignExpr,
   Pipeline,
   LetDecl,
+  FuncDecl,
   PipelineStmt,
   UpdateFilter,
   CallArg,
@@ -36,6 +37,7 @@ import {
   staticBindingType,
   clearCtxLets,
   ctxHasLets,
+  extendCtxFunctions,
   freshSubPipelineCtx,
   internalError,
   type GenerateCtx,
@@ -125,11 +127,12 @@ function shouldSkipTrailingNamespaceUnset(stages: readonly unknown[]): boolean {
  */
 function isStageCandidate(el: ArrayElement): boolean {
   if (el.type === "SpreadElement") return false;
-  // Update ops (`$.a = 1`, `delete $.x`) and `let` bindings are pipeline
-  // statements — they lower to $set / $unset stages. Recognising them here
-  // flips the array into pipeline mode even when no `$stage`-shaped element
-  // comes first (`[let x = 5, $match(x > 0)]` is a pipeline).
-  if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+  // Update ops (`$.a = 1`, `delete $.x`), `let` bindings, and function
+  // declarations are pipeline statements — they lower to $set / $unset stages
+  // (or, for a function declaration, to nothing). Recognising them here flips
+  // the array into pipeline mode even when no `$stage`-shaped element comes
+  // first (`[let x = 5, $match(x > 0)]` / `[const f = a => a, $set(...)]`).
+  if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
     return true;
   }
   if (el.type === "ObjectLiteral") {
@@ -370,6 +373,11 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       updateBuffer.push(el);
       return;
     }
+    if (el.type === "FuncDecl") {
+      flushUpdateOps();
+      ctx = lowerFuncDecl(el, ctx);
+      return;
+    }
     if (el.type === "LetDecl") {
       flushUpdateOps();
       const direct = detectLookupCall(el.value, ctx);
@@ -438,6 +446,10 @@ export function generateImplicitPipeline(
         stmt = { type: "UpdateFilter", ops: [rewrite.assign], pos: rewrite.assign.pos };
       }
     }
+    if (stmt.type === "FuncDecl") {
+      ctx = lowerFuncDecl(stmt, ctx);
+      return;
+    }
     if (stmt.type === "LetDecl") {
       const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {
@@ -482,7 +494,44 @@ export function generateImplicitPipeline(
 
 type LetLowering = { set: Record<string, unknown>; ctx: GenerateCtx };
 
+/**
+ * Lower a reusable-function declaration: register `name → lambda` in the ctx
+ * and emit NO stage. Mirrors `lowerLetDecl`'s collision guards (re-declaration,
+ * clash with a `let`/`const` binding or a function-form parameter). See
+ * docs/specs/reusable-functions.md.
+ */
+function lowerFuncDecl(decl: FuncDecl, ctx: GenerateCtx): GenerateCtx {
+  if (ctx.functions?.has(decl.name)) {
+    throw new CodegenError(
+      `Function \`${decl.name}\` is already declared earlier in this pipeline. ` +
+        `Re-declaration in the same scope is not allowed — pick a different name.`,
+      decl.pos,
+    );
+  }
+  if (ctx.pipelineLets?.has(decl.name)) {
+    throw new CodegenError(
+      `Function \`${decl.name}\` collides with a \`${ctx.pipelineConstNames?.has(decl.name) ? "const" : "let"} ${decl.name}\` binding already in scope. ` +
+        `Rename one — a reusable function and a value binding can't share a name.`,
+      decl.pos,
+    );
+  }
+  if (ctx.bindings?.has(decl.name)) {
+    throw new CodegenError(
+      `Function \`${decl.name}\` shadows a function-form parameter binding of the same name. Rename one.`,
+      decl.pos,
+    );
+  }
+  return extendCtxFunctions(ctx, decl);
+}
+
 function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
+  if (ctx.functions?.has(decl.name)) {
+    throw new CodegenError(
+      `\`${decl.kind} ${decl.name}\` collides with a reusable function \`${decl.name}\` already declared in this pipeline. ` +
+        `Rename one — a value binding and a function can't share a name.`,
+      decl.pos,
+    );
+  }
   if (ctx.pipelineLets?.has(decl.name)) {
     throw new CodegenError(
       `\`${decl.kind} ${decl.name}\` is already declared earlier in this pipeline. ` +
@@ -1424,7 +1473,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
     // ambiguous and the MongoDB server has no equivalent shape. Reject.
     if (el.type !== "SpreadElement") {
       const innerPush =
-        el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl"
+        el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl"
           ? null
           : detectUnionPush(el as Expr);
       if (innerPush !== null) {
@@ -1453,6 +1502,11 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
     validator.checkBeforeElement(el.pos);
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
       updateBuffer.push(el);
+      return;
+    }
+    if (el.type === "FuncDecl") {
+      flushUpdateOps();
+      ctx = lowerFuncDecl(el, ctx);
       return;
     }
     if (el.type === "LetDecl") {
@@ -1577,7 +1631,9 @@ const lowerBlock: SubPipelineLowerer = (block, ctx) => {
   // with a precise hoist-to-outer hint, mirroring the nested-lookup rule.
   for (const stmt of block.stmts) {
     const innerPush =
-      stmt.type === "LetDecl" ? null : stmt.type === "UpdateFilter" ? null : detectUnionPush(stmt as Expr);
+      stmt.type === "LetDecl" || stmt.type === "FuncDecl" || stmt.type === "UpdateFilter"
+        ? null
+        : detectUnionPush(stmt as Expr);
     if (innerPush !== null) {
       throw new CodegenError(
         `'$$.push(...)' inside a lookup's block-body lambda is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. ` +
@@ -1885,6 +1941,7 @@ function findFirstLookupInElement(el: ArrayElement): number | null {
   if (el.type === "AssignExpr") return findFirstLookupInExpr(el.value);
   if (el.type === "DeleteStmt") return null;
   if (el.type === "LetDecl") return findFirstLookupInExpr(el.value);
+  if (el.type === "FuncDecl") return null; // compile-time decl; lookups surface at call sites
   if (el.type === "SpreadElement") return findFirstLookupInExpr(el.argument);
   return findFirstLookupInExpr(el as Expr);
 }
@@ -1970,6 +2027,8 @@ function findFirstLookupInExpr(expr: Expr): number | null {
         } else if (stmt.type === "LetDecl") {
           const a = findFirstLookupInExpr(stmt.value);
           if (a !== null) return a;
+        } else if (stmt.type === "FuncDecl") {
+          // compile-time decl; no lookup to locate here
         } else {
           const a = findFirstLookupInExpr(stmt as Expr);
           if (a !== null) return a;

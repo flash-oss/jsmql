@@ -68,6 +68,7 @@ function walkContainsPush(node: Expr | Pipeline | UpdateFilter | PipelineStmt | 
   if (node.type === "AssignExpr") return walkContainsPush(node.value);
   if (node.type === "DeleteStmt") return false;
   if (node.type === "LetDecl") return walkContainsPush(node.value);
+  if (node.type === "FuncDecl") return false;
   const expr = node;
   if (detectUnionPush(expr) !== null) return true;
   if (expr.type === "MethodCall") {

@@ -19,6 +19,8 @@ import type {
   UpdateOp,
   UpdateFilter,
   ExprBlock,
+  Lambda,
+  FuncDecl,
 } from "./ast.ts";
 
 export class CodegenError extends Error {
@@ -149,6 +151,23 @@ export type GenerateCtx = {
    * rejects it); it never produces a false positive on valid query code.
    */
   aggExpr?: boolean;
+  /**
+   * Reusable named functions in scope (`const f = (a) => …`). Key is the
+   * declared name; value is the parsed declaration. A `CallExpression` whose
+   * callee is a `ParamRef` naming one of these expands the body INLINE at the
+   * call site as an IIFE → `$let` (re-lowered per call, never hoisted). Like
+   * `pipelineLets` they are pipeline-scoped: `freshSubPipelineCtx` drops them
+   * (they don't cross into `$lookup`/`$unionWith` sub-pipelines) and
+   * `freshFacetCtx` preserves them. See docs/specs/reusable-functions.md.
+   */
+  functions?: ReadonlyMap<string, FuncDecl>;
+  /**
+   * Names of functions currently mid-expansion (the inline-expansion stack).
+   * A call to a name already on the stack is direct/mutual recursion, which a
+   * MongoDB expression can't represent — rejected with a precise error rather
+   * than looping forever. See docs/specs/reusable-functions.md § Recursion.
+   */
+  expandingFns?: ReadonlySet<string>;
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -166,6 +185,8 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     pipelineContext: ctx.pipelineContext,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
+    functions: ctx.functions,
+    expandingFns: ctx.expandingFns,
   };
 }
 
@@ -239,7 +260,9 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
  * different document (e.g. `$lookup.pipeline` runs against the foreign
  * collection). Function-form `bindings` DO cross: they are compile-time
  * constants, not document state, and inlining them inside a sub-pipeline is
- * the same shape as the user writing the literal there directly.
+ * the same shape as the user writing the literal there directly. Reusable
+ * named functions (`functions`) do NOT cross — they are pipeline-scoped like
+ * `let`s; a sub-pipeline declares and uses its own.
  */
 export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
   return { lambdaParams: new Set(), bindings: outer.bindings, pipelineContext: outer.pipelineContext };
@@ -262,7 +285,28 @@ export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
     pipelineConstNames: outer.pipelineConstNames,
     bindingTypes: outer.bindingTypes,
     pipelineContext: outer.pipelineContext,
+    // Functions declared before the $facet are visible inside its branches,
+    // mirroring the outer-lets rule above.
+    functions: outer.functions,
+    expandingFns: outer.expandingFns,
   };
+}
+
+/**
+ * Register a reusable named function. Returns a fresh ctx; never mutates. Used
+ * by pipeline.ts when a `const f = (a) => …` declaration is reached. Collision
+ * checks (re-declaration, name clash with a `let`/binding) live at the call
+ * site (pipeline.ts `lowerFuncDecl`), mirroring `extendCtxLets` / `lowerLetDecl`.
+ */
+export function extendCtxFunctions(ctx: GenerateCtx, decl: FuncDecl): GenerateCtx {
+  const next = new Map(ctx.functions ?? []);
+  next.set(decl.name, decl);
+  return { ...ctx, functions: next };
+}
+
+/** Predicate: is `name` a reusable-function binding in scope? */
+export function ctxHasFunction(ctx: GenerateCtx, name: string): boolean {
+  return ctx.functions?.has(name) ?? false;
 }
 
 /** Return a fresh ctx with the given function-form parameter bindings applied. */
@@ -483,7 +527,8 @@ function arrayElementType(expr: Expr): "object" | "array" | "string" | undefined
           el.type === "SpreadElement" ||
           el.type === "AssignExpr" ||
           el.type === "DeleteStmt" ||
-          el.type === "LetDecl"
+          el.type === "LetDecl" ||
+          el.type === "FuncDecl"
         ) {
           return undefined;
         }
@@ -894,6 +939,13 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       expr.pos,
     );
   }
+  if (dynType === "FuncDecl") {
+    throw new CodegenError(
+      "A function declaration is a pipeline statement, not a value. " +
+        "Declare `const f = (…) => …` at the top level of a pipeline, then call `f(...)`.",
+      expr.pos,
+    );
+  }
   switch (expr.type) {
     case "NumberLiteral":
       return expr.value;
@@ -1091,8 +1143,9 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       //   2. lambda parameter — emit `$$name`
       //   3. pipeline `let` binding — emit `$<fieldPath>` (document field)
       //   4. function-form parameter binding — emit the inlined literal value
-      //   5. dropped let — precise post-reshape error
-      //   6. otherwise — unknown identifier
+      //   5. reusable named function — error (it can only be called, not read)
+      //   6. dropped let — precise post-reshape error
+      //   7. otherwise — unknown identifier
       // (3) and (4) are name-disjoint by construction (pipeline.ts rejects a
       //  `let` that shadows a function-form binding), so their relative order
       //  affects only the error path, not correctness for valid programs.
@@ -1108,6 +1161,18 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       }
       if (ctx.bindings?.has(expr.name)) {
         return safeBoundValue(ctx.bindings.get(expr.name), ctx);
+      }
+      if (ctx.functions?.has(expr.name)) {
+        // A reusable function used in bare value position (`$ = { fn: double }`,
+        // `double + 1`). MongoDB has no first-class functions — call it instead.
+        // Higher-order use is [DEF-032]. (A bare array-method callback
+        // `arr.map(double)` is caught earlier in requireLambda, which suggests
+        // the `x => double(x)` wrap.)
+        throw new CodegenError(
+          `'${expr.name}' is a reusable function — call it with '${expr.name}(...)'. ` +
+            `A function can't be used as a value (passing it to another function isn't supported); inline the call instead.`,
+          expr.pos,
+        );
       }
       const droppedBy = ctx.droppedLets?.get(expr.name);
       if (droppedBy !== undefined) {
@@ -1652,6 +1717,13 @@ function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx, pos: n
         el.pos,
       );
     }
+    if (el.type === "FuncDecl") {
+      throw new CodegenError(
+        "A function declaration is a pipeline statement, not a value, and is only valid as a pipeline-array element. " +
+          "If this array is meant to be a pipeline, ensure its first element is a stage like `$match(...)`.",
+        el.pos,
+      );
+    }
   }
   void pos;
 
@@ -1679,7 +1751,12 @@ function generateArrayLiteral(elements: ArrayElement[], ctx: GenerateCtx, pos: n
       // downstream operator expecting an array).
       const argVal = _generate(el.argument, ctx);
       operands.push(chainHasOptional(el.argument) ? wrapIfNull(argVal, []) : argVal);
-    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+    } else if (
+      el.type === "AssignExpr" ||
+      el.type === "DeleteStmt" ||
+      el.type === "LetDecl" ||
+      el.type === "FuncDecl"
+    ) {
       // Already rejected above; unreachable.
       continue;
     } else {
@@ -2450,7 +2527,7 @@ function generateMethodCall(
       };
     }
     case "findLast": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
@@ -2460,7 +2537,7 @@ function generateMethodCall(
     }
     case "findIndex":
     case "findLastIndex": {
-      const lambda = requireLambda(exprArgsOnly(args, method), method, callPos);
+      const lambda = requireLambda(exprArgsOnly(args, method), method, callPos, ctx);
       if (lambda.params.length >= 3) {
         throw new CodegenError(
           `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
@@ -2558,7 +2635,7 @@ function generateMethodCall(
       return { $reduce: { input: genObj, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } };
     }
     case "flatMap": {
-      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "flatMap", object);
       return {
         $reduce: {
@@ -2571,12 +2648,12 @@ function generateMethodCall(
 
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
-      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "map", object);
       return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } };
     }
     case "filter": {
-      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
@@ -2592,7 +2669,7 @@ function generateMethodCall(
       };
     }
     case "find": {
-      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
@@ -2602,7 +2679,7 @@ function generateMethodCall(
       return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] }, 1] };
     }
     case "some": {
-      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
       return {
         $anyElementTrue: {
@@ -2615,7 +2692,7 @@ function generateMethodCall(
       };
     }
     case "every": {
-      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
       return {
         $allElementsTrue: {
@@ -2631,7 +2708,7 @@ function generateMethodCall(
     case "reduceRight": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "lambda, initialValue", exact: 2 }, exprArgs.length, callPos);
-      const lambda = requireLambda(exprArgs, method, callPos);
+      const lambda = requireLambda(exprArgs, method, callPos, ctx);
       if (lambda.params.length < 2 || lambda.params.length > 3) {
         throw new CodegenError(
           `.${method}() lambda must have 2 or 3 parameters (accumulator, element[, index])`,
@@ -2677,6 +2754,8 @@ function generateMethodCall(
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
         bindingTypes: nextBindingTypes,
+        functions: ctx.functions,
+        expandingFns: ctx.expandingFns,
       };
       const baseBody = genLambdaBody(lambda, reduceCtx);
       const inExpr = has3
@@ -3317,6 +3396,7 @@ function requireLambda(
   args: Expr[],
   method: string,
   callerPos: number,
+  ctx?: GenerateCtx,
 ): { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number } {
   const first = args[0];
   // Bare type-cast callback: `.filter(Boolean)` desugars to `.filter(v => Boolean(v))`.
@@ -3348,6 +3428,15 @@ function requireLambda(
     };
   }
   if (!first || first.type !== "Lambda") {
+    // A reusable function passed as a bare callback (`arr.map(double)`) — name it
+    // and point at the lambda-wrap form. MongoDB has no first-class functions, so
+    // the callback must be a lambda that calls it.
+    if (first?.type === "ParamRef" && ctx?.functions?.has(first.name)) {
+      throw new CodegenError(
+        `.${method}() got the reusable function '${first.name}' as a bare callback — pass a lambda that calls it: \`.${method}(x => ${first.name}(x))\`.`,
+        first.pos,
+      );
+    }
     throw new CodegenError(
       `.${method}() requires a lambda as its first argument, e.g. x => x > 0`,
       first?.pos ?? callerPos,
@@ -3362,46 +3451,97 @@ function requireLambda(
   return first as { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number };
 }
 
-// ── Call expressions (IIFE → $let) ────────────────────────────────────────────
+// ── Call expressions (IIFE / reusable functions → $let) ───────────────────────
 
 /**
- * The only supported call form is an IIFE — a call whose callee is a lambda literal:
+ * Apply a lambda to argument expressions — shared by the anonymous IIFE form
+ * (`((x) => …)(arg)`) and the named reusable-function call form (`f(arg)`).
+ * Arguments are generated in the CALLER ctx (`argCtx`); the body is generated
+ * in `bodyCtx` (caller ctx extended with the params, so they resolve to
+ * `$$param`). Each param is bound once via `$let`, so a multiply-read argument
+ * isn't recomputed — and so a zero-param lambda still emits `{ $let: { vars: {},
+ * in: … } }`, matching the IIFE precedent (empty `vars` is server-valid).
  *
- *   ((x, y) => $.a + x * y)(2, 3)
- *   → { $let: { vars: { x: 2, y: 3 }, in: { $add: ["$a", { $multiply: ["$$x", 3] }] } } }
- *
- * Other callees (e.g. a field reference followed by `(...)`) are not callable in MQL —
- * we reject them with an error pointing at the supported forms.
+ * `label` names the construct in arity/spread/block errors ("IIFE" or
+ * `Function 'f'`). `bodyCtx` is supplied by the caller so the named form can
+ * push the function onto the recursion-guard stack before lowering the body.
  */
-function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx, pos: number): unknown {
-  if (callee.type !== "Lambda") {
+function applyLambda(
+  lambda: Lambda,
+  args: CallArg[],
+  argCtx: GenerateCtx,
+  bodyCtx: GenerateCtx,
+  pos: number,
+  label: string,
+): unknown {
+  if (lambda.block !== undefined) {
     throw new CodegenError(
-      `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE → $let). For named operators use $opName(...); for methods use receiver.method(...).`,
-      pos,
+      `${label} cannot have a statement-block body (a sub-pipeline of stages) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = …; return y; }\`.`,
+      lambda.pos,
     );
   }
-  if (callee.block !== undefined) {
+  if (lambda.params.length !== args.length) {
     throw new CodegenError(
-      `IIFE callee cannot be a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = …; return y; }\`.`,
-      callee.pos,
-    );
-  }
-  if (callee.params.length !== args.length) {
-    throw new CodegenError(
-      `IIFE: expected ${callee.params.length} argument(s) for params (${callee.params.join(", ")}), got ${args.length}`,
+      `${label}: expected ${lambda.params.length} argument(s)${lambda.params.length ? ` for params (${lambda.params.join(", ")})` : ""}, got ${args.length}.`,
       pos,
     );
   }
   const vars: Record<string, unknown> = {};
-  for (let i = 0; i < callee.params.length; i++) {
+  for (let i = 0; i < lambda.params.length; i++) {
     const a = args[i];
     if (a.type === "SpreadElement") {
-      throw new CodegenError(`IIFE: spread arguments are not supported (use $op($let, ...) instead)`, a.pos);
+      throw new CodegenError(
+        `${label}: spread arguments aren't supported — pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
+        a.pos,
+      );
     }
-    vars[callee.params[i]] = _generate(a, ctx);
+    vars[lambda.params[i]] = _generate(a, argCtx);
+  }
+  return { $let: { vars, in: genLambdaBody(lambda, bodyCtx) } };
+}
+
+/**
+ * Lower a call expression. Two supported callees:
+ *   - a lambda literal — an IIFE: `((x, y) => $.a + x * y)(2, 3)` →
+ *     `{ $let: { vars: { x: 2, y: 3 }, in: … } }`;
+ *   - a bare identifier naming a reusable function declared `const f = (…) => …`
+ *     — the body is expanded INLINE here as the same `$let` shape (re-lowered
+ *     per call). See docs/specs/reusable-functions.md.
+ * Any other callee (e.g. a field ref followed by `(...)`) isn't callable in MQL;
+ * we reject it with an error pointing at the supported forms.
+ */
+function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx, pos: number): unknown {
+  // Named reusable function: `f(args)` where `f` was declared `const f = (…) => …`.
+  if (callee.type === "ParamRef") {
+    const fn = ctx.functions?.get(callee.name);
+    if (fn !== undefined) {
+      if (ctx.expandingFns?.has(callee.name)) {
+        throw new CodegenError(
+          `Recursive function calls aren't supported — a MongoDB expression can't call itself. ` +
+            `'${callee.name}' is invoked while it is still being expanded (direct or mutual recursion). Rewrite it without recursion.`,
+          pos,
+        );
+      }
+      const marked: GenerateCtx = { ...ctx, expandingFns: new Set([...(ctx.expandingFns ?? []), callee.name]) };
+      const bodyCtx = extendCtx(marked, fn.lambda.params);
+      return applyLambda(fn.lambda, args, ctx, bodyCtx, pos, `Function '${callee.name}'`);
+    }
+    // A bare-identifier call that isn't a reusable function in scope.
+    throw new CodegenError(
+      `Unknown function '${callee.name}(...)'.${didYouMean(callee.name, [...(ctx.functions?.keys() ?? [])], (s) => `${s}(...)`)} ` +
+        `Declare it first with \`const ${callee.name} = (…) => …;\` at the top level of a pipeline; ` +
+        `for a MongoDB operator write \`$${callee.name}(...)\`; for a method, \`receiver.${callee.name}(...)\`.`,
+      pos,
+    );
+  }
+  if (callee.type !== "Lambda") {
+    throw new CodegenError(
+      `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE → $let) or a declared function name. For named operators use $opName(...); for methods use receiver.method(...).`,
+      pos,
+    );
   }
   const bodyCtx = extendCtx(ctx, callee.params);
-  return { $let: { vars, in: genLambdaBody(callee, bodyCtx) } };
+  return applyLambda(callee, args, ctx, bodyCtx, pos, "IIFE");
 }
 
 // ── Type casts ────────────────────────────────────────────────────────────────
@@ -3585,6 +3725,8 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
         bindingTypes: ctx.bindingTypes,
+        functions: ctx.functions,
+        expandingFns: ctx.expandingFns,
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
       const keyExpr = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
@@ -4045,8 +4187,13 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "ArrayLiteral":
       for (const el of expr.elements) {
         if (el.type === "SpreadElement") collectReadsInto(el.argument, out);
-        else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
-          // update ops/lets inside expressions are rejected elsewhere; ignore here
+        else if (
+          el.type === "AssignExpr" ||
+          el.type === "DeleteStmt" ||
+          el.type === "LetDecl" ||
+          el.type === "FuncDecl"
+        ) {
+          // update ops/lets/func-decls inside expressions are rejected elsewhere; ignore here
         } else collectReadsInto(el, out);
       }
       return;

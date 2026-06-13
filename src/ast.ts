@@ -7,10 +7,10 @@ export type ObjectKey = StaticKey | ComputedKey;
 export type KeyValueEntry = { type: "KeyValueEntry"; key: ObjectKey; value: Expr; pos: number };
 
 export type ObjectEntry = KeyValueEntry | SpreadElement;
-// AssignExpr, DeleteStmt, and LetDecl are valid as ArrayElements ONLY when the
-// array is a pipeline (first element is a stage candidate). Codegen for a
-// non-pipeline ArrayLiteral throws on these — see codegen.ts:generateArrayLiteral.
-export type ArrayElement = Expr | SpreadElement | AssignExpr | DeleteStmt | LetDecl;
+// AssignExpr, DeleteStmt, LetDecl, and FuncDecl are valid as ArrayElements ONLY
+// when the array is a pipeline (first element is a stage candidate). Codegen for
+// a non-pipeline ArrayLiteral throws on these — see codegen.ts:generateArrayLiteral.
+export type ArrayElement = Expr | SpreadElement | AssignExpr | DeleteStmt | LetDecl | FuncDecl;
 
 /** Argument position that may be a spread (call sites that allow `...x`) */
 export type CallArg = Expr | SpreadElement;
@@ -39,6 +39,22 @@ export type UpdateOp = AssignExpr | DeleteStmt;
  * `docs/specs/let-bindings.md`.
  */
 export type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const"; pos: number };
+
+/** The arrow-function node, extracted from the `Expr` union so it can be
+ * referenced standalone (e.g. as `FuncDecl.lambda`). */
+export type Lambda = Extract<Expr, { type: "Lambda" }>;
+
+/**
+ * Reusable named function declaration: `const <name> = (params) => <body>` (or
+ * the `let` alias). Distinct from `LetDecl` purely by the initialiser being an
+ * arrow function — the parser forks on that at pipeline-statement positions.
+ * The declaration emits NO stage; it registers `name → lambda` in a
+ * compile-time table (`GenerateCtx.functions`). A call `name(args)` expands the
+ * body INLINE at the call site as an IIFE → `$let` (re-lowered per call). Only
+ * valid at the top level of a pipeline, same as `LetDecl`. See
+ * `docs/specs/reusable-functions.md`.
+ */
+export type FuncDecl = { type: "FuncDecl"; name: string; lambda: Lambda; kind: "let" | "const"; pos: number };
 
 /**
  * Expression-block body of an arrow function: zero or more `const`/`let`
@@ -72,7 +88,7 @@ export type UpdateFilter = { type: "UpdateFilter"; ops: UpdateOp[]; pos: number 
  * stage plus a binding visible to subsequent statements (see
  * `generateImplicitPipeline`).
  */
-export type PipelineStmt = UpdateFilter | Expr | LetDecl;
+export type PipelineStmt = UpdateFilter | Expr | LetDecl | FuncDecl;
 
 /**
  * Top-level pipeline assembled from `;`-separated statements. Distinct from

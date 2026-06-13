@@ -584,7 +584,13 @@ function classifyAccumulatorExpr(body: Expr, isAccRef: (e: Expr) => boolean, dPa
     if (first.type === "SpreadElement" && isAccRef(first.argument) && second.type !== "SpreadElement") {
       // Reject update-op array elements (AssignExpr/DeleteStmt/LetDecl); only
       // Expr second elements are valid here.
-      if (second.type === "AssignExpr" || second.type === "DeleteStmt" || second.type === "LetDecl") return null;
+      if (
+        second.type === "AssignExpr" ||
+        second.type === "DeleteStmt" ||
+        second.type === "LetDecl" ||
+        second.type === "FuncDecl"
+      )
+        return null;
       const path = paramFieldPath(second, dParam);
       if (path !== null) return { kind: "push", value: path };
     }

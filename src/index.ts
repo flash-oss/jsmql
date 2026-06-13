@@ -454,7 +454,13 @@ function isCompileFormArrow(src: string): boolean {
     return false; // lex error — let plain-source validation surface it
   }
   const first = lex.next();
-  if (first.type === TokenType.Ident && (first.value === "async" || first.value === "function")) return true;
+  if (first.type === TokenType.Ident && first.value === "async") return true;
+  // A leading `function` is compile-form ONLY when the whole input is a single
+  // function expression (`function name?(...) { ... }`, nothing after). A
+  // reusable-function pipeline (`function foo(a){…}; …`) has statements after
+  // the body — let it fall through to plain parsing so the parser's
+  // arrow-redirect surfaces here too (consistent with the one-shot `jsmql()`).
+  if (first.type === TokenType.Ident && first.value === "function") return functionSpansWholeInput(lex);
   if (first.type !== TokenType.LParen) return false;
   let depth = 1;
   while (depth > 0) {
@@ -464,6 +470,35 @@ function isCompileFormArrow(src: string): boolean {
     else if (t.type === TokenType.RParen) depth--;
   }
   return lex.next().type === TokenType.Arrow;
+}
+
+/**
+ * True iff the remaining tokens (the lexer is positioned just after a leading
+ * `function`) are a single `name?(...) { ... }` function expression that spans
+ * the whole input — i.e. EOF immediately follows the body. Used to tell a
+ * compile-form `function (params, $, $$) { … }` string from a reusable-function
+ * pipeline (`function foo(a){…}; …`), which has statements after the body.
+ */
+function functionSpansWholeInput(lex: Lexer): boolean {
+  let t = lex.next();
+  if (t.type === TokenType.Ident) t = lex.next(); // optional name
+  if (t.type !== TokenType.LParen) return false;
+  let depth = 1;
+  while (depth > 0) {
+    const x = lex.next();
+    if (x.type === TokenType.EOF) return false;
+    if (x.type === TokenType.LParen) depth++;
+    else if (x.type === TokenType.RParen) depth--;
+  }
+  if (lex.next().type !== TokenType.LBrace) return false;
+  depth = 1;
+  while (depth > 0) {
+    const x = lex.next();
+    if (x.type === TokenType.EOF) return false;
+    if (x.type === TokenType.LBrace) depth++;
+    else if (x.type === TokenType.RBrace) depth--;
+  }
+  return lex.next().type === TokenType.EOF;
 }
 
 // `jsmql` is exposed as a callable with attached properties:

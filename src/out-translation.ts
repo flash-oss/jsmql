@@ -410,6 +410,7 @@ function walkContainsOut(node: Expr | Pipeline | UpdateFilter | PipelineStmt | U
   }
   if (node.type === "DeleteStmt") return false;
   if (node.type === "LetDecl") return false;
+  if (node.type === "FuncDecl") return false;
   if (node.type === "ArrayLiteral") {
     for (const el of node.elements) {
       if (el.type === "SpreadElement") continue;

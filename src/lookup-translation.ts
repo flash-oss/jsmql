@@ -21,6 +21,7 @@ import type {
   ObjectEntry,
   KeyValueEntry,
   LetDecl,
+  FuncDecl,
 } from "./ast.ts";
 import {
   CodegenError,
@@ -154,6 +155,10 @@ function rewriteEnclosingForeignParams(expr: Expr, params: ReadonlyArray<string>
             if (el.type === "AssignExpr") return { ...el, target: walk(el.target), value: walk(el.value) };
             if (el.type === "DeleteStmt") return { ...el, target: walk(el.target) };
             if (el.type === "LetDecl") return { ...el, value: walk(el.value) };
+            // A reusable function declared in this scope may close over the
+            // enclosing foreign param in its body — rewrite it like a LetDecl's
+            // value so the body's `o.<field>` refs hoist out (mirrors transformStmt).
+            if (el.type === "FuncDecl") return { ...el, lambda: walk(el.lambda) as Lambda };
             return walk(el as Expr);
           }),
         };
@@ -387,6 +392,7 @@ function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
   if (node.type === "AssignExpr") return walkContainsLookup(node.value, ctx);
   if (node.type === "DeleteStmt") return false;
   if (node.type === "LetDecl") return walkContainsLookup(node.value, ctx);
+  if (node.type === "FuncDecl") return false; // compile-time decl; expanded at call sites, not here
   // Expr branches that could contain nested expressions
   const expr = node;
   if (detectLookupCall(expr, ctx) !== null) return true;
@@ -426,7 +432,7 @@ function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
     for (const el of expr.elements) {
       if (el.type === "SpreadElement") {
         if (walkContainsLookup(el.argument, ctx)) return true;
-      } else if (walkContainsLookup(el as Expr | UpdateOp | LetDecl, ctx)) {
+      } else if (walkContainsLookup(el as Expr | UpdateOp | LetDecl | FuncDecl, ctx)) {
         return true;
       }
     }
@@ -1016,6 +1022,13 @@ function transformStmt(
       pos: stmt.pos,
     };
   }
+  if (stmt.type === "FuncDecl") {
+    // A function declared in this sub-pipeline may close over the foreign param
+    // in its body — rewrite the lambda body just like a LetDecl's value, so the
+    // body's `<foreignParam>.<field>` refs hoist to `$<field>` and the inlined
+    // expansion at the call site resolves.
+    return { ...stmt, lambda: transformExpr(stmt.lambda, foreignParam, allocator, outerLets) as Lambda };
+  }
   if (stmt.type === "UpdateFilter") {
     const ops: UpdateOp[] = stmt.ops.map((op) => {
       if (op.type === "AssignExpr") {
@@ -1241,6 +1254,8 @@ function mapChildren(
               pos: el.pos,
             };
           }
+          if (el.type === "FuncDecl")
+            return { ...el, lambda: transformExpr(el.lambda, foreignParam, allocator, outerLets) as Lambda };
           return transformExpr(el as Expr, foreignParam, allocator, outerLets);
         }),
         pos: expr.pos,
@@ -1719,6 +1734,7 @@ function descendAndExtract(
             if (el.type === "DeleteStmt") return { type: "DeleteStmt", target: rewriteChild(el.target), pos: el.pos };
             if (el.type === "LetDecl")
               return { type: "LetDecl", name: el.name, value: rewriteChild(el.value), kind: el.kind, pos: el.pos };
+            if (el.type === "FuncDecl") return el; // compile-time decl; nothing to rewrite
             return rewriteChild(el as Expr);
           }),
           pos: expr.pos,

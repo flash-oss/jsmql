@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 25. Decided-against: 9. As of 2026-06-11.
+**Counts.** Open: 28. Decided-against: 9. As of 2026-06-13.
 
 ---
 
@@ -200,6 +200,42 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** `docs/specs/pipeline-validation.md` § Known gap.
 - **Status.** open
 - **Effort.** M (container threading through `lowerBlock` + tests)
+
+### DEF-030 — `function` keyword declaration form
+
+- **What's blocked.** Declaring a reusable function with the `function` keyword (`function foo(a) { return …; }`). Arrow declarations (`const foo = (a) => …`) are the supported syntax — see `docs/specs/reusable-functions.md`.
+- **Target lowering.** Identical to the arrow form: register `foo → lambda`, expand inline at call sites. The `function` keyword would just be a second spelling of the same declaration.
+- **Why blocked.** Needs a `function` lexer keyword + a declaration production in the parser. Maps to the same `FuncDecl` node, so the codegen/pipeline side is already done; only the front-end is missing. A friendly redirect already fires for the keyword (`collectStatement` in `src/parser.ts`).
+- **Attempted approaches.** None — deliberately scoped out of the first cut (arrow-only) per the developer's call.
+- **Success criteria.** `function double(x) { return x * 2; } $ = { a: double($.p) };` lowers identically to the `const double = (x) => x * 2;` form.
+- **Rejection site(s).** `src/parser.ts` `collectStatement` (the `function`-keyword redirect, tagged `[DEF-030]`).
+- **Spec.** `docs/specs/reusable-functions.md` § Deferred.
+- **Status.** open
+- **Effort.** S (lexer keyword + parser production; reuses the FuncDecl pipeline)
+
+### DEF-031 — Function-aware Filters via textual inline
+
+- **What's blocked.** Using a reusable function inside a **bare Filter** (no `;`, e.g. `db.coll.find(jsmql("isAdult($)"))`). A function declaration needs a `;`, which flips the source into Pipeline mode, so a Filter can't currently declare or call one.
+- **Target lowering.** A function used in a Filter would have to be **textually inlined** into the predicate (the Filter has no pipeline scope / `$let` stage to host the binding), then translated to the query language as if the body were written in place.
+- **Why blocked.** Filters are a single expression with no statement list; threading a declaration in needs either a separate declaration channel or a textual-inline pass distinct from the pipeline `$let` expansion. Output shape differs from the pipeline form (inlined body vs `$let`), so it's a deliberate separate design.
+- **Attempted approaches.** None — recorded at the developer's request as the likely next step for Filters.
+- **Success criteria.** TBD with the inline design; `db.coll.find(jsmql("const adult = (p) => p.age >= 18; adult($)"))` (or a Filter-specific syntax) produces a query document with the body inlined.
+- **Rejection site(s).** None — no bespoke throw; the existing pipeline-only requirement (`throwFuncDeclOutsidePipeline` in `src/parser.ts`) covers it generically.
+- **Spec.** `docs/specs/reusable-functions.md` § Deferred.
+- **Status.** design-only
+- **Effort.** M
+
+### DEF-032 — Higher-order functions (function passed as a value)
+
+- **What's blocked.** Using a reusable function as a **value** rather than calling it — `$ = { fn: double }`, or passing it to another function (`arr.map(double)` as a function reference, higher-order composition).
+- **Target lowering.** No direct MQL analogue — MongoDB has no first-class functions. Any support would have to inline at the eventual call site, which requires tracking the function value through the expression tree.
+- **Why blocked.** MQL expressions can't carry a function value; the common `arr.map(double)` desire is already served by `arr.map(x => double(x))` (an explicit lambda whose body calls the function). A clear rejection already guides toward that.
+- **Attempted approaches.** None — scoped out of the first cut per the developer's call.
+- **Success criteria.** TBD; at minimum `arr.map(double)` would lower like `arr.map(x => double(x))`.
+- **Rejection site(s).** `src/codegen.ts` `ParamRef` case (function-as-value error, tagged `[DEF-032]`).
+- **Spec.** `docs/specs/reusable-functions.md` § Deferred.
+- **Status.** open
+- **Effort.** M
 
 ---
 

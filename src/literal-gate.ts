@@ -96,7 +96,13 @@ export function arrayElements(e: Expr): Expr[] | null {
   const out: Expr[] = [];
   for (const el of e.elements) {
     // A spread / assignment inside the array → not a plain value list; bail.
-    if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+    if (
+      el.type === "SpreadElement" ||
+      el.type === "AssignExpr" ||
+      el.type === "DeleteStmt" ||
+      el.type === "LetDecl" ||
+      el.type === "FuncDecl"
+    ) {
       return null;
     }
     out.push(el);

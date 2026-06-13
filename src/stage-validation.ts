@@ -111,7 +111,8 @@ function findMatchOperator(body: Expr, names: ReadonlySet<string>): { name: stri
         el.type === "SpreadElement" ||
         el.type === "AssignExpr" ||
         el.type === "DeleteStmt" ||
-        el.type === "LetDecl"
+        el.type === "LetDecl" ||
+        el.type === "FuncDecl"
       ) {
         continue;
       }

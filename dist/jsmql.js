@@ -976,6 +976,7 @@ var Parser = class {
     if (!sawSemi) {
       const only = stmts[0];
       if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
+      if (only.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(only.name, only.pos);
       return only;
     }
     return { type: "Pipeline", stmts, pos: stmts[0].pos };
@@ -1277,6 +1278,7 @@ var Parser = class {
     if (!sawSemi) {
       const only = stmts[0];
       if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
+      if (only.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(only.name, only.pos);
       return only;
     }
     return { type: "Pipeline", stmts, pos: stmts[0].pos };
@@ -1298,6 +1300,7 @@ var Parser = class {
       throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
     }
     if (stmt.type === "LetDecl") this.throwLetOutsidePipeline(stmt.name, stmt.pos);
+    if (stmt.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(stmt.name, stmt.pos);
     return stmt;
   }
   /**
@@ -1335,8 +1338,14 @@ var Parser = class {
    */
   collectStatement() {
     const first = this.lexer.peek();
+    if (first.type === TokenType.Ident && first.value === "function") {
+      throw new ParseError(
+        `The \`function\` keyword isn't supported here \u2014 declare a reusable function with an arrow: \`const foo = (a) => \u2026;\`, then call \`foo(...)\`.`,
+        first.pos
+      );
+    }
     if (first.type === TokenType.Let || first.type === TokenType.Const) {
-      return this.parseLetDecl();
+      return this.parseDeclStatement();
     }
     if (first.type === TokenType.Delete || first.type === TokenType.PlusPlus || first.type === TokenType.MinusMinus) {
       return this.parseUpdateFilter();
@@ -1385,9 +1394,37 @@ var Parser = class {
       );
     }
     this.lexer.next();
-    const value = this.parseExpression();
+    const value = this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow ? this.parseLambdaUnparen() : this.parseExpression();
     const kind = kw === "const" ? "const" : "let";
     return { type: "LetDecl", name: ident.value, value, kind, pos: kwTok.pos };
+  }
+  /**
+   * Parse a `let`/`const` declaration in a pipeline-statement position, forking
+   * an arrow-function initialiser into a reusable `FuncDecl` (see ast.ts). A
+   * non-arrow initialiser stays a value-binding `LetDecl`. The fork is purely
+   * syntactic (RHS is an arrow ⇒ function), so the same input always produces
+   * the same node. Used by `collectStatement` and `parseArrayLiteral`; the
+   * block-body-arrow path (`parseExprBlockBody`) deliberately does NOT fork —
+   * functions are top-level-only. See docs/specs/reusable-functions.md.
+   */
+  parseDeclStatement() {
+    const decl = this.parseLetDecl();
+    if (decl.value.type === "Lambda") {
+      return { type: "FuncDecl", name: decl.name, lambda: decl.value, kind: decl.kind, pos: decl.pos };
+    }
+    return decl;
+  }
+  /**
+   * Raised when a reusable function declaration appears at the top of an input
+   * that turns out to be expression-mode (no `;`, not a bracketed pipeline).
+   * Like `let`, a function is a pipeline statement — there's nothing to call it
+   * from in a bare expression.
+   */
+  throwFuncDeclOutsidePipeline(name, pos) {
+    throw new ParseError(
+      `A reusable function declaration (\`const ${name} = (\u2026) => \u2026\`) is only valid inside a pipeline. Add at least one more statement separated by \`;\` that calls \`${name}\` (e.g. \`const ${name} = \u2026; $ = { \u2026 }\`), or use the bracketed form \`[ const ${name} = \u2026, \u2026 ]\`.`,
+      pos
+    );
   }
   // ── UpdateOp program ─────────────────────────────────────────────────────
   /** Entry when the input starts with a update op token (`delete`). */
@@ -2254,6 +2291,12 @@ var Parser = class {
     const decls = [];
     while (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
       const decl = this.parseLetDecl();
+      if (decl.value.type === "Lambda") {
+        throw new ParseError(
+          `Reusable functions must be declared at the top level of a pipeline, not inside an arrow body. Move \`${decl.kind} ${decl.name} = (\u2026) => \u2026\` out of the \`=> { \u2026 }\` block.`,
+          decl.pos
+        );
+      }
       decls.push(decl);
       const semi = this.lexer.peek();
       if (semi.type !== TokenType.Semi) {
@@ -2545,7 +2588,7 @@ var Parser = class {
       } else if (this.lexer.peek().type === TokenType.Delete) {
         elements.push(this.parseDeleteStmt());
       } else if (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
-        elements.push(this.parseLetDecl());
+        elements.push(this.parseDeclStatement());
       } else if (this.peekIncDecOp() !== null) {
         elements.push(this.parsePrefixIncDec());
       } else {
@@ -3487,7 +3530,7 @@ function arrayElements(e) {
   if (e.type !== "ArrayLiteral") return null;
   const out = [];
   for (const el of e.elements) {
-    if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+    if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
       return null;
     }
     out.push(el);
@@ -3839,7 +3882,9 @@ function extendCtx(ctx, params) {
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
     accumulatorContext: ctx.accumulatorContext,
-    aggExpr: ctx.aggExpr
+    aggExpr: ctx.aggExpr,
+    functions: ctx.functions,
+    expandingFns: ctx.expandingFns
   };
 }
 function elementTypedCtx(ctx, params, inputExpr) {
@@ -3886,8 +3931,17 @@ function freshFacetCtx(outer) {
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
     bindingTypes: outer.bindingTypes,
-    pipelineContext: outer.pipelineContext
+    pipelineContext: outer.pipelineContext,
+    // Functions declared before the $facet are visible inside its branches,
+    // mirroring the outer-lets rule above.
+    functions: outer.functions,
+    expandingFns: outer.expandingFns
   };
+}
+function extendCtxFunctions(ctx, decl) {
+  const next = new Map(ctx.functions ?? []);
+  next.set(decl.name, decl);
+  return { ...ctx, functions: next };
 }
 function withBindings(ctx, bindings) {
   return { ...ctx, bindings };
@@ -4046,7 +4100,7 @@ function arrayElementType(expr) {
     case "ArrayLiteral": {
       let elementType;
       for (const el of expr.elements) {
-        if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+        if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
           return void 0;
         }
         const t = staticBindingType(el);
@@ -4284,6 +4338,12 @@ function _generateBody(expr, ctx) {
       expr.pos
     );
   }
+  if (dynType === "FuncDecl") {
+    throw new CodegenError(
+      "A function declaration is a pipeline statement, not a value. Declare `const f = (\u2026) => \u2026` at the top level of a pipeline, then call `f(...)`.",
+      expr.pos
+    );
+  }
   switch (expr.type) {
     case "NumberLiteral":
       return expr.value;
@@ -4375,6 +4435,12 @@ function _generateBody(expr, ctx) {
       }
       if (ctx.bindings?.has(expr.name)) {
         return safeBoundValue(ctx.bindings.get(expr.name), ctx);
+      }
+      if (ctx.functions?.has(expr.name)) {
+        throw new CodegenError(
+          `'${expr.name}' is a reusable function \u2014 call it with '${expr.name}(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead.`,
+          expr.pos
+        );
       }
       const droppedBy = ctx.droppedLets?.get(expr.name);
       if (droppedBy !== void 0) {
@@ -4692,6 +4758,12 @@ function generateArrayLiteral(elements, ctx, pos) {
         el.pos
       );
     }
+    if (el.type === "FuncDecl") {
+      throw new CodegenError(
+        "A function declaration is a pipeline statement, not a value, and is only valid as a pipeline-array element. If this array is meant to be a pipeline, ensure its first element is a stage like `$match(...)`.",
+        el.pos
+      );
+    }
   }
   void pos;
   const hasSpread = elements.some((el) => el.type === "SpreadElement");
@@ -4710,7 +4782,7 @@ function generateArrayLiteral(elements, ctx, pos) {
       flushBuffer();
       const argVal = _generate(el.argument, ctx);
       operands.push(chainHasOptional(el.argument) ? wrapIfNull(argVal, []) : argVal);
-    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+    } else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
       continue;
     } else {
       buffer.push(el);
@@ -5262,7 +5334,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       };
     }
     case "findLast": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
@@ -5272,7 +5344,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "findIndex":
     case "findLastIndex": {
-      const lambda = requireLambda(exprArgsOnly(args, method), method, callPos);
+      const lambda = requireLambda(exprArgsOnly(args, method), method, callPos, ctx);
       if (lambda.params.length >= 3) {
         throw new CodegenError(
           `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
@@ -5356,7 +5428,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return { $reduce: { input: genObj, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } };
     }
     case "flatMap": {
-      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "flatMap", object);
       return {
         $reduce: {
@@ -5368,12 +5440,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     // ── Array methods (lambda) ──────────────────────────────────────────────
     case "map": {
-      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "map", object);
       return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } };
     }
     case "filter": {
-      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
@@ -5388,7 +5460,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       };
     }
     case "find": {
-      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
       if (lambda.params.length <= 1) {
@@ -5397,7 +5469,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, 0] }, 1] };
     }
     case "some": {
-      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
       return {
         $anyElementTrue: {
@@ -5410,7 +5482,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       };
     }
     case "every": {
-      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos);
+      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
       return {
         $allElementsTrue: {
@@ -5426,7 +5498,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "reduceRight": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "lambda, initialValue", exact: 2 }, exprArgs.length, callPos);
-      const lambda = requireLambda(exprArgs, method, callPos);
+      const lambda = requireLambda(exprArgs, method, callPos, ctx);
       if (lambda.params.length < 2 || lambda.params.length > 3) {
         throw new CodegenError(
           `.${method}() lambda must have 2 or 3 parameters (accumulator, element[, index])`,
@@ -5450,7 +5522,9 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         ]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
-        bindingTypes: nextBindingTypes
+        bindingTypes: nextBindingTypes,
+        functions: ctx.functions,
+        expandingFns: ctx.expandingFns
       };
       const baseBody = genLambdaBody(lambda, reduceCtx);
       const inExpr = has3 ? {
@@ -5858,7 +5932,7 @@ function generateExprBlock(block, ctx) {
   };
   return fold(0, ctx);
 }
-function requireLambda(args, method, callerPos) {
+function requireLambda(args, method, callerPos, ctx) {
   const first = args[0];
   if (first?.type === "TypeCastRef") {
     return {
@@ -5887,6 +5961,12 @@ function requireLambda(args, method, callerPos) {
     };
   }
   if (!first || first.type !== "Lambda") {
+    if (first?.type === "ParamRef" && ctx?.functions?.has(first.name)) {
+      throw new CodegenError(
+        `.${method}() got the reusable function '${first.name}' as a bare callback \u2014 pass a lambda that calls it: \`.${method}(x => ${first.name}(x))\`.`,
+        first.pos
+      );
+    }
     throw new CodegenError(
       `.${method}() requires a lambda as its first argument, e.g. x => x > 0`,
       first?.pos ?? callerPos
@@ -5900,35 +5980,59 @@ function requireLambda(args, method, callerPos) {
   }
   return first;
 }
-function generateCallExpression(callee, args, ctx, pos) {
-  if (callee.type !== "Lambda") {
+function applyLambda(lambda, args, argCtx, bodyCtx, pos, label) {
+  if (lambda.block !== void 0) {
     throw new CodegenError(
-      `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE \u2192 $let). For named operators use $opName(...); for methods use receiver.method(...).`,
-      pos
+      `${label} cannot have a statement-block body (a sub-pipeline of stages) \u2014 that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = \u2026; return y; }\`.`,
+      lambda.pos
     );
   }
-  if (callee.block !== void 0) {
+  if (lambda.params.length !== args.length) {
     throw new CodegenError(
-      `IIFE callee cannot be a statement-block arrow (a sub-pipeline) \u2014 that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = \u2026; return y; }\`.`,
-      callee.pos
-    );
-  }
-  if (callee.params.length !== args.length) {
-    throw new CodegenError(
-      `IIFE: expected ${callee.params.length} argument(s) for params (${callee.params.join(", ")}), got ${args.length}`,
+      `${label}: expected ${lambda.params.length} argument(s)${lambda.params.length ? ` for params (${lambda.params.join(", ")})` : ""}, got ${args.length}.`,
       pos
     );
   }
   const vars = {};
-  for (let i = 0; i < callee.params.length; i++) {
+  for (let i = 0; i < lambda.params.length; i++) {
     const a = args[i];
     if (a.type === "SpreadElement") {
-      throw new CodegenError(`IIFE: spread arguments are not supported (use $op($let, ...) instead)`, a.pos);
+      throw new CodegenError(
+        `${label}: spread arguments aren't supported \u2014 pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
+        a.pos
+      );
     }
-    vars[callee.params[i]] = _generate(a, ctx);
+    vars[lambda.params[i]] = _generate(a, argCtx);
+  }
+  return { $let: { vars, in: genLambdaBody(lambda, bodyCtx) } };
+}
+function generateCallExpression(callee, args, ctx, pos) {
+  if (callee.type === "ParamRef") {
+    const fn = ctx.functions?.get(callee.name);
+    if (fn !== void 0) {
+      if (ctx.expandingFns?.has(callee.name)) {
+        throw new CodegenError(
+          `Recursive function calls aren't supported \u2014 a MongoDB expression can't call itself. '${callee.name}' is invoked while it is still being expanded (direct or mutual recursion). Rewrite it without recursion.`,
+          pos
+        );
+      }
+      const marked = { ...ctx, expandingFns: /* @__PURE__ */ new Set([...ctx.expandingFns ?? [], callee.name]) };
+      const bodyCtx2 = extendCtx(marked, fn.lambda.params);
+      return applyLambda(fn.lambda, args, ctx, bodyCtx2, pos, `Function '${callee.name}'`);
+    }
+    throw new CodegenError(
+      `Unknown function '${callee.name}(...)'.${didYouMean(callee.name, [...ctx.functions?.keys() ?? []], (s) => `${s}(...)`)} Declare it first with \`const ${callee.name} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${callee.name}(...)\`; for a method, \`receiver.${callee.name}(...)\`.`,
+      pos
+    );
+  }
+  if (callee.type !== "Lambda") {
+    throw new CodegenError(
+      `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE \u2192 $let) or a declared function name. For named operators use $opName(...); for methods use receiver.method(...).`,
+      pos
+    );
   }
   const bodyCtx = extendCtx(ctx, callee.params);
-  return { $let: { vars, in: genLambdaBody(callee, bodyCtx) } };
+  return applyLambda(callee, args, ctx, bodyCtx, pos, "IIFE");
 }
 function generateTypeCast(cast, arg, ctx, _pos) {
   const val = _generate(arg, ctx);
@@ -6089,7 +6193,9 @@ function generateObjectCall(method, args, ctx, pos) {
         reduceRemap: /* @__PURE__ */ new Map([[lambda.params[0], "this"]]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
-        bindingTypes: ctx.bindingTypes
+        bindingTypes: ctx.bindingTypes,
+        functions: ctx.functions,
+        expandingFns: ctx.expandingFns
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
       const keyExpr = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
@@ -6417,7 +6523,7 @@ function collectReadsInto(expr, out) {
     case "ArrayLiteral":
       for (const el of expr.elements) {
         if (el.type === "SpreadElement") collectReadsInto(el.argument, out);
-        else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+        else if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
         } else collectReadsInto(el, out);
       }
       return;
@@ -6872,7 +6978,8 @@ function translateIncludesCall(expr, ctx) {
     const values = [];
     for (const el of expr.object.elements) {
       if (el.type === "SpreadElement") return null;
-      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") return null;
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl")
+        return null;
       const lit = anyEqualityLiteral(el, ctx);
       if (lit === null) return null;
       values.push(lit.value);
@@ -7260,6 +7367,7 @@ function walkContainsPush(node) {
   if (node.type === "AssignExpr") return walkContainsPush(node.value);
   if (node.type === "DeleteStmt") return false;
   if (node.type === "LetDecl") return walkContainsPush(node.value);
+  if (node.type === "FuncDecl") return false;
   const expr = node;
   if (detectUnionPush(expr) !== null) return true;
   if (expr.type === "MethodCall") {
@@ -7785,7 +7893,8 @@ function classifyAccumulatorExpr(body, isAccRef, dParam) {
   if (body.type === "ArrayLiteral" && body.elements.length === 2) {
     const [first, second] = body.elements;
     if (first.type === "SpreadElement" && isAccRef(first.argument) && second.type !== "SpreadElement") {
-      if (second.type === "AssignExpr" || second.type === "DeleteStmt" || second.type === "LetDecl") return null;
+      if (second.type === "AssignExpr" || second.type === "DeleteStmt" || second.type === "LetDecl" || second.type === "FuncDecl")
+        return null;
       const path = paramFieldPath(second, dParam);
       if (path !== null) return { kind: "push", value: path };
     }
@@ -8197,6 +8306,7 @@ function rewriteEnclosingForeignParams(expr, params) {
             if (el.type === "AssignExpr") return { ...el, target: walk(el.target), value: walk(el.value) };
             if (el.type === "DeleteStmt") return { ...el, target: walk(el.target) };
             if (el.type === "LetDecl") return { ...el, value: walk(el.value) };
+            if (el.type === "FuncDecl") return { ...el, lambda: walk(el.lambda) };
             return walk(el);
           })
         };
@@ -8318,6 +8428,7 @@ function walkContainsLookup(node, ctx) {
   if (node.type === "AssignExpr") return walkContainsLookup(node.value, ctx);
   if (node.type === "DeleteStmt") return false;
   if (node.type === "LetDecl") return walkContainsLookup(node.value, ctx);
+  if (node.type === "FuncDecl") return false;
   const expr = node;
   if (detectLookupCall(expr, ctx) !== null) return true;
   if (expr.type === "MethodCall") {
@@ -8677,6 +8788,9 @@ function transformStmt(stmt, foreignParam, allocator, outerLets) {
       pos: stmt.pos
     };
   }
+  if (stmt.type === "FuncDecl") {
+    return { ...stmt, lambda: transformExpr(stmt.lambda, foreignParam, allocator, outerLets) };
+  }
   if (stmt.type === "UpdateFilter") {
     const ops = stmt.ops.map((op) => {
       if (op.type === "AssignExpr") {
@@ -8857,6 +8971,8 @@ function mapChildren(expr, foreignParam, allocator, outerLets) {
               pos: el.pos
             };
           }
+          if (el.type === "FuncDecl")
+            return { ...el, lambda: transformExpr(el.lambda, foreignParam, allocator, outerLets) };
           return transformExpr(el, foreignParam, allocator, outerLets);
         }),
         pos: expr.pos
@@ -9188,6 +9304,7 @@ function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = E
             if (el.type === "DeleteStmt") return { type: "DeleteStmt", target: rewriteChild(el.target), pos: el.pos };
             if (el.type === "LetDecl")
               return { type: "LetDecl", name: el.name, value: rewriteChild(el.value), kind: el.kind, pos: el.pos };
+            if (el.type === "FuncDecl") return el;
             return rewriteChild(el);
           }),
           pos: expr.pos
@@ -9403,7 +9520,7 @@ function findMatchOperator(body, names) {
     }
   } else if (body.type === "ArrayLiteral") {
     for (const el of body.elements) {
-      if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+      if (el.type === "SpreadElement" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
         continue;
       }
       const found = findMatchOperator(el, names);
@@ -9989,6 +10106,7 @@ function walkContainsOut(node) {
   }
   if (node.type === "DeleteStmt") return false;
   if (node.type === "LetDecl") return false;
+  if (node.type === "FuncDecl") return false;
   if (node.type === "ArrayLiteral") {
     for (const el of node.elements) {
       if (el.type === "SpreadElement") continue;
@@ -10113,7 +10231,7 @@ function shouldSkipTrailingNamespaceUnset(stages) {
 }
 function isStageCandidate(el) {
   if (el.type === "SpreadElement") return false;
-  if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl") {
+  if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
     return true;
   }
   if (el.type === "ObjectLiteral") {
@@ -10243,6 +10361,11 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
       updateBuffer.push(el);
       return;
     }
+    if (el.type === "FuncDecl") {
+      flushUpdateOps();
+      ctx = lowerFuncDecl(el, ctx);
+      return;
+    }
     if (el.type === "LetDecl") {
       flushUpdateOps();
       const direct = detectLookupCall(el.value, ctx);
@@ -10285,6 +10408,10 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
         stmt = { type: "UpdateFilter", ops: [rewrite.assign], pos: rewrite.assign.pos };
       }
     }
+    if (stmt.type === "FuncDecl") {
+      ctx = lowerFuncDecl(stmt, ctx);
+      return;
+    }
     if (stmt.type === "LetDecl") {
       const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {
@@ -10319,7 +10446,34 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
   return out;
 }
+function lowerFuncDecl(decl, ctx) {
+  if (ctx.functions?.has(decl.name)) {
+    throw new CodegenError(
+      `Function \`${decl.name}\` is already declared earlier in this pipeline. Re-declaration in the same scope is not allowed \u2014 pick a different name.`,
+      decl.pos
+    );
+  }
+  if (ctx.pipelineLets?.has(decl.name)) {
+    throw new CodegenError(
+      `Function \`${decl.name}\` collides with a \`${ctx.pipelineConstNames?.has(decl.name) ? "const" : "let"} ${decl.name}\` binding already in scope. Rename one \u2014 a reusable function and a value binding can't share a name.`,
+      decl.pos
+    );
+  }
+  if (ctx.bindings?.has(decl.name)) {
+    throw new CodegenError(
+      `Function \`${decl.name}\` shadows a function-form parameter binding of the same name. Rename one.`,
+      decl.pos
+    );
+  }
+  return extendCtxFunctions(ctx, decl);
+}
 function lowerLetDecl(decl, ctx) {
+  if (ctx.functions?.has(decl.name)) {
+    throw new CodegenError(
+      `\`${decl.kind} ${decl.name}\` collides with a reusable function \`${decl.name}\` already declared in this pipeline. Rename one \u2014 a value binding and a function can't share a name.`,
+      decl.pos
+    );
+  }
   if (ctx.pipelineLets?.has(decl.name)) {
     throw new CodegenError(
       `\`${decl.kind} ${decl.name}\` is already declared earlier in this pipeline. Re-declaration in the same scope is not allowed \u2014 ${decl.kind === "const" ? "" : "reassign it (`" + decl.name + " = \u2026`), "}pick a different name, or rebind after a reshape stage (\`$group\`, \`$replaceRoot\`, \u2026).`,
@@ -10808,7 +10962,7 @@ function generatePipelineWithCtx(ast, startCtx, container) {
   }
   for (const el of ast.elements) {
     if (el.type !== "SpreadElement") {
-      const innerPush = el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" ? null : detectUnionPush(el);
+      const innerPush = el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl" ? null : detectUnionPush(el);
       if (innerPush !== null) {
         throw new CodegenError(
           `'$$.push(...)' inside a sub-pipeline ('$lookup.pipeline', '$unionWith.pipeline', '$facet.*') is not supported \u2014 $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.`,
@@ -10831,6 +10985,11 @@ function generatePipelineWithCtx(ast, startCtx, container) {
     validator.checkBeforeElement(el.pos);
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
       updateBuffer.push(el);
+      return;
+    }
+    if (el.type === "FuncDecl") {
+      flushUpdateOps();
+      ctx = lowerFuncDecl(el, ctx);
       return;
     }
     if (el.type === "LetDecl") {
@@ -10895,7 +11054,7 @@ function formatStageList() {
 }
 var lowerBlock = (block, ctx) => {
   for (const stmt of block.stmts) {
-    const innerPush = stmt.type === "LetDecl" ? null : stmt.type === "UpdateFilter" ? null : detectUnionPush(stmt);
+    const innerPush = stmt.type === "LetDecl" || stmt.type === "FuncDecl" || stmt.type === "UpdateFilter" ? null : detectUnionPush(stmt);
     if (innerPush !== null) {
       throw new CodegenError(
         `'$$.push(...)' inside a lookup's block-body lambda is not supported \u2014 $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.`,
@@ -11206,7 +11365,8 @@ function isCompileFormArrow(src) {
     return false;
   }
   const first = lex.next();
-  if (first.type === TokenType.Ident && (first.value === "async" || first.value === "function")) return true;
+  if (first.type === TokenType.Ident && first.value === "async") return true;
+  if (first.type === TokenType.Ident && first.value === "function") return functionSpansWholeInput(lex);
   if (first.type !== TokenType.LParen) return false;
   let depth = 1;
   while (depth > 0) {
@@ -11216,6 +11376,27 @@ function isCompileFormArrow(src) {
     else if (t.type === TokenType.RParen) depth--;
   }
   return lex.next().type === TokenType.Arrow;
+}
+function functionSpansWholeInput(lex) {
+  let t = lex.next();
+  if (t.type === TokenType.Ident) t = lex.next();
+  if (t.type !== TokenType.LParen) return false;
+  let depth = 1;
+  while (depth > 0) {
+    const x = lex.next();
+    if (x.type === TokenType.EOF) return false;
+    if (x.type === TokenType.LParen) depth++;
+    else if (x.type === TokenType.RParen) depth--;
+  }
+  if (lex.next().type !== TokenType.LBrace) return false;
+  depth = 1;
+  while (depth > 0) {
+    const x = lex.next();
+    if (x.type === TokenType.EOF) return false;
+    if (x.type === TokenType.LBrace) depth++;
+    else if (x.type === TokenType.RBrace) depth--;
+  }
+  return lex.next().type === TokenType.EOF;
 }
 var jsmql = Object.assign(jsmqlDispatch, {
   compile: compileFunction,

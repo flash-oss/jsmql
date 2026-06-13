@@ -37,6 +37,11 @@ type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "cons
 `kind` records the surface keyword and only affects reassignment (see
 § Reassignment): a `let` binding is reassignable, a `const` binding is not.
 
+> **Fork note.** When the initialiser is an **arrow function**
+> (`const f = (a) => …`), the parser produces a `FuncDecl` instead — a reusable
+> named function, not a value binding. The two are distinguished purely by the
+> initialiser. See [reusable-functions.md](reusable-functions.md).
+
 `PipelineStmt` is widened to `UpdateFilter | Expr | LetDecl`; `ArrayElement`
 is widened to include `LetDecl` (parallel to `AssignExpr` / `DeleteStmt`), so a
 let can appear either as a `;`-separated statement or as an element in a
