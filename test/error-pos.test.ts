@@ -48,6 +48,23 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
       // Should point at the `let` keyword.
       expect(src.slice(result.errors[0].pos)).toMatch(/^let/);
     });
+
+    it("non-key expression in object literal points at the offending token and guides to conditional spread", () => {
+      // A bare ternary/field-ref as an object entry is invalid JS; the error
+      // must name the token, list the valid entry forms, and point at the
+      // conditional-spread fix. `.pos` and the in-message position must agree.
+      const src = "$set({ ...$.base, $.flag == null ? {} : { x: 1 } })";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe("SYNTAX_ERROR");
+      // Should point at the `$.` that can't begin an object key.
+      expect(src.slice(result.errors[0].pos)).toMatch(/^\$\.flag/);
+      expect(result.errors[0].message).toMatch(/An object entry must be/);
+      expect(result.errors[0].message).toMatch(/conditionally, spread a ternary/);
+      // `.pos` and the position embedded in the message must be the same.
+      const inMsg = Number((result.errors[0].message.match(/at position (\d+)/) ?? [])[1]);
+      expect(inMsg).toBe(result.errors[0].pos);
+    });
   });
 
   describe("codegen errors", () => {

@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-13 — fix: actionable parser error for a non-key expression in an object literal
+
+Writing an expression where an object key is expected — e.g. a bare ternary `{ ...base, $.flag == null ? {} : { … } }` (invalid JS; a common slip when reaching for a conditional spread) — produced a bare, dead-end "Expected object key at position N". The message now names the offending token (`'$.'`, via `formatActualToken`), states that an object entry must be `` `key: value` ``, a shorthand `` `key` ``, or a spread `` `...expr` ``, and points at the fix: spread a ternary, `{ ...base, ...(cond ? { … } : {}) }` — which is the valid form that already compiles. `.pos` and the position embedded in the message are the same token offset, so editor underlining and the human-readable text never disagree. Honours the strict-JS-subset rule (#2): jsmql still rejects the invalid input — it just explains *why* and *what to write instead*. Files: [src/parser.ts](../src/parser.ts) (`parseObjectEntry`), [test/error-pos.test.ts](../test/error-pos.test.ts).
+
+---
+
 ## 2026-06-12 — feat: infer array-method lambda *element* type so `element[key]` lowers precisely
 
 Follow-on to the bare-root bracket fix below. A lambda parameter is a variable, not a literal, so `$.cre.result[party]` inside `["sender","recipient"].map(party => …)` still emitted the runtime `$isArray` guard — even though `party` is *provably* always a string (it iterates an all-string-literal array). jsmql simply never inferred the element type of a lambda parameter: `.map`/`.filter`/etc. added the param to the in-scope `lambdaParams` set but left `bindingTypes` untouched, so the `keyIsString` shortcut (which already fires for string literals, `.toLowerCase()` results, and `const k = "…"`) couldn't see it. The guard is valid and short-circuits correctly on every engine tested, but it carries the same dead `$arrayElemAt`-with-string-index branch that some servers reject — so proving the type is both leaner and removes that latent footgun for the whole map family.
