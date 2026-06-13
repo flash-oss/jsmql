@@ -5596,12 +5596,7 @@ function arrayIterInput(lambda, genObj, ctx, method, inputExpr) {
   }
   const bodyCtx = elementTypedCtx(ctx, params, inputExpr);
   if (params.length <= 1) {
-    return {
-      input: genObj,
-      asName: params[0] ? safeVarName(params[0]) : "v",
-      bodyCtx,
-      wrap: (body) => body
-    };
+    return { input: genObj, asName: params[0] ? safeVarName(params[0]) : "v", bodyCtx, wrap: (body) => body };
   }
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
