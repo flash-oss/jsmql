@@ -2894,6 +2894,37 @@ describe("statement-position mutators", () => {
   });
 });
 
+describe("statement-position Object.assign — mutating merge on a field path", () => {
+  it("merges sources into the target field via $set + $mergeObjects", () => {
+    expect(jsmql("Object.assign($.profile, { verified: true });")).toEqual([
+      { $set: { profile: { $mergeObjects: ["$profile", { verified: true }] } } },
+    ]);
+  });
+  it("multiple sources keep the target as the first $mergeObjects operand", () => {
+    expect(jsmql("Object.assign($.a, $.b, { c: 1 });")).toEqual([
+      { $set: { a: { $mergeObjects: ["$a", "$b", { c: 1 }] } } },
+    ]);
+  });
+  it("nested receiver $.user.profile emits a dotted $set key", () => {
+    expect(jsmql("Object.assign($.user.profile, { x: 1 });")).toEqual([
+      { $set: { "user.profile": { $mergeObjects: ["$user.profile", { x: 1 }] } } },
+    ]);
+  });
+  it("coalesces with adjacent field assignments inside a [...] pipeline literal", () => {
+    expect(jsmql("[ $.x = 1, Object.assign($.profile, { a: $.foo }), $.y = 2 ]")).toEqual([
+      { $set: { x: 1, profile: { $mergeObjects: ["$profile", { a: "$foo" }] }, y: 2 } },
+    ]);
+  });
+  it("expression position is unaffected — still lowers to $mergeObjects", () => {
+    expect(jsmql("$addFields({ merged: Object.assign($.a, $.b) });")).toEqual([
+      { $addFields: { merged: { $mergeObjects: ["$a", "$b"] } } },
+    ]);
+  });
+  it("an object-literal target (discarded result) throws an actionable error", () => {
+    expect(() => jsmql("Object.assign({}, { a: 1 });")).toThrow(/at statement position mutates its first argument/);
+  });
+});
+
 describe("iterator / void / locale DX shims", () => {
   it(".forEach() explains the no-return-value problem", () => {
     expect(() => jsmql.expr("$.xs.forEach(x => x)")).toThrow(/undefined/);

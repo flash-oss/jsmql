@@ -1263,6 +1263,24 @@ jsmql`
 
 `.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors explaining why they're not expressible (iterator protocol / void return / locale-dependence) and what to use instead.
 
+#### `Object.assign(target, ...sources)` mutates `target`
+
+`Object.assign` is JavaScript's *mutating* merge: it writes the merged object back into its first argument. At statement position jsmql honours that — the target may be a document field **or** an in-scope `let`/`const` binding:
+
+```js
+// Merge into a document field — one $set:
+Object.assign($.profile, { verified: true });
+// → { $set: { profile: { $mergeObjects: ["$profile", { verified: true }] } } }
+
+// Build up a scratch object across statements:
+const result = {};
+Object.assign(result, { a: $.foo });
+// → { $set: { "__jsmql.result": {} } }
+//   { $set: { "__jsmql.result": { $mergeObjects: ["$__jsmql.result", { a: "$foo" }] } } }
+```
+
+`Object.assign(result, …)` works even when `result` is `const` — mutating a `const`-bound object is legal JavaScript (only *rebinding* it with `result = …` is not). It's the mutating twin of the value form `result = { ...result, ... }`. In **expression** position `Object.assign(a, b)` is unchanged — it lowers to `$mergeObjects` (see [Object Operations](#object-operations)). The first argument must be a writable target (a `$.field` or an in-scope binding); anything else — `Object.assign({}, …)`, an undeclared name — throws an actionable error.
+
 #### Sort key functions: `.toSorted(keyFn)` and `.sort(keyFn)`
 
 Both accept an optional 1-parameter lambda that names the field to sort by. The same shapes work everywhere — `.toSorted()` returns a new array, `.sort()` mutates at statement position:
@@ -1680,6 +1698,8 @@ $getField("fieldName", $.doc)      // { $getField: { field: "fieldName", input: 
 $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: "$doc", value: val } }
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
 ```
+
+`Object.assign` shown here is the **expression** form (→ `$mergeObjects`). Called as a bare **statement** it mutates its first argument instead — see [Mutators](#objectassigntarget-sources-mutates-target).
 
 ### Spread in Variadic Calls
 

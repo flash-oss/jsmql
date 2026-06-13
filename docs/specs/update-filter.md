@@ -139,6 +139,16 @@ There are two pipeline forms, with one important behavioural difference:
 
 `AssignExpr`s also enter the lowering path via the statement-position mutator rewrite (see [method-dispatch.md § Mutators at statement position](method-dispatch.md#mutators-at-statement-position)). Before classifying a statement as an Expr, both pipeline loops call `tryRewriteMutatorCall` from `codegen.ts`; if it returns a synthetic `AssignExpr`, that node enters the same UpdateOp coalescer the explicit-`=` path uses. From the coalescer's perspective the two sources are indistinguishable — chained mutators on the same field (`$.events.push(x); $.events.sort(e => e.t);`) split on read-after-write the same way `$.events = …; $.events = …` already does. There is no separate "mutator stage" type.
 
+### `Object.assign` at statement position
+
+A bare `Object.assign(target, ...sources)` statement is JavaScript's *mutating* merge — it writes the merged object back into `target`. `classifyObjectAssignStmt` (in `src/pipeline.ts`) runs in both pipeline loops, right after the array-mutator rewrite, and dispatches on the first argument:
+
+- **Writable field path** (`$.profile`, `$.a.b`) → returns a synthetic `AssignExpr { target, value: <the whole ObjectCall> }`. Because the call's first argument *is* the target, generating that `ObjectCall` yields `$mergeObjects[<target>, ...sources]`, so the assignment lowers to `{ $set: { <path>: { $mergeObjects: [<read>, ...sources] } } }` and rides the same coalescer as `$.x = …` and the array mutators.
+- **In-scope `let`/`const` binding** → emits its own `{ $set: { <slot>: <gen(ObjectCall)> } }` directly (after flushing the update buffer and hoisting any buried `$lookup`s through `extractLookupCalls`). It deliberately does **not** route through the `ParamRef` reassignment path in `tryLowerAssignSugar`, so the `const`-reassignment guard there is bypassed — mutating a `const`-bound object is legal JS (only *rebinding* it via `=` is not). The binding case is owned by [let-bindings.md § Object.assign mutation](let-bindings.md).
+- **Anything else** (no first argument, a spread target, an object literal, an undeclared identifier) → a `reject` classification carrying an actionable `CodegenError` (`pos` = the call's offset) that names a valid target.
+
+Expression-position `Object.assign` never reaches this classifier (it's nested inside stage bodies / `$match` / etc.) and lowers to `$mergeObjects` through `generateObjectCall` unchanged.
+
 ## Error message conventions
 
 | Situation                       | Where caught | Message theme |

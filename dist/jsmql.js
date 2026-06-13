@@ -2632,7 +2632,10 @@ var Parser = class {
       return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
     }
     if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
-      throw new ParseError(`Expected object key at position ${tok.pos}`, tok.pos);
+      throw new ParseError(
+        `Expected an object key, but found ${formatActualToken(tok)} at position ${tok.pos}. An object entry must be \`key: value\`, a shorthand \`key\`, or a spread \`...expr\`. To include fields conditionally, spread a ternary: \`{ ...base, ...(cond ? { \u2026 } : {}) }\`.`,
+        tok.pos
+      );
     }
     this.lexer.next();
     const next = this.lexer.peek();
@@ -10201,6 +10204,27 @@ function containerKindFor(stageName) {
   if (stageName === "$unionWith") return "unionWith";
   return "lookup";
 }
+function classifyObjectAssignStmt(node, ctx) {
+  if (node.type !== "ObjectCall" || node.method !== "assign") return null;
+  const target = node.args.length === 0 ? null : node.args[0];
+  if (target !== null && target.type === "ParamRef") {
+    const slot = ctx.pipelineLets?.get(target.name);
+    if (slot !== void 0) return { kind: "binding", slot, call: node };
+    return {
+      kind: "reject",
+      message: `Cannot 'Object.assign(${target.name}, \u2026)' \u2014 '${target.name}' isn't a 'let'/'const' binding in scope. Declare it first with 'let ${target.name} = \u2026', or write '$.${target.name}' to mutate a document field.`,
+      pos: node.pos
+    };
+  }
+  if (target !== null && target.type !== "SpreadElement" && isWritableFieldPath(target)) {
+    return { kind: "field", assign: { type: "AssignExpr", target, value: node, pos: node.pos } };
+  }
+  return {
+    kind: "reject",
+    message: `'Object.assign(...)' at statement position mutates its first argument, but ${target === null ? "no first argument was given" : "the first argument isn't a writable target"}. Pass a document field ('$.profile') or an in-scope 'let'/'const' binding \u2014 e.g. 'Object.assign($.profile, { \u2026 })' or 'let r = {}; Object.assign(r, { \u2026 })'. (To build a merged object as a value, assign it: '$.merged = Object.assign(a, b)'.)`,
+    pos: node.pos
+  };
+}
 function generatePipeline(ast, startCtx = EMPTY_CTX) {
   if (ast.type !== "ArrayLiteral") {
     internalError("generatePipeline expects an ArrayLiteral AST");
@@ -10222,6 +10246,20 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
     if (el.type === "MethodCall") {
       const rewrite = tryRewriteMutatorCall(el);
       if (rewrite.kind === "rewrite") el = rewrite.assign;
+    }
+    if (el.type === "ObjectCall") {
+      const mut = classifyObjectAssignStmt(el, ctx);
+      if (mut !== null) {
+        if (mut.kind === "reject") throw new CodegenError(mut.message, mut.pos);
+        if (mut.kind === "binding") {
+          flushUpdateOps();
+          const { stages, rewritten } = extractLookupCalls(mut.call, ctx, tracking.alloc, lowerBlock);
+          for (const s of stages) out.push(s);
+          out.push({ $set: { [mut.slot]: generateWithCtx(rewritten, ctx) } });
+          return;
+        }
+        el = mut.assign;
+      }
     }
     if (el.type === "AssignExpr") {
       const r = tryLowerAssignSugar(el, ctx, out, flushUpdateOps, tracking.alloc, lowerBlock, out.length === 0);
@@ -10283,6 +10321,19 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
       const rewrite = tryRewriteMutatorCall(stmt);
       if (rewrite.kind === "rewrite") {
         stmt = { type: "UpdateFilter", ops: [rewrite.assign], pos: rewrite.assign.pos };
+      }
+    }
+    if (stmt.type === "ObjectCall") {
+      const mut = classifyObjectAssignStmt(stmt, ctx);
+      if (mut !== null) {
+        if (mut.kind === "reject") throw new CodegenError(mut.message, mut.pos);
+        if (mut.kind === "binding") {
+          const { stages, rewritten } = extractLookupCalls(mut.call, ctx, tracking.alloc, lowerBlock);
+          for (const s of stages) out.push(s);
+          out.push({ $set: { [mut.slot]: generateWithCtx(rewritten, ctx) } });
+          return;
+        }
+        stmt = { type: "UpdateFilter", ops: [mut.assign], pos: mut.assign.pos };
       }
     }
     if (stmt.type === "LetDecl") {

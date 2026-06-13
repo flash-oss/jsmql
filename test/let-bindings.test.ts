@@ -784,6 +784,52 @@ describe("let bindings — reassignment", () => {
   });
 });
 
+// ── `Object.assign(binding, …)` — JS's mutating merge on a binding ─────────────
+
+describe("let bindings — Object.assign mutation", () => {
+  it("`Object.assign(result, …)` re-`$set`s the binding's slot via $mergeObjects", () => {
+    // The JS-faithful mutating form of `result = { ...result, … }`.
+    expect(jsmql("let result = {}; Object.assign(result, { a: $.foo }); $ = result;")).toEqual([
+      { $set: { "__jsmql.result": {} } },
+      { $set: { "__jsmql.result": { $mergeObjects: ["$__jsmql.result", { a: "$foo" }] } } },
+      { $replaceWith: "$__jsmql.result" },
+    ]);
+  });
+
+  it("allowed on a `const` binding — mutating a const-bound object is legal JS (only rebinding isn't)", () => {
+    // This is the reported bug: `const result = {}; Object.assign(result, …)`
+    // must NOT throw, even though `result = …` on a const would.
+    expect(jsmql("const result = {}; Object.assign(result, { a: $.foo });")).toEqual([
+      { $set: { "__jsmql.result": {} } },
+      { $set: { "__jsmql.result": { $mergeObjects: ["$__jsmql.result", { a: "$foo" }] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("multiple sources keep the slot as the first $mergeObjects operand", () => {
+    expect(jsmql("let r = {}; Object.assign(r, { a: 1 }, { b: 2 }); $ = r;")).toEqual([
+      { $set: { "__jsmql.r": {} } },
+      { $set: { "__jsmql.r": { $mergeObjects: ["$__jsmql.r", { a: 1 }, { b: 2 }] } } },
+      { $replaceWith: "$__jsmql.r" },
+    ]);
+  });
+
+  it("works in the bracketed pipeline form", () => {
+    expect(jsmql("[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]")).toEqual([
+      { $set: { "__jsmql.r": {} } },
+      { $set: { "__jsmql.r": { $mergeObjects: ["$__jsmql.r", { a: "$foo" }] } } },
+      { $replaceWith: "$__jsmql.r" },
+    ]);
+  });
+
+  it("Object.assign on an out-of-scope identifier throws an actionable error with a meaningful .pos", () => {
+    const result = jsmql.validate("Object.assign(zzz, { a: 1 });");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch(/'zzz' isn't a 'let'\/'const' binding in scope/);
+    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+  });
+});
+
 // ── `const` keyword (DEF-009) ─────────────────────────────────────────────────
 
 describe("let bindings — `const` is a read-only alias for `let`", () => {
