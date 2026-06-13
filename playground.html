@@ -1240,7 +1240,10 @@
       }
 
       for (const btn of modeButtons) {
-        btn.addEventListener("click", () => setMode(btn.dataset.mode));
+        btn.addEventListener("click", () => {
+          setMode(btn.dataset.mode);
+          saveState();
+        });
       }
 
       function populateExamples() {
@@ -1677,6 +1680,38 @@
         return { src: prefix + query + " }", prefixLen: prefix.length };
       }
 
+      // Persist the editor session — the JSMQL query, the Variables object, and
+      // the active compile mode — to localStorage so a page refresh restores
+      // exactly what the user was working on. Query + Variables are the user's
+      // own work; the compile mode rides along so the restored query produces
+      // the same MQL output it did before the refresh. Both calls are wrapped
+      // because localStorage access throws when storage is unavailable (private
+      // mode, disabled cookies, a sandboxed iframe) — persistence is a
+      // best-effort nicety, never a hard dependency.
+      const STORAGE_KEY = "jsmql-playground:session:v1";
+      function saveState() {
+        try {
+          localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+              input: inputCm.getValue(),
+              vars: varsCm.getValue(),
+              mode: currentMode,
+            }),
+          );
+        } catch {}
+      }
+      function loadState() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return null;
+          const s = JSON.parse(raw);
+          return s && typeof s === "object" ? s : null;
+        } catch {
+          return null;
+        }
+      }
+
       function render() {
         clearActiveOnUserEdit();
         const src = inputCm.getValue();
@@ -1792,8 +1827,14 @@
         }
       }
 
-      inputCm.on("change", render);
-      varsCm.on("change", render);
+      inputCm.on("change", () => {
+        render();
+        saveState();
+      });
+      varsCm.on("change", () => {
+        render();
+        saveState();
+      });
       prettify.addEventListener("change", render);
 
       let copyResetTimer = null;
@@ -1821,11 +1862,28 @@
           selectExample(slug, { scroll: true });
         }
       });
-      if (orderedSlugs.length > 0) {
-        const initialSlug = slugFromHash();
-        const startSlug =
-          initialSlug && examples.has(initialSlug) ? initialSlug : orderedSlugs[0];
-        selectExample(startSlug, { scroll: initialSlug != null });
+      // Restore the persisted session so a page refresh keeps the user's work.
+      // The Variables editor is independent of which example/query is shown, so
+      // it's restored on every load path. For the query, in priority order:
+      //   1. a URL hash that targets a real example — a shared/explicit link
+      //      always wins (and is only present when viewing an unmodified
+      //      example; free editing clears it via clearActiveOnUserEdit);
+      //   2. a saved free-form query — restored with the compile mode it was
+      //      last rendered with, so the output matches what the user left;
+      //   3. the first example — the default for a first visit.
+      const saved = loadState();
+      if (saved && typeof saved.vars === "string" && saved.vars !== "") {
+        varsCm.setValue(saved.vars);
+      }
+      const initialSlug = orderedSlugs.length > 0 ? slugFromHash() : null;
+      if (initialSlug && examples.has(initialSlug)) {
+        selectExample(initialSlug, { scroll: true });
+      } else if (saved && typeof saved.input === "string" && saved.input.trim() !== "") {
+        setMode(MODE_FNS[saved.mode] ? saved.mode : "auto", { rerender: false });
+        inputCm.setValue(saved.input);
+        render();
+      } else if (orderedSlugs.length > 0) {
+        selectExample(orderedSlugs[0], { scroll: false });
       }
     </script>
   </body>

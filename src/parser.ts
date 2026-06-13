@@ -2194,7 +2194,12 @@ export class Parser {
     }
 
     if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
-      throw new ParseError(`Expected object key at position ${tok.pos}`, tok.pos);
+      throw new ParseError(
+        `Expected an object key, but found ${formatActualToken(tok)} at position ${tok.pos}. ` +
+          `An object entry must be \`key: value\`, a shorthand \`key\`, or a spread \`...expr\`. ` +
+          `To include fields conditionally, spread a ternary: \`{ ...base, ...(cond ? { … } : {}) }\`.`,
+        tok.pos,
+      );
     }
     this.lexer.next();
     const next = this.lexer.peek();

@@ -40,6 +40,7 @@ import {
   extendCtxFunctions,
   freshSubPipelineCtx,
   internalError,
+  isWritableFieldPath,
   type GenerateCtx,
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
@@ -306,6 +307,67 @@ function containerKindFor(stageName: string): "facet" | "lookup" | "unionWith" {
 }
 
 /**
+ * Statement-position `Object.assign(target, ...sources)` — JavaScript's
+ * *mutating* merge: it writes the merged object back into `target` and returns
+ * it. jsmql mirrors that at pipeline-statement position:
+ *
+ *   - **target = in-scope `let`/`const` binding** → one `$set` re-materialising
+ *     the binding's slot to `$mergeObjects[<slot>, ...sources]`. Allowed on a
+ *     `const` binding: mutating a const-bound object is legal JS (only
+ *     *rebinding* via `=` is not), so the const-reassignment guard in
+ *     `tryLowerAssignSugar` is deliberately bypassed here.
+ *   - **target = writable field path** (`$.profile`, `$.a.b`) → desugars to
+ *     `$.profile = Object.assign($.profile, …)`, flowing through the same `$set`
+ *     coalescer as `$.x = …` and the array mutators (so a read-after-write
+ *     splits stages correctly).
+ *
+ * Returns `null` when `node` isn't a statement-position `Object.assign(...)`
+ * we can lower as a mutation (no args, spread target, or a target that is
+ * neither an in-scope binding nor a writable field path). The caller then lets
+ * the generic stage path raise its error. Expression-position `Object.assign`
+ * (inside a stage body, a `$match`, etc.) never reaches here — it lowers to
+ * `$mergeObjects` through codegen, unchanged. See docs/specs/update-filter.md
+ * § Object.assign and docs/LANGUAGE.md § Mutators.
+ */
+type ObjectAssignMutation =
+  | { kind: "binding"; slot: string; call: Expr }
+  | { kind: "field"; assign: AssignExpr }
+  | { kind: "reject"; message: string; pos: number };
+
+function classifyObjectAssignStmt(node: Expr, ctx: GenerateCtx): ObjectAssignMutation | null {
+  // Only a bare `Object.assign(...)` statement is a mutation; everything else
+  // (other Object statics, non-ObjectCall nodes) falls through untouched.
+  if (node.type !== "ObjectCall" || node.method !== "assign") return null;
+  const target = node.args.length === 0 ? null : node.args[0];
+  if (target !== null && target.type === "ParamRef") {
+    const slot = ctx.pipelineLets?.get(target.name);
+    if (slot !== undefined) return { kind: "binding", slot, call: node };
+    return {
+      kind: "reject",
+      message:
+        `Cannot 'Object.assign(${target.name}, …)' — '${target.name}' isn't a 'let'/'const' binding in scope. ` +
+        `Declare it first with 'let ${target.name} = …', or write '$.${target.name}' to mutate a document field.`,
+      pos: node.pos,
+    };
+  }
+  if (target !== null && target.type !== "SpreadElement" && isWritableFieldPath(target)) {
+    return { kind: "field", assign: { type: "AssignExpr", target, value: node, pos: node.pos } };
+  }
+  // It IS `Object.assign(...)` at statement position, but the first argument
+  // isn't a persistable mutation target — name what a valid target looks like.
+  return {
+    kind: "reject",
+    message:
+      `'Object.assign(...)' at statement position mutates its first argument, but ` +
+      `${target === null ? "no first argument was given" : "the first argument isn't a writable target"}. ` +
+      `Pass a document field ('$.profile') or an in-scope 'let'/'const' binding — ` +
+      `e.g. 'Object.assign($.profile, { … })' or 'let r = {}; Object.assign(r, { … })'. ` +
+      `(To build a merged object as a value, assign it: '$.merged = Object.assign(a, b)'.)`,
+    pos: node.pos,
+  };
+}
+
+/**
  * Compile a pipeline-shaped ArrayLiteral AST to an MQL pipeline (stage array).
  *
  * Caller must have verified `isPipelineAst(ast)` first; we still validate
@@ -352,6 +414,23 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     if (el.type === "MethodCall") {
       const rewrite = tryRewriteMutatorCall(el);
       if (rewrite.kind === "rewrite") el = rewrite.assign;
+    }
+    // Statement-position `Object.assign(target, …)` — JS's mutating merge.
+    // A binding target emits its own `$set`; a field target becomes an
+    // `AssignExpr` and falls through to the update-op coalescer below.
+    if (el.type === "ObjectCall") {
+      const mut = classifyObjectAssignStmt(el, ctx);
+      if (mut !== null) {
+        if (mut.kind === "reject") throw new CodegenError(mut.message, mut.pos);
+        if (mut.kind === "binding") {
+          flushUpdateOps();
+          const { stages, rewritten } = extractLookupCalls(mut.call, ctx, tracking.alloc, lowerBlock);
+          for (const s of stages) out.push(s);
+          out.push({ $set: { [mut.slot]: generateWithCtx(rewritten, ctx) } });
+          return;
+        }
+        el = mut.assign;
+      }
     }
     if (el.type === "AssignExpr") {
       const r = tryLowerAssignSugar(el, ctx, out, flushUpdateOps, tracking.alloc, lowerBlock, out.length === 0);
@@ -449,6 +528,22 @@ export function generateImplicitPipeline(
     if (stmt.type === "FuncDecl") {
       ctx = lowerFuncDecl(stmt, ctx);
       return;
+    }
+    // Statement-position `Object.assign(target, …)` — JS's mutating merge.
+    // A binding target emits its own `$set`; a field target is wrapped as a
+    // single-op `UpdateFilter` so it routes through the same path as `$.x = …`.
+    if (stmt.type === "ObjectCall") {
+      const mut = classifyObjectAssignStmt(stmt, ctx);
+      if (mut !== null) {
+        if (mut.kind === "reject") throw new CodegenError(mut.message, mut.pos);
+        if (mut.kind === "binding") {
+          const { stages, rewritten } = extractLookupCalls(mut.call, ctx, tracking.alloc, lowerBlock);
+          for (const s of stages) out.push(s);
+          out.push({ $set: { [mut.slot]: generateWithCtx(rewritten, ctx) } });
+          return;
+        }
+        stmt = { type: "UpdateFilter", ops: [mut.assign], pos: mut.assign.pos };
+      }
     }
     if (stmt.type === "LetDecl") {
       const direct = detectLookupCall(stmt.value, ctx);

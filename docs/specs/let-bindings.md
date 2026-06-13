@@ -117,6 +117,21 @@ Outside a pipeline (Filter / `jsmql.expr` / update-doc mode) there is no let
 scope, so a bare-identifier assignment never reaches `tryLowerAssignSugar`;
 `targetToPath()` in codegen rejects it with the same "bare identifier" guidance.
 
+### `Object.assign` mutation
+
+`Object.assign(<name>, ...sources)` at statement position is JS's *mutating*
+merge of a binding — the value twin is `<name> = { ...<name>, ...sources }`.
+`classifyObjectAssignStmt` (in `src/pipeline.ts`) detects it before the generic
+statement path and emits one `{ $set: { "__jsmql.<name>": <gen(ObjectCall)> } }`
+stage; because the call's first argument *is* `<name>`, that generates
+`$mergeObjects["$__jsmql.<name>", ...sources]`. Unlike `=` reassignment it is
+**allowed on a `const` binding** — mutating a const-bound object is legal JS,
+only rebinding isn't — so it bypasses the `pipelineConstNames` guard. An
+out-of-scope name is rejected with a "declare it with `let …` first, or write
+`$.<name>`" hint. The field-path sibling (`Object.assign($.x, …)`) and the full
+dispatch table live in [update-filter.md § `Object.assign` at statement
+position](update-filter.md).
+
 `const`-ness rides on `LetDecl.kind` and is tracked on `GenerateCtx` as
 `pipelineConstNames` (a subset of `pipelineLets`); `clearCtxLets()` resets it
 alongside the lets, and `extendCtxLets(ctx, name, path, kind)` records it on
