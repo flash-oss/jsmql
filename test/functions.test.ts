@@ -170,10 +170,14 @@ describe("reusable functions — rejections (actionable errors)", () => {
     );
   });
 
-  it("the `function` keyword is redirected to the arrow form", () => {
-    expect(() => jsmql("function foo(a) { return a; } $ = { x: foo($.n) };")).toThrow(
-      /The `function` keyword isn't supported here — declare a reusable function with an arrow/,
-    );
+  it("a lone `function` declaration (nothing calls it) is rejected like a lone arrow decl", () => {
+    expect(() => jsmql("function foo(a) { return a }")).toThrow(/only valid inside a pipeline/);
+  });
+
+  it("a `function` declaration with local bindings used as a query predicate is rejected with guidance", () => {
+    expect(() =>
+      jsmql("const r = $$$.tags.find(function (t) { const a = t.score; return a > 5 }); $ = { r };"),
+    ).toThrow(/block body with local `const`\/`let` bindings/);
   });
 
   it("re-declaring a function in the same pipeline is rejected", () => {
@@ -233,14 +237,12 @@ describe("reusable functions — review-driven hardening", () => {
     ]);
   });
 
-  it("the `function`-keyword redirect surfaces identically via validate() and jsmql()", () => {
-    const src = "function foo(a) { return a; } $ = { x: foo($.n) };";
-    const res = jsmql.validate(src);
-    expect(res.valid).toBe(false);
-    expect(res.errors[0].pos).toBe(0);
-    expect(res.errors[0].message).toMatch(/The `function` keyword isn't supported here — declare a reusable function/);
-    // jsmql() throws the same message (no divergence between the two surfaces).
-    expect(() => jsmql(src)).toThrow(res.errors[0].message);
+  it("a `function`-keyword declaration lowers identically to the `const = arrow` form (DEF-030 success criteria)", () => {
+    const fnForm = jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };");
+    const arrowForm = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
+    expect(fnForm).toEqual(arrowForm);
+    // …and the self-terminating form (no `;` after `}`) is valid too.
+    expect(jsmql("function double(x) { return x * 2 } $ = { a: double($.price) }")).toEqual(arrowForm);
   });
 
   it("a reusable function passed as a bare array-method callback names it and suggests the wrap", () => {
@@ -251,5 +253,88 @@ describe("reusable functions — review-driven hardening", () => {
 
   it("a non-function bare callback still gets the generic lambda-required error", () => {
     expect(() => jsmql("$ = { a: $.items.map(5) };")).toThrow(/\.map\(\) requires a lambda as its first argument/);
+  });
+});
+
+// The `function` keyword: a second spelling of the reusable-function/arrow
+// surface, accepted everywhere arrows are (declaration, inline callback, IIFE,
+// entry form). Each case asserts byte-identical MQL to the arrow equivalent.
+// See docs/specs/reusable-functions.md § The `function` keyword.
+describe("`function` keyword — parity with the arrow form", () => {
+  it("declaration form lowers identically to `const f = (x) => …`", () => {
+    const arrow = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
+    expect(jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };")).toEqual(arrow);
+  });
+
+  it("is self-terminating — no `;` needed after the closing `}`", () => {
+    const withSemi = jsmql("function double(x) { return x * 2 }; $ = { a: double($.price) };");
+    const noSemi = jsmql("function double(x) { return x * 2 } $ = { a: double($.price) }");
+    expect(noSemi).toEqual(withSemi);
+  });
+
+  it("a self-terminating chain of declarations composes", () => {
+    const fn = jsmql("function inc(x) { return x + 1 } function dbl(x) { return x * 2 } $ = { a: dbl(inc($.n)) }");
+    const arrow = jsmql("const inc = (x) => x + 1; const dbl = (x) => x * 2; $ = { a: dbl(inc($.n)) };");
+    expect(fn).toEqual(arrow);
+  });
+
+  it("an anonymous `function` expression works as an inline `.map` callback", () => {
+    const arrow = jsmql.expr("$.items.map((x) => x * 2)");
+    expect(jsmql.expr("$.items.map(function (x) { return x * 2 })")).toEqual(arrow);
+  });
+
+  it("a NAMED `function` expression callback ignores the name", () => {
+    const anon = jsmql.expr("$.items.map(function (x) { return x * 2 })");
+    expect(jsmql.expr("$.items.map(function scale(x) { return x * 2 })")).toEqual(anon);
+  });
+
+  it("a `function` body with local `const`/`let` lowers to nested `$let` (≡ block-body arrow)", () => {
+    const arrow = jsmql.expr("$.items.map((x) => { const y = x + 1; return y * 2 })");
+    expect(jsmql.expr("$.items.map(function (x) { const y = x + 1; return y * 2 })")).toEqual(arrow);
+  });
+
+  it("a parenthesised `function` IIFE lowers to `$let` (≡ the arrow IIFE)", () => {
+    const arrow = jsmql.expr("((x) => x * 2)(5)");
+    expect(jsmql.expr("(function (x) { return x * 2 })(5)")).toEqual(arrow);
+  });
+
+  it("`function` declaration works as a bracketed-pipeline element", () => {
+    const fn = jsmql("[ function double(x) { return x * 2 }, $set({ a: double($.price) }) ]");
+    const arrow = jsmql("[ const double = (x) => x * 2, $set({ a: double($.price) }) ]");
+    expect(fn).toEqual(arrow);
+  });
+
+  it("works inside a `$$$.<coll>.find` predicate (expression body) like an arrow", () => {
+    const fn = jsmql("const tags = $$$.tags.find(function (t) { return t.active }); $ = { tags };");
+    const arrow = jsmql("const tags = $$$.tags.find((t) => t.active); $ = { tags };");
+    expect(fn).toEqual(arrow);
+  });
+
+  it("entry form `jsmql(function ($) { return … })` lowers like the arrow entry", () => {
+    expect(
+      jsmql(function ($) {
+        return $.age >= 18;
+      }),
+    ).toEqual(jsmql(($) => $.age >= 18));
+  });
+
+  it("`jsmql.compile(function (params, $) { return … })` lowers like the arrow compile form", () => {
+    const fn = jsmql.compile(function ({ min }, $) {
+      return $.age >= min;
+    });
+    const arrow = jsmql.compile(({ min }, $) => $.age >= min);
+    expect(fn({ min: 21 })).toEqual(arrow({ min: 21 }));
+  });
+
+  it("rejects a generator `function*` with an actionable message", () => {
+    expect(() => jsmql("function* f(x) { return x } $ = { a: f($.n) }")).toThrow(/generator functions/);
+  });
+
+  it("`function` is not a reserved keyword — object keys and field paths keep working", () => {
+    // It lexes as an ordinary identifier and is intercepted only where a function
+    // expression/declaration can actually start, so `{ function: … }` (object
+    // key) and `$.function` (field path) are unaffected.
+    expect(jsmql.expr("{ function: $.x }")).toEqual({ function: "$x" });
+    expect(jsmql.expr("$.function")).toEqual("$function");
   });
 });

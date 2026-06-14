@@ -148,10 +148,22 @@ describe("implicit pipeline — block-body arrow input", () => {
     expect(result).toEqual([{ $set: { a: 1 } }]);
   });
 
-  it("block body with `return` rejected with a helpful error", () => {
-    expect(() =>
+  it("block body `{ return <expr> }` is the value form (≡ the expression body)", () => {
+    // A brace body opening directly with `return` is the value form, identical
+    // to `($) => $.a > 18`. (A `;`-separated body of stage statements stays a
+    // pipeline; a stray statement-position `return` mixed into one is rejected.)
+    expect(
       jsmql(($) => {
         return $.a > 18;
+      }),
+    ).toEqual({ a: { $gt: 18 } });
+  });
+
+  it("a stray `return` in a `;`-separated block body is rejected with guidance", () => {
+    expect(() =>
+      jsmql(($) => {
+        $.a = 1;
+        return $.a;
       }),
     ).toThrow(/return/);
   });

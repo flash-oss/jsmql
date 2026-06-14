@@ -1436,14 +1436,27 @@ $ = {
 };
 ```
 
+The **`function` keyword** is a second spelling of the same thing — write it however you'd write JavaScript. It works everywhere an arrow does: as a declaration, as an inline callback, and as the `jsmql(fn)` input. A `function` declaration is *self-terminating* (no `;` needed after the `}`, exactly like JS):
+
+```js
+function money(n) { return Math.round(n * 100) / 100 }
+$ = { subtotal: money($.price), tax: money($.tax) };
+// …identical MQL to `const money = (n) => …`
+
+$.items.map(function (x) { return x * 1.1 })   // inline callback — same as `(x) => x * 1.1`
+jsmql(function ($) { return $.age >= 18 })      // entry form — same as `($) => $.age >= 18`
+```
+
+A named function *expression* (`.map(function scale(x) { … })`) is accepted, but the name is ignored — MQL has no recursion, so the name is unreachable. `async function` and generator `function*` are rejected with a pointer to the plain form.
+
 Notes:
 
-- **Both `=>` styles and a block body work** — `x => …`, `(x) => …`, and `(x) => { const t = …; return …; }`. A block body uses the same local-`const` rules described above.
+- **Both `=>` styles, the `function` keyword, and a block body work** — `x => …`, `(x) => …`, `(x) => { const t = …; return …; }`, and `function f(x) { return …; }`. A block body uses the same local-`const` rules described above.
 - **Bodies can close over the document.** Beyond their parameters, a function body may read `$.fields` and in-scope `let` bindings.
 - **Functions compose** — one function may call another declared earlier in the same pipeline.
-- **Pipeline-only.** A function is a pipeline statement (it needs the `;` that puts the source in pipeline mode), exactly like [`let`](#local-bindings-let). Declare functions at the top level of the pipeline, not inside an arrow body.
+- **Pipeline-only.** A function is a pipeline statement, exactly like [`let`](#local-bindings-let). An arrow declaration needs the `;` that puts the source in pipeline mode; a `function` declaration is self-terminating and triggers pipeline mode on its own. Declare functions at the top level of the pipeline, not inside an arrow body.
 - **Re-lowered per call.** Calling a function twice produces two independent `$let` blocks — there's no shared definition stored anywhere, and a declared-but-uncalled function adds nothing to the output.
-- Calling an undeclared name, the wrong argument count, recursion, or using a function as a value (rather than calling it) each produce an actionable error. The `function` keyword isn't a declaration form here — use an arrow.
+- Calling an undeclared name, the wrong argument count, recursion, or using a function as a value (rather than calling it) each produce an actionable error.
 
 ---
 

@@ -123,14 +123,13 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
   });
 
   describe("function-input errors", () => {
-    it("non-arrow function input", () => {
-      const result = jsmql.validate(
-        (() => {
-          // Force a `function ...` shape rather than an arrow.
-          // eslint-disable-next-line no-new-func
-          return new Function("return 1") as never;
-        })(),
-      );
+    it("unsupported function shape (generator) carries a meaningful .pos", () => {
+      // Plain `function (…) { return … }` inputs are accepted now (they lower
+      // exactly like the arrow form); a generator is still unsupported and must
+      // surface a positioned SYNTAX_ERROR.
+      const result = jsmql.validate(function* ($) {
+        return $.age > 18;
+      } as never);
       expect(result.valid).toBe(false);
       expect(result.errors[0].code).toBe("SYNTAX_ERROR");
       expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);

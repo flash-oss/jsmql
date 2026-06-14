@@ -201,18 +201,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M (container threading through `lowerBlock` + tests)
 
-### DEF-030 — `function` keyword declaration form
-
-- **What's blocked.** Declaring a reusable function with the `function` keyword (`function foo(a) { return …; }`). Arrow declarations (`const foo = (a) => …`) are the supported syntax — see `docs/specs/reusable-functions.md`.
-- **Target lowering.** Identical to the arrow form: register `foo → lambda`, expand inline at call sites. The `function` keyword would just be a second spelling of the same declaration.
-- **Why blocked.** Needs a `function` lexer keyword + a declaration production in the parser. Maps to the same `FuncDecl` node, so the codegen/pipeline side is already done; only the front-end is missing. A friendly redirect already fires for the keyword (`collectStatement` in `src/parser.ts`).
-- **Attempted approaches.** None — deliberately scoped out of the first cut (arrow-only) per the developer's call.
-- **Success criteria.** `function double(x) { return x * 2; } $ = { a: double($.p) };` lowers identically to the `const double = (x) => x * 2;` form.
-- **Rejection site(s).** `src/parser.ts` `collectStatement` (the `function`-keyword redirect, tagged `[DEF-030]`).
-- **Spec.** `docs/specs/reusable-functions.md` § Deferred.
-- **Status.** open
-- **Effort.** S (lexer keyword + parser production; reuses the FuncDecl pipeline)
-
 ### DEF-031 — Function-aware Filters via textual inline
 
 - **What's blocked.** Using a reusable function inside a **bare Filter** (no `;`, e.g. `db.coll.find(jsmql("isAdult($)"))`). A function declaration needs a `;`, which flips the source into Pipeline mode, so a Filter can't currently declare or call one.
