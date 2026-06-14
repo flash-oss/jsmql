@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-14 — docs: jsmql never invents its own `$`-operators; `continue` keyword rejected
+
+Recorded a standing language-design axiom in [CLAUDE.md](../CLAUDE.md) § "Things the user did not explicitly ask for but matter" (with a one-line pointer from [src/CLAUDE.md](../src/CLAUDE.md) next to the `src/operators.ts` SSOT bullet): **jsmql never mints its own `$`-prefixed operators or pseudo-stages.** Every `$`-named callable maps to something that already exists in MongoDB — a real operator via the `$op(...)` escape hatch (backed by `src/operators.ts`), or a real pipeline stage (`$match`, `$project`, …). A convenience like `$drop(pred)` that lowered to `$match(!(pred))` will **never** be added, however handy it looks: it fabricates a `$name` that isn't a MongoDB operator (breaking the "every `$op` is a real op" model and the paste-raw-MQL round-trip property), and it's a second spelling for a capability that already has one (the friction in `feedback_no_silent_output_drift.md`). New ergonomics go into JS-idiomatic surface — a JS method, or destination-visible sugar over a real stage (`$$.push(…)` → `$unionWith`) — never a brand-new `$foo()`.
+
+Context: we evaluated adding a JS `continue` keyword (`if (<expr>) continue;` → `$match(!(<expr>))`, the loop-as-pipeline idiom). The lowering intuition was correct and verified on a running `mongod`, **but the surface syntax is a hard JavaScript `SyntaxError`** — `continue` outside a loop fails `node --check` in every framing (bare, arrow block-body, braced), which the #2 "strict subset of JavaScript" priority forbids outright. The `$op(...)`-style escape would have been `$drop(...)` — and that is exactly the invented-operator the new axiom rules out. Net result: no `continue`, no `$drop`; the capability already exists as `$match(!(cond))`. No code or behaviour change in this entry — governance only.
+
+---
+
 ## 2026-06-13 — feat: `Object.assign(target, …)` mutates at statement position
 
 A bare `Object.assign(target, ...sources)` statement now lowers as JavaScript's *mutating* merge — it writes the merged object back into `target` — where `target` may be a writable document field (`$.profile`) **or** an in-scope `let`/`const` binding. Before this, a statement-position `Object.assign(...)` fell through to the generic pipeline path and threw "Element N of pipeline is not a recognised stage", even though the expression form (`Object.assign(a, b)` → `$mergeObjects`) already worked everywhere else. Reported as a bug against the JS-idiomatic build-up pattern `const result = {}; Object.assign(result, { … });`.
