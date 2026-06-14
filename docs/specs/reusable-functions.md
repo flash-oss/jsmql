@@ -1,6 +1,6 @@
 # Reusable named functions
 
-**Status:** implemented (arrow form).
+**Status:** implemented (arrow form + the `function` keyword — see § The `function` keyword).
 
 How `const <name> = (params) => <body>;` declares a reusable function that is
 **not** lowered at the declaration, and how a call `name(args)` expands the body
@@ -58,7 +58,7 @@ Two additions in [src/ast.ts](../../src/ast.ts):
 
 ```ts
 type Lambda   = Extract<Expr, { type: "Lambda" }>;            // the arrow node, reusable standalone
-type FuncDecl = { type: "FuncDecl"; name: string; lambda: Lambda; kind: "let" | "const"; pos: number };
+type FuncDecl = { type: "FuncDecl"; name: string; lambda: Lambda; kind: "let" | "const"; form: "arrow" | "function"; pos: number };
 ```
 
 `PipelineStmt` and `ArrayElement` are both widened to include `FuncDecl`
@@ -68,8 +68,9 @@ type FuncDecl = { type: "FuncDecl"; name: string; lambda: Lambda; kind: "let" | 
 ## Lexer
 
 No new tokens. `function` is **not** a keyword — it lexes as an ordinary
-identifier, and the parser intercepts it at statement start to redirect to the
-arrow form ([DEF-030]).
+identifier (so `{ function: … }` object keys and `$.function` field paths keep
+working). The parser intercepts it *by value* only where a function
+expression/declaration can start. See § The `function` keyword.
 
 ## Parser
 
@@ -86,9 +87,9 @@ arrow form ([DEF-030]).
   block-body-arrow path (`parseExprBlockBody`) deliberately does **not** fork —
   functions are top-level-only, so a nested arrow-valued binding is rejected
   there with a precise "declare at the top level" message.
-- **`function`-keyword redirect** in `collectStatement()`: a leading identifier
-  `function` throws a friendly "use an arrow" error ([DEF-030]) instead of a
-  cryptic token error.
+- **`function`-keyword declaration** in `collectStatement()` / `parseArrayLiteral()`:
+  a leading identifier `function` is parsed by `parseFunctionDeclStatement()` into
+  the same `FuncDecl` node (`form: "function"`). See § The `function` keyword.
 - **Outside-a-pipeline rejection**: a sole `FuncDecl` with no `;` (and not
   bracketed) throws `throwFuncDeclOutsidePipeline` — same shape as the existing
   `let`-outside-pipeline rule.
@@ -191,16 +192,61 @@ call sites, exactly as for a hand-written IIFE.
 | Direct/mutual recursion | ``Recursive function calls aren't supported …`` |
 | Call to an undeclared name | ``Unknown function 'comput(...)'. Did you mean 'compute(...)'? …`` |
 | Function used as a value | ``'double' is a reusable function — call it with 'double(...)' …`` ([DEF-032]) |
-| `function` keyword | ``The `function` keyword isn't supported here — … use an arrow …`` ([DEF-030]) |
+| `function` body without `return` | ``A block body must end with a `return <expr>` statement …`` |
+| Generator `function*` | ``jsmql does not support generator functions (`function*`) …`` |
+| `function` predicate with local bindings | ``predicate has a block body with local `const`/`let` bindings, which isn't supported in this position …`` |
 | Re-declaration / name clash | ``Function `f` is already declared earlier in this pipeline …`` |
 | Nested declaration in an arrow body | ``Reusable functions must be declared at the top level of a pipeline …`` |
 | Declaration with no pipeline | ``A reusable function declaration (…) is only valid inside a pipeline …`` |
 
 All carry a meaningful `.pos`, so `validate()` underlines the offending span.
 
+## The `function` keyword
+
+The JS `function` keyword is a **second spelling** of the same surface, accepted
+everywhere an arrow is. It parses into the *same* `Lambda` / `FuncDecl` nodes, so
+codegen is unchanged — the whole feature is front-end (parser) only. `function`
+stays an ordinary identifier (not a lexer keyword), intercepted **by value**:
+
+- **Value position** (`parsePrimary`, top of the `Ident` branch): `function [name]
+  (params) { … }` → a `Lambda`. Covers inline callbacks (`.map(function (x) {
+  return x * 2 })`), IIFEs (`(function (x) { return x * 2 })(5)`), and `const f =
+  function (x) { … }`. JS allows naming a function expression, but the name is
+  unreachable in MQL (no recursion), so it is parsed and **discarded** —
+  `.map(function scale(x){…})` ≡ the anonymous form.
+- **Statement / array-element position** (`collectStatement` / `parseArrayLiteral`):
+  `function name(params) { … }` → a `FuncDecl` with `form: "function"`, identical
+  to `const name = (params) => …`.
+- **Entry form** (`parseFunctionInput`): `jsmql(function ($) { … })` /
+  `jsmql.compile(function (params, $) { … })`.
+
+**Body grammar.** A `function` body reuses `parseExprBlockBody` — `{ (const|let
+…;)* return <expr>; }`. A body whose only statement is `return E` is normalised to
+a plain expression-body `Lambda` (`body: E`), so it is byte-identical to `(x) => E`
+in **every** position — including the query-translation predicate positions
+(`$$$.coll.find/filter`, `$$.filter`, stream `.filter`) which translate a `body`
+expression. A body with leading `const`/`let` keeps the `exprBlock` (→ nested
+`$let`); such a body is rejected in a query-predicate position (inline the
+bindings).
+
+**Self-termination.** A `function` declaration ends at its closing `}` (JS-style),
+so the next statement may follow with **no `;`** — `function f(x){ return x*2 } $ =
+{ … }`. `form: "function"` drives this in the statement loops (`parse`,
+`parseBlockBody`, `parseLambdaBlockBody`); array elements stay `,`-separated.
+A `function` declaration forces Pipeline mode (it can't be a Filter), the same as
+`$ = …` and arrow `FuncDecl`s.
+
+**Entry block-body reconciliation.** At the entry, a brace body that opens with
+`return` is the value form (`{ return E }` ≡ `($) => E`); otherwise it is the
+existing `;`-pipeline body. This applies to both `=> {` and `function {`, which
+also fixes the long-broken `($) => { return E }`. A stray statement-position
+`return` in a pipeline body is rejected by `rejectReturn` with guidance.
+
+Rejected (matching the arrow form): `async function` / `function*` (generator),
+default / rest / destructured params.
+
 ## Deferred
 
-- **`function` keyword declaration form** ([DEF-030]).
 - **Function-aware Filters via textual inline** ([DEF-031]) — functions in a bare
   Filter (no `;`) would be inlined into the predicate rather than `$let`-bound.
 - **Higher-order functions** ([DEF-032]) — passing a function as a value.

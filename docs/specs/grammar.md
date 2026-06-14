@@ -18,7 +18,15 @@ pipeline_program
 
 pipeline_stmt  = update_filter
                | let_decl
+               | function_decl
                | expression           (* must compile to a stage at codegen *)
+
+function_decl  = "function" IDENT "(" [IDENT ("," IDENT)*] ")" expr_block
+               (* reusable-function declaration; the keyword spelling of
+                  `const IDENT = (params) => <body>`. Self-terminating: its
+                  closing `}` ends the statement, so the next pipeline_stmt may
+                  follow with no `;` (and its presence flips into pipeline mode).
+                  See docs/specs/reusable-functions.md § The `function` keyword. *)
 
 let_decl       = ("let" | "const") IDENT "=" expression
                (* pipeline-scoped local binding; see docs/specs/let-bindings.md.
@@ -112,6 +120,7 @@ primary        = operator_call
                | array_literal
                | object_literal
                | lambda_paren                                (* (x) => expr *)
+               | function_expr                               (* function (x) { return expr } *)
                | "(" expression ")"                          (* also accepts (x => expr) *)
                | IDENT                                       (* param_ref — lambda param or type cast name *)
 
@@ -154,6 +163,13 @@ lambda_unparen = IDENT "=>" lambda_body                      (* x => expr | x =>
 lambda_paren   = "(" [IDENT ("," IDENT)*] ")" "=>" lambda_body  (* (x, y) => … *)
 lambda_body    = expr_block | expression
 expr_block     = "{" (let_decl ";")* "return" expression [";"] "}"   (* lowers to nested $let *)
+function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)*] ")" expr_block
+               (* a function expression — the same node a block-body arrow
+                  produces. An optional name is parsed and discarded (unreachable
+                  in MQL). A single-`return` body normalises to a plain
+                  expression body, so it is identical to `(x) => <expr>`
+                  everywhere. `function` is not a keyword token — the parser
+                  intercepts the identifier by value. *)
 
 math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
 MATH_METHOD    = (* see `MathMethod` in src/ast.ts *)
@@ -222,7 +238,7 @@ Every expression accepted by this grammar is also valid JavaScript syntax. Addin
 
 ## Function-form input is not part of the grammar
 
-`jsmql()` and `validate()` are polymorphic: each accepts a string, an arrow function, or a template-tag invocation (see [architecture.md](architecture.md)). When given a function, an adapter in `src/index.ts` extracts the body via `Function.prototype.toString()` and feeds the body to the parser — the arrow wrapper itself never reaches the parser and is **not** described by this grammar. When called as a template tag, the adapter joins the literal chunks with `JSON.stringify`'d interpolations and feeds the resulting source to the parser. In every case the parser sees ordinary `expression`-conforming source, so this grammar covers all three call shapes.
+`jsmql()` and `validate()` are polymorphic: each accepts a string, a function (an arrow `($) => …` or a `function ($) { return … }`), or a template-tag invocation (see [architecture.md](architecture.md)). When given a function, an adapter in `src/index.ts` extracts the body via `Function.prototype.toString()` and feeds the body to the parser — the function wrapper itself never reaches the parser and is **not** described by this grammar. A `function ($) { return <expr> }` entry body is the value form (≡ `($) => <expr>`); a `function ($) { <stmts> }` body is the `;`-pipeline form (≡ `($) => { <stmts> }`). When called as a template tag, the adapter joins the literal chunks with `JSON.stringify`'d interpolations and feeds the resulting source to the parser. In every case the parser sees ordinary `expression`-conforming source, so this grammar covers all three call shapes.
 
 ## Template literals
 

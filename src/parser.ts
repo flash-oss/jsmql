@@ -25,6 +25,7 @@ import type {
   DeleteStmt,
   LetDecl,
   FuncDecl,
+  Lambda,
   ExprBlock,
   UpdateOp,
   UpdateFilter,
@@ -161,15 +162,26 @@ export class Parser {
     // more comma-separated update ops). Any presence of `;` — including a
     // single trailing one — flips the input to pipeline mode (`Pipeline`),
     // and each `;`-separated chunk becomes its own stage(s) in the lowerer
-    // with no cross-coalescing. Without any `;`, behaviour is unchanged:
+    // with no cross-coalescing. A `function …(){ … }` declaration is also
+    // self-terminating (its `}` ends the statement, no `;` needed), so it too
+    // flips to pipeline mode. Without any of these, behaviour is unchanged:
     // the single statement is returned as `Expr` or `UpdateFilter`.
     const stmts: PipelineStmt[] = [this.collectStatement()];
-    let sawSemi = false;
-    while (this.lexer.peek().type === TokenType.Semi) {
-      this.lexer.next(); // consume `;`
-      sawSemi = true;
-      if (this.lexer.peek().type === TokenType.EOF) break; // trailing `;`
-      stmts.push(this.collectStatement());
+    let multi = false;
+    while (true) {
+      if (this.lexer.peek().type === TokenType.Semi) {
+        this.lexer.next(); // consume `;`
+        multi = true;
+        if (this.lexer.peek().type === TokenType.EOF) break; // trailing `;`
+        stmts.push(this.collectStatement());
+        continue;
+      }
+      if (this.selfTerminates(stmts[stmts.length - 1]) && this.lexer.peek().type !== TokenType.EOF) {
+        multi = true;
+        stmts.push(this.collectStatement());
+        continue;
+      }
+      break;
     }
 
     const eof = this.lexer.peek();
@@ -177,13 +189,23 @@ export class Parser {
       throw new ParseError(`Unexpected token '${eof.value}' at position ${eof.pos}`, eof.pos);
     }
 
-    if (!sawSemi) {
+    if (!multi) {
       const only = stmts[0];
       if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
       if (only.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(only.name, only.pos);
       return only;
     }
     return { type: "Pipeline", stmts, pos: stmts[0].pos };
+  }
+
+  /**
+   * A `function`-keyword declaration is self-terminating (JS-style): its closing
+   * `}` ends the statement, so the next statement may follow with no `;`. Every
+   * other statement (including an arrow-form `const f = … => …` declaration)
+   * still needs the usual `;` separator.
+   */
+  private selfTerminates(stmt: PipelineStmt): boolean {
+    return stmt.type === "FuncDecl" && stmt.form === "function";
   }
 
   /**
@@ -204,20 +226,46 @@ export class Parser {
     const first = this.lexer.peek();
     if (first.type === TokenType.Ident && first.value === "async") {
       throw new FunctionInputError(
-        "jsmql does not support async functions. Use a synchronous arrow: `($) => …`",
+        "jsmql does not support async functions. Use a synchronous arrow `($) => …` or `function ($) { return … }`.",
         first.pos,
       );
     }
+    // The `function` keyword form: `function [name] (params) { … }`. Consume the
+    // keyword + optional (discarded) name, then fall through to the shared
+    // parameter-list parse; the body is a brace block (no `=>`).
+    let isFunctionForm = false;
     if (first.type === TokenType.Ident && first.value === "function") {
-      throw new FunctionInputError(
-        "jsmql expects an arrow function, got a `function` declaration. Use: `($) => …`",
-        first.pos,
-      );
+      this.lexer.next(); // consume `function`
+      if (this.lexer.peek().type === TokenType.Star) {
+        throw new FunctionInputError(
+          "jsmql does not support generator functions (`function*`). Use `function ($) { return … }` or an arrow `($) => …`.",
+          this.lexer.peek().pos,
+        );
+      }
+      if (this.lexer.peek().type === TokenType.Ident) this.lexer.next(); // optional name — unreachable in MQL, discarded
+      isFunctionForm = true;
     }
-    if (first.type !== TokenType.LParen) {
-      throw new FunctionInputError("jsmql expects an arrow function `($) => …` as the function-form input.", first.pos);
+    if (this.lexer.peek().type !== TokenType.LParen) {
+      const tok = this.lexer.peek();
+      throw new FunctionInputError(
+        isFunctionForm
+          ? "jsmql expected '(' to start the parameter list of the `function` input."
+          : "jsmql expects an arrow function `($) => …` (or `function ($) { return … }`) as the function-form input.",
+        tok.pos,
+      );
     }
     const bindings = this.parseParameterList();
+
+    if (isFunctionForm) {
+      if (this.lexer.peek().type !== TokenType.LBrace) {
+        const tok = this.lexer.peek();
+        throw new FunctionInputError(
+          "jsmql expected '{' to start the body of the `function` input — a `function` body is a block, e.g. `function ($) { return <expr> }`.",
+          tok.pos,
+        );
+      }
+      return { program: this.parseEntryBlockBody(), bindings };
+    }
 
     const arrowTok = this.lexer.peek();
     if (arrowTok.type !== TokenType.Arrow) {
@@ -228,8 +276,50 @@ export class Parser {
     }
     this.lexer.next(); // consume `=>`
 
-    const program = this.lexer.peek().type === TokenType.LBrace ? this.parseBlockBody() : this.parseExpressionBody();
-    return { program, bindings };
+    if (this.lexer.peek().type === TokenType.LBrace) return { program: this.parseEntryBlockBody(), bindings };
+    return { program: this.parseExpressionBody(), bindings };
+  }
+
+  /**
+   * Dispatch the brace body of an entry-form function/arrow (`jsmql(($) => { … })`
+   * / `jsmql(function ($) { … })`). Cursor is at `{`. Two shapes, mirroring what
+   * arrows can already express at the entry:
+   *   - **Value form** `{ return <expr> }` — the body opens directly with
+   *     `return`. Equivalent to the expression-body entry `($) => <expr>`; the
+   *     program is the bare `<expr>` (so it lowers to a Filter / expression /
+   *     parameterised builder, with no `$let` envelope). This also makes the
+   *     long-broken `($) => { return … }` work, in line with value-position
+   *     lambdas.
+   *   - **Pipeline form** `{ stmt; stmt; … }` — anything else; a `;`-separated
+   *     sequence of stage / update-op / let / `function`-decl statements.
+   * A "locals then return" body (`{ const a = …; return a }`) has no arrow
+   * precedent at the entry, so it routes to the pipeline form where `rejectReturn`
+   * surfaces an actionable message.
+   */
+  private parseEntryBlockBody(): Program {
+    if (this.lexer.lookahead(1).type === TokenType.Return) return this.parseEntryReturnBody();
+    return this.parseBlockBody();
+  }
+
+  /** Parse the entry value body `{ return <expr> ;? }` → the bare `<expr>`. */
+  private parseEntryReturnBody(): Program {
+    this.lexer.next(); // consume `{`
+    this.lexer.next(); // consume `return`
+    const expr = this.parseExpression();
+    if (this.lexer.peek().type === TokenType.Semi) this.lexer.next(); // optional trailing `;`
+    const close = this.lexer.peek();
+    if (close.type !== TokenType.RBrace) {
+      throw new ParseError(
+        `Expected '}' to close the \`{ return … }\` body at position ${close.pos}, got ${formatActualToken(close)}.`,
+        close.pos,
+      );
+    }
+    this.lexer.next(); // consume `}`
+    const eof = this.lexer.peek();
+    if (eof.type !== TokenType.EOF) {
+      throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
+    }
+    return expr;
   }
 
   /**
@@ -516,13 +606,25 @@ export class Parser {
 
     this.rejectReturn();
     const stmts: PipelineStmt[] = [this.collectStatement()];
-    let sawSemi = false;
-    while (this.lexer.peek().type === TokenType.Semi) {
-      this.lexer.next();
-      sawSemi = true;
-      if (this.lexer.peek().type === TokenType.RBrace) break;
-      this.rejectReturn();
-      stmts.push(this.collectStatement());
+    let multi = false;
+    while (true) {
+      if (this.lexer.peek().type === TokenType.Semi) {
+        this.lexer.next();
+        multi = true;
+        if (this.lexer.peek().type === TokenType.RBrace) break;
+        this.rejectReturn();
+        stmts.push(this.collectStatement());
+        continue;
+      }
+      // A `function …(){ … }` declaration is self-terminating — the next
+      // statement may follow its `}` with no `;`.
+      if (this.selfTerminates(stmts[stmts.length - 1]) && this.lexer.peek().type !== TokenType.RBrace) {
+        multi = true;
+        this.rejectReturn();
+        stmts.push(this.collectStatement());
+        continue;
+      }
+      break;
     }
 
     const closeTok = this.lexer.peek();
@@ -536,7 +638,7 @@ export class Parser {
       throw new ParseError(`Unexpected token after function body at position ${eof.pos}`, eof.pos);
     }
 
-    if (!sawSemi) {
+    if (!multi) {
       const only = stmts[0];
       if (only.type === "LetDecl") this.throwLetOutsidePipeline(only.name, only.pos);
       if (only.type === "FuncDecl") this.throwFuncDeclOutsidePipeline(only.name, only.pos);
@@ -583,19 +685,24 @@ export class Parser {
   }
 
   /**
-   * Throw a precise `FunctionInputError` if the next token is the bare
-   * identifier `return`. Called at every statement-start position inside
-   * a block body, so a `return` token *inside* a string or expression
-   * (where it would just be a property name like `obj.return`) doesn't
-   * false-fire — only true statement-leading `return`s reach this check.
+   * Throw a precise `FunctionInputError` if the next token is a statement-leading
+   * `return`. Called at every statement-start position inside a function-input
+   * **pipeline** block body. The pure value form `{ return <expr> }` is routed
+   * away before reaching here (see `parseFunctionInput`), so a `return` that
+   * lands here is a control-flow `return` mixed into a `;`-separated pipeline
+   * body (e.g. `($) => { $.x = 1; return $.y }`) — which has no MQL meaning. The
+   * check is statement-position-only, so a `return` used as a property name
+   * (`$.return`) — which lexes as a `Return` token after a `.` — never reaches a
+   * statement-start position and so doesn't false-fire.
    */
   private rejectReturn(): void {
     const tok = this.lexer.peek();
-    if (tok.type === TokenType.Ident && tok.value === "return") {
+    if (tok.type === TokenType.Return) {
       throw new FunctionInputError(
-        "jsmql block-body arrows are a sequence of jsmql statements, not JavaScript control flow. " +
-          "Remove `return` — write the body as `;`-separated jsmql statements, or switch to an " +
-          "expression-body arrow `($) => EXPR`.",
+        "A `return` here isn't a jsmql statement. A function/arrow body is either a single " +
+          "`{ return <expr> }` (the value form, e.g. `($) => { return $.age }`) or a `;`-separated " +
+          "sequence of jsmql statements (no `return`). For a value computed from locals, use " +
+          "`jsmql.expr` or fold the bindings into the returned expression.",
         tok.pos,
       );
     }
@@ -609,15 +716,12 @@ export class Parser {
   private collectStatement(): PipelineStmt {
     const first = this.lexer.peek();
 
-    // `function foo(...) { … }` — the `function` keyword declaration form is
-    // deferred [DEF-030]; arrows are the reusable-function syntax. Surface a
-    // friendly redirect instead of a cryptic "unexpected token".
+    // `function foo(...) { return … }` — a reusable function declaration, the
+    // keyword spelling of `const foo = (...) => …`. Forks to the same `FuncDecl`
+    // node; `form: "function"` makes it self-terminating (no `;` needed after
+    // the closing `}` — see the statement loops).
     if (first.type === TokenType.Ident && first.value === "function") {
-      throw new ParseError(
-        `The \`function\` keyword isn't supported here — declare a reusable function with an arrow: ` +
-          `\`const foo = (a) => …;\`, then call \`foo(...)\`.`,
-        first.pos,
-      );
+      return this.parseFunctionDeclStatement();
     }
 
     // `let <ident> = <expr>` (or the `const` alias) — pipeline-scoped local
@@ -720,7 +824,7 @@ export class Parser {
   private parseDeclStatement(): LetDecl | FuncDecl {
     const decl = this.parseLetDecl();
     if (decl.value.type === "Lambda") {
-      return { type: "FuncDecl", name: decl.name, lambda: decl.value, kind: decl.kind, pos: decl.pos };
+      return { type: "FuncDecl", name: decl.name, lambda: decl.value, kind: decl.kind, form: "arrow", pos: decl.pos };
     }
     return decl;
   }
@@ -733,9 +837,10 @@ export class Parser {
    */
   private throwFuncDeclOutsidePipeline(name: string, pos: number): never {
     throw new ParseError(
-      `A reusable function declaration (\`const ${name} = (…) => …\`) is only valid inside a pipeline. ` +
-        `Add at least one more statement separated by \`;\` that calls \`${name}\` ` +
-        `(e.g. \`const ${name} = …; $ = { … }\`), or use the bracketed form \`[ const ${name} = …, … ]\`.`,
+      `A reusable function declaration (\`function ${name}(…) { … }\` / \`const ${name} = (…) => …\`) ` +
+        `is only valid inside a pipeline. Add at least one more statement that calls \`${name}\` ` +
+        `(e.g. \`function ${name}(…) { … } $ = { … }\`, or \`const ${name} = …; $ = { … }\`), ` +
+        `or use the bracketed form \`[ const ${name} = …, … ]\`.`,
       pos,
     );
   }
@@ -1447,6 +1552,23 @@ export class Parser {
         return this.parseGrouped();
       case TokenType.Ident: {
         const name = t.value;
+        // `function (…) { return … }` / `function foo(…) { … }` in value
+        // position — an inline function expression or IIFE callee. Normalised to
+        // the same `Lambda` node arrows produce (the name, if any, is unreachable
+        // in MQL and discarded). Must come first: `function` lexes as an ordinary
+        // identifier (it is deliberately not a keyword, so `{ function: … }` and
+        // `$.function` keep working), so we intercept it here by value.
+        if (name === "function") return this.parseFunctionExpr(/* requireName */ false).lambda;
+        if (
+          name === "async" &&
+          this.lexer.lookahead(1).type === TokenType.Ident &&
+          this.lexer.lookahead(1).value === "function"
+        ) {
+          throw new ParseError(
+            `jsmql does not support async functions. Use a synchronous \`function (…) { return … }\` or an arrow.`,
+            t.pos,
+          );
+        }
         if (name === "Math") return this.parseMathReference();
         if (name === "Object") return this.parseObjectCall();
         if (name === "Date" && this.lexer.lookahead(1).type === TokenType.Dot) {
@@ -1675,9 +1797,15 @@ export class Parser {
     return { type: "Lambda", params: [paramTok.value], body, pos: paramTok.pos };
   }
 
-  /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
-  private parseLambdaParen(blockKind: "pipeline" | "expr" = "expr"): Expr {
-    const lparen = this.lexer.next(); // consume (
+  /**
+   * Parse `( Ident (, Ident)* )` or `()` — the bare-identifier parameter list
+   * shared by arrow lambdas (`parseLambdaParen`) and `function` expressions
+   * (`parseFunctionExpr`). Cursor must be at `(`; consumes through the closing
+   * `)`. No defaults / rest / destructuring (same as arrows — an unsupported
+   * shape surfaces the `expect(Ident)` error at the offending token).
+   */
+  private parseParenParamNames(): string[] {
+    this.lexer.expect(TokenType.LParen);
     const params: string[] = [];
     if (this.lexer.peek().type !== TokenType.RParen) {
       params.push(this.lexer.expect(TokenType.Ident).value);
@@ -1687,6 +1815,13 @@ export class Parser {
       }
     }
     this.lexer.expect(TokenType.RParen);
+    return params;
+  }
+
+  /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
+  private parseLambdaParen(blockKind: "pipeline" | "expr" = "expr"): Expr {
+    const lparen = this.lexer.peek(); // `(` — captured for `pos`
+    const params = this.parseParenParamNames();
     this.lexer.expect(TokenType.Arrow);
     if (this.lexer.peek().type === TokenType.LBrace) {
       if (blockKind === "pipeline") {
@@ -1698,6 +1833,83 @@ export class Parser {
     }
     const body = this.parseExpression();
     return { type: "Lambda", params, body, pos: lparen.pos };
+  }
+
+  /**
+   * Parse a `function` expression into the SAME `Lambda` node an arrow
+   * produces — `function [name](params) { (const|let …;)* return <expr>; }`
+   * becomes `{ type: "Lambda", params, exprBlock }`. A JS `function` body is
+   * always a brace block, so it reuses `parseExprBlockBody` (the value-returning
+   * `{ … return … }` grammar) verbatim; codegen then treats it exactly like a
+   * block-body arrow.
+   *
+   * `requireName` is `true` at statement / array-element position (a declaration
+   * needs a name, like JS); `false` in value position, where JS permits a named
+   * function expression but the name is unreachable in MQL (no recursion), so
+   * the returned `name` is simply ignored by value-position callers —
+   * `.map(function scale(x){…})` ≡ the anonymous form. Returns the parsed name
+   * (if any) alongside the `Lambda` so declaration callers can build a FuncDecl.
+   */
+  private parseFunctionExpr(requireName: boolean): { name: string | undefined; lambda: Lambda } {
+    const fnTok = this.lexer.next(); // consume the `function` identifier
+    if (this.lexer.peek().type === TokenType.Star) {
+      throw new ParseError(
+        `jsmql does not support generator functions (\`function*\`). Use a plain \`function (…) { return … }\` or an arrow.`,
+        this.lexer.peek().pos,
+      );
+    }
+    // Optional (value position) / required (declaration) name.
+    let name: string | undefined;
+    if (this.lexer.peek().type === TokenType.Ident) {
+      name = this.lexer.next().value;
+    } else if (requireName) {
+      const tok = this.lexer.peek();
+      throw new ParseError(
+        `Expected a function name after \`function\` at position ${tok.pos}, got ${formatActualToken(tok)}. ` +
+          `A \`function\` declaration needs a name — write \`function foo(a) { return … }\`.`,
+        tok.pos,
+      );
+    }
+    if (this.lexer.peek().type !== TokenType.LParen) {
+      const tok = this.lexer.peek();
+      throw new ParseError(
+        `Expected '(' to start the parameter list of \`function${name ? ` ${name}` : ""}\` at position ${tok.pos}, ` +
+          `got ${formatActualToken(tok)}.`,
+        tok.pos,
+      );
+    }
+    const params = this.parseParenParamNames();
+    if (this.lexer.peek().type !== TokenType.LBrace) {
+      const tok = this.lexer.peek();
+      throw new ParseError(
+        `Expected '{' to start the body of \`function${name ? ` ${name}` : ""}(…)\` at position ${tok.pos}, ` +
+          `got ${formatActualToken(tok)}. A \`function\` body is a block ending in \`return <expr>\`.`,
+        tok.pos,
+      );
+    }
+    const exprBlock = this.parseExprBlockBody();
+    // A block whose only statement is `return E` IS the expression `E` — emit a
+    // plain expression-body Lambda so `function (x) { return E }` is byte-for-byte
+    // `(x) => E` everywhere (value position AND the query-translation predicate
+    // positions — `$$$.coll.find/filter`, `$$.filter`, stream `.filter` — which
+    // translate a `body` expression but don't special-case `exprBlock`). Bodies
+    // with leading `const`/`let` keep the `exprBlock` (→ nested `$let`).
+    const lambda: Lambda =
+      exprBlock.decls.length === 0
+        ? { type: "Lambda", params, body: exprBlock.ret, pos: fnTok.pos }
+        : { type: "Lambda", params, exprBlock, pos: fnTok.pos };
+    return { name, lambda };
+  }
+
+  /**
+   * Parse a `function <name>(params) { … }` DECLARATION at a pipeline-statement
+   * or array-element position, forking into a reusable `FuncDecl` (the same node
+   * `const <name> = (params) => …` produces). `form: "function"` marks it
+   * self-terminating (see `FuncDecl` in ast.ts). Mirrors `parseDeclStatement`.
+   */
+  private parseFunctionDeclStatement(): FuncDecl {
+    const { name, lambda } = this.parseFunctionExpr(/* requireName */ true);
+    return { type: "FuncDecl", name: name!, lambda, kind: "const", form: "function", pos: lambda.pos };
   }
 
   /**
@@ -1718,10 +1930,20 @@ export class Parser {
       );
     }
     const stmts: PipelineStmt[] = [this.collectStatement()];
-    while (this.lexer.peek().type === TokenType.Semi) {
-      this.lexer.next();
-      if (this.lexer.peek().type === TokenType.RBrace) break;
-      stmts.push(this.collectStatement());
+    while (true) {
+      if (this.lexer.peek().type === TokenType.Semi) {
+        this.lexer.next();
+        if (this.lexer.peek().type === TokenType.RBrace) break;
+        stmts.push(this.collectStatement());
+        continue;
+      }
+      // A `function …(){ … }` declaration is self-terminating (no `;` needed
+      // after its `}`), consistent with the other statement loops.
+      if (this.selfTerminates(stmts[stmts.length - 1]) && this.lexer.peek().type !== TokenType.RBrace) {
+        stmts.push(this.collectStatement());
+        continue;
+      }
+      break;
     }
     const closeTok = this.lexer.peek();
     if (closeTok.type !== TokenType.RBrace) {
@@ -1772,8 +1994,9 @@ export class Parser {
     const ret = this.lexer.peek();
     if (ret.type !== TokenType.Return) {
       throw new ParseError(
-        `A block-body arrow must end with a \`return <expr>\` statement at position ${ret.pos}, got ${formatActualToken(ret)}. ` +
-          `Write \`x => { const a = …; return <expr>; }\`, or \`x => (<expr>)\` to return an object/expression directly.`,
+        `A block body must end with a \`return <expr>\` statement at position ${ret.pos}, got ${formatActualToken(ret)}. ` +
+          `Write \`x => { const a = …; return <expr>; }\` / \`function f(x) { return <expr>; }\`, ` +
+          `or \`x => (<expr>)\` to return an object/expression directly.`,
         ret.pos,
       );
     }
@@ -2083,6 +2306,12 @@ export class Parser {
         // Codegen rejects either if the array is not a pipeline (parallel to
         // AssignExpr/DeleteStmt handling).
         elements.push(this.parseDeclStatement());
+      } else if (this.lexer.peek().type === TokenType.Ident && this.lexer.peek().value === "function") {
+        // `function foo(...) { return … }` as a pipeline element — the keyword
+        // spelling of a `const foo = (...) => …` declaration. (Array elements are
+        // `,`-separated by JS syntax, so no self-termination handling is needed
+        // here, unlike the `;`-separated statement loops.)
+        elements.push(this.parseFunctionDeclStatement());
       } else if (this.peekIncDecOp() !== null) {
         // Prefix `++$.x` / `--$.x` as a pipeline element.
         elements.push(this.parsePrefixIncDec());

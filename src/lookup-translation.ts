@@ -726,7 +726,7 @@ export function translatePredicate(
   }
 
   throw new CodegenError(
-    `.${call.method}(predicate) lambda is missing a body — internal parser bug; please report.`,
+    `.${call.method}(predicate) predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
     lambda.pos,
   );
 }
@@ -790,7 +790,10 @@ export function buildPipelineFormPredicate(
     const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
     return { letVars, pipelineBody: lowerBlock(rewritten, subCtx) };
   }
-  throw new CodegenError(`Predicate lambda is missing a body — internal parser bug; please report.`, lambda.pos);
+  throw new CodegenError(
+    `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
+    lambda.pos,
+  );
 }
 
 /**

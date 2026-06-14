@@ -140,7 +140,7 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
     onLocalRef: rejectLocalRef,
     missingBody: () => {
       throw new CodegenError(
-        `\`$$.filter(p)\` lambda is missing a body — internal parser bug; please report.`,
+        `\`$$.filter(p)\` predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
         lambda.pos,
       );
     },

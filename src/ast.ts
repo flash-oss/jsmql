@@ -45,16 +45,31 @@ export type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" 
 export type Lambda = Extract<Expr, { type: "Lambda" }>;
 
 /**
- * Reusable named function declaration: `const <name> = (params) => <body>` (or
- * the `let` alias). Distinct from `LetDecl` purely by the initialiser being an
- * arrow function — the parser forks on that at pipeline-statement positions.
+ * Reusable named function declaration. Two spellings, one node:
+ *   - arrow:    `const <name> = (params) => <body>` (or the `let` alias)
+ *   - keyword:  `function <name>(params) { … return … }`
+ * Distinct from `LetDecl` purely by the initialiser being an arrow / by the
+ * `function` keyword — the parser forks on that at pipeline-statement positions.
  * The declaration emits NO stage; it registers `name → lambda` in a
  * compile-time table (`GenerateCtx.functions`). A call `name(args)` expands the
  * body INLINE at the call site as an IIFE → `$let` (re-lowered per call). Only
  * valid at the top level of a pipeline, same as `LetDecl`. See
  * `docs/specs/reusable-functions.md`.
+ *
+ * `form` records which spelling was used. Codegen ignores it (both lower
+ * identically); the parser reads it for one purpose only — a `"function"`
+ * declaration is **self-terminating** (its closing `}` ends the statement, no
+ * `;` needed before the next, JS-style), whereas an `"arrow"` declaration needs
+ * the usual `;` separator.
  */
-export type FuncDecl = { type: "FuncDecl"; name: string; lambda: Lambda; kind: "let" | "const"; pos: number };
+export type FuncDecl = {
+  type: "FuncDecl";
+  name: string;
+  lambda: Lambda;
+  kind: "let" | "const";
+  form: "arrow" | "function";
+  pos: number;
+};
 
 /**
  * Expression-block body of an arrow function: zero or more `const`/`let`

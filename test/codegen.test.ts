@@ -4097,20 +4097,28 @@ describe("function overload", () => {
     expect(jsmql.expr(($) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
   });
 
-  it("rejects `return` inside a block-body arrow with a clear error", () => {
-    expect(() =>
+  it("accepts a `{ return <expr> }` block-body arrow (value form ≡ the expression body)", () => {
+    expect(
       jsmql.expr(($) => {
         return $.age > 18;
       }),
-    ).toThrow(/return/);
+    ).toEqual({ $gt: ["$age", 18] });
   });
 
-  it("rejects a `function` declaration", () => {
-    expect(() =>
+  it("accepts a `function` input (≡ the arrow form)", () => {
+    expect(
       jsmql.expr(function ($) {
         return $.age > 18;
       }),
-    ).toThrow(/arrow function/);
+    ).toEqual({ $gt: ["$age", 18] });
+  });
+
+  it("accepts a named `function` input — the name is discarded", () => {
+    expect(
+      jsmql.expr(function predicate($) {
+        return $.age > 18;
+      }),
+    ).toEqual({ $gt: ["$age", 18] });
   });
 
   it("rejects an async arrow", () => {
@@ -4131,10 +4139,8 @@ describe("function overload", () => {
     expect(r.errors[0]?.message).toMatch(/jsmql`` template tag/);
   });
 
-  it("jsmql.validate() reports SYNTAX_ERROR for an unsupported function shape", () => {
-    const r = jsmql.validate(($) => {
-      return $.age > 18;
-    });
+  it("jsmql.validate() reports SYNTAX_ERROR for an unsupported function shape (async)", () => {
+    const r = jsmql.validate(async ($) => $.age > 18);
     expect(r.valid).toBe(false);
     expect(r.errors[0]?.code).toBe("SYNTAX_ERROR");
   });

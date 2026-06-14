@@ -1512,6 +1512,44 @@ $ = {
   });
 });
 
+describe(
+  "order pricing — same helper, written with the `function` keyword",
+  { features: ["Reusable functions"] },
+  () => {
+    // The `function` keyword is a second spelling of the reusable-function form —
+    // paste JS as you'd write it. The declaration is self-terminating (no `;`
+    // after the `}`), and it lowers to byte-identical MQL to the arrow form above.
+    it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+      expect(
+        jsmql(`
+function money(n) { return Math.round(n * 100) / 100 }
+$ = {
+  subtotal: money($.price * $.qty),
+  tax: money($.price * $.qty * $.taxRate),
+};
+      `),
+      ).toEqual([
+        {
+          $replaceWith: {
+            subtotal: {
+              $let: {
+                vars: { n: { $multiply: ["$price", "$qty"] } },
+                in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              },
+            },
+            tax: {
+              $let: {
+                vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
+                in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              },
+            },
+          },
+        },
+      ]);
+    });
+  },
+);
+
 describe("$round of $sum as a plain expression", { features: ["Escape hatch"] }, () => {
   it(
     "compiles to the expected MQL",
