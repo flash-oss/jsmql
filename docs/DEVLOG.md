@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-14 — fix: bare `$ = <expr>` (no `;`) now emits `$replaceWith`, not `$set` on the `""` field path
+
+A root-replace `$ = <expr>` written as the **only** statement (no trailing `;`) was lowering to `[{ $set: { "": <expr> } }]` — a `$set` on an empty-string field path — instead of the `$replaceWith` its `;`-terminated twin produces. The cause: without a `;`, the parser yields a one-op `UpdateFilter` (not a `Pipeline`), so the assignment never reached `tryLowerAssignSugar` / `lowerReplaceRoot`; `generateUpdateFilter` then treated the bare `$` target (`FieldRef { path: "" }`) as an ordinary field update. The empty-key `$set` is meaningless/invalid MQL, so this violated HR3.
+
+Fix: a new `updateFilterHasReplaceRoot` (in [src/pipeline.ts](../src/pipeline.ts), beside `isReplaceRootAssign`) detects a `$ = …` op inside an UpdateFilter, and [src/index.ts](../src/index.ts) reroutes such an UpdateFilter through `generateImplicitPipeline` — wrapping it as a one-statement `Pipeline`, which reproduces the `;`-form exactly (full reuse of `lowerReplaceRoot`: `$replaceWith`, the array fan-out, and the non-document/compound-assign rejections all carry over). This is the **same reroute the `$out` sugar already uses** (`containsOutAssign`), added in the two parallel spots: `lowerProgram` (covers `jsmql()` + `jsmql.expr()`) and `lowerToPipelineStages` (covers `jsmql.pipeline()` + `jsmql.update()`, where `$replaceWith` is whitelisted). `jsmql.filter()` now rejects a bare `$ = <expr>` with a root-replace-specific message instead of the generic "update-op chain" one. Normal field updates (`$.x = 1`, `$.x = 1, $.y = 2`) are untouched (the reroute only fires when a `$ =` op is present). Verified end-to-end on a running `mongod` (`$ = { a: 1, b: $.x }` over `{x:7,junk:1}` → `{a:1,b:7}` — root replaced, extra fields dropped). Files: [src/pipeline.ts](../src/pipeline.ts), [src/index.ts](../src/index.ts), [docs/specs/replace-root-stage.md](specs/replace-root-stage.md), [test/pipeline.test.ts](../test/pipeline.test.ts).
+
+---
+
 ## 2026-06-14 — feat: the `function` keyword — usable everywhere arrows are (closes DEF-030)
 
 The JS `function` keyword is now accepted as a **second spelling** of the reusable-function / lambda surface, in every position an arrow works: a declaration (`function double(x) { return x * 2 }`), an inline callback (`.map(function (x) { return x * 2 })`), an IIFE (`(function (x) { return x * 2 })(5)`), and the entry form (`jsmql(function ($) { return $.age >= 18 })` / `jsmql.compile(function (p, $) { … })`). This closes **[DEF-030]** — and goes beyond its original "declaration only" scope to the full surface, at the developer's request ("everywhere"). The keyword form lowers to **byte-identical** MQL to the arrow equivalent; verified end-to-end on a running `mongod` (declaration pipeline, inline `$map`, entry-form Filter).

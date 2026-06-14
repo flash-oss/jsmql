@@ -11,7 +11,7 @@ import {
   isOpaqueBsonValue,
   type GenerateCtx,
 } from "./codegen.ts";
-import { isPipelineAst, generatePipeline, generateImplicitPipeline } from "./pipeline.ts";
+import { isPipelineAst, generatePipeline, generateImplicitPipeline, updateFilterHasReplaceRoot } from "./pipeline.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
 import { LexError, Lexer, TokenType } from "./lexer.ts";
@@ -719,7 +719,17 @@ type ExprLowering = (ast: Expr, ctx: GenerateCtx) => object;
 
 function lowerProgram(ast: Program, ctx: GenerateCtx, lowerExpr: ExprLowering): JsmqlOutput {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
-  if (ast.type === "UpdateFilter") return generateUpdateFilter(ast, ctx);
+  if (ast.type === "UpdateFilter") {
+    // A bare `$ = <expr>` (root-replace sugar) written without a `;` parses as a
+    // one-op UpdateFilter, not a Pipeline, so it skips `tryLowerAssignSugar`.
+    // Reroute it through the pipeline lowerer so it emits `$replaceWith` —
+    // identical to the `;`-terminated form — rather than a meaningless `$set` on
+    // the "" field path. Same reroute the `$out` sugar uses (`containsOutAssign`).
+    if (updateFilterHasReplaceRoot(ast)) {
+      return generateImplicitPipeline({ type: "Pipeline", stmts: [ast], pos: ast.pos }, ctx);
+    }
+    return generateUpdateFilter(ast, ctx);
+  }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
   return lowerExpr(ast, ctx);
 }
@@ -890,6 +900,13 @@ function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     );
   }
   if (ast.type === "UpdateFilter") {
+    if (updateFilterHasReplaceRoot(ast)) {
+      throw new CodegenError(
+        "jsmql.filter() expects a Filter, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). " +
+          "Call jsmql.pipeline() or jsmql() for Pipeline output.",
+        ast.pos,
+      );
+    }
     throw new CodegenError(
       "jsmql.filter() expects a Filter, but received an update-op chain (e.g. `$.x = …`, `delete $.x`). " +
         "Update-op chains compile to `$set` / `$unset` stages — call jsmql.update() or jsmql() for the Pipeline form.",
@@ -1032,10 +1049,12 @@ function rejectOutOutsidePipeline(ast: Program, apiName: string): void {
 function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string): object[] {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx) as object[];
   if (ast.type === "UpdateFilter") {
-    // `$out` sugar (`$$$.<coll> = …`) inside an UpdateFilter must go through
-    // pipeline lowering — `generateUpdateFilter` doesn't know about it. Reroute
-    // the same way `lowerWithCtx` does for the implicit `jsmql()` entry.
-    if (containsOutAssign(ast)) {
+    // `$out` sugar (`$$$.<coll> = …`) and the bare `$ = <expr>` root-replace
+    // sugar inside an UpdateFilter must go through pipeline lowering —
+    // `generateUpdateFilter` knows about neither (the latter would emit a `$set`
+    // on the "" field path). Reroute the same way `lowerWithCtx` / `lowerProgram`
+    // do for the implicit `jsmql()` entry.
+    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast)) {
       const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
       return generateImplicitPipeline(synthetic, ctx) as object[];
     }

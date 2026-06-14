@@ -10736,6 +10736,9 @@ function lowerLetDecl(decl, ctx) {
 function isReplaceRootAssign(op) {
   return op.target.type === "FieldRef" && op.target.path === "";
 }
+function updateFilterHasReplaceRoot(uf) {
+  return uf.ops.some((op) => op.type === "AssignExpr" && isReplaceRootAssign(op));
+}
 function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
   if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
     throw new CodegenError(
@@ -11723,7 +11726,12 @@ function validateInterpolatable(value, slot, key) {
 }
 function lowerProgram(ast, ctx, lowerExpr) {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
-  if (ast.type === "UpdateFilter") return generateUpdateFilter(ast, ctx);
+  if (ast.type === "UpdateFilter") {
+    if (updateFilterHasReplaceRoot(ast)) {
+      return generateImplicitPipeline({ type: "Pipeline", stmts: [ast], pos: ast.pos }, ctx);
+    }
+    return generateUpdateFilter(ast, ctx);
+  }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
   return lowerExpr(ast, ctx);
 }
@@ -11780,6 +11788,12 @@ function lowerFilterStrict(ast, ctx) {
     );
   }
   if (ast.type === "UpdateFilter") {
+    if (updateFilterHasReplaceRoot(ast)) {
+      throw new CodegenError(
+        "jsmql.filter() expects a Filter, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+        ast.pos
+      );
+    }
     throw new CodegenError(
       "jsmql.filter() expects a Filter, but received an update-op chain (e.g. `$.x = \u2026`, `delete $.x`). Update-op chains compile to `$set` / `$unset` stages \u2014 call jsmql.update() or jsmql() for the Pipeline form.",
       ast.pos
@@ -11857,7 +11871,7 @@ function rejectOutOutsidePipeline(ast, apiName) {
 function lowerToPipelineStages(ast, ctx, apiName) {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
   if (ast.type === "UpdateFilter") {
-    if (containsOutAssign(ast)) {
+    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast)) {
       const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
       return generateImplicitPipeline(synthetic, ctx);
     }

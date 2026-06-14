@@ -663,6 +663,21 @@ function isReplaceRootAssign(op: AssignExpr): boolean {
 }
 
 /**
+ * Does this UpdateFilter contain a bare `$ = <expr>` root-replace op? A single
+ * top-level `$ = <expr>` written **without** a trailing `;` parses as a one-op
+ * `UpdateFilter` (not a `Pipeline`), so it never reaches `tryLowerAssignSugar`.
+ * `index.ts` uses this to reroute such an UpdateFilter through the pipeline
+ * lowerer (`generateImplicitPipeline`) so it emits `$replaceWith` — identical to
+ * the `;`-terminated form — instead of a meaningless `$set` on the "" field
+ * path. Parallel to `containsOutAssign` (out-translation.ts), which reroutes the
+ * sibling `$$$.<coll> = …` `$out` sugar the same way. See
+ * docs/specs/replace-root-stage.md.
+ */
+export function updateFilterHasReplaceRoot(uf: UpdateFilter): boolean {
+  return uf.ops.some((op) => op.type === "AssignExpr" && isReplaceRootAssign(op));
+}
+
+/**
  * Lower `$ = <expr>` to a `$replaceWith` stage (MQL's shorthand for
  * `$replaceRoot: { newRoot: <expr> }` — same runtime, fewer characters).
  *

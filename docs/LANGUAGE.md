@@ -2034,7 +2034,7 @@ The `delete` keyword is statement-only — unlike JavaScript, it does not return
 
 ### Replace root via `$ = <expr>`
 
-Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`).
+Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`). The trailing `;` is optional when `$ = <expr>` is the only statement — `jsmql("$ = { … }")` and `jsmql("$ = { … };")` both produce the same `$replaceWith` pipeline.
 
 > **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith`, the [fan-out](#fan-out-one-document-to-many-documents) form, and the `$facet` variant below). Stages that write elsewhere — `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)` — use distinct LHS prefixes so the write destination is visible at a glance.
 

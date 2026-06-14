@@ -26,6 +26,17 @@ statement (including inside a comma-separated update-filter chain like
 `$.a = 1, $ = $.profile, $.b = 2`). Using it inside a Filter / `jsmql.expr`
 goes through the normal pipeline-mode-required gate.
 
+**No `;` required.** A bare `$ = <expr>` that is the *only* statement (no `;`,
+so the parser yields a one-op `UpdateFilter` rather than a `Pipeline`) is still
+root-replace — `index.ts` reroutes such an UpdateFilter through
+`generateImplicitPipeline` (via `updateFilterHasReplaceRoot`, parallel to the
+`$out` sugar's `containsOutAssign`) so it emits `$replaceWith`, identical to the
+`;`-terminated form. This holds across `jsmql()`, `jsmql.expr()`,
+`jsmql.pipeline()`, and `jsmql.update()` (where `$replaceWith` is whitelisted);
+`jsmql.filter()` rejects it with a root-replace-specific message. Without this
+reroute, `generateUpdateFilter` would treat the bare `$` target as a field path
+and emit `{ $set: { "": … } }` — invalid/meaningless MQL.
+
 See [`docs/LANGUAGE.md#replace-root`](../LANGUAGE.md#replace-root) for the
 user-facing reference.
 

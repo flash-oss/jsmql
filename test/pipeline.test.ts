@@ -299,6 +299,40 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(jsmql("$ = $.profile;")).toEqual([{ $replaceWith: "$profile" }]);
   });
 
+  // Regression: a bare `$ = <expr>` as the ONLY statement (no trailing `;`)
+  // parses as a one-op UpdateFilter rather than a Pipeline, and used to emit a
+  // meaningless `$set` on the "" field path (`[{ $set: { "": … } }]`). It must
+  // lower to `$replaceWith`, identical to the `;`-terminated form.
+  it("single-statement `$ = { … }` (no `;`) lowers to `$replaceWith`, not `$set: { '': … }`", () => {
+    expect(jsmql("$ = { a: 1 }")).toEqual([{ $replaceWith: { a: 1 } }]);
+    // …byte-identical to the `;`-form and the bracketed form.
+    expect(jsmql("$ = { a: 1 }")).toEqual(jsmql("$ = { a: 1 };"));
+    expect(jsmql("$ = { a: 1 }")).toEqual(jsmql("[ $ = { a: 1 } ]"));
+  });
+
+  it("single-statement `$ = <expr>` (no `;`) reroutes across every Pipeline entry", () => {
+    const expected = [{ $replaceWith: "$profile" }];
+    expect(jsmql("$ = $.profile")).toEqual(expected);
+    expect(jsmql.expr("$ = $.profile")).toEqual(expected);
+    expect(jsmql.pipeline("$ = $.profile")).toEqual(expected);
+  });
+
+  it("single-statement `$ = <expr>` still reuses the full replace-root machinery (non-document reject)", () => {
+    // The reroute goes through `lowerReplaceRoot`, so the no-`;` form gets the
+    // same actionable rejection as the `;`-form.
+    expect(() => jsmql("$ = 5")).toThrow(/Cannot replace root with a number/);
+    expect(() => jsmql("$ = [1, 2]")).toThrow(/Cannot fan out an array of number/);
+  });
+
+  it("a normal field update (`$.x = 1`, no `;`) is unaffected — stays `$set`", () => {
+    expect(jsmql("$.x = 1")).toEqual([{ $set: { x: 1 } }]);
+    expect(jsmql("$.x = 1, $.y = 2")).toEqual([{ $set: { x: 1, y: 2 } }]);
+  });
+
+  it("`jsmql.filter()` rejects a bare `$ = <expr>` with a root-replace-specific message", () => {
+    expect(() => jsmql.filter("$ = { a: 1 }")).toThrow(/root-replace `\$ = <expr>`.*\$replaceWith/);
+  });
+
   it("bare `$` in expression position lowers to `$$ROOT`", () => {
     expect(jsmql.expr("$mergeObjects($, { x: 1 })")).toEqual({ $mergeObjects: ["$$ROOT", { x: 1 }] });
   });
