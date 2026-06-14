@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-14 — feat(playground): LOC + byte-size counters in both panel headers
+
+Each panel header now carries a live size figure: the **jsmql input** label reads `jsmql input  3 LOC, 187 B` and the **MQL output** label reads `MQL output  49 LOC, 728 B`. The side-by-side numbers make the playground's core pitch legible at a glance — how much terser the JSMQL source is than the MQL it expands to. This **replaces** the old `(Node/Deno/Bun)` hint in the output label (the where-it-runs note was low-value next to a concrete size delta).
+
+`statsOf(text)` computes both: `text.split("\n").length` for LOC and `new Blob([text]).size` for an exact UTF-8 byte count, formatted as `<N> B` under 1 KB else `<N.N> KB`. Input stats update from the editor source on every `render()` (so they track typing live); output stats are set only on the success branch from the *rendered* MQL string — so the figure follows the Prettify toggle (a fair LOC comparison wants the pretty-printed shape), and an empty or error panel clears the figure since its text is a message, not MQL. Both clear to `""` so a fresh/empty session reads just `jsmql input` / `MQL output`.
+
+Purely playground UX — no library code changed. Authored in [playground_skeleton.html](../playground_skeleton.html) (new `.label-stats` span in each header, the `statsOf` helper, and the per-branch wiring in `render()`); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html). Verified by syntax-checking the generated module and confirming the figures on a real 3-stage pipeline (3 LOC/187 B → 49 LOC/728 B).
+
+---
+
 ## 2026-06-14 — feat(playground): line numbers in the input and output editors
 
 Both CodeMirror panes — the **jsmql input** (left) and the **MQL output** (right) — now show a line-number gutter (`lineNumbers: true`). Purely a readability aid for multi-line pipelines and their emitted MQL; no library code changed.

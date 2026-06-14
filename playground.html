@@ -714,6 +714,15 @@
         flex-shrink: 0;
       }
 
+      .label .label-stats {
+        font-size: 11px;
+        text-transform: none;
+        letter-spacing: normal;
+        font-family: var(--mono);
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+
       .label .current-title {
         font-size: 12px;
         text-transform: none;
@@ -1056,6 +1065,7 @@
               <span class="kbd">⌘E</span>
             </button>
             <span class="label-tag">jsmql input</span>
+            <span class="label-stats" id="input-stats"></span>
             <span class="current-title" id="current-title"></span>
           </span>
           <button
@@ -1125,7 +1135,7 @@
       </section>
       <section class="panel" id="output-panel">
         <div class="label">
-          <span>MQL output (Node/Deno/Bun)</span>
+          <span>MQL output <span class="label-stats" id="output-stats"></span></span>
           <span class="controls">
             <label><input type="checkbox" id="prettify" checked /> Prettify</label>
             <button type="button" id="copy">Copy</button>
@@ -1160,6 +1170,8 @@
       const showSidebarBtn = document.getElementById("show-sidebar");
       const mainEl = document.getElementById("main");
       const currentTitleEl = document.getElementById("current-title");
+      const inputStatsEl = document.getElementById("input-stats");
+      const outputStatsEl = document.getElementById("output-stats");
       const usageEl = document.getElementById("usage-bar");
       const usageCodeEl = document.getElementById("usage-code");
 
@@ -1851,9 +1863,25 @@
         writeHash(null);
       }
 
+      // "<N> LOC, <size>" for a panel header — lines + byte size (B under 1 KB,
+      // else KB to one decimal). The side-by-side input/output figures show how
+      // much terser the JSMQL source is than the MQL it expands to. Empty text
+      // (or none) yields "" so the header reads just "jsmql input" / "MQL output".
+      function statsOf(text) {
+        if (!text) return "";
+        const loc = text.split("\n").length;
+        const bytes = new Blob([text]).size;
+        const size = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+        return `${loc} LOC, ${size}`;
+      }
+
       function render() {
         clearActiveOnUserEdit();
         const src = inputCm.getValue();
+        inputStatsEl.textContent = src.trim() ? statsOf(src) : "";
+        // Output stats are set per-branch below: real MQL gets a figure; an
+        // empty/error panel clears it (the panel text is a message, not MQL).
+        outputStatsEl.textContent = "";
 
         // Resolve the Variables editor first — it decides whether we dispatch
         // through the plain entry points or their `.compile(...)` builders, and
@@ -1944,7 +1972,9 @@
             return;
           }
           outputCm.setOption("mode", { name: "javascript", json: true });
-          outputCm.setValue(prettify.checked ? pretty(out) : compact(out));
+          const rendered = prettify.checked ? pretty(out) : compact(out);
+          outputCm.setValue(rendered);
+          outputStatsEl.textContent = statsOf(rendered);
           outputPanel.classList.remove("error");
           // The call-site hint must name the API that produces THIS output —
           // for AUTO that means `aggregate` for a Pipeline array vs `find`
