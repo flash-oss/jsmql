@@ -69,7 +69,7 @@
       header {
         padding: 10px 16px;
         /* Reserve room on the right so the 48px GitHub corner ribbon never
-           overlaps the "Hide examples" toggle. */
+           overlaps the header content. */
         padding-right: 60px;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
@@ -96,30 +96,32 @@
         text-decoration: underline;
       }
 
-      header .spacer {
-        flex: 1;
-      }
-
-      header .header-action {
+      /* Shared style for the two examples-sidebar toggles: "Hide" (in the
+         Examples panel header) and "Show examples" (in the input-panel label,
+         shown only while the sidebar is collapsed). */
+      .examples-toggle {
         font-family: inherit;
-        font-size: 12px;
+        font-size: 11px;
+        text-transform: none;
+        letter-spacing: normal;
         color: var(--fg);
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 5px;
-        padding: 4px 10px;
+        padding: 3px 9px;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         gap: 6px;
+        flex-shrink: 0;
       }
 
-      header .header-action:hover {
+      .examples-toggle:hover {
         border-color: var(--border-strong);
         background: var(--bg);
       }
 
-      header .header-action .kbd {
+      .examples-toggle .kbd {
         font-family: var(--mono);
         font-size: 10px;
         color: var(--muted);
@@ -127,6 +129,16 @@
         border: 1px solid var(--border);
         border-radius: 3px;
         background: var(--bg);
+      }
+
+      /* The "Show examples" affordance exists only while the sidebar is
+         collapsed (the "Hide" button disappears with the sidebar itself). */
+      #show-sidebar {
+        display: none;
+      }
+
+      main.sidebar-collapsed #show-sidebar {
+        display: inline-flex;
       }
 
       /* Classic GitHub corner ribbon, pinned top-right. The fill is the
@@ -227,8 +239,8 @@
 
       .sidebar-title-row {
         display: flex;
-        align-items: baseline;
-        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
         margin-bottom: 8px;
       }
 
@@ -238,12 +250,6 @@
         text-transform: uppercase;
         letter-spacing: 0.6px;
         color: var(--muted);
-      }
-
-      .sidebar-title-row .count {
-        font-size: 11px;
-        color: var(--subtle);
-        font-variant-numeric: tabular-nums;
       }
 
       .search-wrap {
@@ -912,16 +918,6 @@
       <strong>jsmql playground</strong>
       <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
       <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">syntax reference</a>
-      <span class="spacer"></span>
-      <button
-        type="button"
-        class="header-action"
-        id="toggle-sidebar"
-        title="Toggle examples sidebar"
-      >
-        <span id="toggle-sidebar-label">Hide examples</span>
-        <span class="kbd">⌘B</span>
-      </button>
     </header>
     <a
       href="https://github.com/flash-oss/jsmql"
@@ -948,8 +944,16 @@
       <aside id="sidebar" aria-label="Examples">
         <div class="sidebar-top">
           <div class="sidebar-title-row">
+            <button
+              type="button"
+              class="examples-toggle"
+              id="toggle-sidebar"
+              title="Hide examples sidebar"
+            >
+              Hide
+              <span class="kbd">⌘E</span>
+            </button>
             <span class="title">Examples</span>
-            <span class="count" id="example-count"></span>
           </div>
           <div class="search-wrap">
             <input
@@ -1005,6 +1009,15 @@
       <section class="panel input-panel" id="input-panel">
         <div class="label">
           <span class="label-main">
+            <button
+              type="button"
+              class="examples-toggle"
+              id="show-sidebar"
+              title="Show examples sidebar"
+            >
+              Show examples
+              <span class="kbd">⌘E</span>
+            </button>
             <span class="label-tag">jsmql input</span>
             <span class="current-title" id="current-title"></span>
           </span>
@@ -1083,10 +1096,9 @@
       const listEl = document.getElementById("example-list");
       const noMatchesEl = document.getElementById("no-matches");
       const toggleSidebarBtn = document.getElementById("toggle-sidebar");
-      const toggleSidebarLabel = document.getElementById("toggle-sidebar-label");
+      const showSidebarBtn = document.getElementById("show-sidebar");
       const mainEl = document.getElementById("main");
       const currentTitleEl = document.getElementById("current-title");
-      const countEl = document.getElementById("example-count");
       const usageEl = document.getElementById("usage-bar");
       const usageCodeEl = document.getElementById("usage-code");
 
@@ -1261,7 +1273,6 @@
         // the editor label can fall back to it when the it title is generic.
         const list = JSON.parse(document.getElementById("examples-data").textContent);
         const groups = new Map();
-        let itCount = 0;
         for (const d of list) {
           const feature = (d.features && d.features[0]) || "Other";
           if (!groups.has(feature)) groups.set(feature, []);
@@ -1273,7 +1284,6 @@
               features: d.features || [],
               displayTitle: d.its.length === 1 ? d.title : it.title,
             });
-            itCount += 1;
           }
         }
 
@@ -1333,13 +1343,6 @@
           frag.appendChild(section);
         }
         listEl.replaceChildren(frag);
-
-        const allIts = [];
-        for (const d of list) for (const it of d.its) allIts.push(it);
-        const pipelines = allIts.filter((e) => e.kind === "pipeline").length;
-        const filters = allIts.filter((e) => e.kind === "filter").length;
-        const expressions = allIts.length - pipelines - filters;
-        countEl.textContent = `${itCount} (${filters} filt · ${pipelines} pipe · ${expressions} expr)`;
       }
 
       function writeHash(slug) {
@@ -1514,7 +1517,7 @@
       });
 
       // ⌘K / Ctrl+K focuses the example search from anywhere.
-      // ⌘B / Ctrl+B toggles the sidebar.
+      // ⌘E / Ctrl+E toggles the sidebar.
       window.addEventListener("keydown", (e) => {
         const mod = e.metaKey || e.ctrlKey;
         if (!mod) return;
@@ -1527,15 +1530,14 @@
           if (mainEl.classList.contains("sidebar-collapsed")) toggleSidebar();
           searchEl.focus();
           searchEl.select();
-        } else if (key === "b") {
+        } else if (key === "e") {
           e.preventDefault();
           toggleSidebar();
         }
       });
 
       function toggleSidebar() {
-        const collapsed = mainEl.classList.toggle("sidebar-collapsed");
-        toggleSidebarLabel.textContent = collapsed ? "Show examples" : "Hide examples";
+        mainEl.classList.toggle("sidebar-collapsed");
         // CodeMirror caches the gutter width when first laid out; force a
         // refresh after the grid columns change so the editors re-measure.
         requestAnimationFrame(() => {
@@ -1545,6 +1547,7 @@
         });
       }
       toggleSidebarBtn.addEventListener("click", toggleSidebar);
+      showSidebarBtn.addEventListener("click", toggleSidebar);
 
       let errorMarker = null;
       function clearErrorMarker() {

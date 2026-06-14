@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-14 — feat(playground): examples toggle lives on the panel; hotkey ⌘E
+
+The examples-sidebar toggle moved out of the page header and onto the Examples panel itself. When the panel is open, a compact `Hide ⌘E` button sits to the left of the `EXAMPLES` heading; when collapsed, a `Show examples ⌘E` button appears on the left, inside the input panel's label, so there is always exactly one toggle visible and it reads against the thing it controls. Both share one `.examples-toggle` style (replacing the old header `.header-action` rule), and `#show-sidebar` is gated to `main.sidebar-collapsed` so the open/closed affordances never both show. The header is now just the title + syntax-reference link.
+
+Also dropped the `95 (19 filt · 34 pipe · 42 expr)` count line from the panel header (and the JS that computed it — `countEl`, `itCount`, the per-kind tally) as noise no one reads, and rebound the toggle hotkey from ⌘B to **⌘E** (`key === "e"`, both button hints, the help comment). No library code changed — purely playground UX, authored in [playground_skeleton.html](../playground_skeleton.html) and regenerated into [playground.html](../playground.html) via `scripts/sync-playground.mjs`.
+
+---
+
 ## 2026-06-14 — docs: jsmql never invents its own `$`-operators; `continue` keyword rejected
 
 Recorded a standing language-design axiom in [CLAUDE.md](../CLAUDE.md) § "Things the user did not explicitly ask for but matter" (with a one-line pointer from [src/CLAUDE.md](../src/CLAUDE.md) next to the `src/operators.ts` SSOT bullet): **jsmql never mints its own `$`-prefixed operators or pseudo-stages.** Every `$`-named callable maps to something that already exists in MongoDB — a real operator via the `$op(...)` escape hatch (backed by `src/operators.ts`), or a real pipeline stage (`$match`, `$project`, …). A convenience like `$drop(pred)` that lowered to `$match(!(pred))` will **never** be added, however handy it looks: it fabricates a `$name` that isn't a MongoDB operator (breaking the "every `$op` is a real op" model and the paste-raw-MQL round-trip property), and it's a second spelling for a capability that already has one (the friction in `feedback_no_silent_output_drift.md`). New ergonomics go into JS-idiomatic surface — a JS method, or destination-visible sugar over a real stage (`$$.push(…)` → `$unionWith`) — never a brand-new `$foo()`.
