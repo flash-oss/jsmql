@@ -907,6 +907,17 @@
         padding-right: 16px;
       }
 
+      .CodeMirror-gutters {
+        background: var(--bg);
+        border-right: 1px solid var(--border-strong);
+      }
+
+      .cm-s-neo .CodeMirror-linenumber {
+        color: #1a1a1a;
+        font-weight: 600;
+        opacity: 1;
+      }
+
       .panel.error .CodeMirror {
         background: var(--error-bg);
         color: var(--error);
@@ -916,6 +927,15 @@
       .panel.error .CodeMirror-line,
       .panel.error .CodeMirror-line span {
         color: var(--error) !important;
+      }
+
+      .panel.error .CodeMirror-gutters {
+        background: var(--error-bg);
+        border-right: 1px solid var(--error);
+      }
+
+      .panel.error .CodeMirror-linenumber {
+        color: var(--error);
       }
 
       .cm-error-marker {
@@ -1150,6 +1170,7 @@
       const inputCm = CodeMirror.fromTextArea(inputEl, {
         mode: { name: "javascript" },
         theme: "neo",
+        lineNumbers: true,
         lineWrapping: true,
         tabSize: 2,
         indentUnit: 2,
@@ -1169,6 +1190,7 @@
       const outputCm = CodeMirror(outputEl, {
         mode: { name: "javascript", json: true },
         theme: "neo",
+        lineNumbers: true,
         lineWrapping: true,
         // `true`, not `"nocursor"`: keep the panel non-editable but still
         // focusable so the user can select (and copy) partial MQL output.

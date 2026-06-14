@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-14 — feat(playground): line numbers in the input and output editors
+
+Both CodeMirror panes — the **jsmql input** (left) and the **MQL output** (right) — now show a line-number gutter (`lineNumbers: true`). Purely a readability aid for multi-line pipelines and their emitted MQL; no library code changed.
+
+The gutter is themed to the page: `.CodeMirror-gutters` uses the `--bg` background with a `--border-strong` divider, and an error-panel variant (`.panel.error .CodeMirror-gutters` / `-linenumber`) keeps it consistent when the output pane is in its error state. The line numbers themselves are deliberately prominent — dark (`#1a1a1a`), `font-weight: 600`, full opacity. The selector is `.cm-s-neo .CodeMirror-linenumber` rather than a bare `.CodeMirror-linenumber`: the neo theme ships its own theme-scoped rule that otherwise out-specifies a plain selector and washes the numbers back to grey. The existing sidebar-toggle `refresh()` calls already re-measure the new gutter width, so no layout fix was needed.
+
+Authored in the hand-written [playground_skeleton.html](../playground_skeleton.html); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html).
+
+---
+
 ## 2026-06-14 — docs: jsmql never invents its own `$`-operators; `continue` keyword rejected
 
 Recorded a standing language-design axiom in [CLAUDE.md](../CLAUDE.md) § "Things the user did not explicitly ask for but matter" (with a one-line pointer from [src/CLAUDE.md](../src/CLAUDE.md) next to the `src/operators.ts` SSOT bullet): **jsmql never mints its own `$`-prefixed operators or pseudo-stages.** Every `$`-named callable maps to something that already exists in MongoDB — a real operator via the `$op(...)` escape hatch (backed by `src/operators.ts`), or a real pipeline stage (`$match`, `$project`, …). A convenience like `$drop(pred)` that lowered to `$match(!(pred))` will **never** be added, however handy it looks: it fabricates a `$name` that isn't a MongoDB operator (breaking the "every `$op` is a real op" model and the paste-raw-MQL round-trip property), and it's a second spelling for a capability that already has one (the friction in `feedback_no_silent_output_drift.md`). New ergonomics go into JS-idiomatic surface — a JS method, or destination-visible sugar over a real stage (`$$.push(…)` → `$unionWith`) — never a brand-new `$foo()`.
