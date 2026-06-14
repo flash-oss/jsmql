@@ -858,6 +858,23 @@
         gap: 10px;
       }
 
+      /* Share button: lives in the jsmql-input panel label, pushed to the right
+         by the label's space-between. Inherits the `.label button` look; adds a
+         leading share glyph. `flex-shrink: 0` keeps it intact when a long
+         current-title fills the label-main on its left. */
+      #share-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+      }
+
+      #share-btn svg {
+        width: 13px;
+        height: 13px;
+        flex-shrink: 0;
+      }
+
       #output {
         flex: 1;
         min-height: 0;
@@ -1008,6 +1025,28 @@
             <span class="label-tag">jsmql input</span>
             <span class="current-title" id="current-title"></span>
           </span>
+          <button
+            type="button"
+            id="share-btn"
+            title="Copy a shareable link (Variables + query + compile mode)"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            <span id="share-label">Share</span>
+          </button>
         </div>
         <div class="mode-bar">
           <span
@@ -1079,6 +1118,8 @@
       const inputPanel = document.getElementById("input-panel");
       const prettify = document.getElementById("prettify");
       const copyBtn = document.getElementById("copy");
+      const shareBtn = document.getElementById("share-btn");
+      const shareLabel = document.getElementById("share-label");
       const searchEl = document.getElementById("search");
       const listEl = document.getElementById("example-list");
       const noMatchesEl = document.getElementById("no-matches");
@@ -1355,6 +1396,10 @@
       function slugFromHash() {
         const raw = location.hash.slice(1);
         if (!raw) return null;
+        // A `#s=<payload>` share link is not an example slug — `parseShareHash`
+        // owns it. Example slugs can never contain `=` (`makeSlug` emits only
+        // `[a-z0-9-]`), so the `s=` marker is unambiguous.
+        if (raw.startsWith("s=")) return null;
         try {
           return decodeURIComponent(raw);
         } catch {
@@ -1712,6 +1757,75 @@
         }
       }
 
+      // ── Shareable links ───────────────────────────────────────────────────
+      // The session ({ input, vars, mode } — the same shape `saveState`
+      // persists) also round-trips through a `#s=<base64url>` URL hash, so a
+      // user can hand someone a link that reopens the playground with the exact
+      // same Variables, query, AND compile mode (mode is what decides the output
+      // shape, so it must ride along for the recipient to see the same MQL). The
+      // "Share" button (in the jsmql-input label) copies `buildShareUrl()`;
+      // `parseShareHash()` /
+      // `applySharedSession()` are the top rung of the init restore ladder below
+      // and the `hashchange` handler. The payload is UTF-8 → base64url so
+      // multi-byte chars and the `+ / =` bytes survive inside a fragment; the
+      // `v` tag lets the format evolve without mis-decoding old links.
+      function toB64Url(str) {
+        const bytes = new TextEncoder().encode(str);
+        let bin = "";
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      }
+      function fromB64Url(s) {
+        const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        return new TextDecoder().decode(bytes);
+      }
+      function encodeSession() {
+        return toB64Url(
+          JSON.stringify({
+            v: 1,
+            input: inputCm.getValue(),
+            vars: varsCm.getValue(),
+            mode: currentMode,
+          }),
+        );
+      }
+      function buildShareUrl() {
+        return location.origin + location.pathname + location.search + "#s=" + encodeSession();
+      }
+      // Decode a `#s=<payload>` share hash into a session, or null when the hash
+      // isn't a share link / can't be decoded (a malformed link falls through to
+      // the normal restore ladder rather than blanking the page). Unknown modes
+      // coerce to `auto`, matching the localStorage-restore path.
+      function parseShareHash() {
+        const raw = location.hash.slice(1);
+        if (!raw.startsWith("s=")) return null;
+        try {
+          const obj = JSON.parse(fromB64Url(raw.slice(2)));
+          if (!obj || typeof obj !== "object") return null;
+          return {
+            input: typeof obj.input === "string" ? obj.input : "",
+            vars: typeof obj.vars === "string" ? obj.vars : "",
+            mode: MODE_FNS[obj.mode] ? obj.mode : "auto",
+          };
+        } catch {
+          return null;
+        }
+      }
+      // Load a decoded share session into the editors, then normalise the URL.
+      // The snapshot now lives in the editors (and, via the change→`saveState`
+      // hooks the `setValue` calls fire, in localStorage), so the consumed `#s=`
+      // hash is dropped — otherwise it would linger and go stale the moment the
+      // user edits. Mirrors the order the localStorage-restore path uses: mode
+      // before the input `setValue`, so the synchronous render sees it.
+      function applySharedSession(shared) {
+        varsCm.setValue(shared.vars);
+        setMode(shared.mode, { rerender: false });
+        inputCm.setValue(shared.input);
+        render();
+        writeHash(null);
+      }
+
       function render() {
         clearActiveOnUserEdit();
         const src = inputCm.getValue();
@@ -1853,37 +1967,71 @@
         }, 1200);
       });
 
+      // "Share" copies a self-contained `#s=` link to the current session
+      // (Variables + query + compile mode) — distinct from the output panel's
+      // "Copy", which copies the MQL JSON. Same secure-context clipboard
+      // requirement and feedback pattern as Copy above.
+      let shareResetTimer = null;
+      shareBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(buildShareUrl());
+          shareLabel.textContent = "Link copied!";
+        } catch {
+          shareLabel.textContent = "Copy failed";
+        }
+        clearTimeout(shareResetTimer);
+        shareResetTimer = setTimeout(() => {
+          shareLabel.textContent = "Share";
+        }, 1200);
+      });
+
       setMode("auto", { rerender: false });
       populateExamples();
       filterList("");
       window.addEventListener("hashchange", () => {
+        // A `#s=` share link pasted into an already-open tab navigates within
+        // the document (hash change, no reload) — apply it like a fresh load.
+        const shared = parseShareHash();
+        if (shared) {
+          applySharedSession(shared);
+          return;
+        }
         const slug = slugFromHash();
         if (slug && examples.has(slug) && slug !== activeSlug) {
           selectExample(slug, { scroll: true });
         }
       });
-      // Restore the persisted session so a page refresh keeps the user's work.
+      // Restore the session so a refresh — or a shared link — keeps the work.
       // The Variables editor is independent of which example/query is shown, so
-      // it's restored on every load path. For the query, in priority order:
-      //   1. a URL hash that targets a real example — a shared/explicit link
-      //      always wins (and is only present when viewing an unmodified
-      //      example; free editing clears it via clearActiveOnUserEdit);
-      //   2. a saved free-form query — restored with the compile mode it was
+      // a saved vars value is restored on every NON-share path. Priority order:
+      //   1. a `#s=` share link — an explicit snapshot of someone's session
+      //      (Variables + query + compile mode); wins over everything, including
+      //      a saved localStorage session. `applySharedSession` normalises the
+      //      URL afterwards so the consumed link doesn't go stale on edit;
+      //   2. a URL hash targeting a real example — a shared/explicit `#slug`
+      //      link (only present when viewing an unmodified example; free editing
+      //      clears it via clearActiveOnUserEdit);
+      //   3. a saved free-form query — restored with the compile mode it was
       //      last rendered with, so the output matches what the user left;
-      //   3. the first example — the default for a first visit.
-      const saved = loadState();
-      if (saved && typeof saved.vars === "string" && saved.vars !== "") {
-        varsCm.setValue(saved.vars);
-      }
-      const initialSlug = orderedSlugs.length > 0 ? slugFromHash() : null;
-      if (initialSlug && examples.has(initialSlug)) {
-        selectExample(initialSlug, { scroll: true });
-      } else if (saved && typeof saved.input === "string" && saved.input.trim() !== "") {
-        setMode(MODE_FNS[saved.mode] ? saved.mode : "auto", { rerender: false });
-        inputCm.setValue(saved.input);
-        render();
-      } else if (orderedSlugs.length > 0) {
-        selectExample(orderedSlugs[0], { scroll: false });
+      //   4. the first example — the default for a first visit.
+      const shared = parseShareHash();
+      if (shared) {
+        applySharedSession(shared);
+      } else {
+        const saved = loadState();
+        if (saved && typeof saved.vars === "string" && saved.vars !== "") {
+          varsCm.setValue(saved.vars);
+        }
+        const initialSlug = orderedSlugs.length > 0 ? slugFromHash() : null;
+        if (initialSlug && examples.has(initialSlug)) {
+          selectExample(initialSlug, { scroll: true });
+        } else if (saved && typeof saved.input === "string" && saved.input.trim() !== "") {
+          setMode(MODE_FNS[saved.mode] ? saved.mode : "auto", { rerender: false });
+          inputCm.setValue(saved.input);
+          render();
+        } else if (orderedSlugs.length > 0) {
+          selectExample(orderedSlugs[0], { scroll: false });
+        }
       }
     </script>
   </body>
