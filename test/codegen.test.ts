@@ -5090,3 +5090,98 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     expect(jsmql.expr("$abs($.address.city)")).toEqual({ $abs: "$address.city" });
   });
 });
+
+// A comma after the last item of any list is valid JS (`f(a, b,)`) and must be
+// accepted everywhere, producing output identical to the comma-free form.
+describe("trailing commas (JS syntax)", () => {
+  it("Math.method args", () => {
+    expect(jsmql.expr("Math.max(1, 2,)")).toEqual(jsmql.expr("Math.max(1, 2)"));
+  });
+
+  it("method-call args", () => {
+    expect(jsmql.expr("$.items.map(x => x * 1.1,)")).toEqual(jsmql.expr("$.items.map(x => x * 1.1)"));
+  });
+
+  it("$op positional args", () => {
+    expect(jsmql.expr("$add(1, 2,)")).toEqual(jsmql.expr("$add(1, 2)"));
+  });
+
+  it("$op single-object arg stays object-style", () => {
+    expect(jsmql.expr('$dateTrunc({ date: $.t, unit: "week", },)')).toEqual(
+      jsmql.expr('$dateTrunc({ date: $.t, unit: "week" })'),
+    );
+  });
+
+  it("type cast (single arg) tolerates a lone trailing comma", () => {
+    expect(jsmql.expr("Number($.x,)")).toEqual(jsmql.expr("Number($.x)"));
+  });
+
+  it("type cast still rejects a real second argument", () => {
+    const r = jsmql.validate("Number($.x, $.y)");
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].message).toMatch(/Type cast 'Number\(\)' takes exactly 1 argument/);
+  });
+
+  it("Number static method args", () => {
+    expect(jsmql.expr("Number.isInteger($.x,)")).toEqual(jsmql.expr("Number.isInteger($.x)"));
+  });
+
+  it("Object method args", () => {
+    expect(jsmql.expr("Object.keys($.a,)")).toEqual(jsmql.expr("Object.keys($.a)"));
+  });
+
+  it("new Date / new Set args", () => {
+    expect(jsmql.expr("new Date(2020, 1, 1,)")).toEqual(jsmql.expr("new Date(2020, 1, 1)"));
+    expect(jsmql.expr("new Set([1, 2],)")).toEqual(jsmql.expr("new Set([1, 2])"));
+  });
+
+  it("Date.UTC args", () => {
+    expect(jsmql.expr("Date.UTC(2020, 1,)")).toEqual(jsmql.expr("Date.UTC(2020, 1)"));
+  });
+
+  it("Array.from args (both shapes)", () => {
+    expect(jsmql.expr("Array.from({ length: 5 },)")).toEqual(jsmql.expr("Array.from({ length: 5 })"));
+    expect(jsmql.expr("Array.from({ length: 5 }, (_, i) => i,)")).toEqual(
+      jsmql.expr("Array.from({ length: 5 }, (_, i) => i)"),
+    );
+  });
+
+  it("array & object literals", () => {
+    expect(jsmql.expr("[1, 2, 3,]")).toEqual(jsmql.expr("[1, 2, 3]"));
+    expect(jsmql.expr("$add([$.a, $.b,])")).toEqual(jsmql.expr("$add([$.a, $.b])"));
+  });
+
+  it("parenthesised lambda params (incl. trailing comma)", () => {
+    expect(jsmql.expr("$.a.reduce((acc, x,) => acc + x, 0)")).toEqual(jsmql.expr("$.a.reduce((acc, x) => acc + x, 0)"));
+  });
+
+  it("$match stage body — the multi-line predicate case", () => {
+    const withComma = jsmql(
+      '$match($.amount > 100 && ($.currency === "USD" || $.currency === "EUR") && $.status === "active",)',
+    );
+    const without = jsmql(
+      '$match($.amount > 100 && ($.currency === "USD" || $.currency === "EUR") && $.status === "active")',
+    );
+    expect(withComma).toEqual(without);
+  });
+
+  it("update-op chain — trailing comma before a block-body's closing brace", () => {
+    // Only reachable via a source string: a real arrow can't carry it (JS
+    // rejects `a = 1, b = 2,` as a statement), but the parser must still accept
+    // the trailing `,` before the block's closing `}`.
+    expect(jsmql.compile("($) => { $.a = 1, $.b = 2, }")()).toEqual(jsmql.compile("($) => { $.a = 1, $.b = 2 }")());
+  });
+
+  it("function declaration parameter list (pipeline)", () => {
+    expect(jsmql("function dbl(x,) { return x * 2 } $ = { y: dbl($.n) }")).toEqual(
+      jsmql("function dbl(x) { return x * 2 } $ = { y: dbl($.n) }"),
+    );
+  });
+
+  it("compile-form params destructure and slot list", () => {
+    // String entry so the trailing commas survive the formatter: one inside the
+    // params destructure (`{ min, }`) and one after the `$` doc slot (`$,`).
+    expect(jsmql.compile("({ min, }, $,) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+    expect(jsmql.compile("({ min }, $) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+  });
+});

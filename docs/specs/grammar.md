@@ -21,7 +21,7 @@ pipeline_stmt  = update_filter
                | function_decl
                | expression           (* must compile to a stage at codegen *)
 
-function_decl  = "function" IDENT "(" [IDENT ("," IDENT)*] ")" expr_block
+function_decl  = "function" IDENT "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                (* reusable-function declaration; the keyword spelling of
                   `const IDENT = (params) => <body>`. Self-terminating: its
                   closing `}` ends the statement, so the next pipeline_stmt may
@@ -127,10 +127,10 @@ primary        = operator_call
 operator_call  = "$" IDENT_OR_KW "(" op_arg_list ")"
 
 op_arg_list    = ""                                          (* zero args *)
-               | object_literal                              (* object-style, see note *)
-               | call_arg ("," call_arg)*                    (* positional args, may include lambdas/spreads *)
+               | object_literal ","?                         (* object-style — a lone trailing comma stays object-style; see note *)
+               | call_arg ("," call_arg)* ","?               (* positional args, may include lambdas/spreads *)
 
-call_arg_list  = (call_arg ("," call_arg)*)?
+call_arg_list  = (call_arg ("," call_arg)* ","?)?
 call_arg       = "..." expression                            (* spread *)
                | lambda_unparen | lambda_paren
                | expression
@@ -146,11 +146,11 @@ context_ref    = ( "$$" | "$$$" | "$$$$" )                   (* bare prefix toke
                   docs/specs/context-references.md. *)
 
 array_literal  = "[" array_elements? "]"
-array_elements = array_element ("," array_element)*
+array_elements = array_element ("," array_element)* ","?
 array_element  = "..." expression | expression
 
 object_literal = "{" object_entries? "}"
-object_entries = object_entry ("," object_entry)*
+object_entries = object_entry ("," object_entry)* ","?
 object_entry   = "..." expression
                | (IDENT | STRING) ":" expression
                | "$" IDENT ":" expression                    (* dollar-prefixed key, e.g. { $match: ... } *)
@@ -160,10 +160,10 @@ object_entry   = "..." expression
 template_literal = "`" template_chunk ("${" expression "}" template_chunk)* "`"
 
 lambda_unparen = IDENT "=>" lambda_body                      (* x => expr | x => { … } *)
-lambda_paren   = "(" [IDENT ("," IDENT)*] ")" "=>" lambda_body  (* (x, y) => … *)
+lambda_paren   = "(" [IDENT ("," IDENT)* ","?] ")" "=>" lambda_body  (* (x, y) => … *)
 lambda_body    = expr_block | expression
 expr_block     = "{" (let_decl ";")* "return" expression [";"] "}"   (* lowers to nested $let *)
-function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)*] ")" expr_block
+function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                (* a function expression — the same node a block-body arrow
                   produces. An optional name is parsed and discarded (unreachable
                   in MQL). A single-`return` body normalises to a plain
@@ -180,18 +180,18 @@ MATH_CONST     = (* see `MathConstant` in src/ast.ts *)
 object_call    = "Object" "." OBJECT_METHOD "(" call_arg_list ")"
 OBJECT_METHOD  = (* see `ObjectMethod` in src/ast.ts *)
 
-type_cast      = TYPE_CAST_NAME "(" expression ")"
+type_cast      = TYPE_CAST_NAME "(" expression ","? ")"      (* exactly one arg; a lone trailing comma is allowed *)
 TYPE_CAST_NAME = (* see `TypeCastOp` in src/ast.ts *)
 
 type_cast_ref  = BARE_CAST_NAME                              (* bare callback shorthand, no `(` *)
 BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* see `BareCastOp` in src/ast.ts *)
 
-number_static  = "Number" "." NUMBER_STATIC "(" expression ")"
+number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
 NUMBER_STATIC  = (* see `NumberStaticMethod` in src/ast.ts *)
 
-new_date_or_set = "new" ("Date" | "Set") "(" expression? ")"
+new_date_or_set = "new" ("Date" | "Set") "(" (expression ("," expression)* ","?)? ")"
 date_now       = "Date" "." "now" "(" ")"
-array_static   = "Array" "." ("isArray" "(" expression ")" | "from" "(" expression ("," call_arg)? ")")
+array_static   = "Array" "." ("isArray" "(" expression ","? ")" | "from" "(" expression ("," call_arg)? ","? ")")
 
 regex_literal  = "/" REGEX_CHARS "/" REGEX_FLAGS?            (* context-sensitive: see below *)
 REGEX_FLAGS    = [gimsuy]+
@@ -235,6 +235,10 @@ Implemented in `Parser.parse()` (top-level `;` loop) and
 ## Strict-JS-subset rule
 
 Every expression accepted by this grammar is also valid JavaScript syntax. Adding a production that JS would reject (e.g. `obj.0`, which is why `FIELD_SEGMENT` excludes `NUMBER`) is a violation of the project's [#2 priority](../../CLAUDE.md). When a feature seems to need JS-incompatible syntax, either find a JS-syntax-equivalent surface (bracket access for numeric indices, method calls for transformations) or expose it as a `$op(...)` call — `$op` is always valid JS because it's a function name.
+
+## Trailing commas
+
+Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` three-slot signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Shared helpers `parseDelimitedList` / `parseCommaTail` / `consumeTrailingComma` in `src/parser.ts` enforce this uniformly.
 
 ## Function-form input is not part of the grammar
 

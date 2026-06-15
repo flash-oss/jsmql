@@ -357,6 +357,7 @@ export class Parser {
         const sep = this.lexer.peek();
         if (sep.type === TokenType.Comma) {
           this.lexer.next();
+          if (this.lexer.peek().type === TokenType.RParen) break; // trailing comma
           continue;
         }
         if (sep.type === TokenType.RParen) break;
@@ -888,7 +889,18 @@ export class Parser {
     while (this.peekUpdateOpSeparator()) {
       this.lexer.next(); // consume `,`
       const next = this.lexer.peek().type;
-      if (next === TokenType.EOF || next === TokenType.Semi) break; // trailing separator
+      // A trailing separator before any terminator (EOF, `;`, or a closing
+      // `}` / `]` / `)` of an enclosing block / bracketed pipeline / paren)
+      // ends the chain.
+      if (
+        next === TokenType.EOF ||
+        next === TokenType.Semi ||
+        next === TokenType.RBrace ||
+        next === TokenType.RBracket ||
+        next === TokenType.RParen
+      ) {
+        break;
+      }
       ops.push(...this.parseUpdateOp());
     }
   }
@@ -1442,18 +1454,52 @@ export class Parser {
     return left;
   }
 
-  /** Parse method call argument list: "(" [argOrLambda (, argOrLambda)*] ")" */
+  /**
+   * Parse a (possibly empty) comma-separated list terminated by `close`,
+   * allowing an optional trailing comma (`f(a, b,)` — valid JS). The opening
+   * delimiter must already be consumed; `close` is left unconsumed for the
+   * caller to `expect`. Each item is produced by `parseItem`. Used by every
+   * argument / parameter list whose items are uniform; the operator-call and
+   * `Array.from` paths parse their first argument specially and reach for
+   * `parseCommaTail` / `consumeTrailingComma` instead.
+   */
+  private parseDelimitedList<T>(close: TokenType, parseItem: () => T): T[] {
+    if (this.lexer.peek().type === close) return [];
+    const items: T[] = [parseItem()];
+    this.parseCommaTail(items, close, parseItem);
+    return items;
+  }
+
+  /**
+   * Consume a `,`-separated tail, appending each item to `items`. A trailing
+   * comma (one immediately followed by `close`) ends the list without parsing
+   * another item, matching JS. Stops at the first non-`,` token, leaving it for
+   * the caller.
+   */
+  private parseCommaTail<T>(items: T[], close: TokenType, parseItem: () => T): void {
+    while (this.lexer.peek().type === TokenType.Comma) {
+      this.lexer.next(); // consume `,`
+      if (this.lexer.peek().type === close) break; // trailing comma
+      items.push(parseItem());
+    }
+  }
+
+  /**
+   * Consume a lone trailing comma — a `,` immediately followed by `close` — so
+   * fixed-arity built-in calls (`Number(x,)`, `Array.isArray(x,)`) accept the
+   * JS trailing comma. No-op when the `,` is followed by anything else, so a
+   * genuine extra argument still surfaces the call's own arity error.
+   */
+  private consumeTrailingComma(close: TokenType): void {
+    if (this.lexer.peek().type === TokenType.Comma && this.lexer.lookahead(1).type === close) {
+      this.lexer.next();
+    }
+  }
+
+  /** Parse method call argument list: "(" [argOrLambda ("," argOrLambda)* ","?] ")" */
   private parseMethodCallArgs(blockKind: "pipeline" | "expr" = "expr"): CallArg[] {
     this.lexer.expect(TokenType.LParen);
-    if (this.lexer.peek().type === TokenType.RParen) {
-      this.lexer.next();
-      return [];
-    }
-    const args: CallArg[] = [this.parseCallArg(blockKind)];
-    while (this.lexer.peek().type === TokenType.Comma) {
-      this.lexer.next();
-      args.push(this.parseCallArg(blockKind));
-    }
+    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg(blockKind));
     this.lexer.expect(TokenType.RParen);
     return args;
   }
@@ -1670,7 +1716,9 @@ export class Parser {
       return { type: "OperatorCall", name, style: "positional", args: [], pos: dollar.pos };
     }
 
-    // Object-style: single `{...}` arg with no trailing comma
+    // Object-style: a single `{...}` argument. A lone trailing comma keeps it
+    // object-style (`$op({…})` ≡ `$op({…},)`); a real second arg makes it
+    // positional.
     if (peek.type === TokenType.LBrace) {
       const obj = this.parseObjectLiteral();
       const after = this.lexer.peek();
@@ -1678,22 +1726,21 @@ export class Parser {
         this.lexer.next();
         return { type: "OperatorCall", name, style: "object", args: [obj], pos: dollar.pos };
       }
+      if (after.type === TokenType.Comma && this.lexer.lookahead(1).type === TokenType.RParen) {
+        this.lexer.next(); // consume `,`
+        this.lexer.next(); // consume `)`
+        return { type: "OperatorCall", name, style: "object", args: [obj], pos: dollar.pos };
+      }
       // First positional arg happens to be an object — collect remaining args
       const args: CallArg[] = [obj];
-      while (this.lexer.peek().type === TokenType.Comma) {
-        this.lexer.next();
-        args.push(this.parseCallArg());
-      }
+      this.parseCommaTail(args, TokenType.RParen, () => this.parseCallArg());
       this.lexer.expect(TokenType.RParen);
       return { type: "OperatorCall", name, style: "positional", args, pos: dollar.pos };
     }
 
     // Positional args (may include lambdas and spreads)
     const args: CallArg[] = [this.parseCallArg()];
-    while (this.lexer.peek().type === TokenType.Comma) {
-      this.lexer.next();
-      args.push(this.parseCallArg());
-    }
+    this.parseCommaTail(args, TokenType.RParen, () => this.parseCallArg());
     this.lexer.expect(TokenType.RParen);
     return { type: "OperatorCall", name, style: "positional", args, pos: dollar.pos };
   }
@@ -1760,7 +1807,7 @@ export class Parser {
 
   /**
    * Non-consuming lookahead: is the current position the start of a parenthesized lambda?
-   * Matches: "(" ")" "=>" | "(" Ident ")" "=>" | "(" Ident ("," Ident)* ")" "=>"
+   * Matches: "(" ")" "=>" | "(" Ident ")" "=>" | "(" Ident ("," Ident)* ","? ")" "=>"
    */
   private isLambdaStart(): boolean {
     if (this.lexer.peek().type !== TokenType.LParen) return false;
@@ -1769,7 +1816,7 @@ export class Parser {
     if (this.lexer.lookahead(offset).type === TokenType.RParen) {
       return this.lexer.lookahead(offset + 1).type === TokenType.Arrow;
     }
-    // Collect Ident (, Ident)*
+    // Collect Ident ("," Ident)* with an optional trailing comma
     while (this.lexer.lookahead(offset).type === TokenType.Ident) {
       offset++;
       if (this.lexer.lookahead(offset).type === TokenType.RParen) {
@@ -1777,6 +1824,10 @@ export class Parser {
       }
       if (this.lexer.lookahead(offset).type !== TokenType.Comma) return false;
       offset++; // consume comma
+      // Trailing comma: `(a,) => …` / `(a, b,) => …`
+      if (this.lexer.lookahead(offset).type === TokenType.RParen) {
+        return this.lexer.lookahead(offset + 1).type === TokenType.Arrow;
+      }
     }
     return false;
   }
@@ -1806,14 +1857,7 @@ export class Parser {
    */
   private parseParenParamNames(): string[] {
     this.lexer.expect(TokenType.LParen);
-    const params: string[] = [];
-    if (this.lexer.peek().type !== TokenType.RParen) {
-      params.push(this.lexer.expect(TokenType.Ident).value);
-      while (this.lexer.peek().type === TokenType.Comma) {
-        this.lexer.next();
-        params.push(this.lexer.expect(TokenType.Ident).value);
-      }
-    }
+    const params = this.parseDelimitedList(TokenType.RParen, () => this.lexer.expect(TokenType.Ident).value);
     this.lexer.expect(TokenType.RParen);
     return params;
   }
@@ -2038,10 +2082,7 @@ export class Parser {
         : { type: "NewSet", arg: null, pos: newTok.pos };
     }
     const args: Expr[] = [this.parseExpression()];
-    while (this.lexer.peek().type === TokenType.Comma) {
-      this.lexer.next();
-      args.push(this.parseExpression());
-    }
+    this.parseCommaTail(args, TokenType.RParen, () => this.parseExpression());
     this.lexer.expect(TokenType.RParen);
     if (cls === "Set") {
       if (args.length > 1) {
@@ -2078,14 +2119,7 @@ export class Parser {
     if (methodTok.value === "UTC") {
       this.lexer.next(); // consume 'UTC'
       this.lexer.expect(TokenType.LParen);
-      const args: Expr[] = [];
-      if (this.lexer.peek().type !== TokenType.RParen) {
-        args.push(this.parseExpression());
-        while (this.lexer.peek().type === TokenType.Comma) {
-          this.lexer.next();
-          args.push(this.parseExpression());
-        }
-      }
+      const args = this.parseDelimitedList(TokenType.RParen, () => this.parseExpression());
       this.lexer.expect(TokenType.RParen);
       if (args.length < 1 || args.length > 7) {
         throw new ParseError(
@@ -2115,6 +2149,7 @@ export class Parser {
       this.lexer.next();
       this.lexer.expect(TokenType.LParen);
       const arg = this.parseExpression();
+      this.consumeTrailingComma(TokenType.RParen);
       this.lexer.expect(TokenType.RParen);
       return { type: "OperatorCall", name: "$isArray", style: "positional", args: [arg], pos: arrayTok.pos };
     }
@@ -2124,9 +2159,13 @@ export class Parser {
       const input = this.parseExpression();
       let mapFn: Expr | null = null;
       if (this.lexer.peek().type === TokenType.Comma) {
-        this.lexer.next();
-        const arg = this.parseArgOrLambda();
-        mapFn = arg;
+        this.lexer.next(); // consume `,`
+        // A lone trailing comma (`Array.from(x,)`) leaves mapFn unset; otherwise
+        // the second arg is the map callback.
+        if (this.lexer.peek().type !== TokenType.RParen) {
+          mapFn = this.parseArgOrLambda();
+          this.consumeTrailingComma(TokenType.RParen);
+        }
       }
       this.lexer.expect(TokenType.RParen);
       return { type: "ArrayFrom", input, mapFn, pos: arrayTok.pos };
@@ -2154,6 +2193,7 @@ export class Parser {
     this.lexer.next();
     this.lexer.expect(TokenType.LParen);
     const arg = this.parseExpression();
+    this.consumeTrailingComma(TokenType.RParen);
     this.lexer.expect(TokenType.RParen);
     return { type: "NumberStatic", method, arg, pos: numberTok.pos };
   }
@@ -2193,14 +2233,7 @@ export class Parser {
       return { type: "MathCallRef", method, pos: mathTok.pos };
     }
     this.lexer.expect(TokenType.LParen);
-    const args: CallArg[] = [];
-    if (this.lexer.peek().type !== TokenType.RParen) {
-      args.push(this.parseCallArg());
-      while (this.lexer.peek().type === TokenType.Comma) {
-        this.lexer.next();
-        args.push(this.parseCallArg());
-      }
-    }
+    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg());
     this.lexer.expect(TokenType.RParen);
     return { type: "MathCall", method, args, pos: mathTok.pos };
   }
@@ -2220,14 +2253,7 @@ export class Parser {
     this.lexer.next(); // consume method name
     const method = methodTok.value as ObjectMethod;
     this.lexer.expect(TokenType.LParen);
-    const args: CallArg[] = [];
-    if (this.lexer.peek().type !== TokenType.RParen) {
-      args.push(this.parseCallArg());
-      while (this.lexer.peek().type === TokenType.Comma) {
-        this.lexer.next();
-        args.push(this.parseCallArg());
-      }
-    }
+    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg());
     this.lexer.expect(TokenType.RParen);
     return { type: "ObjectCall", method, args, pos: objectTok.pos };
   }
@@ -2239,7 +2265,11 @@ export class Parser {
     this.lexer.expect(TokenType.LParen);
     const arg = this.parseExpression();
     if (this.lexer.peek().type === TokenType.Comma) {
-      throw new ParseError(`Type cast '${cast}()' takes exactly 1 argument at position ${castTok.pos}`, castTok.pos);
+      this.lexer.next(); // consume `,`
+      // A lone trailing comma (`Number(x,)`) is fine; a real second argument is not.
+      if (this.lexer.peek().type !== TokenType.RParen) {
+        throw new ParseError(`Type cast '${cast}()' takes exactly 1 argument at position ${castTok.pos}`, castTok.pos);
+      }
     }
     this.lexer.expect(TokenType.RParen);
     return { type: "TypeCast", cast, arg, pos: castTok.pos };

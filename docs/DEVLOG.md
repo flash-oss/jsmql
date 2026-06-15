@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-15 — feat: trailing commas accepted in every comma-separated list
+
+`Math.max(1, 2,)` and a multi-line `$match(… ,)` (a comma before the closing paren — exactly what prettier/oxfmt emit when they break a list across lines) used to throw. They no longer do. A single trailing comma after the last item of **any** comma-separated list is now accepted everywhere — strengthening the #2 "strict subset of JavaScript" priority: previously a trailing comma was a counterexample to the README's "if `node --check` accepts it, jsmql does too" claim.
+
+Covered sites (all in [src/parser.ts](../src/parser.ts)): method-call args, `$op(...)` positional **and** object-style (a lone trailing comma after a sole object arg stays object-style — `$op({…})` ≡ `$op({…},)`), `Math.*` / `Object.*` / `Date.UTC` / `new Date|Set` arg lists, the fixed-arity built-ins (`Number(x,)`, `Array.isArray(x,)`, `Number.isInteger(x,)`, `Array.from(x,)` / `Array.from(x, fn,)`), arrow & `function` parameter lists (and the parenthesised-lambda lookahead `isLambdaStart`, so `(x,) => …` is recognised), the `jsmql.compile` three-slot signature + its params destructure, and the in-stage update-op chain before a block's closing `}`. Array and object literals and the destructure slot already allowed it. A trailing comma never changes the parse — output is byte-identical to the comma-free form — and it is **not** a way to pass an extra argument: `Number(x, y)` still raises the precise "takes exactly 1 argument" error (only a *lone* trailing comma is swallowed).
+
+Implemented with three shared helpers so the rule is enforced uniformly rather than re-derived per call site: `parseDelimitedList` (empty-or-list with optional trailing comma), `parseCommaTail` (tail after an already-parsed first item — used by the operator-call object/positional paths), and `consumeTrailingComma` (swallow a *lone* trailing comma before a fixed-arity close). Spec: [docs/specs/grammar.md](specs/grammar.md) § Trailing commas (+ `","?` on the core EBNF productions); user doc: [docs/LANGUAGE.md](LANGUAGE.md) § Trailing commas; tests: the `trailing commas (JS syntax)` block in [test/codegen.test.ts](../test/codegen.test.ts).
+
+---
+
 ## 2026-06-14 — feat(playground): LOC + byte-size counters in both panel headers
 
 Each panel header now carries a live size figure: the **jsmql input** label reads `jsmql input  3 LOC, 187 B` and the **MQL output** label reads `MQL output  49 LOC, 728 B`. The side-by-side numbers make the playground's core pitch legible at a glance — how much terser the JSMQL source is than the MQL it expands to. This **replaces** the old `(Node/Deno/Bun)` hint in the output label (the where-it-runs note was low-value next to a concrete size delta).

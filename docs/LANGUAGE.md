@@ -46,7 +46,8 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 2. [Expressions](#expressions)
 3. [Literals](#literals)
 4. [Comments](#comments)
-5. [Field References](#field-references)
+5. [Trailing commas](#trailing-commas)
+6. [Field References](#field-references)
 6. [Mistakes caught at compile time](#mistakes-caught-at-compile-time)
 7. [Operators](#operators)
 7. [String Methods](#string-methods)
@@ -380,6 +381,27 @@ $.score /* block comment, can span lines */ * 1.1
 ```
 
 Semantics match JavaScript exactly: line comments end at any LineTerminator (LF, CR, LSEP, PSEP) or EOF; block comments do not nest (the first `*/` closes), and an unclosed `/* …` is a parse error. Comments inside string literals, regex literals, and template-literal text are character data, not comments.
+
+---
+
+## Trailing commas
+
+As in JavaScript, a single trailing comma after the last item of any comma-separated list is allowed — and ignored. It works **everywhere** a list appears: call arguments, array and object literals, arrow / `function` parameter lists, and the in-stage update-op chain. This means code your formatter has already touched (prettier and oxfmt add trailing commas when they break a list across lines) pastes straight in.
+
+```js
+Math.max($.a, $.b,)                       // call args
+[1, 2, 3,]                                // array
+{ name: $.name, age: $.age, }             // object
+$.items.map((x, i,) => x * i)             // lambda params + call args
+$match(
+  $.amount > 100 &&
+  ($.currency === "USD" || $.currency === "EUR") &&
+  $.status === "active",                  // ← trailing comma on a multi-line stage body
+)
+$.a = 1, $.b = 2,                         // update-op chain
+```
+
+A trailing comma never changes the result — output is identical to the comma-free form — and it is **not** a way to sneak in an extra argument: `Number($.x, $.y)` is still the "takes exactly 1 argument" error, while `Number($.x,)` is fine.
 
 ---
 
