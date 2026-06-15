@@ -2698,13 +2698,20 @@ All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, 
 
 ## Function Form
 
-In addition to a string, `jsmql()` and `jsmql.validate()` accept an **arrow function** whose body is the expression. The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
+In addition to a string, `jsmql()` and `jsmql.validate()` accept a **function** whose body is the expression — either an arrow `($) => …` or the `function` keyword (`function ($) { return … }`). The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
 
 jsmql(($) => $.age > 18);
-// → { $gt: ["$age", 18] }
+// → { age: { $gt: 18 } }                          (Filter — no `;`, so it dispatches like the string form)
+
+jsmql(function ($) { return $.age > 18 });
+// → { age: { $gt: 18 } } — same result; the `function` keyword is equivalent
+
+jsmql(function named($) { return $.age > 18 });
+// → identical; a named function expression's name is parsed and discarded
+//   (it's unreachable in MQL — there is no recursion)
 
 jsmql(($) =>
   [$.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
@@ -2716,7 +2723,7 @@ jsmql(($) =>
 // will indent and line-break it like any other JS — that is the whole point.
 ```
 
-**Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long jsmql expressions sit as one un-broken line. Wrapping the expression in a plain arrow function lets every JS formatter handle it for free — no plugin, no config.
+**Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long jsmql expressions sit as one un-broken line. Wrapping the expression in a plain function lets every JS formatter handle it for free — no plugin, no config.
 
 ### Block-body arrows for pipelines
 
@@ -2737,15 +2744,16 @@ jsmql(($, { $match }) => {
 //   ]
 ```
 
+The `function` keyword mirrors both shapes: `function ($) { return <expr> }` is the value form (≡ `($) => <expr>`), and `function ($) { stmt; stmt; }` is the pipeline form (≡ the block-body arrow above).
+
 Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage update op chain, identical to the string form.
 
 `return` is **not** part of jsmql — block bodies are statement lists, not JavaScript control flow. Using `return` inside a block-body arrow throws a clear `FunctionInputError` pointing at either the `;`-separated form or an expression-body arrow as alternatives.
 
 ### Restrictions
 
-- **Arrow functions only.** `function` declarations are rejected. Use `() => …`.
-- **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`.
-- **No `async`, no generators.**
+- **Arrow or `function`, but synchronous and non-generator.** Both `($) => …` and `function ($) { … }` are accepted as the input (a named function expression's name is parsed but discarded — it's unreachable in MQL). `async` functions and generators (`function*`) are rejected, with a message pointing at the synchronous form.
+- **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`. (A single-`return` `function` body is the exception: `function ($) { return <expr> }` *is* the value form, exactly like `($) => <expr>`.)
 - **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Two options for parameterising a query exist instead: the [template-tag form](#template-tag-form-jsmql) for one-shot interpolation, and the [`jsmql.compile(fn)` form](#parameterised-queries-jsmqlcompile) for reusable parameterised queries:
   ```js
   const minAge = 21;
@@ -2971,7 +2979,7 @@ eligibleUsersQuery({ minAge: 21, region: "AU" });
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$region", "AU"] }] }
 ```
 
-The destructure is still the only way to declare parameters; placeholder syntaxes like `${name}` inside the string are deliberately **not** supported — they would break jsmql's strict-JS-subset rule and collide with real template literals. If the query string isn't arrow-shaped, you get the same `FunctionInputError` the function form would have raised.
+The destructure is still the only way to declare parameters; placeholder syntaxes like `${name}` inside the string are deliberately **not** supported — they would break jsmql's strict-JS-subset rule and collide with real template literals. If the query string isn't function-shaped (an arrow `(params, $) => …` or a `function (params, $) { … }`), you get the same `FunctionInputError` the function form would have raised.
 
 ### The arrow signature
 
@@ -3038,7 +3046,7 @@ If a binding referenced in the body is missing from the params object, the call 
 
 ### Validation
 
-`jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` accepts the one-shot input shapes (string, arrow, template tag) **and** a parameterised-arrow string (it validates the arrow's shape with bindings stubbed out); the parameterised callable returned by `.compile` stays throw-only.
+`jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` accepts the one-shot input shapes (string, arrow / `function`, template tag) **and** a parameterised-function string (it validates the function's shape with bindings stubbed out); the parameterised callable returned by `.compile` stays throw-only.
 
 ### Shape-specific compile builders
 

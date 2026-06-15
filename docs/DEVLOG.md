@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-15 — docs: LANGUAGE.md Function Form no longer claims "arrow functions only"
+
+The Function Form section's Restrictions bullet still read "**Arrow functions only.** `function` declarations are rejected. Use `() => …`" — stale since the `function` keyword shipped everywhere arrows are accepted (DEF-030, commit 756e042). The grammar (`function_expr` / `function_decl`) and [reusable-functions.md](specs/reusable-functions.md) § "the JS `function` keyword" already documented it as a second spelling of the same surface; only the user-facing reference lagged.
+
+Corrected [LANGUAGE.md](LANGUAGE.md) § Function Form: the intro now says `jsmql()` / `jsmql.validate()` accept an arrow `($) => …` **or** a `function ($) { … }` (with worked examples, incl. the discarded-name note); the block-body subsection notes the `function` keyword mirrors both the value (`{ return <expr> }` ≡ `($) => <expr>`) and pipeline (`{ stmt; stmt; }` ≡ block-body arrow) shapes; the Restrictions list now states "arrow or `function`, but synchronous and non-generator" (folding the old "no async/generators" bullet in). Also reconciled the `jsmql.compile` section's "arrow-shaped" / "the arrow's shape" phrasing to "function-shaped" since `compile` accepts the `function` keyword too (verified). Fixed a stale MQL output while in the same example block: the Function Form intro showed `jsmql(($) => $.age > 18)` → `{ $gt: ["$age", 18] }` (the raw expression form), but a no-`;` input dispatches to Filter mode → `{ age: { $gt: 18 } }` (consistent with the "Function form mirrors the rule" section and verified against the live build). Docs-only — no code or behaviour change.
+
+---
+
 ## 2026-06-15 — feat: trailing commas accepted in every comma-separated list
 
 `Math.max(1, 2,)` and a multi-line `$match(… ,)` (a comma before the closing paren — exactly what prettier/oxfmt emit when they break a list across lines) used to throw. They no longer do. A single trailing comma after the last item of **any** comma-separated list is now accepted everywhere — strengthening the #2 "strict subset of JavaScript" priority: previously a trailing comma was a counterexample to the README's "if `node --check` accepts it, jsmql does too" claim.
