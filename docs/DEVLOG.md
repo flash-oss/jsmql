@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-16 — fix(ops): `$$` is `var`, not `const`, in the generated ambient types
+
+`@koresar/jsmql/ops` declared the collection context ref as `const $$`. But `$$` is reassigned wholesale by the replace-stream / `$facet` sugar — e.g. `$$ = $$$.transactions.filter(t => t.type === "deposit")` — so TypeScript flagged valid jsmql with `TS2588: Cannot assign to '$$' because it is a constant.`. The fix emits `var $$` instead (verified: `var` accepts the reassignment with zero errors; a forced-`const` control reproduces exactly `TS2588`).
+
+Only `$$` changed. `$$$` / `$$$$` stay `const`: the language never reassigns them wholesale — their only write forms are *property* assignments (`$$$.coll = …`, `$$$$.db.coll = …` → `$out`), which `const` already permits, and keeping them `const` still correctly flags the invalid `$$$ = …` whole-reassignment (no such sugar exists). Loosening all three to `var` would have wrongly accepted a form the parser rejects.
+
+Source of the change is the generator [scripts/generate-ops.mjs](../scripts/generate-ops.mjs) (`contextRefBlock` — the collection branch now emits `var`); [src/ops.ts](../src/ops.ts) was regenerated (the drift test byte-compares it). Spec updated: [docs/specs/ops-generation.md](specs/ops-generation.md) § Context references now documents the per-ref keyword and its rationale.
+
+---
+
 ## 2026-06-16 — fix(playground): trailing `// comment` no longer breaks the variables (compile) path
 
 A query ending in a `// line comment` with no trailing newline rendered `Unexpected end of expression` in the playground — but **only** when the Variables editor had at least one key, so `render()` routes through the `.compile(...)` builders. `buildArrow(keys, query)` ([playground_skeleton.html](../playground_skeleton.html)) wraps the query into a compile-form arrow string `({ keys }) => { <query> }`, and it appended the closing ` }` **on the same line** as the query's last line. When that last line was `// some comment`, the brace landed *inside* the comment (`// some comment }`), so the block never closed and jsmql's parser hit EOF mid-block — a correct rejection of genuinely malformed wrapper source, surfaced as the cryptic error. The no-variables path was unaffected (it feeds the raw query straight to `jsmql()`, whose lexer treats the trailing comment as trivia).

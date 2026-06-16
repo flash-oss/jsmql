@@ -2228,7 +2228,7 @@ declare global {
    *
    * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
    */
-  const $$: JsmqlCollectionRef;
+  var $$: JsmqlCollectionRef;
   /**
    * jsmql current-database context reference (`$$$`, run on `db.aggregate()`). Heads cross-collection joins (`$$$.coll.find/filter(...)` → `$lookup`) and `$out` writes (`$$$.coll = ...`). Has no diagnostic source stages of its own — `$currentOp` & friends run on the admin database, reached via `$$$$`.
    *

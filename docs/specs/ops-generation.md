@@ -30,7 +30,7 @@ A single `src/ops.ts` file containing one `declare global { … } export {};` bl
 
 1. **Stages** — every key of `STAGES`.
 2. **Expression operators (incl. accumulators and window functions)** — every key of `OPERATORS`. Accumulators sit in the same registry; the section header reflects that this set covers all non-stage callables.
-3. **Context references (`$$`, `$$$`, `$$$$`)** — three ambient `const` declarations so arrow-form context-ref code type-checks. See § Context references below.
+3. **Context references (`$$`, `$$$`, `$$$$`)** — three ambient declarations (`var $$`, `const $$$`, `const $$$$`) so arrow-form context-ref code type-checks. See § Context references below.
 
 For each operator the generator emits:
 
@@ -77,9 +77,11 @@ Reserved TS keywords used as argument names (e.g. `default` for `$bucket`) are q
 
 ### Context references (`$$` / `$$$` / `$$$$`)
 
-`contextRefBlock(spec)` emits one ambient `const` per context-ref prefix, in scope order (collection → database → cluster), so arrow-form code like `jsmql(($) => $$.indexStats())` or `jsmql(($) => $$$.orders.find(...))` type-checks under TypeScript instead of erroring on an undeclared identifier.
+`contextRefBlock(spec)` emits one ambient declaration per context-ref prefix, in scope order (collection → database → cluster), so arrow-form code like `jsmql(($) => $$.indexStats())` or `jsmql(($) => $$$.orders.find(...))` type-checks under TypeScript instead of erroring on an undeclared identifier.
 
-Each const is an inline object type:
+The declaration keyword differs by ref. **`$$` is declared `var`**, not `const`: the `$$ = …` replace-stream / `$facet` sugar reassigns it wholesale, and `const $$` would make TypeScript reject that valid jsmql with `TS2588: Cannot assign to '$$' because it is a constant.`. **`$$$` / `$$$$` stay `const`** — they only ever take *property* writes (`$$$.coll = …`, `$$$$.db.coll = …` → `$out`), which `const` permits, while `const` still flags the invalid `$$$ = …` whole-reassignment (there is no such sugar).
+
+Each ref is typed as an object shape:
 
 - **Named diagnostic methods** — derived from the `diagnostic: { scope, options }` field on each entry in `STAGES` (the single source of truth, also read by [`src/system-stage-translation.ts`](../../src/system-stage-translation.ts)). Stages bucket by `diagnostic.scope`: `collection` → `$$`, `cluster` → `$$$$`. `$$$` (database) has no diagnostics by design — `$currentOp` & friends run on the admin DB. The method name is the stage name minus its leading `$`; method names are sorted for byte-stable output. Each method reuses the *same* `jsdocFor(...)` JSDoc the stage's own block gets (description, `@minVersion`, `@see`), so docs stay consistent. The signature is `method(): any;` when `options: false`, else `method(options?: <shape>): any;`.
 - **Options shapes** — the option *field* shapes (`collStats`'s `latencyStats`/`storageStats`/…, `currentOp`'s `allUsers`/`idleCursors`/…) aren't carried by `STAGES` or the vendored YAML in a usable form, and matter only to TS completion, so they live in the generator as a hardcoded `DIAGNOSTIC_OPTION_SHAPES` map keyed by stage name, transcribed from the MongoDB manual (doc URLs inline). The three no-option stages (`$indexStats`, `$planCacheStats`, `$shardedDataDistribution`) are absent from the map — they take zero arguments, matching `options: false` and the runtime arg check in `resolveSystemStageCall`.
