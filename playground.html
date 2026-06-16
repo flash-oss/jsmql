@@ -1759,7 +1759,13 @@
       // editor for highlighting.
       function buildArrow(keys, query) {
         const prefix = `({ ${keys.join(", ")} }) => { `;
-        return { src: prefix + query + " }", prefixLen: prefix.length };
+        // Close the block on its OWN line. If `query` ends with a `// line
+        // comment` and no trailing newline, appending `}` on the same line
+        // would comment out the closing brace and the parser would hit EOF
+        // ("Unexpected end of expression"). The leading newline terminates any
+        // trailing line comment before the brace — mirrors `parseVars`, which
+        // puts a `\n` before its closing `)` for the same reason.
+        return { src: prefix + query + "\n}", prefixLen: prefix.length };
       }
 
       // Persist the editor session — the JSMQL query, the Variables object, and

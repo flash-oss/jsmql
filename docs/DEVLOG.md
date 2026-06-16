@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-16 — fix(playground): trailing `// comment` no longer breaks the variables (compile) path
+
+A query ending in a `// line comment` with no trailing newline rendered `Unexpected end of expression` in the playground — but **only** when the Variables editor had at least one key, so `render()` routes through the `.compile(...)` builders. `buildArrow(keys, query)` ([playground_skeleton.html](../playground_skeleton.html)) wraps the query into a compile-form arrow string `({ keys }) => { <query> }`, and it appended the closing ` }` **on the same line** as the query's last line. When that last line was `// some comment`, the brace landed *inside* the comment (`// some comment }`), so the block never closed and jsmql's parser hit EOF mid-block — a correct rejection of genuinely malformed wrapper source, surfaced as the cryptic error. The no-variables path was unaffected (it feeds the raw query straight to `jsmql()`, whose lexer treats the trailing comment as trivia).
+
+Fix: close the block on its own line — `prefix + query + "\n}"` — so the leading newline terminates any trailing line comment before the brace. This mirrors `parseVars`, which already puts a `\n` before its closing `)` in `new Function("return (" + trimmed + "\n)")` for exactly this reason. `prefixLen` is unchanged, so arrow-relative → query-editor error-position mapping (`toQueryPos`) still lines up. Playground-only; no library code touched. [playground.html](../playground.html) regenerated via `scripts/sync-playground.mjs`.
+
+---
+
 ## 2026-06-15 — docs: LANGUAGE.md Function Form no longer claims "arrow functions only"
 
 The Function Form section's Restrictions bullet still read "**Arrow functions only.** `function` declarations are rejected. Use `() => …`" — stale since the `function` keyword shipped everywhere arrows are accepted (DEF-030, commit 756e042). The grammar (`function_expr` / `function_decl`) and [reusable-functions.md](specs/reusable-functions.md) § "the JS `function` keyword" already documented it as a second spelling of the same surface; only the user-facing reference lagged.
