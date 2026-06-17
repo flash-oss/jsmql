@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-18 — fix: constant `new Date(...)` folds to a real BSON Date (HR1/HR3)
+
+`new Date("2026-05-17T...")` inside a query document — a Filter `{ createdAt: { $gte: new Date("...") } }` or the `$match({ ... })` object-literal passthrough — lowered to the aggregation form `{ $toDate: "..." }`. But MongoDB's *query language* doesn't evaluate `{ $toDate }`; it compares against it as a literal subdocument, so the predicate silently matched **nothing**. Verified against a local `mongod`: a real `Date` in a `$gte` slot matches, `{ $toDate: "..." }` matches `[]`, in both `find` and aggregation `$match`. This violated HR1 (a constant `Date` should pass through verbatim) and produced a query that just didn't work — the reported bug.
+
+Fix: a `new Date(...)` with compile-time-constant arguments now folds to a real BSON `Date` in **every** context (codegen-level, not just the query translator), so the same `new Date("...")` emits the same MQL regardless of surrounding syntax and works in both aggregation-expression and query-document positions. The fold logic became a single source of truth — `evalConstDate` / `foldConstantDate` in [codegen.ts](../src/codegen.ts) — that both `generateNewDate` and the `$match`/Filter translator ([match-translation.ts](../src/match-translation.ts)) call; the translator's old private `evaluateStaticDate` (which folded multi-arg `new Date(y, m, d)` in JS **local** time, silently disagreeing with codegen's **UTC** `$dateFromParts`) is gone. Only genuinely-runtime forms (`new Date()` = now, `new Date($.field)`) keep the `{ $toDate }` / `$dateFromParts` lowering.
+
+HR3 follow-up: when the constant arguments evaluate to an *Invalid* Date (`new Date("not-a-date")`), jsmql now **rejects at compile time** with an actionable, position-bearing error (`"not-a-date" is not a valid date string. Use an ISO 8601 date like ...`) instead of emitting `{ $toDate: "not-a-date" }` — which `mongod` rejects at parse time anyway ("Error parsing date string"). A JS-valid-but-non-ISO string (`new Date("Jan 1 2024")`) folds to a real Date, which also fixes a case the old `{ $toDate }` form would have had the server reject.
+
+---
+
 ## 2026-06-17 — fix(playground): scope the saved session to the page's full URL
 
 The editor session (query + Variables + compile mode) persisted under a fixed `localStorage` key, `"jsmql-playground:session:v1"`. `localStorage` is scoped by the browser to the *origin* (scheme + host + port) but **not** the path, so every playground served from the same origin shared one slot and clobbered each other: a dev copy deployed alongside the canonical `flash-oss.github.io/jsmql/playground.html` (e.g. under a different path) would overwrite the work the user had open there, and two local copies at `localhost:1234/bla/` vs `localhost:1234/foo/` collided too.
