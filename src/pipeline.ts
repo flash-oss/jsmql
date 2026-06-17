@@ -29,6 +29,8 @@ import {
   generateWithCtx,
   generateUpdateOpGroups,
   generateUpdateFilter,
+  generateAssertGuardExpr,
+  ASSERT_FN_NAME,
   updateOpWritePath,
   tryRewriteMutatorCall,
   CodegenError,
@@ -85,6 +87,17 @@ import {
 } from "./stream-methods.ts";
 
 type StageShape = { name: string; body: Expr };
+
+/**
+ * `assert(condition[, message])` — a pipeline-statement guard that lowers to a
+ * `$match` carrying a conditional `$convert` (see `generateAssertGuardExpr` in
+ * codegen.ts and docs/specs/assert.md). A bare-identifier call to `assert`.
+ * Expression-position uses are rejected in codegen; this only flags the
+ * statement form so both pipeline forms route it through `lowerStatementTail`.
+ */
+export function isAssertCall(el: ArrayElement): el is Extract<Expr, { type: "CallExpression" }> {
+  return el.type === "CallExpression" && el.callee.type === "ParamRef" && el.callee.name === ASSERT_FN_NAME;
+}
 
 /** Stages that replace the document and so drop all in-scope `let` bindings. */
 const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith", "$facet"]);
@@ -162,6 +175,10 @@ function isStageCandidate(el: ArrayElement): boolean {
   // `[$$.indexStats(), $sort(...)]` into pipeline mode (same pattern as the
   // `detectUnionPush` line above).
   if (el.type === "MethodCall" && isSystemStageCall(el as Expr)) return true;
+  // `assert(cond[, msg])` is a statement-style guard that lowers to a `$match`
+  // stage. Recognising it here flips a leading-`assert` array / single-statement
+  // block into pipeline mode (same pattern as `$$.push(...)` above).
+  if (isAssertCall(el)) return true;
   return false;
 }
 
@@ -1914,6 +1931,14 @@ function lowerStatementTail(
   lowerBlockFn: SubPipelineLowerer,
 ): GenerateCtx {
   if (el.type !== "SpreadElement") {
+    // `assert(cond[, msg]);` — a guard statement → one `$match` with a
+    // conditional `$convert` that throws `Unknown type name: <message>` when the
+    // condition is false (see generateAssertGuardExpr). A user-declared function
+    // named `assert` takes precedence (falls through to the generic stage path).
+    if (isAssertCall(el) && !ctx.functions?.has(ASSERT_FN_NAME)) {
+      out.push({ $match: { $expr: generateAssertGuardExpr(el.args, ctx, el.pos) } });
+      return ctx;
+    }
     const pushCall = detectUnionPush(el as Expr);
     if (pushCall !== null) {
       for (const s of lowerUnionPush(pushCall, ctx, lowerBlockFn)) out.push(s);

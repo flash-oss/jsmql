@@ -763,6 +763,53 @@ Each rule is enforced at compile time with a targeted error:
 
 **Nested.** `$$.push(...)` inside another lookup's block body or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`) is rejected with a hoist-to-outer hint — the stages it would emit can't land inside the inner pipeline without changing what gets unioned.
 
+### `assert`: fail the pipeline when an invariant breaks
+
+`assert(condition[, message])` is a guard clause for a pipeline. When `condition`
+holds the document passes through unchanged; when it fails the **whole operation
+aborts** with a server error carrying your `message`. It's the closest thing to
+`throw new Error(...)` that runs purely server-side.
+
+```js
+// 1. Guard, then transform. A failing doc aborts the aggregate.
+jsmql(($) => {
+  assert($.qty >= 0, "qty must be >= 0");
+  $.fee = $.qty * 0.01;
+});
+// → [
+//     { $match: { $expr: { $convert: { input: true,
+//         to: { $cond: [{ $gte: ["$qty", 0] }, "bool", "jsmql assertion failed: qty must be >= 0"] } } } } },
+//     { $set: { fee: { $multiply: ["$qty", 0.01] } } }
+//   ]
+
+// 2. Dynamic message — interpolate a runtime value.
+jsmql(($) => { assert($.qty >= 0, `qty was ${$.qty}`); });
+
+// 3. Message optional (uses a generic default), truthiness is JS-like.
+jsmql("assert($.active)");   // 0 / "" / null / missing all fail
+```
+
+When the assertion fails, the driver throws `BadValue (2)` with a message ending
+`Unknown type name: jsmql assertion failed: qty must be >= 0`. The
+`Unknown type name:` prefix is MongoDB boilerplate — your message is the readable
+tail. (jsmql can't set a custom error *code*; only the message text.)
+
+**How it works / why no JS.** MongoDB has no native assert/throw operator, and
+the one mechanism that carries a custom message — `$function` (server-side JS) —
+is deprecated in MongoDB 8.0 and unavailable under the Stable API and on Atlas
+Flex/free tiers, so jsmql avoids it. Instead `assert` feeds the (prefixed)
+message to `$convert` as a bogus target type; a holding assertion converts a
+constant `true`→`bool` (a no-op the surrounding `$match` keeps), a failing one
+trips `Unknown type name`. The `jsmql assertion failed:` prefix is required, not
+decorative — it stops a message that happens to be a real type name (e.g.
+`"int"`) from making the convert *succeed* and silently skipping the check.
+
+**Statement-only.** `assert(...)` must be a top-level Pipeline statement — it has
+no value. `$.x = assert(...)`, `cond ? a : assert(...)`, or any other read of the
+result is rejected with a hint pointing at the statement form. `jsmql.filter` /
+`jsmql.expr` reject it wholesale (it's Pipeline-only); `jsmql.update` rejects it
+too, because it lowers to a `$match`, which update pipelines disallow.
+
 ### `$out`: write the pipeline to a collection
 
 Assigning to a context-ref-rooted LHS writes the current pipeline's documents into a destination collection — MongoDB's [`$out`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/out/) stage. The destination is named on the **left** (where the documents go), the (optionally filtered) source on the **right**:

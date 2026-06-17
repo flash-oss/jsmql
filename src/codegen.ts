@@ -3526,6 +3526,18 @@ function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx,
       const bodyCtx = extendCtx(marked, fn.lambda.params);
       return applyLambda(fn.lambda, args, ctx, bodyCtx, pos, `Function '${callee.name}'`);
     }
+    // `assert(...)` is a statement, not a value — reaching here means it was
+    // used in expression position (a ternary branch, a field RHS, nested in a
+    // call). Point at the statement form. (A user-declared `const assert = …`
+    // takes precedence above via the `ctx.functions` lookup.)
+    if (callee.name === ASSERT_FN_NAME) {
+      throw new CodegenError(
+        `'assert(...)' is a pipeline statement, not a value — it can't appear inside an expression. ` +
+          `Use it as its own statement in a pipeline body, e.g. ` +
+          `\`($) => { assert($.qty >= 0, "qty must be >= 0"); … }\`.`,
+        pos,
+      );
+    }
     // A bare-identifier call that isn't a reusable function in scope.
     throw new CodegenError(
       `Unknown function '${callee.name}(...)'.${didYouMean(callee.name, [...(ctx.functions?.keys() ?? [])], (s) => `${s}(...)`)} ` +
@@ -3542,6 +3554,53 @@ function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx,
   }
   const bodyCtx = extendCtx(ctx, callee.params);
   return applyLambda(callee, args, ctx, bodyCtx, pos, "IIFE");
+}
+
+// ── assert(condition[, message]) — conditional runtime error ────────────────────
+//
+// jsmql's `assert` is a pipeline-statement guard. It lowers to a `$convert`
+// whose TARGET TYPE is a `$cond`: when the assertion holds, the type is a real
+// BSON type so `$convert` is a no-op on the constant `true` (→ `true`); when it
+// fails, the type is the (prefixed) message string, which MongoDB rejects at
+// runtime with `Unknown type name: <message>` (BadValue, code 2). pipeline.ts
+// wraps this expression in `{ $match: { $expr: … } }` — a `$match` neither adds
+// nor drops fields, so a holding assertion is invisible in the output, and the
+// `$convert` is ALWAYS evaluated (the gating lives in its runtime `to`), so the
+// guard never relies on the undocumented short-circuiting of `$cond`/`$and`.
+// The `ASSERT_FAIL_BASE` prefix is load-bearing, not cosmetic: it guarantees the
+// failing-branch string is never itself a valid type name (e.g. a literal
+// message of `"int"`), which would otherwise make `$convert` SUCCEED and
+// silently skip the assertion. See docs/specs/assert.md.
+export const ASSERT_FN_NAME = "assert";
+const ASSERT_FAIL_BASE = "jsmql assertion failed";
+
+/**
+ * Build the bare `$convert` guard expression for `assert(condition[, message])`.
+ * Statement-position only — the caller (pipeline.ts) wraps it in a `$match`
+ * stage; expression-position uses are rejected in `generateCallExpression`.
+ */
+export function generateAssertGuardExpr(args: CallArg[], ctx: GenerateCtx, callPos: number): unknown {
+  const exprArgs = args.map((a) => {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`Spread (...) is not supported as an argument to 'assert(...)'.`, a.pos);
+    }
+    return a;
+  });
+  checkArity("assert", { sig: "condition[, message]", allowed: [1, 2] }, exprArgs.length, callPos, "");
+  const condition = jsBoolIfNeeded(exprArgs[0], _generate(exprArgs[0], ctx));
+  return { $convert: { input: true, to: { $cond: [condition, "bool", assertFailType(exprArgs[1], ctx)] } } };
+}
+
+/**
+ * The failing-branch value placed in `$convert.to`. A static string message
+ * folds to a constant; any other expression (template literal, field ref, …)
+ * is coerced to a string and prefixed at runtime via `$concat`. The
+ * `ASSERT_FAIL_BASE` prefix keeps the result from ever being a valid type name.
+ */
+function assertFailType(msgExpr: Expr | undefined, ctx: GenerateCtx): unknown {
+  if (msgExpr === undefined) return ASSERT_FAIL_BASE;
+  if (msgExpr.type === "StringLiteral") return `${ASSERT_FAIL_BASE}: ${msgExpr.value}`;
+  return { $concat: [`${ASSERT_FAIL_BASE}: `, { $toString: _generate(msgExpr, ctx) }] };
 }
 
 // ── Type casts ────────────────────────────────────────────────────────────────

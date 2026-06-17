@@ -49,6 +49,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/out-stage.md` | `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` |
 | `specs/system-stages.md` | `$$.indexStats()` / `$$$$.currentOp(…)` / … → diagnostic / system source stages |
 | `specs/stream-methods.md` | Registry of chainable array-shaped methods on a `$$ = …` RHS, plus the `.reduce` wrap forms |
+| `specs/assert.md` | `assert(condition[, message])` → conditional-error `$match` guard (`$convert` "Unknown type name") |
 | `specs/cli.md` | The `jsmql` command-line bin (`src/cli.ts` → `dist/cjs/cli.cjs`) |
 
 Items still on the roadmap live in [docs/DEFERRED.md](DEFERRED.md) — that file is their single source of truth. Add a spec file when the work begins.

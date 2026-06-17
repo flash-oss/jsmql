@@ -42,7 +42,7 @@ New AST node types add a case in the `_generate(expr, ctx)` switch. The public e
 
 ## Extending the pipeline sugar
 
-`pipeline.ts` is the sugar-dispatch hub: per-element lowering is shared across all pipeline forms (`[ … ]`, `;`-separated, and the `,`-grouped update-filter op chain) through two helpers. Add a new `$ =`-rooted / lookup sugar in `tryLowerAssignSugar` (replace-stream, `$facet`, `$replaceWith`, `$out`, `$lookup`); add a new statement-style sugar (`$$.push` → `$unionWith`, system source stages, the generic stage-call path) in `lowerStatementTail`. Touch either helper and both pipeline forms pick it up at once. Each sugar's behaviour is owned by its spec in `docs/specs/` — keep the lowering rules there, not in comments here.
+`pipeline.ts` is the sugar-dispatch hub: per-element lowering is shared across all pipeline forms (`[ … ]`, `;`-separated, and the `,`-grouped update-filter op chain) through two helpers. Add a new `$ =`-rooted / lookup sugar in `tryLowerAssignSugar` (replace-stream, `$facet`, `$replaceWith`, `$out`, `$lookup`); add a new statement-style sugar (`$$.push` → `$unionWith`, system source stages, `assert(...)` → conditional-error `$match`, the generic stage-call path) in `lowerStatementTail`. Touch either helper and both pipeline forms pick it up at once. Each sugar's behaviour is owned by its spec in `docs/specs/` — keep the lowering rules there, not in comments here. A statement-style sugar that should also work without a trailing `;` (as a lone top-level call) needs a clause in `isStageCandidate` (`pipeline.ts`) **and** the auto-wrap sites in `index.ts` (`lowerWithCtx` / `lowerToPipelineStages`) — `assert` is the worked example.
 
 ## Error classes
 

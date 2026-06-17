@@ -1736,6 +1736,43 @@ $$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
   );
 });
 
+describe("guard against corrupt data before aggregating (`assert`)", { features: ["Pipelines"] }, () => {
+  it(
+    "asserts an invariant mid-pipeline, then computes — a bad document aborts the whole aggregate",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // Before rolling up revenue we refuse to silently ingest corrupt rows: a
+      // negative quantity should fail the whole aggregate loudly rather than
+      // skew the totals. `assert(cond, msg)` lowers to a `$match` whose
+      // `$convert` throws `Unknown type name: jsmql assertion failed: <msg>`
+      // when the condition fails (no deprecated server-side JS); a holding
+      // assertion passes the document through untouched.
+      expect(
+        jsmql`
+$match($.status === "paid");
+assert($.qty >= 0, "order qty must be non-negative");
+$.revenue = $.qty * $.unitPrice;
+        `,
+      ).toEqual([
+        { $match: { status: "paid" } },
+        {
+          $match: {
+            $expr: {
+              $convert: {
+                input: true,
+                to: {
+                  $cond: [{ $gte: ["$qty", 0] }, "bool", "jsmql assertion failed: order qty must be non-negative"],
+                },
+              },
+            },
+          },
+        },
+        { $set: { revenue: { $multiply: ["$qty", "$unitPrice"] } } },
+      ]);
+    },
+  );
+});
+
 describe("denormalise order line items for analytics (`.map`)", { features: ["Pipelines"] }, () => {
   it(
     "reshapes each shipped order doc into an analytics-friendly summary",

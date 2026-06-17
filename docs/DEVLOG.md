@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-17 — feat: `assert(condition[, message])` — conditional pipeline errors
+
+Added `assert(...)`, a pipeline-statement guard clause that aborts the whole operation with a custom-message server error when its condition fails — the long-requested "`assert()` / `throw new Error()`" capability. A holding assertion is invisible (the document passes through unchanged); a failing one surfaces as `BadValue (2): Unknown type name: jsmql assertion failed: <message>`.
+
+**Mechanism (deliberately not `$function`).** Research against MongoDB 8.2 (run live against a local `mongod`) confirmed there is no native error/assert/throw operator (JIRA SERVER-27190, open since 2016). The only mechanism carrying a custom message is `$function` (server-side JS `throw`) — but server-side JS is **deprecated in MongoDB 8.0**, excluded from the Stable API, and absent on Atlas Flex/free tiers, so we ruled it out. Instead `assert` lowers to `{ $match: { $expr: { $convert: { input: true, to: { $cond: [<cond>, "bool", <failMsg>] } } } } }`: a holding assertion converts `true`→`bool` (a no-op the `$match` keeps), a failing one feeds the message to `$convert` as a bogus target type, tripping `Unknown type name`. The `$convert` is **always evaluated** (gating lives in its runtime `to`), so it never relies on the undocumented short-circuiting of `$cond`/`$and`, and a constant message can't be constant-folded into firing unconditionally. The `jsmql assertion failed:` prefix is **load-bearing, not cosmetic** — without it a message that is itself a valid type name (e.g. `"int"`) would make the convert *succeed* and silently skip the check; verified against `mongod`.
+
+Surface: `assert(condition[, message])`, message optional (string literal folds to a constant; any other expression is `$concat`+`$toString`-coerced at runtime; omitted → a generic default). Condition is JS-truthiness-wrapped like every boolean context. Statement-only: expression-position uses (`$.x = assert(…)`, `cond ? a : assert(…)`) and `jsmql.filter`/`jsmql.expr` reject with a hint pointing at the statement form (`throw` can't be a ternary branch in JS — HR2 — so `assert` is the surface, not `throw new Error()`). `jsmql.update` rejects it via the existing update-stage whitelist (it lowers to `$match`). Recognised in `lowerStatementTail` + auto-wrapped by the `jsmql()` / `jsmql.pipeline()` entry points, so every call form works without a trailing `;`.
+
+Implementation: `generateAssertGuardExpr` + the expression-position rejection in [src/codegen.ts](../src/codegen.ts); `isAssertCall` + the `$match` wrap + `isStageCandidate` clause in [src/pipeline.ts](../src/pipeline.ts); two auto-wrap sites in [src/index.ts](../src/index.ts). Spec: [docs/specs/assert.md](specs/assert.md); user doc: [docs/LANGUAGE.md](LANGUAGE.md) § assert; tests: [test/assert.test.ts](../test/assert.test.ts) (17 cases, lowering + every call form + rejections), all lowerings verified executing against a live `mongod` 8.2.
+
+---
+
 ## 2026-06-15 — docs: LANGUAGE.md Function Form no longer claims "arrow functions only"
 
 The Function Form section's Restrictions bullet still read "**Arrow functions only.** `function` declarations are rejected. Use `() => …`" — stale since the `function` keyword shipped everywhere arrows are accepted (DEF-030, commit 756e042). The grammar (`function_expr` / `function_decl`) and [reusable-functions.md](specs/reusable-functions.md) § "the JS `function` keyword" already documented it as a second spelling of the same surface; only the user-facing reference lagged.

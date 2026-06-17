@@ -11,7 +11,13 @@ import {
   isOpaqueBsonValue,
   type GenerateCtx,
 } from "./codegen.ts";
-import { isPipelineAst, generatePipeline, generateImplicitPipeline, updateFilterHasReplaceRoot } from "./pipeline.ts";
+import {
+  isPipelineAst,
+  generatePipeline,
+  generateImplicitPipeline,
+  updateFilterHasReplaceRoot,
+  isAssertCall,
+} from "./pipeline.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
 import { LexError, Lexer, TokenType } from "./lexer.ts";
@@ -758,7 +764,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     ast.type !== "Pipeline" &&
     ast.type !== "UpdateFilter" &&
     !isPipelineAst(ast) &&
-    detectStageIntent(ast) !== null
+    (detectStageIntent(ast) !== null || isAssertCall(ast as Expr))
   ) {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
@@ -1065,7 +1071,7 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
   // A bare stage call (`$match(...)`) or a diagnostic source-stage sugar
   // (`$$.indexStats()`, `$$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`)
   // is a one-stage Pipeline — wrap it so the user needn't add a trailing `;`.
-  if (detectStageIntent(ast) !== null || isSystemStageCall(ast as Expr)) {
+  if (detectStageIntent(ast) !== null || isSystemStageCall(ast as Expr) || isAssertCall(ast as Expr)) {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx) as object[];
   }

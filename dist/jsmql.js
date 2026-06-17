@@ -6221,6 +6221,12 @@ function generateCallExpression(callee, args, ctx, pos) {
       const bodyCtx2 = extendCtx(marked, fn.lambda.params);
       return applyLambda(fn.lambda, args, ctx, bodyCtx2, pos, `Function '${callee.name}'`);
     }
+    if (callee.name === ASSERT_FN_NAME) {
+      throw new CodegenError(
+        `'assert(...)' is a pipeline statement, not a value \u2014 it can't appear inside an expression. Use it as its own statement in a pipeline body, e.g. \`($) => { assert($.qty >= 0, "qty must be >= 0"); \u2026 }\`.`,
+        pos
+      );
+    }
     throw new CodegenError(
       `Unknown function '${callee.name}(...)'.${didYouMean(callee.name, [...ctx.functions?.keys() ?? []], (s) => `${s}(...)`)} Declare it first with \`const ${callee.name} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${callee.name}(...)\`; for a method, \`receiver.${callee.name}(...)\`.`,
       pos
@@ -6234,6 +6240,24 @@ function generateCallExpression(callee, args, ctx, pos) {
   }
   const bodyCtx = extendCtx(ctx, callee.params);
   return applyLambda(callee, args, ctx, bodyCtx, pos, "IIFE");
+}
+var ASSERT_FN_NAME = "assert";
+var ASSERT_FAIL_BASE = "jsmql assertion failed";
+function generateAssertGuardExpr(args, ctx, callPos) {
+  const exprArgs = args.map((a) => {
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`Spread (...) is not supported as an argument to 'assert(...)'.`, a.pos);
+    }
+    return a;
+  });
+  checkArity("assert", { sig: "condition[, message]", allowed: [1, 2] }, exprArgs.length, callPos, "");
+  const condition = jsBoolIfNeeded(exprArgs[0], _generate(exprArgs[0], ctx));
+  return { $convert: { input: true, to: { $cond: [condition, "bool", assertFailType(exprArgs[1], ctx)] } } };
+}
+function assertFailType(msgExpr, ctx) {
+  if (msgExpr === void 0) return ASSERT_FAIL_BASE;
+  if (msgExpr.type === "StringLiteral") return `${ASSERT_FAIL_BASE}: ${msgExpr.value}`;
+  return { $concat: [`${ASSERT_FAIL_BASE}: `, { $toString: _generate(msgExpr, ctx) }] };
 }
 function generateTypeCast(cast, arg, ctx, _pos) {
   const val = _generate(arg, ctx);
@@ -10423,6 +10447,9 @@ function formatList(methods) {
 }
 
 // src/pipeline.ts
+function isAssertCall(el) {
+  return el.type === "CallExpression" && el.callee.type === "ParamRef" && el.callee.name === ASSERT_FN_NAME;
+}
 var RESHAPE_CLEARING_STAGES = /* @__PURE__ */ new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith", "$facet"]);
 var LET_NAMESPACE2 = "__jsmql";
 function shouldSkipTrailingNamespaceUnset(stages) {
@@ -10448,6 +10475,7 @@ function isStageCandidate(el) {
   if (el.type === "OperatorCall") return true;
   if (el.type === "MethodCall" && detectUnionPush(el) !== null) return true;
   if (el.type === "MethodCall" && isSystemStageCall(el)) return true;
+  if (isAssertCall(el)) return true;
   return false;
 }
 function asStageShape(el) {
@@ -11399,6 +11427,10 @@ function tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlockFn, isFir
 }
 function lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlockFn) {
   if (el.type !== "SpreadElement") {
+    if (isAssertCall(el) && !ctx.functions?.has(ASSERT_FN_NAME)) {
+      out.push({ $match: { $expr: generateAssertGuardExpr(el.args, ctx, el.pos) } });
+      return ctx;
+    }
     const pushCall = detectUnionPush(el);
     if (pushCall !== null) {
       for (const s of lowerUnionPush(pushCall, ctx, lowerBlockFn)) out.push(s);
@@ -11748,7 +11780,7 @@ function lowerProgram(ast, ctx, lowerExpr) {
   return lowerExpr(ast, ctx);
 }
 function lowerWithCtx(ast, ctx) {
-  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) !== null) {
+  if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && (detectStageIntent(ast) !== null || isAssertCall(ast))) {
     const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
@@ -11891,7 +11923,7 @@ function lowerToPipelineStages(ast, ctx, apiName) {
     return Array.isArray(result) ? result : [result];
   }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
-  if (detectStageIntent(ast) !== null || isSystemStageCall(ast)) {
+  if (detectStageIntent(ast) !== null || isSystemStageCall(ast) || isAssertCall(ast)) {
     const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
