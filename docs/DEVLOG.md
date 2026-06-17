@@ -10,7 +10,15 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-06-16 — fix(ops): `$$` is `var`, not `const`, in the generated ambient types
+## 2026-06-17 — fix(playground): scope the saved session to the page's full URL
+
+The editor session (query + Variables + compile mode) persisted under a fixed `localStorage` key, `"jsmql-playground:session:v1"`. `localStorage` is scoped by the browser to the *origin* (scheme + host + port) but **not** the path, so every playground served from the same origin shared one slot and clobbered each other: a dev copy deployed alongside the canonical `flash-oss.github.io/jsmql/playground.html` (e.g. under a different path) would overwrite the work the user had open there, and two local copies at `localhost:1234/bla/` vs `localhost:1234/foo/` collided too.
+
+Fix: derive the key from the page URL — `"jsmql-playground:session:v1:" + location.origin + location.pathname` ([playground_skeleton.html](../playground_skeleton.html)). Different paths now keep independent sessions; different ports/hosts already did (browser origin scoping) but the origin is folded in too so the key reads as "state depends on the whole URL". Existing sessions under the bare-`v1` key are not migrated — a one-time reset, acceptable for a best-effort persistence nicety. Playground-only; no library code touched. [playground.html](../playground.html) regenerated via `scripts/sync-playground.mjs`.
+
+---
+
+## 2026-06-16 — fix(ops): `$` is `var`, not `const`, in the generated ambient types
 
 `@koresar/jsmql/ops` declared the collection context ref as `const $$`. But `$$` is reassigned wholesale by the replace-stream / `$facet` sugar — e.g. `$$ = $$$.transactions.filter(t => t.type === "deposit")` — so TypeScript flagged valid jsmql with `TS2588: Cannot assign to '$$' because it is a constant.`. The fix emits `var $$` instead (verified: `var` accepts the reassignment with zero errors; a forced-`const` control reproduces exactly `TS2588`).
 
