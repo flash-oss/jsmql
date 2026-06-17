@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-17 — fix: actionable error when a predicate is passed to `.includes()` / `.indexOf()`
+
+`$.senderChain.includes(sc => sc.client === clientId && sc.tier === 2)` failed with a *misleading* message: *"Lambda expression cannot be used here — only valid as array method argument or $let second argument."* That wording is self-contradicting at the call site — `.includes` **is** an array method, so it reads as "this should be fine." The lambda was reaching the generic `case "Lambda"` rejection in `_generate`, which has no method context.
+
+The slip itself is a JS-semantics confusion, not a jsmql limitation: `Array.prototype.includes(value)` searches for a *value*; the predicate form is `.some(predicate)` (which jsmql already lowers to `$anyElementTrue`/`$map`). So rather than accept `.includes(predicate)` — which would diverge from real JS (`[].includes(fn)` checks function identity) and add a second spelling for `.some()` — we keep it rejected but redirect. New `rejectPredicateOnValueSearch(arg, method, sibling)` helper in [src/codegen.ts](../src/codegen.ts) intercepts a lambda arg to `.includes` (→ `.some`, both bool) and its dispatch-sibling `.indexOf` (→ `.findIndex`, both index) and throws `… To test elements against a predicate, use .some(sc => …).`, echoing the user's own param name with the caret on the lambda. The generic `case "Lambda"` message was also corrected to stop falsely implying any array method takes a callback — it now names the iterating methods (`.map`/`.filter`/`.some`/`.every`/`.find`/`.reduce`/…) that actually do.
+
+No behaviour change for valid programs: `.includes(value)` / `.indexOf(value)` and `.some(predicate)` are untouched. Spec: [docs/specs/method-dispatch.md](specs/method-dispatch.md) § Type-aware dispatch. Tests: two cases in `test/codegen.test.ts` (`array .includes()` block).
+
+---
+
 ## 2026-06-17 — fix(playground): scope the saved session to the page's full URL
 
 The editor session (query + Variables + compile mode) persisted under a fixed `localStorage` key, `"jsmql-playground:session:v1"`. `localStorage` is scoped by the browser to the *origin* (scheme + host + port) but **not** the path, so every playground served from the same origin shared one slot and clobbered each other: a dev copy deployed alongside the canonical `flash-oss.github.io/jsmql/playground.html` (e.g. under a different path) would overwrite the work the user had open there, and two local copies at `localhost:1234/bla/` vs `localhost:1234/foo/` collided too.

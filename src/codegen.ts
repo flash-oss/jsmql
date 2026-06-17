@@ -1207,7 +1207,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "Lambda":
       throw new CodegenError(
-        "Lambda expression cannot be used here — only valid as array method argument or $let second argument",
+        "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, …) or as the second argument to $let.",
         expr.pos,
       );
 
@@ -2272,6 +2272,7 @@ function generateMethodCall(
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
       checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "indexOf", "findIndex");
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
       // unknown → runtime $cond on $isArray so the right form runs at query time.
@@ -2326,6 +2327,7 @@ function generateMethodCall(
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
       checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "includes", "some");
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
       // unknown → runtime $cond so a bare $.field works for either type.
@@ -3291,6 +3293,24 @@ function exprArgsOnly(args: CallArg[], method: string): Expr[] {
     }
     return a;
   });
+}
+
+/**
+ * `.includes(x)` / `.indexOf(x)` search for a *value*; they don't take a
+ * predicate (that's JS, not jsmql being strict). When the user passes a lambda
+ * they meant the predicate sibling — `.some` (bool) for `.includes`,
+ * `.findIndex` (index) for `.indexOf` — so point there. Without this the lambda
+ * falls through to the generic "function only valid as a callback to an
+ * iterating array method" rejection, which misleads because `.includes`/
+ * `.indexOf` ARE array methods.
+ */
+function rejectPredicateOnValueSearch(arg: Expr | undefined, method: string, sibling: string): void {
+  if (arg?.type !== "Lambda") return;
+  const p = arg.params[0] ?? "x";
+  throw new CodegenError(
+    `.${method}() searches for a value — it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => …).`,
+    arg.pos,
+  );
 }
 
 /**

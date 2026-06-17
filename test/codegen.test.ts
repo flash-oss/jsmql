@@ -3231,7 +3231,9 @@ describe("error cases", () => {
     expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/Did you mean 'Object\.keys'/);
   });
   it("lambda in non-method context throws", () => {
-    expect(() => jsmql.expr("$abs(x => x)")).toThrow(/Lambda expression/);
+    expect(() => jsmql.expr("$abs(x => x)")).toThrow(
+      /A function \(=>\) is only valid as the callback to an iterating array method/,
+    );
   });
   it("assigning to a method-call result is rejected with a precise message", () => {
     expect(() => jsmql.expr("$.s.trim() = 1")).toThrow(/method-call result/);
@@ -3462,6 +3464,20 @@ describe("array .includes()", () => {
         else: { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] },
       },
     });
+  });
+  // `.includes()` takes a value, not a predicate; a lambda means the user wanted
+  // `.some()`. The error must point there (not the misleading "only valid as
+  // array method argument" — `.includes` IS an array method) and echo the
+  // user's own param name.
+  it("predicate (lambda) arg → actionable error pointing at .some()", () => {
+    expect(() => jsmql.expr("$.senderChain.includes(sc => sc.tier === 2)")).toThrow(
+      /\.includes\(\) searches for a value — it doesn't take a function\. To test elements against a predicate, use \.some\(sc => …\)\./,
+    );
+  });
+  it(".indexOf() with a predicate points at .findIndex()", () => {
+    expect(() => jsmql.expr("$.items.indexOf(it => it.qty > 5)")).toThrow(
+      /\.indexOf\(\) searches for a value — it doesn't take a function\. To test elements against a predicate, use \.findIndex\(it => …\)\./,
+    );
   });
 });
 
