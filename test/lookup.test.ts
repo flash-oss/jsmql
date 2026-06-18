@@ -231,20 +231,6 @@ describe("$$$.coll.find/filter — error cases", () => {
     );
   });
 
-  it("nested lookup inside a BLOCK-body predicate is still rejected (separate slice of work)", () => {
-    // Block-body nested lookups need ctx-threading through `lowerBlock` that
-    // the expression-body path doesn't — kept rejected with an actionable
-    // hint until the block-body slice lands.
-    expect(() =>
-      jsmql(`
-        $.usersWithOrders = $$$.users.filter(u => {
-          $match(u.active);
-          $.orders = $$$.orders.filter(o => o.userId === u._id);
-        });
-      `),
-    ).toThrow(/Nested lookup inside another lookup's block-body lambda is not yet supported/); // [DEF-023]
-  });
-
   it(".pos points at the offending construct on errors", () => {
     const r = jsmql.validate("    $.x = $$$.users.find();");
     expect(r.valid).toBe(false);
@@ -253,7 +239,7 @@ describe("$$$.coll.find/filter — error cases", () => {
   });
 });
 
-describe("$$$.coll.find/filter — nested lookups (expression body, any depth)", () => {
+describe("$$$.coll.find/filter — nested lookups (expression body and block body, any depth)", () => {
   // Nested lookups materialise as prologue `$lookup` stages inside the outer's
   // `$lookup.pipeline` body. The inner lookup's `let:` clause auto-captures
   // references to the outer's foreign-doc param (`o.x`) as path-on-local-doc
@@ -381,6 +367,91 @@ describe("$$$.coll.find/filter — nested lookups (expression body, any depth)",
     expect(() => jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).length > 0)")).toThrow(
       /Bare lambda parameter 'a' in a \$lookup predicate is not yet supported/,
     );
+  });
+
+  // ── Block-body nested lookups ──────────────────────────────────────────────
+  // The block-body path threads `EnclosingLookupContext` via the ctx carrier
+  // `GenerateCtx.enclosingLookup`; an inner lookup written as a statement /
+  // stage-body expr / block-bodied lambda lowers the same as the expr-body form.
+  // All three emitted shapes were run against a live mongod and join correctly.
+
+  it("nested lookup as a STATEMENT inside a block body (as from the LHS field)", () => {
+    expect(jsmql("$.x = $$$.a.filter(a => { $match(a.active); $.bs = $$$.b.filter(b => b.aId === a._id); });")).toEqual(
+      [
+        {
+          $lookup: {
+            from: "a",
+            let: {},
+            pipeline: [
+              { $match: { $expr: "$active" } },
+              {
+                $lookup: {
+                  from: "b",
+                  let: { v_id: "$_id" },
+                  pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$v_id"] } } }],
+                  as: "bs",
+                },
+              },
+            ],
+            as: "x",
+          },
+        },
+      ],
+    );
+  });
+
+  it("block-in-block: the inner lookup's lambda also has a block body", () => {
+    expect(
+      jsmql("$.x = $$$.a.filter(a => { $.bs = $$$.b.filter(b => { $match(b.aId === a._id); $sort({ _id: 1 }); }); });"),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "a",
+          let: {},
+          pipeline: [
+            {
+              $lookup: {
+                from: "b",
+                let: { v_id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$v_id"] } } }, { $sort: { _id: 1 } }],
+                as: "bs",
+              },
+            },
+          ],
+          as: "x",
+        },
+      },
+    ]);
+  });
+
+  it("nested lookup inside a STAGE-BODY expression of a block (.length materialises into a slot)", () => {
+    expect(
+      jsmql(
+        "$.x = $$$.users.filter(u => { $match($$$.orders.filter(o => o.uid === u._id).length > 0); $sort({ name: 1 }); });",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          let: {},
+          pipeline: [
+            {
+              $lookup: {
+                from: "orders",
+                let: { v_id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v_id"] } } }],
+                as: "__jsmql.__lookup1",
+              },
+            },
+            { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
+            { $match: { "__jsmql.__lookup1": { $gt: 0 } } },
+            { $sort: { name: 1 } },
+            { $unset: "__jsmql" },
+          ],
+          as: "x",
+        },
+      },
+    ]);
   });
 });
 

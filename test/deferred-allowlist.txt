@@ -34,11 +34,12 @@ docs/CLAUDE.md::"what did we decide against?"
 docs/LANGUAGE.md::features not yet implemented or rejected
 
 # -----------------------------------------------------------------------------
-# Landed: expression-body nested lookups (Wave 3 #1). Block-body nesting is
-# DEF-023 with [DEF-023] tags in source; doc/test wording allowlisted below.
+# Landed: nested lookups in expression-body AND block-body predicates (the
+# latter shipped via the GenerateCtx.enclosingLookup ctx carrier). The
+# stream-method reducer guard below is a separate, unrelated rejection; the
+# lookup spec keeps a categorical "## Future work" header.
 # -----------------------------------------------------------------------------
 src/stream-methods.ts::"nested lookup not yet supported"
-docs/LANGUAGE.md::Nested lookups work in expression-body predicates at any depth
 docs/specs/lookup-stage.md::## Future work
 
 # -----------------------------------------------------------------------------

@@ -93,7 +93,7 @@ A chained terminal that doesn't carry its own predicate (`<lookup>.length`, `.re
 
 - **`generatePipeline`** (the bracketed-array `[...]` form). Same integration, with the additional invariant that adjacent same-kind update ops still coalesce through `generateUpdateOpGroups` — a lookup-bearing op flushes the buffer first, emits the lookup stages, and resumes buffering.
 
-- **`generatePipelineWithCtx`** (sub-pipelines inside `$lookup.pipeline`, `$unionWith.pipeline`, `$facet.*`). Nested lookups inside an expression-body predicate flow through the regular `extractLookupCalls` path now — they materialise as prologue `$lookup` stages within the surrounding pipeline. Block-body nested lookups still throw (see DEF-023).
+- **`generatePipelineWithCtx`** (sub-pipelines inside `$lookup.pipeline`, `$unionWith.pipeline`, `$facet.*`). Nested lookups — in either an expression-body or a block-body predicate — flow through the regular `extractLookupCalls` path and materialise as prologue `$lookup` stages within the surrounding pipeline (the block-body path carries its `EnclosingLookupContext` via `GenerateCtx.enclosingLookup`; see § Block-body nested lookups).
 
 The slot allocator (`makeSlotTracking`) returns `{ alloc, used }` so the trailing `$unset "__jsmql"` cleanup fires whenever either a `let` was declared **or** at least one internal lookup slot was used — keeping the trailing cleanup symmetric with the existing `let`-only path.
 
@@ -153,7 +153,6 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 | `$$$.<coll>.find(<non-arrow>)`                          | `.find(predicate) requires an arrow predicate …`                                                               | `validateLookupShape`              |
 | Multi-param lambda                                      | `.find(predicate) takes a single-parameter arrow (the foreign document), got N`                               | `validateLookupShape`              |
 | Bare foreign-param ref (`o` alone)                      | `Bare lambda parameter 'o' in a $lookup predicate is not yet supported — use \`o.<field>\``                    | `transformExpr` foreign branch     |
-| Nested lookup inside a *block-body* lambda [DEF-023]    | `Nested lookup inside another lookup's block-body lambda is not yet supported. …`                              | `translatePredicate` block branch  |
 | `.reduce()` chained on `.find()` (scalar-or-null)       | `.reduce() on a .find() result is not meaningful — .find returns a scalar-or-null …`                          | `extractLookupCalls` reduce branch |
 | `.length` chained on `.find()` (scalar-or-null)         | `.length on a .find() result is not meaningful — .find returns scalar-or-null …`                              | `extractLookupCalls` length branch |
 | Non-string `jsmql.compile` binding in `[<param>]` slot  | `'$$$[<param>]' / '$$$$[<param>]' parameter binding must be a string (got <typeof>); collection / database names are compile-time constants in MongoDB's $lookup.from.` | `staticAccess` ParamRef branch     |
@@ -161,7 +160,7 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 | `jsmql.update()` lookup                                 | `jsmql.update() does not allow lookup syntax …: MongoDB's aggregation-pipeline update form only accepts …`     | `lowerUpdateStrict`                |
 | Bare expression with lookup (no `;`, no stage call)     | `Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. …`                                      | `lowerWithCtx`                     |
 
-## Nested lookups (expression-body, any depth)
+## Nested lookups (expression body and block body, any depth)
 
 Nested lookups inside another lookup's **expression-body** predicate (`.find/.filter(o => ... $$$.<coll2>.find/filter(...) ...)`) work to any depth. The inner lookup materialises as a prologue `$lookup` (+ `$set $first` for `.find`) stage inside the outer's `$lookup.pipeline` body, with its result substituted into the surrounding predicate as a `FieldRef(<slot>)`.
 
@@ -171,15 +170,22 @@ Nested lookups inside another lookup's **expression-body** predicate (`.find/.fi
 - Refs to the outermost doc (`$.x`) classify as `local` of the outer → extracted into `outer.let = { x: "$x" }`. The inner predicate sees them as `ParamRef("x")` after rewrite; lexical `$$<name>` scoping makes them accessible without re-letting in the inner. The inner's codegen ctx adds the outer's letVar names to `lambdaParams` so `$$x` resolves correctly.
 - Refs to the inner's own foreign param (`t.x` for `t => …`) classify as `foreign` of the inner — rewritten to bare `FieldRef("x")` inside the inner's pipeline.
 
-**Threaded state.** `EnclosingLookupContext` (`foreignParams`, `inScopeLetNames`) flows through `lowerLookup` / `translatePredicate` / `buildPipelineFormPredicate` / `extractLookupCalls` / `tryExtractChainedLookup` / `descendAndExtract` so the recursion knows what's in scope from above.
+**Threaded state.** `EnclosingLookupContext` (`foreignParams`, `inScopeLetNames`) flows through `lowerLookup` / `translatePredicate` / `buildPipelineFormPredicate` / `extractLookupCalls` / `tryExtractChainedLookup` / `descendAndExtract` so the recursion knows what's in scope from above. The expression-body path threads it as an explicit argument; the block-body path can't (block lowering runs through `generateImplicitPipeline`, which has no `enclosing` parameter), so it threads the same value through the **ctx carrier** `GenerateCtx.enclosingLookup` — set on the sub-pipeline ctx by `buildBlockBodyPredicate`, read back by the four entry points when their explicit `enclosing` argument is omitted. `freshSubPipelineCtx` drops it, so each lookup re-seeds its own.
 
-**Known limitation: cross-level field-name collision.** When the same field name (e.g. `_id`) is referenced at two different enclosing levels (`u._id` for level 1 *and* `p._id` for level 2 in the deepest predicate), both rewrite to `FieldRef("_id")` and the deepest level's let-allocator dedupes them into a single binding — semantically wrong but `MQL`-valid. Workaround: pick distinct field names at each level (e.g. compare against `u.userId` vs `p.postId`). A future pass could track let-allocator scope per enclosing level to avoid the collision.
+**Known limitation: cross-level field-name collision.** When the same field name (e.g. `_id`) is referenced at two different enclosing levels (`u._id` for level 1 *and* `p._id` for level 2 in the deepest predicate), both rewrite to `FieldRef("_id")` and the deepest level's let-allocator dedupes them into a single binding — semantically wrong but `MQL`-valid. Workaround: pick distinct field names at each level (e.g. compare against `u.userId` vs `p.postId`). A future pass could track let-allocator scope per enclosing level to avoid the collision. (Affects both the expression-body and block-body paths equally.)
 
-**Block-body nested lookups are still rejected.** A nested lookup inside a *block-body* lambda (`o => { $match(...); $.x = $$$.coll.find(...); }`) throws an actionable error. The block-body path needs ctx-threading through `lowerBlock` to materialise nested lookups correctly — tracked as the next slice of the nested-lookup work.
+### Block-body nested lookups
+
+A nested lookup inside a *block-body* lambda works the same as the expression-body form, to any depth and in any of three positions:
+
+- **As a statement** — `o => { $match(...); $.x = $$$.coll2.filter(...); }` — the inner lookup is emitted as its own `$lookup` stage inside the outer's `$lookup.pipeline`, with `as` taken from the assignment LHS field.
+- **Inside a stage-body expression** — `o => { $match($$$.coll2.filter(...).length > 0); }` — materialises as a prologue `$lookup` + transform `$set` into an internal `__jsmql.__lookupN` slot, exactly like the expression-body path.
+- **As a block-bodied inner lambda** — `o => { $.x = $$$.coll2.filter(c => { $match(...); $sort(...); }); }` — the inner's own multi-stage block lowers recursively.
+
+`buildBlockBodyPredicate` is the shared helper (used by both `translatePredicate` and `buildPipelineFormPredicate`). It mirrors the expression-body path's two steps: (1) `rewriteEnclosingForeignParamsInPipeline` rewrites refs to enclosing foreign params into local `FieldRef`s before this level's let-extraction (the expression-body `transformExpr` deliberately does **not** descend into a nested lambda's *block* body, so each level performs its own rewrite as it is dispatched); (2) it grows `EnclosingLookupContext` and threads it through `lowerBlock` via `GenerateCtx.enclosingLookup`. Assignment/`delete` targets inside the block are routed through `transformTarget` (not `transformExpr`) so a write destination like `$.x` lowers to its `$set`/`$unset` field key instead of being hoisted into a `let`.
 
 ## Future work
 
-- **Block-body nested lookups** (see limitation above).
 - **Cross-level field-name collision** in 3+-level nesting (see limitation above).
 - **Ambient TS types for `$$$`** so the function-form lookup (`($) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).
 - **Optimised chained terminals.** `.map`, `.at`, second `.filter` currently fall through the generic path (one extra `$set` stage); they could emit specialised single-stage transforms.

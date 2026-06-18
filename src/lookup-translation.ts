@@ -205,6 +205,37 @@ function rewriteEnclosingForeignParams(expr: Expr, params: ReadonlyArray<string>
   return walk(expr);
 }
 
+/**
+ * Pipeline-body counterpart of `rewriteEnclosingForeignParams`: apply that
+ * Expr→Expr rewrite to every expression of a block-body sub-pipeline, mirroring
+ * `transformStmt`'s statement-shape handling. Used by the block-body branch of
+ * `translatePredicate` / `buildPipelineFormPredicate` so a nested lookup whose
+ * lambda has a *block* body still has its enclosing-foreign-param refs
+ * (`<outer>.field`) lowered into local `FieldRef`s before this level's
+ * let-extractor runs — the expression-body `transformExpr` skips nested *block*
+ * bodies (see its Lambda case), so each level performs its own rewrite as it is
+ * dispatched. No-op at the top level (`params` empty).
+ */
+function rewriteEnclosingForeignParamsInPipeline(block: Pipeline, params: ReadonlyArray<string>): Pipeline {
+  if (params.length === 0) return block;
+  const rw = (e: Expr): Expr => rewriteEnclosingForeignParams(e, params);
+  const stmts: PipelineStmt[] = block.stmts.map((stmt): PipelineStmt => {
+    if (stmt.type === "LetDecl") return { ...stmt, value: rw(stmt.value) };
+    if (stmt.type === "FuncDecl") return { ...stmt, lambda: rw(stmt.lambda) as Lambda };
+    if (stmt.type === "UpdateFilter") {
+      const ops: UpdateOp[] = stmt.ops.map(
+        (op): UpdateOp =>
+          op.type === "AssignExpr"
+            ? { type: "AssignExpr", target: rw(op.target), value: rw(op.value), pos: op.pos }
+            : { type: "DeleteStmt", target: rw(op.target), pos: op.pos },
+      );
+      return { type: "UpdateFilter", ops, pos: stmt.pos };
+    }
+    return rw(stmt as Expr) as PipelineStmt;
+  });
+  return { type: "Pipeline", stmts, pos: block.pos };
+}
+
 function matchEnclosingParamPath(
   node: Expr,
   params: ReadonlySet<string>,
@@ -653,8 +684,13 @@ export function translatePredicate(
   call: LookupCall,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
-  enclosing: EnclosingLookupContext = EMPTY_ENCLOSING,
+  enclosingArg?: EnclosingLookupContext,
 ): BasicFormPredicate | PipelineFormPredicate {
+  // When the caller (pipeline.ts dispatch) passes no explicit enclosing, fall
+  // back to the ctx carrier — set by an outer block-body lookup so a nested
+  // lookup reached through `lowerBlock` knows it is nested. See
+  // docs/specs/lookup-stage.md § Block-body nested lookups.
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const { lambda } = call;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
@@ -703,26 +739,15 @@ export function translatePredicate(
 
   // ── Block body ─────────────────────────────────────────────────────
   if (lambda.block !== undefined) {
-    // Block-body nesting is a separate slice of work — each statement
-    // may carry its own lookup, and the block's lowering already runs
-    // `extractLookupCalls` for stage bodies. For now, only expression-body
-    // lookups support nesting; block-body nested lookups would need ctx-
-    // threading through `lowerBlock` (tracked as the next step). Reject
-    // EITHER condition: (a) this lookup is itself nested inside another
-    // (enclosing non-empty), or (b) this lookup is top-level but its block
-    // body itself contains a nested lookup call.
-    if (enclosing.foreignParams.length > 0 || containsLookupCall(lambda.block, outerCtx)) {
-      // [DEF-023] block-body nested lookups
-      throw new CodegenError(
-        `Nested lookup inside another lookup's block-body lambda is not yet supported. ` +
-          `Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
-        lambda.pos,
-      );
-    }
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    const stages = lowerBlock(rewritten, subCtx);
-    return { kind: "pipeline", letVars, pipeline: stages };
+    const { letVars, pipeline } = buildBlockBodyPredicate(
+      lambda.block,
+      foreignParam,
+      outerCtx,
+      outerLets,
+      lowerBlock,
+      enclosing,
+    );
+    return { kind: "pipeline", letVars, pipeline };
   }
 
   throw new CodegenError(
@@ -735,6 +760,43 @@ function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): Gener
   const fresh = freshSubPipelineCtx(outerCtx);
   if (letVarNames.length === 0) return fresh;
   return { ...fresh, lambdaParams: new Set([...fresh.lambdaParams, ...letVarNames]) };
+}
+
+/**
+ * Lower a block-body predicate (`o => { $match(...); $sort(...); ... }`) into a
+ * `$lookup.pipeline` stage list. Shared by `translatePredicate` and
+ * `buildPipelineFormPredicate` — the full multi-stage sub-pipeline surface.
+ *
+ * Mirrors the expression-body path's two-step nesting:
+ *   1. Rewrite refs to ENCLOSING foreign params into local `FieldRef`s so this
+ *      lookup's let-extractor captures them into its own `$lookup.let` (no-op at
+ *      the top level).
+ *   2. Grow the enclosing context (this lookup's foreignParam + its newly-
+ *      allocated letVars) and thread it through `lowerBlock` via the ctx carrier
+ *      (`subCtx.enclosingLookup`), so a nested `$$$.<coll>.find/filter(...)`
+ *      reached while lowering the block knows it is nested.
+ * The enclosing-`inScopeLetNames` join the codegen `lambdaParams` so a ref to an
+ * enclosing let emits `$$<name>` rather than throwing `UnknownIdentifier`.
+ */
+function buildBlockBodyPredicate(
+  block: Pipeline,
+  foreignParam: string,
+  outerCtx: GenerateCtx,
+  outerLets: ReadonlyMap<string, string> | undefined,
+  lowerBlock: SubPipelineLowerer,
+  enclosing: EnclosingLookupContext,
+): { letVars: Record<string, string>; pipeline: object[] } {
+  const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
+  const { rewritten, letVars } = extractLetsFromPipeline(preRewritten, foreignParam, outerLets);
+  const innerEnclosing: EnclosingLookupContext = {
+    foreignParams: [...enclosing.foreignParams, foreignParam],
+    inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+  };
+  const subCtx: GenerateCtx = {
+    ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
+    enclosingLookup: innerEnclosing,
+  };
+  return { letVars, pipeline: lowerBlock(rewritten, subCtx) };
 }
 
 /**
@@ -755,8 +817,9 @@ export function buildPipelineFormPredicate(
   lambda: Lambda,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
-  enclosing: EnclosingLookupContext = EMPTY_ENCLOSING,
+  enclosingArg?: EnclosingLookupContext,
 ): { letVars: Record<string, string>; pipelineBody: object[] } {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== undefined) {
@@ -778,17 +841,15 @@ export function buildPipelineFormPredicate(
     return { letVars, pipelineBody: [...nestedStages, { $match: { $expr: generateWithCtx(lookupFree, subCtx) } }] };
   }
   if (lambda.block !== undefined) {
-    if (enclosing.foreignParams.length > 0) {
-      // [DEF-023] block-body nested lookups
-      throw new CodegenError(
-        `Nested lookup inside another lookup's block-body lambda is not yet supported. ` +
-          `Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
-        lambda.pos,
-      );
-    }
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    return { letVars, pipelineBody: lowerBlock(rewritten, subCtx) };
+    const { letVars, pipeline } = buildBlockBodyPredicate(
+      lambda.block,
+      foreignParam,
+      outerCtx,
+      outerLets,
+      lowerBlock,
+      enclosing,
+    );
+    return { letVars, pipelineBody: pipeline };
   }
   throw new CodegenError(
     `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
@@ -1037,17 +1098,51 @@ function transformStmt(
       if (op.type === "AssignExpr") {
         return {
           type: "AssignExpr",
-          target: transformExpr(op.target, foreignParam, allocator, outerLets),
+          target: transformTarget(op.target, foreignParam, allocator, outerLets),
           value: transformExpr(op.value, foreignParam, allocator, outerLets),
           pos: op.pos,
         };
       }
       // DeleteStmt
-      return { type: "DeleteStmt", target: transformExpr(op.target, foreignParam, allocator, outerLets), pos: op.pos };
+      return {
+        type: "DeleteStmt",
+        target: transformTarget(op.target, foreignParam, allocator, outerLets),
+        pos: op.pos,
+      };
     });
     return { type: "UpdateFilter", ops, pos: stmt.pos };
   }
   return transformExpr(stmt as Expr, foreignParam, allocator, outerLets);
+}
+
+/**
+ * Transform an assignment / delete TARGET inside a block-body sub-pipeline.
+ *
+ * Unlike a value, a target is a WRITE destination, not a correlation read: a
+ * `$.foo` here names the field `foo` on the sub-pipeline's current (foreign)
+ * doc — the eventual `$set`/`$unset` key — so it must lower to a `FieldRef`,
+ * never be hoisted into a `$lookup.let` var the way `transformExpr` does for a
+ * local read. Both root spellings denote the current doc inside the
+ * sub-pipeline (`$.foo` = current doc; `<foreignParam>.foo` = the same doc), so
+ * either resolves to the bare field path. Exotic targets (computed index,
+ * outer-let) fall back to the normal value transform, preserving their existing
+ * behaviour and error messages.
+ */
+function transformTarget(
+  target: Expr,
+  foreignParam: string,
+  allocator: LetAllocator,
+  outerLets: ReadonlyMap<string, string> | undefined,
+): Expr {
+  const classified = classifyPath(target, foreignParam, outerLets);
+  if (
+    classified !== null &&
+    (classified.kind === "local" || classified.kind === "foreign") &&
+    classified.segments.length > 0
+  ) {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  return transformExpr(target, foreignParam, allocator, outerLets);
 }
 
 /**
@@ -1063,9 +1158,10 @@ function transformStmt(
  *     transformed sub-trees.
  *
  * Nested lambdas inside the predicate body keep their own params; we
- * stop walking into their bodies because their scope is distinct. (A
- * nested `$$$.x.find/filter(...)` is detected separately by the
- * pipeline integration, which rejects it in v1 — see plan §5.)
+ * recurse into expression bodies with the same foreign param so an
+ * enclosing-foreign ref still hoists, but NOT into a nested lambda's
+ * statement *block* body (see the Lambda case) — those are handled when
+ * the nested lookup is dispatched, via `rewriteEnclosingForeignParamsInPipeline`.
  */
 function transformExpr(
   expr: Expr,
@@ -1387,8 +1483,9 @@ export function lowerLookup(
   as: string,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
-  enclosing: EnclosingLookupContext = EMPTY_ENCLOSING,
+  enclosingArg?: EnclosingLookupContext,
 ): object[] {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const pred = translatePredicate(call, outerCtx, lowerBlock, enclosing);
   // `$lookup.from` is a bare string for same-database joins (`$$$.<coll>`) and
   // an object `{ db, coll }` for cross-database joins (`$$$$.<db>.<coll>`).
@@ -1429,19 +1526,20 @@ export function lowerLookup(
  * recursed into so a lookup buried in (say) an arithmetic operand still
  * materialises correctly.
  *
- * Nested lookups inside an expression-body predicate of an outer lookup
- * materialise through the same recursive descent (with
- * `EnclosingLookupContext` threading), landing as prologue `$lookup`
- * stages inside the outer's `$lookup.pipeline`. Block-body nested
- * lookups are still rejected — see [DEF-023] in `translatePredicate`.
+ * Nested lookups inside an outer lookup's predicate — expression-body or
+ * block-body — materialise through the same recursive descent (with
+ * `EnclosingLookupContext` threading, the block-body path supplying it via
+ * `outerCtx.enclosingLookup`), landing as prologue `$lookup` stages inside
+ * the outer's `$lookup.pipeline`. See docs/specs/lookup-stage.md § Nested lookups.
  */
 export function extractLookupCalls(
   expr: Expr,
   outerCtx: GenerateCtx,
   allocSlot: SlotAllocator,
   lowerBlock: SubPipelineLowerer,
-  enclosing: EnclosingLookupContext = EMPTY_ENCLOSING,
+  enclosingArg?: EnclosingLookupContext,
 ): { stages: object[]; rewritten: Expr } {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   // Malformed-shape pre-check: if expr is a MethodCall on a DatabaseRef-rooted
   // receiver, run the targeted validator so wrong-method (`fnid`), wrong-arity,
   // and non-arrow-arg cases surface their precise messages instead of falling

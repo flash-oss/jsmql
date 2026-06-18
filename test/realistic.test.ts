@@ -1620,6 +1620,56 @@ $project({ name: 1, recentOrders: 1, nOrders });
   });
 });
 
+// Two-level join from inside a block-body sub-pipeline: each active user gets
+// their 5 most-recent orders, and each of THOSE orders is enriched in place
+// with its shipments via a nested `$$$.shipments` lookup written as a statement
+// inside the outer orders block. The inner lookup's `$$v_id` correlates to the
+// *order's* `_id` (the current doc of the outer orders sub-pipeline), not the
+// user's — verified against a live mongod.
+describe(
+  "user → recent orders → each order's shipments (nested lookup in a block body)",
+  { features: ["Pipelines"] },
+  () => {
+    it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+      expect(
+        jsmql`
+$match($.active === true);
+$.recentOrders = $$$.orders.filter(o => {
+  $match(o.userId === $._id);
+  $sort({ createdAt: -1 });
+  $limit(5);
+  $.shipments = $$$.shipments.filter(s => s.orderId === o._id);
+});
+$project({ name: 1, recentOrders: 1 });
+      `,
+      ).toEqual([
+        { $match: { active: true } },
+        {
+          $lookup: {
+            from: "orders",
+            let: { v_id: "$_id" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+              { $sort: { createdAt: -1 } },
+              { $limit: 5 },
+              {
+                $lookup: {
+                  from: "shipments",
+                  let: { v_id: "$_id" },
+                  pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$v_id"] } } }],
+                  as: "shipments",
+                },
+              },
+            ],
+            as: "recentOrders",
+          },
+        },
+        { $project: { name: 1, recentOrders: 1 } },
+      ]);
+    });
+  },
+);
+
 // `$$.push(...)` — merge active users from the live collection with deleted
 // users from an archive collection and a couple of synthetic placeholder
 // docs, then page the unified result. Demonstrates inline-doc batching,
