@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { ObjectId } from "../src/objectid.ts";
 
 // Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
@@ -828,6 +829,204 @@ describe("jsmql template-tag form", () => {
       cyclic.self = cyclic;
       expect(() => jsmql.expr`${cyclic}`).toThrow(/could not be serialised/);
     });
+  });
+});
+
+describe("ObjectId literal (in-source constant)", () => {
+  const HEX = "698a76556c10b90d8bd0497e";
+  const HEX2 = "507f1f77bcf86cd799439011";
+
+  it('ObjectId("hex") in a filter lowers to a live BSON ObjectId in field-equality position', () => {
+    const out = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
+    expect(out._id).toBeInstanceOf(ObjectId);
+    expect(out._id._bsontype).toBe("ObjectId");
+    expect(out._id.toHexString()).toBe(HEX);
+    // index-friendly: a query-doc value, not an $expr wrap
+    expect("$expr" in out).toBe(false);
+  });
+
+  it('new ObjectId("hex") is accepted identically to the bare-call form', () => {
+    const bare = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
+    const knew = jsmql(`$._id === new ObjectId("${HEX}")`) as { _id: ObjectId };
+    expect(knew._id).toBeInstanceOf(ObjectId);
+    expect(knew._id.toHexString()).toBe(bare._id.toHexString());
+  });
+
+  it("an array of ObjectId literals lowers to $in with live instances", () => {
+    const out = jsmql(`[ObjectId("${HEX}"), ObjectId("${HEX2}")].includes($._id)`) as { _id: { $in: ObjectId[] } };
+    expect(out._id.$in.every((o) => o instanceof ObjectId)).toBe(true);
+    expect(out._id.$in.map((o) => o.toHexString())).toEqual([HEX, HEX2]);
+  });
+
+  it('works as an object-literal value too — { _id: ObjectId("…") } and the new form', () => {
+    expect(jsmql(`{ _id: ObjectId("${HEX}") }`)).toEqual({ _id: new ObjectId(HEX) });
+    expect(jsmql(`{ _id: new ObjectId("${HEX}") }`)).toEqual({ _id: new ObjectId(HEX) });
+  });
+
+  it("ObjectId literal in aggregation-expression position lands directly in the expression", () => {
+    const out = jsmql.expr(`$._id === ObjectId("${HEX}")`) as { $eq: [string, ObjectId] };
+    expect(out.$eq[0]).toBe("$_id");
+    expect(out.$eq[1]).toBeInstanceOf(ObjectId);
+    expect(out.$eq[1].toHexString()).toBe(HEX);
+  });
+
+  it("ObjectId literal inside an explicit $match pipeline stage", () => {
+    const out = jsmql(`$match($._id === ObjectId("${HEX}"));`) as Array<{ $match: { _id: ObjectId } }>;
+    expect(out[0].$match._id).toBeInstanceOf(ObjectId);
+    expect(out[0].$match._id.toHexString()).toBe(HEX);
+  });
+
+  it("emits a real BSON value (12 serialisable bytes), not a string — the property that makes the server match it", () => {
+    const out = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
+    const buf = new Uint8Array(12);
+    expect(out._id.serializeInto(buf, 0)).toBe(12);
+    expect(Buffer.from(buf).toString("hex")).toBe(HEX);
+  });
+
+  it("rejects a wrong-length hex string with a position-bearing error", () => {
+    expect(() => jsmql(`$._id === ObjectId("507f1f77bcf86cd79943901")`)).toThrow(
+      /expected exactly 24 hexadecimal characters, got 23/,
+    );
+  });
+
+  it("rejects a 24-character non-hex string", () => {
+    expect(() => jsmql(`$._id === ObjectId("zzzf1f77bcf86cd799439011")`)).toThrow(
+      /contains non-hexadecimal characters/,
+    );
+  });
+
+  it("the no-argument form lowers to $createObjectId() (server-side fresh id)", () => {
+    expect(jsmql.expr(`ObjectId()`)).toEqual({ $createObjectId: {} });
+    expect(jsmql.expr(`new ObjectId()`)).toEqual({ $createObjectId: {} });
+  });
+
+  it("a dynamic argument lowers to $toObjectId(arg) (server-side conversion)", () => {
+    expect(jsmql.expr(`ObjectId($.idStr)`)).toEqual({ $toObjectId: "$idStr" });
+    // In a filter the converted value isn't a query-doc literal, so it rides in $expr.
+    expect(jsmql(`$._id === ObjectId($.idStr)`)).toEqual({ $expr: { $eq: ["$_id", { $toObjectId: "$idStr" }] } });
+  });
+
+  it("a constant string that isn't 24 hex chars is still a compile-time error (caught typo)", () => {
+    expect(() => jsmql(`$._id === ObjectId("507f1f77bcf86cd79943901")`)).toThrow(
+      /expected exactly 24 hexadecimal characters, got 23/,
+    );
+  });
+
+  it("validate() reports an invalid ObjectId literal with a real .pos", () => {
+    const r = jsmql.validate(`$._id === ObjectId("nothex")`);
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].pos).toBeGreaterThan(0);
+  });
+});
+
+describe("ObjectId via 0x hex literal", () => {
+  const HEX = "507f1f77bcf86cd799439011";
+  const HEX2 = "698a76556c10b90d8bd0497e";
+
+  it("0x + exactly 24 hex digits lowers to a live ObjectId (type 0x, paste an _id)", () => {
+    const out = jsmql(`$._id === 0x${HEX}`) as { _id: ObjectId };
+    expect(out._id).toBeInstanceOf(ObjectId);
+    expect(out._id.toHexString()).toBe(HEX);
+    expect("$expr" in out).toBe(false);
+  });
+
+  it('identical to the ObjectId("…") form', () => {
+    const viaHex = jsmql(`$._id === 0x${HEX}`) as { _id: ObjectId };
+    const viaCall = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
+    expect(viaHex._id.toHexString()).toBe(viaCall._id.toHexString());
+  });
+
+  it("numeric separators are allowed inside the hex literal", () => {
+    const out = jsmql(`$._id === 0x507f_1f77_bcf8_6cd7_9943_9011`) as { _id: ObjectId };
+    expect(out._id.toHexString()).toBe(HEX);
+  });
+
+  it("an array of 0x literals lowers to $in", () => {
+    const out = jsmql(`[0x${HEX}, 0x${HEX2}].includes($._id)`) as { _id: { $in: ObjectId[] } };
+    expect(out._id.$in.map((o) => o.toHexString())).toEqual([HEX, HEX2]);
+  });
+
+  // The canonical "look up one doc by its _id" form: a raw filter doc written as
+  // an object literal, with the id as a `0x…` value. Mirrors what you'd paste
+  // into db.coll.find(...). → { _id: ObjectId("…") }.
+  it("a 0x literal as an object-literal value mints an ObjectId (the canonical _id lookup)", () => {
+    expect(jsmql(`{ _id: 0x${HEX} }`)).toEqual({ _id: new ObjectId(HEX) });
+  });
+
+  it("0x literals inside a raw filter doc's $in array each mint an ObjectId", () => {
+    expect(jsmql(`{ _id: { $in: [0x${HEX}, 0x${HEX2}] } }`)).toEqual({
+      _id: { $in: [new ObjectId(HEX), new ObjectId(HEX2)] },
+    });
+  });
+
+  it("a 0x literal nested inside an object value mints an ObjectId", () => {
+    expect(jsmql(`{ owner: { id: 0x${HEX} } }`)).toEqual({ owner: { id: new ObjectId(HEX) } });
+  });
+
+  it("0X prefix and uppercase hex digits are accepted (normalised to lowercase)", () => {
+    // Timestamp 0xabcdef78 → year 2061, comfortably after the 2009 floor.
+    const out = jsmql.expr(`0XABCDEF781234567812345678`) as ObjectId;
+    expect(out).toBeInstanceOf(ObjectId);
+    expect(out.toHexString()).toBe("abcdef781234567812345678");
+  });
+
+  it("a short hex literal stays a plain integer", () => {
+    expect(jsmql.expr(`0xff`)).toBe(255);
+    // 0x1FFFFFFFFFFFFF === Number.MAX_SAFE_INTEGER (the largest exactly-representable int)
+    expect(jsmql.expr(`0x1FFFFFFFFFFFFF`)).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("a hex literal that is neither 24 digits nor a safe integer is rejected with guidance", () => {
+    // 16 digits, > MAX_SAFE_INTEGER, not an ObjectId width.
+    expect(() => jsmql(`$.x === 0xFFFFFFFFFFFFFFFF`)).toThrow(/neither a 24-character ObjectId nor an integer/);
+    // 14 digits, exactly one past MAX_SAFE_INTEGER (0x20000000000000 === 2**53).
+    expect(() => jsmql.expr(`0x20000000000000`)).toThrow(/neither a 24-character ObjectId/);
+    // 23 digits — one short of an ObjectId.
+    expect(() => jsmql(`$._id === 0x507f1f77bcf86cd79943901`)).toThrow(/neither a 24-character ObjectId/);
+    // 25 digits — one past an ObjectId.
+    expect(() => jsmql.expr(`0x1234567812345678123456789`)).toThrow(/neither a 24-character ObjectId/);
+  });
+});
+
+describe("ObjectId plausibility floor (timestamp predating MongoDB = typo)", () => {
+  // An ObjectId's first 4 bytes are a Unix timestamp; MongoDB didn't exist
+  // before 2009, so an older one can't be real. Floor: 0x4a000000 (2009-05-05).
+
+  it("rejects an all-zeros / leading-zeros id (1970) — a 24-digit shape, but impossibly old", () => {
+    // Recognised as an ObjectId by width, then floored — the error is about the
+    // timestamp, not the digit count.
+    expect(() => jsmql.expr(`0x000000000000000000000001`)).toThrow(/older than the smallest valid ObjectId/);
+  });
+
+  it("rejects a sequential test id like 0x1234… (its timestamp is 1979)", () => {
+    expect(() => jsmql(`{ _id: 0x123456781234567812345678 }`)).toThrow(/1979-09-05.*older than the smallest/);
+  });
+
+  it('rejects the same too-old id written as ObjectId("…") / new ObjectId("…")', () => {
+    expect(() => jsmql.expr(`ObjectId("123456781234567812345678")`)).toThrow(/older than the smallest valid ObjectId/);
+    expect(() => jsmql.expr(`new ObjectId("123456781234567812345678")`)).toThrow(
+      /older than the smallest valid ObjectId/,
+    );
+  });
+
+  it("the error names the decoded timestamp date (actionable DX)", () => {
+    expect(() => jsmql.expr(`0x000000000000000000000000`)).toThrow(/1970-01-01/);
+  });
+
+  it("accepts an id exactly at the floor (2009-05-05) and just above", () => {
+    expect((jsmql.expr(`0x4a0000000000000000000000`) as ObjectId).toHexString()).toBe("4a0000000000000000000000");
+    expect((jsmql.expr(`0x4a0000000000000000000001`) as ObjectId).toHexString()).toBe("4a0000000000000000000001");
+  });
+
+  it("rejects just below the floor (2009-05-05 minus an instant)", () => {
+    expect(() => jsmql.expr(`0x49ffffffffffffffffffffff`)).toThrow(/older than the smallest valid ObjectId/);
+  });
+
+  it("validate() reports a too-old ObjectId with a real .pos", () => {
+    const r = jsmql.validate(`$._id === 0x000000000000000000000001`);
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].message).toMatch(/older than the smallest valid ObjectId/);
+    expect(r.errors[0].pos).toBeGreaterThan(0);
   });
 });
 

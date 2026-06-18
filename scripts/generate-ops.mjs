@@ -449,6 +449,32 @@ function contextRefBlock(spec) {
   return blocks.join("\n");
 }
 
+// The JS-builtin construction forms that aren't `$`-prefixed operators/stages
+// and so have no registry entry, but still need an ambient declaration for the
+// arrow form to type-check. Emitted as an interface with both a call and a
+// construct signature so `ObjectId("…")` and `new ObjectId("…")` both resolve.
+function constructionFormsBlock() {
+  const jsdoc =
+    "/**\n" +
+    " * Construct a constant BSON `ObjectId` from a 24-character hex string —\n" +
+    ' * e.g. `$._id === ObjectId("507f1f77bcf86cd799439011")`. `new ObjectId(...)`\n' +
+    " * is equivalent. jsmql emits a live ObjectId value (the only form the MongoDB\n" +
+    " * driver accepts in a query document). For an id known only at runtime,\n" +
+    " * interpolate a real ObjectId (template tag or a `jsmql.compile` parameter),\n" +
+    " * or convert a string field server-side with `$toObjectId($.idStr)`.\n" +
+    " *\n" +
+    " * @see https://www.mongodb.com/docs/manual/reference/method/ObjectId/\n" +
+    " */";
+  return (
+    "interface ObjectIdConstructor {\n" +
+    "  (hexString: string): any;\n" +
+    "  new (hexString: string): any;\n" +
+    "}\n" +
+    jsdoc +
+    "\nvar ObjectId: ObjectIdConstructor;"
+  );
+}
+
 export function generateOpsSource() {
   const spec = loadSpec();
 
@@ -531,6 +557,9 @@ export function generateOpsSource() {
     "",
     "  // ── Context references ($$, $$$, $$$$) ────────────────────────────────",
     indent(contextRefBlock(spec)),
+    "",
+    "  // ── JS construction forms (ObjectId) ──────────────────────────────────",
+    indent(constructionFormsBlock()),
   ];
 
   const footer = ["}", "", "export {};", ""];

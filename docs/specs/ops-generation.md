@@ -31,6 +31,7 @@ A single `src/ops.ts` file containing one `declare global { … } export {};` bl
 1. **Stages** — every key of `STAGES`.
 2. **Expression operators (incl. accumulators and window functions)** — every key of `OPERATORS`. Accumulators sit in the same registry; the section header reflects that this set covers all non-stage callables.
 3. **Context references (`$$`, `$$$`, `$$$$`)** — three ambient declarations (`var $$`, `const $$$`, `const $$$$`) so arrow-form context-ref code type-checks. See § Context references below.
+4. **JS construction forms** — non-`$` builtins that have no registry entry but still need an ambient declaration for the arrow form. Currently just `ObjectId`: an `interface ObjectIdConstructor` with both a call and a construct signature (so `ObjectId("…")` and `new ObjectId("…")` resolve) plus `var ObjectId: ObjectIdConstructor`. Emitted by `constructionFormsBlock()`.
 
 For each operator the generator emits:
 

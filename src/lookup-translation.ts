@@ -1118,6 +1118,7 @@ function mapChildren(
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
       return expr;
     case "BinaryExpr":
       return {
@@ -1630,6 +1631,7 @@ function descendAndExtract(
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
       return { stages, rewritten: expr };
     case "BinaryExpr":
       return {

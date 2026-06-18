@@ -17,6 +17,7 @@
 // as Expr nodes; the caller re-enters `generate()` on them.
 
 import type { Expr, BinaryOp } from "./ast.ts";
+import { ObjectId } from "./objectid.ts";
 import { isOpaqueBsonValue, generateWithCtx, mqlForBinaryOp } from "./codegen.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
@@ -714,6 +715,11 @@ function anyEqualityLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } |
       return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ false);
     case "NewDate":
       return evaluateStaticDate(expr);
+    case "ObjectIdLiteral":
+      // `$._id === ObjectId("…")` → `{ _id: <ObjectId> }`. The live instance is
+      // a BSON-comparable value the query language matches directly (and an
+      // index can serve), exactly like an interpolated ObjectId.
+      return { value: new ObjectId(expr.hex) };
     default:
       return null;
   }

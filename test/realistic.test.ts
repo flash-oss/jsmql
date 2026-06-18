@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { ObjectId } from "../src/objectid.ts";
 import "../src/ops.ts";
 
 // Teach TS about the playground-metadata keys (`kind`, `usage`, `features`)
@@ -588,6 +589,20 @@ describe("typeof check for documents with an object profile", { features: ["Filt
 describe("lookup by `_id` and tenant", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
     expect(jsmql(`$._id === "doc_42" && $.tenantId === "acme"`)).toEqual({ _id: "doc_42", tenantId: "acme" });
+  });
+});
+
+describe("fetch a document by its ObjectId", { features: ["Filters"] }, () => {
+  // Query by `_id` with a constant ObjectId. The leanest form is the `0x` hex
+  // literal — type `0x` and paste the 24-char id, no quotes or `ObjectId(...)`
+  // wrapper. `ObjectId("…")` / `new ObjectId("…")` are equivalent. jsmql mints a
+  // live BSON ObjectId (not a string, not an Extended-JSON envelope), so the
+  // match uses the `_id` index directly.
+  it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
+    expect(jsmql(`$._id === 0x507f1f77bcf86cd799439011 && $.tenantId === "acme"`)).toEqual({
+      _id: new ObjectId("507f1f77bcf86cd799439011"),
+      tenantId: "acme",
+    });
   });
 });
 

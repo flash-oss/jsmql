@@ -576,6 +576,9 @@ var Lexer = class _Lexer {
   isDigit(ch) {
     return ch >= "0" && ch <= "9";
   }
+  isHexDigit(ch) {
+    return ch >= "0" && ch <= "9" || ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F";
+  }
   isIdentStart(ch) {
     return ch >= "a" && ch <= "z" || ch >= "A" && ch <= "Z" || ch === "_";
   }
@@ -585,6 +588,19 @@ var Lexer = class _Lexer {
   readNumber(start) {
     const src = this.src;
     let i = this.pos;
+    if (src[i] === "0" && (src[i + 1] === "x" || src[i + 1] === "X")) {
+      const hexStart = i + 2;
+      i = this.consumeHexDigitsWithSeparators(hexStart, start);
+      if (i === hexStart) {
+        throw new LexError(
+          `Hexadecimal literal at position ${start} has no digits after '0${src[hexStart - 1]}'`,
+          start
+        );
+      }
+      const value2 = src.slice(this.pos, i).replace(/_/g, "");
+      this.pos = i;
+      return { type: TokenType.Number, value: value2, pos: start };
+    }
     i = this.consumeDigitsWithSeparators(i, start);
     let hasFraction = false;
     let hasExponent = false;
@@ -633,6 +649,29 @@ var Lexer = class _Lexer {
       if (ch === "_") {
         const next = src[i + 1];
         if (next === void 0 || !this.isDigit(next)) {
+          throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
+        }
+        i++;
+        continue;
+      }
+      break;
+    }
+    return i;
+  }
+  /** Hex variant of consumeDigitsWithSeparators (0-9 a-f A-F, `_` between digits). */
+  consumeHexDigitsWithSeparators(i, start) {
+    const src = this.src;
+    if (i >= src.length || !this.isHexDigit(src[i])) return i;
+    i++;
+    while (i < src.length) {
+      const ch = src[i];
+      if (this.isHexDigit(ch)) {
+        i++;
+        continue;
+      }
+      if (ch === "_") {
+        const next = src[i + 1];
+        if (next === void 0 || !this.isHexDigit(next)) {
           throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
         }
         i++;
@@ -942,6 +981,17 @@ var MATH_CONSTANTS2 = new Set(MATH_CONSTANTS);
 var OBJECT_METHODS2 = new Set(OBJECT_METHODS);
 var TYPE_CAST_NAMES = /* @__PURE__ */ new Set(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 var BARE_CAST_NAMES = /* @__PURE__ */ new Set(["Number", "String", "Boolean"]);
+var OBJECTID_MIN_HEX = "4a0000000000000000000000";
+function assertPlausibleObjectId(hex, pos) {
+  const lower = hex.toLowerCase();
+  if (lower < OBJECTID_MIN_HEX) {
+    const when = new Date(parseInt(lower.slice(0, 8), 16) * 1e3).toISOString().slice(0, 10);
+    throw new ParseError(
+      `ObjectId ${lower} looks like a typo: its embedded timestamp decodes to ${when}, older than the smallest valid ObjectId ${OBJECTID_MIN_HEX} (2009-05-05, around MongoDB's first release).`,
+      pos
+    );
+  }
+}
 function compoundBinaryOp(op) {
   switch (op) {
     case "+=":
@@ -2179,6 +2229,10 @@ var Parser = class {
         if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseNumberStaticCall();
         }
+        if (name === "ObjectId" && this.lexer.lookahead(1).type === TokenType.LParen) {
+          this.lexer.next();
+          return this.finishObjectIdConstruction(t.pos);
+        }
         if (TYPE_CAST_NAMES.has(name)) {
           if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
           if (BARE_CAST_NAMES.has(name)) {
@@ -2547,9 +2601,13 @@ var Parser = class {
     if (className.type !== TokenType.Ident) {
       throw new ParseError(`Expected class name after 'new' at position ${newTok.pos}`, newTok.pos);
     }
+    if (className.value === "ObjectId") {
+      this.lexer.next();
+      return this.finishObjectIdConstruction(newTok.pos);
+    }
     if (className.value !== "Date" && className.value !== "Set") {
       throw new ParseError(
-        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set()`,
+        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set(), new ObjectId()`,
         className.pos
       );
     }
@@ -2579,6 +2637,39 @@ var Parser = class {
       );
     }
     return { type: "NewDate", args, pos: newTok.pos };
+  }
+  /**
+   * Finish parsing an `ObjectId(...)` construction (also reached via
+   * `new ObjectId(...)`). The caller has consumed the `ObjectId` identifier;
+   * `pos` is the leading token (`new` or `ObjectId`). Three shapes:
+   *   - `ObjectId()`               → `$createObjectId()` (server-side fresh id)
+   *   - `ObjectId("<24 hex>")`     → a constant ObjectId minted at compile time
+   *   - `ObjectId(<anything else>)`→ `$toObjectId(arg)` (server-side conversion)
+   * A constant string that is NOT 24 hex chars is a typo we can catch now, so it
+   * throws rather than deferring a guaranteed runtime failure to the server.
+   */
+  finishObjectIdConstruction(pos) {
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return { type: "OperatorCall", name: "$createObjectId", style: "positional", args: [], pos };
+    }
+    const arg = this.parseExpression();
+    this.consumeTrailingComma(TokenType.RParen);
+    this.lexer.expect(TokenType.RParen);
+    if (arg.type === "StringLiteral") {
+      const hex = arg.value;
+      if (!/^[0-9a-fA-F]{24}$/.test(hex)) {
+        const detail = hex.length === 24 ? `it contains non-hexadecimal characters` : `got ${hex.length} character${hex.length === 1 ? "" : "s"}`;
+        throw new ParseError(
+          `ObjectId("${hex}") is not a valid ObjectId: expected exactly 24 hexadecimal characters, ${detail}, at position ${arg.pos}.`,
+          arg.pos
+        );
+      }
+      assertPlausibleObjectId(hex, arg.pos);
+      return { type: "ObjectIdLiteral", hex, pos };
+    }
+    return { type: "OperatorCall", name: "$toObjectId", style: "positional", args: [arg], pos };
   }
   /** "Date.now()" or "Date.UTC(year, month, day, …)" — other Date.* members are not supported */
   parseDateStatic() {
@@ -2740,11 +2831,37 @@ var Parser = class {
   }
   parseNumber() {
     const t = this.lexer.next();
+    if (t.value[0] === "0" && (t.value[1] === "x" || t.value[1] === "X")) {
+      return this.classifyHexLiteral(t.value, t.pos);
+    }
     const value = parseFloat(t.value);
     if (isNaN(value)) {
       throw new ParseError(`Invalid number '${t.value}' at position ${t.pos}`, t.pos);
     }
     return { type: "NumberLiteral", value, pos: t.pos };
+  }
+  /**
+   * Classify a `0x…` hex literal (lexeme incl. prefix, underscores already
+   * stripped). Exactly 24 hex digits → a constant ObjectId — the "type `0x`,
+   * paste a 24-char _id" form. Otherwise it's an integer literal, accepted only
+   * when it fits a JS double's exact-integer range; a larger non-24-digit hex
+   * would silently lose precision (and is neither an ObjectId nor representable),
+   * so it's rejected with guidance rather than emitted wrong.
+   */
+  classifyHexLiteral(lexeme, pos) {
+    const hex = lexeme.slice(2);
+    if (hex.length === 24) {
+      assertPlausibleObjectId(hex, pos);
+      return { type: "ObjectIdLiteral", hex, pos };
+    }
+    const big = BigInt(lexeme);
+    if (big <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      return { type: "NumberLiteral", value: Number(big), pos };
+    }
+    throw new ParseError(
+      `Hex literal '${lexeme}' at position ${pos} has ${hex.length} digits \u2014 neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal.`,
+      pos
+    );
   }
   /** Parse a template literal: `chunk0${expr0}chunk1${expr1}chunk2` */
   parseTemplateLiteral() {
@@ -4052,6 +4169,65 @@ function validateObjectKeys(name, shapeKeys, rules, style, args, pos) {
   }
 }
 
+// src/objectid.ts
+var BSON_MAJOR_VERSION = 7;
+var BSON_VERSION_SYMBOL = /* @__PURE__ */ Symbol.for("@@mdb.bson.version");
+var HEX24 = /^[0-9a-fA-F]{24}$/;
+var ObjectId = class {
+  constructor(hex) {
+    this._bsontype = "ObjectId";
+    if (!HEX24.test(hex)) {
+      throw new TypeError(`Invalid ObjectId hex string: ${JSON.stringify(hex)} (expected 24 hex characters)`);
+    }
+    const bytes = new Uint8Array(12);
+    for (let i = 0; i < 12; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    this.buffer = bytes;
+  }
+  // bson 7.x rejects any value whose version symbol !== its BSON_MAJOR_VERSION.
+  get [BSON_VERSION_SYMBOL]() {
+    return BSON_MAJOR_VERSION;
+  }
+  // bson exposes `.id` as the raw 12-byte buffer; mirror it for any driver code
+  // that reads bytes directly rather than through `serializeInto`.
+  get id() {
+    return this.buffer;
+  }
+  toHexString() {
+    let out = "";
+    for (let i = 0; i < 12; i++) {
+      out += this.buffer[i].toString(16).padStart(2, "0");
+    }
+    return out;
+  }
+  toString() {
+    return this.toHexString();
+  }
+  // Extended JSON renders an ObjectId as its hex string; matching that keeps
+  // `JSON.stringify` output (e.g. from the CLI) readable, even though a JSON
+  // string can never round-trip back into a live BSON value.
+  toJSON() {
+    return this.toHexString();
+  }
+  equals(other) {
+    if (other === null || other === void 0) return false;
+    const o = other;
+    const hex = typeof o.toHexString === "function" ? o.toHexString() : typeof o.toString === "function" ? o.toString() : null;
+    return hex !== null && hex.toLowerCase() === this.toHexString();
+  }
+  getTimestamp() {
+    const seconds = this.buffer[0] * 2 ** 24 + this.buffer[1] * 2 ** 16 + this.buffer[2] * 2 ** 8 + this.buffer[3];
+    return new Date(seconds * 1e3);
+  }
+  serializeInto(uint8array, index) {
+    for (let i = 0; i < 12; i++) {
+      uint8array[index + i] = this.buffer[i];
+    }
+    return 12;
+  }
+};
+
 // src/codegen.ts
 var CodegenError = class extends Error {
   constructor(message, pos = 0) {
@@ -4675,6 +4851,8 @@ function _generateBody(expr, ctx) {
       return { $type: _generate(expr.operand, ctx) };
     case "NewDate":
       return generateNewDate(expr.args, ctx);
+    case "ObjectIdLiteral":
+      return new ObjectId(expr.hex);
     case "NewSet":
       return expr.arg === null ? [] : _generate(expr.arg, ctx);
     case "ArrayFrom":
@@ -6719,6 +6897,7 @@ function collectReadsInto(expr, out) {
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
     case "TypeCastRef":
       return;
     case "ArrayLiteral":
@@ -7473,6 +7652,8 @@ function anyEqualityLiteral(expr, ctx) {
       );
     case "NewDate":
       return evaluateStaticDate(expr);
+    case "ObjectIdLiteral":
+      return { value: new ObjectId(expr.hex) };
     default:
       return null;
   }
@@ -9050,6 +9231,7 @@ function mapChildren(expr, foreignParam, allocator, outerLets) {
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
       return expr;
     case "BinaryExpr":
       return {
@@ -9405,6 +9587,7 @@ function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = E
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
       return { stages, rewritten: expr };
     case "BinaryExpr":
       return {
@@ -11960,5 +12143,6 @@ If '${err.identifier}' is a value from outer scope, use the jsmql\`\` template t
 export {
   FunctionInputError,
   JsmqlInterpolationError,
+  ObjectId,
   jsmql
 };

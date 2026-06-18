@@ -1,6 +1,7 @@
 import { lookupOperator } from "./operators.ts";
 import { validateOperatorArgs } from "./operator-validation.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { ObjectId } from "./objectid.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
@@ -1216,6 +1217,13 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "NewDate":
       return generateNewDate(expr.args, ctx);
+
+    case "ObjectIdLiteral":
+      // Mint a live BSON ObjectId — the only value the driver accepts in a
+      // query doc (an Extended JSON envelope is server-rejected). The instance
+      // passes through `safeBoundValue`/`isOpaqueBsonValue` unchanged in every
+      // position, exactly like an interpolated ObjectId. See src/objectid.ts.
+      return new ObjectId(expr.hex);
 
     case "NewSet":
       // `new Set(arr)` is a tag for the value — used as a receiver in set-method calls
@@ -4182,6 +4190,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
     case "TypeCastRef":
       return;
     case "ArrayLiteral":

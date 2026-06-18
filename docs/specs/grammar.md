@@ -110,7 +110,7 @@ primary        = operator_call
                | math_call | math_const
                | object_call
                | type_cast | type_cast_ref | number_static
-               | new_date_or_set | date_now | array_static
+               | new_date_or_set | objectid_literal | date_now | array_static
                | regex_literal
                | template_literal
                | number | bigint
@@ -190,16 +190,26 @@ number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
 NUMBER_STATIC  = (* see `NumberStaticMethod` in src/ast.ts *)
 
 new_date_or_set = "new" ("Date" | "Set") "(" (expression ("," expression)* ","?)? ")"
+objectid_literal = "new"? "ObjectId" "(" (expression ","?)? ")"
+                 (* empty → $createObjectId(); a 24-hex string literal → ObjectId
+                    literal (non-24 string throws; pre-2009 timestamp throws);
+                    any other expr → $toObjectId(expr) *)
 date_now       = "Date" "." "now" "(" ")"
 array_static   = "Array" "." ("isArray" "(" expression ","? ")" | "from" "(" expression ("," call_arg)? ","? ")")
 
 regex_literal  = "/" REGEX_CHARS "/" REGEX_FLAGS?            (* context-sensitive: see below *)
 REGEX_FLAGS    = [gimsuy]+
 
-number         = DIGIT_SEQ ("." DIGIT_SEQ)? (("e"|"E") ("+"|"-")? DIGIT_SEQ)?
+number         = hex_number
+               | DIGIT_SEQ ("." DIGIT_SEQ)? (("e"|"E") ("+"|"-")? DIGIT_SEQ)?
                  (* decimal point only consumed when followed by a digit *)
+hex_number     = ("0x"|"0X") HEX_SEQ
+                 (* parser classifies: exactly 24 hex digits → ObjectId literal
+                    (rejected if its embedded timestamp predates 2009 — a typo);
+                    else an integer (rejected if > Number.MAX_SAFE_INTEGER) *)
 bigint         = DIGIT_SEQ "n"                                (* integer-only; no fraction or exponent *)
 DIGIT_SEQ      = [0-9]+ ("_" [0-9]+)*                         (* numeric separators *)
+HEX_SEQ        = [0-9a-fA-F]+ ("_" [0-9a-fA-F]+)*             (* numeric separators *)
 string         = '"' chars '"' | "'" chars "'"
 boolean        = "true" | "false"
 null           = "null"
@@ -238,7 +248,7 @@ Every expression accepted by this grammar is also valid JavaScript syntax. Addin
 
 ## Trailing commas
 
-Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` three-slot signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Shared helpers `parseDelimitedList` / `parseCommaTail` / `consumeTrailingComma` in `src/parser.ts` enforce this uniformly.
+Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` three-slot signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Shared helpers `parseDelimitedList` / `parseCommaTail` / `consumeTrailingComma` in `src/parser.ts` enforce this uniformly.
 
 ## Function-form input is not part of the grammar
 

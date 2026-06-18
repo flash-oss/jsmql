@@ -1605,6 +1605,42 @@ $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "i
 
 Valid target types: `"double"`, `"string"`, `"objectId"`, `"bool"`, `"date"`, `"int"`, `"long"`, `"decimal"`.
 
+### ObjectId literals
+
+Write a constant `_id` three ways — they all produce the same live BSON ObjectId:
+
+```js
+$._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
+$._id === ObjectId("507f1f77bcf86cd799439011")
+$._id === new ObjectId("507f1f77bcf86cd799439011")
+// all → { _id: ObjectId("507f1f77bcf86cd799439011") }
+
+[0x507f1f77bcf86cd799439011, 0x698a76556c10b90d8bd0497e].includes($._id)
+// { _id: { $in: [ObjectId("507f…"), ObjectId("698a…")] } }
+```
+
+The **`0x` hex form** is the most ergonomic — no quotes, no wrapper, just paste a 24-character hex `_id` after `0x` (numeric separators like `0x507f_1f77_…` are allowed). A `0x` literal with **exactly 24 hex digits** is an ObjectId; a shorter one is an ordinary integer (`0xff` → `255`); a longer-than-safe-integer, non-24-digit hex is rejected.
+
+jsmql emits a real BSON `ObjectId` value, which is the only thing the MongoDB driver accepts in a query document — so the equality is index-friendly with no `$expr` wrapper. (A hand-written Extended JSON envelope is **not** equivalent: the driver passes it to the server verbatim, which the server rejects as an unknown operator.) The string passed to `ObjectId("…")` is validated as 24 hex chars at compile time, so a typo is caught early.
+
+**Typo guard.** An ObjectId's first 4 bytes are a creation timestamp, and MongoDB didn't exist before 2009 — so jsmql rejects any ObjectId whose timestamp predates that (the smallest accepted id is `0x4a000000…`, 2009‑05‑05). This catches the common slips: an all‑zeros id, a sequential placeholder like `0x1234…`, or a dropped leading digit. The error names the decoded date so you can see what you actually typed.
+
+Two more forms handle the non-constant cases:
+
+```js
+$.userId = ObjectId($.idString)    // dynamic value → { $toObjectId: "$idString" } (server-side convert)
+$.newId  = ObjectId()              // no argument   → { $createObjectId: {} } (server-side fresh id)
+```
+
+For an id you only have **at runtime**, pass a real ObjectId via the template tag or a `jsmql.compile` parameter rather than baking a string into the source:
+
+```js
+jsmql`$._id === ${someObjectId}`              // interpolate a live ObjectId instance
+jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObjectId }
+```
+
+> Note: the value jsmql constructs is hard-coded to the BSON major version jsmql's supported driver ships (currently bson 7). It serializes byte-for-byte identically to a driver `ObjectId`; if your app pins a *different* bson major, prefer interpolating your driver's own ObjectId instance.
+
 ---
 
 ## Date Operations
