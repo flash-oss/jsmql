@@ -46,7 +46,7 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
-import { JSMQL_NS, bindingSlot } from "./namespace.ts";
+import { JSMQL_NS, LENGTH_SLOT, bindingSlot } from "./namespace.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
@@ -406,8 +406,9 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   let updateBuffer: UpdateOp[] = [];
   // Pipeline context: `$`-prefixed string literals pass through verbatim
   // (field paths / wire syntax), never auto-wrapped in `$literal`. See
-  // GenerateCtx.pipelineContext.
-  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true };
+  // GenerateCtx.pipelineContext. `topLevelStream` gates `$$.length` to this
+  // top-level pipeline (dropped by freshSubPipelineCtx for sub-pipelines).
+  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, topLevelStream: true };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
   const tracking = makeSlotTracking();
@@ -418,8 +419,21 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     updateBuffer = [];
   };
 
+  // `$$.length` materialisation: emit the `$setWindowFields` count stage before
+  // the first use, reuse it while it stays fresh, recompute after an
+  // invalidating stage. `lengthSlotAt` is the `out` index right after the last
+  // materialise (null = never materialised). See the stream-length helpers above.
+  let lengthSlotAt: number | null = null;
+  const ensureStreamLength = () => {
+    flushUpdateOps(); // land pending ops in `out` so the freshness scan sees them
+    if (lengthSlotAt !== null && (out as object[]).slice(lengthSlotAt).every(stagePreservesStreamLength)) return;
+    out.push(streamLengthStage());
+    lengthSlotAt = out.length;
+  };
+
   ast.elements.forEach((rawEl, i) => {
     validator.checkBeforeElement(rawEl.pos);
+    if (containsStreamLength(rawEl)) ensureStreamLength();
     let el: ArrayElement = rawEl;
     // Statement-position mutator rewrite: a `$.<field>.sort(...)` / `.push(...)`
     // / … call becomes a synthetic `$.<field> = <immutable RHS>` assignment so
@@ -496,7 +510,9 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     ctx = lowerStatementTail(el, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
   flushUpdateOps();
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
+    out.push({ $unset: JSMQL_NS });
+  }
   return out;
 }
 
@@ -522,13 +538,28 @@ export function generateImplicitPipeline(
 ): unknown[] {
   const out: unknown[] = [];
   // Pipeline context: see GenerateCtx.pipelineContext (string literals pass through).
-  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true };
+  // `topLevelStream` gates `$$.length` — set ONLY at the top level; a
+  // sub-pipeline (container !== "top") leaves it off so codegen rejects
+  // `$$.length` there (it would mean the sub-stream — not supported, [DEF-033]).
+  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, topLevelStream: container === "top" };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking();
 
+  // `$$.length` materialisation. The implicit (`;`-separated) form never buffers
+  // update ops (`;` is a hard boundary), so no flush is needed before the scan.
+  let lengthSlotAt: number | null = null;
+  const ensureStreamLength = () => {
+    if (lengthSlotAt !== null && (out as object[]).slice(lengthSlotAt).every(stagePreservesStreamLength)) return;
+    out.push(streamLengthStage());
+    lengthSlotAt = out.length;
+  };
+
   p.stmts.forEach((rawStmt, i) => {
     validator.checkBeforeElement(rawStmt.pos);
+    // `$$.length`: materialise at the top level; a sub-pipeline use is rejected
+    // by codegen's topLevelStream gate, so only hoist here when top-level.
+    if (container === "top" && containsStreamLength(rawStmt)) ensureStreamLength();
     let stmt: PipelineStmt = rawStmt;
     // Statement-position mutator rewrite: same logic as `generatePipeline`,
     // wrapped in a single-op `UpdateFilter` so it routes through the existing
@@ -598,7 +629,9 @@ export function generateImplicitPipeline(
     ctx = lowerStatementTail(stmt as Expr, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
 
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
+    out.push({ $unset: JSMQL_NS });
+  }
   return out;
 }
 
@@ -628,6 +661,17 @@ function lowerFuncDecl(decl: FuncDecl, ctx: GenerateCtx): GenerateCtx {
   if (ctx.bindings?.has(decl.name)) {
     throw new CodegenError(
       `Function \`${decl.name}\` shadows a function-form parameter binding of the same name. Rename one.`,
+      decl.pos,
+    );
+  }
+  // `$$.length` inside a reusable function body would be inlined at each call
+  // site, but the body lives in the ctx (not the inline AST), so the
+  // materialiser can't see it to hoist the `$setWindowFields` ahead of the
+  // calling stage. Reject it rather than emit a dangling `$__jsmql.length`.
+  if (someExpr(decl.lambda, isStreamLengthNode)) {
+    throw new CodegenError(
+      `'$$.length' isn't supported inside a reusable function body yet [DEF-033]. ` +
+        `Read it at the top level of the pipeline (e.g. \`let n = $$.length;\`) and pass the value in as a parameter.`,
       decl.pos,
     );
   }
@@ -2063,6 +2107,137 @@ function extractFromStageElement(
     return { type: "ObjectLiteral", entries, pos: el.pos };
   }
   return el;
+}
+
+// ── `$$.length` stream-cardinality materialisation ──────────────────────────────
+//
+// `$$.length` is the document count of the current stream at the point it's
+// used. It lowers to a `$setWindowFields` that stamps `__jsmql.length` onto
+// every doc, after which codegen reads it back as `"$__jsmql.length"`
+// (see generateStreamLength in codegen.ts). The materialise stage is hoisted
+// lazily: emitted once before the first use, reused while it stays fresh, and
+// recomputed after any stage that changes the count or drops the field.
+// See docs/specs/stream-length.md.
+
+/** Is this node the `$$.length` stream-cardinality reference? */
+function isStreamLengthNode(e: Expr): boolean {
+  return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
+}
+
+/** Recurse a CallArg (Expr or spread) for `someExpr`. */
+function someArg(arg: CallArg, pred: (e: Expr) => boolean): boolean {
+  return arg.type === "SpreadElement" ? someExpr(arg.argument, pred) : someExpr(arg, pred);
+}
+
+/**
+ * True if `expr` or any sub-expression satisfies `pred`. **Complete** over the
+ * `Expr` union — every child-bearing node recurses. Completeness is load-bearing
+ * for `containsStreamLength`: a missed node type would let `$$.length` slip
+ * through un-materialised and emit a dangling `$__jsmql.length` reference. (A
+ * `$$.length` inside a *named reusable function* body lives in the ctx, not the
+ * AST, so it isn't reachable here — `lowerFuncDecl` rejects that case instead.)
+ */
+function someExpr(expr: Expr, pred: (e: Expr) => boolean): boolean {
+  if (pred(expr)) return true;
+  switch (expr.type) {
+    case "OperatorCall":
+    case "MathCall":
+    case "ObjectCall":
+      return expr.args.some((a) => someArg(a, pred));
+    case "CallExpression":
+      return someExpr(expr.callee, pred) || expr.args.some((a) => someArg(a, pred));
+    case "MethodCall":
+      return someExpr(expr.object, pred) || expr.args.some((a) => someArg(a, pred));
+    case "MemberAccess":
+      return someExpr(expr.object, pred);
+    case "IndexAccess":
+      return someExpr(expr.object, pred) || someExpr(expr.index, pred);
+    case "BinaryExpr":
+      return someExpr(expr.left, pred) || someExpr(expr.right, pred);
+    case "UnaryExpr":
+      return someExpr(expr.operand, pred);
+    case "TernaryExpr":
+      return someExpr(expr.condition, pred) || someExpr(expr.consequent, pred) || someExpr(expr.alternate, pred);
+    case "TemplateLiteral":
+      return expr.expressions.some((e) => someExpr(e, pred));
+    case "ArrayLiteral":
+      return expr.elements.some((el) => someElement(el, pred));
+    case "ObjectLiteral":
+      return expr.entries.some((entry) =>
+        entry.type === "SpreadElement"
+          ? someExpr(entry.argument, pred)
+          : (entry.key.kind === "computed" && someExpr(entry.key.expr, pred)) || someExpr(entry.value, pred),
+      );
+    case "Lambda":
+      if (expr.body !== undefined && someExpr(expr.body, pred)) return true;
+      if (expr.exprBlock !== undefined) {
+        if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
+        if (someExpr(expr.exprBlock.ret, pred)) return true;
+      }
+      if (expr.block !== undefined) return expr.block.stmts.some((s) => someStmt(s, pred));
+      return false;
+    case "TypeofExpr":
+      return someExpr(expr.operand, pred);
+    case "TypeCast":
+      return someExpr(expr.arg, pred);
+    case "NewDate":
+    case "DateUTC":
+      return expr.args.some((e) => someExpr(e, pred));
+    case "NewSet":
+      return expr.arg !== null && someExpr(expr.arg, pred);
+    case "ArrayFrom":
+      return someExpr(expr.input, pred) || (expr.mapFn !== null && someExpr(expr.mapFn, pred));
+    case "NumberStatic":
+      return someExpr(expr.arg, pred);
+    default:
+      // Leaves with no child expressions: literals, FieldRef, CollectionRef,
+      // DatabaseRef, ClusterRef, ParamRef, RegexLiteral, the *Ref/*Const tags,
+      // DateNow. None can contain a sub-expression.
+      return false;
+  }
+}
+
+/** `someExpr` over a pipeline ArrayElement (statement wrappers + bare expr). */
+function someElement(el: ArrayElement, pred: (e: Expr) => boolean): boolean {
+  if (el.type === "AssignExpr") return someExpr(el.value, pred);
+  if (el.type === "DeleteStmt") return false;
+  if (el.type === "LetDecl") return someExpr(el.value, pred);
+  if (el.type === "FuncDecl") return false; // body lives in ctx, not the AST — see lowerFuncDecl
+  if (el.type === "SpreadElement") return someExpr(el.argument, pred);
+  return someExpr(el as Expr, pred);
+}
+
+/** `someExpr` over a `;`-separated pipeline statement. */
+function someStmt(stmt: PipelineStmt, pred: (e: Expr) => boolean): boolean {
+  if (stmt.type === "UpdateFilter") {
+    return stmt.ops.some((op) => (op.type === "AssignExpr" ? someExpr(op.value, pred) : false));
+  }
+  return someElement(stmt as ArrayElement, pred);
+}
+
+/** True if a statement reads `$$.length` anywhere in its (inline) expressions. */
+export function containsStreamLength(node: ArrayElement | PipelineStmt): boolean {
+  return node.type === "UpdateFilter" ? someStmt(node, isStreamLengthNode) : someElement(node, isStreamLengthNode);
+}
+
+/**
+ * Stages that preserve a materialised `__jsmql.length` — same count, field kept.
+ * Conservative allowlist: anything else (a `$match`, `$group`, `$unwind`,
+ * `$project`, `$unset`, `$replaceWith`, sugar, …) is treated as invalidating, so
+ * the next `$$.length` use recomputes. Recomputing is always correct; reusing a
+ * stale count is a bug — so we only keep freshness across provably-safe stages.
+ */
+const STREAM_LENGTH_PRESERVING = new Set(["$set", "$addFields", "$sort", "$lookup", "$setWindowFields"]);
+
+function stagePreservesStreamLength(stage: unknown): boolean {
+  if (stage === null || typeof stage !== "object") return false;
+  const keys = Object.keys(stage as Record<string, unknown>);
+  return keys.length === 1 && STREAM_LENGTH_PRESERVING.has(keys[0]);
+}
+
+/** The `$setWindowFields` stage that stamps the stream count onto every doc. */
+function streamLengthStage(): object {
+  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
 }
 
 /**

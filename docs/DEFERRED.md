@@ -227,6 +227,20 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
+### DEF-033 — `$$.length` inside a sub-pipeline or reusable function body
+
+- **What's blocked.** `$$.length` (the stream-cardinality value) used **inside a `$lookup` / `$facet` / `$unionWith` sub-pipeline** (e.g. a correlated `$$$.coll.filter(o => o.n === $$.length)`), or **inside a reusable function body** (`const f = () => $$.length`). Top-level pipeline uses are supported (the shipped feature).
+- **Target lowering.** Sub-pipeline: the count would mean the *sub-stream's* length, which needs its own `$setWindowFields` inside the sub-pipeline (or correlation of the outer count via `$lookup.let`). Function body: the function inlines at each call site, so the materialiser would need to hoist a `$setWindowFields` ahead of every calling stage — the body isn't in the inline AST where the per-statement scan runs.
+- **Why blocked.** Both need the materialisation machinery to reach into a context the top-level per-statement scan doesn't cover; scoped out of the first cut. The top-level case (the overwhelmingly common one — "guard/annotate the current stream") ships now.
+- **Attempted approaches.** None — deliberately deferred per the developer's call (Phase-2 plan, decision B).
+- **Success criteria.** `$$$.coll.filter(o => o.x === $$.length)` materialises the outer count and correlates it in; `const f = () => $$.length; $.n = f()` materialises ahead of the call site.
+- **Rejection site(s).** `src/codegen.ts` `generateStreamLength` (sub-pipeline, via the `topLevelStream` gate) and `src/pipeline.ts` `lowerFuncDecl` (reusable function body) — both tagged `[DEF-033]`.
+- **Spec.** `docs/specs/stream-length.md` § Deferred.
+- **Status.** open
+- **Effort.** M
+
+---
+
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.

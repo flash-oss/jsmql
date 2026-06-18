@@ -810,6 +810,44 @@ result is rejected with a hint pointing at the statement form. `jsmql.filter` /
 `jsmql.expr` reject it wholesale (it's Pipeline-only); `jsmql.update` rejects it
 too, because it lowers to a `$match`, which update pipelines disallow.
 
+### `$$.length`: count the current stream
+
+`$$` is the current stream; `$$.length` is its document count **at the point you
+use it** — the JS array-length idiom. It's a value usable anywhere an expression
+goes: a field, arithmetic, an `assert` condition, a stage body.
+
+```js
+// Annotate every doc with the size of the (filtered) stream.
+jsmql(`$match($.status === "active"); $.activeCount = $$.length;`);
+// → [
+//     { $match: { status: "active" } },
+//     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+//     { $set: { activeCount: "$__jsmql.length" } },
+//     { $unset: "__jsmql" }
+//   ]
+
+// Reuse is free; the count is RECOMPUTED after a stage that changes it.
+jsmql(`$.before = $$.length; $match($.keep); $.after = $$.length;`);
+// → before = pre-match count, after = post-match count (two $setWindowFields)
+
+// The conditional-error use — "at most one match":
+jsmql(`$match($.email === "me@x.com"); assert($$.length <= 1, "expected ≤ 1 user");`);
+```
+
+**How it works.** MongoDB has no inline "stream count" operator, so jsmql
+materialises one: a `$setWindowFields` `$count` stamps the count onto every
+document (under `__jsmql.length`, cleaned up by the trailing `$unset`), and
+`$$.length` reads it back. The materialiser is emitted **once** before the first
+use, **reused** while it stays valid, and **recomputed** after any stage that
+changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
+…). Needs **MongoDB 5.0+** (`$setWindowFields`); it buffers the stream
+(100 MB / `allowDiskUse`), like any window/group.
+
+**Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
+count. Not yet supported inside a `$lookup`/`$facet`/`$unionWith` sub-pipeline or
+a reusable function body `[DEF-033]` (compute it at the top level and carry the
+value in).
+
 ### `$out`: write the pipeline to a collection
 
 Assigning to a context-ref-rooted LHS writes the current pipeline's documents into a destination collection — MongoDB's [`$out`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/out/) stage. The destination is named on the **left** (where the documents go), the (optionally filtered) source on the **right**:

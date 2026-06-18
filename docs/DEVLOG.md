@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-18 — feat: `$$.length` — the current stream's document count as a value
+
+`$$.length` is now a usable value: the number of documents in the stream at the point it's read. `$.n = $$.length`, `1 / $$.length`, `assert($$.length <= 1, …)` — anywhere an expression goes. This is the long-deferred stream-`.length` (it supersedes the old "terminal `$count`" sketch from the 2026-05 stream-methods note: that would have collapsed the stream; this keeps it).
+
+**Mechanism.** MQL has no inline stream-count operator, so jsmql materialises one: a `$setWindowFields` with a full-partition `$count` stamps the count onto every document under the reserved system slot `__jsmql.length` (Phase-1 namespace standard), and codegen reads it back as `"$__jsmql.length"`. `$setWindowFields` adds a field without collapsing the stream. Requires MongoDB 5.0+.
+
+**Compute-once / reuse / recompute.** The materialiser is hoisted lazily: emitted once before the first use, reused while it stays *fresh*, and recomputed after any stage that isn't count-and-field preserving. Preserving allowlist (`STREAM_LENGTH_PRESERVING`): `$set`/`$addFields`/`$sort`/`$lookup`/`$setWindowFields`; everything else (`$match`, `$group`, `$unwind`, `$project`, `$unset`, `$replaceWith`, sugar, …) invalidates. Conservative by design — recomputing is always correct, reusing a stale count is a bug. Detection is a complete `Expr`-union walk (`someExpr`/`containsStreamLength` in pipeline.ts); a missed node would emit a dangling `$__jsmql.length`.
+
+**Scope.** Top-level pipeline only, gated by a new `topLevelStream` ctx flag (set by both pipeline lowerers, preserved by `extendCtx` for same-document lambdas, dropped by `freshSubPipelineCtx`). Rejected in Filter/`jsmql.expr` (no stream), inside a `$lookup`/`$facet`/`$unionWith` sub-pipeline, and inside a reusable function body — the latter two tracked as **[DEF-033]**. A top-level `.map`/`.filter` lambda is allowed (the stamped field is on the same document). Single-statement no-`;` forms (`$.n = $$.length`) reroute through the pipeline lowerer the same way lookup/`$out`/replace-root do.
+
+Implementation: `generateStreamLength` + the `topLevelStream` flag in [src/codegen.ts](../src/codegen.ts); the lazy materialiser, freshness allowlist, complete detection walk, sub-pipeline + function-body rejection in [src/pipeline.ts](../src/pipeline.ts); `LENGTH_SLOT` in [src/namespace.ts](../src/namespace.ts); reroutes in [src/index.ts](../src/index.ts). Spec [docs/specs/stream-length.md](specs/stream-length.md); user doc [docs/LANGUAGE.md](LANGUAGE.md) § `$$.length`; tests [test/stream-length.test.ts](../test/stream-length.test.ts) (19 cases) + a realistic case; every shape (compute/reuse/recompute, all call forms, rejections) verified executing against a live mongod 8.2.
+
+---
+
 ## 2026-06-18 — refactor: standardise the `__jsmql.` temp namespace, bucketed by kind
 
 Compiler-generated temporaries the document carries between stages now live in **kind-bucketed** sub-fields of the single `__jsmql` object, with a new single source of truth at [src/namespace.ts](../src/namespace.ts). Before, `let`/`const` bindings sat flat at `__jsmql.<name>`, lookup/scratch slots at `__jsmql.__lookup<n>`, and the dict-build reducer used a rogue **top-level** `__jsmqlDict` sibling (outside the `__jsmql` object entirely). Now:

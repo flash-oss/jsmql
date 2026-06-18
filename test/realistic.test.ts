@@ -1780,6 +1780,33 @@ $.revenue = $.qty * $.unitPrice;
   );
 });
 
+describe("tag each in-stock product with the category total (`$$.length`)", { features: ["Pipelines"] }, () => {
+  it(
+    "stamps the stream count onto every doc and reuses it for a share-of-total",
+    { kind: "pipeline", usage: "db.products.aggregate(jsmql(...))" },
+    () => {
+      // Category page: after narrowing to in-stock products, every doc carries
+      // the total in-stock count (for a "showing N products" header) and its
+      // share of the total. `$$.length` materialises one `$setWindowFields`
+      // `$count`; the second use reuses it (no extra stage). The trailing
+      // `$unset` keeps the scratch field out of the result.
+      expect(
+        jsmql`
+$match($.inStock === true);
+$.totalInStock = $$.length;
+$.sharePct = 100 / $$.length;
+        `,
+      ).toEqual([
+        { $match: { inStock: true } },
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        { $set: { totalInStock: "$__jsmql.length" } },
+        { $set: { sharePct: { $divide: [100, "$__jsmql.length"] } } },
+        { $unset: "__jsmql" },
+      ]);
+    },
+  );
+});
+
 describe("denormalise order line items for analytics (`.map`)", { features: ["Pipelines"] }, () => {
   it(
     "reshapes each shipped order doc into an analytics-friendly summary",

@@ -1,6 +1,7 @@
 import { lookupOperator } from "./operators.ts";
 import { validateOperatorArgs } from "./operator-validation.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { LENGTH_SLOT } from "./namespace.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
@@ -128,6 +129,17 @@ export type GenerateCtx = {
    */
   pipelineContext?: boolean;
   /**
+   * True only in **top-level pipeline** expression position — set by the two
+   * pipeline lowerers in `pipeline.ts` (and preserved by `extendCtx` for
+   * same-document lambda bodies, but deliberately dropped by
+   * `freshSubPipelineCtx` so sub-pipelines don't inherit it). Gates `$$.length`
+   * (the stream-cardinality value): valid only where `pipeline.ts` has
+   * materialised `__jsmql.length` ahead of the stage. Absent in `jsmql.expr` /
+   * Filter mode and inside any `$lookup`/`$facet`/`$unionWith` sub-pipeline, so
+   * `$$.length` there is rejected (see `generateStreamLength`).
+   */
+  topLevelStream?: boolean;
+  /**
    * Accumulator context — set by `pipeline.ts` when descending into a `$group`
    * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
    * slot. Used by the operator-call codegen to gate operators that only make
@@ -183,6 +195,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     bindingTypes: ctx.bindingTypes,
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
+    topLevelStream: ctx.topLevelStream,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
@@ -1311,11 +1324,44 @@ function wrapIfNull(value: unknown, fallback: unknown): unknown {
 // and `$size([])` returns 0 (matching JS short-circuit: `undefined?.length` is
 // undefined; we surface 0).
 function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx): unknown {
+  // `$$.length` — the current stream's cardinality. `pipeline.ts` materialises
+  // it into the `__jsmql.length` field (via `$setWindowFields`) ahead of the
+  // stage that reads it; here we just emit the field reference. Gated to
+  // top-level pipeline position (see `generateStreamLength`).
+  if (object.type === "CollectionRef") return generateStreamLength(ctx, object.pos);
   const rawObj = _generate(object, ctx);
   if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
   const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
   return cond({ $isArray: obj }, { $size: obj }, { $strLenCP: obj });
+}
+
+/**
+ * Lower `$$.length` (the current stream's document count) to the materialised
+ * field reference `"$__jsmql.length"`. `pipeline.ts` guarantees a
+ * `$setWindowFields` populated `__jsmql.length` on each document ahead of the
+ * stage that reads it. Gated to top-level pipeline position:
+ *   - no pipeline (Filter / `jsmql.expr`) → there is no stream to count;
+ *   - inside a sub-pipeline (`$lookup`/`$facet`/`$unionWith`) → the count would
+ *     mean the SUB-stream, which needs correlation we don't do yet [DEF-033].
+ * See docs/specs/stream-length.md.
+ */
+function generateStreamLength(ctx: GenerateCtx, pos: number): unknown {
+  if (!ctx.pipelineContext) {
+    throw new CodegenError(
+      `'$$.length' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. ` +
+        `Use it inside a pipeline (e.g. \`($) => { $.n = $$.length; … }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
+      pos,
+    );
+  }
+  if (!ctx.topLevelStream) {
+    throw new CodegenError(
+      `'$$.length' isn't supported inside a '$lookup' / '$facet' / '$unionWith' sub-pipeline yet [DEF-033] — ` +
+        `there it would mean the sub-pipeline's own stream length. Compute it in the outer (top-level) pipeline instead.`,
+      pos,
+    );
+  }
+  return `$${LENGTH_SLOT}`;
 }
 
 // Method-name → "neutral input for the operator this method lowers to".

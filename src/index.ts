@@ -17,6 +17,7 @@ import {
   generateImplicitPipeline,
   updateFilterHasReplaceRoot,
   isAssertCall,
+  containsStreamLength,
 } from "./pipeline.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import { lookupStage } from "./stages.ts";
@@ -820,6 +821,15 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
+  // An UpdateFilter that reads `$$.length` (`$.n = $$.length`) needs the
+  // pipeline lowerer to hoist the `$setWindowFields` materialiser — the
+  // bare-doc `generateUpdateFilter` path doesn't, and codegen would reject the
+  // un-materialised `$$.length`. Reroute as a one-stmt Pipeline (same pattern
+  // as the lookup / `$out` reroutes above), so a no-`;` single statement works.
+  if (ast.type === "UpdateFilter" && containsStreamLength(ast)) {
+    const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
   // An UpdateFilter whose LHS is the `$out` sugar shape (`$$$.<coll> = …`,
   // `$$$$.<db>.<coll> = …`) follows the same reroute logic as the lookup
   // case: the bare-doc `generateUpdateFilter` path doesn't know about
@@ -1060,7 +1070,7 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
     // `generateUpdateFilter` knows about neither (the latter would emit a `$set`
     // on the "" field path). Reroute the same way `lowerWithCtx` / `lowerProgram`
     // do for the implicit `jsmql()` entry.
-    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast)) {
+    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast) || containsStreamLength(ast)) {
       const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
       return generateImplicitPipeline(synthetic, ctx) as object[];
     }

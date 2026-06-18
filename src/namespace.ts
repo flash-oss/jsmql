@@ -36,6 +36,15 @@ export function tmpSlot(n: number): string {
 }
 
 /**
+ * Reserved named system value: the current stream length (`$$.length`),
+ * materialised per-document by a `$setWindowFields` `$count` and read back via
+ * the field path `"$" + LENGTH_SLOT`. A reserved key, so it can't collide with
+ * a user binding (`let length` → `__jsmql.var.length`). See
+ * docs/specs/stream-length.md.
+ */
+export const LENGTH_SLOT = `${JSMQL_NS}.length`;
+
+/**
  * Flat reserved scratch name for `$group` / `$bucket` accumulator output, where
  * MongoDB forbids dotted field names so the value can't live under the
  * `__jsmql` object. Must be consumed by the very next stage. The single

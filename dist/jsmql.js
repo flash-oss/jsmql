@@ -4052,6 +4052,17 @@ function validateObjectKeys(name, shapeKeys, rules, style, args, pos) {
   }
 }
 
+// src/namespace.ts
+var JSMQL_NS = "__jsmql";
+function bindingSlot(name) {
+  return `${JSMQL_NS}.var.${name}`;
+}
+function tmpSlot(n) {
+  return `${JSMQL_NS}.tmp.${n}`;
+}
+var LENGTH_SLOT = `${JSMQL_NS}.length`;
+var GROUP_TMP = `${JSMQL_NS}Tmp`;
+
 // src/codegen.ts
 var CodegenError = class extends Error {
   constructor(message, pos = 0) {
@@ -4082,6 +4093,7 @@ function extendCtx(ctx, params) {
     bindingTypes: ctx.bindingTypes,
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
+    topLevelStream: ctx.topLevelStream,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
@@ -4717,11 +4729,27 @@ function wrapIfNull(value, fallback) {
   return { $ifNull: [value, fallback] };
 }
 function generateLengthAccess(object, optional, ctx) {
+  if (object.type === "CollectionRef") return generateStreamLength(ctx, object.pos);
   const rawObj = _generate(object, ctx);
   if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
   const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
   return cond({ $isArray: obj2 }, { $size: obj2 }, { $strLenCP: obj2 });
+}
+function generateStreamLength(ctx, pos) {
+  if (!ctx.pipelineContext) {
+    throw new CodegenError(
+      `'$$.length' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. \`($) => { $.n = $$.length; \u2026 }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
+      pos
+    );
+  }
+  if (!ctx.topLevelStream) {
+    throw new CodegenError(
+      `'$$.length' isn't supported inside a '$lookup' / '$facet' / '$unionWith' sub-pipeline yet [DEF-033] \u2014 there it would mean the sub-pipeline's own stream length. Compute it in the outer (top-level) pipeline instead.`,
+      pos
+    );
+  }
+  return `$${LENGTH_SLOT}`;
 }
 var OPTIONAL_STRING_METHODS = methodsWhere((m) => m.optional === "string");
 var OPTIONAL_ARRAY_METHODS = methodsWhere((m) => m.optional === "array");
@@ -6854,16 +6882,6 @@ function pathsCollide(a, b) {
   }
   return false;
 }
-
-// src/namespace.ts
-var JSMQL_NS = "__jsmql";
-function bindingSlot(name) {
-  return `${JSMQL_NS}.var.${name}`;
-}
-function tmpSlot(n) {
-  return `${JSMQL_NS}.tmp.${n}`;
-}
-var GROUP_TMP = `${JSMQL_NS}Tmp`;
 
 // src/stages.ts
 var STAGES = {
@@ -10586,7 +10604,7 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
   }
   const out = [];
   let updateBuffer = [];
-  let ctx = { ...startCtx, pipelineContext: true };
+  let ctx = { ...startCtx, pipelineContext: true, topLevelStream: true };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
   const tracking = makeSlotTracking();
@@ -10595,8 +10613,16 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
     for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
     updateBuffer = [];
   };
+  let lengthSlotAt = null;
+  const ensureStreamLength = () => {
+    flushUpdateOps();
+    if (lengthSlotAt !== null && out.slice(lengthSlotAt).every(stagePreservesStreamLength)) return;
+    out.push(streamLengthStage());
+    lengthSlotAt = out.length;
+  };
   ast.elements.forEach((rawEl, i) => {
     validator.checkBeforeElement(rawEl.pos);
+    if (containsStreamLength(rawEl)) ensureStreamLength();
     let el = rawEl;
     if (el.type === "MethodCall") {
       const rewrite = tryRewriteMutatorCall(el);
@@ -10665,17 +10691,26 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
     ctx = lowerStatementTail(el, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
   flushUpdateOps();
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
+    out.push({ $unset: JSMQL_NS });
+  }
   return out;
 }
 function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   const out = [];
-  let ctx = { ...startCtx, pipelineContext: true };
+  let ctx = { ...startCtx, pipelineContext: true, topLevelStream: container === "top" };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking();
+  let lengthSlotAt = null;
+  const ensureStreamLength = () => {
+    if (lengthSlotAt !== null && out.slice(lengthSlotAt).every(stagePreservesStreamLength)) return;
+    out.push(streamLengthStage());
+    lengthSlotAt = out.length;
+  };
   p.stmts.forEach((rawStmt, i) => {
     validator.checkBeforeElement(rawStmt.pos);
+    if (container === "top" && containsStreamLength(rawStmt)) ensureStreamLength();
     let stmt = rawStmt;
     if (stmt.type === "MethodCall") {
       const rewrite = tryRewriteMutatorCall(stmt);
@@ -10731,7 +10766,9 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
     }
     ctx = lowerStatementTail(stmt, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
+    out.push({ $unset: JSMQL_NS });
+  }
   return out;
 }
 function lowerFuncDecl(decl, ctx) {
@@ -10750,6 +10787,12 @@ function lowerFuncDecl(decl, ctx) {
   if (ctx.bindings?.has(decl.name)) {
     throw new CodegenError(
       `Function \`${decl.name}\` shadows a function-form parameter binding of the same name. Rename one.`,
+      decl.pos
+    );
+  }
+  if (someExpr(decl.lambda, isStreamLengthNode)) {
+    throw new CodegenError(
+      `'$$.length' isn't supported inside a reusable function body yet [DEF-033]. Read it at the top level of the pipeline (e.g. \`let n = $$.length;\`) and pass the value in as a parameter.`,
       decl.pos
     );
   }
@@ -11532,6 +11575,92 @@ function extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out) {
   }
   return el;
 }
+function isStreamLengthNode(e) {
+  return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
+}
+function someArg(arg, pred) {
+  return arg.type === "SpreadElement" ? someExpr(arg.argument, pred) : someExpr(arg, pred);
+}
+function someExpr(expr, pred) {
+  if (pred(expr)) return true;
+  switch (expr.type) {
+    case "OperatorCall":
+    case "MathCall":
+    case "ObjectCall":
+      return expr.args.some((a) => someArg(a, pred));
+    case "CallExpression":
+      return someExpr(expr.callee, pred) || expr.args.some((a) => someArg(a, pred));
+    case "MethodCall":
+      return someExpr(expr.object, pred) || expr.args.some((a) => someArg(a, pred));
+    case "MemberAccess":
+      return someExpr(expr.object, pred);
+    case "IndexAccess":
+      return someExpr(expr.object, pred) || someExpr(expr.index, pred);
+    case "BinaryExpr":
+      return someExpr(expr.left, pred) || someExpr(expr.right, pred);
+    case "UnaryExpr":
+      return someExpr(expr.operand, pred);
+    case "TernaryExpr":
+      return someExpr(expr.condition, pred) || someExpr(expr.consequent, pred) || someExpr(expr.alternate, pred);
+    case "TemplateLiteral":
+      return expr.expressions.some((e) => someExpr(e, pred));
+    case "ArrayLiteral":
+      return expr.elements.some((el) => someElement(el, pred));
+    case "ObjectLiteral":
+      return expr.entries.some(
+        (entry) => entry.type === "SpreadElement" ? someExpr(entry.argument, pred) : entry.key.kind === "computed" && someExpr(entry.key.expr, pred) || someExpr(entry.value, pred)
+      );
+    case "Lambda":
+      if (expr.body !== void 0 && someExpr(expr.body, pred)) return true;
+      if (expr.exprBlock !== void 0) {
+        if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
+        if (someExpr(expr.exprBlock.ret, pred)) return true;
+      }
+      if (expr.block !== void 0) return expr.block.stmts.some((s) => someStmt(s, pred));
+      return false;
+    case "TypeofExpr":
+      return someExpr(expr.operand, pred);
+    case "TypeCast":
+      return someExpr(expr.arg, pred);
+    case "NewDate":
+    case "DateUTC":
+      return expr.args.some((e) => someExpr(e, pred));
+    case "NewSet":
+      return expr.arg !== null && someExpr(expr.arg, pred);
+    case "ArrayFrom":
+      return someExpr(expr.input, pred) || expr.mapFn !== null && someExpr(expr.mapFn, pred);
+    case "NumberStatic":
+      return someExpr(expr.arg, pred);
+    default:
+      return false;
+  }
+}
+function someElement(el, pred) {
+  if (el.type === "AssignExpr") return someExpr(el.value, pred);
+  if (el.type === "DeleteStmt") return false;
+  if (el.type === "LetDecl") return someExpr(el.value, pred);
+  if (el.type === "FuncDecl") return false;
+  if (el.type === "SpreadElement") return someExpr(el.argument, pred);
+  return someExpr(el, pred);
+}
+function someStmt(stmt, pred) {
+  if (stmt.type === "UpdateFilter") {
+    return stmt.ops.some((op) => op.type === "AssignExpr" ? someExpr(op.value, pred) : false);
+  }
+  return someElement(stmt, pred);
+}
+function containsStreamLength(node) {
+  return node.type === "UpdateFilter" ? someStmt(node, isStreamLengthNode) : someElement(node, isStreamLengthNode);
+}
+var STREAM_LENGTH_PRESERVING = /* @__PURE__ */ new Set(["$set", "$addFields", "$sort", "$lookup", "$setWindowFields"]);
+function stagePreservesStreamLength(stage) {
+  if (stage === null || typeof stage !== "object") return false;
+  const keys = Object.keys(stage);
+  return keys.length === 1 && STREAM_LENGTH_PRESERVING.has(keys[0]);
+}
+function streamLengthStage() {
+  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
+}
 
 // src/index.ts
 var JsmqlInterpolationError = class extends Error {
@@ -11807,6 +11936,10 @@ function lowerWithCtx(ast, ctx) {
     const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
+  if (ast.type === "UpdateFilter" && containsStreamLength(ast)) {
+    const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
+    return generateImplicitPipeline(synthetic, ctx);
+  }
   if (ast.type === "UpdateFilter" && containsOutAssign(ast)) {
     const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
@@ -11923,7 +12056,7 @@ function rejectOutOutsidePipeline(ast, apiName) {
 function lowerToPipelineStages(ast, ctx, apiName) {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
   if (ast.type === "UpdateFilter") {
-    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast)) {
+    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast) || containsStreamLength(ast)) {
       const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
       return generateImplicitPipeline(synthetic, ctx);
     }
