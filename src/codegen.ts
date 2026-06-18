@@ -712,8 +712,9 @@ function isPureRef(expr: Expr, ctx: GenerateCtx): boolean {
  * non-ASCII character). Names starting with `_`, `$`, a digit, or an uppercase
  * letter are reserved/invalid and the server rejects the whole pipeline
  * ("'…' starts with an invalid character for a user variable name"). User lambda
- * params (the idiomatic throwaway `_` in `(_, i) => …`) and field-derived
- * `$lookup` let names (`_id` — the most common join key!) routinely hit this.
+ * params (the idiomatic throwaway `_` in `(_, i) => …`) routinely hit this.
+ * (`$lookup.let` names take a different route — `letVarName` in
+ * lookup-translation.ts stamps a `v<depth>_` prefix for cross-level uniqueness.)
  *
  * Deterministic and idempotent: valid names are returned unchanged (so the
  * overwhelmingly common case produces identical output), and an invalid name

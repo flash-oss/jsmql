@@ -23,14 +23,7 @@ import type {
   LetDecl,
   FuncDecl,
 } from "./ast.ts";
-import {
-  CodegenError,
-  EMPTY_CTX,
-  generateWithCtx,
-  freshSubPipelineCtx,
-  safeVarName,
-  type GenerateCtx,
-} from "./codegen.ts";
+import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
@@ -712,7 +705,12 @@ export function translatePredicate(
     }
 
     // Pipeline-form with auto-`let` extraction.
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length,
+    );
 
     // Step 2: materialise nested lookups in the now-rewritten body. The
     // enclosing context grows by one level: this lookup's foreignParam plus
@@ -787,7 +785,12 @@ function buildBlockBodyPredicate(
   enclosing: EnclosingLookupContext,
 ): { letVars: Record<string, string>; pipeline: object[] } {
   const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
-  const { rewritten, letVars } = extractLetsFromPipeline(preRewritten, foreignParam, outerLets);
+  const { rewritten, letVars } = extractLetsFromPipeline(
+    preRewritten,
+    foreignParam,
+    outerLets,
+    enclosing.foreignParams.length,
+  );
   const innerEnclosing: EnclosingLookupContext = {
     foreignParams: [...enclosing.foreignParams, foreignParam],
     inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
@@ -824,7 +827,12 @@ export function buildPipelineFormPredicate(
   const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== undefined) {
     const preRewritten = rewriteEnclosingForeignParams(lambda.body, enclosing.foreignParams);
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length,
+    );
     const innerEnclosing: EnclosingLookupContext = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
@@ -951,7 +959,27 @@ type LetAllocator = {
   letVars: () => Record<string, string>;
 };
 
-function createLetAllocator(): LetAllocator {
+/**
+ * Build the `$lookup.let` variable name for a captured field at a given lookup
+ * **nesting depth** (0 = outermost lookup, 1 = a lookup nested one level in, …).
+ *
+ * Shape: `v<depth>_<field>` — e.g. `_id` at depth 0 → `v0_id`, `userId` at
+ * depth 1 → `v1_userId`. The depth is load-bearing, not cosmetic: MQL `$$`
+ * variables are lexically scoped *through* nested `$lookup.pipeline` boundaries,
+ * so two lookups in the same nesting chain that each capture a field of the same
+ * name would otherwise allocate the same var, and the deeper `let` would shadow
+ * the shallower one — silently mis-resolving a reference meant for the outer doc
+ * (the `$$v_id` collision bug). Stamping the declaring lookup's depth into the
+ * name keeps every level distinct. Always starts with `v` (a valid `$$`
+ * user-variable lead char); a leading `_` in the field doubles as the connector
+ * (`_id` → `v0_id`, not `v0__id`), and any other field gets an explicit `_`.
+ */
+function letVarName(lastSegment: string, depth: number): string {
+  const connector = lastSegment.startsWith("_") ? "" : "_";
+  return `v${depth}${connector}${lastSegment}`;
+}
+
+function createLetAllocator(depth: number): LetAllocator {
   const byPath = new Map<string, string>();
   const used = new Set<string>();
   const out: Record<string, string> = {};
@@ -970,9 +998,7 @@ function createLetAllocator(): LetAllocator {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== undefined) return existing;
-      // The let-var name is `$$<name>` in the sub-pipeline; sanitize so a field
-      // like `_id` (the most common join key) doesn't yield an invalid `$$_id`.
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -982,7 +1008,7 @@ function createLetAllocator(): LetAllocator {
     allocateForOuterLet(segments: string[], fieldPath: string): string {
       const existing = byPath.get(fieldPath);
       if (existing !== undefined) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);
@@ -997,8 +1023,9 @@ export function extractLetsFromExpr(
   body: Expr,
   foreignParam: string,
   outerLets?: ReadonlyMap<string, string>,
+  depth: number = 0,
 ): { rewritten: Expr; letVars: Record<string, string> } {
-  const allocator = createLetAllocator();
+  const allocator = createLetAllocator(depth);
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
@@ -1007,8 +1034,9 @@ export function extractLetsFromPipeline(
   block: Pipeline,
   foreignParam: string,
   outerLets?: ReadonlyMap<string, string>,
+  depth: number = 0,
 ): { rewritten: Pipeline; letVars: Record<string, string> } {
-  const allocator = createLetAllocator();
+  const allocator = createLetAllocator(depth);
   const stmts: PipelineStmt[] = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }

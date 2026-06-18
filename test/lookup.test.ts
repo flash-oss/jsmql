@@ -52,7 +52,7 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
       $lookup: { from: string; let: Record<string, string>; pipeline: object[]; as: string };
     };
     expect(lookupStage.$lookup.from).toBe("users");
-    expect(lookupStage.$lookup.let).toEqual({ userId: "$userId" });
+    expect(lookupStage.$lookup.let).toEqual({ v0_userId: "$userId" });
     expect(lookupStage.$lookup.as).toBe("user");
     expect((out as object[])[1]).toEqual({ $set: { user: { $first: "$user" } } });
   });
@@ -60,14 +60,14 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
   it("two refs to the same `$.x` share one let entry (dedup)", () => {
     const out = jsmql("$.users = $$$.users.filter(u => u._id === $.userId && u.lastLogin > $.userId);");
     const lookup = ((out as object[])[0] as { $lookup: { let: Record<string, string> } }).$lookup;
-    expect(Object.keys(lookup.let)).toEqual(["userId"]);
-    expect(lookup.let.userId).toBe("$userId");
+    expect(Object.keys(lookup.let)).toEqual(["v0_userId"]);
+    expect(lookup.let.v0_userId).toBe("$userId");
   });
 
   it("multiple distinct `$.x` refs land as multiple let entries", () => {
     const out = jsmql("$.users = $$$.users.filter(u => u._id === $.userId && u.tenantId === $.tenantId);");
     const lookup = ((out as object[])[0] as { $lookup: { let: Record<string, string> } }).$lookup;
-    expect(Object.keys(lookup.let).sort()).toEqual(["tenantId", "userId"]);
+    expect(Object.keys(lookup.let).sort()).toEqual(["v0_tenantId", "v0_userId"]);
   });
 });
 
@@ -84,9 +84,9 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
       {
         $lookup: {
           from: "orders",
-          let: { v_id: "$_id" },
+          let: { v0_id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
             { $sort: { createdAt: -1 } },
             { $limit: 10 },
           ],
@@ -256,8 +256,8 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
             {
               $lookup: {
                 from: "b",
-                let: { x: "$x" },
-                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$x"] } } }],
+                let: { v1_x: "$x" },
+                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$v1_x"] } } }],
                 as: "__jsmql.__lookup1",
               },
             },
@@ -280,8 +280,8 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
             {
               $lookup: {
                 from: "b",
-                let: { x: "$x" },
-                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$x"] } } }],
+                let: { v1_x: "$x" },
+                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$v1_x"] } } }],
                 as: "__jsmql.__lookup1",
               },
             },
@@ -296,10 +296,10 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   });
 
   it("outer-outer doc ref ($._id) flows through outer.let and is visible inside the inner via lexical $$ scope", () => {
-    // The user's `$._id` is captured by the OUTER lookup's `let: { v_id: "$_id" }`.
-    // Inside the outer's pipeline, the post's `_id` is the local-doc field;
-    // the inner's `let: { v_id: "$_id" }` captures that POST id (shadowing the
-    // outer's `_id` for the duration of the inner's pipeline).
+    // `$._id` is captured by the OUTER lookup's `let: { v0_id: "$_id" }` (depth 0).
+    // The inner's `let: { v1_id: "$_id" }` (depth 1) captures the POST's `_id`.
+    // The depth prefix keeps them distinct — `$$v0_id` (the outermost doc) and
+    // `$$v1_id` (the post) no longer collide under lexical `$$` scoping.
     expect(
       jsmql(
         "$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)",
@@ -308,18 +308,18 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "posts",
-          let: { v_id: "$_id" },
+          let: { v0_id: "$_id" },
           pipeline: [
             {
               $lookup: {
                 from: "tags",
-                let: { v_id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$v_id"] } } }],
+                let: { v1_id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$v1_id"] } } }],
                 as: "__jsmql.__lookup1",
               },
             },
             { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } },
           ],
           as: "posts",
         },
@@ -338,7 +338,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     expect(middle.pipeline[0].$lookup).toBeDefined();
     const innermost = middle.pipeline[0].$lookup as { from: string; let: Record<string, string>; pipeline: object[] };
     expect(innermost.from).toBe("c");
-    expect(innermost.let).toEqual({ x: "$x" });
+    expect(innermost.let).toEqual({ v2_x: "$x" });
   });
 
   it("cross-database outer with same-database inner", () => {
@@ -357,7 +357,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     ) as Array<Record<string, unknown>>;
     const outer = out[0].$lookup as { pipeline: Array<Record<string, unknown>> };
     const inner = outer.pipeline[0].$lookup as { let: Record<string, string> };
-    expect(inner.let).toEqual({ x: "$x" });
+    expect(inner.let).toEqual({ v1_x: "$x" });
   });
 
   it("bare enclosing-foreign-param ref (no member access) is rejected", () => {
@@ -387,8 +387,8 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               {
                 $lookup: {
                   from: "b",
-                  let: { v_id: "$_id" },
-                  pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$v_id"] } } }],
+                  let: { v1_id: "$_id" },
+                  pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$v1_id"] } } }],
                   as: "bs",
                 },
               },
@@ -412,8 +412,8 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
             {
               $lookup: {
                 from: "b",
-                let: { v_id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$v_id"] } } }, { $sort: { _id: 1 } }],
+                let: { v1_id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$v1_id"] } } }, { $sort: { _id: 1 } }],
                 as: "bs",
               },
             },
@@ -438,8 +438,8 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
             {
               $lookup: {
                 from: "orders",
-                let: { v_id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v_id"] } } }],
+                let: { v1_id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v1_id"] } } }],
                 as: "__jsmql.__lookup1",
               },
             },
@@ -527,7 +527,7 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
     const out = jsmql("$.user = $$$$.analytics.users.find(u => u._id === $.userId && u.active);");
     const lookup = ((out as object[])[0] as { $lookup: { from: object; let: object } }).$lookup;
     expect(lookup.from).toEqual({ db: "analytics", coll: "users" });
-    expect(lookup.let).toEqual({ userId: "$userId" });
+    expect(lookup.let).toEqual({ v0_userId: "$userId" });
   });
 
   it("block-body lambdas work the same as `$$$.<coll>`", () => {
@@ -542,9 +542,9 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
       {
         $lookup: {
           from: { db: "analytics", coll: "orders" },
-          let: { v_id: "$_id" },
+          let: { v0_id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
             { $sort: { createdAt: -1 } },
             { $limit: 5 },
           ],
@@ -735,9 +735,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "events",
-          let: { v_id: "$_id" },
+          let: { v0_id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
             { $sort: { createdAt: -1 } },
             { $limit: 10 },
           ],
@@ -754,8 +754,8 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "orders",
-          let: { v_id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$v_id"] } } }, { $unwind: "$items" }],
+          let: { v0_id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } }, { $unwind: "$items" }],
           as: "__jsmql.__lookup1",
         },
       },

@@ -57,9 +57,9 @@ $$ = $$$$.archive.orders
         {
           $lookup: {
             from: { db: "archive", coll: "orders" },
-            let: { userId: "$__jsmql.userId" },
+            let: { v0_userId: "$__jsmql.userId" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+              { $match: { $expr: { $eq: ["$userId", "$$v0_userId"] } } },
               { $sort: { placedAt: -1 } },
               { $limit: 5 },
             ],
@@ -1602,9 +1602,9 @@ $project({ name: 1, recentOrders: 1, nOrders });
       {
         $lookup: {
           from: "orders",
-          let: { v_id: "$_id" },
+          let: { v0_id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
             { $sort: { createdAt: -1 } },
             { $limit: 5 },
           ],
@@ -1623,9 +1623,13 @@ $project({ name: 1, recentOrders: 1, nOrders });
 // Two-level join from inside a block-body sub-pipeline: each active user gets
 // their 5 most-recent orders, and each of THOSE orders is enriched in place
 // with its shipments via a nested `$$$.shipments` lookup written as a statement
-// inside the outer orders block. The inner lookup's `$$v_id` correlates to the
-// *order's* `_id` (the current doc of the outer orders sub-pipeline), not the
-// user's — verified against a live mongod.
+// inside the outer orders block. The inner predicate correlates against BOTH
+// enclosing levels at once — `s.orderId === o._id` (the *order*, the current doc
+// of the outer orders sub-pipeline) and `s.userId === $._id` (the outermost
+// *user*). The depth-stamped let names keep them distinct: `$$v1_id` is the
+// order's `_id`, `$$v0_id` is the user's. (With a single shared `$$v_id` they
+// would collide and the user correlation would silently read the order's id.)
+// Verified against a live mongod.
 describe(
   "user → recent orders → each order's shipments (nested lookup in a block body)",
   { features: ["Pipelines"] },
@@ -1638,7 +1642,7 @@ $.recentOrders = $$$.orders.filter(o => {
   $match(o.userId === $._id);
   $sort({ createdAt: -1 });
   $limit(5);
-  $.shipments = $$$.shipments.filter(s => s.orderId === o._id);
+  $.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id);
 });
 $project({ name: 1, recentOrders: 1 });
       `,
@@ -1647,16 +1651,20 @@ $project({ name: 1, recentOrders: 1 });
         {
           $lookup: {
             from: "orders",
-            let: { v_id: "$_id" },
+            let: { v0_id: "$_id" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+              { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
               { $sort: { createdAt: -1 } },
               { $limit: 5 },
               {
                 $lookup: {
                   from: "shipments",
-                  let: { v_id: "$_id" },
-                  pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$v_id"] } } }],
+                  let: { v1_id: "$_id" },
+                  pipeline: [
+                    {
+                      $match: { $expr: { $and: [{ $eq: ["$orderId", "$$v1_id"] }, { $eq: ["$userId", "$$v0_id"] }] } },
+                    },
+                  ],
                   as: "shipments",
                 },
               },
@@ -2144,9 +2152,9 @@ $.recentOrders = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { v_id: "$_id" },
+              let: { v0_id: "$_id" },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+                { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
                 { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
@@ -2201,9 +2209,9 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { v_id: "$_id" },
+              let: { v0_id: "$_id" },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+                { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
               ],
@@ -2245,9 +2253,11 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { v_id: "$_id", minSpend: "$__jsmql.minSpend" },
+              let: { v0_id: "$_id", v0_minSpend: "$__jsmql.minSpend" },
               pipeline: [
-                { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $gt: ["$total", "$$minSpend"] }] } } },
+                {
+                  $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $gt: ["$total", "$$v0_minSpend"] }] } },
+                },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
               ],

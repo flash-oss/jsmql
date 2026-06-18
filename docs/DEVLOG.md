@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-18 — fix(lookup): depth-stamped `$lookup.let` names fix the cross-level `$$v_id` collision
+
+A nested lookup that captured the same field name at two enclosing levels produced **wrong-but-running** MQL. Reported case: `$.recentOrders = $$$.orders.filter(o => { $.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id); })` emitted `$$v_id` for *both* `o._id` (the order) and `$._id` (the outermost user) — and since MQL `$$` variables are lexically scoped *through* nested `$lookup.pipeline` boundaries, the inner `let: { v_id: "$_id" }` shadowed the outer one, so `s.userId === $._id` silently compared against the order's `_id`. Confirmed against a live `mongod`: the join returned the wrong shipments before, the right ones after.
+
+Fix: every auto-extracted `$lookup.let` variable name now carries the **nesting depth** of the lookup that declares it — `v<depth>_<field>` (`letVarName` in [src/lookup-translation.ts](../src/lookup-translation.ts)). Depth is `enclosing.foreignParams.length`, threaded via a new `depth` parameter on `extractLetsFromExpr` / `extractLetsFromPipeline` → `createLetAllocator`. The reported case now emits `let: { v0_id: "$_id" }` (outer) and `let: { v1_id: "$_id" }` (inner), with the deepest `$match` reading `$$v1_id` (order) and `$$v0_id` (user) distinctly — verified joining correctly on `mongod`. This is deterministic (same input → same output; no heuristic), in keeping with the no-output-drift rule.
+
+Because the depth must disambiguate *any* shared field name (not just `_id`), the prefix is uniform: a single-level lookup's `let` changes from `v_id` / `userId` to `v0_id` / `v0_userId`, etc. These are internal correlation variables the user never writes by name, so the rename is a non-breaking, MQL-equivalent change. `$let` / `$map` / `$reduce` `vars` (which still use codegen's `safeVarName`) are untouched — this change is scoped to `$lookup.let`. Supersedes the "cross-level field-name collision" known-limitation note in [docs/specs/lookup-stage.md](specs/lookup-stage.md) (now resolved). Expected MQL across `test/lookup.test.ts`, `test/pipeline.test.ts`, `test/realistic.test.ts`, `test/stream-methods.test.ts`, and `test/literal-passthrough.test.ts` updated to the depth-prefixed names.
+
+---
+
 ## 2026-06-18 — feat(lookup): nested lookups inside block-body predicates
 
 A `$$$.<coll>.find/filter(...)` may now appear inside another lookup's **block-body** lambda — as a statement (`$.orders = $$$.orders.filter(o => o.userId === u._id)`), inside a stage-body expression (`$match($$$.orders.filter(...).length > 0)`), or as a block-bodied inner lambda — to any depth. It lowers to the same shape the expression-body path already produced: the inner lookup materialises as a `$lookup` stage inside the outer's `$lookup.pipeline`, with `u.<field>` refs auto-`let`'d into the inner's `$lookup.let`. Previously this threw `Nested lookup inside another lookup's block-body lambda is not yet supported`. Closes the last open nested-lookup item (was DEF-023). All three emitted shapes were run against a live `mongod` and join correctly.

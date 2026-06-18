@@ -600,9 +600,9 @@ $.recentOrders = $$$.orders.filter(o => {
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { v_id: "$_id" },
+//       let: { v0_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
 //         { $sort: { createdAt: -1 } },
 //         { $limit: 10 }
 //       ],
@@ -643,9 +643,9 @@ $.recentOrders = $$$.orders
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { v_id: "$_id" },
+//       let: { v0_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
 //         { $sort: { placedAt: -1 } },     // toSorted + toReversed
 //         { $limit: 5 },                    // slice(0, 5)
 //         { $replaceWith: { id: "$_id", total: "$total" } },  // map
@@ -2195,9 +2195,9 @@ jsmql`$$ = $$$.orders
 // → [
 //   { $lookup: {
 //       from: "orders",
-//       let: { v_id: "$_id" },
+//       let: { v0_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],

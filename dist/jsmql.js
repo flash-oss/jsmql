@@ -8814,7 +8814,12 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
       const basic = tryBasicForm(preRewritten, foreignParam, outerLets);
       if (basic !== null) return basic;
     }
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -8854,7 +8859,12 @@ function makeSubPipelineCtx(outerCtx, letVarNames) {
 }
 function buildBlockBodyPredicate(block, foreignParam, outerCtx, outerLets, lowerBlock2, enclosing) {
   const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
-  const { rewritten, letVars } = extractLetsFromPipeline(preRewritten, foreignParam, outerLets);
+  const { rewritten, letVars } = extractLetsFromPipeline(
+    preRewritten,
+    foreignParam,
+    outerLets,
+    enclosing.foreignParams.length
+  );
   const innerEnclosing = {
     foreignParams: [...enclosing.foreignParams, foreignParam],
     inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -8871,7 +8881,12 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg)
   const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== void 0) {
     const preRewritten = rewriteEnclosingForeignParams(lambda.body, enclosing.foreignParams);
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -8942,7 +8957,11 @@ function tryBasicForm(body, foreignParam, outerLets) {
   }
   return null;
 }
-function createLetAllocator() {
+function letVarName(lastSegment, depth) {
+  const connector = lastSegment.startsWith("_") ? "" : "_";
+  return `v${depth}${connector}${lastSegment}`;
+}
+function createLetAllocator(depth) {
   const byPath = /* @__PURE__ */ new Map();
   const used = /* @__PURE__ */ new Set();
   const out = {};
@@ -8961,7 +8980,7 @@ function createLetAllocator() {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== void 0) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -8971,7 +8990,7 @@ function createLetAllocator() {
     allocateForOuterLet(segments, fieldPath) {
       const existing = byPath.get(fieldPath);
       if (existing !== void 0) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);
@@ -8981,13 +9000,13 @@ function createLetAllocator() {
     letVars: () => out
   };
 }
-function extractLetsFromExpr(body, foreignParam, outerLets) {
-  const allocator = createLetAllocator();
+function extractLetsFromExpr(body, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
-function extractLetsFromPipeline(block, foreignParam, outerLets) {
-  const allocator = createLetAllocator();
+function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
   const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }
