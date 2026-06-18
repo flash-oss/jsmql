@@ -259,9 +259,12 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     ]);
   });
 
-  it("folds the date-from-parts form (all-numeric args)", () => {
+  it("folds the date-from-parts form (all-numeric args) as UTC", () => {
+    // Multi-arg `new Date(y, m, d)` is interpreted as UTC — same as the
+    // `$dateFromParts` codegen lowering — so the folded value is TZ-independent
+    // (the expected uses Date.UTC, NOT the machine-local `new Date(2026,0,1)`).
     expect(jsmql("[$match($.createdAt >= new Date(2026, 0, 1))]")).toEqual([
-      { $match: { createdAt: { $gte: new Date(2026, 0, 1) } } },
+      { $match: { createdAt: { $gte: new Date(Date.UTC(2026, 0, 1)) } } },
     ]);
   });
 
@@ -285,12 +288,13 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     ]);
   });
 
-  it("falls back to $expr when the string would produce Invalid Date", () => {
-    // We don't translate to a bogus filter that silently matches nothing —
-    // letting $expr run surfaces the failure when the query actually executes.
-    expect(jsmql('[$match($.createdAt >= new Date("not-a-date"))]')).toEqual([
-      { $match: { $expr: { $gte: ["$createdAt", { $toDate: "not-a-date" }] } } },
-    ]);
+  it("rejects a constant string that can't be parsed as a date (HR3)", () => {
+    // The constant is unparseable and the server would reject the equivalent
+    // `{ $toDate }`, so the comparison drops to the $expr residual and codegen
+    // refuses it at compile time rather than emit a bogus filter.
+    expect(() => jsmql('[$match($.createdAt >= new Date("not-a-date"))]')).toThrow(
+      /"not-a-date" is not a valid date string/,
+    );
   });
 
   it("merges with other clauses under && and uses $and on key collision", () => {

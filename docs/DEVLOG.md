@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-18 — fix: constant `new Date(...)` folds to a real BSON Date (HR1/HR3)
+
+`new Date("2026-05-17T...")` inside a query document — a Filter `{ createdAt: { $gte: new Date("...") } }` or the `$match({ ... })` object-literal passthrough — lowered to the aggregation form `{ $toDate: "..." }`. But MongoDB's *query language* doesn't evaluate `{ $toDate }`; it compares against it as a literal subdocument, so the predicate silently matched **nothing**. Verified against a local `mongod`: a real `Date` in a `$gte` slot matches, `{ $toDate: "..." }` matches `[]`, in both `find` and aggregation `$match`. This violated HR1 (a constant `Date` should pass through verbatim) and produced a query that just didn't work — the reported bug.
+
+Fix: a `new Date(...)` with compile-time-constant arguments now folds to a real BSON `Date` in **every** context (codegen-level, not just the query translator), so the same `new Date("...")` emits the same MQL regardless of surrounding syntax and works in both aggregation-expression and query-document positions. The fold logic became a single source of truth — `evalConstDate` / `foldConstantDate` in [codegen.ts](../src/codegen.ts) — that both `generateNewDate` and the `$match`/Filter translator ([match-translation.ts](../src/match-translation.ts)) call; the translator's old private `evaluateStaticDate` (which folded multi-arg `new Date(y, m, d)` in JS **local** time, silently disagreeing with codegen's **UTC** `$dateFromParts`) is gone. Only genuinely-runtime forms (`new Date()` = now, `new Date($.field)`) keep the `{ $toDate }` / `$dateFromParts` lowering.
+
+HR3 follow-up: when the constant arguments evaluate to an *Invalid* Date (`new Date("not-a-date")`), jsmql now **rejects at compile time** with an actionable, position-bearing error (`"not-a-date" is not a valid date string. Use an ISO 8601 date like ...`) instead of emitting `{ $toDate: "not-a-date" }` — which `mongod` rejects at parse time anyway ("Error parsing date string"). A JS-valid-but-non-ISO string (`new Date("Jan 1 2024")`) folds to a real Date, which also fixes a case the old `{ $toDate }` form would have had the server reject.
+
+---
+
 ## 2026-06-17 — fix: actionable error when a predicate is passed to `.includes()` / `.indexOf()`
 
 `$.senderChain.includes(sc => sc.client === clientId && sc.tier === 2)` failed with a *misleading* message: *"Lambda expression cannot be used here — only valid as array method argument or $let second argument."* That wording is self-contradicting at the call site — `.includes` **is** an array method, so it reads as "this should be fine." The lambda was reaching the generic `case "Lambda"` rejection in `_generate`, which has no method context.
@@ -64,26 +74,6 @@ Implemented with three shared helpers so the rule is enforced uniformly rather t
 
 ---
 
-## 2026-06-14 — feat(playground): LOC + byte-size counters in both panel headers
-
-Each panel header now carries a live size figure: the **jsmql input** label reads `jsmql input  3 LOC, 187 B` and the **MQL output** label reads `MQL output  49 LOC, 728 B`. The side-by-side numbers make the playground's core pitch legible at a glance — how much terser the JSMQL source is than the MQL it expands to. This **replaces** the old `(Node/Deno/Bun)` hint in the output label (the where-it-runs note was low-value next to a concrete size delta).
-
-`statsOf(text)` computes both: `text.split("\n").length` for LOC and `new Blob([text]).size` for an exact UTF-8 byte count, formatted as `<N> B` under 1 KB else `<N.N> KB`. Input stats update from the editor source on every `render()` (so they track typing live); output stats are set only on the success branch from the *rendered* MQL string — so the figure follows the Prettify toggle (a fair LOC comparison wants the pretty-printed shape), and an empty or error panel clears the figure since its text is a message, not MQL. Both clear to `""` so a fresh/empty session reads just `jsmql input` / `MQL output`.
-
-Purely playground UX — no library code changed. Authored in [playground_skeleton.html](../playground_skeleton.html) (new `.label-stats` span in each header, the `statsOf` helper, and the per-branch wiring in `render()`); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html). Verified by syntax-checking the generated module and confirming the figures on a real 3-stage pipeline (3 LOC/187 B → 49 LOC/728 B).
-
----
-
-## 2026-06-14 — feat(playground): line numbers in the input and output editors
-
-Both CodeMirror panes — the **jsmql input** (left) and the **MQL output** (right) — now show a line-number gutter (`lineNumbers: true`). Purely a readability aid for multi-line pipelines and their emitted MQL; no library code changed.
-
-The gutter is themed to the page: `.CodeMirror-gutters` uses the `--bg` background with a `--border-strong` divider, and an error-panel variant (`.panel.error .CodeMirror-gutters` / `-linenumber`) keeps it consistent when the output pane is in its error state. The line numbers themselves are deliberately prominent — dark (`#1a1a1a`), `font-weight: 600`, full opacity. The selector is `.cm-s-neo .CodeMirror-linenumber` rather than a bare `.CodeMirror-linenumber`: the neo theme ships its own theme-scoped rule that otherwise out-specifies a plain selector and washes the numbers back to grey. The existing sidebar-toggle `refresh()` calls already re-measure the new gutter width, so no layout fix was needed.
-
-Authored in the hand-written [playground_skeleton.html](../playground_skeleton.html); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html).
-
----
-
 ## 2026-06-14 — docs: jsmql never invents its own `$`-operators; `continue` keyword rejected
 
 Recorded a standing language-design axiom in [CLAUDE.md](../CLAUDE.md) § "Things the user did not explicitly ask for but matter" (with a one-line pointer from [src/CLAUDE.md](../src/CLAUDE.md) next to the `src/operators.ts` SSOT bullet): **jsmql never mints its own `$`-prefixed operators or pseudo-stages.** Every `$`-named callable maps to something that already exists in MongoDB — a real operator via the `$op(...)` escape hatch (backed by `src/operators.ts`), or a real pipeline stage (`$match`, `$project`, …). A convenience like `$drop(pred)` that lowered to `$match(!(pred))` will **never** be added, however handy it looks: it fabricates a `$name` that isn't a MongoDB operator (breaking the "every `$op` is a real op" model and the paste-raw-MQL round-trip property), and it's a second spelling for a capability that already has one (the friction in `feedback_no_silent_output_drift.md`). New ergonomics go into JS-idiomatic surface — a JS method, or destination-visible sugar over a real stage (`$$.push(…)` → `$unionWith`) — never a brand-new `$foo()`.
@@ -117,6 +107,26 @@ No library code changed — purely playground UX, authored in the hand-written [
 The examples-sidebar toggle moved out of the page header and onto the Examples panel itself. When the panel is open, a compact `Hide ⌘E` button sits to the left of the `EXAMPLES` heading; when collapsed, a `Show examples ⌘E` button appears on the left, inside the input panel's label, so there is always exactly one toggle visible and it reads against the thing it controls. Both share one `.examples-toggle` style (replacing the old header `.header-action` rule), and `#show-sidebar` is gated to `main.sidebar-collapsed` so the open/closed affordances never both show. The header is now just the title + syntax-reference link.
 
 Also dropped the `95 (19 filt · 34 pipe · 42 expr)` count line from the panel header (and the JS that computed it — `countEl`, `itCount`, the per-kind tally) as noise no one reads, and rebound the toggle hotkey from ⌘B to **⌘E** (`key === "e"`, both button hints, the help comment). No library code changed — purely playground UX, authored in [playground_skeleton.html](../playground_skeleton.html) and regenerated into [playground.html](../playground.html) via `scripts/sync-playground.mjs`.
+
+---
+
+## 2026-06-14 — feat(playground): line numbers in the input and output editors
+
+Both CodeMirror panes — the **jsmql input** (left) and the **MQL output** (right) — now show a line-number gutter (`lineNumbers: true`). Purely a readability aid for multi-line pipelines and their emitted MQL; no library code changed.
+
+The gutter is themed to the page: `.CodeMirror-gutters` uses the `--bg` background with a `--border-strong` divider, and an error-panel variant (`.panel.error .CodeMirror-gutters` / `-linenumber`) keeps it consistent when the output pane is in its error state. The line numbers themselves are deliberately prominent — dark (`#1a1a1a`), `font-weight: 600`, full opacity. The selector is `.cm-s-neo .CodeMirror-linenumber` rather than a bare `.CodeMirror-linenumber`: the neo theme ships its own theme-scoped rule that otherwise out-specifies a plain selector and washes the numbers back to grey. The existing sidebar-toggle `refresh()` calls already re-measure the new gutter width, so no layout fix was needed.
+
+Authored in the hand-written [playground_skeleton.html](../playground_skeleton.html); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html).
+
+---
+
+## 2026-06-14 — feat(playground): LOC + byte-size counters in both panel headers
+
+Each panel header now carries a live size figure: the **jsmql input** label reads `jsmql input  3 LOC, 187 B` and the **MQL output** label reads `MQL output  49 LOC, 728 B`. The side-by-side numbers make the playground's core pitch legible at a glance — how much terser the JSMQL source is than the MQL it expands to. This **replaces** the old `(Node/Deno/Bun)` hint in the output label (the where-it-runs note was low-value next to a concrete size delta).
+
+`statsOf(text)` computes both: `text.split("\n").length` for LOC and `new Blob([text]).size` for an exact UTF-8 byte count, formatted as `<N> B` under 1 KB else `<N.N> KB`. Input stats update from the editor source on every `render()` (so they track typing live); output stats are set only on the success branch from the *rendered* MQL string — so the figure follows the Prettify toggle (a fair LOC comparison wants the pretty-printed shape), and an empty or error panel clears the figure since its text is a message, not MQL. Both clear to `""` so a fresh/empty session reads just `jsmql input` / `MQL output`.
+
+Purely playground UX — no library code changed. Authored in [playground_skeleton.html](../playground_skeleton.html) (new `.label-stats` span in each header, the `statsOf` helper, and the per-branch wiring in `render()`); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html). Verified by syntax-checking the generated module and confirming the figures on a real 3-stage pipeline (3 LOC/187 B → 49 LOC/728 B).
 
 ---
 

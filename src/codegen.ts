@@ -3795,27 +3795,132 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
  * semantics where the element is always undefined.
  */
 /**
+ * Evaluate a `new Date(...)` whose arguments are all compile-time constants,
+ * returning the resulting JS `Date` — **even when that Date is Invalid** (so the
+ * caller can distinguish "not constant" from "constant but unparseable"). Returns
+ * null only when the value can't be known at compile time: `new Date()` (= now)
+ * or any non-literal argument.
+ *
+ * Multi-arg `(y, m, d, …)` and `new Date(Date.UTC(…))` are interpreted as
+ * **UTC** (month index 0-based, as in JS `Date.UTC`), matching the
+ * `$dateFromParts` timezone in `generateDateFromParts`. This is the documented
+ * UTC divergence — "local time" on a MongoDB server is rarely what a query
+ * author wants — and evaluating here keeps the query-translator's value
+ * identical to codegen's (it previously used JS-local time and silently
+ * disagreed).
+ */
+function evalConstDate(args: Expr[]): Date | null {
+  if (args.length === 0) return null; // new Date() — runtime "now"
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      const utc = constNumberArgs(arg.args);
+      return utc === null ? null : new Date(utcMs(utc));
+    }
+    if (arg.type === "NumberLiteral") return new Date(arg.value); // epoch ms
+    if (arg.type === "StringLiteral") return new Date(arg.value); // ISO string
+    return null; // new Date(<runtime expr>)
+  }
+  const nums = constNumberArgs(args);
+  if (nums === null) return null; // multi-arg with a non-literal part
+  return new Date(utcMs(nums));
+}
+
+/**
+ * Fold a `new Date(...)` whose arguments are all compile-time constants into a
+ * real, **valid** JS `Date`, or null otherwise — the single source of truth for
+ * "is this `new Date(...)` a usable constant date?". Used by the `$match`/Filter
+ * query translator (`match-translation.ts`): a null result (runtime, or a
+ * constant that doesn't parse) drops the comparison to the `$expr` residual,
+ * which re-enters codegen — where `generateNewDate` decides between the runtime
+ * lowering and an HR3 compile-time rejection.
+ */
+export function foldConstantDate(args: Expr[]): Date | null {
+  const d = evalConstDate(args);
+  return d !== null && !Number.isNaN(d.getTime()) ? d : null;
+}
+
+function utcMs(parts: number[]): number {
+  return (Date.UTC as (...a: number[]) => number)(...parts);
+}
+
+function constNumberArgs(args: Expr[]): number[] | null {
+  const out: number[] = [];
+  for (const a of args) {
+    if (a.type !== "NumberLiteral") return null;
+    out.push(a.value);
+  }
+  return out;
+}
+
+/**
+ * An actionable rejection for a `new Date(...)` whose constant arguments we
+ * evaluated to an Invalid Date — the server would reject the resulting
+ * `{ $toDate }` / `$dateFromParts` at parse time, so we refuse it here (HR3)
+ * instead of emitting it. The string-literal case (by far the common one) names
+ * the offending value and the format to use; the numeric/parts case reports the
+ * out-of-range result.
+ */
+function invalidConstDateError(args: Expr[]): CodegenError {
+  const first = args[0];
+  if (args.length === 1 && first.type === "StringLiteral") {
+    return new CodegenError(
+      `new Date("${first.value}") — "${first.value}" is not a valid date string. ` +
+        `Use an ISO 8601 date like "2026-01-01" or "2026-01-01T00:00:00.000Z".`,
+      first.pos,
+    );
+  }
+  return new CodegenError(
+    `new Date(…) — these arguments produce an invalid date (out of the representable range).`,
+    first.pos,
+  );
+}
+
+/**
  * Lower `new Date(args…)`:
- *   - 0 args (`new Date()`)               → `{ $toDate: "$$NOW" }`
- *   - 1 arg  (`new Date(ts)` / `(string)`) → `{ $toDate: <arg> }`
- *   - 2..7 args                            → `{ $dateFromParts: { year, month: +1, … } }`
+ *   - constant args (valid)                → a real BSON `Date` (folded; see below)
+ *   - constant args (Invalid Date)         → compile-time rejection (HR3; see below)
+ *   - 0 args (`new Date()`)                → `{ $toDate: "$$NOW" }`
+ *   - 1 runtime arg (`new Date($.ts)`)     → `{ $toDate: <arg> }`
+ *   - runtime multi-arg                    → `{ $dateFromParts: { year, month: +1, … } }`
+ *
+ * A `new Date(...)` with compile-time-constant arguments denotes a constant
+ * Date, so it folds to a real `Date` value (HR1: a Date passes through
+ * verbatim). This is correct in BOTH positions a date can appear: an
+ * aggregation expression (where `{ $toDate: … }` would also work) AND a
+ * query document — Filter / `$match` object-literal passthrough — where the
+ * runtime `{ $toDate: … }` form is read as an inert literal subdocument that
+ * matches nothing. The fold makes both contexts emit the working shape and
+ * keeps `new Date("…")` producing the *same* MQL regardless of where it sits.
+ *
+ * When the constant args evaluate to an *Invalid* Date (e.g. `new Date("nope")`)
+ * we reject at compile time (HR3): the server rejects the equivalent `{ $toDate }`
+ * at parse time, so emitting it would knowingly produce unrunnable MQL. Only
+ * genuinely-runtime forms fall through to `{ $toDate }` / `$dateFromParts`.
  *
  * JS month indices are 0-based; MQL `$dateFromParts.month` is 1-based, so an
  * `$add: [month, 1]` is inserted (folded at compile time for literal months).
  *
  * Divergence: JS multi-arg `new Date(y, m, d, …)` interprets the parts in
  * **local time** (whatever the runtime considers local); jsmql interprets
- * them as **UTC** (MQL's `$dateFromParts` default), since "local time" on a
- * MongoDB server is rarely what a query author wants. Use `Date.UTC(...)`
- * (or build the Date in client code and pass it via the template-tag form)
- * if the JS-local semantics matter.
+ * them as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the fold),
+ * since "local time" on a MongoDB server is rarely what a query author wants.
+ * Use `Date.UTC(...)` (or build the Date in client code and pass it via the
+ * template-tag form) if the JS-local semantics matter.
  */
 function generateNewDate(args: Expr[], ctx: GenerateCtx): unknown {
+  const constEval = evalConstDate(args);
+  if (constEval !== null) {
+    // All arguments are compile-time constants — fold to a real BSON Date, or
+    // reject if they don't form a valid date (HR3 — the server would too).
+    if (Number.isNaN(constEval.getTime())) throw invalidConstDateError(args);
+    return constEval;
+  }
   if (args.length === 0) return { $toDate: "$$NOW" };
   if (args.length === 1) {
-    // Peephole: `new Date(Date.UTC(y, m, d, …))` is the canonical UTC-date
-    // constant idiom. Skip the `$toLong → $toDate` round-trip and emit the
-    // raw `$dateFromParts` (still UTC-anchored, just as a Date instead of ms).
+    // Peephole: `new Date(Date.UTC(y, m, d, …))` with a runtime part is the
+    // canonical UTC-date idiom. Skip the `$toLong → $toDate` round-trip and
+    // emit the raw `$dateFromParts` (still UTC-anchored, just as a Date).
     const arg = args[0];
     if (arg.type === "DateUTC") {
       return generateDateFromParts(arg.args, ctx, "UTC");

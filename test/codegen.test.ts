@@ -391,7 +391,8 @@ describe("operator literal-type validation — date slots (was DEF-029)", () => 
     expect(jsmql.expr("$year($.createdAt)")).toEqual({ $year: "$createdAt" });
     expect(jsmql.expr('$year("$createdAt")')).toEqual({ $year: "$createdAt" }); // HR1: a $-string is a field ref
     expect(jsmql.expr('$dateAdd({ startDate: new Date("2020-01-01"), unit: "day", amount: 1 })')).toEqual({
-      $dateAdd: { startDate: { $toDate: "2020-01-01" }, unit: "day", amount: 1 },
+      // A constant `new Date(...)` folds to a real BSON Date (HR1), not `{ $toDate }`.
+      $dateAdd: { startDate: new Date("2020-01-01"), unit: "day", amount: 1 },
     });
     // a negative integer amount is fine
     expect(jsmql.expr("$dateAdd({ startDate: $.t, unit: 'day', amount: -3 })")).toEqual({
@@ -2038,24 +2039,46 @@ describe("new Date()", () => {
   it("with field arg", () => {
     expect(jsmql.expr("new Date($.ts)")).toEqual({ $toDate: "$ts" });
   });
-  it("with string literal", () => {
-    expect(jsmql.expr('new Date("2024-01-01")')).toEqual({ $toDate: "2024-01-01" });
+  it("with constant string literal folds to a real Date (not $toDate)", () => {
+    // A compile-time-constant `new Date(...)` denotes a constant Date, so it
+    // folds to a real BSON Date that works in BOTH aggregation-expression and
+    // query-document positions. `{ $toDate }` only works in the former.
+    expect(jsmql.expr('new Date("2024-01-01")')).toEqual(new Date("2024-01-01"));
   });
-  it("new Date(y, m) folds month + 1", () => {
-    expect(jsmql.expr("new Date(2024, 0)")).toEqual({ $dateFromParts: { year: 2024, month: 1 } });
+  it("new Date(y, m) folds to a UTC Date", () => {
+    expect(jsmql.expr("new Date(2024, 0)")).toEqual(new Date(Date.UTC(2024, 0)));
   });
-  it("new Date(y, m, d) sets day", () => {
-    expect(jsmql.expr("new Date(2024, 0, 15)")).toEqual({ $dateFromParts: { year: 2024, month: 1, day: 15 } });
+  it("new Date(y, m, d) folds to a UTC Date", () => {
+    expect(jsmql.expr("new Date(2024, 0, 15)")).toEqual(new Date(Date.UTC(2024, 0, 15)));
   });
-  it("new Date(y, m, d, h, mi, s, ms) fills all parts", () => {
-    expect(jsmql.expr("new Date(2024, 11, 31, 23, 59, 58, 999)")).toEqual({
-      $dateFromParts: { year: 2024, month: 12, day: 31, hour: 23, minute: 59, second: 58, millisecond: 999 },
-    });
+  it("new Date(y, m, d, h, mi, s, ms) folds to a UTC Date", () => {
+    expect(jsmql.expr("new Date(2024, 11, 31, 23, 59, 58, 999)")).toEqual(
+      new Date(Date.UTC(2024, 11, 31, 23, 59, 58, 999)),
+    );
   });
-  it("non-literal month gets $add: [m, 1]", () => {
+  it("non-literal month gets $add: [m, 1] (runtime form, not folded)", () => {
     expect(jsmql.expr("new Date($.y, $.m, 1)")).toEqual({
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: 1 },
     });
+  });
+  it("rejects a constant date string that can't be parsed (HR3)", () => {
+    // We KNOW the value at compile time and the server rejects the equivalent
+    // `{ $toDate: "not-a-date" }` at parse time — so refuse it here rather than
+    // emit unrunnable MQL. The message names the value and the format to use.
+    expect(() => jsmql.expr('new Date("not-a-date")')).toThrow(/"not-a-date" is not a valid date string/);
+    expect(() => jsmql.expr('new Date("not-a-date")')).toThrow(/ISO 8601/);
+  });
+  it("constant Date folds in query-document position too (the reported bug)", () => {
+    // The motivating regression: in a Filter / `$match` object-literal
+    // passthrough (a query document, not an aggregation expression) the old
+    // `{ $toDate }` shape was read as an inert literal subdocument — matching
+    // nothing. A real Date is what the query language compares against.
+    expect(jsmql('{ createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") } }')).toEqual({
+      createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") },
+    });
+    expect(jsmql('[$match({ createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") } })]')).toEqual([
+      { $match: { createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") } } },
+    ]);
   });
   it("rejects more than 7 args", () => {
     expect(() => jsmql.expr("new Date(1, 2, 3, 4, 5, 6, 7, 8)")).toThrow(/at most 7 arguments/);
@@ -2071,10 +2094,8 @@ describe("Date.UTC()", () => {
   it("Date.UTC(y) — year-only form", () => {
     expect(jsmql.expr("Date.UTC(1970)")).toEqual({ $toLong: { $dateFromParts: { year: 1970, timezone: "UTC" } } });
   });
-  it("new Date(Date.UTC(...)) peephole: skips $toLong round-trip", () => {
-    expect(jsmql.expr("new Date(Date.UTC(2024, 0, 15))")).toEqual({
-      $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" },
-    });
+  it("new Date(Date.UTC(...)) with constant parts folds to a real UTC Date", () => {
+    expect(jsmql.expr("new Date(Date.UTC(2024, 0, 15))")).toEqual(new Date(Date.UTC(2024, 0, 15)));
   });
   it("Date.UTC requires at least 1 arg", () => {
     expect(() => jsmql.expr("Date.UTC()")).toThrow(/Date\.UTC.*takes 1 to 7 arguments/);
