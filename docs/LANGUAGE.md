@@ -1648,18 +1648,25 @@ jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObject
 ### Date Constructor and `Date.now()`
 
 ```js
+// Constant arguments → a real BSON Date, folded at compile time (see note below):
+new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
+new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)   (UTC)
+new Date(2024, 11, 31, 23, 59, 58, 999)
+                                   // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form
+new Date(Date.UTC(2024, 0, 15))    // Date(2024-01-15T00:00:00Z)
+
+// Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // { $toDate: "$$NOW" }  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
-new Date("2024-01-01")             // { $toDate: "2024-01-01" }
-new Date(2024, 0, 15)              // { $dateFromParts: { year: 2024, month: 1, day: 15 } }
-new Date(2024, 11, 31, 23, 59, 58, 999)
-                                   // full year/month/day/hour/minute/second/ms form
+new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
+
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
 Date.UTC(2024, 0, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } } }
-new Date(Date.UTC(2024, 0, 15))    // { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } }   — peephole skips the toLong/toDate round-trip
 ```
 
-**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly. JS month indices stay 0-based on the input side — jsmql folds the `+1` adjustment for you.
+**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, jsmql evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` / `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document: `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter / `$match` — MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, never matching anything. Only genuinely runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments don't form a valid date (`new Date("not-a-date")`), jsmql rejects it at compile time rather than emit MQL the server would refuse.
+
+**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the constant fold), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly. JS month indices stay 0-based on the input side — jsmql folds the `+1` adjustment for you.
 
 ### Date Getter Methods
 

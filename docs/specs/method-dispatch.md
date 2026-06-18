@@ -294,6 +294,8 @@ The `ARRAY_RETURNING_METHODS` and `ARRAY_OUTPUT_OPS` sets in `codegen.ts` drive 
 
 Spread args are handled identically across the array and string branches in `.concat`: `args.map(a => a.type === "SpreadElement" ? gen(a.argument) : gen(a))`.
 
+**Predicate (lambda) arg is rejected with a redirect.** `.includes()` / `.indexOf()` search for a *value*, never a predicate (this is faithful JS — `[].includes(fn)` checks function identity, not a test). Passing a lambda is the classic "I meant the predicate sibling" slip, so `rejectPredicateOnValueSearch(arg, method, sibling)` in `codegen.ts` intercepts it before the generic `Lambda` rejection and points at the right method — `.some` for `.includes` (both bool), `.findIndex` for `.indexOf` (both index) — echoing the user's own param name (`use .some(sc => …)`). The generic `case "Lambda"` message is the fallback for every other misuse and names the iterating methods (`.map`/`.filter`/`.some`/…) that *do* take a callback.
+
 ## Template literals
 
 `TemplateLiteral` is an AST node with `quasis: string[]` and `expressions: Expr[]`, where `quasis.length === expressions.length + 1`. Codegen emits `$concat` over the interleaved chunks and expressions. Empty quasis are skipped to keep the output tidy.

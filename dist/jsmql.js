@@ -4844,7 +4844,7 @@ function _generateBody(expr, ctx) {
       return generateCallExpression(expr.callee, expr.args, ctx, expr.pos);
     case "Lambda":
       throw new CodegenError(
-        "Lambda expression cannot be used here \u2014 only valid as array method argument or $let second argument",
+        "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, \u2026) or as the second argument to $let.",
         expr.pos
       );
     case "TypeofExpr":
@@ -5484,6 +5484,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
       checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "indexOf", "findIndex");
       const needle = _generate(exprArgs[0], ctx);
       if (isArrayProducing(object)) {
         return { $indexOfArray: [genObj, needle] };
@@ -5534,6 +5535,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
       checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "includes", "some");
       const needle = _generate(exprArgs[0], ctx);
       if (isArrayProducing(object)) {
         return { $in: [needle, genObj] };
@@ -6268,6 +6270,14 @@ function exprArgsOnly(args, method) {
     return a;
   });
 }
+function rejectPredicateOnValueSearch(arg, method, sibling) {
+  if (arg?.type !== "Lambda") return;
+  const p = arg.params[0] ?? "x";
+  throw new CodegenError(
+    `.${method}() searches for a value \u2014 it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => \u2026).`,
+    arg.pos
+  );
+}
 function checkArity(method, spec, count, callPos, prefix = ".") {
   const ok = spec.none !== void 0 ? count === 0 : spec.exact !== void 0 ? count === spec.exact : spec.allowed !== void 0 ? spec.allowed.includes(count) : count >= spec.atLeast;
   if (ok) return;
@@ -6612,7 +6622,56 @@ function generateObjectCall(method, args, ctx, pos) {
     }
   }
 }
+function evalConstDate(args) {
+  if (args.length === 0) return null;
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      const utc = constNumberArgs(arg.args);
+      return utc === null ? null : new Date(utcMs(utc));
+    }
+    if (arg.type === "NumberLiteral") return new Date(arg.value);
+    if (arg.type === "StringLiteral") return new Date(arg.value);
+    return null;
+  }
+  const nums = constNumberArgs(args);
+  if (nums === null) return null;
+  return new Date(utcMs(nums));
+}
+function foldConstantDate(args) {
+  const d = evalConstDate(args);
+  return d !== null && !Number.isNaN(d.getTime()) ? d : null;
+}
+function utcMs(parts) {
+  return Date.UTC(...parts);
+}
+function constNumberArgs(args) {
+  const out = [];
+  for (const a of args) {
+    if (a.type !== "NumberLiteral") return null;
+    out.push(a.value);
+  }
+  return out;
+}
+function invalidConstDateError(args) {
+  const first = args[0];
+  if (args.length === 1 && first.type === "StringLiteral") {
+    return new CodegenError(
+      `new Date("${first.value}") \u2014 "${first.value}" is not a valid date string. Use an ISO 8601 date like "2026-01-01" or "2026-01-01T00:00:00.000Z".`,
+      first.pos
+    );
+  }
+  return new CodegenError(
+    `new Date(\u2026) \u2014 these arguments produce an invalid date (out of the representable range).`,
+    first.pos
+  );
+}
 function generateNewDate(args, ctx) {
+  const constEval = evalConstDate(args);
+  if (constEval !== null) {
+    if (Number.isNaN(constEval.getTime())) throw invalidConstDateError(args);
+    return constEval;
+  }
   if (args.length === 0) return { $toDate: "$$NOW" };
   if (args.length === 1) {
     const arg = args[0];
@@ -7651,7 +7710,7 @@ function anyEqualityLiteral(expr, ctx) {
         false
       );
     case "NewDate":
-      return evaluateStaticDate(expr);
+      return foldedDateValue(expr);
     case "ObjectIdLiteral":
       return { value: new ObjectId(expr.hex) };
     default:
@@ -7672,41 +7731,14 @@ function anyOrderedLiteral(expr, ctx) {
         true
       );
     case "NewDate":
-      return evaluateStaticDate(expr);
+      return foldedDateValue(expr);
     default:
       return null;
   }
 }
-function evaluateStaticDate(expr) {
-  const args = expr.args;
-  if (args.length === 0) return null;
-  if (args.length === 1) {
-    const arg = args[0];
-    if (arg.type === "DateUTC") {
-      const utcArgs = staticNumberArgs(arg.args);
-      if (utcArgs === null) return null;
-      const ms = Date.UTC(...utcArgs);
-      return finalizeDate(new Date(ms));
-    }
-    if (arg.type === "NumberLiteral") return finalizeDate(new Date(arg.value));
-    if (arg.type === "StringLiteral") return finalizeDate(new Date(arg.value));
-    return null;
-  }
-  const numericArgs = staticNumberArgs(args);
-  if (numericArgs === null) return null;
-  return finalizeDate(new Date(...numericArgs));
-}
-function staticNumberArgs(args) {
-  const out = [];
-  for (const a of args) {
-    if (a.type !== "NumberLiteral") return null;
-    out.push(a.value);
-  }
-  return out;
-}
-function finalizeDate(d) {
-  if (Number.isNaN(d.getTime())) return null;
-  return { value: d };
+function foldedDateValue(expr) {
+  const d = foldConstantDate(expr.args);
+  return d === null ? null : { value: d };
 }
 function paramRefAsLiteral(expr, ctx, orderedOnly) {
   if (!ctx.bindings?.has(expr.name)) return null;

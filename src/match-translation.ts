@@ -18,7 +18,7 @@
 
 import type { Expr, BinaryOp } from "./ast.ts";
 import { ObjectId } from "./objectid.ts";
-import { isOpaqueBsonValue, generateWithCtx, mqlForBinaryOp } from "./codegen.ts";
+import { isOpaqueBsonValue, generateWithCtx, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -696,10 +696,12 @@ function flipOrderedOp(op: ">" | ">=" | "<" | "<="): ">" | ">=" | "<" | "<=" {
  *     which the query language doesn't recognise as a value.
  *
  * `NewDate` (and `Date.UTC` inside `new Date(...)`) is accepted *when its
- * arguments are all compile-time literals* — the value is then folded to a
- * real JS `Date` instance. The aggregation form `{ $toDate: "..." }` is NOT
- * accepted as a query-doc value, because MongoDB's query language treats it
- * as a literal subdocument key, not an evaluable expression.
+ * arguments are all compile-time literals* — the shared `foldConstantDate`
+ * (codegen.ts) folds it to a real JS `Date`. The aggregation form
+ * `{ $toDate: "..." }` is NOT accepted as a query-doc value, because MongoDB's
+ * query language treats it as a literal subdocument key, not an evaluable
+ * expression — which is exactly why codegen folds a constant `new Date(...)`
+ * to a real `Date` rather than emitting `{ $toDate }` here.
  */
 function anyEqualityLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | null {
   switch (expr.type) {
@@ -714,11 +716,11 @@ function anyEqualityLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } |
     case "ParamRef":
       return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ false);
     case "NewDate":
-      return evaluateStaticDate(expr);
+      return foldedDateValue(expr);
     case "ObjectIdLiteral":
-      // `$._id === ObjectId("…")` → `{ _id: <ObjectId> }`. The live instance is
-      // a BSON-comparable value the query language matches directly (and an
-      // index can serve), exactly like an interpolated ObjectId.
+      // `$._id === ObjectId("…")` (or a `0x…` literal) → `{ _id: <ObjectId> }`.
+      // The live instance is a BSON-comparable value the query language matches
+      // directly (and an index can serve), exactly like an interpolated ObjectId.
       return { value: new ObjectId(expr.hex) };
     default:
       return null;
@@ -742,62 +744,26 @@ function anyOrderedLiteral(expr: Expr, ctx: TranslateCtx): { value: unknown } | 
     case "ParamRef":
       return paramRefAsLiteral(expr, ctx, /*orderedOnly*/ true);
     case "NewDate":
-      return evaluateStaticDate(expr);
+      return foldedDateValue(expr);
     default:
       return null;
   }
 }
 
 /**
- * Compile-time-evaluate a `new Date(...)` (or `new Date(Date.UTC(...))`) when
- * all arguments are themselves number/string literals. Returns the resulting
- * `Date` so the translator can place it directly as a query-doc value —
- * MongoDB's driver and shell both accept BSON `Date` instances on the RHS of
- * `$gte` / `$gt` / `$lt` / `$lte` / equality, which is what makes the index
- * usable.
- *
- * Cases that intentionally fall through to `$expr` (return null):
- *   - `new Date()` — codegens to `{ $toDate: "$$NOW" }` and must evaluate at
- *     query time. Folding at compile time would silently freeze the timestamp
- *     the user expected to be "now-when-this-query-runs".
- *   - any non-literal argument (field ref, operator call, method call, …) —
- *     can't be evaluated without runtime data.
- *   - any combination that produces `Invalid Date` — surface as `$expr` so
- *     the failure is visible at query time rather than as a silently bogus
- *     filter that matches nothing.
+ * Wrap the shared `foldConstantDate` (codegen.ts) for the query-doc translator:
+ * a constant `new Date(...)` becomes a BSON `Date` placed directly as a query
+ * value (MongoDB's driver accepts `Date` instances on the RHS of `$gte` / `$gt`
+ * / `$lt` / `$lte` / equality — what makes the index usable). A null result
+ * (a runtime `new Date()` / field-ref / op-call argument, OR a constant that
+ * doesn't parse to a valid date) drops the comparison to the `$expr` residual,
+ * which re-enters codegen — where `generateNewDate` emits the runtime
+ * `{ $toDate }` / `$dateFromParts` form for the runtime cases and rejects an
+ * Invalid constant date at compile time (HR3).
  */
-function evaluateStaticDate(expr: Expr & { type: "NewDate" }): { value: Date } | null {
-  const args = expr.args;
-  if (args.length === 0) return null;
-  if (args.length === 1) {
-    const arg = args[0];
-    if (arg.type === "DateUTC") {
-      const utcArgs = staticNumberArgs(arg.args);
-      if (utcArgs === null) return null;
-      const ms = (Date.UTC as (...a: number[]) => number)(...utcArgs);
-      return finalizeDate(new Date(ms));
-    }
-    if (arg.type === "NumberLiteral") return finalizeDate(new Date(arg.value));
-    if (arg.type === "StringLiteral") return finalizeDate(new Date(arg.value));
-    return null;
-  }
-  const numericArgs = staticNumberArgs(args);
-  if (numericArgs === null) return null;
-  return finalizeDate(new Date(...(numericArgs as [number, number, ...number[]])));
-}
-
-function staticNumberArgs(args: Expr[]): number[] | null {
-  const out: number[] = [];
-  for (const a of args) {
-    if (a.type !== "NumberLiteral") return null;
-    out.push(a.value);
-  }
-  return out;
-}
-
-function finalizeDate(d: Date): { value: Date } | null {
-  if (Number.isNaN(d.getTime())) return null;
-  return { value: d };
+function foldedDateValue(expr: Expr & { type: "NewDate" }): { value: Date } | null {
+  const d = foldConstantDate(expr.args);
+  return d === null ? null : { value: d };
 }
 
 /**
