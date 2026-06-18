@@ -1780,32 +1780,55 @@ $.revenue = $.qty * $.unitPrice;
   );
 });
 
-describe("tag each in-stock product with the category total (`$$.length`)", { features: ["Pipelines"] }, () => {
-  it(
-    "stamps the stream count onto every doc and reuses it for a share-of-total",
-    { kind: "pipeline", usage: "db.products.aggregate(jsmql(...))" },
-    () => {
-      // Category page: after narrowing to in-stock products, every doc carries
-      // the total in-stock count (for a "showing N products" header) and its
-      // share of the total. `$$.length` materialises one `$setWindowFields`
-      // `$count`; the second use reuses it (no extra stage). The trailing
-      // `$unset` keeps the scratch field out of the result.
-      expect(
-        jsmql`
+describe(
+  "tag each in-stock product with the category total + size guard (`$$.length` + `assert`)",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "reuses one stream-count materialisation across two fields and an assert guard",
+      { kind: "pipeline", usage: "db.products.aggregate(jsmql(...))" },
+      () => {
+        // Category page: after narrowing to in-stock products, every doc carries
+        // the total in-stock count (a "showing N products" header) and its share
+        // of the total, and the whole aggregate aborts if the category is too big
+        // to render in one page. `$$.length` materialises ONE `$setWindowFields`
+        // `$count`; both `$set`s and the `assert` reuse it (no extra count stages,
+        // since `$set` is freshness-preserving). The trailing `$unset` keeps the
+        // scratch field out of the result.
+        expect(
+          jsmql`
 $match($.inStock === true);
 $.totalInStock = $$.length;
 $.sharePct = 100 / $$.length;
+assert($$.length <= 1000, "too many in-stock products to render");
         `,
-      ).toEqual([
-        { $match: { inStock: true } },
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-        { $set: { totalInStock: "$__jsmql.length" } },
-        { $set: { sharePct: { $divide: [100, "$__jsmql.length"] } } },
-        { $unset: "__jsmql" },
-      ]);
-    },
-  );
-});
+        ).toEqual([
+          { $match: { inStock: true } },
+          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+          { $set: { totalInStock: "$__jsmql.length" } },
+          { $set: { sharePct: { $divide: [100, "$__jsmql.length"] } } },
+          {
+            $match: {
+              $expr: {
+                $convert: {
+                  input: true,
+                  to: {
+                    $cond: [
+                      { $lte: ["$__jsmql.length", 1000] },
+                      "bool",
+                      "jsmql assertion failed: too many in-stock products to render",
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          { $unset: "__jsmql" },
+        ]);
+      },
+    );
+  },
+);
 
 describe("denormalise order line items for analytics (`.map`)", { features: ["Pipelines"] }, () => {
   it(
