@@ -76,7 +76,7 @@ Rejecting defaults entirely keeps the rule simple and the surface honest: **the 
 
 1. `ctx.reduceRemap` → `$$<remapped>` (`.reduce()` parameter rename).
 2. `ctx.lambdaParams` → `$$name` (lambda scope).
-3. `ctx.pipelineLets` → `$<fieldPath>` (pipeline-let binding; stored under `__jsmql.<name>`).
+3. `ctx.pipelineLets` → `$<fieldPath>` (pipeline-let binding; stored under `__jsmql.var.<name>`).
 4. **NEW** `ctx.bindings` → emit the value directly as a JSON literal.
 5. `ctx.droppedLets` → precise "let X can't be read after $stage" error.
 6. → `UnknownIdentifierError`.

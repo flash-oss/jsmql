@@ -44,7 +44,7 @@ $ = { a: double($.price), b: double($.cost) };
 | Initialiser | Node | Lowering |
 |---|---|---|
 | an arrow function (`(a) => …` / `a => …`) | `FuncDecl` | none (registered, expanded on call) |
-| anything else (`$.x`, `5`, `$op(…)`, …) | `LetDecl` | a `$set { __jsmql.<name>: … }` stage |
+| anything else (`$.x`, `5`, `$op(…)`, …) | `LetDecl` | a `$set { __jsmql.var.<name>: … }` stage |
 
 The fork is syntactic — there is no data dependence and no heuristic — so a JS
 developer's mental model ("a `const` holding a function" vs "a `const` holding a

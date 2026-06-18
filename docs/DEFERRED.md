@@ -48,7 +48,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 ### DEF-010 — Multi-binding `let a = …, b = …;`
 
 - **What's blocked.** Comma-separated bindings inside one `let` statement.
-- **Target lowering.** Single `$set` stage with both bindings: `let a = $.x, b = a + 1;` → `{ $set: { "__jsmql.a": "$x", "__jsmql.b": { $add: ["$__jsmql.a", 1] } } }`. Left-to-right evaluation order matches JS.
+- **Target lowering.** Single `$set` stage with both bindings: `let a = $.x, b = a + 1;` → `{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] } } }`. Left-to-right evaluation order matches JS.
 - **Why blocked.** Comma disambiguation against the update-filter `,` separator (`$.a = 1, $.b = 2`). The two are syntactically distinguishable (let-binding follows `let <Ident>`, update follows `=`/`+=`/etc.) but the parser doesn't currently route on that.
 - **Attempted approaches.** None.
 - **Success criteria.** `let userId = $.userId, total = $.amount * 1.1; $match(...);` lowers to one combined `$set` + `$match`. `let a = …; let b = …;` continues to work and produces equivalent (two `$set` stages, slightly worse).

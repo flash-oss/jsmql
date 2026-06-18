@@ -112,9 +112,9 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   it("chained .length on .filter produces $size + slot writeback", () => {
     const out = jsmql("let n = $$$.orders.filter(o => o.userId === $._id).length;");
     expect(out).toEqual([
-      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-      { $set: { "__jsmql.n": "$__jsmql.__lookup1" } },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { "__jsmql.var.n": "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -122,15 +122,15 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   it("chained .reduce on .filter folds with the user's lambda", () => {
     const out = jsmql("let total = $$$.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);");
     expect(out).toEqual([
-      { $lookup: { from: "tx", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
+      { $lookup: { from: "tx", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
       {
         $set: {
-          "__jsmql.__lookup1": {
-            $reduce: { input: "$__jsmql.__lookup1", initialValue: 0, in: { $add: ["$$value", "$$this.amount"] } },
+          "__jsmql.tmp.1": {
+            $reduce: { input: "$__jsmql.tmp.1", initialValue: 0, in: { $add: ["$$value", "$$this.amount"] } },
           },
         },
       },
-      { $set: { "__jsmql.total": "$__jsmql.__lookup1" } },
+      { $set: { "__jsmql.var.total": "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -153,9 +153,9 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   it("member access on a .find result lowers via the materialised scalar slot", () => {
     const out = jsmql("let name = $$$.users.find(u => u._id === $.userId).name;");
     expect(out).toEqual([
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-      { $set: { "__jsmql.name": "$__jsmql.__lookup1.name" } },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $set: { "__jsmql.var.name": "$__jsmql.tmp.1.name" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -166,8 +166,8 @@ describe("$$$.coll.find/filter — chained terminals", () => {
       let nTx = $$$.tx.filter(t => t.userId === $._id).length;
     `);
     const json = JSON.stringify(out);
-    expect(json).toContain("__jsmql.__lookup1");
-    expect(json).toContain("__jsmql.__lookup2");
+    expect(json).toContain("__jsmql.tmp.1");
+    expect(json).toContain("__jsmql.tmp.2");
   });
 });
 
@@ -272,11 +272,11 @@ describe("$$$.coll.find/filter — nested lookups (expression body, any depth)",
                 from: "b",
                 let: { x: "$x" },
                 pipeline: [{ $match: { $expr: { $eq: ["$x", "$$x"] } } }],
-                as: "__jsmql.__lookup1",
+                as: "__jsmql.tmp.1",
               },
             },
-            { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-            { $match: { $expr: { $gt: ["$__jsmql.__lookup1", 0] } } },
+            { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+            { $match: { $expr: { $gt: ["$__jsmql.tmp.1", 0] } } },
           ],
           as: "x",
         },
@@ -296,11 +296,11 @@ describe("$$$.coll.find/filter — nested lookups (expression body, any depth)",
                 from: "b",
                 let: { x: "$x" },
                 pipeline: [{ $match: { $expr: { $eq: ["$x", "$$x"] } } }],
-                as: "__jsmql.__lookup1",
+                as: "__jsmql.tmp.1",
               },
             },
-            { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-            { $match: { $expr: "$__jsmql.__lookup1" } },
+            { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+            { $match: { $expr: "$__jsmql.tmp.1" } },
           ],
           as: "x",
         },
@@ -329,11 +329,11 @@ describe("$$$.coll.find/filter — nested lookups (expression body, any depth)",
                 from: "tags",
                 let: { v_id: "$_id" },
                 pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$v_id"] } } }],
-                as: "__jsmql.__lookup1",
+                as: "__jsmql.tmp.1",
               },
             },
-            { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } },
+            { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $gt: ["$__jsmql.tmp.1", 0] }] } } },
           ],
           as: "posts",
         },
@@ -491,11 +491,11 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
           from: { db: "analytics", coll: "orders" },
           localField: "_id",
           foreignField: "userId",
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-      { $set: { "__jsmql.n": "$__jsmql.__lookup1" } },
+      { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { "__jsmql.var.n": "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -516,11 +516,11 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
           from: { db: "analytics", coll: "users" },
           localField: "userId",
           foreignField: "_id",
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-      { $set: { "__jsmql.name": "$__jsmql.__lookup1.name" } },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $set: { "__jsmql.var.name": "$__jsmql.tmp.1.name" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -626,10 +626,10 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           from: "users",
           let: {},
           pipeline: [{ $match: { $expr: "$active" } }, { $replaceWith: { id: "$_id", name: "$name" } }],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $set: { stats: "$__jsmql.__lookup1" } },
+      { $set: { stats: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -647,10 +647,10 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           from: "users",
           let: {},
           pipeline: [{ $match: { $expr: "$active" } }, { $sort: { score: -1 } }, { $limit: 5 }],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $set: { byScore: "$__jsmql.__lookup1" } },
+      { $set: { byScore: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -670,10 +670,10 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
             { $sort: { createdAt: -1 } },
             { $limit: 10 },
           ],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $set: { recent: "$__jsmql.__lookup1" } },
+      { $set: { recent: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -685,10 +685,10 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           from: "orders",
           let: { v_id: "$_id" },
           pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$v_id"] } } }, { $unwind: "$items" }],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $set: { items: "$__jsmql.__lookup1" } },
+      { $set: { items: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -698,9 +698,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // that fire BEFORE the chain-extension check in extractLookupCalls; they
     // continue to lower the same way they did before this commit.
     expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
-      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-      { $set: { count: "$__jsmql.__lookup1" } },
+      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { count: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -714,9 +714,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // The .find + member-access path runs through existing logic — not the
     // new chain extension — and produces the same shape it always did.
     expect(out).toEqual([
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-      { $set: { firstName: "$__jsmql.__lookup1.name" } },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $set: { firstName: "$__jsmql.tmp.1.name" } },
       { $unset: "__jsmql" },
     ]);
   });

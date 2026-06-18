@@ -68,9 +68,9 @@ about what the statement does to the document.
 | `$ = $` | `{ $replaceWith: "$$ROOT" }` (identity — bare `$` lowers to `"$$ROOT"`) |
 | `$ = $mergeObjects($.a, $.b)` | `{ $replaceWith: { $mergeObjects: ["$a", "$b"] } }` |
 | `$ = { ...$, x: 1 }` | `{ $replaceWith: { $mergeObjects: ["$$ROOT", { x: 1 }] } }` |
-| `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, as: "__jsmql.__lookupN" } }`, `{ $replaceWith: { $first: "$__jsmql.__lookupN" } }`, trailing `{ $unset: "__jsmql" }` |
+| `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, as: "__jsmql.tmp.N" } }`, `{ $replaceWith: { $first: "$__jsmql.tmp.N" } }`, trailing `{ $unset: "__jsmql" }` |
 | `$ = $.foo + $$$.coll.find(pred).count` (buried lookup) | Prologue `$lookup` + `$set $first` stages for the buried lookup, then `{ $replaceWith: <rewritten-expr> }` |
-| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (provably array) | `{ $set: { "__jsmql.__lookupN": <array> } }`, `{ $unwind: "$__jsmql.__lookupN" }`, `{ $replaceWith: "$__jsmql.__lookupN" }` — see [Fan-out variant](#fan-out-variant) |
+| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (provably array) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out variant](#fan-out-variant) |
 
 For the direct-lookup variant we deliberately skip the `$set { slot: $first slot }`
 step that `lowerLookup` emits for the assignment-target form (`$.users = …`).
@@ -152,9 +152,9 @@ element becomes the new root via `$replaceWith`:
 ```
 $ = [{ a: 1 }, { b: 2 }];
 // → [
-//   { $set:         { "__jsmql.__lookup1": [{ a: 1 }, { b: 2 }] } },
-//   { $unwind:      "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $set:         { "__jsmql.tmp.1": [{ a: 1 }, { b: 2 }] } },
+//   { $unwind:      "$__jsmql.tmp.1" },
+//   { $replaceWith: "$__jsmql.tmp.1" },
 // ]
 ```
 

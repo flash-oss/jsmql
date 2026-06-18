@@ -4,8 +4,8 @@ import { jsmql } from "../src/index.ts";
 describe("let bindings — basic shape", () => {
   it("a single let materialises under __jsmql, with a trailing $unset", () => {
     expect(jsmql("let total = $.price * $.qty; $project({ total })")).toEqual([
-      { $set: { "__jsmql.total": { $multiply: ["$price", "$qty"] } } },
-      { $project: { total: "$__jsmql.total" } },
+      { $set: { "__jsmql.var.total": { $multiply: ["$price", "$qty"] } } },
+      { $project: { total: "$__jsmql.var.total" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -22,25 +22,32 @@ describe("let bindings — basic shape", () => {
         $project({ sku: 1, subtotal, withTax, final: withShip });
       `),
     ).toEqual([
-      { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.withTax": { $multiply: ["$__jsmql.subtotal", 1.2] } } },
-      { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
-      { $project: { sku: 1, subtotal: "$__jsmql.subtotal", withTax: "$__jsmql.withTax", final: "$__jsmql.withShip" } },
+      { $set: { "__jsmql.var.subtotal": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.var.withTax": { $multiply: ["$__jsmql.var.subtotal", 1.2] } } },
+      { $set: { "__jsmql.var.withShip": { $add: ["$__jsmql.var.withTax", "$shipping"] } } },
+      {
+        $project: {
+          sku: 1,
+          subtotal: "$__jsmql.var.subtotal",
+          withTax: "$__jsmql.var.withTax",
+          final: "$__jsmql.var.withShip",
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("a let referenced inside $match wraps in $expr automatically", () => {
     expect(jsmql("let big = $.x > 100; $match(big)")).toEqual([
-      { $set: { "__jsmql.big": { $gt: ["$x", 100] } } },
-      { $match: { $expr: "$__jsmql.big" } },
+      { $set: { "__jsmql.var.big": { $gt: ["$x", 100] } } },
+      { $match: { $expr: "$__jsmql.var.big" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("a let referenced as a $sort value resolves to its field path", () => {
     expect(jsmql("let score = $.views + $.likes; $sort({ score: -1 })")).toEqual([
-      { $set: { "__jsmql.score": { $add: ["$views", "$likes"] } } },
+      { $set: { "__jsmql.var.score": { $add: ["$views", "$likes"] } } },
       { $sort: { score: -1 } },
       { $unset: "__jsmql" },
     ]);
@@ -49,11 +56,11 @@ describe("let bindings — basic shape", () => {
   it("a let used inside a method-call lambda body resolves correctly", () => {
     // The lambda parameter shadows nothing in this case — `tax` is the let.
     expect(jsmql("let tax = 0.2; $project({ totals: $.items.map(x => x.price * (1 + tax)) })")).toEqual([
-      { $set: { "__jsmql.tax": 0.2 } },
+      { $set: { "__jsmql.var.tax": 0.2 } },
       {
         $project: {
           totals: {
-            $map: { input: "$items", as: "x", in: { $multiply: ["$$x.price", { $add: [1, "$__jsmql.tax"] }] } },
+            $map: { input: "$items", as: "x", in: { $multiply: ["$$x.price", { $add: [1, "$__jsmql.var.tax"] }] } },
           },
         },
       },
@@ -66,11 +73,11 @@ describe("let bindings — basic shape", () => {
     // The lambda wins inside its body (lexical: closer scope wins). Outside the
     // lambda, the let is still visible.
     expect(jsmql("let total = $.grand; $project({ doubled: $.items.map(total => total * 2), grand: total })")).toEqual([
-      { $set: { "__jsmql.total": "$grand" } },
+      { $set: { "__jsmql.var.total": "$grand" } },
       {
         $project: {
           doubled: { $map: { input: "$items", as: "total", in: { $multiply: ["$$total", 2] } } },
-          grand: "$__jsmql.total",
+          grand: "$__jsmql.var.total",
         },
       },
       { $unset: "__jsmql" },
@@ -81,8 +88,8 @@ describe("let bindings — basic shape", () => {
 describe("let bindings — bracketed pipeline form", () => {
   it("works as the first element of a [...] pipeline", () => {
     expect(jsmql("[let x = $.a + 1, $match(x > 5)]")).toEqual([
-      { $set: { "__jsmql.x": { $add: ["$a", 1] } } },
-      { $match: { $expr: { $gt: ["$__jsmql.x", 5] } } },
+      { $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.x", 5] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -93,7 +100,7 @@ describe("let bindings — bracketed pipeline form", () => {
     // not the update op.
     expect(jsmql("[$match($.x > 0), let y = $.x * 2, $.flag = true, $sort({ y: 1 })]")).toEqual([
       { $match: { x: { $gt: 0 } } },
-      { $set: { "__jsmql.y": { $multiply: ["$x", 2] } } },
+      { $set: { "__jsmql.var.y": { $multiply: ["$x", 2] } } },
       { $set: { flag: true } },
       { $sort: { y: 1 } },
       { $unset: "__jsmql" },
@@ -105,8 +112,8 @@ describe("let bindings — template-tag form", () => {
   it("composes with `${...}` interpolation", () => {
     const threshold = 42;
     expect(jsmql`let big = $.score > ${threshold}; $match(big)`).toEqual([
-      { $set: { "__jsmql.big": { $gt: ["$score", 42] } } },
-      { $match: { $expr: "$__jsmql.big" } },
+      { $set: { "__jsmql.var.big": { $gt: ["$score", 42] } } },
+      { $match: { $expr: "$__jsmql.var.big" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -141,10 +148,10 @@ describe("let bindings — scope-reshaping stages clear the binding", () => {
     expect(
       jsmql("let v = $.x; $group({ _id: $.cat, sum: $sum($.amount) }); let v2 = $.sum * 2; $project({ v2 })"),
     ).toEqual([
-      { $set: { "__jsmql.v": "$x" } },
+      { $set: { "__jsmql.var.v": "$x" } },
       { $group: { _id: "$cat", sum: { $sum: "$amount" } } },
-      { $set: { "__jsmql.v2": { $multiply: ["$sum", 2] } } },
-      { $project: { v2: "$__jsmql.v2" } },
+      { $set: { "__jsmql.var.v2": { $multiply: ["$sum", 2] } } },
+      { $project: { v2: "$__jsmql.var.v2" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -166,7 +173,7 @@ describe("let bindings — context rules", () => {
 
   it("a single let with trailing `;` is valid (pipeline of one binding + auto-unset)", () => {
     // Useless but legal — the parser flips to pipeline mode at the `;`.
-    expect(jsmql("let x = 5;")).toEqual([{ $set: { "__jsmql.x": 5 } }, { $unset: "__jsmql" }]);
+    expect(jsmql("let x = 5;")).toEqual([{ $set: { "__jsmql.var.x": 5 } }, { $unset: "__jsmql" }]);
   });
 
   it("`let` is rejected as a value-array element", () => {
@@ -197,8 +204,8 @@ describe("let bindings — sub-pipeline boundaries", () => {
           from: "orders",
           let: { uid: "$_id" },
           pipeline: [
-            { $set: { "__jsmql.recent": { $gt: ["$createdAt", "2026-01-01"] } } },
-            { $match: { $expr: "$__jsmql.recent" } },
+            { $set: { "__jsmql.var.recent": { $gt: ["$createdAt", "2026-01-01"] } } },
+            { $match: { $expr: "$__jsmql.var.recent" } },
             { $unset: "__jsmql" },
           ],
           as: "userOrders",
@@ -285,56 +292,56 @@ describe("let bindings — parser errors", () => {
 describe("let bindings — RHS expression coverage", () => {
   it("number literal RHS", () => {
     expect(jsmql("let n = 42; $project({ n })")).toEqual([
-      { $set: { "__jsmql.n": 42 } },
-      { $project: { n: "$__jsmql.n" } },
+      { $set: { "__jsmql.var.n": 42 } },
+      { $project: { n: "$__jsmql.var.n" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("string literal RHS", () => {
     expect(jsmql('let s = "active"; $project({ s })')).toEqual([
-      { $set: { "__jsmql.s": "active" } },
-      { $project: { s: "$__jsmql.s" } },
+      { $set: { "__jsmql.var.s": "active" } },
+      { $project: { s: "$__jsmql.var.s" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("boolean literal RHS", () => {
     expect(jsmql("let flag = true; $project({ flag })")).toEqual([
-      { $set: { "__jsmql.flag": true } },
-      { $project: { flag: "$__jsmql.flag" } },
+      { $set: { "__jsmql.var.flag": true } },
+      { $project: { flag: "$__jsmql.var.flag" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("null literal RHS", () => {
     expect(jsmql("let nothing = null; $project({ nothing })")).toEqual([
-      { $set: { "__jsmql.nothing": null } },
-      { $project: { nothing: "$__jsmql.nothing" } },
+      { $set: { "__jsmql.var.nothing": null } },
+      { $project: { nothing: "$__jsmql.var.nothing" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("BigInt literal RHS — coerced through $toLong like elsewhere", () => {
     expect(jsmql("let big = 123n; $project({ big })")).toEqual([
-      { $set: { "__jsmql.big": { $toLong: "123" } } },
-      { $project: { big: "$__jsmql.big" } },
+      { $set: { "__jsmql.var.big": { $toLong: "123" } } },
+      { $project: { big: "$__jsmql.var.big" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("template-literal RHS with field interpolation", () => {
     expect(jsmql("let g = `hello ${$.name}`; $project({ greeting: g })")).toEqual([
-      { $set: { "__jsmql.g": { $concat: ["hello ", { $toString: "$name" }] } } },
-      { $project: { greeting: "$__jsmql.g" } },
+      { $set: { "__jsmql.var.g": { $concat: ["hello ", { $toString: "$name" }] } } },
+      { $project: { greeting: "$__jsmql.var.g" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("ternary RHS", () => {
     expect(jsmql('let cat = $.age > 18 ? "adult" : "minor"; $project({ cat })')).toEqual([
-      { $set: { "__jsmql.cat": { $cond: { if: { $gt: ["$age", 18] }, then: "adult", else: "minor" } } } },
-      { $project: { cat: "$__jsmql.cat" } },
+      { $set: { "__jsmql.var.cat": { $cond: { if: { $gt: ["$age", 18] }, then: "adult", else: "minor" } } } },
+      { $project: { cat: "$__jsmql.var.cat" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -344,40 +351,40 @@ describe("let bindings — RHS expression coverage", () => {
     // is what's actually emitted, and Mongo evaluates accumulators per-document
     // in normal $set context (effectively as the first element of an array).
     expect(jsmql("let avg = $avg($.scores); $project({ avg })")).toEqual([
-      { $set: { "__jsmql.avg": { $avg: "$scores" } } },
-      { $project: { avg: "$__jsmql.avg" } },
+      { $set: { "__jsmql.var.avg": { $avg: "$scores" } } },
+      { $project: { avg: "$__jsmql.var.avg" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("array-literal RHS", () => {
     expect(jsmql("let tags = [$.a, $.b, $.c]; $project({ tags })")).toEqual([
-      { $set: { "__jsmql.tags": ["$a", "$b", "$c"] } },
-      { $project: { tags: "$__jsmql.tags" } },
+      { $set: { "__jsmql.var.tags": ["$a", "$b", "$c"] } },
+      { $project: { tags: "$__jsmql.var.tags" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("object-literal RHS", () => {
     expect(jsmql("let obj = { a: $.x, b: $.y }; $project({ obj })")).toEqual([
-      { $set: { "__jsmql.obj": { a: "$x", b: "$y" } } },
-      { $project: { obj: "$__jsmql.obj" } },
+      { $set: { "__jsmql.var.obj": { a: "$x", b: "$y" } } },
+      { $project: { obj: "$__jsmql.var.obj" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("nullish-coalescing RHS", () => {
     expect(jsmql('let v = $.maybe ?? "default"; $project({ v })')).toEqual([
-      { $set: { "__jsmql.v": { $ifNull: ["$maybe", "default"] } } },
-      { $project: { v: "$__jsmql.v" } },
+      { $set: { "__jsmql.var.v": { $ifNull: ["$maybe", "default"] } } },
+      { $project: { v: "$__jsmql.var.v" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("`new Date()` RHS", () => {
     expect(jsmql("let now = new Date(); $project({ now })")).toEqual([
-      { $set: { "__jsmql.now": { $toDate: "$$NOW" } } },
-      { $project: { now: "$__jsmql.now" } },
+      { $set: { "__jsmql.var.now": { $toDate: "$$NOW" } } },
+      { $project: { now: "$__jsmql.var.now" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -388,24 +395,24 @@ describe("let bindings — RHS expression coverage", () => {
 describe("let bindings — member / method / index access", () => {
   it("member access on a let folds to a dotted field path", () => {
     expect(jsmql("let user = $.user; $project({ name: user.name })")).toEqual([
-      { $set: { "__jsmql.user": "$user" } },
-      { $project: { name: "$__jsmql.user.name" } },
+      { $set: { "__jsmql.var.user": "$user" } },
+      { $project: { name: "$__jsmql.var.user.name" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("nested member access on a let", () => {
     expect(jsmql("let u = $.user; $project({ city: u.address.city })")).toEqual([
-      { $set: { "__jsmql.u": "$user" } },
-      { $project: { city: "$__jsmql.u.address.city" } },
+      { $set: { "__jsmql.var.u": "$user" } },
+      { $project: { city: "$__jsmql.var.u.address.city" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("method call on a let resolves the receiver to its field path", () => {
     expect(jsmql("let name = $.name; $project({ upper: name.toUpperCase() })")).toEqual([
-      { $set: { "__jsmql.name": "$name" } },
-      { $project: { upper: { $toUpper: "$__jsmql.name" } } },
+      { $set: { "__jsmql.var.name": "$name" } },
+      { $project: { upper: { $toUpper: "$__jsmql.var.name" } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -414,14 +421,14 @@ describe("let bindings — member / method / index access", () => {
     // The let's value type is unknown at compile time, so codegen emits the
     // standard runtime array-vs-object dispatch for `xs[0]`.
     expect(jsmql("let xs = $.items; $project({ first: xs[0] })")).toEqual([
-      { $set: { "__jsmql.xs": "$items" } },
+      { $set: { "__jsmql.var.xs": "$items" } },
       {
         $project: {
           first: {
             $cond: {
-              if: { $isArray: "$__jsmql.xs" },
-              then: { $arrayElemAt: ["$__jsmql.xs", 0] },
-              else: { $getField: { field: 0, input: "$__jsmql.xs" } },
+              if: { $isArray: "$__jsmql.var.xs" },
+              then: { $arrayElemAt: ["$__jsmql.var.xs", 0] },
+              else: { $getField: { field: 0, input: "$__jsmql.var.xs" } },
             },
           },
         },
@@ -436,8 +443,8 @@ describe("let bindings — member / method / index access", () => {
 describe("let bindings — interaction with update ops", () => {
   it("a update op's RHS can read a let from the enclosing pipeline scope", () => {
     expect(jsmql("let big = $.x > 100; $.flag = big; $match($.flag)")).toEqual([
-      { $set: { "__jsmql.big": { $gt: ["$x", 100] } } },
-      { $set: { flag: "$__jsmql.big" } },
+      { $set: { "__jsmql.var.big": { $gt: ["$x", 100] } } },
+      { $set: { flag: "$__jsmql.var.big" } },
       { $match: { $expr: "$flag" } },
       { $unset: "__jsmql" },
     ]);
@@ -445,17 +452,17 @@ describe("let bindings — interaction with update ops", () => {
 
   it("compound update op can use a let on the RHS", () => {
     expect(jsmql("let bump = $.b * 0.1; $.a += bump")).toEqual([
-      { $set: { "__jsmql.bump": { $multiply: ["$b", 0.1] } } },
-      { $set: { a: { $add: ["$a", "$__jsmql.bump"] } } },
+      { $set: { "__jsmql.var.bump": { $multiply: ["$b", 0.1] } } },
+      { $set: { a: { $add: ["$a", "$__jsmql.var.bump"] } } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("`delete` on a real field doesn't affect let scope", () => {
     expect(jsmql("let keep = $.a; delete $.b; $project({ keep })")).toEqual([
-      { $set: { "__jsmql.keep": "$a" } },
+      { $set: { "__jsmql.var.keep": "$a" } },
       { $unset: "b" },
-      { $project: { keep: "$__jsmql.keep" } },
+      { $project: { keep: "$__jsmql.var.keep" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -466,10 +473,10 @@ describe("let bindings — interaction with update ops", () => {
 describe("let bindings — re-declaration across boundaries", () => {
   it("re-declaring the same name after $group is allowed (scope was cleared)", () => {
     expect(jsmql("let v = $.x; $group({ _id: $.c, sum: $sum($.a) }); let v = $.sum * 2; $project({ v })")).toEqual([
-      { $set: { "__jsmql.v": "$x" } },
+      { $set: { "__jsmql.var.v": "$x" } },
       { $group: { _id: "$c", sum: { $sum: "$a" } } },
-      { $set: { "__jsmql.v": { $multiply: ["$sum", 2] } } },
-      { $project: { v: "$__jsmql.v" } },
+      { $set: { "__jsmql.var.v": { $multiply: ["$sum", 2] } } },
+      { $project: { v: "$__jsmql.var.v" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -486,10 +493,10 @@ describe("let bindings — re-declaration across boundaries", () => {
 describe("let bindings — multi-stage visibility", () => {
   it("one let is visible in many downstream stages", () => {
     expect(jsmql("let s = $.a + $.b; $match(s > 0); $sort({ x: 1 }); $project({ value: s, doubled: s * 2 })")).toEqual([
-      { $set: { "__jsmql.s": { $add: ["$a", "$b"] } } },
-      { $match: { $expr: { $gt: ["$__jsmql.s", 0] } } },
+      { $set: { "__jsmql.var.s": { $add: ["$a", "$b"] } } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.s", 0] } } },
       { $sort: { x: 1 } },
-      { $project: { value: "$__jsmql.s", doubled: { $multiply: ["$__jsmql.s", 2] } } },
+      { $project: { value: "$__jsmql.var.s", doubled: { $multiply: ["$__jsmql.var.s", 2] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -498,8 +505,8 @@ describe("let bindings — multi-stage visibility", () => {
     const src = Array.from({ length: 10 }, (_, i) => `let v${i} = ${i};`).join(" ") + " $match($.a > 0)";
     const result = jsmql(src) as object[];
     expect(result).toHaveLength(12); // 10 $set + 1 $match + 1 $unset
-    expect(result[0]).toEqual({ $set: { "__jsmql.v0": 0 } });
-    expect(result[9]).toEqual({ $set: { "__jsmql.v9": 9 } });
+    expect(result[0]).toEqual({ $set: { "__jsmql.var.v0": 0 } });
+    expect(result[9]).toEqual({ $set: { "__jsmql.var.v9": 9 } });
     expect(result[10]).toEqual({ $match: { a: { $gt: 0 } } });
     expect(result[11]).toEqual({ $unset: "__jsmql" });
   });
@@ -507,9 +514,9 @@ describe("let bindings — multi-stage visibility", () => {
   it("a let between two real stages is bound in the right place", () => {
     expect(jsmql("$match($.x > 0); let s = $.a + $.b; $sort({ x: 1 }); $project({ s })")).toEqual([
       { $match: { x: { $gt: 0 } } },
-      { $set: { "__jsmql.s": { $add: ["$a", "$b"] } } },
+      { $set: { "__jsmql.var.s": { $add: ["$a", "$b"] } } },
       { $sort: { x: 1 } },
-      { $project: { s: "$__jsmql.s" } },
+      { $project: { s: "$__jsmql.var.s" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -520,8 +527,8 @@ describe("let bindings — multi-stage visibility", () => {
 describe("let bindings — lambda interaction", () => {
   it("a let is visible inside a .map() lambda body and resolves to a field path", () => {
     expect(jsmql("let mult = 1.5; $project({ adj: $.items.map(x => x * mult) })")).toEqual([
-      { $set: { "__jsmql.mult": 1.5 } },
-      { $project: { adj: { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$__jsmql.mult"] } } } } },
+      { $set: { "__jsmql.var.mult": 1.5 } },
+      { $project: { adj: { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$__jsmql.var.mult"] } } } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -530,12 +537,12 @@ describe("let bindings — lambda interaction", () => {
     expect(
       jsmql("let cutoff = 50; $project({ big: $.scores.filter(s => s > cutoff).reduce((acc, s) => acc + s, 0) })"),
     ).toEqual([
-      { $set: { "__jsmql.cutoff": 50 } },
+      { $set: { "__jsmql.var.cutoff": 50 } },
       {
         $project: {
           big: {
             $reduce: {
-              input: { $filter: { input: "$scores", as: "s", cond: { $gt: ["$$s", "$__jsmql.cutoff"] } } },
+              input: { $filter: { input: "$scores", as: "s", cond: { $gt: ["$$s", "$__jsmql.var.cutoff"] } } },
               initialValue: 0,
               in: { $add: ["$$value", "$$this"] },
             },
@@ -548,8 +555,8 @@ describe("let bindings — lambda interaction", () => {
 
   it("a lambda param of the same name shadows the let inside the lambda body only", () => {
     expect(jsmql("let i = 10; $project({ a: $.xs.map(i => i + 1), b: i })")).toEqual([
-      { $set: { "__jsmql.i": 10 } },
-      { $project: { a: { $map: { input: "$xs", as: "i", in: { $add: ["$$i", 1] } } }, b: "$__jsmql.i" } },
+      { $set: { "__jsmql.var.i": 10 } },
+      { $project: { a: { $map: { input: "$xs", as: "i", in: { $add: ["$$i", 1] } } }, b: "$__jsmql.var.i" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -573,19 +580,19 @@ describe("let bindings — sub-pipeline depth", () => {
         $match(x < 100)
       ]`),
     ).toEqual([
-      { $set: { "__jsmql.x": "$a" } },
+      { $set: { "__jsmql.var.x": "$a" } },
       {
         $lookup: {
           from: "orders",
           pipeline: [
-            { $set: { "__jsmql.x": "$b" } },
-            { $match: { $expr: { $gt: ["$__jsmql.x", 0] } } },
+            { $set: { "__jsmql.var.x": "$b" } },
+            { $match: { $expr: { $gt: ["$__jsmql.var.x", 0] } } },
             { $unset: "__jsmql" },
           ],
           as: "matched",
         },
       },
-      { $match: { $expr: { $lt: ["$__jsmql.x", 100] } } },
+      { $match: { $expr: { $lt: ["$__jsmql.var.x", 100] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -604,8 +611,8 @@ describe("let bindings — sub-pipeline depth", () => {
       {
         $facet: {
           summary: [
-            { $set: { "__jsmql.avg": { $avg: "$score" } } },
-            { $project: { avg: "$__jsmql.avg" } },
+            { $set: { "__jsmql.var.avg": { $avg: "$score" } } },
+            { $project: { avg: "$__jsmql.var.avg" } },
             { $unset: "__jsmql" },
           ],
         },
@@ -638,11 +645,11 @@ describe("let bindings — `let` is still usable as a field name and operator na
   });
 
   it("the pipeline-level `let` and a deeper $let-operator with same var name coexist", () => {
-    // Pipeline let `x` materialises as `__jsmql.x`; the MongoDB $let var `x`
+    // Pipeline let `x` materialises as `__jsmql.var.x`; the MongoDB $let var `x`
     // is a user-variable `$$x` — different namespaces, no collision.
     expect(jsmql("let x = 5; $project({ y: $let({ x: 10 }, x => x * 2), z: x })")).toEqual([
-      { $set: { "__jsmql.x": 5 } },
-      { $project: { y: { $let: { vars: { x: 10 }, in: { $multiply: ["$$x", 2] } } }, z: "$__jsmql.x" } },
+      { $set: { "__jsmql.var.x": 5 } },
+      { $project: { y: { $let: { vars: { x: 10 }, in: { $multiply: ["$$x", 2] } } }, z: "$__jsmql.var.x" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -658,9 +665,9 @@ describe("let bindings — function-form input", () => {
       $project({ x });
     });
     expect(result).toEqual([
-      { $set: { "__jsmql.x": { $add: ["$a", 1] } } },
-      { $match: { $expr: { $gt: ["$__jsmql.x", 0] } } },
-      { $project: { x: "$__jsmql.x" } },
+      { $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.x", 0] } } },
+      { $project: { x: "$__jsmql.var.x" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -687,8 +694,8 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
     // intact (so accumulators can reference the let), and only the *next*
     // stage sees the cleared scope.
     expect(jsmql("let weighted = $.x * $.weight; $group({ _id: $.cat, total: $sum(weighted) })")).toEqual([
-      { $set: { "__jsmql.weighted": { $multiply: ["$x", "$weight"] } } },
-      { $group: { _id: "$cat", total: { $sum: "$__jsmql.weighted" } } },
+      { $set: { "__jsmql.var.weighted": { $multiply: ["$x", "$weight"] } } },
+      { $group: { _id: "$cat", total: { $sum: "$__jsmql.var.weighted" } } },
     ]);
   });
 });
@@ -701,13 +708,13 @@ describe("let bindings — $project keeps the let scope (documented trade-off)",
     // LANGUAGE.md as a footgun parallel to today's `$.tmp = ...` + `delete`
     // pattern. The point of the test is to lock in the *compile-time*
     // behaviour: scope is preserved, no error is raised, codegen produces
-    // a reference to `$__jsmql.x` even though the user's pipeline will see
+    // a reference to `$__jsmql.var.x` even though the user's pipeline will see
     // null at runtime if their cluster runs it. The user is responsible for
     // putting inclusion-mode $projects last.
     expect(jsmql("let x = $.a; $project({ x: 1 }); $match(x > 0)")).toEqual([
-      { $set: { "__jsmql.x": "$a" } },
+      { $set: { "__jsmql.var.x": "$a" } },
       { $project: { x: 1 } },
-      { $match: { $expr: { $gt: ["$__jsmql.x", 0] } } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.x", 0] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -718,7 +725,7 @@ describe("let bindings — $project keeps the let scope (documented trade-off)",
 describe("let bindings — reassignment", () => {
   it("reassigning a `let` re-`$set`s its materialised slot", () => {
     // The second statement reads the binding's current value and writes back to
-    // the same `__jsmql.<name>` slot — exactly how `let x = 1; x = x + 1` reads
+    // the same `__jsmql.var.<name>` slot — exactly how `let x = 1; x = x + 1` reads
     // in JavaScript.
     expect(
       jsmql(`
@@ -727,33 +734,33 @@ describe("let bindings — reassignment", () => {
         $project({ total: basePrice });
       `),
     ).toEqual([
-      { $set: { "__jsmql.basePrice": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.basePrice": { $multiply: ["$__jsmql.basePrice", 0.9] } } },
-      { $project: { total: "$__jsmql.basePrice" } },
+      { $set: { "__jsmql.var.basePrice": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.var.basePrice": { $multiply: ["$__jsmql.var.basePrice", 0.9] } } },
+      { $project: { total: "$__jsmql.var.basePrice" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("compound assignment and increment desugar against the slot", () => {
     expect(jsmql("let n = $.start; n += 5; $project({ n })")).toEqual([
-      { $set: { "__jsmql.n": "$start" } },
-      { $set: { "__jsmql.n": { $add: ["$__jsmql.n", 5] } } },
-      { $project: { n: "$__jsmql.n" } },
+      { $set: { "__jsmql.var.n": "$start" } },
+      { $set: { "__jsmql.var.n": { $add: ["$__jsmql.var.n", 5] } } },
+      { $project: { n: "$__jsmql.var.n" } },
       { $unset: "__jsmql" },
     ]);
     expect(jsmql("let n = $.start; n++; $project({ n })")).toEqual([
-      { $set: { "__jsmql.n": "$start" } },
-      { $set: { "__jsmql.n": { $add: ["$__jsmql.n", 1] } } },
-      { $project: { n: "$__jsmql.n" } },
+      { $set: { "__jsmql.var.n": "$start" } },
+      { $set: { "__jsmql.var.n": { $add: ["$__jsmql.var.n", 1] } } },
+      { $project: { n: "$__jsmql.var.n" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("reassignment works in the bracketed pipeline form", () => {
     expect(jsmql("[ let x = $.a, x = x + 1, $project({ x }) ]")).toEqual([
-      { $set: { "__jsmql.x": "$a" } },
-      { $set: { "__jsmql.x": { $add: ["$__jsmql.x", 1] } } },
-      { $project: { x: "$__jsmql.x" } },
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.x": { $add: ["$__jsmql.var.x", 1] } } },
+      { $project: { x: "$__jsmql.var.x" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -790,9 +797,9 @@ describe("let bindings — Object.assign mutation", () => {
   it("`Object.assign(result, …)` re-`$set`s the binding's slot via $mergeObjects", () => {
     // The JS-faithful mutating form of `result = { ...result, … }`.
     expect(jsmql("let result = {}; Object.assign(result, { a: $.foo }); $ = result;")).toEqual([
-      { $set: { "__jsmql.result": {} } },
-      { $set: { "__jsmql.result": { $mergeObjects: ["$__jsmql.result", { a: "$foo" }] } } },
-      { $replaceWith: "$__jsmql.result" },
+      { $set: { "__jsmql.var.result": {} } },
+      { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } },
+      { $replaceWith: "$__jsmql.var.result" },
     ]);
   });
 
@@ -800,25 +807,25 @@ describe("let bindings — Object.assign mutation", () => {
     // This is the reported bug: `const result = {}; Object.assign(result, …)`
     // must NOT throw, even though `result = …` on a const would.
     expect(jsmql("const result = {}; Object.assign(result, { a: $.foo });")).toEqual([
-      { $set: { "__jsmql.result": {} } },
-      { $set: { "__jsmql.result": { $mergeObjects: ["$__jsmql.result", { a: "$foo" }] } } },
+      { $set: { "__jsmql.var.result": {} } },
+      { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("multiple sources keep the slot as the first $mergeObjects operand", () => {
     expect(jsmql("let r = {}; Object.assign(r, { a: 1 }, { b: 2 }); $ = r;")).toEqual([
-      { $set: { "__jsmql.r": {} } },
-      { $set: { "__jsmql.r": { $mergeObjects: ["$__jsmql.r", { a: 1 }, { b: 2 }] } } },
-      { $replaceWith: "$__jsmql.r" },
+      { $set: { "__jsmql.var.r": {} } },
+      { $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", { a: 1 }, { b: 2 }] } } },
+      { $replaceWith: "$__jsmql.var.r" },
     ]);
   });
 
   it("works in the bracketed pipeline form", () => {
     expect(jsmql("[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]")).toEqual([
-      { $set: { "__jsmql.r": {} } },
-      { $set: { "__jsmql.r": { $mergeObjects: ["$__jsmql.r", { a: "$foo" }] } } },
-      { $replaceWith: "$__jsmql.r" },
+      { $set: { "__jsmql.var.r": {} } },
+      { $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", { a: "$foo" }] } } },
+      { $replaceWith: "$__jsmql.var.r" },
     ]);
   });
 
@@ -839,16 +846,16 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
     const fromLet = jsmql("let x = $.foo; $match($.parent === x);");
     expect(fromConst).toEqual(fromLet);
     expect(fromConst).toEqual([
-      { $set: { "__jsmql.x": "$foo" } },
-      { $match: { $expr: { $eq: ["$parent", "$__jsmql.x"] } } },
+      { $set: { "__jsmql.var.x": "$foo" } },
+      { $match: { $expr: { $eq: ["$parent", "$__jsmql.var.x"] } } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("`const` works in the bracketed pipeline form", () => {
     expect(jsmql("[ const x = $.foo, $match($.parent === x) ]")).toEqual([
-      { $set: { "__jsmql.x": "$foo" } },
-      { $match: { $expr: { $eq: ["$parent", "$__jsmql.x"] } } },
+      { $set: { "__jsmql.var.x": "$foo" } },
+      { $match: { $expr: { $eq: ["$parent", "$__jsmql.var.x"] } } },
       { $unset: "__jsmql" },
     ]);
   });

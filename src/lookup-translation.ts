@@ -32,6 +32,7 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
+import { tmpSlot } from "./namespace.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
@@ -538,13 +539,10 @@ export function validateLookupShape(expr: Expr): void {
 
 // ── Slot allocator ────────────────────────────────────────────────────────────
 
-/** Compiler-owned namespace; same field jsmql's pipeline-scoped `let` uses. */
-const LET_NAMESPACE = "__jsmql";
-
 /**
  * Per-pipeline counter shared across `extractLookupCalls` invocations so
- * `__jsmql.__lookup1` / `__lookup2` / … stay distinct within one pipeline.
- * The caller owns the counter.
+ * `__jsmql.tmp.1` / `tmp.2` / … stay distinct within one pipeline. The caller
+ * owns the counter; the path itself comes from `tmpSlot` (see namespace.ts).
  */
 export type SlotAllocator = () => string;
 
@@ -552,7 +550,7 @@ export function createSlotAllocator(): SlotAllocator {
   let n = 0;
   return () => {
     n += 1;
-    return `${LET_NAMESPACE}.__lookup${n}`;
+    return tmpSlot(n);
   };
 }
 
@@ -573,9 +571,9 @@ type ClassifiedPath =
   | {
       // An outer pipeline-scoped `let` binding referenced inside the predicate
       // (optionally with member access on it). The let materialises under
-      // `__jsmql.<bindingName>` on each outer doc; `fieldPath` is the full
+      // `__jsmql.var.<bindingName>` on each outer doc; `fieldPath` is the full
       // resolved path including any `.member` chain (e.g.
-      // `__jsmql.user._id` for `user._id` where `user` is the binding).
+      // `__jsmql.var.user._id` for `user._id` where `user` is the binding).
       // `segments` is the access chain starting at the binding name —
       // used for letVar-naming via `segments[last]`, mirroring the
       // local-path convention.
@@ -851,7 +849,7 @@ function tryBasicForm(
   if (leftPath === null || rightPath === null) return null;
   // "Local" for basic-form purposes means anything that resolves to a field
   // path on the OUTER doc — either a `$.<field>` ref OR an outer-let ref
-  // (whose materialised path lives at `__jsmql.<binding>` on each outer doc).
+  // (whose materialised path lives at `__jsmql.var.<binding>` on each outer doc).
   function localFieldFor(p: ClassifiedPath): string | null {
     if (p.kind === "local" && p.segments.length > 0) return p.segments.join(".");
     if (p.kind === "outerLet") return p.fieldPath;
@@ -881,7 +879,7 @@ type LetAllocator = {
    * Outer pipeline-scoped `let` binding referenced inside the predicate.
    * `segments` is the access chain rooted at the binding name (e.g.
    * `["user", "_id"]` for `user._id`); `fieldPath` is the full materialised
-   * path on the outer doc (e.g. `"__jsmql.user._id"`). The allocated letVar
+   * path on the outer doc (e.g. `"__jsmql.var.user._id"`). The allocated letVar
    * name is `segments[last]` — same convention as `allocateForLocalPath` —
    * uniquified on collision.
    */
@@ -1380,7 +1378,7 @@ function transformCallArgs(
  * Build the `$lookup` (+ optional `$set { $first }`) stage list for a single
  * lookup call, writing its result into the `as` slot. The `as` slot may be a
  * user-named field path (when the lookup is the whole RHS of an assignment /
- * `let`) or an internal `__jsmql.__lookupN` slot (when chained).
+ * `let`) or an internal `__jsmql.tmp.N` slot (when chained).
  */
 export function lowerLookup(
   call: LookupCall,

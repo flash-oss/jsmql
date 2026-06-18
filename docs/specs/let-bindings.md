@@ -8,7 +8,7 @@ are rewritten to the materialised field paths.
 
 User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 
-> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let).
+> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let).
 
 ## Why it exists
 
@@ -18,7 +18,7 @@ and adds three things on top of plain update ops:
 1. **Auto-cleanup** — one trailing `{ $unset: "__jsmql" }` stage per pipeline,
    emitted by the compiler whenever at least one `let` was declared.
 2. **Collision-safe storage** — all lets materialise under a single nested field
-   `__jsmql.<name>`. A user's real document field named `name` is never touched.
+   `__jsmql.var.<name>`. A user's real document field named `name` is never touched.
 3. **Bare-identifier reference** — `total` (not `$.total`) at call sites, so
    "scratch helper" reads visually distinct from "real document field". Naturally
    provides a one-line spot for an intent comment per derivation.
@@ -100,9 +100,9 @@ and defers the decision to codegen. `tryLowerAssignSugar()`
 for every top-level pipeline form — dispatches on a `ParamRef` target first:
 
 - **in-scope `let`** → flush the pending update-op buffer, then emit one
-  `{ $set: { "__jsmql.<name>": <rewritten RHS> } }` stage. The RHS resolves the
+  `{ $set: { "__jsmql.var.<name>": <rewritten RHS> } }` stage. The RHS resolves the
   binding's own reads through `ctx.pipelineLets` as usual, so `p = p * 0.9`
-  lowers to `{ $set: { "__jsmql.p": { $multiply: ["$__jsmql.p", 0.9] } } }`.
+  lowers to `{ $set: { "__jsmql.var.p": { $multiply: ["$__jsmql.var.p", 0.9] } } }`.
   Each reassignment is its own `$set` (a read-after-write needs separate stages),
   matching how a re-declaring `let` already lowers. `+=` / `++` desugar to a
   `BinaryExpr` RHS in the parser, so they flow through this same path for free.
@@ -122,9 +122,9 @@ scope, so a bare-identifier assignment never reaches `tryLowerAssignSugar`;
 `Object.assign(<name>, ...sources)` at statement position is JS's *mutating*
 merge of a binding — the value twin is `<name> = { ...<name>, ...sources }`.
 `classifyObjectAssignStmt` (in `src/pipeline.ts`) detects it before the generic
-statement path and emits one `{ $set: { "__jsmql.<name>": <gen(ObjectCall)> } }`
+statement path and emits one `{ $set: { "__jsmql.var.<name>": <gen(ObjectCall)> } }`
 stage; because the call's first argument *is* `<name>`, that generates
-`$mergeObjects["$__jsmql.<name>", ...sources]`. Unlike `=` reassignment it is
+`$mergeObjects["$__jsmql.var.<name>", ...sources]`. Unlike `=` reassignment it is
 **allowed on a `const` binding** — mutating a const-bound object is legal JS,
 only rebinding isn't — so it bypasses the `pipelineConstNames` guard. An
 out-of-scope name is rejected with a "declare it with `let …` first, or write
@@ -145,7 +145,7 @@ The let scope lives on `GenerateCtx` ([src/codegen.ts](../../src/codegen.ts)):
 type GenerateCtx = {
   lambdaParams: ReadonlySet<string>;
   reduceRemap?: ReadonlyMap<string, string>;
-  pipelineLets?: ReadonlyMap<string, string>;  // ident → field path, e.g. "__jsmql.total"
+  pipelineLets?: ReadonlyMap<string, string>;  // ident → field path, e.g. "__jsmql.var.total"
   droppedLets?: ReadonlyMap<string, string>;   // ident → stage that dropped it
 };
 ```
@@ -176,7 +176,7 @@ standard JS lexical-scoping intuition.
 forms (`[...]` and `;`-separated) walk their statements left-to-right with a
 threaded `GenerateCtx`:
 
-- **LetDecl** → emit `{ $set: { "__jsmql.<name>": <gen value with current ctx> } }`,
+- **LetDecl** → emit `{ $set: { "__jsmql.var.<name>": <gen value with current ctx> } }`,
   extend ctx via `extendCtxLets`. Re-declaration check happens here.
 - **Update op** (in bracketed form) → buffer for coalescing; flushed through
   `generateUpdateOpGroups(buf, ctx)` so RHS expressions can read lets.
@@ -238,7 +238,7 @@ Pipelines with no `let` declarations produce **byte-identical** MQL output to
 pre-feature jsmql. The `__jsmql` field name and the trailing `$unset` only
 appear when at least one `let` is in scope at some point during lowering — or
 at least one `$$$.<coll>.find/filter(...)` chained terminal materialises into
-an internal `__jsmql.__lookup<N>` slot (see [`lookup-stage.md`](./lookup-stage.md)).
+an internal `__jsmql.tmp.<N>` slot (see [`lookup-stage.md`](./lookup-stage.md)).
 The two features share the `__jsmql` namespace and the single trailing `$unset`
 cleanup, so a pipeline that uses both still emits exactly one `$unset` stage at
 the end.
@@ -247,12 +247,12 @@ the end.
 
 `let x = $$$.coll.find/filter(...)` is recognised in `lowerImplicitPipeline`
 and `lowerPipeline`: instead of materialising the value through the usual
-`$set { __jsmql.<name>: <value> }` shape, the `$lookup.as` slot is set
-directly to `__jsmql.<name>` and the binding is registered in the same way.
+`$set { __jsmql.var.<name>: <value> }` shape, the `$lookup.as` slot is set
+directly to `__jsmql.var.<name>` and the binding is registered in the same way.
 For chained-on-lookup RHSes (`let n = $$$.coll.filter(p).length`,
 `let s = $$$.tx.filter(p).reduce(fn, init)`), the chained terminal materialises
-into an internal `__jsmql.__lookup<N>` slot first; the let machinery then
-materialises `__jsmql.<name>` from that slot in the standard way. See
+into an internal `__jsmql.tmp.<N>` slot first; the let machinery then
+materialises `__jsmql.var.<name>` from that slot in the standard way. See
 [`lookup-stage.md`](./lookup-stage.md) for the chained-terminal lowering table.
 
 ## Deferred (not in v1)
@@ -270,7 +270,7 @@ materialises `__jsmql.<name>` from that slot in the standard way. See
   Documented in `LANGUAGE.md` instead.
 - **Outer lets cross into `$lookup.pipeline` / `$unionWith.pipeline`.** These
   sub-pipelines run on a *different* document (the foreign collection), so
-  the materialised `__jsmql.<name>` field doesn't exist there — outer lets
+  the materialised `__jsmql.var.<name>` field doesn't exist there — outer lets
   legitimately don't cross. (The `$lookup.let` clause is the mechanism to
   thread per-doc values into those sub-pipelines; jsmql already auto-extracts
   `$.x` refs into it.)
@@ -279,7 +279,7 @@ materialises `__jsmql.<name>` from that slot in the standard way. See
 
 - **Outer lets visible inside `$facet` sub-pipelines** (Wave 5 #28). Each
   facet branch operates on the same input documents that arrived at the
-  outer `$facet` stage — they still carry the `__jsmql.<name>` fields the
+  outer `$facet` stage — they still carry the `__jsmql.var.<name>` fields the
   outer lets materialised into. A new `freshFacetCtx` helper (in
   `src/codegen.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
   sub-pipeline ctx that PRESERVES `pipelineLets`; the facet branch lowering

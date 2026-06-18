@@ -214,9 +214,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
   it("lookup inside .map body materialises into prologue $lookup + $set, $replaceWith reads the slot", () => {
     expect(jsmql("$$ = $$.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));")).toEqual([
-      { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-      { $replaceWith: { a: "$__jsmql.__lookup1" } },
+      { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $replaceWith: { a: "$__jsmql.tmp.1" } },
     ]);
   });
 
@@ -227,16 +227,16 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       ),
     ).toEqual([
       { $match: { active: true } },
-      { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-      { $replaceWith: { id: "$_id", archived: "$__jsmql.__lookup1" } },
+      { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $replaceWith: { id: "$_id", archived: "$__jsmql.tmp.1" } },
     ]);
   });
 
   it("array-valued .filter lookup inside .map body uses the pipeline-form $lookup (no $first wrap)", () => {
     expect(jsmql("$$ = $$.map(d => ({ id: d._id, items: $$$.archive.filter(x => x.userId === d._id) }));")).toEqual([
-      { $lookup: { from: "archive", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
-      { $replaceWith: { id: "$_id", items: "$__jsmql.__lookup1" } },
+      { $lookup: { from: "archive", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+      { $replaceWith: { id: "$_id", items: "$__jsmql.tmp.1" } },
     ]);
   });
 
@@ -250,9 +250,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
           coll: "users",
           pipeline: [
             { $match: { active: true } },
-            { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.__lookup1" } },
-            { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
-            { $replaceWith: { a: "$__jsmql.__lookup1" } },
+            { $lookup: { from: "archive", localField: "_id", foreignField: "_id", as: "__jsmql.tmp.1" } },
+            { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+            { $replaceWith: { a: "$__jsmql.tmp.1" } },
           ],
         },
       },
@@ -279,10 +279,10 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
                 pipeline: [
                   { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$tier", "$$tier"] }] } } },
                 ],
-                as: "__jsmql.__lookup1",
+                as: "__jsmql.tmp.1",
               },
             },
-            { $replaceWith: { archives: "$__jsmql.__lookup1" } },
+            { $replaceWith: { archives: "$__jsmql.tmp.1" } },
           ],
         },
       },
@@ -643,22 +643,22 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
 
   it("basic shape: `{...acc, [d.id]: d.name}` → $arrayToObject", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$name" } } } },
-      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$name" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
   it("nested key path: `{...acc, [d.user.email]: d.score}`", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.user.email]: d.score }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlDict: { $push: { k: "$user.email", v: "$score" } } } },
-      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$user.email", v: "$score" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
   it("bare-doc value (`[d.id]: d`) uses $$ROOT", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$$ROOT" } } } },
-      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$$ROOT" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
@@ -668,16 +668,16 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
     // iteration, which is fine because the $group accumulator does the
     // accumulation; the spread is JS-faithful boilerplate.)
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ [d.id]: d.name }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$name" } } } },
-      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$name" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
   it("composes with a preceding $match", () => {
     expect(jsmql("$match($.active === true); $$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})]")).toEqual([
       { $match: { active: true } },
-      { $group: { _id: null, __jsmqlDict: { $push: { k: "$id", v: "$name" } } } },
-      { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$name" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 

@@ -168,12 +168,12 @@ describe("jsmql.update() — strict aggregation-pipeline update", () => {
   });
 
   it("allows `let` bindings (they lower to whitelisted $set / $unset stages)", () => {
-    // `let` bindings desugar to a `$set: { "__jsmql.foo": ... }` stage plus a
+    // `let` bindings desugar to a `$set: { "__jsmql.var.foo": ... }` stage plus a
     // trailing `$unset: "__jsmql"` cleanup — both stages are in the
     // update-pipeline whitelist, so the chain composes cleanly.
     expect(jsmql.update("let upper = $.name.toUpperCase(); $.name = upper")).toEqual([
-      { $set: { "__jsmql.upper": { $toUpper: "$name" } } },
-      { $set: { name: "$__jsmql.upper" } },
+      { $set: { "__jsmql.var.upper": { $toUpper: "$name" } } },
+      { $set: { name: "$__jsmql.var.upper" } },
       { $unset: "__jsmql" },
     ]);
   });

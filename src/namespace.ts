@@ -1,0 +1,44 @@
+// Single source of truth for the `__jsmql` document namespace — the one
+// top-level object jsmql stashes compiler-generated temporaries in, so values
+// can be threaded between stages without flooding the developer's output.
+// Everything here is removed before output by a single trailing
+// `{ $unset: "__jsmql" }` (peephole-skipped when a reshape stage already
+// dropped the document). See src/CLAUDE.md § the `__jsmql` namespace.
+//
+// The scheme — sub-bucketed by kind:
+//   __jsmql.var.<name>   — `let` / `const` bindings           → bindingSlot()
+//   __jsmql.tmp.<n>      — anonymous compiler scratch          → tmpSlot()
+//                          (lookup result slots, fan-out / $unwind slots,
+//                          stream-method intermediates; the per-pipeline
+//                          counter `createSlotAllocator` lives in
+//                          lookup-translation.ts for import-cycle reasons but
+//                          builds its path here)
+//   __jsmql.<reserved>   — named system values                (e.g. the stream
+//                          length `__jsmql.length`, added with that feature)
+//
+// THE ONE EXCEPTION: `$group` / `$bucket` accumulator OUTPUT keys may not
+// contain dots, so scratch produced *inside* a group can't live under the
+// object. Such scratch uses the flat reserved name `GROUP_TMP` and MUST be
+// consumed by the immediately-following stage (so it never reaches output or
+// the trailing `$unset`).
+
+/** The namespace object — the root field, and the trailing `$unset` target. */
+export const JSMQL_NS = "__jsmql";
+
+/** Field path for a user `let` / `const` binding `<name>` → `__jsmql.var.<name>`. */
+export function bindingSlot(name: string): string {
+  return `${JSMQL_NS}.var.${name}`;
+}
+
+/** Field path for anonymous compiler scratch slot `n` → `__jsmql.tmp.<n>`. */
+export function tmpSlot(n: number): string {
+  return `${JSMQL_NS}.tmp.${n}`;
+}
+
+/**
+ * Flat reserved scratch name for `$group` / `$bucket` accumulator output, where
+ * MongoDB forbids dotted field names so the value can't live under the
+ * `__jsmql` object. Must be consumed by the very next stage. The single
+ * documented exception to "all temporaries live under `__jsmql.`".
+ */
+export const GROUP_TMP = `${JSMQL_NS}Tmp`;

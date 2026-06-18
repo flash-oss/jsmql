@@ -2,7 +2,7 @@
 
 ## What this covers
 
-The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection (both `$$$.<coll>` same-database and `$$$$.<db>.<coll>` cross-database shapes), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.__lookup<N>` slots, the mode-gate behaviour, the deployment requirement for the cross-database `from: { db, coll }` shape, and the error catalog.
+The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection (both `$$$.<coll>` same-database and `$$$$.<db>.<coll>` cross-database shapes), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.tmp.<N>` slots, the mode-gate behaviour, the deployment requirement for the cross-database `from: { db, coll }` shape, and the error catalog.
 
 ## Why `$$$` (and not `this.`)
 
@@ -64,13 +64,13 @@ For foreign-rooted sub-trees, the sub-tree is replaced with a bare `FieldRef` wh
 
 A bare reference to the foreign param itself (`o` alone, no member access) is **rejected** with a targeted "use `o.<field>`" error — no `$$ROOT` lowering yet.
 
-The MongoDB-native `$lookup.let` is wholly distinct from jsmql's pipeline-scoped `let` (`__jsmql.x`): lookup-pipeline lets live only inside one `$lookup.pipeline` and are read as `$$letVar`, while pipeline-scoped lets are materialised as document fields under `__jsmql.<name>` and read as `"$__jsmql.x"`. See [`let-bindings.md`](./let-bindings.md).
+The MongoDB-native `$lookup.let` is wholly distinct from jsmql's pipeline-scoped `let` (`__jsmql.var.x`): lookup-pipeline lets live only inside one `$lookup.pipeline` and are read as `$$letVar`, while pipeline-scoped lets are materialised as document fields under `__jsmql.var.<name>` and read as `"$__jsmql.var.x"`. See [`let-bindings.md`](./let-bindings.md).
 
 ## Chained-terminal materialisation
 
 `extractLookupCalls` recognises three chained patterns explicitly:
 
-| Pattern                                    | Emitted stages (slot = `__jsmql.__lookup<N>`)                                                           |
+| Pattern                                    | Emitted stages (slot = `__jsmql.tmp.<N>`)                                                           |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
 | `<lookup>.length`                          | `$lookup as: slot`, then `$set { slot: $size("$slot") }`                                                |
 | `<lookup>.reduce(fn, init)`                | `$lookup as: slot`, then `$set { slot: <reduce expression over slot> }` (rejected on `.find` receiver) |
@@ -87,7 +87,7 @@ A chained terminal that doesn't carry its own predicate (`<lookup>.length`, `.re
 `src/pipeline.ts` wires lookup-translation into the two top-level lowering entry points:
 
 - **`generateImplicitPipeline`** (the `;`-separated form). For each statement:
-  - `LetDecl` with a direct lookup value → use `__jsmql.<name>` as the `$lookup.as` slot directly; one `$lookup` stage (+ optional `$set $first`) replaces the usual `$set { __jsmql.<name>: <value> }`.
+  - `LetDecl` with a direct lookup value → use `__jsmql.var.<name>` as the `$lookup.as` slot directly; one `$lookup` stage (+ optional `$set $first`) replaces the usual `$set { __jsmql.var.<name>: <value> }`.
   - `UpdateFilter` → run through `lowerUpdateFilterWithLookups`, which iterates the comma-chained ops, splitting the coalesced `$set` buffer at any op whose RHS is a direct lookup (LHS path used as the `as:` slot) or contains chained lookups (extracted into internal slots first).
   - Stage call (`$match(...)`, `$project({...})`, …) → `extractFromStageElement` walks the stage body's expressions and lifts any lookup subtrees into prologue stages emitted *before* the stage itself.
 
@@ -110,7 +110,7 @@ Detection differences:
 - `validateLookupShape`'s `classifyLookupReceiver` returns `'$$$.<coll>'` for DatabaseRef-rooted chains and `'$$$$.<db>.<coll>'` for ClusterRef-rooted chains, so the wrong-method / wrong-arity error messages name the right spelling.
 - The parser's `isLookupReceiverRooted` (used to enable block-body lambdas) accepts either leaf kind.
 
-Same in every other respect: same predicate-translation (basic vs pipeline form), same auto-`let` extraction, same chained-terminal materialisation, same nested-lookup rejection, same mode-gate behaviour, same `.find` $first follow-up, same `__jsmql.__lookup<N>` slot scheme.
+Same in every other respect: same predicate-translation (basic vs pipeline form), same auto-`let` extraction, same chained-terminal materialisation, same nested-lookup rejection, same mode-gate behaviour, same `.find` $first follow-up, same `__jsmql.tmp.<N>` slot scheme.
 
 **Compile-time names — three accepted index kinds.** `staticAccess(node, ctx)` resolves one step of a lookup-receiver chain to a compile-time string name. It accepts:
 

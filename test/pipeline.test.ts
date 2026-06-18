@@ -282,8 +282,8 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("direct lookup `.find` lowers to $lookup + $replaceWith {$first}", () => {
     expect(jsmql("[ $ = $$$.users.find(u => u._id === $.userId) ]")).toEqual([
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $replaceWith: { $first: "$__jsmql.__lookup1" } },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $replaceWith: { $first: "$__jsmql.tmp.1" } },
     ]);
   });
 
@@ -339,33 +339,33 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("fans out an array-literal of documents (one output doc per element)", () => {
     expect(jsmql("[ $ = [{ a: 1 }, { b: 2 }] ]")).toEqual([
-      { $set: { "__jsmql.__lookup1": [{ a: 1 }, { b: 2 }] } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.tmp.1": [{ a: 1 }, { b: 2 }] } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
   it("fans out a spread field (`$ = [...$.items]`)", () => {
     expect(jsmql("[ $ = [...$.items] ]")).toEqual([
-      { $set: { "__jsmql.__lookup1": "$items" } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.tmp.1": "$items" } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
   it("fans out a provably-array expression (`.map`)", () => {
     expect(jsmql("[ $ = $.items.map(x => ({ sku: x.sku })) ]")).toEqual([
-      { $set: { "__jsmql.__lookup1": { $map: { input: "$items", as: "x", in: { sku: "$$x.sku" } } } } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.tmp.1": { $map: { input: "$items", as: "x", in: { sku: "$$x.sku" } } } } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
   it("fans out `Object.entries(...)` into {k, v} documents", () => {
     expect(jsmql("[ $ = Object.entries($.scores) ]")).toEqual([
-      { $set: { "__jsmql.__lookup1": { $objectToArray: "$scores" } } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.tmp.1": { $objectToArray: "$scores" } } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -374,9 +374,9 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // element are dropped, while others fan out. This is how a conditional drop
     // is spelled (rather than a stream-wide `$$ = []`).
     expect(jsmql("[ $ = $.items.filter(x => x.qty > 0) ]")).toEqual([
-      { $set: { "__jsmql.__lookup1": { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } } } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.tmp.1": { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } } } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -584,8 +584,8 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     // The narrow form is just a $match — outer lets stay visible inside its
     // predicate AND in subsequent stages.
     expect(jsmql(`let cutoff = 10; $$ = $$.filter(t => t.score > cutoff); $.flagged = true;`)).toEqual([
-      { $set: { "__jsmql.cutoff": 10 } },
-      { $match: { $expr: { $gt: ["$score", "$__jsmql.cutoff"] } } },
+      { $set: { "__jsmql.var.cutoff": 10 } },
+      { $match: { $expr: { $gt: ["$score", "$__jsmql.var.cutoff"] } } },
       { $set: { flagged: true } },
       { $unset: "__jsmql" },
     ]);
@@ -658,9 +658,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // `foreignField`). `$unwind` + `$replaceWith` turn the per-outer-doc
     // array of matches into the new stream.
     expect(jsmql(`$$ = $$$.users.filter(u => u._id === $.userId);`)).toEqual([
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -674,11 +674,11 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
           from: "users",
           let: { userId: "$userId" },
           pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$userId"] } } }, { $limit: 1 }],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -693,11 +693,11 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
           from: "orders",
           let: { v_id: "$_id" },
           pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$v_id"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -710,11 +710,11 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
           pipeline: [
             { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$region", "$$region"] }] } } },
           ],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -725,11 +725,11 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
           from: { db: "analytics", coll: "events" },
           localField: "_id",
           foreignField: "userId",
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -760,34 +760,34 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   });
 
   it("outer `let` binding referenced in the predicate triggers basic-form pivot", () => {
-    // `uid` is a let binding stored at `__jsmql.uid` on each outer doc.
+    // `uid` is a let binding stored at `__jsmql.var.uid` on each outer doc.
     // `u._id === uid` is a single ===, so basic form fires — `localField`
-    // uses the materialised `__jsmql.uid` path directly. Index-friendly.
+    // uses the materialised `__jsmql.var.uid` path directly. Index-friendly.
     expect(jsmql(`let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);`)).toEqual([
-      { $set: { "__jsmql.uid": "$userId" } },
-      { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "__jsmql.__lookup1" } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.var.uid": "$userId" } },
+      { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "__jsmql.tmp.1" } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
   it("outer `let` binding works in expression-position lookup too", () => {
     expect(jsmql(`let uid = $.userId; $.matched = $$$.users.filter(u => u._id === uid);`)).toEqual([
-      { $set: { "__jsmql.uid": "$userId" } },
-      { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "matched" } },
+      { $set: { "__jsmql.var.uid": "$userId" } },
+      { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "matched" } },
       { $unset: "__jsmql" },
     ]);
   });
 
   it("member access on an outer `let` binding (`user._id`) still picks basic form", () => {
     // `user` is a let-binding (the whole user object). `user._id` resolves
-    // to the materialised path `__jsmql.user._id`. Still a single ===, so
+    // to the materialised path `__jsmql.var.user._id`. Still a single ===, so
     // basic form fires.
     expect(jsmql(`let user = $.user; $$ = $$$.events.filter(e => e.userId === user._id);`)).toEqual([
-      { $set: { "__jsmql.user": "$user" } },
-      { $lookup: { from: "events", localField: "__jsmql.user._id", foreignField: "userId", as: "__jsmql.__lookup1" } },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $set: { "__jsmql.var.user": "$user" } },
+      { $lookup: { from: "events", localField: "__jsmql.var.user._id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -795,19 +795,19 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     expect(
       jsmql(`let region = $.region; $$ = $$$.events.filter(e => e.userId === $._id && e.region === region);`),
     ).toEqual([
-      { $set: { "__jsmql.region": "$region" } },
+      { $set: { "__jsmql.var.region": "$region" } },
       {
         $lookup: {
           from: "events",
-          let: { v_id: "$_id", region: "$__jsmql.region" },
+          let: { v_id: "$_id", region: "$__jsmql.var.region" },
           pipeline: [
             { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$region", "$$region"] }] } } },
           ],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 
@@ -817,17 +817,17 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
         `let uid = $.userId; $$ = $$$.orders.filter(o => o.userId === uid).toSorted((a, b) => b.placedAt - a.placedAt).slice(0, 5);`,
       ),
     ).toEqual([
-      { $set: { "__jsmql.uid": "$userId" } },
+      { $set: { "__jsmql.var.uid": "$userId" } },
       {
         $lookup: {
           from: "orders",
-          let: { uid: "$__jsmql.uid" },
+          let: { uid: "$__jsmql.var.uid" },
           pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$uid"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
-          as: "__jsmql.__lookup1",
+          as: "__jsmql.tmp.1",
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 });

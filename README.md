@@ -24,14 +24,14 @@ let pipeline = jsmql`
 // → [
 //   { $match: { email: "me@example.com" } },
 //   { $limit: 1 },
-//   { $set: { "__jsmql.userId": "$_id" } },
-//   { $lookup: { from: { db: "archive", coll: "orders" }, let: { userId: "$__jsmql.userId" }, pipeline: [
+//   { $set: { "__jsmql.var.userId": "$_id" } },
+//   { $lookup: { from: { db: "archive", coll: "orders" }, let: { userId: "$__jsmql.var.userId" }, pipeline: [
 //       { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
 //       { $sort: { placedAt: -1 } },
 //       { $limit: 5 },
-//   ], as: "__jsmql.__lookup1" } },
-//   { $unwind: "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
+//   ], as: "__jsmql.tmp.1" } },
+//   { $unwind: "$__jsmql.tmp.1" },
+//   { $replaceWith: "$__jsmql.tmp.1" },
 //   { $unset: "__jsmql" }
 // ]
 

@@ -46,6 +46,7 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { JSMQL_NS, bindingSlot } from "./namespace.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
@@ -101,9 +102,6 @@ export function isAssertCall(el: ArrayElement): el is Extract<Expr, { type: "Cal
 
 /** Stages that replace the document and so drop all in-scope `let` bindings. */
 const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith", "$facet"]);
-
-/** Compiler-owned namespace for materialised `let` bindings. */
-const LET_NAMESPACE = "__jsmql";
 
 /**
  * Peephole: skip the trailing `{ $unset: "__jsmql" }` cleanup when the
@@ -479,7 +477,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
       const direct = detectLookupCall(el.value, ctx);
       if (direct !== null) {
         validateLookupShape(el.value);
-        const slot = `${LET_NAMESPACE}.${el.name}`;
+        const slot = bindingSlot(el.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
         ctx = extendCtxLets(ctx, el.name, slot);
@@ -498,7 +496,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
     ctx = lowerStatementTail(el, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
   flushUpdateOps();
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
   return out;
 }
 
@@ -566,7 +564,7 @@ export function generateImplicitPipeline(
       const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {
         validateLookupShape(stmt.value);
-        const slot = `${LET_NAMESPACE}.${stmt.name}`;
+        const slot = bindingSlot(stmt.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
         ctx = extendCtxLets(ctx, stmt.name, slot);
@@ -600,7 +598,7 @@ export function generateImplicitPipeline(
     ctx = lowerStatementTail(stmt as Expr, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
 
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
   return out;
 }
 
@@ -661,7 +659,7 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
       decl.pos,
     );
   }
-  const fieldPath = `${LET_NAMESPACE}.${decl.name}`;
+  const fieldPath = bindingSlot(decl.name);
   const value = generateWithCtx(decl.value, ctx);
   return {
     set: { $set: { [fieldPath]: value } },
@@ -706,7 +704,7 @@ export function updateFilterHasReplaceRoot(uf: UpdateFilter): boolean {
  *   - Obviously non-document RHS (`$ = [1,2]`, `$ = 5`, `$ = "x"`, direct
  *     `.filter()` lookup) is rejected with an actionable message.
  *   - Direct `$$$.<coll>.find(pred)` RHS becomes `$lookup` (into an internal
- *     `__jsmql.__lookup<N>` slot) followed by `$replaceWith: { $first: "$<slot>" }`.
+ *     `__jsmql.tmp.<N>` slot) followed by `$replaceWith: { $first: "$<slot>" }`.
  *     We don't reuse `lowerLookup` because its `.find` form emits an extra
  *     `$set { slot: $first slot }` stage that's wasteful here — the slot is
  *     discarded by the replace anyway, so `$first` lives inside the
@@ -1652,7 +1650,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
     ctx = result.ctx;
   });
   flushUpdateOps();
-  if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE });
+  if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
   return out;
 }
 
@@ -1775,7 +1773,7 @@ const lowerBlock: SubPipelineLowerer = (block, ctx) => {
 /**
  * Per-pipeline slot allocator plus a flag for whether any slot was handed out.
  * Used to decide whether to emit the trailing `$unset "__jsmql"` cleanup at
- * the end of a top-level pipeline — `__jsmql.__lookup<N>` slots ride the same
+ * the end of a top-level pipeline — `__jsmql.tmp.<N>` slots ride the same
  * cleanup as `let`-bindings, so a pipeline with no lets but at least one
  * lookup still needs the trailing `$unset`.
  */

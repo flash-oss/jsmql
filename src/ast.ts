@@ -33,7 +33,7 @@ export type UpdateOp = AssignExpr | DeleteStmt;
  * <value>`). Only valid at the top level of a pipeline (either as a
  * `;`-separated PipelineStmt or as an element inside a bracketed `[...]`
  * pipeline). The value is materialised under a single compiler-owned namespace
- * (`__jsmql.<name>`) and the namespace is `$unset` at the end of the pipeline.
+ * (`__jsmql.var.<name>`) and the namespace is `$unset` at the end of the pipeline.
  * `kind` records the surface keyword: a `let` binding is reassignable (a later
  * `<name> = …` re-`$set`s the slot), a `const` binding is not. See
  * `docs/specs/let-bindings.md`.

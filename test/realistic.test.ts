@@ -53,21 +53,21 @@ $$ = $$$$.archive.orders
       ).toEqual([
         { $match: { email: "me@example.com" } },
         { $limit: 1 },
-        { $set: { "__jsmql.userId": "$_id" } },
+        { $set: { "__jsmql.var.userId": "$_id" } },
         {
           $lookup: {
             from: { db: "archive", coll: "orders" },
-            let: { userId: "$__jsmql.userId" },
+            let: { userId: "$__jsmql.var.userId" },
             pipeline: [
               { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
               { $sort: { placedAt: -1 } },
               { $limit: 5 },
             ],
-            as: "__jsmql.__lookup1",
+            as: "__jsmql.tmp.1",
           },
         },
-        { $unwind: "$__jsmql.__lookup1" },
-        { $replaceWith: "$__jsmql.__lookup1" },
+        { $unwind: "$__jsmql.tmp.1" },
+        { $replaceWith: "$__jsmql.tmp.1" },
       ]);
     },
   );
@@ -286,7 +286,7 @@ $ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.p
       { $match: { status: "paid" } },
       {
         $set: {
-          "__jsmql.__lookup1": {
+          "__jsmql.tmp.1": {
             $map: {
               input: "$lineItems",
               as: "li",
@@ -295,8 +295,8 @@ $ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.p
           },
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 });
@@ -320,7 +320,7 @@ $ = ["sender", "recipient"].map(party => {
     ).toEqual([
       {
         $set: {
-          "__jsmql.__lookup1": {
+          "__jsmql.tmp.1": {
             $filter: {
               input: {
                 $map: {
@@ -361,8 +361,8 @@ $ = ["sender", "recipient"].map(party => {
           },
         },
       },
-      { $unwind: "$__jsmql.__lookup1" },
-      { $replaceWith: "$__jsmql.__lookup1" },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
     ]);
   });
 });
@@ -461,10 +461,17 @@ let withShip = withTax + $.shipping;  // with tax and shipping
 $project({ sku: 1, subtotal, withTax, final: withShip });
       `,
     ).toEqual([
-      { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.withTax": { $multiply: ["$__jsmql.subtotal", 1.2] } } },
-      { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
-      { $project: { sku: 1, subtotal: "$__jsmql.subtotal", withTax: "$__jsmql.withTax", final: "$__jsmql.withShip" } },
+      { $set: { "__jsmql.var.subtotal": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.var.withTax": { $multiply: ["$__jsmql.var.subtotal", 1.2] } } },
+      { $set: { "__jsmql.var.withShip": { $add: ["$__jsmql.var.withTax", "$shipping"] } } },
+      {
+        $project: {
+          sku: 1,
+          subtotal: "$__jsmql.var.subtotal",
+          withTax: "$__jsmql.var.withTax",
+          final: "$__jsmql.var.withShip",
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });
@@ -483,9 +490,9 @@ basePrice = basePrice * 0.9;
 $project({ total: basePrice });
       `),
     ).toEqual([
-      { $set: { "__jsmql.basePrice": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.basePrice": { $multiply: ["$__jsmql.basePrice", 0.9] } } },
-      { $project: { total: "$__jsmql.basePrice" } },
+      { $set: { "__jsmql.var.basePrice": { $multiply: ["$price", "$qty"] } } },
+      { $set: { "__jsmql.var.basePrice": { $multiply: ["$__jsmql.var.basePrice", 0.9] } } },
+      { $project: { total: "$__jsmql.var.basePrice" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -1611,10 +1618,10 @@ $project({ name: 1, recentOrders: 1, nOrders });
           as: "recentOrders",
         },
       },
-      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
-      { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-      { $set: { "__jsmql.nOrders": "$__jsmql.__lookup1" } },
-      { $project: { name: 1, recentOrders: 1, nOrders: "$__jsmql.nOrders" } },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { "__jsmql.var.nOrders": "$__jsmql.tmp.1" } },
+      { $project: { name: 1, recentOrders: 1, nOrders: "$__jsmql.var.nOrders" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -2062,15 +2069,15 @@ $$ = $$$.users.filter(u => u.active === true).map(u => ({
               coll: "users",
               pipeline: [
                 { $match: { active: true } },
-                { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
-                { $set: { "__jsmql.__lookup1": { $first: "$__jsmql.__lookup1" } } },
+                { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+                { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
                 {
                   $replaceWith: {
                     user: "$_id",
                     name: "$name",
                     email: "$contactDetails.email",
                     signupAt: "$createdAt",
-                    lastOrder: "$__jsmql.__lookup1",
+                    lastOrder: "$__jsmql.tmp.1",
                   },
                 },
               ],
@@ -2138,10 +2145,10 @@ $.recentOrders = $$$.orders
                 { $limit: 5 },
                 { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
               ],
-              as: "__jsmql.__lookup1",
+              as: "__jsmql.tmp.1",
             },
           },
-          { $set: { recentOrders: "$__jsmql.__lookup1" } },
+          { $set: { recentOrders: "$__jsmql.tmp.1" } },
           { $unset: "__jsmql" },
         ]);
       },
@@ -2194,11 +2201,11 @@ $$ = $$$.orders
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
               ],
-              as: "__jsmql.__lookup1",
+              as: "__jsmql.tmp.1",
             },
           },
-          { $unwind: "$__jsmql.__lookup1" },
-          { $replaceWith: "$__jsmql.__lookup1" },
+          { $unwind: "$__jsmql.tmp.1" },
+          { $replaceWith: "$__jsmql.tmp.1" },
         ]);
       },
     );
@@ -2228,21 +2235,21 @@ $$ = $$$.orders
   .slice(0, 10);
           `,
         ).toEqual([
-          { $set: { "__jsmql.minSpend": { $cond: { if: { $eq: ["$tier", "gold"] }, then: 500, else: 100 } } } },
+          { $set: { "__jsmql.var.minSpend": { $cond: { if: { $eq: ["$tier", "gold"] }, then: 500, else: 100 } } } },
           {
             $lookup: {
               from: "orders",
-              let: { v_id: "$_id", minSpend: "$__jsmql.minSpend" },
+              let: { v_id: "$_id", minSpend: "$__jsmql.var.minSpend" },
               pipeline: [
                 { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $gt: ["$total", "$$minSpend"] }] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
               ],
-              as: "__jsmql.__lookup1",
+              as: "__jsmql.tmp.1",
             },
           },
-          { $unwind: "$__jsmql.__lookup1" },
-          { $replaceWith: "$__jsmql.__lookup1" },
+          { $unwind: "$__jsmql.tmp.1" },
+          { $replaceWith: "$__jsmql.tmp.1" },
         ]);
       },
     );

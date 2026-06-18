@@ -6855,6 +6855,16 @@ function pathsCollide(a, b) {
   return false;
 }
 
+// src/namespace.ts
+var JSMQL_NS = "__jsmql";
+function bindingSlot(name) {
+  return `${JSMQL_NS}.var.${name}`;
+}
+function tmpSlot(n) {
+  return `${JSMQL_NS}.tmp.${n}`;
+}
+var GROUP_TMP = `${JSMQL_NS}Tmp`;
+
 // src/stages.ts
 var STAGES = {
   $addFields: {
@@ -8358,8 +8368,8 @@ function paramFieldOrBareParam(expr, param) {
 function lowerDictBuildWrap(wrap) {
   const v = wrap.valuePath === null ? "$$ROOT" : `$${wrap.valuePath}`;
   return [
-    { $group: { _id: null, __jsmqlDict: { $push: { k: `$${wrap.keyPath}`, v } } } },
-    { $replaceWith: { $arrayToObject: "$__jsmqlDict" } }
+    { $group: { _id: null, [GROUP_TMP]: { $push: { k: `$${wrap.keyPath}`, v } } } },
+    { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
   ];
 }
 function lowerReduceWrap(entries) {
@@ -8765,12 +8775,11 @@ function validateLookupShape(expr) {
     );
   }
 }
-var LET_NAMESPACE = "__jsmql";
 function createSlotAllocator() {
   let n = 0;
   return () => {
     n += 1;
-    return `${LET_NAMESPACE}.__lookup${n}`;
+    return tmpSlot(n);
   };
 }
 function classifyPath(expr, foreignParam, outerLets) {
@@ -10451,7 +10460,6 @@ function isAssertCall(el) {
   return el.type === "CallExpression" && el.callee.type === "ParamRef" && el.callee.name === ASSERT_FN_NAME;
 }
 var RESHAPE_CLEARING_STAGES = /* @__PURE__ */ new Set(["$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith", "$facet"]);
-var LET_NAMESPACE2 = "__jsmql";
 function shouldSkipTrailingNamespaceUnset(stages) {
   if (stages.length === 0) return false;
   const last = stages[stages.length - 1];
@@ -10638,7 +10646,7 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
       const direct = detectLookupCall(el.value, ctx);
       if (direct !== null) {
         validateLookupShape(el.value);
-        const slot = `${LET_NAMESPACE2}.${el.name}`;
+        const slot = bindingSlot(el.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
         ctx = extendCtxLets(ctx, el.name, slot);
@@ -10657,7 +10665,7 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
     ctx = lowerStatementTail(el, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
   flushUpdateOps();
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
   return out;
 }
 function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
@@ -10696,7 +10704,7 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
       const direct = detectLookupCall(stmt.value, ctx);
       if (direct !== null) {
         validateLookupShape(stmt.value);
-        const slot = `${LET_NAMESPACE2}.${stmt.name}`;
+        const slot = bindingSlot(stmt.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
         ctx = extendCtxLets(ctx, stmt.name, slot);
@@ -10723,7 +10731,7 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
     }
     ctx = lowerStatementTail(stmt, i, ctx, out, validator, tracking.alloc, lowerBlock);
   });
-  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
+  if ((everHadLet || tracking.used()) && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
   return out;
 }
 function lowerFuncDecl(decl, ctx) {
@@ -10766,7 +10774,7 @@ function lowerLetDecl(decl, ctx) {
       decl.pos
     );
   }
-  const fieldPath = `${LET_NAMESPACE2}.${decl.name}`;
+  const fieldPath = bindingSlot(decl.name);
   const value = generateWithCtx(decl.value, ctx);
   return {
     set: { $set: { [fieldPath]: value } },
@@ -11291,7 +11299,7 @@ function generatePipelineWithCtx(ast, startCtx, container) {
     ctx = result.ctx;
   });
   flushUpdateOps();
-  if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: LET_NAMESPACE2 });
+  if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
   return out;
 }
 function formatNotAStageError(el, index) {

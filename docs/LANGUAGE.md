@@ -611,14 +611,14 @@ $.recentOrders = $$$.orders.filter(o => {
 //   }]
 ```
 
-**Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.__lookup<N>` slot, emits the chained transform as a follow-up `$set`, and substitutes a FieldRef into the parent expression. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
+**Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot, emits the chained transform as a follow-up `$set`, and substitutes a FieldRef into the parent expression. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
 
 ```js
 let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
 // → [
-//     { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.__lookup1" } },
-//     { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-//     { $set: { "__jsmql.nOrders": "$__jsmql.__lookup1" } },
+//     { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+//     { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+//     { $set: { "__jsmql.var.nOrders": "$__jsmql.tmp.1" } },
 //     { $unset: "__jsmql" }
 //   ]
 
@@ -650,10 +650,10 @@ $.recentOrders = $$$.orders
 //         { $limit: 5 },                    // slice(0, 5)
 //         { $replaceWith: { id: "$_id", total: "$total" } },  // map
 //       ],
-//       as: "__jsmql.__lookup1",
+//       as: "__jsmql.tmp.1",
 //     },
 //   },
-//   { $set: { recentOrders: "$__jsmql.__lookup1" } },
+//   { $set: { recentOrders: "$__jsmql.tmp.1" } },
 //   { $unset: "__jsmql" }]
 ```
 
@@ -1344,8 +1344,8 @@ Object.assign($.profile, { verified: true });
 // Build up a scratch object across statements:
 const result = {};
 Object.assign(result, { a: $.foo });
-// → { $set: { "__jsmql.result": {} } }
-//   { $set: { "__jsmql.result": { $mergeObjects: ["$__jsmql.result", { a: "$foo" }] } } }
+// → { $set: { "__jsmql.var.result": {} } }
+//   { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } }
 ```
 
 `Object.assign(result, …)` works even when `result` is `const` — mutating a `const`-bound object is legal JavaScript (only *rebinding* it with `result = …` is not). It's the mutating twin of the value form `result = { ...result, ... }`. In **expression** position `Object.assign(a, b)` is unchanged — it lowers to `$mergeObjects` (see [Object Operations](#object-operations)). The first argument must be a writable target (a `$.field` or an in-scope binding); anything else — `Object.assign({}, …)`, an undeclared name — throws an actionable error.
@@ -2121,8 +2121,8 @@ jsmql("$ = { ...$, computedScore: $.points * 1.1 };")
 // `.find` returns scalar-or-null; `$replaceWith` runs `$first` on the lookup slot.
 jsmql("$ = $$$.users.find(u => u._id === $.userId);")
 // → [
-//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.__lookup1" } },
-//     { $replaceWith: { $first: "$__jsmql.__lookup1" } },
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.1" } },
+//     { $replaceWith: { $first: "$__jsmql.tmp.1" } },
 //     { $unset: "__jsmql" }
 //   ]
 ```
@@ -2156,9 +2156,9 @@ When the RHS is **provably an array** — an array literal, or an array-typed ex
 // Explode an array literal: 1 input doc → 2 output docs
 jsmql("$ = [{ kind: 'a' }, { kind: 'b' }];")
 // → [
-//     { $set: { "__jsmql.__lookup1": [{ kind: "a" }, { kind: "b" }] } },
-//     { $unwind: "$__jsmql.__lookup1" },
-//     { $replaceWith: "$__jsmql.__lookup1" }
+//     { $set: { "__jsmql.tmp.1": [{ kind: "a" }, { kind: "b" }] } },
+//     { $unwind: "$__jsmql.tmp.1" },
+//     { $replaceWith: "$__jsmql.tmp.1" }
 //   ]
 
 // Explode each order's line-items into per-item documents
@@ -2248,10 +2248,10 @@ jsmql`$$ = $$$.orders
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
-//       as: "__jsmql.__lookup1",
+//       as: "__jsmql.tmp.1",
 //   } },
-//   { $unwind: "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unwind: "$__jsmql.tmp.1" },
+//   { $replaceWith: "$__jsmql.tmp.1" },
 // ]
 ```
 
@@ -2259,7 +2259,7 @@ When the predicate is a single `===` between a foreign-path and a `$.<path>` (an
 
 The `$unwind` drops outer docs with no matches by default — if you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
-**`let` bindings cross the source-switch boundary too.** A name bound via `let foo = …` in the surrounding pipeline can be referenced directly inside a correlated `.filter` predicate — jsmql hoists it as a `$lookup.let` var the same way it does `$.<field>` refs. Member access on a `let`-bound object (`user._id` when `let user = $.user`) works too: the resolved path becomes the materialised `__jsmql.user._id` and basic-form `$lookup` continues to fire when the predicate is a single `===`:
+**`let` bindings cross the source-switch boundary too.** A name bound via `let foo = …` in the surrounding pipeline can be referenced directly inside a correlated `.filter` predicate — jsmql hoists it as a `$lookup.let` var the same way it does `$.<field>` refs. Member access on a `let`-bound object (`user._id` when `let user = $.user`) works too: the resolved path becomes the materialised `__jsmql.var.user._id` and basic-form `$lookup` continues to fire when the predicate is a single `===`:
 
 ```js
 jsmql`
@@ -2267,10 +2267,10 @@ let uid = $.userId;
 $$ = $$$.users.filter(u => u._id === uid);
 `
 // → [
-//   { $set: { "__jsmql.uid": "$userId" } },
-//   { $lookup: { from: "users", localField: "__jsmql.uid", foreignField: "_id", as: "__jsmql.__lookup1" } },
-//   { $unwind: "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $set: { "__jsmql.var.uid": "$userId" } },
+//   { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "__jsmql.tmp.1" } },
+//   { $unwind: "$__jsmql.tmp.1" },
+//   { $replaceWith: "$__jsmql.tmp.1" },
 // ]
 ```
 
@@ -2291,19 +2291,19 @@ jsmql(`
 // → [
 //   { $match: { email: "me@example.com" } },
 //   { $limit: 1 },
-//   { $set: { "__jsmql.userId": "$_id" } },
+//   { $set: { "__jsmql.var.userId": "$_id" } },
 //   { $lookup: {
 //       from: "orders",
-//       let: { userId: "$__jsmql.userId" },
+//       let: { userId: "$__jsmql.var.userId" },
 //       pipeline: [
 //         { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
-//       as: "__jsmql.__lookup1",
+//       as: "__jsmql.tmp.1",
 //   } },
-//   { $unwind: "$__jsmql.__lookup1" },
-//   { $replaceWith: "$__jsmql.__lookup1" },
+//   { $unwind: "$__jsmql.tmp.1" },
+//   { $replaceWith: "$__jsmql.tmp.1" },
 // ]
 ```
 
@@ -2597,7 +2597,7 @@ The full rule table and divergence reference live in [docs/specs/match-query-tra
 
 ### Local bindings (`let`)
 
-Pipelines can introduce **named local helpers** with `let`. Each binding is scoped to the rest of the pipeline; the compiler materialises it under a single compiler-owned namespace (`__jsmql.<name>`) and emits one cleanup `$unset` at the end.
+Pipelines can introduce **named local helpers** with `let`. Each binding is scoped to the rest of the pipeline; the compiler materialises it under a single compiler-owned namespace (`__jsmql.var.<name>`) and emits one cleanup `$unset` at the end.
 
 A `let` binding is **reassignable** — a later `name = …` re-`$set`s it, just like JavaScript. Each reassignment is its own `$set` stage (a read-after-write needs a separate stage):
 
@@ -2608,9 +2608,9 @@ jsmql`
   $project({ total: basePrice });
 `;
 // → [
-//   { $set: { "__jsmql.basePrice": { $multiply: ["$price", "$qty"] } } },
-//   { $set: { "__jsmql.basePrice": { $multiply: ["$__jsmql.basePrice", 0.9] } } },
-//   { $project: { total: "$__jsmql.basePrice" } },
+//   { $set: { "__jsmql.var.basePrice": { $multiply: ["$price", "$qty"] } } },
+//   { $set: { "__jsmql.var.basePrice": { $multiply: ["$__jsmql.var.basePrice", 0.9] } } },
+//   { $project: { total: "$__jsmql.var.basePrice" } },
 //   { $unset: "__jsmql" },
 // ]
 ```
@@ -2641,13 +2641,13 @@ Lowers to:
 
 ```js
 [
-  { $set: { "__jsmql.subtotal": { $multiply: ["$price", "$qty"] } } },
-  { $set: { "__jsmql.withTax":  { $multiply: ["$__jsmql.subtotal", 1.2] } } },
-  { $set: { "__jsmql.withShip": { $add: ["$__jsmql.withTax", "$shipping"] } } },
+  { $set: { "__jsmql.var.subtotal": { $multiply: ["$price", "$qty"] } } },
+  { $set: { "__jsmql.var.withTax":  { $multiply: ["$__jsmql.var.subtotal", 1.2] } } },
+  { $set: { "__jsmql.var.withShip": { $add: ["$__jsmql.var.withTax", "$shipping"] } } },
   { $project: { sku: 1,
-                subtotal: "$__jsmql.subtotal",
-                withTax:  "$__jsmql.withTax",
-                final:    "$__jsmql.withShip" } },
+                subtotal: "$__jsmql.var.subtotal",
+                withTax:  "$__jsmql.var.withTax",
+                final:    "$__jsmql.var.withShip" } },
   { $unset: "__jsmql" }
 ]
 ```
@@ -2655,7 +2655,7 @@ Lowers to:
 Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
 
 - Each derived value sits on its own line — natural spot for a one-line `// …` comment.
-- No collision risk: even if your document has a real field named `subtotal`, the let lives under `__jsmql.subtotal` and never touches it.
+- No collision risk: even if your document has a real field named `subtotal`, the let lives under `__jsmql.var.subtotal` and never touches it.
 - No forgotten cleanup — the compiler appends the `$unset` automatically.
 - `subtotal` (a bare identifier) at call sites reads visually distinct from `$.subtotal` (a real document field).
 

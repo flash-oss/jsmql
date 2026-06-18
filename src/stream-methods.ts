@@ -15,6 +15,7 @@ import {
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
+import { GROUP_TMP } from "./namespace.ts";
 import { containsUnionPush } from "./union-translation.ts";
 import { lowerUnionPush } from "./union-translation.ts";
 
@@ -57,7 +58,7 @@ export type StreamMethodDef = {
    * (`.toReversed`) can read the last stage and return
    * `replacesPreviousStage: true` so the caller drops it before appending.
    *
-   * `allocSlot` allocates a fresh `__jsmql.__lookup<N>` slot from the
+   * `allocSlot` allocates a fresh `__jsmql.tmp.<N>` slot from the
    * surrounding pipeline's tracker — used by methods that need to
    * materialise embedded `$$$.<coll>.find/filter(...)` lookups (e.g.
    * `.map`'s body). Each call to `allocSlot()` marks the pipeline as
@@ -170,7 +171,7 @@ const CONCAT: StreamMethodDef = {
 // `$$$.<coll>.find/filter(...)` lookups inside the body ARE supported in
 // both stream contexts. The body is post-processed through
 // `extractLookupCalls` to materialise each lookup into an
-// `__jsmql.__lookup<N>` slot ahead of the `$replaceWith`. References to
+// `__jsmql.tmp.<N>` slot ahead of the `$replaceWith`. References to
 // the outer doc (`d.<field>`) get rewritten to bare field paths via
 // `extractLetsFromExpr` BEFORE the lookup extractor runs, so the lookup
 // predicate's `extractLetsFromExpr` (called from inside
@@ -870,8 +871,8 @@ function ensureLiteralInit(call: Extract<Expr, { type: "MethodCall" }>): void {
 // compile time) because here the *keys come from runtime data* — one input
 // doc, one output entry, key/value both read off the doc. Lowers to:
 //
-//   [{ $group:       { _id: null, __jsmqlDict: { $push: { k: "$<keyPath>", v: "$<valPath>"|"$$ROOT" } } } },
-//    { $replaceWith: { $arrayToObject: "$__jsmqlDict" } }]
+//   [{ $group:       { _id: null, __jsmqlTmp: { $push: { k: "$<keyPath>", v: "$<valPath>"|"$$ROOT" } } } },
+//    { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } }]
 //
 // The leading `...acc` spread is supported (JS-faithful — that's how `{ ...acc, [k]: v }`
 // is conventionally spelled in JS) but optional: `(acc, d) => ({ [d.k]: d.v })`
@@ -953,14 +954,16 @@ function paramFieldOrBareParam(expr: Expr, param: string): string | null | undef
 
 /**
  * Lower a detected dict-build wrap to the `$group` + `$replaceWith` pair.
- * One internal-namespace slot (`__jsmqlDict`) collects the `{k, v}` pairs;
- * `$arrayToObject` folds the pair-array into the final dict.
+ * Collects the `{k, v}` pairs into the flat `GROUP_TMP` slot (a `$group`
+ * accumulator output key can't be dotted, so this is the namespace's
+ * group-output exception — see namespace.ts); `$replaceWith` consumes it on
+ * the very next stage, so it never reaches the developer's output.
  */
 export function lowerDictBuildWrap(wrap: DictBuildWrap): object[] {
   const v: string = wrap.valuePath === null ? "$$ROOT" : `$${wrap.valuePath}`;
   return [
-    { $group: { _id: null, __jsmqlDict: { $push: { k: `$${wrap.keyPath}`, v } } } },
-    { $replaceWith: { $arrayToObject: "$__jsmqlDict" } },
+    { $group: { _id: null, [GROUP_TMP]: { $push: { k: `$${wrap.keyPath}`, v } } } },
+    { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
   ];
 }
 

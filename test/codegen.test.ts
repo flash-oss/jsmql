@@ -1256,8 +1256,8 @@ describe("bracket access", () => {
     // `const k = "host"` makes `obj[k]` a property getter; the IndexAccess
     // codegen reads the binding's static type from bindingTypes.
     expect(jsmql.pipeline('const k = "host";\n$ = { v: $.config[k] };')).toEqual([
-      { $set: { "__jsmql.k": "host" } },
-      { $replaceWith: { v: { $getField: { field: "$__jsmql.k", input: "$config" } } } },
+      { $set: { "__jsmql.var.k": "host" } },
+      { $replaceWith: { v: { $getField: { field: "$__jsmql.var.k", input: "$config" } } } },
     ]);
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
@@ -1280,10 +1280,10 @@ describe("bracket access", () => {
     // The reported case: indexing the root by a value read from a const map
     // (`$[SSTM_PROP[party]]`). Both getters resolve to a string field name.
     expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toEqual([
-      { $set: { "__jsmql.M": { a: "x" } } },
+      { $set: { "__jsmql.var.M": { a: "x" } } },
       {
         $replaceWith: {
-          v: { $getField: { field: { $getField: { field: "k", input: "$__jsmql.M" } }, input: "$$ROOT" } },
+          v: { $getField: { field: { $getField: { field: "k", input: "$__jsmql.var.M" } }, input: "$$ROOT" } },
         },
       },
     ]);

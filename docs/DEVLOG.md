@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-18 — refactor: standardise the `__jsmql.` temp namespace, bucketed by kind
+
+Compiler-generated temporaries the document carries between stages now live in **kind-bucketed** sub-fields of the single `__jsmql` object, with a new single source of truth at [src/namespace.ts](../src/namespace.ts). Before, `let`/`const` bindings sat flat at `__jsmql.<name>`, lookup/scratch slots at `__jsmql.__lookup<n>`, and the dict-build reducer used a rogue **top-level** `__jsmqlDict` sibling (outside the `__jsmql` object entirely). Now:
+
+- `__jsmql.var.<name>` — `let` **and** `const` bindings (merged: let-vs-const is compile-time, a name is unique per scope, and codegen already tracks const-ness — so the keyword needn't leak into the field path). `bindingSlot()`.
+- `__jsmql.tmp.<n>` — anonymous scratch: lookup result slots, fan-out/`$unwind` slots, stream-method intermediates. The per-pipeline counter `createSlotAllocator()` stays in `lookup-translation.ts` (import-cycle reasons) but builds its path via `tmpSlot()`.
+- `__jsmql.<reservedName>` — named system values; the first lands with the stream-length feature (`__jsmql.length`).
+- Exception: `$group`/`$bucket` accumulator output keys can't be dotted, so group-produced scratch uses the flat reserved `GROUP_TMP` (`__jsmqlTmp`, formerly `__jsmqlDict`) and is consumed by the immediately-following stage.
+
+**Why:** bucketing makes user/compiler collisions structurally impossible — a user `let length` is `__jsmql.var.length`, distinct from the system `__jsmql.length`, so no name needs reserving — and keeps the developer's output clean behind one trailing `{ $unset: "__jsmql" }`. This is the prerequisite for `$$.length` (Phase 2) and any future temp-using feature, and the rule is now codified in [src/CLAUDE.md](../src/CLAUDE.md) § the `__jsmql` namespace.
+
+**Behaviour-identical:** these fields are internal and stripped before output, so final documents are byte-for-byte unchanged — only the intermediate field paths moved. The full suite (2317 tests) passes with no count change; the shipped `assert()` uses no `__jsmql` temp and is untouched. All four shapes (`var`/`tmp`/system/group-exception) plus the single `$unset` cleanup were verified executing against a live `mongod` 8.2. Touched `pipeline.ts` (binding paths + `$unset`), `lookup-translation.ts` (slot allocator), `stream-methods.ts` (dict-build), the new `namespace.ts`, and the path-stating comments + test expectations across the suite.
+
+---
+
 ## 2026-06-17 — feat: `assert(condition[, message])` — conditional pipeline errors
 
 Added `assert(...)`, a pipeline-statement guard clause that aborts the whole operation with a custom-message server error when its condition fails — the long-requested "`assert()` / `throw new Error()`" capability. A holding assertion is invisible (the document passes through unchanged); a failing one surfaces as `BadValue (2): Unknown type name: jsmql assertion failed: <message>`.

@@ -59,7 +59,7 @@ export type GenerateCtx = {
   reduceRemap?: ReadonlyMap<string, string>;
   /**
    * Pipeline-scoped `let` bindings in scope. Key is the user-facing name; value
-   * is the field-path string to read it back (e.g. `"__jsmql.subtotal"` — no
+   * is the field-path string to read it back (e.g. `"__jsmql.var.subtotal"` — no
    * leading `$`, that gets prepended at lookup sites). Threaded through
    * pipeline lowering by `pipeline.ts`; ignored in expression-mode codegen.
    */
@@ -273,8 +273,8 @@ export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
  * `$facet` branches. Unlike `$lookup.pipeline` / `$unionWith.pipeline`
  * (which operate on a different document set), every facet branch operates
  * on the SAME input docs that arrived at the outer pipeline's $facet stage.
- * Those docs still carry the `__jsmql.<name>` fields the outer lets
- * materialised into, so `$__jsmql.<name>` references inside the branch
+ * Those docs still carry the `__jsmql.var.<name>` fields the outer lets
+ * materialised into, so `$__jsmql.var.<name>` references inside the branch
  * resolve correctly.
  */
 export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
