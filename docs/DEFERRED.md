@@ -215,16 +215,16 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-033 — `$$.length` inside a sub-pipeline or reusable function body
+### DEF-033 — `$$.length` in a `$facet`/`$unionWith` sub-pipeline, a deep nested lookup, or a function body
 
-- **What's blocked.** `$$.length` (the stream-cardinality value) used **inside a `$lookup` / `$facet` / `$unionWith` sub-pipeline** (e.g. a correlated `$$$.coll.filter(o => o.n === $$.length)`), or **inside a reusable function body** (`const f = () => $$.length`). Top-level pipeline uses are supported (the shipped feature).
-- **Target lowering.** Sub-pipeline: the count would mean the *sub-stream's* length, which needs its own `$setWindowFields` inside the sub-pipeline (or correlation of the outer count via `$lookup.let`). Function body: the function inlines at each call site, so the materialiser would need to hoist a `$setWindowFields` ahead of every calling stage — the body isn't in the inline AST where the per-statement scan runs.
-- **Why blocked.** Both need the materialisation machinery to reach into a context the top-level per-statement scan doesn't cover; scoped out of the first cut. The top-level case (the overwhelmingly common one — "guard/annotate the current stream") ships now.
-- **Attempted approaches.** None — deliberately deferred per the developer's call (Phase-2 plan, decision B).
-- **Success criteria.** `$$$.coll.filter(o => o.x === $$.length)` materialises the outer count and correlates it in; `const f = () => $$.length; $.n = f()` materialises ahead of the call site.
-- **Rejection site(s).** `src/codegen.ts` `generateStreamLength` (sub-pipeline, via the `topLevelStream` gate) and `src/pipeline.ts` `lowerFuncDecl` (reusable function body) — both tagged `[DEF-033]`.
-- **Spec.** `docs/specs/stream-length.md` § Deferred.
-- **Status.** open
+- **What's blocked (narrowed).** `$$.length` (= the ROOT stream count) is now supported **inside a top-level `$lookup`** — its predicate (`$$$.coll.filter(o => o.n === $$.length)`), block body, and `.map` chain — by capturing the top-materialised `$__jsmql.length` into the `$lookup.let` as `v0_len` and reading it back as `$$v0_len`. Inner *sub-stream* counts ship too, via the named 3rd-arg handle (`.map((o, _i, coll) => coll.length)`). **Still blocked:** `$$.length` inside a `$facet` / `$unionWith` sub-pipeline; `$$.length` *deeper* than one `$lookup` level (capture is gated to `depth === 0`); and `$$.length` inside a **reusable function body** (`const f = () => $$.length`).
+- **Target lowering.** `$facet`/`$unionWith`: their sub-pipeline lowerers would need the same `captureRootStreamLength` hook (`$facet` branches see the same docs, so the field is reachable; `$unionWith` has no `let` slot so it needs another route). Deep nesting: let-chain `v<d-1>_len → v<d>_len` at each level instead of binding only `depth === 0`. Function body: the function inlines at each call site, so the materialiser would need to hoist a `$setWindowFields` ahead of every calling stage — the body isn't in the inline AST where the per-statement scan runs.
+- **Why blocked.** The shipped capture reaches one `$lookup.let` hop from the top; the remaining contexts need either a different carrier (`$unionWith`) or let-chaining (depth > 1) / call-site hoisting (functions). Scoped out of this cut.
+- **Attempted approaches.** Shipped the top-level `$lookup` capture (`captureRootStreamLength`, `rootStreamLengthVar`) + the named sub-stream handle (`substreamLengthHandles`). Remaining contexts deferred.
+- **Success criteria.** `$ = { k: $$.filter(o => o.x === $$.length) }` ($facet) captures the root count; a 2-levels-deep `$$.length` let-chains correctly; `const f = () => $$.length; $.n = f()` materialises ahead of the call site.
+- **Rejection site(s).** `src/codegen.ts` `generateStreamLength` (the `topLevelStream`/`rootStreamLengthVar` gate — fires for `$facet`/`$unionWith`/deep nesting) and `src/pipeline.ts` `lowerFuncDecl` (reusable function body) — both tagged `[DEF-033]`.
+- **Spec.** `docs/specs/stream-length.md` § Scope & rejections.
+- **Status.** open (narrowed — top-level `$lookup` + sub-stream handle now ship)
 - **Effort.** M
 
 ---

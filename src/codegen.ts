@@ -155,6 +155,17 @@ export type GenerateCtx = {
    */
   substreamLengthHandles?: ReadonlyMap<string, string>;
   /**
+   * The `$lookup.let` variable that holds the ROOT stream's count, when the
+   * `$$.length` sigil is used inside a sub-pipeline. Per the design, `$$` is
+   * always the ROOT/top-level stream regardless of nesting depth (mirroring
+   * `$` = root doc); a lookup whose body reads `$$.length` captures the
+   * top-materialised `$__jsmql.length` into its `let` (depth-stamped `v<d>_len`)
+   * and sets this so `generateStreamLength` emits `$$<var>` rather than the
+   * (wrong) sub-stream `$__jsmql.length` field. Inner sub-stream counts use the
+   * named 3rd-arg handle (`substreamLengthHandles`) instead.
+   */
+  rootStreamLengthVar?: string;
+  /**
    * Accumulator context — set by `pipeline.ts` when descending into a `$group`
    * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
    * slot. Used by the operator-call codegen to gate operators that only make
@@ -227,6 +238,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     pipelineContext: ctx.pipelineContext,
     topLevelStream: ctx.topLevelStream,
     substreamLengthHandles: ctx.substreamLengthHandles,
+    rootStreamLengthVar: ctx.rootStreamLengthVar,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
@@ -1410,10 +1422,15 @@ function generateStreamLength(ctx: GenerateCtx, pos: number): unknown {
       pos,
     );
   }
+  // Inside a sub-pipeline, `$$` is still the ROOT stream — its count was
+  // materialised at the top level and captured into this lookup's `$lookup.let`
+  // (a depth-stamped `v<d>_len`), so read it back as that `$$`-variable.
+  if (ctx.rootStreamLengthVar !== undefined) return `$$${ctx.rootStreamLengthVar}`;
   if (!ctx.topLevelStream) {
     throw new CodegenError(
-      `'$$.length' isn't supported inside a '$lookup' / '$facet' / '$unionWith' sub-pipeline yet [DEF-033] — ` +
-        `there it would mean the sub-pipeline's own stream length. Compute it in the outer (top-level) pipeline instead.`,
+      `'$$.length' (the root stream count) isn't available here yet [DEF-033] — it works at the top level and inside a top-level '$lookup' ` +
+        `(predicate, block, or '.map' chain, captured into '$lookup.let'), but not yet in a '$facet' / '$unionWith' sub-pipeline or a deeper nested lookup. ` +
+        `Compute it in the outer (top-level) pipeline and reference the value instead.`,
       pos,
     );
   }

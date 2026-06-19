@@ -51,7 +51,9 @@ import { JSMQL_NS, bindingSlot, streamLengthStage } from "./namespace.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
+  argsReadRootStreamLength,
   buildPipelineFormPredicate,
+  captureRootStreamLength,
   detectLookupCall,
   lowerLookup,
   extractLookupCalls,
@@ -1282,7 +1284,13 @@ function lowerLookupPivot(
     // Chain methods need a pipeline-form lookup so their stages can extend
     // the sub-pipeline body.
     const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
-    const innerCtx = freshSubPipelineCtx(outerCtx);
+    // `$$.length` (the ROOT stream count) used in any chain method body →
+    // capture the top-materialised `$__jsmql.length` into this lookup's
+    // `$lookup.let` (a top-level pivot is depth 0 → `v0_len`) so the sub-pipeline
+    // reads it as `$$v0_len`. `$$` is always the ROOT stream; inner sub-stream
+    // counts use the 3rd-arg handle.
+    const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
+    const innerCtx = captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx));
     for (const m of restMethods) {
       const def = lookupStreamMethod(m.method);
       if (def === null) {

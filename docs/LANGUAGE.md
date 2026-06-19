@@ -858,9 +858,32 @@ changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
 …). Needs **MongoDB 5.0+** (`$setWindowFields`); it buffers the stream
 (100 MB / `allowDiskUse`), like any window/group.
 
+**`$$` is always the ROOT stream — at any nesting depth.** Mirroring `$` (the
+root document), `$$` is the top-level stream even when you read `$$.length`
+*inside* a `$lookup` sub-pipeline. There jsmql materialises the root count at the
+top and passes it into the lookup automatically via `$lookup.let` (as `v0_len`),
+so it reads back correctly:
+
+```js
+// "this user's recent-order count vs the total recent-user count"
+jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
+// → [
+//     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+//     { $lookup: { from: "users", let: { v0_len: "$__jsmql.length" },
+//         pipeline: [{ $match: { $expr: { $eq: ["$orderCount", "$$v0_len"] } } }], as: "peers" } },
+//     { $unset: "__jsmql" }
+//   ]
+```
+
+To count an **inner** sub-stream (not the root), use the 3rd callback param —
+`$$$.orders.filter(p).map((o, _i, coll) => coll.length)` (see *Cross-collection
+lookups* above). `$$.length` = root; `coll.length` = that sub-stream.
+
 **Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
-count. Not yet supported inside a `$lookup`/`$facet`/`$unionWith` sub-pipeline or
-a reusable function body `[DEF-033]` (compute it at the top level and carry the
+count. Inside a top-level `$lookup` (predicate, block body, or `.map` chain)
+`$$.length` works via the `$lookup.let` capture above; still **not** supported
+inside a `$facet`/`$unionWith` sub-pipeline, a *deeper* nested lookup, or a
+reusable function body `[DEF-033]` (compute it at the top level and carry the
 value in).
 
 ### `$out`: write the pipeline to a collection

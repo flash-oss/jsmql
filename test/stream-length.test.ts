@@ -136,10 +136,27 @@ describe("$$.length — rejections", () => {
     expect(() => jsmql.filter("$$.length > 1")).toThrow(/'\$\$\.length'.*needs Pipeline mode/);
   });
 
-  it("rejects inside a $lookup sub-pipeline predicate [DEF-033]", () => {
-    expect(() => jsmql("$.peers = $$$.users.filter(u => u.n === $$.length)")).toThrow(
-      /'\$\$\.length' isn't supported inside a '\$lookup' \/ '\$facet' \/ '\$unionWith' sub-pipeline yet \[DEF-033\]/,
-    );
+  it("captures `$$.length` (ROOT count) into $lookup.let inside a top-level lookup predicate", () => {
+    // `$$` is always the ROOT stream regardless of nesting; the count
+    // materialises at the top and is passed into the lookup as
+    // `let: { v0_len: "$__jsmql.length" }`, read inside as `$$v0_len`.
+    // Verified end-to-end on a live mongod.
+    expect(jsmql("$.peers = $$$.users.filter(u => u.n === $$.length);")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      {
+        $lookup: {
+          from: "users",
+          let: { v0_len: "$__jsmql.length" },
+          pipeline: [{ $match: { $expr: { $eq: ["$n", "$$v0_len"] } } }],
+          as: "peers",
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("rejects `$$.length` inside a $facet / $unionWith sub-pipeline [DEF-033]", () => {
+    expect(() => jsmql("$ = { peers: $$.filter(u => u.n === $$.length) };")).toThrow(/\[DEF-033\]/);
   });
 
   it("rejects inside a reusable function body [DEF-033]", () => {
@@ -160,5 +177,59 @@ describe("$$.length — cleanup", () => {
     // on a live mongod in the dev probes; here we assert the cleanup stage is last.
     const out = jsmql("$.n = $$.length") as Record<string, unknown>[];
     expect(out[out.length - 1]).toEqual(UNSET);
+  });
+});
+
+describe("nested length usage — sub-stream handles + `$$.length` (root) at every level", () => {
+  // The composite case: a per-user orders pivot whose `.map` reads three
+  // different counts — a nested lookup `.length` (this order's shipments), the
+  // 3rd-arg handle `ordersColl.length` (this user's orders sub-stream), and
+  // `$$.length` (the ROOT users stream, captured into the orders $lookup.let as
+  // v0_len). Verified end-to-end on a live mongod: per-order shipment counts,
+  // per-user order counts, and a constant root count, all correct, no leak.
+  it("compiles three count levels in one block-body .map", () => {
+    expect(
+      jsmql(`
+        $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
+          return {
+            totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,
+            totalOrders: ordersColl.length,
+            totalUsers: $$.length,
+          };
+        });
+      `),
+    ).toEqual([
+      SWF, // root count materialised at the top
+      {
+        $lookup: {
+          from: "orders",
+          let: { v0_id: "$_id", v0_len: "$__jsmql.length" }, // v0_len captures the root count
+          pipeline: [
+            { $match: { $expr: { $eq: ["$$v0_id", "$userId"] } } },
+            SWF, // orders sub-stream count (for ordersColl.length)
+            { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.2" } },
+            { $set: { "__jsmql.tmp.2": { $size: "$__jsmql.tmp.2" } } }, // nested .length terminal
+            {
+              $replaceWith: {
+                totalShipments: "$__jsmql.tmp.2",
+                totalOrders: "$__jsmql.length", // orders sub-stream
+                totalUsers: "$$v0_len", // ROOT (captured)
+              },
+            },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+
+  it("block-body `.map` with `return` is accepted; an unused index/3rd param on a predicate filter doesn't throw", () => {
+    // `(s, i, shipmntsColl) => …` — extra params present but unused: valid JS, compiles.
+    expect(jsmql("$$ = $$.map((d, _i, _coll) => { return ({ id: d._id }); });")).toEqual([
+      { $replaceWith: { id: "$_id" } },
+    ]);
+    expect(() => jsmql("$.x = $$$.s.filter((s, i, c) => s.k === $.k);")).not.toThrow();
   });
 });

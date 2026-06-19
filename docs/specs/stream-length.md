@@ -123,13 +123,34 @@ trailing `{ $unset: "__jsmql" }` fires *inside* the sub-pipeline so the count
 field doesn't leak into the `as` array. The same index / non-`.length`
 rejections apply (checked in `buildBlockBodyPredicate`).
 
-**Using the named handle, not `$$.length`, avoids a spurious outer stage.** A
-`coll.length` reference is a `ParamRef.length`, which the *outer* pipeline's
-materialiser scan (`isStreamLengthNode`, keyed on `CollectionRef` for `$$.length`)
-correctly ignores — so no useless top-level `$setWindowFields` is emitted. (A
-`$$.length` *sigil* inside a block still mis-fires an outer stamp — that and
-`$facet`/`$unionWith` parity remain on the list; see [DEFERRED.md](../DEFERRED.md)
-DEF-033.)
+## `$$.length` (ROOT count) inside a `$lookup` — captured into `$lookup.let`
+
+`$$` is **always the ROOT/top-level stream**, regardless of nesting depth
+(mirroring `$` = root document); an inner sub-stream count uses the 3rd-arg
+handle above, never the `$$` sigil. So `$$.length` *inside* a top-level `$lookup`
+means the root count: jsmql materialises it at the top (`isStreamLengthNode` /
+`containsStreamLength` detect the `$$.length` *anywhere* in the statement,
+including inside the sub-pipeline, so the top-level materialiser fires), then the
+lookup **captures** the root field into its `$lookup.let` as a depth-stamped
+`v0_len: "$__jsmql.length"`, and codegen reads `$$.length` back as `$$v0_len`
+(via `GenerateCtx.rootStreamLengthVar`, set by `captureRootStreamLength` in
+lookup-translation.ts). This is wired into every top-level lookup body — the
+expression-body predicate (`translatePredicate`), the `$.x =` chained pivot
+(`tryExtractChainedLookup`), and the `$$ =` replace-stream pivot (pipeline.ts) —
+so `$$.length` works in all three. Verified on mongod (counts correct, no leak).
+
+Distinct paths, no collision: the root count rides a `$$`-**variable**
+(`v0_len`), an inner sub-stream count rides the `$__jsmql.length` **field**, so a
+`.map` body can read both at once (`totalUsers: $$.length`, `totalOrders:
+coll.length`). The detection keys on node type — `$$.length` is a
+`CollectionRef.length`, a handle is a `ParamRef.length` — so the outer scan only
+ever fires for the root sigil, never for a handle.
+
+**Depth limit (`[DEF-033]`).** Capture is gated to `depth === 0` (the top-level
+lookup, where `$__jsmql.length` lives on the input docs). A `$$.length` *deeper*
+than one lookup level, or inside a `$facet`/`$unionWith` sub-pipeline or a
+reusable function body, is not captured and stays rejected — there the root field
+isn't reachable by a single `let` hop.
 
 **Empty sub-stream + `assert`.** An in-block `assert(coll.length > 0, …)` is a
 per-document `$match` *inside* the `$lookup.pipeline`; on a foreign sub-stream
@@ -141,18 +162,21 @@ level instead — `$.orders = $$$.orders.filter(p); assert($.orders.length > 0, 
 
 ## Scope & rejections
 
-`$$.length` is **top-level pipeline only**, gated by the `topLevelStream` ctx
-flag (set by the two pipeline lowerers, preserved by `extendCtx` for
-same-document lambdas, dropped by `freshSubPipelineCtx`). Rejected:
+`$$.length` resolves at the top level (the `topLevelStream` ctx flag, set by the
+two pipeline lowerers) and, via the `$lookup.let` capture above, inside a
+top-level `$lookup` (`rootStreamLengthVar`). Rejected:
 
 | Context | Why |
 |---|---|
 | Filter / `jsmql.expr` (no pipeline) | there is no stream to count — needs Pipeline mode |
-| inside a `$lookup`/`$facet`/`$unionWith` sub-pipeline | would mean the sub-stream's length — not supported yet, **[DEF-033]** |
+| inside a `$facet` / `$unionWith` sub-pipeline | the root field isn't reachable by a `$lookup.let` hop there — not supported yet, **[DEF-033]** |
+| a `$$.length` *deeper* than one `$lookup` level | capture is gated to `depth === 0`; deeper nesting needs let-chaining — **[DEF-033]** |
 | inside a reusable function body (`const f = () => $$.length`) | the body inlines at the call site but isn't in the per-statement scan's AST — **[DEF-033]** |
 
-A top-level `.map`/`.filter` lambda (same document) **is** allowed — the stamped
-field is on the document and accessible inside `$map`/`$filter`.
+A top-level `$lookup` body (predicate, block, `.map` chain) **is** supported — the
+root count is captured into `$lookup.let` (see the section above). A top-level
+`.map`/`.filter` lambda over the same document is likewise fine (the stamped field
+is on the document).
 
 ## Empty stream
 

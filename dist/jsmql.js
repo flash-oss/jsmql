@@ -4251,6 +4251,9 @@ function tmpSlot(n) {
   return `${JSMQL_NS}.tmp.${n}`;
 }
 var LENGTH_SLOT = `${JSMQL_NS}.length`;
+function streamLengthStage() {
+  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
+}
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
 
 // src/objectid.ts
@@ -4343,6 +4346,8 @@ function extendCtx(ctx, params) {
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
     topLevelStream: ctx.topLevelStream,
+    substreamLengthHandles: ctx.substreamLengthHandles,
+    rootStreamLengthVar: ctx.rootStreamLengthVar,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
@@ -4981,6 +4986,10 @@ function wrapIfNull(value, fallback) {
 }
 function generateLengthAccess(object, optional, ctx) {
   if (object.type === "CollectionRef") return generateStreamLength(ctx, object.pos);
+  if (object.type === "ParamRef") {
+    const handleSource = ctx.substreamLengthHandles?.get(object.name);
+    if (handleSource !== void 0) return handleSource;
+  }
   if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
     const v = _generate(object, ctx);
     return { $size: optional ? wrapIfNull(v, []) : v };
@@ -4998,9 +5007,10 @@ function generateStreamLength(ctx, pos) {
       pos
     );
   }
+  if (ctx.rootStreamLengthVar !== void 0) return `$$${ctx.rootStreamLengthVar}`;
   if (!ctx.topLevelStream) {
     throw new CodegenError(
-      `'$$.length' isn't supported inside a '$lookup' / '$facet' / '$unionWith' sub-pipeline yet [DEF-033] \u2014 there it would mean the sub-pipeline's own stream length. Compute it in the outer (top-level) pipeline instead.`,
+      `'$$.length' (the root stream count) isn't available here yet [DEF-033] \u2014 it works at the top level and inside a top-level '$lookup' (predicate, block, or '.map' chain, captured into '$lookup.let'), but not yet in a '$facet' / '$unionWith' sub-pipeline or a deeper nested lookup. Compute it in the outer (top-level) pipeline and reference the value instead.`,
       pos
     );
   }
@@ -8178,6 +8188,23 @@ var CONCAT = {
     return { stages };
   }
 };
+function mapBodyExpr(lambda) {
+  if (lambda.body !== void 0) return lambda.body;
+  const eb = lambda.exprBlock;
+  if (eb !== void 0) {
+    if (eb.decls.length > 0) {
+      throw new CodegenError(
+        `.map(d => { \u2026 }) with 'let'/'const' bindings isn't supported \u2014 use a single 'return <expr>' (e.g. '.map(d => ({ \u2026 }))'), or hoist the bindings to a top-level 'let' before the chain.`,
+        lambda.pos
+      );
+    }
+    return eb.ret;
+  }
+  throw new CodegenError(
+    `.map(d => <expr>) requires an expression or single-'return' body \u2014 a multi-statement block isn't supported here; split into separate stages ($set, $project, \u2026) instead.`,
+    lambda.pos
+  );
+}
 var MAP = {
   name: "map",
   validate(args, callPos) {
@@ -8197,15 +8224,16 @@ var MAP = {
         arg.pos
       );
     }
-    if (arg.params.length !== 1) {
+    if (arg.params.length > 3) {
       throw new CodegenError(
-        `.map(d => <expr>) takes a single-parameter arrow (got ${arg.params.length}). MongoDB streams have no per-doc index, so '(d, i) => \u2026' isn't meaningful here.`,
+        `.map(d => <expr>) takes at most 3 parameters '(element, index, collection)', got ${arg.params.length}.`,
         arg.pos
       );
     }
-    if (arg.body === void 0) {
+    const bodyExpr = mapBodyExpr(arg);
+    if (arg.params.length >= 2 && someExpr(bodyExpr, (e) => e.type === "ParamRef" && e.name === arg.params[1])) {
       throw new CodegenError(
-        `.map(d => <expr>) requires an expression body. Block-body arrows ('d => { \u2026 }') aren't supported here \u2014 split into separate stages ($set, $project, \u2026) instead.`,
+        `.map((${arg.params[0]}, ${arg.params[1]}) => \u2026) can't use the index parameter '${arg.params[1]}' \u2014 MongoDB streams have no per-doc index. Drop it, or keep it unused (e.g. '(${arg.params[0]}, _${arg.params[1]}, coll)') only to reach the 3rd 'collection' parameter.`,
         arg.pos
       );
     }
@@ -8213,12 +8241,32 @@ var MAP = {
   lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0];
     const param = lambda.params[0];
-    const body = lambda.body;
+    const collName = lambda.params.length === 3 ? lambda.params[2] : void 0;
+    const body = mapBodyExpr(lambda);
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => \u2026)' body isn't meaningful \u2014 '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
         lambda.pos
       );
+    }
+    let collLengthUsed = false;
+    if (collName !== void 0) {
+      let total = 0;
+      let lengthUses = 0;
+      someExpr(body, (e) => {
+        if (e.type === "ParamRef" && e.name === collName) total++;
+        if (e.type === "MemberAccess" && e.member === "length" && e.object.type === "ParamRef" && e.object.name === collName) {
+          lengthUses++;
+        }
+        return false;
+      });
+      if (total > lengthUses) {
+        throw new CodegenError(
+          `In '.map((${param}, _i, ${collName}) => \u2026)' over a '$$$.<coll>' stream, only '${collName}.length' (the sub-stream's document count) is available \u2014 there's no materialised array to index or iterate. To work with the array itself, use the materialised form (e.g. '$$$.<coll>.filter(pred).filter((${param}, i, ${collName}) => \u2026)').`,
+          lambda.pos
+        );
+      }
+      collLengthUsed = lengthUses > 0;
     }
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
     if (Object.keys(letVars).length > 0) {
@@ -8229,8 +8277,13 @@ var MAP = {
       );
     }
     const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, ctx, allocSlot, lowerBlock2);
-    const expr = generateWithCtx(rewritten2, ctx);
-    return { stages: [...prologue, { $replaceWith: expr }], clearLets: true };
+    const bodyCtx = collName !== void 0 && collLengthUsed ? {
+      ...ctx,
+      substreamLengthHandles: new Map([...ctx.substreamLengthHandles ?? [], [collName, `$${LENGTH_SLOT}`]])
+    } : ctx;
+    const expr = generateWithCtx(rewritten2, bodyCtx);
+    const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
+    return { stages: [...lengthStages, ...prologue, { $replaceWith: expr }], clearLets: true };
   }
 };
 function classifyComparatorPath(expr, paramA, paramB) {
@@ -9100,11 +9153,34 @@ function validateLookupShape(expr) {
     );
   }
   if (arg.params.length !== 1) {
-    throw new CodegenError(
-      `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
-      arg.pos
-    );
+    if (expr.method !== "filter" || arg.params.length > 3) {
+      throw new CodegenError(
+        `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
+        arg.pos
+      );
+    }
+    if (arg.block === void 0 && arg.body !== void 0) {
+      for (let p = 1; p < arg.params.length; p++) {
+        if (someExpr(arg.body, (e) => e.type === "ParamRef" && e.name === arg.params[p])) {
+          throw new CodegenError(
+            `'${arg.params[p]}' (the ${p === 1 ? "index" : "array"} parameter) has no meaning on a '.filter' predicate \u2014 the filtered sub-stream doesn't exist yet while the predicate runs. For its post-filter count, use a block body and the 3rd param, e.g. \`.filter((${arg.params[0]}, _i, coll) => { $match(...); assert(coll.length > 0, "\u2026"); })\`.`,
+            arg.pos
+          );
+        }
+      }
+    }
   }
+}
+function isRootStreamLengthNode(e) {
+  return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
+}
+function captureRootStreamLength(usesRootLen, depth, letVars, subCtx) {
+  if (!usesRootLen || depth !== 0) return subCtx;
+  letVars["v0_len"] = `$${LENGTH_SLOT}`;
+  return { ...subCtx, rootStreamLengthVar: "v0_len" };
+}
+function argsReadRootStreamLength(args) {
+  return args.some((a) => someArg(a, isRootStreamLengthNode));
 }
 function createSlotAllocator() {
   let n = 0;
@@ -9180,19 +9256,18 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
       lowerBlock2,
       innerEnclosing
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtxBase = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtx = captureRootStreamLength(
+      someExpr(lookupFree, isRootStreamLengthNode),
+      enclosing.foreignParams.length,
+      letVars,
+      subCtxBase
+    );
     const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
     return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
-    const { letVars, pipeline } = buildBlockBodyPredicate(
-      lambda.block,
-      foreignParam,
-      outerCtx,
-      outerLets,
-      lowerBlock2,
-      enclosing
-    );
+    const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing);
     return { kind: "pipeline", letVars, pipeline };
   }
   throw new CodegenError(
@@ -9205,7 +9280,35 @@ function makeSubPipelineCtx(outerCtx, letVarNames) {
   if (letVarNames.length === 0) return fresh;
   return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
 }
-function buildBlockBodyPredicate(block, foreignParam, outerCtx, outerLets, lowerBlock2, enclosing) {
+function buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing) {
+  const block = lambda.block;
+  const foreignParam = lambda.params[0];
+  const indexParam = lambda.params.length >= 2 ? lambda.params[1] : void 0;
+  const collParam = lambda.params.length === 3 ? lambda.params[2] : void 0;
+  const blockUses = (pred) => block.stmts.some((s) => someStmt(s, pred));
+  if (indexParam !== void 0 && blockUses((e) => e.type === "ParamRef" && e.name === indexParam)) {
+    throw new CodegenError(
+      `'${indexParam}' (the 2nd, index parameter) has no meaning inside a '.filter((${foreignParam}, ${indexParam}, \u2026) => \u2026)' block \u2014 MongoDB streams have no per-doc index. Keep it unused (e.g. '(${foreignParam}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
+      lambda.pos
+    );
+  }
+  if (collParam !== void 0) {
+    let total = 0;
+    let lengthUses = 0;
+    blockUses((e) => {
+      if (e.type === "ParamRef" && e.name === collParam) total++;
+      if (e.type === "MemberAccess" && e.member === "length" && e.object.type === "ParamRef" && e.object.name === collParam) {
+        lengthUses++;
+      }
+      return false;
+    });
+    if (total > lengthUses) {
+      throw new CodegenError(
+        `In '.filter((${foreignParam}, _i, ${collParam}) => { \u2026 })', only '${collParam}.length' (the post-filter sub-stream count) is available \u2014 there's no materialised array to index or iterate inside the lookup pipeline.`,
+        lambda.pos
+      );
+    }
+  }
   const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
   const { rewritten, letVars } = extractLetsFromPipeline(
     preRewritten,
@@ -9219,7 +9322,11 @@ function buildBlockBodyPredicate(block, foreignParam, outerCtx, outerLets, lower
   };
   const subCtx = {
     ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
-    enclosingLookup: innerEnclosing
+    enclosingLookup: innerEnclosing,
+    // Bind the 3rd 'collection' param to this sub-stream's materialised count
+    // (`$__jsmql.length`); `generateImplicitPipeline` (via `lowerBlock`) stamps
+    // the `$setWindowFields` ahead of the statement that reads `<coll>.length`.
+    ...collParam !== void 0 ? { substreamLengthHandles: /* @__PURE__ */ new Map([[collParam, `$${LENGTH_SLOT}`]]) } : {}
   };
   return { letVars, pipeline: lowerBlock2(rewritten, subCtx) };
 }
@@ -9252,14 +9359,7 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg)
     return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
-    const { letVars, pipeline } = buildBlockBodyPredicate(
-      lambda.block,
-      foreignParam,
-      outerCtx,
-      outerLets,
-      lowerBlock2,
-      enclosing
-    );
+    const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing);
     return { letVars, pipelineBody: pipeline };
   }
   throw new CodegenError(
@@ -9776,7 +9876,13 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     if (lookupStreamMethod(methods[i].method) === null) return null;
   }
   const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
-  const innerCtx = freshSubPipelineCtx(outerCtx);
+  const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const innerCtx = captureRootStreamLength(
+    usesRootLen,
+    enclosing.foreignParams.length,
+    letVars,
+    freshSubPipelineCtx(outerCtx)
+  );
   for (let i = 1; i < methods.length; i++) {
     const m = methods[i];
     const def = lookupStreamMethod(m.method);
@@ -11064,6 +11170,7 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking();
+  const handleNames = new Set(ctx.substreamLengthHandles?.keys() ?? []);
   let lengthSlotAt = null;
   const ensureStreamLength = () => {
     if (lengthSlotAt !== null && out.slice(lengthSlotAt).every(stagePreservesStreamLength)) return;
@@ -11072,7 +11179,9 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   };
   p.stmts.forEach((rawStmt, i) => {
     validator.checkBeforeElement(rawStmt.pos);
-    if (container === "top" && containsStreamLength(rawStmt)) ensureStreamLength();
+    if ((container === "top" || handleNames.size > 0) && containsStreamLength(rawStmt, handleNames)) {
+      ensureStreamLength();
+    }
     let stmt = rawStmt;
     if (stmt.type === "MethodCall") {
       const rewrite = tryRewriteMutatorCall(stmt);
@@ -11152,7 +11261,7 @@ function lowerFuncDecl(decl, ctx) {
       decl.pos
     );
   }
-  if (someExpr(decl.lambda, isStreamLengthNode)) {
+  if (someExpr(decl.lambda, (e) => isStreamLengthNode(e, NO_HANDLES))) {
     throw new CodegenError(
       `'$$.length' isn't supported inside a reusable function body yet [DEF-033]. Read it at the top level of the pipeline (e.g. \`let n = $$.length;\`) and pass the value in as a parameter.`,
       decl.pos
@@ -11448,7 +11557,8 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
     }
   } else {
     const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
-    const innerCtx = freshSubPipelineCtx(outerCtx);
+    const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
+    const innerCtx = captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx));
     for (const m of restMethods) {
       const def = lookupStreamMethod(m.method);
       if (def === null) {
@@ -11937,20 +12047,21 @@ function extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out) {
   }
   return el;
 }
-function isStreamLengthNode(e) {
-  return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
+var NO_HANDLES = /* @__PURE__ */ new Set();
+function isStreamLengthNode(e, handleNames) {
+  if (e.type !== "MemberAccess" || e.member !== "length") return false;
+  if (e.object.type === "CollectionRef") return true;
+  return e.object.type === "ParamRef" && handleNames.has(e.object.name);
 }
-function containsStreamLength(node) {
-  return node.type === "UpdateFilter" ? someStmt(node, isStreamLengthNode) : someElement(node, isStreamLengthNode);
+function containsStreamLength(node, handleNames = NO_HANDLES) {
+  const pred = (e) => isStreamLengthNode(e, handleNames);
+  return node.type === "UpdateFilter" ? someStmt(node, pred) : someElement(node, pred);
 }
 var STREAM_LENGTH_PRESERVING = /* @__PURE__ */ new Set(["$set", "$addFields", "$sort", "$lookup", "$setWindowFields"]);
 function stagePreservesStreamLength(stage) {
   if (stage === null || typeof stage !== "object") return false;
   const keys = Object.keys(stage);
   return keys.length === 1 && STREAM_LENGTH_PRESERVING.has(keys[0]);
-}
-function streamLengthStage() {
-  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
 }
 
 // src/index.ts

@@ -183,6 +183,32 @@ const CONCAT: StreamMethodDef = {
 // a nested stage inside the outer `$unionWith.pipeline` — valid MQL,
 // since the lookup correlates against the sub-pipeline's local doc (the
 // foreign collection), not any outer-pipeline `let` binding.
+// The expression a `.map` lambda evaluates per element. An expression body
+// (`d => X`) is used directly; a single-`return` block body (`d => { return X }`,
+// which the parser produces as an `exprBlock` with no `let`/`const` decls) yields
+// its `ret`. A block body WITH bindings is rejected with a redirect — rare, and
+// the expression form (or a top-level `let`) covers it. (A multi-statement
+// pipeline block `=> { $match; … }` never reaches `.map`: it's only parsed in
+// lookup-callback position, so `arg.block` is unset here.)
+function mapBodyExpr(lambda: LambdaNode): Expr {
+  if (lambda.body !== undefined) return lambda.body;
+  const eb = lambda.exprBlock;
+  if (eb !== undefined) {
+    if (eb.decls.length > 0) {
+      throw new CodegenError(
+        `.map(d => { … }) with 'let'/'const' bindings isn't supported — use a single 'return <expr>' (e.g. '.map(d => ({ … }))'), ` +
+          `or hoist the bindings to a top-level 'let' before the chain.`,
+        lambda.pos,
+      );
+    }
+    return eb.ret;
+  }
+  throw new CodegenError(
+    `.map(d => <expr>) requires an expression or single-'return' body — a multi-statement block isn't supported here; split into separate stages ($set, $project, …) instead.`,
+    lambda.pos,
+  );
+}
+
 const MAP: StreamMethodDef = {
   name: "map",
   validate(args, callPos) {
@@ -208,16 +234,11 @@ const MAP: StreamMethodDef = {
         arg.pos,
       );
     }
-    if (arg.body === undefined) {
-      throw new CodegenError(
-        `.map(d => <expr>) requires an expression body. Block-body arrows ('d => { … }') aren't supported here — split into separate stages ($set, $project, …) instead.`,
-        arg.pos,
-      );
-    }
+    const bodyExpr = mapBodyExpr(arg); // throws for unsupported block bodies
     // The index (2nd) param has no meaning on a stream — MongoDB has no per-doc
     // index. It may be present (positional, to reach the 3rd 'collection' param)
     // but never referenced.
-    if (arg.params.length >= 2 && someExpr(arg.body, (e) => e.type === "ParamRef" && e.name === arg.params[1])) {
+    if (arg.params.length >= 2 && someExpr(bodyExpr, (e) => e.type === "ParamRef" && e.name === arg.params[1])) {
       throw new CodegenError(
         `.map((${arg.params[0]}, ${arg.params[1]}) => …) can't use the index parameter '${arg.params[1]}' — MongoDB streams have no per-doc index. ` +
           `Drop it, or keep it unused (e.g. '(${arg.params[0]}, _${arg.params[1]}, coll)') only to reach the 3rd 'collection' parameter.`,
@@ -229,7 +250,7 @@ const MAP: StreamMethodDef = {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
-    const body = lambda.body as Expr;
+    const body = mapBodyExpr(lambda);
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,

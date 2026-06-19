@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-20 — feat: `$$.length` = ROOT stream count at any depth (via `$lookup.let`) + block-body `.map`
+
+Completes the nested stream-length composite. The motivating program now compiles and runs (verified end-to-end on mongod):
+
+```js
+$match($.createdAt >= new Date(2026, 1, 1));
+$$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
+  return {
+    totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length, // nested lookup .length
+    totalOrders: ordersColl.length,  // 3rd-arg handle — the orders sub-stream
+    totalUsers: $$.length,           // the ROOT users stream
+  };
+});
+```
+
+Three pieces landed:
+
+**1. `$$.length` is the ROOT stream, at any nesting depth** — mirroring `$` = root document (the developer's design call). Inside a top-level `$lookup`, the root count materialises at the top (`$setWindowFields` → `$__jsmql.length`) and is **captured into the `$lookup.let`** as `v0_len`, read back as `$$v0_len`. New `GenerateCtx.rootStreamLengthVar` + `captureRootStreamLength` (lookup-translation.ts), wired into all three top-level lookup bodies: the expression predicate (`translatePredicate`), the `$.x =` chained pivot (`tryExtractChainedLookup`), and the `$$ =` replace-stream pivot (pipeline.ts). The root count rides a `$$`-variable while a sub-stream count rides the `$__jsmql.length` field, so a `.map` body reads both at once with no collision (detection keys on `CollectionRef.length` vs `ParamRef.length`). `generateStreamLength` returns `$$<var>` when the var is set. This **narrows DEF-033**: top-level `$lookup` `$$.length` ships; `$facet`/`$unionWith`, depth > 1, and reusable-function bodies stay deferred (the message now lists those).
+
+**2. Block-body `.map`** — `(o, i, coll) => { return <expr>; }` (an `exprBlock` with no `let`/`const` decls) is accepted as the expression form (`mapBodyExpr` in stream-methods.ts); decls redirect to the expression / top-level-`let` form.
+
+**3. Unused extra params on an expression-body `.filter` predicate** — `(s, i, shipmntsColl) => …` is valid JS, so it no longer throws; `validateLookupShape` rejects only a *used* index/array param on a predicate (with a block-body redirect), mirroring `.map`.
+
+Docs: [LANGUAGE.md](LANGUAGE.md) § `$$.length` (root semantics) + § Cross-collection lookups; spec [stream-length.md](specs/stream-length.md) §§ ROOT-count-inside-`$lookup` / Scope; [DEFERRED.md](DEFERRED.md) DEF-033 narrowed. Tests: a nested-three-levels unit case in [test/stream-length.test.ts](../test/stream-length.test.ts) and a realistic showcase in [test/realistic.test.ts](../test/realistic.test.ts), both the mongod-verified shape.
+
+---
+
 ## 2026-06-19 — feat: block-body `.filter` 3rd-arg `coll.length` (in-pipeline sub-stream count)
 
 A block-body lookup filter now accepts the 3rd 'collection' param, so the post-filter sub-stream count is usable *inside* the `$lookup.pipeline` — the headline being an in-pipeline guard: `$.orders = $$$.orders.filter((o, _i, ordersColl) => { $match(o.userId === $._id); assert(ordersColl.length > 0, "User without orders is impossible"); })`. Lowers to a `$lookup` whose pipeline is `[$match, $setWindowFields($count→__jsmql.length), $match($convert assert), $unset __jsmql]`. Verified on live mongod: alice (2 orders) → `orders:[…]`; bob (0 orders) → `orders:[]`.

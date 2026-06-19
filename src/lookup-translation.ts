@@ -23,7 +23,7 @@ import type {
   LetDecl,
   FuncDecl,
 } from "./ast.ts";
-import { someStmt } from "./ast-walk.ts";
+import { someArg, someExpr, someStmt } from "./ast-walk.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
 import { LENGTH_SLOT, tmpSlot } from "./namespace.ts";
@@ -555,22 +555,32 @@ export function validateLookupShape(expr: Expr): void {
     );
   }
   if (arg.params.length !== 1) {
-    // A block-body `.filter` may take up to 3 params — (element, index,
-    // collection) — where the 3rd is the post-filter sub-stream handle (only
-    // `.length` available) and the index is positional-only (no per-doc stream
-    // index). The detailed checks run during lowering (buildBlockBodyPredicate).
-    // Expression-body predicates and `.find` keep the single-param rule: the
-    // filtered sub-stream doesn't exist yet while the predicate is being
-    // evaluated, so an `array`/`index` param there has no meaning.
-    const blockFilter = expr.method === "filter" && arg.block !== undefined && arg.params.length <= 3;
-    if (!blockFilter) {
+    // `.find` keeps the single-param rule; only `.filter` accepts up to 3
+    // (element, index, collection).
+    if (expr.method !== "filter" || arg.params.length > 3) {
       throw new CodegenError(
-        `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.` +
-          (expr.method === "filter" && arg.body !== undefined
-            ? ` The filtered sub-stream doesn't exist yet while the predicate runs; to use its post-filter count, use a block body and the 3rd param, e.g. \`.filter((${arg.params[0] ?? "o"}, _i, coll) => { $match(...); assert(coll.length > 0, "…"); })\`.`
-            : ``),
+        `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
         arg.pos,
       );
+    }
+    // Block-body `.filter`: the 3rd is the post-filter sub-stream handle (only
+    // `.length`) and the index is positional-only. Detailed checks run in
+    // buildBlockBodyPredicate.
+    if (arg.block === undefined && arg.body !== undefined) {
+      // Expression-body predicate: the filtered sub-stream doesn't exist yet
+      // while the predicate runs, so the extra params may be PRESENT (it's valid
+      // JS — `(s, _i, _coll) => …`) but must be UNUSED. A *used* index/array
+      // param redirects to the block-body form.
+      for (let p = 1; p < arg.params.length; p++) {
+        if (someExpr(arg.body, (e) => e.type === "ParamRef" && e.name === arg.params[p])) {
+          throw new CodegenError(
+            `'${arg.params[p]}' (the ${p === 1 ? "index" : "array"} parameter) has no meaning on a '.filter' predicate — ` +
+              `the filtered sub-stream doesn't exist yet while the predicate runs. For its post-filter count, use a block body and the 3rd param, ` +
+              `e.g. \`.filter((${arg.params[0]}, _i, coll) => { $match(...); assert(coll.length > 0, "…"); })\`.`,
+            arg.pos,
+          );
+        }
+      }
     }
   }
 }
@@ -583,6 +593,37 @@ export function validateLookupShape(expr: Expr): void {
  * owns the counter; the path itself comes from `tmpSlot` (see namespace.ts).
  */
 export type SlotAllocator = () => string;
+
+/** Is this node the `$$.length` (ROOT stream count) reference? */
+function isRootStreamLengthNode(e: Expr): boolean {
+  return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
+}
+
+/**
+ * `$$.length` (the ROOT stream count) used inside this lookup's body: when the
+ * lookup is at the TOP level (`depth === 0`, where the top-materialised
+ * `$__jsmql.length` lives on the input documents), capture it into the
+ * `$lookup.let` as `v0_len` and return the sub-ctx with `rootStreamLengthVar`
+ * set so codegen emits `$$v0_len`. `$$` is always the ROOT stream regardless of
+ * nesting depth; inner sub-stream counts use the named 3rd-arg handle instead.
+ * Deeper nesting (`depth > 0`) is left uncaptured — the foreign documents don't
+ * carry the root field — so `$$.length` there stays rejected [DEF-033].
+ */
+export function captureRootStreamLength(
+  usesRootLen: boolean,
+  depth: number,
+  letVars: Record<string, string>,
+  subCtx: GenerateCtx,
+): GenerateCtx {
+  if (!usesRootLen || depth !== 0) return subCtx;
+  letVars["v0_len"] = `$${LENGTH_SLOT}`;
+  return { ...subCtx, rootStreamLengthVar: "v0_len" };
+}
+
+/** Does any of these call args read `$$.length` (the ROOT stream count)? */
+export function argsReadRootStreamLength(args: readonly CallArg[]): boolean {
+  return args.some((a) => someArg(a, isRootStreamLengthNode));
+}
 
 export function createSlotAllocator(): SlotAllocator {
   let n = 0;
@@ -742,7 +783,15 @@ export function translatePredicate(
 
     // Codegen context: our own letVar names PLUS enclosing-in-scope names
     // are all `lambdaParams` so codegen emits `$$<name>` correctly.
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtxBase = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    // `$$.length` (ROOT count) in the predicate, at the top level → capture into
+    // `$lookup.let` so the residual `$expr` codegen reads it as `$$v0_len`.
+    const subCtx = captureRootStreamLength(
+      someExpr(lookupFree, isRootStreamLengthNode),
+      enclosing.foreignParams.length,
+      letVars,
+      subCtxBase,
+    );
     // Index-friendly translation: constant comparisons (`o.status === "x"`)
     // become a `{ field: value }` query the server can use an index for; only
     // the parts that have no query form — correlated `$$letVar` comparisons,
@@ -1751,9 +1800,20 @@ function tryExtractChainedLookup(
   // The enclosing context flows through so nested lookups inside the
   // predicate materialise correctly with their own let-bindings.
   const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock, enclosing);
+  // `$$.length` (the ROOT stream count) used in any chain method body: capture
+  // the top-materialised `$__jsmql.length` into THIS lookup's `$lookup.let`
+  // (depth-stamped `v<d>_len`) so the sub-pipeline reads it as `$$v<d>_len`
+  // (via `rootStreamLengthVar`). `$$` is always the ROOT stream regardless of
+  // depth; inner sub-stream counts use the 3rd-arg handle instead.
+  const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const innerCtx = captureRootStreamLength(
+    usesRootLen,
+    enclosing.foreignParams.length,
+    letVars,
+    freshSubPipelineCtx(outerCtx),
+  );
   // Apply each chain method through the stream-methods registry. `inSubPipeline`
   // is true so methods know they're emitting inside a sub-pipeline body.
-  const innerCtx = freshSubPipelineCtx(outerCtx);
   for (let i = 1; i < methods.length; i++) {
     const m = methods[i];
     const def = lookupStreamMethod(m.method);

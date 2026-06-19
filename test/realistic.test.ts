@@ -2474,6 +2474,53 @@ $sort({ revenue: -1 });
   );
 });
 
+describe("Per-user order report with counts at three nesting levels", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+    // For each recent user, explode their orders and annotate each with three
+    // different counts: this order's shipment count (a nested lookup), this
+    // user's order count (the 3rd-arg `ordersColl` sub-stream handle), and the
+    // total recent-user count (`$$.length` — the ROOT stream, captured into the
+    // orders $lookup.let as `v0_len`). Verified end-to-end on a live mongod.
+    expect(
+      jsmql(`
+$match($.createdAt >= new Date(2026, 1, 1));
+$$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
+  return {
+    totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,
+    totalOrders: ordersColl.length,
+    totalUsers: $$.length,
+  };
+});
+          `),
+    ).toEqual([
+      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      {
+        $lookup: {
+          from: "orders",
+          let: { v0_id: "$_id", v0_len: "$__jsmql.length" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$$v0_id", "$userId"] } } },
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.2" } },
+            { $set: { "__jsmql.tmp.2": { $size: "$__jsmql.tmp.2" } } },
+            {
+              $replaceWith: {
+                totalShipments: "$__jsmql.tmp.2",
+                totalOrders: "$__jsmql.length",
+                totalUsers: "$$v0_len",
+              },
+            },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+});
+
 describe("$near is not allowed inside an aggregation $match", { features: ["Pipelines"] }, () => {
   it(
     "the error points at the $geoNear stage to use instead",
