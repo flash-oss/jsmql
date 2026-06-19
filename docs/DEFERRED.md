@@ -177,23 +177,11 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M
 
-### DEF-023 — Nested lookups inside a *block-body* lambda
-
-- **What's blocked.** A `$$$.<coll>.find/filter(...)` inside the *block-body* form of another lookup's lambda — `$.users = $$$.users.filter(u => { $match(u.active); $.orders = $$$.orders.filter(o => o.userId === u._id); })`. Expression-body nested lookups (Wave 3 #1) work; block-body ones still throw.
-- **Target lowering.** Same shape as the expression-body path — the inner lookup materialises as a prologue stage inside the outer's `$lookup.pipeline`, with `u.<field>` refs auto-let'd into `inner.let`.
-- **Why blocked.** The block-body lowering goes through `lowerBlock` (= `generateImplicitPipeline`), which calls `extractLookupCalls` on each stage's body. Threading `EnclosingLookupContext` through those layers is the open work — the expression-body path threads it directly via `translatePredicate`'s recursion, but the block-body path runs through a different dispatch.
-- **Attempted approaches.** Considered passing `enclosing` through the `lowerBlock` signature; deferred because it touches every stage-lowering callsite. Could also be solved with a ctx-borne carrier (`ctx.enclosingLookup`), but that adds a new GenerateCtx field that every pipeline-layer function would need to preserve.
-- **Success criteria.** `$.x = $$$.a.filter(a => { $match(a.active); $.bs = $$$.b.filter(b => b.aId === a._id); })` lowers cleanly. Tests in `test/lookup.test.ts` mirror the expression-body block.
-- **Rejection site(s).** `src/lookup-translation.ts:translatePredicate` block-body branch; `src/lookup-translation.ts:buildPipelineFormPredicate` block-body branch.
-- **Spec.** `docs/specs/lookup-stage.md` "Nested lookups (expression-body, any depth)" section names this as the next slice.
-- **Status.** open
-- **Effort.** M (ctx-threading through `lowerBlock` + tests)
-
 ### DEF-024 — Forbidden-in-context inside sugar predicate block-bodies
 
 - **What's blocked.** A literal write/source stage (`{ $merge: … }`, `$out`, `$facet`, …) written inside a *sugar predicate block-body* lambda — `$$$.c.filter(o => { { $merge: 'm' }; })` (lookup) or `$ = { k: $$.filter(d => { … }) }` (facet) — gets must-first / must-last validation but NOT the forbidden-in-`$lookup`/`$facet`/`$unionWith` ban. Literal sub-pipeline arrays (`{ $lookup: { pipeline: [...] } }`) ARE fully covered via `generatePipelineWithCtx(container)`.
 - **Target lowering.** No MQL change. Thread the container kind into `generateImplicitPipeline` when it runs as a block-body lowerer (`lowerBlock`), so block-body sub-pipelines enforce `forbiddenIn`.
-- **Why blocked.** `lowerBlock` is the shared `SubPipelineLowerer`, used pervasively for predicate→`$match` translation (which produces top-level `$match` stages, not a sub-pipeline) as well as true sub-pipeline bodies. Binding a fixed container to it would mislabel the predicate-translation cases. A clean fix needs per-call-site container threading across `lookup-translation.ts` / `union-translation.ts` / `facet-translation.ts` — same class of change as DEF-023. Reachability of a literal write/source stage inside a predicate block-body is very low, and the gap never produces a false positive (at worst an imprecise must-last message or benign under-coverage).
+- **Why blocked.** `lowerBlock` is the shared `SubPipelineLowerer`, used pervasively for predicate→`$match` translation (which produces top-level `$match` stages, not a sub-pipeline) as well as true sub-pipeline bodies. Binding a fixed container to it would mislabel the predicate-translation cases. A clean fix needs per-call-site container threading across `lookup-translation.ts` / `union-translation.ts` / `facet-translation.ts` — the same shape of change that the nested-block-body lookup work solved with a ctx carrier (`GenerateCtx.enclosingLookup`), so a `GenerateCtx.subPipelineContainer` carrier would close this analogously. Reachability of a literal write/source stage inside a predicate block-body is very low, and the gap never produces a false positive (at worst an imprecise must-last message or benign under-coverage).
 - **Attempted approaches.** Considered binding the container into a `lowerBlock` factory at each pipeline.ts call site; deferred because several sites (`lowerReplaceStream`, `lowerOut`, the chain lowerers) have no single unambiguous container and a wrong label is worse DX than the gap.
 - **Success criteria.** `$.x = $$$.c.filter(o => { { $merge: 'm' }; })` throws the forbidden-in-`$lookup` error with a meaningful `.pos`. Tests in `test/stage-validation.test.ts` / `test/pipeline.test.ts`.
 - **Rejection site(s).** `docs/specs/pipeline-validation.md` § Known gap (tagged). `src/pipeline.ts` `generateImplicitPipeline` `container` param (forward-compatible hook, defaults `"top"`).
