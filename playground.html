@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>jsmql playground</title>
+    <title>JSMQL playground</title>
 
     <link
       rel="stylesheet"
@@ -961,7 +961,7 @@
   </head>
   <body>
     <header>
-      <strong>jsmql playground</strong>
+      <strong>JSMQL playground</strong>
       <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
       <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">syntax reference</a>
     </header>
@@ -1064,7 +1064,7 @@
               Show examples
               <span class="kbd">⌘E</span>
             </button>
-            <span class="label-tag">jsmql input</span>
+            <span class="label-tag">JSMQL input</span>
             <span class="label-stats" id="input-stats"></span>
             <span class="current-title" id="current-title"></span>
           </span>
@@ -1900,7 +1900,7 @@
       // "<N> LOC, <size>" for a panel header — lines + byte size (B under 1 KB,
       // else KB to one decimal). The side-by-side input/output figures show how
       // much terser the JSMQL source is than the MQL it expands to. Empty text
-      // (or none) yields "" so the header reads just "jsmql input" / "MQL output".
+      // (or none) yields "" so the header reads just "JSMQL input" / "MQL output".
       function statsOf(text) {
         if (!text) return "";
         const loc = text.split("\n").length;
