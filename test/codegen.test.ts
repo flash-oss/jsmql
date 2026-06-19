@@ -2733,11 +2733,41 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
-  it(".map with 3 params throws", () => {
-    expect(() => jsmql.expr("$.xs.map((x, i, arr) => x)")).toThrow(/at most 2 parameters/);
+  it(".map with a 3rd 'array' param: arr.length → $size; index unused → no $zip", () => {
+    // `i` is only present positionally to reach `arr`, so the simple `$map` is
+    // used (no $zip/$range); `arr` binds to the input via a thin $let.
+    expect(jsmql.expr("$.xs.map((x, i, arr) => arr.length)")).toEqual({
+      $map: { input: "$xs", as: "x", in: { $let: { vars: { arr: "$xs" }, in: { $size: "$$arr" } } } },
+    });
   });
-  it(".filter with 3 params throws", () => {
-    expect(() => jsmql.expr("$.xs.filter((x, i, arr) => true)")).toThrow(/at most 2 parameters/);
+  it(".filter with a 3rd 'array' param: simple $filter, arr is the input", () => {
+    expect(jsmql.expr("$.xs.filter((x, i, arr) => arr.length > 0)")).toEqual({
+      $filter: {
+        input: "$xs",
+        as: "x",
+        cond: { $let: { vars: { arr: "$xs" }, in: { $gt: [{ $size: "$$arr" }, 0] } } },
+      },
+    });
+  });
+  it("unused index → simple lowering (no $zip/$range)", () => {
+    expect(jsmql.expr("$.xs.map((x, i) => x)")).toEqual({ $map: { input: "$xs", as: "x", in: "$$x" } });
+  });
+  it("used index → $zip/$range pairing", () => {
+    expect(jsmql.expr("$.xs.map((x, i) => x + i)")).toEqual({
+      $map: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        as: "jsmqlPair",
+        in: {
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+            in: { $add: ["$$x", "$$i"] },
+          },
+        },
+      },
+    });
+  });
+  it(".map with 4 params throws", () => {
+    expect(() => jsmql.expr("$.xs.map((x, i, arr, extra) => x)")).toThrow(/at most 3 parameters/);
   });
   it(".findIndex with 3 params throws", () => {
     expect(() => jsmql.expr("$.xs.findIndex((x, i, arr) => true)")).toThrow(/at most 2 parameters/);

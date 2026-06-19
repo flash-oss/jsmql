@@ -460,6 +460,8 @@ The same element-type inference applies across `.filter`/`.find`/`.some`/`.every
 
 If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
+**Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.length` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — jsmql only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.length` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`. (On `$$$.<coll>` lookup chains the third arg isn't supported yet — compute it on the resulting array.)
+
 The **bare root** `$` is the simplest case: the root document is always an object and never an array, so there's nothing to dispatch on for *any* key. A string-literal key lowers to a plain field reference — `$["x"]` is just `$.x` — and a computed key lowers straight to `$getField`. This is how you name a field that isn't a bare identifier — a name containing a dot, dash, space, etc. — and how you read a nested `length` field without `.length` folding to the string-or-array length operator:
 
 ```js

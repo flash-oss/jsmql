@@ -111,17 +111,22 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 
 **Predicate bodies use JS truthy/falsy semantics.** The `cond` (or inner `$map` body for `.some`/`.every`) on `.filter`, `.find`, `.findIndex`, `.findLast`, `.findLastIndex`, `.some`, and `.every` is wrapped via `jsBoolIfNeeded` so that `arr.filter(x => x.name)` keeps items where `x.name` is truthy under JS rules (drops `null`, `""`, `0`, missing). When the body is already provably bool (`x => x > 0`, `x => Boolean(x)`, etc.) the wrap is elided and the cheap form ships through. See [grammar.md](grammar.md#js-truthyfalsy-semantics-for---boolean-predicate-methods) for the full ruleset and the helpers in `src/codegen.ts`.
 
-### Callback parameters: `(element, index)`
+### Callback parameters: `(element, index, array)`
 
-JS array-method callbacks receive `(element, index, array)`. jsmql supports the first two parameters; the third `array` parameter is rejected at compile time (binding the receiver into every iteration has no real use case and a costly MQL shape).
+JS array-method callbacks receive `(element, index, array)`. jsmql supports all three. They are shared across `.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every`, `.flatMap` via the `arrayIterInput()` helper in `codegen.ts` (`.findIndex`/`.findLastIndex` keep their own inline 2-param path).
 
-The 1-param path is the status quo: `as` is the user's parameter name, and the body's `$$<name>` is bound directly by `$map`/`$filter`. The 2-param path is shared across `.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every`, `.flatMap` via the `arrayIterInput()` helper in `codegen.ts`:
+- **`array` (3rd param)** is the iterated array itself — i.e. this method's *input* (`genObj`). It's bound to that input and typed as an array, so `arr.length` lowers to a clean `$size` (and `generateLengthAccess` honours the array-typed `ParamRef`). Strict-JS semantics fall out of "the input": in a `.filter(...).map((el,i,arr)=>…)` chain, `genObj` for the `.map` is the `.filter` result, so `arr` is the post-filter array — exactly as in JS.
+- **`index` (2nd param) is lazy.** The `$zip`/`$range` pairing is emitted **only when the index is actually referenced** anywhere in the body (a complete `someExpr` walk from `ast-walk.ts`). When it isn't — including the common `(el, i, arr) => …arr…` case where `i` is only there positionally to reach `arr` — the plain `$map`/`$filter` is used and the array param (if any) is bound with a thin `$let`. `arrayIterInput` returns a `paired` flag so `.filter`/`.find`/`.findLast` know whether to project elements back out of `[index, element]` pairs.
+
+**Simple form** (index unused): `as` is the element name and the body's `$$<name>` is bound directly by `$map`/`$filter`; an `array` param adds `{ $let: { vars: { [arrName]: <input> }, in: <body> } }`.
+
+**Paired form** (index used):
 
 - `input` becomes `{ $zip: { inputs: [{ $range: [0, { $size: expr }] }, expr] } }` (an array of `[index, element]` pairs).
 - `as` becomes a synthetic name `jsmqlPair` so it never collides with a user-named param.
-- The body is wrapped in `{ $let: { vars: { [elemName]: $arrayElemAt($$jsmqlPair, 1), [idxName]: $arrayElemAt($$jsmqlPair, 0) }, in: <body> } }` so the user's names resolve correctly via the standard `lambdaParams` path.
+- The body is wrapped in `{ $let: { vars: { [elemName]: $arrayElemAt($$jsmqlPair, 1), [idxName]: $arrayElemAt($$jsmqlPair, 0)[, [arrName]: <input>] }, in: <body> } }` so the user's names resolve via the standard `lambdaParams` path.
 
-Per-method shape under 2 params:
+Per-method shape under the paired form:
 
 | Method | 2-param shape |
 |---|---|

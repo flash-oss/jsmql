@@ -46,6 +46,7 @@ import {
   type GenerateCtx,
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { someExpr, someElement, someStmt } from "./ast-walk.ts";
 import { JSMQL_NS, LENGTH_SLOT, bindingSlot } from "./namespace.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
@@ -2122,97 +2123,6 @@ function extractFromStageElement(
 /** Is this node the `$$.length` stream-cardinality reference? */
 function isStreamLengthNode(e: Expr): boolean {
   return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
-}
-
-/** Recurse a CallArg (Expr or spread) for `someExpr`. */
-function someArg(arg: CallArg, pred: (e: Expr) => boolean): boolean {
-  return arg.type === "SpreadElement" ? someExpr(arg.argument, pred) : someExpr(arg, pred);
-}
-
-/**
- * True if `expr` or any sub-expression satisfies `pred`. **Complete** over the
- * `Expr` union — every child-bearing node recurses. Completeness is load-bearing
- * for `containsStreamLength`: a missed node type would let `$$.length` slip
- * through un-materialised and emit a dangling `$__jsmql.length` reference. (A
- * `$$.length` inside a *named reusable function* body lives in the ctx, not the
- * AST, so it isn't reachable here — `lowerFuncDecl` rejects that case instead.)
- */
-function someExpr(expr: Expr, pred: (e: Expr) => boolean): boolean {
-  if (pred(expr)) return true;
-  switch (expr.type) {
-    case "OperatorCall":
-    case "MathCall":
-    case "ObjectCall":
-      return expr.args.some((a) => someArg(a, pred));
-    case "CallExpression":
-      return someExpr(expr.callee, pred) || expr.args.some((a) => someArg(a, pred));
-    case "MethodCall":
-      return someExpr(expr.object, pred) || expr.args.some((a) => someArg(a, pred));
-    case "MemberAccess":
-      return someExpr(expr.object, pred);
-    case "IndexAccess":
-      return someExpr(expr.object, pred) || someExpr(expr.index, pred);
-    case "BinaryExpr":
-      return someExpr(expr.left, pred) || someExpr(expr.right, pred);
-    case "UnaryExpr":
-      return someExpr(expr.operand, pred);
-    case "TernaryExpr":
-      return someExpr(expr.condition, pred) || someExpr(expr.consequent, pred) || someExpr(expr.alternate, pred);
-    case "TemplateLiteral":
-      return expr.expressions.some((e) => someExpr(e, pred));
-    case "ArrayLiteral":
-      return expr.elements.some((el) => someElement(el, pred));
-    case "ObjectLiteral":
-      return expr.entries.some((entry) =>
-        entry.type === "SpreadElement"
-          ? someExpr(entry.argument, pred)
-          : (entry.key.kind === "computed" && someExpr(entry.key.expr, pred)) || someExpr(entry.value, pred),
-      );
-    case "Lambda":
-      if (expr.body !== undefined && someExpr(expr.body, pred)) return true;
-      if (expr.exprBlock !== undefined) {
-        if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
-        if (someExpr(expr.exprBlock.ret, pred)) return true;
-      }
-      if (expr.block !== undefined) return expr.block.stmts.some((s) => someStmt(s, pred));
-      return false;
-    case "TypeofExpr":
-      return someExpr(expr.operand, pred);
-    case "TypeCast":
-      return someExpr(expr.arg, pred);
-    case "NewDate":
-    case "DateUTC":
-      return expr.args.some((e) => someExpr(e, pred));
-    case "NewSet":
-      return expr.arg !== null && someExpr(expr.arg, pred);
-    case "ArrayFrom":
-      return someExpr(expr.input, pred) || (expr.mapFn !== null && someExpr(expr.mapFn, pred));
-    case "NumberStatic":
-      return someExpr(expr.arg, pred);
-    default:
-      // Leaves with no child expressions: literals, FieldRef, CollectionRef,
-      // DatabaseRef, ClusterRef, ParamRef, RegexLiteral, the *Ref/*Const tags,
-      // DateNow. None can contain a sub-expression.
-      return false;
-  }
-}
-
-/** `someExpr` over a pipeline ArrayElement (statement wrappers + bare expr). */
-function someElement(el: ArrayElement, pred: (e: Expr) => boolean): boolean {
-  if (el.type === "AssignExpr") return someExpr(el.value, pred);
-  if (el.type === "DeleteStmt") return false;
-  if (el.type === "LetDecl") return someExpr(el.value, pred);
-  if (el.type === "FuncDecl") return false; // body lives in ctx, not the AST — see lowerFuncDecl
-  if (el.type === "SpreadElement") return someExpr(el.argument, pred);
-  return someExpr(el as Expr, pred);
-}
-
-/** `someExpr` over a `;`-separated pipeline statement. */
-function someStmt(stmt: PipelineStmt, pred: (e: Expr) => boolean): boolean {
-  if (stmt.type === "UpdateFilter") {
-    return stmt.ops.some((op) => (op.type === "AssignExpr" ? someExpr(op.value, pred) : false));
-  }
-  return someElement(stmt as ArrayElement, pred);
 }
 
 /** True if a statement reads `$$.length` anywhere in its (inline) expressions. */

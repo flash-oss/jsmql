@@ -1,6 +1,7 @@
 import { lookupOperator } from "./operators.ts";
 import { validateOperatorArgs } from "./operator-validation.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { someExpr } from "./ast-walk.ts";
 import { LENGTH_SLOT } from "./namespace.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
@@ -1329,6 +1330,13 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
   // stage that reads it; here we just emit the field reference. Gated to
   // top-level pipeline position (see `generateStreamLength`).
   if (object.type === "CollectionRef") return generateStreamLength(ctx, object.pos);
+  // A lambda's 3rd 'array' callback param (`.map((el, i, arr) => arr.length)`)
+  // is provably an array — you can only iterate an array — so its `.length` is
+  // a clean `$size`, not the runtime `$isArray` guard used for unknown receivers.
+  if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
+    const v = _generate(object, ctx);
+    return { $size: optional ? wrapIfNull(v, []) : v };
+  }
   const rawObj = _generate(object, ctx);
   if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
@@ -2576,7 +2584,7 @@ function generateMethodCall(
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
-      if (lambda.params.length <= 1) {
+      if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
       }
       return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] }, 1] };
@@ -2702,10 +2710,11 @@ function generateMethodCall(
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
-      if (lambda.params.length <= 1) {
+      if (!iter.paired) {
         return { $filter: { input: iter.input, as: iter.asName, cond } };
       }
-      // 2-param: filter the (index, element) pairs, then project back to elements.
+      // Paired (index used): filter the (index, element) pairs, then project
+      // back to elements.
       return {
         $map: {
           input: { $filter: { input: iter.input, as: iter.asName, cond } },
@@ -2718,10 +2727,10 @@ function generateMethodCall(
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
       const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
-      if (lambda.params.length <= 1) {
+      if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
       }
-      // 2-param: find first matching pair, then extract its element.
+      // Paired (index used): find first matching pair, then extract its element.
       return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] }, 1] };
     }
     case "some": {
@@ -2971,32 +2980,55 @@ function isNegativeLiteral(e: Expr): boolean {
  *   the receiver into every iteration, which has no real use case.
  */
 function arrayIterInput(
-  lambda: { params: string[]; pos: number },
+  lambda: Extract<Expr, { type: "Lambda" }>,
   genObj: unknown,
   ctx: GenerateCtx,
   method: string,
   inputExpr?: Expr,
-): { input: unknown; asName: string; bodyCtx: GenerateCtx; wrap: (body: unknown) => unknown } {
+): { input: unknown; asName: string; bodyCtx: GenerateCtx; wrap: (body: unknown) => unknown; paired: boolean } {
   const params = lambda.params;
-  if (params.length >= 3) {
+  if (params.length > 3) {
     throw new CodegenError(
-      `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
+      `.${method}() callbacks take at most 3 parameters (element, index, array); got ${params.length}.`,
       lambda.pos,
     );
   }
-  const bodyCtx = elementTypedCtx(ctx, params, inputExpr);
-  if (params.length <= 1) {
-    return { input: genObj, asName: params[0] ? safeVarName(params[0]) : "v", bodyCtx, wrap: (body) => body };
+  const arrayParam = params.length === 3 ? params[2] : undefined;
+  // The 3rd 'array' callback param (JS's `(el, i, arr)`) is the iterated array
+  // itself — i.e. this method's input. Typed as an array so `arr.length` lowers
+  // to `$size`. Strict-JS semantics fall out: in a `.filter(...).map((el,i,arr)
+  // => …)` chain, `genObj` for the `.map` is the `.filter` result, so `arr` is
+  // the post-filter array, exactly as in JS.
+  const elementCtx = elementTypedCtx(ctx, params, inputExpr);
+  const bodyCtx = arrayParam
+    ? { ...elementCtx, bindingTypes: new Map([...(elementCtx.bindingTypes ?? []), [arrayParam, "array" as const]]) }
+    : elementCtx;
+  const asName = params[0] ? safeVarName(params[0]) : "v";
+
+  // The `$zip`/`$range` index machinery is only worth emitting when the index
+  // param is *actually referenced* (at any depth). When it isn't — including the
+  // common `(el, i, arr) => …arr…` case where `i` is only there positionally to
+  // reach the array param — emit the plain `$map`/`$filter`, binding the array
+  // param (if any) with a thin `$let`.
+  const indexUsed = params.length >= 2 && someExpr(lambda, (e) => e.type === "ParamRef" && e.name === params[1]);
+  if (!indexUsed) {
+    const wrap = arrayParam
+      ? (body: unknown) => ({ $let: { vars: { [safeVarName(arrayParam)]: genObj }, in: body } })
+      : (body: unknown) => body;
+    return { input: genObj, asName, bodyCtx, wrap, paired: false };
   }
+
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
     asName: "jsmqlPair",
     bodyCtx,
+    paired: true,
     wrap: (body) => ({
       $let: {
         vars: {
           [safeVarName(params[0])]: { $arrayElemAt: ["$$jsmqlPair", 1] },
           [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] },
+          ...(arrayParam ? { [safeVarName(arrayParam)]: genObj } : {}),
         },
         in: body,
       },

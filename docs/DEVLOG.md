@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-19 — feat: array-callback 3rd `(…, array)` param + lazy index pairing
+
+Array-method callbacks (`.map`/`.filter`/`.find`/`.findLast`/`.some`/`.every`/`.flatMap`) now accept the JS 3rd parameter — the iterated array. It binds to the method's input and is typed as an array, so `arr.length` lowers to a clean `$size`: `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics fall out of "the input" — in a `.filter(...).map((el,i,arr)=>…)` chain, `arr` is the post-filter result (it's `map`'s input). `generateLengthAccess` gained an array-typed-`ParamRef` → `$size` case for the clean output. (Lookup-chain `$$$.<coll>.filter(...).map(...)` 3rd arg is a separate, larger piece — the sub-stream count — still pending.)
+
+**Lazy index pairing (the motivating fix).** The `$zip`/`$range` index machinery is now emitted **only when the index param is actually referenced** (a complete `someExpr` `Expr`-union walk). When it isn't — including the common `(el, i, arr) => …arr…` where `i` is only positional to reach `arr` — the plain `$map`/`$filter` is used instead. This also tightened the pre-existing 2-param case: `.map((x, i) => x)` (unused `i`) no longer zips. `arrayIterInput` returns a `paired` flag so `.filter`/`.find`/`.findLast` know whether to project elements back out of the `[index, element]` pairs (previously keyed on param *count*, which no longer matches whether pairs were used).
+
+To reuse the complete `Expr`-union walker in both codegen (the index-usage check) and pipeline (`containsStreamLength`) without an import cycle, the `someExpr`/`someElement`/`someStmt` family moved to a new leaf module [src/ast-walk.ts](../src/ast-walk.ts). Implementation in [src/codegen.ts](../src/codegen.ts) (`arrayIterInput`, `generateLengthAccess`); spec [docs/specs/method-dispatch.md](specs/method-dispatch.md) § Callback parameters; user doc [docs/LANGUAGE.md](LANGUAGE.md). Verified on a live mongod 8.2 (`map(el*arr.length)` → `[30,60,90]`; `filter(arr.length>2)` keeps 3 / drops 2); 2340 tests pass, `tsc` clean.
+
+---
+
 ## 2026-06-18 — feat: `$$.length` — the current stream's document count as a value
 
 `$$.length` is now a usable value: the number of documents in the stream at the point it's read. `$.n = $$.length`, `1 / $$.length`, `assert($$.length <= 1, …)` — anywhere an expression goes. This is the long-deferred stream-`.length` (it supersedes the old "terminal `$count`" sketch from the 2026-05 stream-methods note: that would have collapsed the stream; this keeps it).
