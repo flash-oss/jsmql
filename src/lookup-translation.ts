@@ -731,8 +731,14 @@ export function translatePredicate(
     // Codegen context: our own letVar names PLUS enclosing-in-scope names
     // are all `lambdaParams` so codegen emits `$$<name>` correctly.
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    const matchBody = generateWithCtx(lookupFree, subCtx);
-    return { kind: "pipeline", letVars, pipeline: [...nestedStages, { $match: { $expr: matchBody } }] };
+    // Index-friendly translation: constant comparisons (`o.status === "x"`)
+    // become a `{ field: value }` query the server can use an index for; only
+    // the parts that have no query form — correlated `$$letVar` comparisons,
+    // computed expressions — fall back to `$expr`. This is the same translator
+    // the top-level `$match` / `$unionWith` / `$facet` / `$out` predicates use,
+    // so the lookup path is no longer the odd one wrapping everything in `$expr`.
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
 
   // ── Block body ─────────────────────────────────────────────────────
@@ -846,7 +852,9 @@ export function buildPipelineFormPredicate(
       innerEnclosing,
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    return { letVars, pipelineBody: [...nestedStages, { $match: { $expr: generateWithCtx(lookupFree, subCtx) } }] };
+    // Index-friendly translation — see the matching note in `translatePredicate`.
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== undefined) {
     const { letVars, pipeline } = buildBlockBodyPredicate(

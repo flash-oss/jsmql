@@ -69,6 +69,24 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
     const lookup = ((out as object[])[0] as { $lookup: { let: Record<string, string> } }).$lookup;
     expect(Object.keys(lookup.let).sort()).toEqual(["v0_tenantId", "v0_userId"]);
   });
+
+  it("constant comparisons use index-friendly query form; only correlated parts fall back to $expr", () => {
+    // `o.status === "shipped"` (constant) becomes a `{ status: "shipped" }` query
+    // field the server can index. Only `o.userId === $._id` — a comparison
+    // against the `$$v0_id` let var, which the query language cannot express —
+    // stays in $expr. Same translator the top-level `$match` uses; verified
+    // joining correctly against a live mongod.
+    expect(jsmql('$.x = $$$.orders.filter(o => o.userId === $._id && o.status === "shipped");')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { v0_id: "$_id" },
+          pipeline: [{ $match: { status: "shipped", $expr: { $eq: ["$userId", "$$v0_id"] } } }],
+          as: "x",
+        },
+      },
+    ]);
+  });
 });
 
 describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
@@ -262,7 +280,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               },
             },
             { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-            { $match: { $expr: { $gt: ["$__jsmql.__lookup1", 0] } } },
+            { $match: { "__jsmql.__lookup1": { $gt: 0 } } },
           ],
           as: "x",
         },
@@ -319,7 +337,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               },
             },
             { $set: { "__jsmql.__lookup1": { $size: "$__jsmql.__lookup1" } } },
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $gt: ["$__jsmql.__lookup1", 0] }] } } },
+            { $match: { "__jsmql.__lookup1": { $gt: 0 }, $expr: { $eq: ["$userId", "$$v0_id"] } } },
           ],
           as: "posts",
         },

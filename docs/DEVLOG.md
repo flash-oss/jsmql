@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-18 — fix(lookup): correlated-pipeline predicates use index-friendly query form, not blanket `$expr`
+
+The expression-body `$lookup` correlated-pipeline predicate path wrapped the *whole* predicate in `{ $match: { $expr: … } }` — even constant comparisons the query planner could serve from an index. It now routes the let-extracted predicate through `translateMatchBody` + `matchStagesFromTranslation`, the same index-friendly emitter the sibling predicate translators (`$unionWith` / `$facet` / `$out` / the `$$ = $$.filter(…)` replace-stream filter) already used. So `$$$.orders.filter(o => o.userId === $._id && o.status === "shipped")` now lowers the sub-pipeline `$match` to `{ status: "shipped", $expr: { $eq: ["$userId", "$$v0_id"] } }` — `status` is an indexable query field; only the correlated half stays in `$expr`. Previously both were buried in one `$expr: { $and: [...] }`.
+
+Why the correlated half stays `$expr`: MongoDB's query language cannot reference `let` variables — only `$expr` can — so `foreignField === $$letVar` has no query-form equivalent and must remain `$expr` (a constraint, not a missed optimization; it is still index-eligible inside `$lookup`). A materialized count comparison like `$$$.x.filter(…).length > 0` likewise now emits the query form `{ "__jsmql.__lookupN": { $gt: 0 } }` instead of `{ $expr: { $gt: [...] } }`.
+
+This aligns the expression-body and chain-form lookup paths with the block-body path, which already produced the index-friendly shape (each `$match(...)` statement in a block lowers through the same translator via `lowerBlock`). Implemented in `translatePredicate` and `buildPipelineFormPredicate` ([src/lookup-translation.ts](../src/lookup-translation.ts)). Verified against a live `mongod` (mixed query + correlated-`$expr` joins return the correct rows); two nested-lookup test expectations in [test/lookup.test.ts](../test/lookup.test.ts) updated to the query form, plus a new guard case for the constant-vs-correlated split.
+
+---
+
 ## 2026-06-18 — fix(lookup): depth-stamped `$lookup.let` names fix the cross-level `$$v_id` collision
 
 A nested lookup that captured the same field name at two enclosing levels produced **wrong-but-running** MQL. Reported case: `$.recentOrders = $$$.orders.filter(o => { $.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id); })` emitted `$$v_id` for *both* `o._id` (the order) and `$._id` (the outermost user) — and since MQL `$$` variables are lexically scoped *through* nested `$lookup.pipeline` boundaries, the inner `let: { v_id: "$_id" }` shadowed the outer one, so `s.userId === $._id` silently compared against the order's `_id`. Confirmed against a live `mongod`: the join returned the wrong shipments before, the right ones after.

@@ -8833,8 +8833,8 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
       innerEnclosing
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    const matchBody = generateWithCtx(lookupFree, subCtx);
-    return { kind: "pipeline", letVars, pipeline: [...nestedStages, { $match: { $expr: matchBody } }] };
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
     const { letVars, pipeline } = buildBlockBodyPredicate(
@@ -8900,7 +8900,8 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg)
       innerEnclosing
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    return { letVars, pipelineBody: [...nestedStages, { $match: { $expr: generateWithCtx(lookupFree, subCtx) } }] };
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
     const { letVars, pipeline } = buildBlockBodyPredicate(
