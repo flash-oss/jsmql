@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-19 — feat: block-body `.filter` 3rd-arg `coll.length` (in-pipeline sub-stream count)
+
+A block-body lookup filter now accepts the 3rd 'collection' param, so the post-filter sub-stream count is usable *inside* the `$lookup.pipeline` — the headline being an in-pipeline guard: `$.orders = $$$.orders.filter((o, _i, ordersColl) => { $match(o.userId === $._id); assert(ordersColl.length > 0, "User without orders is impossible"); })`. Lowers to a `$lookup` whose pipeline is `[$match, $setWindowFields($count→__jsmql.length), $match($convert assert), $unset __jsmql]`. Verified on live mongod: alice (2 orders) → `orders:[…]`; bob (0 orders) → `orders:[]`.
+
+**Mechanism.** `validateLookupShape` relaxes the single-param rule for block-body `.filter` only (expression-body predicates and `.find` keep it — the filtered sub-stream doesn't exist while the predicate runs; that rejection now redirects to the block form). `buildBlockBodyPredicate` takes the whole lambda, rejects a *used* index param and any non-`.length` use of the handle, and binds the 3rd param via `GenerateCtx.substreamLengthHandles`. `generateImplicitPipeline`'s materialiser (already present, gated `container === "top"`, which `lowerBlock` uses) now also fires for a bound handle's `.length`: `isStreamLengthNode`/`containsStreamLength` gained an optional `handleNames` set matching `<handle>.length` (a `ParamRef`) alongside `$$.length` (a `CollectionRef`). Because the block keeps the foreign docs, the inner trailing `{ $unset: "__jsmql" }` clears the count so it doesn't leak into the `as` array.
+
+**Why the named handle, not the `$$.length` sigil.** A `coll.length` is a `ParamRef.length`, which the *outer* pipeline's materialiser scan ignores (it keys on `CollectionRef` for `$$.length`) — so no spurious top-level `$setWindowFields` is emitted (a real bug the `$$.length`-sigil-in-sub-pipeline path still has). **Empty-stream caveat** (documented): an in-block `assert(coll.length > 0)` is a per-doc `$match` inside the lookup pipeline, so on a zero-match sub-stream it can't fire (no doc to reject) — `as` is `[]`; for a hard non-empty guarantee, assert on the materialised array at the outer level. Docs: [LANGUAGE.md](LANGUAGE.md) § Cross-collection lookups, specs [stream-length.md](specs/stream-length.md) § Sub-stream length, [lookup-stage.md](specs/lookup-stage.md). Tests in [test/lookup.test.ts](../test/lookup.test.ts). The `$$.length` sigil in sub-pipelines, cross-level passthrough, and `$facet`/`$unionWith` parity remain (DEF-033).
+
+---
+
 ## 2026-06-19 — feat: lookup-chain `.map` 3rd-arg `coll.length` (sub-stream count)
 
 A `$$$.<coll>.filter(p).map((o, _i, coll) => …)` chain — and the top-level `$$ = $$.map(...)` stream chain — now accept the JS 3rd callback param, where `coll` is the **stream** the `.map` transforms (the post-filter foreign sub-stream, or the top-level stream). `coll.length` is its document count: `$.byOrder = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, share: o.total / coll.length }))`. This is the named-handle spelling of "the inner pipeline's stream length" from the `$` = root, 3rd-arg = inner-stream design — the first slice of that work.

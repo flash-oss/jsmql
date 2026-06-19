@@ -546,6 +546,10 @@ export function generateImplicitPipeline(
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking();
+  // Sub-stream length handles in scope (a block-body `.filter`/`.map` 3rd param,
+  // bound by buildBlockBodyPredicate). Their `.length` materialises a
+  // `$setWindowFields` `$count` in THIS pipeline, exactly like `$$.length`.
+  const handleNames: ReadonlySet<string> = new Set(ctx.substreamLengthHandles?.keys() ?? []);
 
   // `$$.length` materialisation. The implicit (`;`-separated) form never buffers
   // update ops (`;` is a hard boundary), so no flush is needed before the scan.
@@ -558,9 +562,12 @@ export function generateImplicitPipeline(
 
   p.stmts.forEach((rawStmt, i) => {
     validator.checkBeforeElement(rawStmt.pos);
-    // `$$.length`: materialise at the top level; a sub-pipeline use is rejected
-    // by codegen's topLevelStream gate, so only hoist here when top-level.
-    if (container === "top" && containsStreamLength(rawStmt)) ensureStreamLength();
+    // Stream length: `$$.length` (top-level), or a bound sub-stream handle's
+    // `.length` (inside a block-body lookup, where `container === "top"` via
+    // `lowerBlock`). Materialise the `$setWindowFields` ahead of the using stage.
+    if ((container === "top" || handleNames.size > 0) && containsStreamLength(rawStmt, handleNames)) {
+      ensureStreamLength();
+    }
     let stmt: PipelineStmt = rawStmt;
     // Statement-position mutator rewrite: same logic as `generatePipeline`,
     // wrapped in a single-op `UpdateFilter` so it routes through the existing
@@ -669,7 +676,7 @@ function lowerFuncDecl(decl: FuncDecl, ctx: GenerateCtx): GenerateCtx {
   // site, but the body lives in the ctx (not the inline AST), so the
   // materialiser can't see it to hoist the `$setWindowFields` ahead of the
   // calling stage. Reject it rather than emit a dangling `$__jsmql.length`.
-  if (someExpr(decl.lambda, isStreamLengthNode)) {
+  if (someExpr(decl.lambda, (e) => isStreamLengthNode(e, NO_HANDLES))) {
     throw new CodegenError(
       `'$$.length' isn't supported inside a reusable function body yet [DEF-033]. ` +
         `Read it at the top level of the pipeline (e.g. \`let n = $$.length;\`) and pass the value in as a parameter.`,
@@ -2119,14 +2126,31 @@ function extractFromStageElement(
 // recomputed after any stage that changes the count or drops the field.
 // See docs/specs/stream-length.md.
 
-/** Is this node the `$$.length` stream-cardinality reference? */
-function isStreamLengthNode(e: Expr): boolean {
-  return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
+const NO_HANDLES: ReadonlySet<string> = new Set();
+
+/**
+ * Is this node a stream-cardinality `.length` reference? `$$.length` (the
+ * `CollectionRef` sigil) always; `<handle>.length` (a `ParamRef`) only when the
+ * name is a bound sub-stream handle (a lookup-chain `.filter`/`.map` 3rd param —
+ * see GenerateCtx.substreamLengthHandles).
+ */
+function isStreamLengthNode(e: Expr, handleNames: ReadonlySet<string>): boolean {
+  if (e.type !== "MemberAccess" || e.member !== "length") return false;
+  if (e.object.type === "CollectionRef") return true;
+  return e.object.type === "ParamRef" && handleNames.has(e.object.name);
 }
 
-/** True if a statement reads `$$.length` anywhere in its (inline) expressions. */
-export function containsStreamLength(node: ArrayElement | PipelineStmt): boolean {
-  return node.type === "UpdateFilter" ? someStmt(node, isStreamLengthNode) : someElement(node, isStreamLengthNode);
+/**
+ * True if a statement reads the stream length anywhere in its (inline)
+ * expressions — `$$.length`, or (when `handleNames` is supplied) a bound
+ * sub-stream handle's `.length`.
+ */
+export function containsStreamLength(
+  node: ArrayElement | PipelineStmt,
+  handleNames: ReadonlySet<string> = NO_HANDLES,
+): boolean {
+  const pred = (e: Expr) => isStreamLengthNode(e, handleNames);
+  return node.type === "UpdateFilter" ? someStmt(node, pred) : someElement(node, pred);
 }
 
 /**

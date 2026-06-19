@@ -615,6 +615,17 @@ $.recentOrders = $$$.orders.filter(o => {
 //   }]
 ```
 
+**The sub-stream count inside a block (`(o, _i, coll) => …`).** A block-body `.filter` may take a 3rd param naming the **post-filter sub-stream**; `coll.length` is how many documents matched, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
+
+```js
+$.orders = $$$.orders.filter((o, _i, coll) => {
+  $match(o.userId === $._id);
+  assert(coll.length > 0, "User without orders is impossible");
+});
+```
+
+Only `coll.length` is available (a stream has no array to index/iterate), and the index (2nd) param may be present but never *used* (no per-doc stream index). **Caveat — empty sub-stream:** an in-block `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there's no document for it to reject — the result is just `orders: []`, the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
+
 **Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot, emits the chained transform as a follow-up `$set`, and substitutes a FieldRef into the parent expression. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
 
 ```js

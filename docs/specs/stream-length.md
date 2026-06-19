@@ -111,6 +111,34 @@ streams have no per-doc index; it may be present-but-unused only to reach the 3r
 param). Both rejections are permanent (no DEF row): there is no HR3-safe stream
 index, and the array-form is reached via the materialised path instead.
 
+**Block-body `.filter`.** The same 3rd-arg handle works in a block-body lookup
+filter — `$.orders = $$$.orders.filter((o, _i, coll) => { $match(o.userId === $._id); assert(coll.length > 0, "…"); })`.
+There the block lowers to the `$lookup.pipeline` (via `lowerBlock` →
+`generateImplicitPipeline`, which already runs the materialiser since `lowerBlock`
+uses `container: "top"`), `buildBlockBodyPredicate` binds `coll` via
+`substreamLengthHandles`, and the materialiser stamps the `$setWindowFields`
+ahead of the statement that reads `coll.length` (here the `assert` `$match`).
+Because the block keeps the foreign documents (a filter doesn't reshape), the
+trailing `{ $unset: "__jsmql" }` fires *inside* the sub-pipeline so the count
+field doesn't leak into the `as` array. The same index / non-`.length`
+rejections apply (checked in `buildBlockBodyPredicate`).
+
+**Using the named handle, not `$$.length`, avoids a spurious outer stage.** A
+`coll.length` reference is a `ParamRef.length`, which the *outer* pipeline's
+materialiser scan (`isStreamLengthNode`, keyed on `CollectionRef` for `$$.length`)
+correctly ignores — so no useless top-level `$setWindowFields` is emitted. (A
+`$$.length` *sigil* inside a block still mis-fires an outer stamp — that and
+`$facet`/`$unionWith` parity remain on the list; see [DEFERRED.md](../DEFERRED.md)
+DEF-033.)
+
+**Empty sub-stream + `assert`.** An in-block `assert(coll.length > 0, …)` is a
+per-document `$match` *inside* the `$lookup.pipeline`; on a foreign sub-stream
+with zero matches there are no documents to evaluate, so the assert can't fire —
+the `as` array is simply `[]`. This is inherent to `$lookup` (not a jsmql choice):
+to *guarantee* a non-empty result, assert on the materialised array at the outer
+level instead — `$.orders = $$$.orders.filter(p); assert($.orders.length > 0, "…")`
+(verified to fire on mongod).
+
 ## Scope & rejections
 
 `$$.length` is **top-level pipeline only**, gated by the `topLevelStream` ctx

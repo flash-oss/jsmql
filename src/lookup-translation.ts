@@ -23,9 +23,10 @@ import type {
   LetDecl,
   FuncDecl,
 } from "./ast.ts";
+import { someStmt } from "./ast-walk.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
-import { tmpSlot } from "./namespace.ts";
+import { LENGTH_SLOT, tmpSlot } from "./namespace.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
@@ -554,10 +555,23 @@ export function validateLookupShape(expr: Expr): void {
     );
   }
   if (arg.params.length !== 1) {
-    throw new CodegenError(
-      `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
-      arg.pos,
-    );
+    // A block-body `.filter` may take up to 3 params — (element, index,
+    // collection) — where the 3rd is the post-filter sub-stream handle (only
+    // `.length` available) and the index is positional-only (no per-doc stream
+    // index). The detailed checks run during lowering (buildBlockBodyPredicate).
+    // Expression-body predicates and `.find` keep the single-param rule: the
+    // filtered sub-stream doesn't exist yet while the predicate is being
+    // evaluated, so an `array`/`index` param there has no meaning.
+    const blockFilter = expr.method === "filter" && arg.block !== undefined && arg.params.length <= 3;
+    if (!blockFilter) {
+      throw new CodegenError(
+        `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.` +
+          (expr.method === "filter" && arg.body !== undefined
+            ? ` The filtered sub-stream doesn't exist yet while the predicate runs; to use its post-filter count, use a block body and the 3rd param, e.g. \`.filter((${arg.params[0] ?? "o"}, _i, coll) => { $match(...); assert(coll.length > 0, "…"); })\`.`
+            : ``),
+        arg.pos,
+      );
+    }
   }
 }
 
@@ -741,14 +755,7 @@ export function translatePredicate(
 
   // ── Block body ─────────────────────────────────────────────────────
   if (lambda.block !== undefined) {
-    const { letVars, pipeline } = buildBlockBodyPredicate(
-      lambda.block,
-      foreignParam,
-      outerCtx,
-      outerLets,
-      lowerBlock,
-      enclosing,
-    );
+    const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock, enclosing);
     return { kind: "pipeline", letVars, pipeline };
   }
 
@@ -781,13 +788,52 @@ function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): Gener
  * enclosing let emits `$$<name>` rather than throwing `UnknownIdentifier`.
  */
 function buildBlockBodyPredicate(
-  block: Pipeline,
-  foreignParam: string,
+  lambda: Lambda,
   outerCtx: GenerateCtx,
   outerLets: ReadonlyMap<string, string> | undefined,
   lowerBlock: SubPipelineLowerer,
   enclosing: EnclosingLookupContext,
 ): { letVars: Record<string, string>; pipeline: object[] } {
+  const block = lambda.block as Pipeline; // caller guarantees lambda.block !== undefined
+  const foreignParam = lambda.params[0];
+  // 2nd/3rd params on a block-body `.filter` — (element, index, collection).
+  // The index has no per-doc meaning on a stream; the collection is the
+  // post-filter sub-stream and only `<coll>.length` (its count) is available.
+  const indexParam = lambda.params.length >= 2 ? lambda.params[1] : undefined;
+  const collParam = lambda.params.length === 3 ? lambda.params[2] : undefined;
+  const blockUses = (pred: (e: Expr) => boolean): boolean => block.stmts.some((s) => someStmt(s, pred));
+
+  if (indexParam !== undefined && blockUses((e) => e.type === "ParamRef" && e.name === indexParam)) {
+    throw new CodegenError(
+      `'${indexParam}' (the 2nd, index parameter) has no meaning inside a '.filter((${foreignParam}, ${indexParam}, …) => …)' block — MongoDB streams have no per-doc index. ` +
+        `Keep it unused (e.g. '(${foreignParam}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
+      lambda.pos,
+    );
+  }
+  if (collParam !== undefined) {
+    let total = 0;
+    let lengthUses = 0;
+    blockUses((e) => {
+      if (e.type === "ParamRef" && e.name === collParam) total++;
+      if (
+        e.type === "MemberAccess" &&
+        e.member === "length" &&
+        e.object.type === "ParamRef" &&
+        e.object.name === collParam
+      ) {
+        lengthUses++;
+      }
+      return false; // visit all
+    });
+    if (total > lengthUses) {
+      throw new CodegenError(
+        `In '.filter((${foreignParam}, _i, ${collParam}) => { … })', only '${collParam}.length' (the post-filter sub-stream count) is available — ` +
+          `there's no materialised array to index or iterate inside the lookup pipeline.`,
+        lambda.pos,
+      );
+    }
+  }
+
   const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
   const { rewritten, letVars } = extractLetsFromPipeline(
     preRewritten,
@@ -802,6 +848,10 @@ function buildBlockBodyPredicate(
   const subCtx: GenerateCtx = {
     ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
     enclosingLookup: innerEnclosing,
+    // Bind the 3rd 'collection' param to this sub-stream's materialised count
+    // (`$__jsmql.length`); `generateImplicitPipeline` (via `lowerBlock`) stamps
+    // the `$setWindowFields` ahead of the statement that reads `<coll>.length`.
+    ...(collParam !== undefined ? { substreamLengthHandles: new Map([[collParam, `$${LENGTH_SLOT}`]]) } : {}),
   };
   return { letVars, pipeline: lowerBlock(rewritten, subCtx) };
 }
@@ -855,14 +905,7 @@ export function buildPipelineFormPredicate(
     return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== undefined) {
-    const { letVars, pipeline } = buildBlockBodyPredicate(
-      lambda.block,
-      foreignParam,
-      outerCtx,
-      outerLets,
-      lowerBlock,
-      enclosing,
-    );
+    const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock, enclosing);
     return { letVars, pipelineBody: pipeline };
   }
   throw new CodegenError(

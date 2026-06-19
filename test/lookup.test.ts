@@ -126,6 +126,70 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
   });
 });
 
+describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream length)", () => {
+  // The post-filter sub-stream count, via `<coll>.length`, usable inside the
+  // block (here in an assert). Verified end-to-end on a live mongod: alice
+  // (2 orders) → orders:[…], bob (0 orders) → orders:[] (the assert no-ops on
+  // an empty sub-stream — no doc flows through the lookup pipeline to reject).
+  it("assert(ordersColl.length > 0) materialises a $setWindowFields before the assert $match", () => {
+    expect(
+      jsmql(`
+        $.orders = $$$.orders.filter((o, i, ordersColl) => {
+          $match(o.userId === $._id);
+          assert(ordersColl.length > 0, "User without orders is impossible");
+        });
+      `),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { v0_id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            {
+              $match: {
+                $expr: {
+                  $convert: {
+                    input: true,
+                    to: {
+                      $cond: [
+                        { $gt: ["$__jsmql.length", 0] },
+                        "bool",
+                        "jsmql assertion failed: User without orders is impossible",
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            { $unset: "__jsmql" },
+          ],
+          as: "orders",
+        },
+      },
+    ]);
+  });
+
+  it("rejects a USED index param in the block", () => {
+    expect(() =>
+      jsmql(`$.x = $$$.orders.filter((o, i, c) => { $match(o.userId === $._id); assert(i > 0, "x"); });`),
+    ).toThrow(/'i' \(the 2nd, index parameter\) has no meaning.*no per-doc index/);
+  });
+
+  it("rejects a non-`.length` use of the collection handle in the block", () => {
+    expect(() =>
+      jsmql(`$.x = $$$.orders.filter((o, i, c) => { $match(o.userId === $._id); $.first = c[0]; });`),
+    ).toThrow(/only 'c\.length' \(the post-filter sub-stream count\) is available/);
+  });
+
+  it("an expression-body filter with 3 params is rejected with a block-body redirect", () => {
+    expect(() => jsmql(`$.x = $$$.orders.filter((o, i, c) => c.length > 0);`)).toThrow(
+      /filtered sub-stream doesn't exist yet.*use a block body and the 3rd param/,
+    );
+  });
+});
+
 describe("$$$.coll.find/filter — chained terminals", () => {
   it("chained .length on .filter produces $size + slot writeback", () => {
     const out = jsmql("let n = $$$.orders.filter(o => o.userId === $._id).length;");
