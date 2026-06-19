@@ -760,9 +760,15 @@ const shipSpecs: ShipSpec[] = [
   },
 ];
 
+// Each order's owning user, so a shipment can carry a denormalised `userId`
+// (the customer who placed the shipped order). This is what lets a nested
+// lookup correlate shipments back to the outer user: `s.userId === $._id`.
+const ORDER_USER = new Map(orderSpecs.map((o) => [o.n, o.user]));
+
 export const shipments = shipSpecs.map((s) => ({
   _id: ID.shipment(s.n),
   orderId: ID.order(s.order),
+  userId: ID.user(ORDER_USER.get(s.order)!),
   carrier: s.carrier,
   status: s.status,
   weight: s.weight,
@@ -852,9 +858,15 @@ export function validateDataset(): void {
     }
     if (!userIds.has((o.userId as ObjectId).toHexString())) errs.push(`order ${o._id.toHexString()}: dangling userId`);
   }
+  const orderUserOf = new Map(
+    orders.map((o) => [(o._id as ObjectId).toHexString(), (o.userId as ObjectId).toHexString()]),
+  );
   for (const s of shipments) {
-    if (!orderIds.has((s.orderId as ObjectId).toHexString()))
-      errs.push(`shipment ${s._id.toHexString()}: dangling orderId`);
+    const orderHex = (s.orderId as ObjectId).toHexString();
+    if (!orderIds.has(orderHex)) errs.push(`shipment ${s._id.toHexString()}: dangling orderId`);
+    // The denormalised userId must equal the owning order's user.
+    if (orderUserOf.get(orderHex) !== (s.userId as ObjectId).toHexString())
+      errs.push(`shipment ${s._id.toHexString()}: userId does not match its order's user`);
   }
   for (const r of reviews) {
     if (!productIds.has((r.productId as ObjectId).toHexString()))
