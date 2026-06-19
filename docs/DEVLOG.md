@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-19 — test: live-MongoDB integration suite + deterministic fixture instance
+
+jsmql can emit MQL that *looks* valid and passes a `toEqual(...)` but that the server doesn't actually run the way the user meant — exactly the failure mode HR3 exists to prevent. We now have [test/integration.test.ts](../test/integration.test.ts): 12 curated cases that compile a jsmql source, run it against a **real MongoDB**, and assert on the documents returned. Expected values were derived from a live run, never guessed. Building it immediately surfaced a real DX trap — the fixture's first deterministic ObjectIds were zero-padded (`0000…a1`), whose embedded timestamp decodes to 1970, so jsmql's `assertPlausibleObjectId` guard (correctly) rejected "find by `_id` via the `0x` literal"; the fix was to give fixture ids a plausible `0x65000000…` (2023) timestamp prefix so the `0x` literal works end-to-end.
+
+The dataset lives in [test/fixtures/](../test/fixtures/CLAUDE.md): five cross-referenced collections (`users`/`products`/`orders`/`shipments`/`reviews`), deterministic by hard rule (fixed ids/dates/numbers — no `Math.random`/`Date.now`), with order line prices and totals **computed** from the catalogue and a `validateDataset()` self-check at seed time. A content hash (`DATASET_HASH`) drives idempotent re-seeding.
+
+The read-only requirement drove the instance design. A server-enforced read-only role needs `authorization: enabled`, which is instance-wide — enabling it on the developer's primary mongod (which serves their real services auth-free) was rejected as too invasive. Instead we run a **dedicated second mongod on `:27018`** with `--auth`, its own dbpath at `~/.jsmql-fixture` (outside the repo), an admin user used only by the seeder, and a `jsmql_ro` user with `read` on `jsmql_fixture` that the tests connect through — so a test run literally cannot write (verified: writes/updates come back `Unauthorized`). Lifecycle is `npm run fixture:{up,seed,status,down,reset}` ([test/fixtures/instance.ts](../test/fixtures/instance.ts); `mongod --fork` is rejected on macOS, so it self-daemonizes detached). The suite **self-skips** (green, not failing) when the instance isn't up, so `npm test` stays green for contributors who haven't run `fixture:up`. This is now the canonical home for "verify it actually runs" — see [test/CLAUDE.md](../test/CLAUDE.md). No `src/` behaviour changed.
+
+---
+
 ## 2026-06-18 — fix: constant `new Date(...)` folds to a real BSON Date (HR1/HR3)
 
 `new Date("2026-05-17T...")` inside a query document — a Filter `{ createdAt: { $gte: new Date("...") } }` or the `$match({ ... })` object-literal passthrough — lowered to the aggregation form `{ $toDate: "..." }`. But MongoDB's *query language* doesn't evaluate `{ $toDate }`; it compares against it as a literal subdocument, so the predicate silently matched **nothing**. Verified against a local `mongod`: a real `Date` in a `$gte` slot matches, `{ $toDate: "..." }` matches `[]`, in both `find` and aggregation `$match`. This violated HR1 (a constant `Date` should pass through verbatim) and produced a query that just didn't work — the reported bug.

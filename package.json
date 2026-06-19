@@ -63,7 +63,12 @@
     "smoke:dist": "npm run build && vitest run test/smoke.test.ts",
     "format": "oxfmt .",
     "generate:ops": "node scripts/generate-ops.mjs",
-    "sync:playground": "node scripts/sync-playground.mjs"
+    "sync:playground": "node scripts/sync-playground.mjs",
+    "fixture:up": "node test/fixtures/instance.ts up",
+    "fixture:seed": "node test/fixtures/instance.ts seed",
+    "fixture:status": "node test/fixtures/instance.ts status",
+    "fixture:down": "node test/fixtures/instance.ts down",
+    "fixture:reset": "node test/fixtures/instance.ts reset"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
