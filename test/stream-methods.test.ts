@@ -197,10 +197,69 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     expect(() => jsmql("$$ = $$.map();")).toThrow(/takes exactly one argument/);
   });
 
-  it("two-arg arrow `(d, i) => …` is rejected with a no-index hint", () => {
+  it("two-arg arrow `(d, i) => …` that USES the index is rejected with a no-index hint", () => {
     expect(() => jsmql("$$ = $$.map((d, i) => ({ id: d._id, idx: i }));")).toThrow(
-      /single-parameter arrow.*no per-doc index/,
+      /can't use the index parameter 'i'.*no per-doc index/,
     );
+  });
+
+  it("an UNUSED index param is allowed (positional, to reach the 3rd 'collection' param)", () => {
+    // `i` is present but never referenced — accepted, no $zip/index machinery.
+    expect(jsmql("$$ = $$.map((d, _i) => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
+  });
+
+  // ── 3rd 'collection' param → sub-stream length ──────────────────────────────
+  // `coll.length` (the post-filter sub-stream's document count) materialises a
+  // `$setWindowFields` `$count` (`__jsmql.length`) ahead of the `$replaceWith`.
+  // Verified end-to-end on a live mongod (counts correct, no `__jsmql` leak).
+  describe(".map((d, _i, coll) => …) — 3rd 'collection' param sub-stream length", () => {
+    it("top-level `$$` stream chain: coll.length → $setWindowFields + read-back", () => {
+      expect(jsmql("$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.length }));")).toEqual([
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        { $replaceWith: { id: "$_id", n: "$__jsmql.length" } },
+      ]);
+    });
+
+    it("lookup chain: $setWindowFields lands after the filter's $match, inside $lookup.pipeline", () => {
+      expect(
+        jsmql("$$ = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, n: coll.length }));"),
+      ).toEqual([
+        {
+          $lookup: {
+            from: "orders",
+            let: { v0_id: "$_id" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+              { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+              { $replaceWith: { id: "$_id", n: "$__jsmql.length" } },
+            ],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        { $unwind: "$__jsmql.tmp.1" },
+        { $replaceWith: "$__jsmql.tmp.1" },
+      ]);
+    });
+
+    it("coll.length composes inside an operator ($divide)", () => {
+      expect(jsmql("$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.length }));")).toEqual([
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        { $replaceWith: { share: { $divide: ["$total", "$__jsmql.length"] } } },
+      ]);
+    });
+
+    it("only `.length` is available on the handle — other uses are rejected with a redirect", () => {
+      expect(() => jsmql("$$ = $$.map((o, _i, coll) => ({ first: coll[0] }));")).toThrow(
+        /only 'coll\.length'.*no materialised array to index or iterate/,
+      );
+      expect(() => jsmql("$$ = $$.map((o, _i, coll) => ({ all: coll }));")).toThrow(/only 'coll\.length'/);
+    });
+
+    it("a USED index is still rejected even with a 3rd param present", () => {
+      expect(() => jsmql("$$ = $$.map((o, i, coll) => ({ x: i, n: coll.length }));")).toThrow(
+        /can't use the index parameter 'i'/,
+      );
+    });
   });
 
   // (Block-body arrows like `d => { … }` are caught by the parser before .map's

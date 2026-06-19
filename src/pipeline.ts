@@ -47,7 +47,7 @@ import {
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr, someElement, someStmt } from "./ast-walk.ts";
-import { JSMQL_NS, LENGTH_SLOT, bindingSlot } from "./namespace.ts";
+import { JSMQL_NS, bindingSlot, streamLengthStage } from "./namespace.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
@@ -2142,11 +2142,6 @@ function stagePreservesStreamLength(stage: unknown): boolean {
   if (stage === null || typeof stage !== "object") return false;
   const keys = Object.keys(stage as Record<string, unknown>);
   return keys.length === 1 && STREAM_LENGTH_PRESERVING.has(keys[0]);
-}
-
-/** The `$setWindowFields` stage that stamps the stream count onto every doc. */
-function streamLengthStage(): object {
-  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
 }
 
 /**

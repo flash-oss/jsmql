@@ -142,6 +142,19 @@ export type GenerateCtx = {
    */
   topLevelStream?: boolean;
   /**
+   * In-scope sub-stream length handles: the named 3rd callback param of a
+   * lookup-chain `.map`/`.filter` (`$$$.<coll>.filter(p).map((o, _i, coll) => …)`)
+   * maps to the MQL path its `.length` resolves to. The *current* sub-pipeline
+   * level's handle resolves to `"$__jsmql.length"` (a `$setWindowFields` `$count`
+   * the lowerer stamps just before the consuming stage); an *ancestor* level's
+   * handle resolves to a `$$v<depth>_…` variable the inner `$lookup.let`
+   * captured (cross-level passthrough — any nesting depth). Read by
+   * `generateLengthAccess` for a `ParamRef` receiver. Propagated by `extendCtx`
+   * so nested lambdas inside the body keep the handles in scope.
+   * See docs/specs/stream-length.md § sub-pipeline.
+   */
+  substreamLengthHandles?: ReadonlyMap<string, string>;
+  /**
    * Accumulator context — set by `pipeline.ts` when descending into a `$group`
    * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
    * slot. Used by the operator-call codegen to gate operators that only make
@@ -213,6 +226,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
     topLevelStream: ctx.topLevelStream,
+    substreamLengthHandles: ctx.substreamLengthHandles,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
@@ -1354,6 +1368,16 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
   // stage that reads it; here we just emit the field reference. Gated to
   // top-level pipeline position (see `generateStreamLength`).
   if (object.type === "CollectionRef") return generateStreamLength(ctx, object.pos);
+  // A lookup-chain `.map`/`.filter` 3rd param naming the sub-stream
+  // (`$$$.<coll>.filter(p).map((o, _i, coll) => coll.length)`): its `.length`
+  // is the sub-stream's document count, materialised by the lowerer into
+  // `__jsmql.length` (current level) or captured via `$lookup.let` from an
+  // ancestor level (cross-level). Checked BEFORE the array-typed branch — the
+  // handle is NOT a bound `$$`-variable, so `$size` of it would be invalid.
+  if (object.type === "ParamRef") {
+    const handleSource = ctx.substreamLengthHandles?.get(object.name);
+    if (handleSource !== undefined) return handleSource;
+  }
   // A lambda's 3rd 'array' callback param (`.map((el, i, arr) => arr.length)`)
   // is provably an array — you can only iterate an array — so its `.length` is
   // a clean `$size`, not the runtime `$isArray` guard used for unknown receivers.

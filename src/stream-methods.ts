@@ -8,6 +8,7 @@
 // shape/lowering/error table.
 
 import type { ArrayElement, CallArg, Expr } from "./ast.ts";
+import { someExpr } from "./ast-walk.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
   extractLetsFromExpr,
@@ -15,7 +16,7 @@ import {
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
-import { GROUP_TMP } from "./namespace.ts";
+import { GROUP_TMP, LENGTH_SLOT, streamLengthStage } from "./namespace.ts";
 import { containsUnionPush } from "./union-translation.ts";
 import { lowerUnionPush } from "./union-translation.ts";
 
@@ -201,9 +202,9 @@ const MAP: StreamMethodDef = {
         arg.pos,
       );
     }
-    if (arg.params.length !== 1) {
+    if (arg.params.length > 3) {
       throw new CodegenError(
-        `.map(d => <expr>) takes a single-parameter arrow (got ${arg.params.length}). MongoDB streams have no per-doc index, so '(d, i) => …' isn't meaningful here.`,
+        `.map(d => <expr>) takes at most 3 parameters '(element, index, collection)', got ${arg.params.length}.`,
         arg.pos,
       );
     }
@@ -213,16 +214,57 @@ const MAP: StreamMethodDef = {
         arg.pos,
       );
     }
+    // The index (2nd) param has no meaning on a stream — MongoDB has no per-doc
+    // index. It may be present (positional, to reach the 3rd 'collection' param)
+    // but never referenced.
+    if (arg.params.length >= 2 && someExpr(arg.body, (e) => e.type === "ParamRef" && e.name === arg.params[1])) {
+      throw new CodegenError(
+        `.map((${arg.params[0]}, ${arg.params[1]}) => …) can't use the index parameter '${arg.params[1]}' — MongoDB streams have no per-doc index. ` +
+          `Drop it, or keep it unused (e.g. '(${arg.params[0]}, _${arg.params[1]}, coll)') only to reach the 3rd 'collection' parameter.`,
+        arg.pos,
+      );
+    }
   },
   lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
+    const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
     const body = lambda.body as Expr;
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
         lambda.pos,
       );
+    }
+    // 3rd 'collection' param: only `coll.length` (the sub-stream's document
+    // count) is supported — a stream has no materialised array to index or
+    // iterate. Count total references vs `.length` references in one full walk
+    // (the predicate always returns false, so `someExpr` visits every node);
+    // any reference that isn't a `.length` access is rejected.
+    let collLengthUsed = false;
+    if (collName !== undefined) {
+      let total = 0;
+      let lengthUses = 0;
+      someExpr(body, (e) => {
+        if (e.type === "ParamRef" && e.name === collName) total++;
+        if (
+          e.type === "MemberAccess" &&
+          e.member === "length" &&
+          e.object.type === "ParamRef" &&
+          e.object.name === collName
+        ) {
+          lengthUses++;
+        }
+        return false;
+      });
+      if (total > lengthUses) {
+        throw new CodegenError(
+          `In '.map((${param}, _i, ${collName}) => …)' over a '$$$.<coll>' stream, only '${collName}.length' (the sub-stream's document count) is available — ` +
+            `there's no materialised array to index or iterate. To work with the array itself, use the materialised form (e.g. '$$$.<coll>.filter(pred).filter((${param}, i, ${collName}) => …)').`,
+          lambda.pos,
+        );
+      }
+      collLengthUsed = lengthUses > 0;
     }
     // Lookups inside the body are supported in both the top-level `$$` chain
     // and the lookup-body context (`$$$.<coll>.<chain>`). In the latter,
@@ -247,8 +289,21 @@ const MAP: StreamMethodDef = {
     // wrapping for `.find`. When there are no lookups it returns prologue=[]
     // and the unchanged expr.
     const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, ctx, allocSlot, lowerBlock);
-    const expr = generateWithCtx(rewritten2, ctx);
-    return { stages: [...prologue, { $replaceWith: expr }], clearLets: true };
+    // When `coll.length` is read, bind the handle to the materialised sub-stream
+    // count (`$__jsmql.length`) and stamp it with a `$setWindowFields` `$count`
+    // FIRST — before the prologue lookups (which don't change the doc count, but
+    // a nested lookup's `let` may need to capture this level's count, so it must
+    // be present) and before the `$replaceWith` that reads it.
+    const bodyCtx: GenerateCtx =
+      collName !== undefined && collLengthUsed
+        ? {
+            ...ctx,
+            substreamLengthHandles: new Map([...(ctx.substreamLengthHandles ?? []), [collName, `$${LENGTH_SLOT}`]]),
+          }
+        : ctx;
+    const expr = generateWithCtx(rewritten2, bodyCtx);
+    const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
+    return { stages: [...lengthStages, ...prologue, { $replaceWith: expr }], clearLets: true };
   },
 };
 

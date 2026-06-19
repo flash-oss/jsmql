@@ -88,6 +88,29 @@ $.after = $$.length;           // recompute (post-match count)
 Verified on a live mongod 8.2: `before` = pre-match count, `after` = post-match
 count.
 
+## Sub-stream length: the lookup-chain `.map` 3rd-arg handle
+
+A `$$$.<coll>.filter(p).map((o, _i, coll) => …)` chain runs its `.map` as a
+per-foreign-doc transform *inside* the `$lookup.pipeline`. There, `coll` (the 3rd
+callback param) names the **filtered foreign sub-stream**, and `coll.length` is
+its document count — materialised by the *same* `streamLengthStage()`
+(`$setWindowFields` `$count` → `__jsmql.length`, the single shape in
+[`src/namespace.ts`](../../src/namespace.ts)) one level down, stamped immediately
+before the `.map`'s `$replaceWith`. `MAP.lower` (stream-methods.ts) prepends it
+when `coll.length` is read, and binds the handle via
+`GenerateCtx.substreamLengthHandles` (`coll → "$__jsmql.length"`), which
+`generateLengthAccess` resolves directly (no `$size` — the count field is always
+present). Placement is automatic: the chain assembler appends each method's
+stages in order, so the count reflects the sub-stream *at that chain point*
+(post-filter, post-`.slice`, …). The object `$replaceWith` drops the scratch
+field, so no inner `$unset` is needed for `.map`. Verified on live mongod.
+
+Only `.length` is available on the handle — a stream has no materialised array to
+index or iterate — and the **index** (2nd) param is never available (MongoDB
+streams have no per-doc index; it may be present-but-unused only to reach the 3rd
+param). Both rejections are permanent (no DEF row): there is no HR3-safe stream
+index, and the array-form is reached via the materialised path instead.
+
 ## Scope & rejections
 
 `$$.length` is **top-level pipeline only**, gated by the `topLevelStream` ctx

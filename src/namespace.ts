@@ -45,6 +45,18 @@ export function tmpSlot(n: number): string {
 export const LENGTH_SLOT = `${JSMQL_NS}.length`;
 
 /**
+ * The `$setWindowFields` stage that stamps the stream's document count onto
+ * every document as `__jsmql.length`. The single home for this shape: the
+ * top-level `$$.length` materialiser (pipeline.ts) and the lookup-chain
+ * sub-stream length (stream-methods.ts) both emit it, one level apart. Lives
+ * in this leaf module so both importers avoid a pipeline ↔ stream-methods
+ * cycle. See docs/specs/stream-length.md.
+ */
+export function streamLengthStage(): object {
+  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
+}
+
+/**
  * Flat reserved scratch name for `$group` / `$bucket` accumulator output, where
  * MongoDB forbids dotted field names so the value can't live under the
  * `__jsmql` object. Must be consumed by the very next stage. The single
