@@ -1153,7 +1153,15 @@
       // Pure-ESM library bundle, committed at dist/jsmql.js and rebuilt by
       // scripts/sync-playground.mjs. Served over http(s) (local server / GitHub
       // Pages) — module imports don't load over file://.
-      import { jsmql } from "./dist/jsmql.js";
+      import { jsmql, ObjectId } from "./dist/jsmql.js";
+
+      // A newable factory so the Variables editor accepts BOTH `ObjectId("…")`
+      // and `new ObjectId("…")`: the exported class can't be called without
+      // `new`, but a plain function works either way (calling it returns the
+      // instance; `new` on it returns that same returned object).
+      function makeObjectId(hex) {
+        return new ObjectId(hex);
+      }
 
       const inputEl = document.getElementById("input");
       const outputEl = document.getElementById("output");
@@ -1656,14 +1664,22 @@
       // walks its empty own-keys) — neither reads back as a BSON date.
       function encodeScalar(x) {
         if (x instanceof Date) return "new Date(" + JSON.stringify(x.toISOString()) + ")";
+        if (isObjectId(x)) return "ObjectId(" + JSON.stringify(x.toHexString()) + ")";
         return JSON.stringify(x);
+      }
+
+      // A BSON ObjectId (jsmql's own or a driver's) — duck-typed, like the
+      // compiler does, so output renders as pasteable `ObjectId("…")` source
+      // instead of being walked as a plain object (its keys are bytes/_bsontype).
+      function isObjectId(x) {
+        return !!x && typeof x === "object" && x._bsontype === "ObjectId" && typeof x.toHexString === "function";
       }
 
       // Single-line JS-source form of any value. Shared by both output modes
       // (prettify off renders this directly; prettify on uses it for nodes
       // that fit on one line) so dates serialise identically in both.
       function compact(x) {
-        if (x instanceof Date) return encodeScalar(x);
+        if (x instanceof Date || isObjectId(x)) return encodeScalar(x);
         if (Array.isArray(x)) return "[" + x.map(compact).join(", ") + "]";
         if (x && typeof x === "object")
           return Object.keys(x).length
@@ -1680,9 +1696,9 @@
       // cols, only expanding when the compact form would overflow.
       function pretty(root) {
         const go = (v, i, c) => {
-          // A Date never expands — keep it on one line regardless of column
-          // budget, else the object branch below would walk its empty keys.
-          if (v instanceof Date) return compact(v);
+          // A Date / ObjectId never expands — keep it on one line regardless of
+          // column budget, else the object branch below would walk its keys.
+          if (v instanceof Date || isObjectId(v)) return compact(v);
           const s = compact(v);
           if (c + s.length <= 80) return s;
           // A scalar (string / number / boolean / null) can't be broken across
@@ -1729,8 +1745,10 @@
         try {
           // The user's own input, evaluated client-side — same trust model as
           // a browser console. Wrapped in parens so `{…}` reads as an object
-          // literal, not a block.
-          obj = new Function("return (" + trimmed + "\n)")();
+          // literal, not a block. `ObjectId` is injected so a variable can be
+          // `ObjectId("507f…")` (or `new ObjectId("507f…")`) without importing
+          // the driver — mirroring the `0x…` / `ObjectId("…")` query syntax.
+          obj = new Function("ObjectId", "return (" + trimmed + "\n)")(makeObjectId);
         } catch (err) {
           return { error: "Could not evaluate the variables object: " + err.message };
         }

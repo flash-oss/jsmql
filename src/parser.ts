@@ -126,6 +126,26 @@ const TYPE_CAST_NAMES = new Set<string>(["Number", "String", "Boolean", "parseIn
 // `x => parseInt(x)`.
 const BARE_CAST_NAMES = new Set<BareCastOp>(["Number", "String", "Boolean"]);
 
+// The first 4 bytes of an ObjectId are a Unix timestamp (seconds). MongoDB's
+// first public release was 2009, so an ObjectId whose embedded timestamp is
+// older than that can't be a real id — it's a typo: a dropped/extra digit, an
+// all-zeros placeholder, or a sequential test value like 0x1234…. We floor at
+// 0x4a000000 (2009-05-05, the dawn of MongoDB) and reject anything below it.
+// A lowercase 24-char hex string compares lexicographically exactly as its
+// 96-bit numeric value, so a plain string `<` against the floor is precise.
+const OBJECTID_MIN_HEX = "4a0000000000000000000000";
+
+function assertPlausibleObjectId(hex: string, pos: number): void {
+  const lower = hex.toLowerCase();
+  if (lower < OBJECTID_MIN_HEX) {
+    const when = new Date(parseInt(lower.slice(0, 8), 16) * 1000).toISOString().slice(0, 10);
+    throw new ParseError(
+      `ObjectId ${lower} looks like a typo: its embedded timestamp decodes to ${when}, older than the smallest valid ObjectId ${OBJECTID_MIN_HEX} (2009-05-05, around MongoDB's first release).`,
+      pos,
+    );
+  }
+}
+
 function compoundBinaryOp(op: "+=" | "-=" | "*=" | "/="): BinaryOp {
   switch (op) {
     case "+=":
@@ -1626,6 +1646,10 @@ export class Parser {
         if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseNumberStaticCall();
         }
+        if (name === "ObjectId" && this.lexer.lookahead(1).type === TokenType.LParen) {
+          this.lexer.next(); // consume 'ObjectId'
+          return this.finishObjectIdConstruction(t.pos);
+        }
         if (TYPE_CAST_NAMES.has(name)) {
           if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
           if (BARE_CAST_NAMES.has(name as BareCastOp)) {
@@ -2066,9 +2090,13 @@ export class Parser {
     if (className.type !== TokenType.Ident) {
       throw new ParseError(`Expected class name after 'new' at position ${newTok.pos}`, newTok.pos);
     }
+    if (className.value === "ObjectId") {
+      this.lexer.next(); // consume 'ObjectId'
+      return this.finishObjectIdConstruction(newTok.pos);
+    }
     if (className.value !== "Date" && className.value !== "Set") {
       throw new ParseError(
-        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set()`,
+        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set(), new ObjectId()`,
         className.pos,
       );
     }
@@ -2100,6 +2128,45 @@ export class Parser {
       );
     }
     return { type: "NewDate", args, pos: newTok.pos };
+  }
+
+  /**
+   * Finish parsing an `ObjectId(...)` construction (also reached via
+   * `new ObjectId(...)`). The caller has consumed the `ObjectId` identifier;
+   * `pos` is the leading token (`new` or `ObjectId`). Three shapes:
+   *   - `ObjectId()`               → `$createObjectId()` (server-side fresh id)
+   *   - `ObjectId("<24 hex>")`     → a constant ObjectId minted at compile time
+   *   - `ObjectId(<anything else>)`→ `$toObjectId(arg)` (server-side conversion)
+   * A constant string that is NOT 24 hex chars is a typo we can catch now, so it
+   * throws rather than deferring a guaranteed runtime failure to the server.
+   */
+  private finishObjectIdConstruction(pos: number): Expr {
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return { type: "OperatorCall", name: "$createObjectId", style: "positional", args: [], pos };
+    }
+    const arg = this.parseExpression();
+    this.consumeTrailingComma(TokenType.RParen);
+    this.lexer.expect(TokenType.RParen);
+    if (arg.type === "StringLiteral") {
+      const hex = arg.value;
+      if (!/^[0-9a-fA-F]{24}$/.test(hex)) {
+        const detail =
+          hex.length === 24
+            ? `it contains non-hexadecimal characters`
+            : `got ${hex.length} character${hex.length === 1 ? "" : "s"}`;
+        throw new ParseError(
+          `ObjectId("${hex}") is not a valid ObjectId: expected exactly 24 hexadecimal characters, ${detail}, at position ${arg.pos}.`,
+          arg.pos,
+        );
+      }
+      assertPlausibleObjectId(hex, arg.pos);
+      return { type: "ObjectIdLiteral", hex, pos };
+    }
+    // Dynamic argument (field ref / param / expression): defer to the server's
+    // own string→ObjectId conversion operator.
+    return { type: "OperatorCall", name: "$toObjectId", style: "positional", args: [arg], pos };
   }
 
   /** "Date.now()" or "Date.UTC(year, month, day, …)" — other Date.* members are not supported */
@@ -2277,11 +2344,38 @@ export class Parser {
 
   private parseNumber(): Expr {
     const t = this.lexer.next();
+    if (t.value[0] === "0" && (t.value[1] === "x" || t.value[1] === "X")) {
+      return this.classifyHexLiteral(t.value, t.pos);
+    }
     const value = parseFloat(t.value);
     if (isNaN(value)) {
       throw new ParseError(`Invalid number '${t.value}' at position ${t.pos}`, t.pos);
     }
     return { type: "NumberLiteral", value, pos: t.pos };
+  }
+
+  /**
+   * Classify a `0x…` hex literal (lexeme incl. prefix, underscores already
+   * stripped). Exactly 24 hex digits → a constant ObjectId — the "type `0x`,
+   * paste a 24-char _id" form. Otherwise it's an integer literal, accepted only
+   * when it fits a JS double's exact-integer range; a larger non-24-digit hex
+   * would silently lose precision (and is neither an ObjectId nor representable),
+   * so it's rejected with guidance rather than emitted wrong.
+   */
+  private classifyHexLiteral(lexeme: string, pos: number): Expr {
+    const hex = lexeme.slice(2);
+    if (hex.length === 24) {
+      assertPlausibleObjectId(hex, pos);
+      return { type: "ObjectIdLiteral", hex, pos };
+    }
+    const big = BigInt(lexeme);
+    if (big <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      return { type: "NumberLiteral", value: Number(big), pos };
+    }
+    throw new ParseError(
+      `Hex literal '${lexeme}' at position ${pos} has ${hex.length} digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal.`,
+      pos,
+    );
   }
 
   /** Parse a template literal: `chunk0${expr0}chunk1${expr1}chunk2` */

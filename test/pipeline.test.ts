@@ -672,8 +672,8 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "users",
-          let: { userId: "$userId" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$userId"] } } }, { $limit: 1 }],
+          let: { v0_userId: "$userId" },
+          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$v0_userId"] } } }, { $limit: 1 }],
           as: "__jsmql.tmp.1",
         },
       },
@@ -691,8 +691,12 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "orders",
-          let: { v_id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$v_id"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
+          let: { v0_id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+            { $sort: { placedAt: -1 } },
+            { $limit: 5 },
+          ],
           as: "__jsmql.tmp.1",
         },
       },
@@ -706,9 +710,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "events",
-          let: { v_id: "$_id", region: "$region" },
+          let: { v0_id: "$_id", v0_region: "$region" },
           pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$region", "$$region"] }] } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $eq: ["$region", "$$v0_region"] }] } } },
           ],
           as: "__jsmql.tmp.1",
         },
@@ -799,9 +803,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "events",
-          let: { v_id: "$_id", region: "$__jsmql.var.region" },
+          let: { v0_id: "$_id", v0_region: "$__jsmql.var.region" },
           pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$region", "$$region"] }] } } },
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $eq: ["$region", "$$v0_region"] }] } } },
           ],
           as: "__jsmql.tmp.1",
         },
@@ -821,8 +825,12 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "orders",
-          let: { uid: "$__jsmql.var.uid" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$uid"] } } }, { $sort: { placedAt: -1 } }, { $limit: 5 }],
+          let: { v0_uid: "$__jsmql.var.uid" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$v0_uid"] } } },
+            { $sort: { placedAt: -1 } },
+            { $limit: 5 },
+          ],
           as: "__jsmql.tmp.1",
         },
       },

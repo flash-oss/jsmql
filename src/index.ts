@@ -32,6 +32,11 @@ import type { Program, Expr, Pipeline } from "./ast.ts";
 // even though the class itself lives in parser.ts (where it is thrown).
 export { FunctionInputError };
 
+// The dependency-free ObjectId value jsmql mints for `ObjectId("…")` / `0x…`
+// literals. Re-exported so callers (and the playground) can build the same
+// instance for a `jsmql.compile` binding without importing the mongodb driver.
+export { ObjectId } from "./objectid.ts";
+
 export type ValidationError = { message: string; pos: number; code: "SYNTAX_ERROR" | "CODEGEN_ERROR" };
 
 export type ValidationResult = { valid: boolean; errors: ValidationError[] };

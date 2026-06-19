@@ -175,6 +175,9 @@ export type Expr =
   | { type: "TypeofExpr"; operand: Expr; pos: number }
   | { type: "NewDate"; args: Expr[]; pos: number }
   | { type: "NewSet"; arg: Expr | null; pos: number }
+  // `ObjectId("…")` / `new ObjectId("…")` — a constant ObjectId. `hex` is the
+  // validated 24-char hex string; codegen mints a live BSON value from it.
+  | { type: "ObjectIdLiteral"; hex: string; pos: number }
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr; pos: number }
   | { type: "TypeCastRef"; cast: BareCastOp; pos: number }
   | { type: "MathCall"; method: MathMethod; args: CallArg[]; pos: number }

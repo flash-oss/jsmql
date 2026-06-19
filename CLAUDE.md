@@ -62,6 +62,11 @@ npm run format     # format all files with oxfmt (always run before committing)
 npm run build      # tsc → dist/
 npm run smoke:dist # build, then run the dist-import smoke test
 
+# Live-MongoDB integration suite (test/integration.test.ts) — runs jsmql's MQL
+# against a dedicated, read-only mongod on :27018. See test/fixtures/CLAUDE.md.
+npm run fixture:up # start + seed the fixture instance, then `npm test` exercises it
+                   # (the suite self-skips when the instance is down)
+
 # Run a single test file or a named test during development:
 node_modules/.bin/vitest run test/codegen.test.ts
 node_modules/.bin/vitest run -t "string context"
@@ -104,9 +109,11 @@ docs/
   LANGUAGE.md     User-facing language reference (canonical for user-visible behaviour + examples).
   specs/          Implementation specs — canonical for per-feature internals (see docs/CLAUDE.md for the index).
 test/
-  codegen.test.ts    Unit tests, one case per feature.
-  realistic.test.ts  Full-feature integration tests (referenced from README).
-  smoke.test.ts      Strippable-TS and built-dist invariants (spawn-based).
+  codegen.test.ts      Unit tests, one case per feature.
+  realistic.test.ts    Full-feature compile-time examples (assert emitted MQL; referenced from README).
+  integration.test.ts  Runs jsmql's MQL against a live mongod and asserts returned data (self-skips if down). See test/fixtures/CLAUDE.md.
+  smoke.test.ts        Strippable-TS and built-dist invariants (spawn-based).
+  fixtures/            Deterministic dataset + dedicated read-only mongod (:27018) for integration.test.ts. See test/fixtures/CLAUDE.md.
 scripts/
   generate-ops.mjs              Generates src/ops.ts; runs on prebuild / pretest.
   build-cjs.mjs                 Bundles dist/cjs/*.cjs via esbuild for the `require` condition.

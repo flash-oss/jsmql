@@ -20,6 +20,16 @@ To reuse the complete `Expr`-union walker in both codegen (the index-usage check
 
 ---
 
+## 2026-06-19 — test: live-MongoDB integration suite + deterministic fixture instance
+
+jsmql can emit MQL that *looks* valid and passes a `toEqual(...)` but that the server doesn't actually run the way the user meant — exactly the failure mode HR3 exists to prevent. We now have [test/integration.test.ts](../test/integration.test.ts): 12 curated cases that compile a jsmql source, run it against a **real MongoDB**, and assert on the documents returned. Expected values were derived from a live run, never guessed. Building it immediately surfaced a real DX trap — the fixture's first deterministic ObjectIds were zero-padded (`0000…a1`), whose embedded timestamp decodes to 1970, so jsmql's `assertPlausibleObjectId` guard (correctly) rejected "find by `_id` via the `0x` literal"; the fix was to give fixture ids a plausible `0x65000000…` (2023) timestamp prefix so the `0x` literal works end-to-end.
+
+The dataset lives in [test/fixtures/](../test/fixtures/CLAUDE.md): five cross-referenced collections (`users`/`products`/`orders`/`shipments`/`reviews`), deterministic by hard rule (fixed ids/dates/numbers — no `Math.random`/`Date.now`), with order line prices and totals **computed** from the catalogue and a `validateDataset()` self-check at seed time. A content hash (`DATASET_HASH`) drives idempotent re-seeding.
+
+The read-only requirement drove the instance design. A server-enforced read-only role needs `authorization: enabled`, which is instance-wide — enabling it on the developer's primary mongod (which serves their real services auth-free) was rejected as too invasive. Instead we run a **dedicated second mongod on `:27018`** with `--auth`, its own dbpath at `~/.jsmql-fixture` (outside the repo), an admin user used only by the seeder, and a `jsmql_ro` user with `read` on `jsmql_fixture` that the tests connect through — so a test run literally cannot write (verified: writes/updates come back `Unauthorized`). Lifecycle is `npm run fixture:{up,seed,status,down,reset}` ([test/fixtures/instance.ts](../test/fixtures/instance.ts); `mongod --fork` is rejected on macOS, so it self-daemonizes detached). The suite **self-skips** (green, not failing) when the instance isn't up, so `npm test` stays green for contributors who haven't run `fixture:up`. This is now the canonical home for "verify it actually runs" — see [test/CLAUDE.md](../test/CLAUDE.md). No `src/` behaviour changed.
+
+---
+
 ## 2026-06-18 — feat: `$$.length` — the current stream's document count as a value
 
 `$$.length` is now a usable value: the number of documents in the stream at the point it's read. `$.n = $$.length`, `1 / $$.length`, `assert($$.length <= 1, …)` — anywhere an expression goes. This is the long-deferred stream-`.length` (it supersedes the old "terminal `$count`" sketch from the 2026-05 stream-methods note: that would have collapsed the stream; this keeps it).
@@ -49,6 +59,46 @@ Compiler-generated temporaries the document carries between stages now live in *
 
 ---
 
+## 2026-06-18 — feat(lookup): nested lookups inside block-body predicates
+
+A `$$$.<coll>.find/filter(...)` may now appear inside another lookup's **block-body** lambda — as a statement (`$.orders = $$$.orders.filter(o => o.userId === u._id)`), inside a stage-body expression (`$match($$$.orders.filter(...).length > 0)`), or as a block-bodied inner lambda — to any depth. It lowers to the same shape the expression-body path already produced: the inner lookup materialises as a `$lookup` stage inside the outer's `$lookup.pipeline`, with `u.<field>` refs auto-`let`'d into the inner's `$lookup.let`. Previously this threw `Nested lookup inside another lookup's block-body lambda is not yet supported`. Closes the last open nested-lookup item (was DEF-023). All three emitted shapes were run against a live `mongod` and join correctly.
+
+**Why it was blocked, and the fix.** The expression-body path threads `EnclosingLookupContext` (`foreignParams` / `inScopeLetNames`) as an explicit argument through its own recursion. Block lowering instead runs through `generateImplicitPipeline` (the `SubPipelineLowerer`), which has no `enclosing` parameter, so a nested lookup dispatched from inside a block had no way to learn it was nested — and defaulted to top-level translation (wrong: it would pick basic-form and skip let-coordination). The fix adds a **ctx carrier**, `GenerateCtx.enclosingLookup` ([src/codegen.ts](../src/codegen.ts)): the new shared helper `buildBlockBodyPredicate` ([src/lookup-translation.ts](../src/lookup-translation.ts)) sets it on the sub-pipeline ctx, and the four lookup-translation entry points (`translatePredicate` / `buildPipelineFormPredicate` / `lowerLookup` / `extractLookupCalls`) read it back when their explicit `enclosing` argument is omitted — which is exactly how every `pipeline.ts` dispatch path calls them, so no call site changed. `freshSubPipelineCtx` drops the field, so each lookup re-seeds its own. The same helper feeds both `translatePredicate` and `buildPipelineFormPredicate`, replacing the two copied block-body branches.
+
+**Two supporting fixes.** (1) `transformStmt` ran assignment/`delete` **targets** through `transformExpr`, which hoisted a write destination like `$.bs` into a `$lookup.let` var — surfacing as the misleading `Cannot assign to bare identifier 'bs'` error and blocking even a plain `$.x = …` `$set` inside any block-body lookup. New `transformTarget` keeps a target as its field path (the eventual `$set`/`$unset` key). (2) `rewriteEnclosingForeignParamsInPipeline` applies the enclosing-foreign-param rewrite across a block's statements, because `transformExpr` deliberately does not descend into a nested lambda's *block* body — so each nesting level performs its own rewrite as it is dispatched (needed for block-in-block nesting). The pre-existing cross-level same-field-name `let` collision (documented in [docs/specs/lookup-stage.md](specs/lookup-stage.md)) is shared by both paths and unchanged. Tests: [test/lookup.test.ts](../test/lookup.test.ts) gains three block-body success cases mirroring the expression-body block.
+
+---
+
+## 2026-06-18 — fix: constant `new Date(...)` folds to a real BSON Date (HR1/HR3)
+
+`new Date("2026-05-17T...")` inside a query document — a Filter `{ createdAt: { $gte: new Date("...") } }` or the `$match({ ... })` object-literal passthrough — lowered to the aggregation form `{ $toDate: "..." }`. But MongoDB's *query language* doesn't evaluate `{ $toDate }`; it compares against it as a literal subdocument, so the predicate silently matched **nothing**. Verified against a local `mongod`: a real `Date` in a `$gte` slot matches, `{ $toDate: "..." }` matches `[]`, in both `find` and aggregation `$match`. This violated HR1 (a constant `Date` should pass through verbatim) and produced a query that just didn't work — the reported bug.
+
+Fix: a `new Date(...)` with compile-time-constant arguments now folds to a real BSON `Date` in **every** context (codegen-level, not just the query translator), so the same `new Date("...")` emits the same MQL regardless of surrounding syntax and works in both aggregation-expression and query-document positions. The fold logic became a single source of truth — `evalConstDate` / `foldConstantDate` in [codegen.ts](../src/codegen.ts) — that both `generateNewDate` and the `$match`/Filter translator ([match-translation.ts](../src/match-translation.ts)) call; the translator's old private `evaluateStaticDate` (which folded multi-arg `new Date(y, m, d)` in JS **local** time, silently disagreeing with codegen's **UTC** `$dateFromParts`) is gone. Only genuinely-runtime forms (`new Date()` = now, `new Date($.field)`) keep the `{ $toDate }` / `$dateFromParts` lowering.
+
+HR3 follow-up: when the constant arguments evaluate to an *Invalid* Date (`new Date("not-a-date")`), jsmql now **rejects at compile time** with an actionable, position-bearing error (`"not-a-date" is not a valid date string. Use an ISO 8601 date like ...`) instead of emitting `{ $toDate: "not-a-date" }` — which `mongod` rejects at parse time anyway ("Error parsing date string"). A JS-valid-but-non-ISO string (`new Date("Jan 1 2024")`) folds to a real Date, which also fixes a case the old `{ $toDate }` form would have had the server reject.
+
+---
+
+## 2026-06-18 — fix(lookup): correlated-pipeline predicates use index-friendly query form, not blanket `$expr`
+
+The expression-body `$lookup` correlated-pipeline predicate path wrapped the *whole* predicate in `{ $match: { $expr: … } }` — even constant comparisons the query planner could serve from an index. It now routes the let-extracted predicate through `translateMatchBody` + `matchStagesFromTranslation`, the same index-friendly emitter the sibling predicate translators (`$unionWith` / `$facet` / `$out` / the `$$ = $$.filter(…)` replace-stream filter) already used. So `$$$.orders.filter(o => o.userId === $._id && o.status === "shipped")` now lowers the sub-pipeline `$match` to `{ status: "shipped", $expr: { $eq: ["$userId", "$$v0_id"] } }` — `status` is an indexable query field; only the correlated half stays in `$expr`. Previously both were buried in one `$expr: { $and: [...] }`.
+
+Why the correlated half stays `$expr`: MongoDB's query language cannot reference `let` variables — only `$expr` can — so `foreignField === $$letVar` has no query-form equivalent and must remain `$expr` (a constraint, not a missed optimization; it is still index-eligible inside `$lookup`). A materialized count comparison like `$$$.x.filter(…).length > 0` likewise now emits the query form `{ "__jsmql.__lookupN": { $gt: 0 } }` instead of `{ $expr: { $gt: [...] } }`.
+
+This aligns the expression-body and chain-form lookup paths with the block-body path, which already produced the index-friendly shape (each `$match(...)` statement in a block lowers through the same translator via `lowerBlock`). Implemented in `translatePredicate` and `buildPipelineFormPredicate` ([src/lookup-translation.ts](../src/lookup-translation.ts)). Verified against a live `mongod` (mixed query + correlated-`$expr` joins return the correct rows); two nested-lookup test expectations in [test/lookup.test.ts](../test/lookup.test.ts) updated to the query form, plus a new guard case for the constant-vs-correlated split.
+
+---
+
+## 2026-06-18 — fix(lookup): depth-stamped `$lookup.let` names fix the cross-level `$$v_id` collision
+
+A nested lookup that captured the same field name at two enclosing levels produced **wrong-but-running** MQL. Reported case: `$.recentOrders = $$$.orders.filter(o => { $.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id); })` emitted `$$v_id` for *both* `o._id` (the order) and `$._id` (the outermost user) — and since MQL `$$` variables are lexically scoped *through* nested `$lookup.pipeline` boundaries, the inner `let: { v_id: "$_id" }` shadowed the outer one, so `s.userId === $._id` silently compared against the order's `_id`. Confirmed against a live `mongod`: the join returned the wrong shipments before, the right ones after.
+
+Fix: every auto-extracted `$lookup.let` variable name now carries the **nesting depth** of the lookup that declares it — `v<depth>_<field>` (`letVarName` in [src/lookup-translation.ts](../src/lookup-translation.ts)). Depth is `enclosing.foreignParams.length`, threaded via a new `depth` parameter on `extractLetsFromExpr` / `extractLetsFromPipeline` → `createLetAllocator`. The reported case now emits `let: { v0_id: "$_id" }` (outer) and `let: { v1_id: "$_id" }` (inner), with the deepest `$match` reading `$$v1_id` (order) and `$$v0_id` (user) distinctly — verified joining correctly on `mongod`. This is deterministic (same input → same output; no heuristic), in keeping with the no-output-drift rule.
+
+Because the depth must disambiguate *any* shared field name (not just `_id`), the prefix is uniform: a single-level lookup's `let` changes from `v_id` / `userId` to `v0_id` / `v0_userId`, etc. These are internal correlation variables the user never writes by name, so the rename is a non-breaking, MQL-equivalent change. `$let` / `$map` / `$reduce` `vars` (which still use codegen's `safeVarName`) are untouched — this change is scoped to `$lookup.let`. Supersedes the "cross-level field-name collision" known-limitation note in [docs/specs/lookup-stage.md](specs/lookup-stage.md) (now resolved). Expected MQL across `test/lookup.test.ts`, `test/pipeline.test.ts`, `test/realistic.test.ts`, `test/stream-methods.test.ts`, and `test/literal-passthrough.test.ts` updated to the depth-prefixed names.
+
+---
+
 ## 2026-06-17 — feat: `assert(condition[, message])` — conditional pipeline errors
 
 Added `assert(...)`, a pipeline-statement guard clause that aborts the whole operation with a custom-message server error when its condition fails — the long-requested "`assert()` / `throw new Error()`" capability. A holding assertion is invisible (the document passes through unchanged); a failing one surfaces as `BadValue (2): Unknown type name: jsmql assertion failed: <message>`.
@@ -61,6 +111,35 @@ Implementation: `generateAssertGuardExpr` + the expression-position rejection in
 
 ---
 
+## 2026-06-17 — feat: ObjectId literals — `0x…`, `ObjectId("…")`, `new ObjectId("…")`
+
+You can now write a constant `_id` inline three ways, all producing the same live BSON `ObjectId`:
+
+- **`0x507f1f77bcf86cd799439011`** — the leanest form: type `0x` and paste the 24-char id, no quotes or wrapper. A `0x` hex literal with **exactly 24 hex digits** is an ObjectId; a shorter one is an ordinary integer (`0xff` → `255`); numeric separators (`0x507f_1f77_…`) are allowed; a non-24-digit hex above `Number.MAX_SAFE_INTEGER` is rejected with guidance (it's neither an ObjectId nor a representable integer). Hex literals didn't lex at all before — the lexer now reads `0x…` (raw lexeme preserved), and the parser classifies it.
+- **`ObjectId("…")` / `new ObjectId("…")`** — the shell/driver spelling. The string is validated as 24 hex chars at parse time, so a typo is caught early (`.pos`-bearing error).
+
+Either form lowers to a live `ObjectId` in the query-doc value slot — `{ _id: <ObjectId> }` for equality, `{ _id: { $in: [...] } }` for an `.includes` membership — so the match is index-friendly with no `$expr` wrapper.
+
+**Plausibility floor (typo guard).** An ObjectId's first 4 bytes are a Unix timestamp, and MongoDB didn't exist before 2009 — so any ObjectId whose timestamp predates that can't be real; it's a typo (an all-zeros id, a sequential `0x1234…` placeholder, a dropped leading digit). The parser floors at `0x4a000000…` (2009-05-05) via `assertPlausibleObjectId` and rejects anything below, with a `.pos`-bearing error that decodes and names the offending timestamp's date. A lowercase 24-char hex string compares lexicographically exactly as its 96-bit value, so the check is a single string compare against the floor. (Only a lower bound — future timestamps aren't floored, since "now" is a moving target the user didn't ask to gate.)
+
+The `ObjectId(...)` call also absorbs the non-constant cases instead of throwing: **`ObjectId()`** (no arg) → `{ $createObjectId: {} }` (server-side fresh id), and **`ObjectId(<dynamic>)`** (e.g. `ObjectId($.idStr)`) → `{ $toObjectId: "$idStr" }` (server-side conversion). Both are real registry operators, so this mints nothing new — `ObjectId(...)` is just a JS-shaped front door onto them, alongside the literal form.
+
+**Why a live instance and not a JSON envelope.** The Extended JSON representation of an ObjectId is a *client-side* shape the driver only materialises via an explicit `EJSON.parse` — it is **not** a query or aggregation operator. Sent verbatim (which is what the driver does with the document jsmql emits) the server rejects it — a `BadValue` unknown-operator error in a filter, an unrecognized-expression error in an aggregation expression (both reproduced against a local `mongod`). So the only correct emission is a real ObjectId *value*. jsmql mints one itself — a tiny dependency-free class in [src/objectid.ts](../src/objectid.ts) — rather than importing `bson` (which jsmql deliberately keeps as a devDependency only, and which the browser playground bundle can't `require`). The self-made value serialises **byte-for-byte identically** to a driver `ObjectId` (verified against bson 7.2.0 and end-to-end against a running `mongod` in filter / `$in` / `$expr` / `$match` positions): the driver and serializer duck-type on `_bsontype === "ObjectId"` (never `instanceof`), so a value that also reports the BSON major version via the `@@mdb.bson.version` registry symbol and implements `serializeInto` is fully interchangeable. **Caveat:** that major version is hard-coded (7); an app pinning a different bson major should interpolate its own driver instance instead. Runtime ids are still best passed as a real ObjectId via the template tag or a `jsmql.compile` parameter.
+
+A new `ObjectIdLiteral` AST node carries the validated hex; codegen ([src/codegen.ts](../src/codegen.ts)) and the `$match`/Filter translator ([src/match-translation.ts](../src/match-translation.ts) `anyEqualityLiteral`) both mint the instance, and the lookup-predicate walkers treat it as a leaf. `ObjectId` is re-exported from [src/index.ts](../src/index.ts) so callers can build the same value for a `jsmql.compile` binding without the driver. The arrow form type-checks because `@koresar/jsmql/ops` declares `ObjectId` (an `interface ObjectIdConstructor` with call + construct signatures, emitted by `constructionFormsBlock()` in [scripts/generate-ops.mjs](../scripts/generate-ops.mjs)). **Playground:** the Variables editor accepts `ObjectId("…")` / `new ObjectId("…")` (a newable factory is injected into the eval scope), `0x…` literals work in the query editor through the rebuilt bundle, and the output panel renders ObjectId values as pasteable `ObjectId("…")` source (mirroring how `Date` round-trips). Docs: [LANGUAGE.md](LANGUAGE.md) § ObjectId literals, [specs/match-query-translation.md](specs/match-query-translation.md), [specs/grammar.md](specs/grammar.md), [specs/ops-generation.md](specs/ops-generation.md). Tests: dedicated blocks in [test/codegen.test.ts](../test/codegen.test.ts) plus a realistic case using the `0x` form.
+
+---
+
+## 2026-06-17 — fix: actionable error when a predicate is passed to `.includes()` / `.indexOf()`
+
+`$.senderChain.includes(sc => sc.client === clientId && sc.tier === 2)` failed with a *misleading* message: *"Lambda expression cannot be used here — only valid as array method argument or $let second argument."* That wording is self-contradicting at the call site — `.includes` **is** an array method, so it reads as "this should be fine." The lambda was reaching the generic `case "Lambda"` rejection in `_generate`, which has no method context.
+
+The slip itself is a JS-semantics confusion, not a jsmql limitation: `Array.prototype.includes(value)` searches for a *value*; the predicate form is `.some(predicate)` (which jsmql already lowers to `$anyElementTrue`/`$map`). So rather than accept `.includes(predicate)` — which would diverge from real JS (`[].includes(fn)` checks function identity) and add a second spelling for `.some()` — we keep it rejected but redirect. New `rejectPredicateOnValueSearch(arg, method, sibling)` helper in [src/codegen.ts](../src/codegen.ts) intercepts a lambda arg to `.includes` (→ `.some`, both bool) and its dispatch-sibling `.indexOf` (→ `.findIndex`, both index) and throws `… To test elements against a predicate, use .some(sc => …).`, echoing the user's own param name with the caret on the lambda. The generic `case "Lambda"` message was also corrected to stop falsely implying any array method takes a callback — it now names the iterating methods (`.map`/`.filter`/`.some`/`.every`/`.find`/`.reduce`/…) that actually do.
+
+No behaviour change for valid programs: `.includes(value)` / `.indexOf(value)` and `.some(predicate)` are untouched. Spec: [docs/specs/method-dispatch.md](specs/method-dispatch.md) § Type-aware dispatch. Tests: two cases in `test/codegen.test.ts` (`array .includes()` block).
+
+---
+
 ## 2026-06-17 — fix(playground): scope the saved session to the page's full URL
 
 The editor session (query + Variables + compile mode) persisted under a fixed `localStorage` key, `"jsmql-playground:session:v1"`. `localStorage` is scoped by the browser to the *origin* (scheme + host + port) but **not** the path, so every playground served from the same origin shared one slot and clobbered each other: a dev copy deployed alongside the canonical `flash-oss.github.io/jsmql/playground.html` (e.g. under a different path) would overwrite the work the user had open there, and two local copies at `localhost:1234/bla/` vs `localhost:1234/foo/` collided too.
@@ -69,7 +148,7 @@ Fix: derive the key from the page URL — `"jsmql-playground:session:v1:" + loca
 
 ---
 
-## 2026-06-16 — fix(ops): `$` is `var`, not `const`, in the generated ambient types
+## 2026-06-16 — fix(ops): `$$` is `var`, not `const`, in the generated ambient types
 
 `@koresar/jsmql/ops` declared the collection context ref as `const $$`. But `$$` is reassigned wholesale by the replace-stream / `$facet` sugar — e.g. `$$ = $$$.transactions.filter(t => t.type === "deposit")` — so TypeScript flagged valid jsmql with `TS2588: Cannot assign to '$$' because it is a constant.`. The fix emits `var $$` instead (verified: `var` accepts the reassignment with zero errors; a forced-`const` control reproduces exactly `TS2588`).
 

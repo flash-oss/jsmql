@@ -3,6 +3,7 @@ import { validateOperatorArgs } from "./operator-validation.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
 import { LENGTH_SLOT } from "./namespace.ts";
+import { ObjectId } from "./objectid.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
@@ -181,6 +182,21 @@ export type GenerateCtx = {
    * than looping forever. See docs/specs/reusable-functions.md § Recursion.
    */
   expandingFns?: ReadonlySet<string>;
+  /**
+   * Set while lowering a `$lookup` sub-pipeline **block body**, so a nested
+   * `$$$.<coll>.find/filter(...)` appearing as a statement (or inside a stage
+   * body) within that block knows its enclosing-lookup context — the same
+   * `foreignParams` / `inScopeLetNames` the expression-body path threads
+   * directly. The lookup-translation entry points (`lowerLookup` /
+   * `extractLookupCalls` / `translatePredicate` / `buildPipelineFormPredicate`)
+   * read it when no explicit `enclosing` argument is passed; `lowerBlock` is the
+   * only carrier because block lowering runs through `generateImplicitPipeline`,
+   * which has no `enclosing` parameter. Structurally identical to
+   * `EnclosingLookupContext` in lookup-translation.ts (kept inline here to avoid
+   * a type import cycle). `freshSubPipelineCtx` drops it — each lookup re-seeds
+   * its own. See docs/specs/lookup-stage.md § Nested lookups.
+   */
+  enclosingLookup?: { foreignParams: ReadonlyArray<string>; inScopeLetNames: ReadonlySet<string> };
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -711,8 +727,9 @@ function isPureRef(expr: Expr, ctx: GenerateCtx): boolean {
  * non-ASCII character). Names starting with `_`, `$`, a digit, or an uppercase
  * letter are reserved/invalid and the server rejects the whole pipeline
  * ("'…' starts with an invalid character for a user variable name"). User lambda
- * params (the idiomatic throwaway `_` in `(_, i) => …`) and field-derived
- * `$lookup` let names (`_id` — the most common join key!) routinely hit this.
+ * params (the idiomatic throwaway `_` in `(_, i) => …`) routinely hit this.
+ * (`$lookup.let` names take a different route — `letVarName` in
+ * lookup-translation.ts stamps a `v<depth>_` prefix for cross-level uniqueness.)
  *
  * Deterministic and idempotent: valid names are returned unchanged (so the
  * overwhelmingly common case produces identical output), and an invalid name
@@ -1221,7 +1238,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "Lambda":
       throw new CodegenError(
-        "Lambda expression cannot be used here — only valid as array method argument or $let second argument",
+        "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, …) or as the second argument to $let.",
         expr.pos,
       );
 
@@ -1230,6 +1247,13 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "NewDate":
       return generateNewDate(expr.args, ctx);
+
+    case "ObjectIdLiteral":
+      // Mint a live BSON ObjectId — the only value the driver accepts in a
+      // query doc (an Extended JSON envelope is server-rejected). The instance
+      // passes through `safeBoundValue`/`isOpaqueBsonValue` unchanged in every
+      // position, exactly like an interpolated ObjectId. See src/objectid.ts.
+      return new ObjectId(expr.hex);
 
     case "NewSet":
       // `new Set(arr)` is a tag for the value — used as a receiver in set-method calls
@@ -2326,6 +2350,7 @@ function generateMethodCall(
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
       checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "indexOf", "findIndex");
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
       // unknown → runtime $cond on $isArray so the right form runs at query time.
@@ -2380,6 +2405,7 @@ function generateMethodCall(
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
       checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "includes", "some");
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
       // unknown → runtime $cond so a bare $.field works for either type.
@@ -3372,6 +3398,24 @@ function exprArgsOnly(args: CallArg[], method: string): Expr[] {
 }
 
 /**
+ * `.includes(x)` / `.indexOf(x)` search for a *value*; they don't take a
+ * predicate (that's JS, not jsmql being strict). When the user passes a lambda
+ * they meant the predicate sibling — `.some` (bool) for `.includes`,
+ * `.findIndex` (index) for `.indexOf` — so point there. Without this the lambda
+ * falls through to the generic "function only valid as a callback to an
+ * iterating array method" rejection, which misleads because `.includes`/
+ * `.indexOf` ARE array methods.
+ */
+function rejectPredicateOnValueSearch(arg: Expr | undefined, method: string, sibling: string): void {
+  if (arg?.type !== "Lambda") return;
+  const p = arg.params[0] ?? "x";
+  throw new CodegenError(
+    `.${method}() searches for a value — it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => …).`,
+    arg.pos,
+  );
+}
+
+/**
  * Argument-count spec for a method/static call. Exactly one of
  * `exact` / `allowed` / `atLeast` / `none` is set. `sig` is the parameter
  * signature shown in the error — e.g. `"start[, count]"` renders as
@@ -3912,27 +3956,132 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
  * semantics where the element is always undefined.
  */
 /**
+ * Evaluate a `new Date(...)` whose arguments are all compile-time constants,
+ * returning the resulting JS `Date` — **even when that Date is Invalid** (so the
+ * caller can distinguish "not constant" from "constant but unparseable"). Returns
+ * null only when the value can't be known at compile time: `new Date()` (= now)
+ * or any non-literal argument.
+ *
+ * Multi-arg `(y, m, d, …)` and `new Date(Date.UTC(…))` are interpreted as
+ * **UTC** (month index 0-based, as in JS `Date.UTC`), matching the
+ * `$dateFromParts` timezone in `generateDateFromParts`. This is the documented
+ * UTC divergence — "local time" on a MongoDB server is rarely what a query
+ * author wants — and evaluating here keeps the query-translator's value
+ * identical to codegen's (it previously used JS-local time and silently
+ * disagreed).
+ */
+function evalConstDate(args: Expr[]): Date | null {
+  if (args.length === 0) return null; // new Date() — runtime "now"
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      const utc = constNumberArgs(arg.args);
+      return utc === null ? null : new Date(utcMs(utc));
+    }
+    if (arg.type === "NumberLiteral") return new Date(arg.value); // epoch ms
+    if (arg.type === "StringLiteral") return new Date(arg.value); // ISO string
+    return null; // new Date(<runtime expr>)
+  }
+  const nums = constNumberArgs(args);
+  if (nums === null) return null; // multi-arg with a non-literal part
+  return new Date(utcMs(nums));
+}
+
+/**
+ * Fold a `new Date(...)` whose arguments are all compile-time constants into a
+ * real, **valid** JS `Date`, or null otherwise — the single source of truth for
+ * "is this `new Date(...)` a usable constant date?". Used by the `$match`/Filter
+ * query translator (`match-translation.ts`): a null result (runtime, or a
+ * constant that doesn't parse) drops the comparison to the `$expr` residual,
+ * which re-enters codegen — where `generateNewDate` decides between the runtime
+ * lowering and an HR3 compile-time rejection.
+ */
+export function foldConstantDate(args: Expr[]): Date | null {
+  const d = evalConstDate(args);
+  return d !== null && !Number.isNaN(d.getTime()) ? d : null;
+}
+
+function utcMs(parts: number[]): number {
+  return (Date.UTC as (...a: number[]) => number)(...parts);
+}
+
+function constNumberArgs(args: Expr[]): number[] | null {
+  const out: number[] = [];
+  for (const a of args) {
+    if (a.type !== "NumberLiteral") return null;
+    out.push(a.value);
+  }
+  return out;
+}
+
+/**
+ * An actionable rejection for a `new Date(...)` whose constant arguments we
+ * evaluated to an Invalid Date — the server would reject the resulting
+ * `{ $toDate }` / `$dateFromParts` at parse time, so we refuse it here (HR3)
+ * instead of emitting it. The string-literal case (by far the common one) names
+ * the offending value and the format to use; the numeric/parts case reports the
+ * out-of-range result.
+ */
+function invalidConstDateError(args: Expr[]): CodegenError {
+  const first = args[0];
+  if (args.length === 1 && first.type === "StringLiteral") {
+    return new CodegenError(
+      `new Date("${first.value}") — "${first.value}" is not a valid date string. ` +
+        `Use an ISO 8601 date like "2026-01-01" or "2026-01-01T00:00:00.000Z".`,
+      first.pos,
+    );
+  }
+  return new CodegenError(
+    `new Date(…) — these arguments produce an invalid date (out of the representable range).`,
+    first.pos,
+  );
+}
+
+/**
  * Lower `new Date(args…)`:
- *   - 0 args (`new Date()`)               → `{ $toDate: "$$NOW" }`
- *   - 1 arg  (`new Date(ts)` / `(string)`) → `{ $toDate: <arg> }`
- *   - 2..7 args                            → `{ $dateFromParts: { year, month: +1, … } }`
+ *   - constant args (valid)                → a real BSON `Date` (folded; see below)
+ *   - constant args (Invalid Date)         → compile-time rejection (HR3; see below)
+ *   - 0 args (`new Date()`)                → `{ $toDate: "$$NOW" }`
+ *   - 1 runtime arg (`new Date($.ts)`)     → `{ $toDate: <arg> }`
+ *   - runtime multi-arg                    → `{ $dateFromParts: { year, month: +1, … } }`
+ *
+ * A `new Date(...)` with compile-time-constant arguments denotes a constant
+ * Date, so it folds to a real `Date` value (HR1: a Date passes through
+ * verbatim). This is correct in BOTH positions a date can appear: an
+ * aggregation expression (where `{ $toDate: … }` would also work) AND a
+ * query document — Filter / `$match` object-literal passthrough — where the
+ * runtime `{ $toDate: … }` form is read as an inert literal subdocument that
+ * matches nothing. The fold makes both contexts emit the working shape and
+ * keeps `new Date("…")` producing the *same* MQL regardless of where it sits.
+ *
+ * When the constant args evaluate to an *Invalid* Date (e.g. `new Date("nope")`)
+ * we reject at compile time (HR3): the server rejects the equivalent `{ $toDate }`
+ * at parse time, so emitting it would knowingly produce unrunnable MQL. Only
+ * genuinely-runtime forms fall through to `{ $toDate }` / `$dateFromParts`.
  *
  * JS month indices are 0-based; MQL `$dateFromParts.month` is 1-based, so an
  * `$add: [month, 1]` is inserted (folded at compile time for literal months).
  *
  * Divergence: JS multi-arg `new Date(y, m, d, …)` interprets the parts in
  * **local time** (whatever the runtime considers local); jsmql interprets
- * them as **UTC** (MQL's `$dateFromParts` default), since "local time" on a
- * MongoDB server is rarely what a query author wants. Use `Date.UTC(...)`
- * (or build the Date in client code and pass it via the template-tag form)
- * if the JS-local semantics matter.
+ * them as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the fold),
+ * since "local time" on a MongoDB server is rarely what a query author wants.
+ * Use `Date.UTC(...)` (or build the Date in client code and pass it via the
+ * template-tag form) if the JS-local semantics matter.
  */
 function generateNewDate(args: Expr[], ctx: GenerateCtx): unknown {
+  const constEval = evalConstDate(args);
+  if (constEval !== null) {
+    // All arguments are compile-time constants — fold to a real BSON Date, or
+    // reject if they don't form a valid date (HR3 — the server would too).
+    if (Number.isNaN(constEval.getTime())) throw invalidConstDateError(args);
+    return constEval;
+  }
   if (args.length === 0) return { $toDate: "$$NOW" };
   if (args.length === 1) {
-    // Peephole: `new Date(Date.UTC(y, m, d, …))` is the canonical UTC-date
-    // constant idiom. Skip the `$toLong → $toDate` round-trip and emit the
-    // raw `$dateFromParts` (still UTC-anchored, just as a Date instead of ms).
+    // Peephole: `new Date(Date.UTC(y, m, d, …))` with a runtime part is the
+    // canonical UTC-date idiom. Skip the `$toLong → $toDate` round-trip and
+    // emit the raw `$dateFromParts` (still UTC-anchored, just as a Date).
     const arg = args[0];
     if (arg.type === "DateUTC") {
       return generateDateFromParts(arg.args, ctx, "UTC");
@@ -4319,6 +4468,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
     case "TypeCastRef":
       return;
     case "ArrayLiteral":

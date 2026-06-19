@@ -2285,6 +2285,23 @@ declare global {
     shardedDataDistribution(): any;
     [key: string]: any;
   };
+
+  // ── JS construction forms (ObjectId) ──────────────────────────────────
+  interface ObjectIdConstructor {
+    (hexString: string): any;
+    new (hexString: string): any;
+  }
+  /**
+   * Construct a constant BSON `ObjectId` from a 24-character hex string —
+   * e.g. `$._id === ObjectId("507f1f77bcf86cd799439011")`. `new ObjectId(...)`
+   * is equivalent. jsmql emits a live ObjectId value (the only form the MongoDB
+   * driver accepts in a query document). For an id known only at runtime,
+   * interpolate a real ObjectId (template tag or a `jsmql.compile` parameter),
+   * or convert a string field server-side with `$toObjectId($.idStr)`.
+   *
+   * @see https://www.mongodb.com/docs/manual/reference/method/ObjectId/
+   */
+  var ObjectId: ObjectIdConstructor;
 }
 
 export {};

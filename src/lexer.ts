@@ -634,6 +634,10 @@ export class Lexer {
     return ch >= "0" && ch <= "9";
   }
 
+  private isHexDigit(ch: string): boolean {
+    return (ch >= "0" && ch <= "9") || (ch >= "a" && ch <= "f") || (ch >= "A" && ch <= "F");
+  }
+
   private isIdentStart(ch: string): boolean {
     return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || ch === "_";
   }
@@ -645,6 +649,24 @@ export class Lexer {
   private readNumber(start: number): Token {
     const src = this.src;
     let i = this.pos;
+    // Hex literal: `0x` / `0X` then hex digits (with `_` separators). The token
+    // keeps its raw `0x…` lexeme (underscores stripped) — the lexer assigns no
+    // meaning; the parser classifies it (24 hex digits → ObjectId, else an
+    // integer or an error). A decimal value never starts with `0x`, so the
+    // prefix is an unambiguous signal downstream.
+    if (src[i] === "0" && (src[i + 1] === "x" || src[i + 1] === "X")) {
+      const hexStart = i + 2;
+      i = this.consumeHexDigitsWithSeparators(hexStart, start);
+      if (i === hexStart) {
+        throw new LexError(
+          `Hexadecimal literal at position ${start} has no digits after '0${src[hexStart - 1]}'`,
+          start,
+        );
+      }
+      const value = src.slice(this.pos, i).replace(/_/g, "");
+      this.pos = i;
+      return { type: TokenType.Number, value, pos: start };
+    }
     i = this.consumeDigitsWithSeparators(i, start);
     let hasFraction = false;
     let hasExponent = false;
@@ -699,6 +721,30 @@ export class Lexer {
       if (ch === "_") {
         const next = src[i + 1];
         if (next === undefined || !this.isDigit(next)) {
+          throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
+        }
+        i++; // consume _
+        continue;
+      }
+      break;
+    }
+    return i;
+  }
+
+  /** Hex variant of consumeDigitsWithSeparators (0-9 a-f A-F, `_` between digits). */
+  private consumeHexDigitsWithSeparators(i: number, start: number): number {
+    const src = this.src;
+    if (i >= src.length || !this.isHexDigit(src[i])) return i;
+    i++;
+    while (i < src.length) {
+      const ch = src[i];
+      if (this.isHexDigit(ch)) {
+        i++;
+        continue;
+      }
+      if (ch === "_") {
+        const next = src[i + 1];
+        if (next === undefined || !this.isHexDigit(next)) {
           throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
         }
         i++; // consume _

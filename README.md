@@ -80,6 +80,10 @@ jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)
 // → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
 // `new Date()` and `new Date($.field)` still need server-time evaluation and ride in $expr.
 
+// `ObjectId("…")` / `new ObjectId("…")` mints a live BSON ObjectId — query by _id the obvious way:
+jsmql(`$._id === ObjectId("507f1f77bcf86cd799439011")`)
+// → { _id: <ObjectId 507f1f77bcf86cd799439011> }
+
 // Template-tag — interpolate runtime literals from outer scope
 const ids = [1, 2, 3];
 jsmql`$.status === "open" && $.id in ${ids}`

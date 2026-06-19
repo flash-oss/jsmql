@@ -602,9 +602,9 @@ $.recentOrders = $$$.orders.filter(o => {
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { v_id: "$_id" },
+//       let: { v0_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
 //         { $sort: { createdAt: -1 } },
 //         { $limit: 10 }
 //       ],
@@ -645,9 +645,9 @@ $.recentOrders = $$$.orders
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { v_id: "$_id" },
+//       let: { v0_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
 //         { $sort: { placedAt: -1 } },     // toSorted + toReversed
 //         { $limit: 5 },                    // slice(0, 5)
 //         { $replaceWith: { id: "$_id", total: "$total" } },  // map
@@ -664,7 +664,7 @@ The existing `.length` / `.reduce` / member-access terminals continue to take pr
 **Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
 
 **Caveats:**
-- **Nested lookups work in expression-body predicates at any depth.** A `$$$.coll2.find/filter(...)` inside another lookup's expression-body lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause; refs to the outermost doc (`$.x`) propagate via lexical `$$` scoping through nested pipelines. Example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. **Block-body nested lookups still throw** ("Nested lookup inside another lookup's block-body lambda is not yet supported") — use an expression body or hoist the inner lookup to a sibling stage.
+- **Nested lookups work at any depth, in both expression-body and block-body predicates.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause; refs to the outermost doc (`$.x`) propagate via lexical `$$` scoping through nested pipelines. Expression-body example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Block-body example: `$.users = $$$.users.filter(u => { $match(u.active); $.orders = $$$.orders.filter(o => o.userId === u._id); })`. One sharp edge: when the *same* field name is referenced at two different enclosing levels, both collapse to a single `$lookup.let` binding — give each level a distinct field name to disambiguate.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — also planned (see `$$$` schema-threading work).
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
@@ -1692,6 +1692,42 @@ $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "i
 
 Valid target types: `"double"`, `"string"`, `"objectId"`, `"bool"`, `"date"`, `"int"`, `"long"`, `"decimal"`.
 
+### ObjectId literals
+
+Write a constant `_id` three ways — they all produce the same live BSON ObjectId:
+
+```js
+$._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
+$._id === ObjectId("507f1f77bcf86cd799439011")
+$._id === new ObjectId("507f1f77bcf86cd799439011")
+// all → { _id: ObjectId("507f1f77bcf86cd799439011") }
+
+[0x507f1f77bcf86cd799439011, 0x698a76556c10b90d8bd0497e].includes($._id)
+// { _id: { $in: [ObjectId("507f…"), ObjectId("698a…")] } }
+```
+
+The **`0x` hex form** is the most ergonomic — no quotes, no wrapper, just paste a 24-character hex `_id` after `0x` (numeric separators like `0x507f_1f77_…` are allowed). A `0x` literal with **exactly 24 hex digits** is an ObjectId; a shorter one is an ordinary integer (`0xff` → `255`); a longer-than-safe-integer, non-24-digit hex is rejected.
+
+jsmql emits a real BSON `ObjectId` value, which is the only thing the MongoDB driver accepts in a query document — so the equality is index-friendly with no `$expr` wrapper. (A hand-written Extended JSON envelope is **not** equivalent: the driver passes it to the server verbatim, which the server rejects as an unknown operator.) The string passed to `ObjectId("…")` is validated as 24 hex chars at compile time, so a typo is caught early.
+
+**Typo guard.** An ObjectId's first 4 bytes are a creation timestamp, and MongoDB didn't exist before 2009 — so jsmql rejects any ObjectId whose timestamp predates that (the smallest accepted id is `0x4a000000…`, 2009‑05‑05). This catches the common slips: an all‑zeros id, a sequential placeholder like `0x1234…`, or a dropped leading digit. The error names the decoded date so you can see what you actually typed.
+
+Two more forms handle the non-constant cases:
+
+```js
+$.userId = ObjectId($.idString)    // dynamic value → { $toObjectId: "$idString" } (server-side convert)
+$.newId  = ObjectId()              // no argument   → { $createObjectId: {} } (server-side fresh id)
+```
+
+For an id you only have **at runtime**, pass a real ObjectId via the template tag or a `jsmql.compile` parameter rather than baking a string into the source:
+
+```js
+jsmql`$._id === ${someObjectId}`              // interpolate a live ObjectId instance
+jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObjectId }
+```
+
+> Note: the value jsmql constructs is hard-coded to the BSON major version jsmql's supported driver ships (currently bson 7). It serializes byte-for-byte identically to a driver `ObjectId`; if your app pins a *different* bson major, prefer interpolating your driver's own ObjectId instance.
+
 ---
 
 ## Date Operations
@@ -1699,18 +1735,25 @@ Valid target types: `"double"`, `"string"`, `"objectId"`, `"bool"`, `"date"`, `"
 ### Date Constructor and `Date.now()`
 
 ```js
+// Constant arguments → a real BSON Date, folded at compile time (see note below):
+new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
+new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)   (UTC)
+new Date(2024, 11, 31, 23, 59, 58, 999)
+                                   // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form
+new Date(Date.UTC(2024, 0, 15))    // Date(2024-01-15T00:00:00Z)
+
+// Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // { $toDate: "$$NOW" }  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
-new Date("2024-01-01")             // { $toDate: "2024-01-01" }
-new Date(2024, 0, 15)              // { $dateFromParts: { year: 2024, month: 1, day: 15 } }
-new Date(2024, 11, 31, 23, 59, 58, 999)
-                                   // full year/month/day/hour/minute/second/ms form
+new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
+
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
 Date.UTC(2024, 0, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } } }
-new Date(Date.UTC(2024, 0, 15))    // { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } }   — peephole skips the toLong/toDate round-trip
 ```
 
-**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly. JS month indices stay 0-based on the input side — jsmql folds the `+1` adjustment for you.
+**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, jsmql evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` / `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document: `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter / `$match` — MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, never matching anything. Only genuinely runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments don't form a valid date (`new Date("not-a-date")`), jsmql rejects it at compile time rather than emit MQL the server would refuse.
+
+**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the constant fold), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly. JS month indices stay 0-based on the input side — jsmql folds the `+1` adjustment for you.
 
 ### Date Getter Methods
 
@@ -2282,9 +2325,9 @@ jsmql`$$ = $$$.orders
 // → [
 //   { $lookup: {
 //       from: "orders",
-//       let: { v_id: "$_id" },
+//       let: { v0_id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],

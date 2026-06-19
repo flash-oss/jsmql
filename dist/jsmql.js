@@ -576,6 +576,9 @@ var Lexer = class _Lexer {
   isDigit(ch) {
     return ch >= "0" && ch <= "9";
   }
+  isHexDigit(ch) {
+    return ch >= "0" && ch <= "9" || ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F";
+  }
   isIdentStart(ch) {
     return ch >= "a" && ch <= "z" || ch >= "A" && ch <= "Z" || ch === "_";
   }
@@ -585,6 +588,19 @@ var Lexer = class _Lexer {
   readNumber(start) {
     const src = this.src;
     let i = this.pos;
+    if (src[i] === "0" && (src[i + 1] === "x" || src[i + 1] === "X")) {
+      const hexStart = i + 2;
+      i = this.consumeHexDigitsWithSeparators(hexStart, start);
+      if (i === hexStart) {
+        throw new LexError(
+          `Hexadecimal literal at position ${start} has no digits after '0${src[hexStart - 1]}'`,
+          start
+        );
+      }
+      const value2 = src.slice(this.pos, i).replace(/_/g, "");
+      this.pos = i;
+      return { type: TokenType.Number, value: value2, pos: start };
+    }
     i = this.consumeDigitsWithSeparators(i, start);
     let hasFraction = false;
     let hasExponent = false;
@@ -633,6 +649,29 @@ var Lexer = class _Lexer {
       if (ch === "_") {
         const next = src[i + 1];
         if (next === void 0 || !this.isDigit(next)) {
+          throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
+        }
+        i++;
+        continue;
+      }
+      break;
+    }
+    return i;
+  }
+  /** Hex variant of consumeDigitsWithSeparators (0-9 a-f A-F, `_` between digits). */
+  consumeHexDigitsWithSeparators(i, start) {
+    const src = this.src;
+    if (i >= src.length || !this.isHexDigit(src[i])) return i;
+    i++;
+    while (i < src.length) {
+      const ch = src[i];
+      if (this.isHexDigit(ch)) {
+        i++;
+        continue;
+      }
+      if (ch === "_") {
+        const next = src[i + 1];
+        if (next === void 0 || !this.isHexDigit(next)) {
           throw new LexError(`Numeric separator '_' must be between two digits (at position ${i})`, start);
         }
         i++;
@@ -942,6 +981,17 @@ var MATH_CONSTANTS2 = new Set(MATH_CONSTANTS);
 var OBJECT_METHODS2 = new Set(OBJECT_METHODS);
 var TYPE_CAST_NAMES = /* @__PURE__ */ new Set(["Number", "String", "Boolean", "parseInt", "parseFloat"]);
 var BARE_CAST_NAMES = /* @__PURE__ */ new Set(["Number", "String", "Boolean"]);
+var OBJECTID_MIN_HEX = "4a0000000000000000000000";
+function assertPlausibleObjectId(hex, pos) {
+  const lower = hex.toLowerCase();
+  if (lower < OBJECTID_MIN_HEX) {
+    const when = new Date(parseInt(lower.slice(0, 8), 16) * 1e3).toISOString().slice(0, 10);
+    throw new ParseError(
+      `ObjectId ${lower} looks like a typo: its embedded timestamp decodes to ${when}, older than the smallest valid ObjectId ${OBJECTID_MIN_HEX} (2009-05-05, around MongoDB's first release).`,
+      pos
+    );
+  }
+}
 function compoundBinaryOp(op) {
   switch (op) {
     case "+=":
@@ -2179,6 +2229,10 @@ var Parser = class {
         if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseNumberStaticCall();
         }
+        if (name === "ObjectId" && this.lexer.lookahead(1).type === TokenType.LParen) {
+          this.lexer.next();
+          return this.finishObjectIdConstruction(t.pos);
+        }
         if (TYPE_CAST_NAMES.has(name)) {
           if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
           if (BARE_CAST_NAMES.has(name)) {
@@ -2547,9 +2601,13 @@ var Parser = class {
     if (className.type !== TokenType.Ident) {
       throw new ParseError(`Expected class name after 'new' at position ${newTok.pos}`, newTok.pos);
     }
+    if (className.value === "ObjectId") {
+      this.lexer.next();
+      return this.finishObjectIdConstruction(newTok.pos);
+    }
     if (className.value !== "Date" && className.value !== "Set") {
       throw new ParseError(
-        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set()`,
+        `Unsupported 'new ${className.value}' at position ${className.pos}. Supported: new Date(), new Set(), new ObjectId()`,
         className.pos
       );
     }
@@ -2579,6 +2637,39 @@ var Parser = class {
       );
     }
     return { type: "NewDate", args, pos: newTok.pos };
+  }
+  /**
+   * Finish parsing an `ObjectId(...)` construction (also reached via
+   * `new ObjectId(...)`). The caller has consumed the `ObjectId` identifier;
+   * `pos` is the leading token (`new` or `ObjectId`). Three shapes:
+   *   - `ObjectId()`               → `$createObjectId()` (server-side fresh id)
+   *   - `ObjectId("<24 hex>")`     → a constant ObjectId minted at compile time
+   *   - `ObjectId(<anything else>)`→ `$toObjectId(arg)` (server-side conversion)
+   * A constant string that is NOT 24 hex chars is a typo we can catch now, so it
+   * throws rather than deferring a guaranteed runtime failure to the server.
+   */
+  finishObjectIdConstruction(pos) {
+    this.lexer.expect(TokenType.LParen);
+    if (this.lexer.peek().type === TokenType.RParen) {
+      this.lexer.next();
+      return { type: "OperatorCall", name: "$createObjectId", style: "positional", args: [], pos };
+    }
+    const arg = this.parseExpression();
+    this.consumeTrailingComma(TokenType.RParen);
+    this.lexer.expect(TokenType.RParen);
+    if (arg.type === "StringLiteral") {
+      const hex = arg.value;
+      if (!/^[0-9a-fA-F]{24}$/.test(hex)) {
+        const detail = hex.length === 24 ? `it contains non-hexadecimal characters` : `got ${hex.length} character${hex.length === 1 ? "" : "s"}`;
+        throw new ParseError(
+          `ObjectId("${hex}") is not a valid ObjectId: expected exactly 24 hexadecimal characters, ${detail}, at position ${arg.pos}.`,
+          arg.pos
+        );
+      }
+      assertPlausibleObjectId(hex, arg.pos);
+      return { type: "ObjectIdLiteral", hex, pos };
+    }
+    return { type: "OperatorCall", name: "$toObjectId", style: "positional", args: [arg], pos };
   }
   /** "Date.now()" or "Date.UTC(year, month, day, …)" — other Date.* members are not supported */
   parseDateStatic() {
@@ -2740,11 +2831,37 @@ var Parser = class {
   }
   parseNumber() {
     const t = this.lexer.next();
+    if (t.value[0] === "0" && (t.value[1] === "x" || t.value[1] === "X")) {
+      return this.classifyHexLiteral(t.value, t.pos);
+    }
     const value = parseFloat(t.value);
     if (isNaN(value)) {
       throw new ParseError(`Invalid number '${t.value}' at position ${t.pos}`, t.pos);
     }
     return { type: "NumberLiteral", value, pos: t.pos };
+  }
+  /**
+   * Classify a `0x…` hex literal (lexeme incl. prefix, underscores already
+   * stripped). Exactly 24 hex digits → a constant ObjectId — the "type `0x`,
+   * paste a 24-char _id" form. Otherwise it's an integer literal, accepted only
+   * when it fits a JS double's exact-integer range; a larger non-24-digit hex
+   * would silently lose precision (and is neither an ObjectId nor representable),
+   * so it's rejected with guidance rather than emitted wrong.
+   */
+  classifyHexLiteral(lexeme, pos) {
+    const hex = lexeme.slice(2);
+    if (hex.length === 24) {
+      assertPlausibleObjectId(hex, pos);
+      return { type: "ObjectIdLiteral", hex, pos };
+    }
+    const big = BigInt(lexeme);
+    if (big <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      return { type: "NumberLiteral", value: Number(big), pos };
+    }
+    throw new ParseError(
+      `Hex literal '${lexeme}' at position ${pos} has ${hex.length} digits \u2014 neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal.`,
+      pos
+    );
   }
   /** Parse a template literal: `chunk0${expr0}chunk1${expr1}chunk2` */
   parseTemplateLiteral() {
@@ -4052,6 +4169,79 @@ function validateObjectKeys(name, shapeKeys, rules, style, args, pos) {
   }
 }
 
+// src/ast-walk.ts
+function someArg(arg, pred) {
+  return arg.type === "SpreadElement" ? someExpr(arg.argument, pred) : someExpr(arg, pred);
+}
+function someExpr(expr, pred) {
+  if (pred(expr)) return true;
+  switch (expr.type) {
+    case "OperatorCall":
+    case "MathCall":
+    case "ObjectCall":
+      return expr.args.some((a) => someArg(a, pred));
+    case "CallExpression":
+      return someExpr(expr.callee, pred) || expr.args.some((a) => someArg(a, pred));
+    case "MethodCall":
+      return someExpr(expr.object, pred) || expr.args.some((a) => someArg(a, pred));
+    case "MemberAccess":
+      return someExpr(expr.object, pred);
+    case "IndexAccess":
+      return someExpr(expr.object, pred) || someExpr(expr.index, pred);
+    case "BinaryExpr":
+      return someExpr(expr.left, pred) || someExpr(expr.right, pred);
+    case "UnaryExpr":
+      return someExpr(expr.operand, pred);
+    case "TernaryExpr":
+      return someExpr(expr.condition, pred) || someExpr(expr.consequent, pred) || someExpr(expr.alternate, pred);
+    case "TemplateLiteral":
+      return expr.expressions.some((e) => someExpr(e, pred));
+    case "ArrayLiteral":
+      return expr.elements.some((el) => someElement(el, pred));
+    case "ObjectLiteral":
+      return expr.entries.some(
+        (entry) => entry.type === "SpreadElement" ? someExpr(entry.argument, pred) : entry.key.kind === "computed" && someExpr(entry.key.expr, pred) || someExpr(entry.value, pred)
+      );
+    case "Lambda":
+      if (expr.body !== void 0 && someExpr(expr.body, pred)) return true;
+      if (expr.exprBlock !== void 0) {
+        if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
+        if (someExpr(expr.exprBlock.ret, pred)) return true;
+      }
+      if (expr.block !== void 0) return expr.block.stmts.some((s) => someStmt(s, pred));
+      return false;
+    case "TypeofExpr":
+      return someExpr(expr.operand, pred);
+    case "TypeCast":
+      return someExpr(expr.arg, pred);
+    case "NewDate":
+    case "DateUTC":
+      return expr.args.some((e) => someExpr(e, pred));
+    case "NewSet":
+      return expr.arg !== null && someExpr(expr.arg, pred);
+    case "ArrayFrom":
+      return someExpr(expr.input, pred) || expr.mapFn !== null && someExpr(expr.mapFn, pred);
+    case "NumberStatic":
+      return someExpr(expr.arg, pred);
+    default:
+      return false;
+  }
+}
+function someElement(el, pred) {
+  if (el.type === "AssignExpr") return someExpr(el.value, pred);
+  if (el.type === "DeleteStmt") return false;
+  if (el.type === "LetDecl") return someExpr(el.value, pred);
+  if (el.type === "FuncDecl") return false;
+  if (el.type === "SpreadElement") return someExpr(el.argument, pred);
+  return someExpr(el, pred);
+}
+function someStmt(stmt, pred) {
+  if (stmt.type === "UpdateFilter") {
+    return stmt.ops.some((op) => op.type === "AssignExpr" ? someExpr(op.value, pred) : false);
+  }
+  return someElement(stmt, pred);
+}
+
 // src/namespace.ts
 var JSMQL_NS = "__jsmql";
 function bindingSlot(name) {
@@ -4062,6 +4252,65 @@ function tmpSlot(n) {
 }
 var LENGTH_SLOT = `${JSMQL_NS}.length`;
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
+
+// src/objectid.ts
+var BSON_MAJOR_VERSION = 7;
+var BSON_VERSION_SYMBOL = /* @__PURE__ */ Symbol.for("@@mdb.bson.version");
+var HEX24 = /^[0-9a-fA-F]{24}$/;
+var ObjectId = class {
+  constructor(hex) {
+    this._bsontype = "ObjectId";
+    if (!HEX24.test(hex)) {
+      throw new TypeError(`Invalid ObjectId hex string: ${JSON.stringify(hex)} (expected 24 hex characters)`);
+    }
+    const bytes = new Uint8Array(12);
+    for (let i = 0; i < 12; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    this.buffer = bytes;
+  }
+  // bson 7.x rejects any value whose version symbol !== its BSON_MAJOR_VERSION.
+  get [BSON_VERSION_SYMBOL]() {
+    return BSON_MAJOR_VERSION;
+  }
+  // bson exposes `.id` as the raw 12-byte buffer; mirror it for any driver code
+  // that reads bytes directly rather than through `serializeInto`.
+  get id() {
+    return this.buffer;
+  }
+  toHexString() {
+    let out = "";
+    for (let i = 0; i < 12; i++) {
+      out += this.buffer[i].toString(16).padStart(2, "0");
+    }
+    return out;
+  }
+  toString() {
+    return this.toHexString();
+  }
+  // Extended JSON renders an ObjectId as its hex string; matching that keeps
+  // `JSON.stringify` output (e.g. from the CLI) readable, even though a JSON
+  // string can never round-trip back into a live BSON value.
+  toJSON() {
+    return this.toHexString();
+  }
+  equals(other) {
+    if (other === null || other === void 0) return false;
+    const o = other;
+    const hex = typeof o.toHexString === "function" ? o.toHexString() : typeof o.toString === "function" ? o.toString() : null;
+    return hex !== null && hex.toLowerCase() === this.toHexString();
+  }
+  getTimestamp() {
+    const seconds = this.buffer[0] * 2 ** 24 + this.buffer[1] * 2 ** 16 + this.buffer[2] * 2 ** 8 + this.buffer[3];
+    return new Date(seconds * 1e3);
+  }
+  serializeInto(uint8array, index) {
+    for (let i = 0; i < 12; i++) {
+      uint8array[index + i] = this.buffer[i];
+    }
+    return 12;
+  }
+};
 
 // src/codegen.ts
 var CodegenError = class extends Error {
@@ -4680,13 +4929,15 @@ function _generateBody(expr, ctx) {
       return generateCallExpression(expr.callee, expr.args, ctx, expr.pos);
     case "Lambda":
       throw new CodegenError(
-        "Lambda expression cannot be used here \u2014 only valid as array method argument or $let second argument",
+        "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, \u2026) or as the second argument to $let.",
         expr.pos
       );
     case "TypeofExpr":
       return { $type: _generate(expr.operand, ctx) };
     case "NewDate":
       return generateNewDate(expr.args, ctx);
+    case "ObjectIdLiteral":
+      return new ObjectId(expr.hex);
     case "NewSet":
       return expr.arg === null ? [] : _generate(expr.arg, ctx);
     case "ArrayFrom":
@@ -4730,6 +4981,10 @@ function wrapIfNull(value, fallback) {
 }
 function generateLengthAccess(object, optional, ctx) {
   if (object.type === "CollectionRef") return generateStreamLength(ctx, object.pos);
+  if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
+    const v = _generate(object, ctx);
+    return { $size: optional ? wrapIfNull(v, []) : v };
+  }
   const rawObj = _generate(object, ctx);
   if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
@@ -5334,6 +5589,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
       checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "indexOf", "findIndex");
       const needle = _generate(exprArgs[0], ctx);
       if (isArrayProducing(object)) {
         return { $indexOfArray: [genObj, needle] };
@@ -5384,6 +5640,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
       checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
+      rejectPredicateOnValueSearch(exprArgs[0], "includes", "some");
       const needle = _generate(exprArgs[0], ctx);
       if (isArrayProducing(object)) {
         return { $in: [needle, genObj] };
@@ -5566,7 +5823,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
-      if (lambda.params.length <= 1) {
+      if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, -1] };
       }
       return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, -1] }, 1] };
@@ -5677,7 +5934,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
-      if (lambda.params.length <= 1) {
+      if (!iter.paired) {
         return { $filter: { input: iter.input, as: iter.asName, cond: cond2 } };
       }
       return {
@@ -5692,7 +5949,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
       const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
-      if (lambda.params.length <= 1) {
+      if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, 0] };
       }
       return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, 0] }, 1] };
@@ -5891,25 +6148,32 @@ function isNegativeLiteral(e) {
 }
 function arrayIterInput(lambda, genObj, ctx, method, inputExpr) {
   const params = lambda.params;
-  if (params.length >= 3) {
+  if (params.length > 3) {
     throw new CodegenError(
-      `.${method}() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.`,
+      `.${method}() callbacks take at most 3 parameters (element, index, array); got ${params.length}.`,
       lambda.pos
     );
   }
-  const bodyCtx = elementTypedCtx(ctx, params, inputExpr);
-  if (params.length <= 1) {
-    return { input: genObj, asName: params[0] ? safeVarName(params[0]) : "v", bodyCtx, wrap: (body) => body };
+  const arrayParam = params.length === 3 ? params[2] : void 0;
+  const elementCtx = elementTypedCtx(ctx, params, inputExpr);
+  const bodyCtx = arrayParam ? { ...elementCtx, bindingTypes: new Map([...elementCtx.bindingTypes ?? [], [arrayParam, "array"]]) } : elementCtx;
+  const asName = params[0] ? safeVarName(params[0]) : "v";
+  const indexUsed = params.length >= 2 && someExpr(lambda, (e) => e.type === "ParamRef" && e.name === params[1]);
+  if (!indexUsed) {
+    const wrap = arrayParam ? (body) => ({ $let: { vars: { [safeVarName(arrayParam)]: genObj }, in: body } }) : (body) => body;
+    return { input: genObj, asName, bodyCtx, wrap, paired: false };
   }
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
     asName: "jsmqlPair",
     bodyCtx,
+    paired: true,
     wrap: (body) => ({
       $let: {
         vars: {
           [safeVarName(params[0])]: { $arrayElemAt: ["$$jsmqlPair", 1] },
-          [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] }
+          [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] },
+          ...arrayParam ? { [safeVarName(arrayParam)]: genObj } : {}
         },
         in: body
       }
@@ -6117,6 +6381,14 @@ function exprArgsOnly(args, method) {
     }
     return a;
   });
+}
+function rejectPredicateOnValueSearch(arg, method, sibling) {
+  if (arg?.type !== "Lambda") return;
+  const p = arg.params[0] ?? "x";
+  throw new CodegenError(
+    `.${method}() searches for a value \u2014 it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => \u2026).`,
+    arg.pos
+  );
 }
 function checkArity(method, spec, count, callPos, prefix = ".") {
   const ok = spec.none !== void 0 ? count === 0 : spec.exact !== void 0 ? count === spec.exact : spec.allowed !== void 0 ? spec.allowed.includes(count) : count >= spec.atLeast;
@@ -6486,7 +6758,56 @@ function generateObjectCall(method, args, ctx, pos) {
     }
   }
 }
+function evalConstDate(args) {
+  if (args.length === 0) return null;
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg.type === "DateUTC") {
+      const utc = constNumberArgs(arg.args);
+      return utc === null ? null : new Date(utcMs(utc));
+    }
+    if (arg.type === "NumberLiteral") return new Date(arg.value);
+    if (arg.type === "StringLiteral") return new Date(arg.value);
+    return null;
+  }
+  const nums = constNumberArgs(args);
+  if (nums === null) return null;
+  return new Date(utcMs(nums));
+}
+function foldConstantDate(args) {
+  const d = evalConstDate(args);
+  return d !== null && !Number.isNaN(d.getTime()) ? d : null;
+}
+function utcMs(parts) {
+  return Date.UTC(...parts);
+}
+function constNumberArgs(args) {
+  const out = [];
+  for (const a of args) {
+    if (a.type !== "NumberLiteral") return null;
+    out.push(a.value);
+  }
+  return out;
+}
+function invalidConstDateError(args) {
+  const first = args[0];
+  if (args.length === 1 && first.type === "StringLiteral") {
+    return new CodegenError(
+      `new Date("${first.value}") \u2014 "${first.value}" is not a valid date string. Use an ISO 8601 date like "2026-01-01" or "2026-01-01T00:00:00.000Z".`,
+      first.pos
+    );
+  }
+  return new CodegenError(
+    `new Date(\u2026) \u2014 these arguments produce an invalid date (out of the representable range).`,
+    first.pos
+  );
+}
 function generateNewDate(args, ctx) {
+  const constEval = evalConstDate(args);
+  if (constEval !== null) {
+    if (Number.isNaN(constEval.getTime())) throw invalidConstDateError(args);
+    return constEval;
+  }
   if (args.length === 0) return { $toDate: "$$NOW" };
   if (args.length === 1) {
     const arg = args[0];
@@ -6771,6 +7092,7 @@ function collectReadsInto(expr, out) {
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
     case "TypeCastRef":
       return;
     case "ArrayLiteral":
@@ -7524,7 +7846,9 @@ function anyEqualityLiteral(expr, ctx) {
         false
       );
     case "NewDate":
-      return evaluateStaticDate(expr);
+      return foldedDateValue(expr);
+    case "ObjectIdLiteral":
+      return { value: new ObjectId(expr.hex) };
     default:
       return null;
   }
@@ -7543,41 +7867,14 @@ function anyOrderedLiteral(expr, ctx) {
         true
       );
     case "NewDate":
-      return evaluateStaticDate(expr);
+      return foldedDateValue(expr);
     default:
       return null;
   }
 }
-function evaluateStaticDate(expr) {
-  const args = expr.args;
-  if (args.length === 0) return null;
-  if (args.length === 1) {
-    const arg = args[0];
-    if (arg.type === "DateUTC") {
-      const utcArgs = staticNumberArgs(arg.args);
-      if (utcArgs === null) return null;
-      const ms = Date.UTC(...utcArgs);
-      return finalizeDate(new Date(ms));
-    }
-    if (arg.type === "NumberLiteral") return finalizeDate(new Date(arg.value));
-    if (arg.type === "StringLiteral") return finalizeDate(new Date(arg.value));
-    return null;
-  }
-  const numericArgs = staticNumberArgs(args);
-  if (numericArgs === null) return null;
-  return finalizeDate(new Date(...numericArgs));
-}
-function staticNumberArgs(args) {
-  const out = [];
-  for (const a of args) {
-    if (a.type !== "NumberLiteral") return null;
-    out.push(a.value);
-  }
-  return out;
-}
-function finalizeDate(d) {
-  if (Number.isNaN(d.getTime())) return null;
-  return { value: d };
+function foldedDateValue(expr) {
+  const d = foldConstantDate(expr.args);
+  return d === null ? null : { value: d };
 }
 function paramRefAsLiteral(expr, ctx, orderedOnly) {
   if (!ctx.bindings?.has(expr.name)) return null;
@@ -8605,6 +8902,22 @@ function rewriteEnclosingForeignParams(expr, params) {
   }
   return walk(expr);
 }
+function rewriteEnclosingForeignParamsInPipeline(block, params) {
+  if (params.length === 0) return block;
+  const rw = (e) => rewriteEnclosingForeignParams(e, params);
+  const stmts = block.stmts.map((stmt) => {
+    if (stmt.type === "LetDecl") return { ...stmt, value: rw(stmt.value) };
+    if (stmt.type === "FuncDecl") return { ...stmt, lambda: rw(stmt.lambda) };
+    if (stmt.type === "UpdateFilter") {
+      const ops = stmt.ops.map(
+        (op) => op.type === "AssignExpr" ? { type: "AssignExpr", target: rw(op.target), value: rw(op.value), pos: op.pos } : { type: "DeleteStmt", target: rw(op.target), pos: op.pos }
+      );
+      return { type: "UpdateFilter", ops, pos: stmt.pos };
+    }
+    return rw(stmt);
+  });
+  return { type: "Pipeline", stmts, pos: block.pos };
+}
 function matchEnclosingParamPath(node, params) {
   if (node.type === "ParamRef" && params.has(node.name)) {
     return { param: node.name, segments: [] };
@@ -8838,7 +9151,8 @@ function classifyPath(expr, foreignParam, outerLets) {
   }
   return null;
 }
-function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const { lambda } = call;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
@@ -8848,7 +9162,12 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLO
       const basic = tryBasicForm(preRewritten, foreignParam, outerLets);
       if (basic !== null) return basic;
     }
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -8862,20 +9181,19 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLO
       innerEnclosing
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    const matchBody = generateWithCtx(lookupFree, subCtx);
-    return { kind: "pipeline", letVars, pipeline: [...nestedStages, { $match: { $expr: matchBody } }] };
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
-    if (enclosing.foreignParams.length > 0 || containsLookupCall(lambda.block, outerCtx)) {
-      throw new CodegenError(
-        `Nested lookup inside another lookup's block-body lambda is not yet supported. Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
-        lambda.pos
-      );
-    }
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    const stages = lowerBlock2(rewritten, subCtx);
-    return { kind: "pipeline", letVars, pipeline: stages };
+    const { letVars, pipeline } = buildBlockBodyPredicate(
+      lambda.block,
+      foreignParam,
+      outerCtx,
+      outerLets,
+      lowerBlock2,
+      enclosing
+    );
+    return { kind: "pipeline", letVars, pipeline };
   }
   throw new CodegenError(
     `.${call.method}(predicate) predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
@@ -8887,12 +9205,36 @@ function makeSubPipelineCtx(outerCtx, letVarNames) {
   if (letVarNames.length === 0) return fresh;
   return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
 }
-function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function buildBlockBodyPredicate(block, foreignParam, outerCtx, outerLets, lowerBlock2, enclosing) {
+  const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
+  const { rewritten, letVars } = extractLetsFromPipeline(
+    preRewritten,
+    foreignParam,
+    outerLets,
+    enclosing.foreignParams.length
+  );
+  const innerEnclosing = {
+    foreignParams: [...enclosing.foreignParams, foreignParam],
+    inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+  };
+  const subCtx = {
+    ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
+    enclosingLookup: innerEnclosing
+  };
+  return { letVars, pipeline: lowerBlock2(rewritten, subCtx) };
+}
+function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== void 0) {
     const preRewritten = rewriteEnclosingForeignParams(lambda.body, enclosing.foreignParams);
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -8906,18 +9248,19 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing = E
       innerEnclosing
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    return { letVars, pipelineBody: [...nestedStages, { $match: { $expr: generateWithCtx(lookupFree, subCtx) } }] };
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
-    if (enclosing.foreignParams.length > 0) {
-      throw new CodegenError(
-        `Nested lookup inside another lookup's block-body lambda is not yet supported. Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
-        lambda.pos
-      );
-    }
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    return { letVars, pipelineBody: lowerBlock2(rewritten, subCtx) };
+    const { letVars, pipeline } = buildBlockBodyPredicate(
+      lambda.block,
+      foreignParam,
+      outerCtx,
+      outerLets,
+      lowerBlock2,
+      enclosing
+    );
+    return { letVars, pipelineBody: pipeline };
   }
   throw new CodegenError(
     `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
@@ -8963,7 +9306,11 @@ function tryBasicForm(body, foreignParam, outerLets) {
   }
   return null;
 }
-function createLetAllocator() {
+function letVarName(lastSegment, depth) {
+  const connector = lastSegment.startsWith("_") ? "" : "_";
+  return `v${depth}${connector}${lastSegment}`;
+}
+function createLetAllocator(depth) {
   const byPath = /* @__PURE__ */ new Map();
   const used = /* @__PURE__ */ new Set();
   const out = {};
@@ -8982,7 +9329,7 @@ function createLetAllocator() {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== void 0) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -8992,7 +9339,7 @@ function createLetAllocator() {
     allocateForOuterLet(segments, fieldPath) {
       const existing = byPath.get(fieldPath);
       if (existing !== void 0) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);
@@ -9002,13 +9349,13 @@ function createLetAllocator() {
     letVars: () => out
   };
 }
-function extractLetsFromExpr(body, foreignParam, outerLets) {
-  const allocator = createLetAllocator();
+function extractLetsFromExpr(body, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
-function extractLetsFromPipeline(block, foreignParam, outerLets) {
-  const allocator = createLetAllocator();
+function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
   const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }
@@ -9051,16 +9398,27 @@ function transformStmt(stmt, foreignParam, allocator, outerLets) {
       if (op.type === "AssignExpr") {
         return {
           type: "AssignExpr",
-          target: transformExpr(op.target, foreignParam, allocator, outerLets),
+          target: transformTarget(op.target, foreignParam, allocator, outerLets),
           value: transformExpr(op.value, foreignParam, allocator, outerLets),
           pos: op.pos
         };
       }
-      return { type: "DeleteStmt", target: transformExpr(op.target, foreignParam, allocator, outerLets), pos: op.pos };
+      return {
+        type: "DeleteStmt",
+        target: transformTarget(op.target, foreignParam, allocator, outerLets),
+        pos: op.pos
+      };
     });
     return { type: "UpdateFilter", ops, pos: stmt.pos };
   }
   return transformExpr(stmt, foreignParam, allocator, outerLets);
+}
+function transformTarget(target, foreignParam, allocator, outerLets) {
+  const classified = classifyPath(target, foreignParam, outerLets);
+  if (classified !== null && (classified.kind === "local" || classified.kind === "foreign") && classified.segments.length > 0) {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  return transformExpr(target, foreignParam, allocator, outerLets);
 }
 function transformExpr(expr, foreignParam, allocator, outerLets) {
   const classified = classifyPath(expr, foreignParam, outerLets);
@@ -9101,6 +9459,7 @@ function mapChildren(expr, foreignParam, allocator, outerLets) {
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
       return expr;
     case "BinaryExpr":
       return {
@@ -9333,7 +9692,8 @@ function transformCallArgs(args, foreignParam, allocator, outerLets) {
     return transformExpr(a, foreignParam, allocator, outerLets);
   });
 }
-function lowerLookup(call, as, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const pred = translatePredicate(call, outerCtx, lowerBlock2, enclosing);
   const from = call.db !== void 0 ? { db: call.db, coll: call.collection } : call.collection;
   const stages = [];
@@ -9347,7 +9707,8 @@ function lowerLookup(call, as, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSIN
   }
   return stages;
 }
-function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   validateLookupShape(expr);
   if (expr.type === "MemberAccess" && expr.member === "length") {
     const innerCall = detectLookupCall(expr.object, outerCtx);
@@ -9456,6 +9817,7 @@ function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = E
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
+    case "ObjectIdLiteral":
       return { stages, rewritten: expr };
     case "BinaryExpr":
       return {
@@ -11578,77 +11940,6 @@ function extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out) {
 function isStreamLengthNode(e) {
   return e.type === "MemberAccess" && e.object.type === "CollectionRef" && e.member === "length";
 }
-function someArg(arg, pred) {
-  return arg.type === "SpreadElement" ? someExpr(arg.argument, pred) : someExpr(arg, pred);
-}
-function someExpr(expr, pred) {
-  if (pred(expr)) return true;
-  switch (expr.type) {
-    case "OperatorCall":
-    case "MathCall":
-    case "ObjectCall":
-      return expr.args.some((a) => someArg(a, pred));
-    case "CallExpression":
-      return someExpr(expr.callee, pred) || expr.args.some((a) => someArg(a, pred));
-    case "MethodCall":
-      return someExpr(expr.object, pred) || expr.args.some((a) => someArg(a, pred));
-    case "MemberAccess":
-      return someExpr(expr.object, pred);
-    case "IndexAccess":
-      return someExpr(expr.object, pred) || someExpr(expr.index, pred);
-    case "BinaryExpr":
-      return someExpr(expr.left, pred) || someExpr(expr.right, pred);
-    case "UnaryExpr":
-      return someExpr(expr.operand, pred);
-    case "TernaryExpr":
-      return someExpr(expr.condition, pred) || someExpr(expr.consequent, pred) || someExpr(expr.alternate, pred);
-    case "TemplateLiteral":
-      return expr.expressions.some((e) => someExpr(e, pred));
-    case "ArrayLiteral":
-      return expr.elements.some((el) => someElement(el, pred));
-    case "ObjectLiteral":
-      return expr.entries.some(
-        (entry) => entry.type === "SpreadElement" ? someExpr(entry.argument, pred) : entry.key.kind === "computed" && someExpr(entry.key.expr, pred) || someExpr(entry.value, pred)
-      );
-    case "Lambda":
-      if (expr.body !== void 0 && someExpr(expr.body, pred)) return true;
-      if (expr.exprBlock !== void 0) {
-        if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
-        if (someExpr(expr.exprBlock.ret, pred)) return true;
-      }
-      if (expr.block !== void 0) return expr.block.stmts.some((s) => someStmt(s, pred));
-      return false;
-    case "TypeofExpr":
-      return someExpr(expr.operand, pred);
-    case "TypeCast":
-      return someExpr(expr.arg, pred);
-    case "NewDate":
-    case "DateUTC":
-      return expr.args.some((e) => someExpr(e, pred));
-    case "NewSet":
-      return expr.arg !== null && someExpr(expr.arg, pred);
-    case "ArrayFrom":
-      return someExpr(expr.input, pred) || expr.mapFn !== null && someExpr(expr.mapFn, pred);
-    case "NumberStatic":
-      return someExpr(expr.arg, pred);
-    default:
-      return false;
-  }
-}
-function someElement(el, pred) {
-  if (el.type === "AssignExpr") return someExpr(el.value, pred);
-  if (el.type === "DeleteStmt") return false;
-  if (el.type === "LetDecl") return someExpr(el.value, pred);
-  if (el.type === "FuncDecl") return false;
-  if (el.type === "SpreadElement") return someExpr(el.argument, pred);
-  return someExpr(el, pred);
-}
-function someStmt(stmt, pred) {
-  if (stmt.type === "UpdateFilter") {
-    return stmt.ops.some((op) => op.type === "AssignExpr" ? someExpr(op.value, pred) : false);
-  }
-  return someElement(stmt, pred);
-}
 function containsStreamLength(node) {
   return node.type === "UpdateFilter" ? someStmt(node, isStreamLengthNode) : someElement(node, isStreamLengthNode);
 }
@@ -12133,5 +12424,6 @@ If '${err.identifier}' is a value from outer scope, use the jsmql\`\` template t
 export {
   FunctionInputError,
   JsmqlInterpolationError,
+  ObjectId,
   jsmql
 };

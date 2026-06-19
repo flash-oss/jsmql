@@ -40,6 +40,10 @@ Topic-scoped suites: pipeline-stage handling, update-filter desugaring (the `$se
 
 The comprehensive guard for the `$`-string rule (`GenerateCtx.pipelineContext`): in pipeline context a `$`-prefixed string literal passes through verbatim; in `jsmql.expr` it is wrapped in `$literal`. Loops **every** operator in `OPERATORS` and **every** stage in `STAGES` so no `$op` can regress, plus a coverage meta-assertion that each op/stage is either tested or explicitly skipped-with-reason. When you add an operator or stage, this file picks it up automatically (the loops are registry-driven); add a `STAGE_CASES` row for a new stage that carries a `$`-string body, or a `STAGE_SKIP` reason otherwise.
 
+### `integration.test.ts` — jsmql MQL run against a live MongoDB
+
+The only suite that runs jsmql's emitted MQL on a **real** server and asserts on the documents that come back — closing the gap a `toEqual(<MQL>)` can't (it proves what jsmql *emits*, not that mongod *runs* it correctly). Each case compiles a jsmql source, runs it read-only against a deterministic fixture dataset, and checks the result; expected values are derived from a live run, never guessed. It runs against a **dedicated, auth-enabled mongod on `:27018`** (separate from your primary instance), with a server-enforced read-only user so a test run can't mutate the data. The dataset, the instance lifecycle, and the read-only design all live in [`test/fixtures/`](fixtures/CLAUDE.md). The suite **skips itself** (green, not failing) when that instance isn't up/seeded, so `npm test` stays green without it; run `npm run fixture:up` first to exercise it. This is the natural home for the "verify it actually runs" discipline below — when in doubt about a shape, add a case here instead of trusting a green `toEqual`.
+
 ## Never assert MQL the MongoDB server would reject
 
 A passing `toEqual(...)` only proves jsmql *emits* a given document — **not** that MongoDB would *accept* it. The whole point of jsmql is to produce runnable MQL, so an expected value that the server rejects is a latent bug the suite is actively endorsing. When you add or change an expected MQL output, make sure the real server would run it.
@@ -71,6 +75,8 @@ When you fix a bug in this class, add the offending shape to `literal-passthroug
 ```sh
 npm test           # run once
 npm run test:watch # watch mode during development
+
+npm run fixture:up && npm test   # also run the live-MongoDB integration suite
 ```
 
-Tests must pass on every commit. Never disable or skip a test to make CI green — fix the underlying issue.
+Tests must pass on every commit. Never disable or skip a test to make CI green — fix the underlying issue. (The `integration.test.ts` suite is the one exception that *self*-skips, by design, when its dedicated mongod isn't running — see its entry above.)
