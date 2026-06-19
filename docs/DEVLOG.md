@@ -51,6 +51,32 @@ Implementation: `generateAssertGuardExpr` + the expression-position rejection in
 
 ---
 
+## 2026-06-17 — fix(playground): scope the saved session to the page's full URL
+
+The editor session (query + Variables + compile mode) persisted under a fixed `localStorage` key, `"jsmql-playground:session:v1"`. `localStorage` is scoped by the browser to the *origin* (scheme + host + port) but **not** the path, so every playground served from the same origin shared one slot and clobbered each other: a dev copy deployed alongside the canonical `flash-oss.github.io/jsmql/playground.html` (e.g. under a different path) would overwrite the work the user had open there, and two local copies at `localhost:1234/bla/` vs `localhost:1234/foo/` collided too.
+
+Fix: derive the key from the page URL — `"jsmql-playground:session:v1:" + location.origin + location.pathname` ([playground_skeleton.html](../playground_skeleton.html)). Different paths now keep independent sessions; different ports/hosts already did (browser origin scoping) but the origin is folded in too so the key reads as "state depends on the whole URL". Existing sessions under the bare-`v1` key are not migrated — a one-time reset, acceptable for a best-effort persistence nicety. Playground-only; no library code touched. [playground.html](../playground.html) regenerated via `scripts/sync-playground.mjs`.
+
+---
+
+## 2026-06-16 — fix(ops): `$` is `var`, not `const`, in the generated ambient types
+
+`@koresar/jsmql/ops` declared the collection context ref as `const $$`. But `$$` is reassigned wholesale by the replace-stream / `$facet` sugar — e.g. `$$ = $$$.transactions.filter(t => t.type === "deposit")` — so TypeScript flagged valid jsmql with `TS2588: Cannot assign to '$$' because it is a constant.`. The fix emits `var $$` instead (verified: `var` accepts the reassignment with zero errors; a forced-`const` control reproduces exactly `TS2588`).
+
+Only `$$` changed. `$$$` / `$$$$` stay `const`: the language never reassigns them wholesale — their only write forms are *property* assignments (`$$$.coll = …`, `$$$$.db.coll = …` → `$out`), which `const` already permits, and keeping them `const` still correctly flags the invalid `$$$ = …` whole-reassignment (no such sugar exists). Loosening all three to `var` would have wrongly accepted a form the parser rejects.
+
+Source of the change is the generator [scripts/generate-ops.mjs](../scripts/generate-ops.mjs) (`contextRefBlock` — the collection branch now emits `var`); [src/ops.ts](../src/ops.ts) was regenerated (the drift test byte-compares it). Spec updated: [docs/specs/ops-generation.md](specs/ops-generation.md) § Context references now documents the per-ref keyword and its rationale.
+
+---
+
+## 2026-06-16 — fix(playground): trailing `// comment` no longer breaks the variables (compile) path
+
+A query ending in a `// line comment` with no trailing newline rendered `Unexpected end of expression` in the playground — but **only** when the Variables editor had at least one key, so `render()` routes through the `.compile(...)` builders. `buildArrow(keys, query)` ([playground_skeleton.html](../playground_skeleton.html)) wraps the query into a compile-form arrow string `({ keys }) => { <query> }`, and it appended the closing ` }` **on the same line** as the query's last line. When that last line was `// some comment`, the brace landed *inside* the comment (`// some comment }`), so the block never closed and jsmql's parser hit EOF mid-block — a correct rejection of genuinely malformed wrapper source, surfaced as the cryptic error. The no-variables path was unaffected (it feeds the raw query straight to `jsmql()`, whose lexer treats the trailing comment as trivia).
+
+Fix: close the block on its own line — `prefix + query + "\n}"` — so the leading newline terminates any trailing line comment before the brace. This mirrors `parseVars`, which already puts a `\n` before its closing `)` in `new Function("return (" + trimmed + "\n)")` for exactly this reason. `prefixLen` is unchanged, so arrow-relative → query-editor error-position mapping (`toQueryPos`) still lines up. Playground-only; no library code touched. [playground.html](../playground.html) regenerated via `scripts/sync-playground.mjs`.
+
+---
+
 ## 2026-06-15 — docs: LANGUAGE.md Function Form no longer claims "arrow functions only"
 
 The Function Form section's Restrictions bullet still read "**Arrow functions only.** `function` declarations are rejected. Use `() => …`" — stale since the `function` keyword shipped everywhere arrows are accepted (DEF-030, commit 756e042). The grammar (`function_expr` / `function_decl`) and [reusable-functions.md](specs/reusable-functions.md) § "the JS `function` keyword" already documented it as a second spelling of the same surface; only the user-facing reference lagged.
@@ -66,26 +92,6 @@ Corrected [LANGUAGE.md](LANGUAGE.md) § Function Form: the intro now says `jsmql
 Covered sites (all in [src/parser.ts](../src/parser.ts)): method-call args, `$op(...)` positional **and** object-style (a lone trailing comma after a sole object arg stays object-style — `$op({…})` ≡ `$op({…},)`), `Math.*` / `Object.*` / `Date.UTC` / `new Date|Set` arg lists, the fixed-arity built-ins (`Number(x,)`, `Array.isArray(x,)`, `Number.isInteger(x,)`, `Array.from(x,)` / `Array.from(x, fn,)`), arrow & `function` parameter lists (and the parenthesised-lambda lookahead `isLambdaStart`, so `(x,) => …` is recognised), the `jsmql.compile` three-slot signature + its params destructure, and the in-stage update-op chain before a block's closing `}`. Array and object literals and the destructure slot already allowed it. A trailing comma never changes the parse — output is byte-identical to the comma-free form — and it is **not** a way to pass an extra argument: `Number(x, y)` still raises the precise "takes exactly 1 argument" error (only a *lone* trailing comma is swallowed).
 
 Implemented with three shared helpers so the rule is enforced uniformly rather than re-derived per call site: `parseDelimitedList` (empty-or-list with optional trailing comma), `parseCommaTail` (tail after an already-parsed first item — used by the operator-call object/positional paths), and `consumeTrailingComma` (swallow a *lone* trailing comma before a fixed-arity close). Spec: [docs/specs/grammar.md](specs/grammar.md) § Trailing commas (+ `","?` on the core EBNF productions); user doc: [docs/LANGUAGE.md](LANGUAGE.md) § Trailing commas; tests: the `trailing commas (JS syntax)` block in [test/codegen.test.ts](../test/codegen.test.ts).
-
----
-
-## 2026-06-14 — feat(playground): LOC + byte-size counters in both panel headers
-
-Each panel header now carries a live size figure: the **jsmql input** label reads `jsmql input  3 LOC, 187 B` and the **MQL output** label reads `MQL output  49 LOC, 728 B`. The side-by-side numbers make the playground's core pitch legible at a glance — how much terser the JSMQL source is than the MQL it expands to. This **replaces** the old `(Node/Deno/Bun)` hint in the output label (the where-it-runs note was low-value next to a concrete size delta).
-
-`statsOf(text)` computes both: `text.split("\n").length` for LOC and `new Blob([text]).size` for an exact UTF-8 byte count, formatted as `<N> B` under 1 KB else `<N.N> KB`. Input stats update from the editor source on every `render()` (so they track typing live); output stats are set only on the success branch from the *rendered* MQL string — so the figure follows the Prettify toggle (a fair LOC comparison wants the pretty-printed shape), and an empty or error panel clears the figure since its text is a message, not MQL. Both clear to `""` so a fresh/empty session reads just `jsmql input` / `MQL output`.
-
-Purely playground UX — no library code changed. Authored in [playground_skeleton.html](../playground_skeleton.html) (new `.label-stats` span in each header, the `statsOf` helper, and the per-branch wiring in `render()`); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html). Verified by syntax-checking the generated module and confirming the figures on a real 3-stage pipeline (3 LOC/187 B → 49 LOC/728 B).
-
----
-
-## 2026-06-14 — feat(playground): line numbers in the input and output editors
-
-Both CodeMirror panes — the **jsmql input** (left) and the **MQL output** (right) — now show a line-number gutter (`lineNumbers: true`). Purely a readability aid for multi-line pipelines and their emitted MQL; no library code changed.
-
-The gutter is themed to the page: `.CodeMirror-gutters` uses the `--bg` background with a `--border-strong` divider, and an error-panel variant (`.panel.error .CodeMirror-gutters` / `-linenumber`) keeps it consistent when the output pane is in its error state. The line numbers themselves are deliberately prominent — dark (`#1a1a1a`), `font-weight: 600`, full opacity. The selector is `.cm-s-neo .CodeMirror-linenumber` rather than a bare `.CodeMirror-linenumber`: the neo theme ships its own theme-scoped rule that otherwise out-specifies a plain selector and washes the numbers back to grey. The existing sidebar-toggle `refresh()` calls already re-measure the new gutter width, so no layout fix was needed.
-
-Authored in the hand-written [playground_skeleton.html](../playground_skeleton.html); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html).
 
 ---
 
@@ -122,6 +128,26 @@ No library code changed — purely playground UX, authored in the hand-written [
 The examples-sidebar toggle moved out of the page header and onto the Examples panel itself. When the panel is open, a compact `Hide ⌘E` button sits to the left of the `EXAMPLES` heading; when collapsed, a `Show examples ⌘E` button appears on the left, inside the input panel's label, so there is always exactly one toggle visible and it reads against the thing it controls. Both share one `.examples-toggle` style (replacing the old header `.header-action` rule), and `#show-sidebar` is gated to `main.sidebar-collapsed` so the open/closed affordances never both show. The header is now just the title + syntax-reference link.
 
 Also dropped the `95 (19 filt · 34 pipe · 42 expr)` count line from the panel header (and the JS that computed it — `countEl`, `itCount`, the per-kind tally) as noise no one reads, and rebound the toggle hotkey from ⌘B to **⌘E** (`key === "e"`, both button hints, the help comment). No library code changed — purely playground UX, authored in [playground_skeleton.html](../playground_skeleton.html) and regenerated into [playground.html](../playground.html) via `scripts/sync-playground.mjs`.
+
+---
+
+## 2026-06-14 — feat(playground): line numbers in the input and output editors
+
+Both CodeMirror panes — the **jsmql input** (left) and the **MQL output** (right) — now show a line-number gutter (`lineNumbers: true`). Purely a readability aid for multi-line pipelines and their emitted MQL; no library code changed.
+
+The gutter is themed to the page: `.CodeMirror-gutters` uses the `--bg` background with a `--border-strong` divider, and an error-panel variant (`.panel.error .CodeMirror-gutters` / `-linenumber`) keeps it consistent when the output pane is in its error state. The line numbers themselves are deliberately prominent — dark (`#1a1a1a`), `font-weight: 600`, full opacity. The selector is `.cm-s-neo .CodeMirror-linenumber` rather than a bare `.CodeMirror-linenumber`: the neo theme ships its own theme-scoped rule that otherwise out-specifies a plain selector and washes the numbers back to grey. The existing sidebar-toggle `refresh()` calls already re-measure the new gutter width, so no layout fix was needed.
+
+Authored in the hand-written [playground_skeleton.html](../playground_skeleton.html); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html).
+
+---
+
+## 2026-06-14 — feat(playground): LOC + byte-size counters in both panel headers
+
+Each panel header now carries a live size figure: the **jsmql input** label reads `jsmql input  3 LOC, 187 B` and the **MQL output** label reads `MQL output  49 LOC, 728 B`. The side-by-side numbers make the playground's core pitch legible at a glance — how much terser the JSMQL source is than the MQL it expands to. This **replaces** the old `(Node/Deno/Bun)` hint in the output label (the where-it-runs note was low-value next to a concrete size delta).
+
+`statsOf(text)` computes both: `text.split("\n").length` for LOC and `new Blob([text]).size` for an exact UTF-8 byte count, formatted as `<N> B` under 1 KB else `<N.N> KB`. Input stats update from the editor source on every `render()` (so they track typing live); output stats are set only on the success branch from the *rendered* MQL string — so the figure follows the Prettify toggle (a fair LOC comparison wants the pretty-printed shape), and an empty or error panel clears the figure since its text is a message, not MQL. Both clear to `""` so a fresh/empty session reads just `jsmql input` / `MQL output`.
+
+Purely playground UX — no library code changed. Authored in [playground_skeleton.html](../playground_skeleton.html) (new `.label-stats` span in each header, the `statsOf` helper, and the per-branch wiring in `render()`); `scripts/sync-playground.mjs` regenerated [playground.html](../playground.html). Verified by syntax-checking the generated module and confirming the figures on a real 3-stage pipeline (3 LOC/187 B → 49 LOC/728 B).
 
 ---
 

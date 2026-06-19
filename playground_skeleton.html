@@ -1759,7 +1759,13 @@
       // editor for highlighting.
       function buildArrow(keys, query) {
         const prefix = `({ ${keys.join(", ")} }) => { `;
-        return { src: prefix + query + " }", prefixLen: prefix.length };
+        // Close the block on its OWN line. If `query` ends with a `// line
+        // comment` and no trailing newline, appending `}` on the same line
+        // would comment out the closing brace and the parser would hit EOF
+        // ("Unexpected end of expression"). The leading newline terminates any
+        // trailing line comment before the brace — mirrors `parseVars`, which
+        // puts a `\n` before its closing `)` for the same reason.
+        return { src: prefix + query + "\n}", prefixLen: prefix.length };
       }
 
       // Persist the editor session — the JSMQL query, the Variables object, and
@@ -1770,7 +1776,17 @@
       // because localStorage access throws when storage is unavailable (private
       // mode, disabled cookies, a sandboxed iframe) — persistence is a
       // best-effort nicety, never a hard dependency.
-      const STORAGE_KEY = "jsmql-playground:session:v1";
+      //
+      // The key is scoped to the page's full URL (origin + path), not a fixed
+      // string, so two playgrounds served from different locations keep separate
+      // sessions. localStorage is already origin-scoped by the browser (so
+      // :1234 and :4321 never collide), but it is NOT path-scoped — without the
+      // pathname, every playground under the same origin (e.g.
+      // flash-oss.github.io/jsmql/ and a dev copy at .../experiment/) would
+      // share one session and clobber each other. Including the origin too keeps
+      // the key self-documenting as "state depends on the whole URL".
+      const STORAGE_KEY =
+        "jsmql-playground:session:v1:" + location.origin + location.pathname;
       function saveState() {
         try {
           localStorage.setItem(

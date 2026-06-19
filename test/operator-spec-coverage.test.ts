@@ -170,7 +170,12 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // `$$` is emitted as a named interface (so its stream methods can return it
     // for chaining); `$$$` / `$$$$` stay inline anonymous types.
     expect(src).toContain("interface JsmqlCollectionRef {");
-    expect(src).toContain("const $$: JsmqlCollectionRef;");
+    // `$$` must be `var`, not `const`: it is reassigned wholesale by the
+    // `$$ = …` replace-stream / `$facet` sugar, and `const $$` makes TS reject
+    // that valid jsmql (TS2588). `$$$` / `$$$$` stay `const` — they only take
+    // property writes (`$$$.coll = …` → `$out`), which `const` permits.
+    expect(src).toContain("var $$: JsmqlCollectionRef;");
+    expect(src).not.toContain("const $$: JsmqlCollectionRef;");
     expect(src).toContain("const $$$: {");
     expect(src).toContain("const $$$$: {");
     // Diagnostic methods derived from STAGES[…].diagnostic, with annotated args.

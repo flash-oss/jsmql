@@ -75,7 +75,8 @@ const DIAGNOSTIC_OPTION_SHAPES = {
   $listSampledQueries: "{ namespace?: string }",
 };
 
-// Context-ref prefixes, in scope order. Each becomes an ambient `const` whose
+// Context-ref prefixes, in scope order. Each becomes an ambient declaration
+// (`var $$` — reassignable via `$$ = …` — plus `const $$$` / `const $$$$`) whose
 // named members are the scope's diagnostic stages (derived from the STAGES
 // `diagnostic` field) and whose `[key: string]: any` tail keeps the rest of the
 // ref's syntax (`$$.push(...)`, `$$$.coll.find(...)`, member access, stream
@@ -395,7 +396,9 @@ function emitBlock(name, jsdoc, callableSigs) {
   return `${jsdoc}\n${emitFunctionDecls(name, callableSigs)}`;
 }
 
-// Emit the `const $$ / $$$ / $$$$` ambient declarations. Diagnostic methods are
+// Emit the `$$` / `$$$` / `$$$$` ambient declarations (`$$` is `var` — it is
+// reassigned by `$$ = …`; the other two are `const`, only their members are
+// written). Diagnostic methods are
 // derived from the STAGES `diagnostic` field (the single source of truth, also
 // read by src/system-stage-translation.ts); each method reuses the same JSDoc
 // the stage's own block gets, so descriptions stay consistent.
@@ -429,10 +432,15 @@ function contextRefBlock(spec) {
     members.push("[key: string]: any;");
     const refJsdoc = `/**\n * ${ref.doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
     // The collection ref is emitted as a named interface so its stream methods
-    // can return it (chaining). The other two refs stay inline anonymous types.
+    // can return it (chaining), and as `var` (not `const`) because `$$` is
+    // reassigned wholesale by the `$$ = …` replace-stream / `$facet` sugar —
+    // `declare const $$` would make TS reject that valid jsmql. The other two
+    // refs stay inline anonymous `const`s: they only ever take *property* writes
+    // (`$$$.coll = …`, `$$$$.db.coll = …` → `$out`), which `const` already
+    // permits, while still flagging the invalid `$$$ = …` whole-reassignment.
     if (scope === "collection") {
       blocks.push(
-        `interface ${COLLECTION_REF_TYPE} {\n${members.join("\n")}\n}\n${refJsdoc}\nconst ${ref.name}: ${COLLECTION_REF_TYPE};`,
+        `interface ${COLLECTION_REF_TYPE} {\n${members.join("\n")}\n}\n${refJsdoc}\nvar ${ref.name}: ${COLLECTION_REF_TYPE};`,
       );
     } else {
       blocks.push(`${refJsdoc}\nconst ${ref.name}: {\n${members.join("\n")}\n};`);
