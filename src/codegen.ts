@@ -169,6 +169,21 @@ export type GenerateCtx = {
    * than looping forever. See docs/specs/reusable-functions.md § Recursion.
    */
   expandingFns?: ReadonlySet<string>;
+  /**
+   * Set while lowering a `$lookup` sub-pipeline **block body**, so a nested
+   * `$$$.<coll>.find/filter(...)` appearing as a statement (or inside a stage
+   * body) within that block knows its enclosing-lookup context — the same
+   * `foreignParams` / `inScopeLetNames` the expression-body path threads
+   * directly. The lookup-translation entry points (`lowerLookup` /
+   * `extractLookupCalls` / `translatePredicate` / `buildPipelineFormPredicate`)
+   * read it when no explicit `enclosing` argument is passed; `lowerBlock` is the
+   * only carrier because block lowering runs through `generateImplicitPipeline`,
+   * which has no `enclosing` parameter. Structurally identical to
+   * `EnclosingLookupContext` in lookup-translation.ts (kept inline here to avoid
+   * a type import cycle). `freshSubPipelineCtx` drops it — each lookup re-seeds
+   * its own. See docs/specs/lookup-stage.md § Nested lookups.
+   */
+  enclosingLookup?: { foreignParams: ReadonlyArray<string>; inScopeLetNames: ReadonlySet<string> };
 };
 
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
@@ -698,8 +713,9 @@ function isPureRef(expr: Expr, ctx: GenerateCtx): boolean {
  * non-ASCII character). Names starting with `_`, `$`, a digit, or an uppercase
  * letter are reserved/invalid and the server rejects the whole pipeline
  * ("'…' starts with an invalid character for a user variable name"). User lambda
- * params (the idiomatic throwaway `_` in `(_, i) => …`) and field-derived
- * `$lookup` let names (`_id` — the most common join key!) routinely hit this.
+ * params (the idiomatic throwaway `_` in `(_, i) => …`) routinely hit this.
+ * (`$lookup.let` names take a different route — `letVarName` in
+ * lookup-translation.ts stamps a `v<depth>_` prefix for cross-level uniqueness.)
  *
  * Deterministic and idempotent: valid names are returned unchanged (so the
  * overwhelmingly common case produces identical output), and an invalid name

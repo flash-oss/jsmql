@@ -8766,6 +8766,22 @@ function rewriteEnclosingForeignParams(expr, params) {
   }
   return walk(expr);
 }
+function rewriteEnclosingForeignParamsInPipeline(block, params) {
+  if (params.length === 0) return block;
+  const rw = (e) => rewriteEnclosingForeignParams(e, params);
+  const stmts = block.stmts.map((stmt) => {
+    if (stmt.type === "LetDecl") return { ...stmt, value: rw(stmt.value) };
+    if (stmt.type === "FuncDecl") return { ...stmt, lambda: rw(stmt.lambda) };
+    if (stmt.type === "UpdateFilter") {
+      const ops = stmt.ops.map(
+        (op) => op.type === "AssignExpr" ? { type: "AssignExpr", target: rw(op.target), value: rw(op.value), pos: op.pos } : { type: "DeleteStmt", target: rw(op.target), pos: op.pos }
+      );
+      return { type: "UpdateFilter", ops, pos: stmt.pos };
+    }
+    return rw(stmt);
+  });
+  return { type: "Pipeline", stmts, pos: block.pos };
+}
 function matchEnclosingParamPath(node, params) {
   if (node.type === "ParamRef" && params.has(node.name)) {
     return { param: node.name, segments: [] };
@@ -9000,7 +9016,8 @@ function classifyPath(expr, foreignParam, outerLets) {
   }
   return null;
 }
-function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const { lambda } = call;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
@@ -9010,7 +9027,12 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLO
       const basic = tryBasicForm(preRewritten, foreignParam, outerLets);
       if (basic !== null) return basic;
     }
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -9024,20 +9046,19 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLO
       innerEnclosing
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    const matchBody = generateWithCtx(lookupFree, subCtx);
-    return { kind: "pipeline", letVars, pipeline: [...nestedStages, { $match: { $expr: matchBody } }] };
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
-    if (enclosing.foreignParams.length > 0 || containsLookupCall(lambda.block, outerCtx)) {
-      throw new CodegenError(
-        `Nested lookup inside another lookup's block-body lambda is not yet supported. Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
-        lambda.pos
-      );
-    }
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    const stages = lowerBlock2(rewritten, subCtx);
-    return { kind: "pipeline", letVars, pipeline: stages };
+    const { letVars, pipeline } = buildBlockBodyPredicate(
+      lambda.block,
+      foreignParam,
+      outerCtx,
+      outerLets,
+      lowerBlock2,
+      enclosing
+    );
+    return { kind: "pipeline", letVars, pipeline };
   }
   throw new CodegenError(
     `.${call.method}(predicate) predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
@@ -9049,12 +9070,36 @@ function makeSubPipelineCtx(outerCtx, letVarNames) {
   if (letVarNames.length === 0) return fresh;
   return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
 }
-function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function buildBlockBodyPredicate(block, foreignParam, outerCtx, outerLets, lowerBlock2, enclosing) {
+  const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
+  const { rewritten, letVars } = extractLetsFromPipeline(
+    preRewritten,
+    foreignParam,
+    outerLets,
+    enclosing.foreignParams.length
+  );
+  const innerEnclosing = {
+    foreignParams: [...enclosing.foreignParams, foreignParam],
+    inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+  };
+  const subCtx = {
+    ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
+    enclosingLookup: innerEnclosing
+  };
+  return { letVars, pipeline: lowerBlock2(rewritten, subCtx) };
+}
+function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== void 0) {
     const preRewritten = rewriteEnclosingForeignParams(lambda.body, enclosing.foreignParams);
-    const { rewritten, letVars } = extractLetsFromExpr(preRewritten, foreignParam, outerLets);
+    const { rewritten, letVars } = extractLetsFromExpr(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
@@ -9068,18 +9113,19 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing = E
       innerEnclosing
     );
     const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    return { letVars, pipelineBody: [...nestedStages, { $match: { $expr: generateWithCtx(lookupFree, subCtx) } }] };
+    const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
+    return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
-    if (enclosing.foreignParams.length > 0) {
-      throw new CodegenError(
-        `Nested lookup inside another lookup's block-body lambda is not yet supported. Use an expression-body lambda for the outer lookup, or hoist the inner lookup to a sibling stage.`,
-        lambda.pos
-      );
-    }
-    const { rewritten, letVars } = extractLetsFromPipeline(lambda.block, foreignParam, outerLets);
-    const subCtx = makeSubPipelineCtx(outerCtx, Object.keys(letVars));
-    return { letVars, pipelineBody: lowerBlock2(rewritten, subCtx) };
+    const { letVars, pipeline } = buildBlockBodyPredicate(
+      lambda.block,
+      foreignParam,
+      outerCtx,
+      outerLets,
+      lowerBlock2,
+      enclosing
+    );
+    return { letVars, pipelineBody: pipeline };
   }
   throw new CodegenError(
     `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
@@ -9125,7 +9171,11 @@ function tryBasicForm(body, foreignParam, outerLets) {
   }
   return null;
 }
-function createLetAllocator() {
+function letVarName(lastSegment, depth) {
+  const connector = lastSegment.startsWith("_") ? "" : "_";
+  return `v${depth}${connector}${lastSegment}`;
+}
+function createLetAllocator(depth) {
   const byPath = /* @__PURE__ */ new Map();
   const used = /* @__PURE__ */ new Set();
   const out = {};
@@ -9144,7 +9194,7 @@ function createLetAllocator() {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== void 0) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -9154,7 +9204,7 @@ function createLetAllocator() {
     allocateForOuterLet(segments, fieldPath) {
       const existing = byPath.get(fieldPath);
       if (existing !== void 0) return existing;
-      const base = safeVarName(segments[segments.length - 1]);
+      const base = letVarName(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);
@@ -9164,13 +9214,13 @@ function createLetAllocator() {
     letVars: () => out
   };
 }
-function extractLetsFromExpr(body, foreignParam, outerLets) {
-  const allocator = createLetAllocator();
+function extractLetsFromExpr(body, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
-function extractLetsFromPipeline(block, foreignParam, outerLets) {
-  const allocator = createLetAllocator();
+function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
   const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }
@@ -9213,16 +9263,27 @@ function transformStmt(stmt, foreignParam, allocator, outerLets) {
       if (op.type === "AssignExpr") {
         return {
           type: "AssignExpr",
-          target: transformExpr(op.target, foreignParam, allocator, outerLets),
+          target: transformTarget(op.target, foreignParam, allocator, outerLets),
           value: transformExpr(op.value, foreignParam, allocator, outerLets),
           pos: op.pos
         };
       }
-      return { type: "DeleteStmt", target: transformExpr(op.target, foreignParam, allocator, outerLets), pos: op.pos };
+      return {
+        type: "DeleteStmt",
+        target: transformTarget(op.target, foreignParam, allocator, outerLets),
+        pos: op.pos
+      };
     });
     return { type: "UpdateFilter", ops, pos: stmt.pos };
   }
   return transformExpr(stmt, foreignParam, allocator, outerLets);
+}
+function transformTarget(target, foreignParam, allocator, outerLets) {
+  const classified = classifyPath(target, foreignParam, outerLets);
+  if (classified !== null && (classified.kind === "local" || classified.kind === "foreign") && classified.segments.length > 0) {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  return transformExpr(target, foreignParam, allocator, outerLets);
 }
 function transformExpr(expr, foreignParam, allocator, outerLets) {
   const classified = classifyPath(expr, foreignParam, outerLets);
@@ -9496,7 +9557,8 @@ function transformCallArgs(args, foreignParam, allocator, outerLets) {
     return transformExpr(a, foreignParam, allocator, outerLets);
   });
 }
-function lowerLookup(call, as, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const pred = translatePredicate(call, outerCtx, lowerBlock2, enclosing);
   const from = call.db !== void 0 ? { db: call.db, coll: call.collection } : call.collection;
   const stages = [];
@@ -9510,7 +9572,8 @@ function lowerLookup(call, as, outerCtx, lowerBlock2, enclosing = EMPTY_ENCLOSIN
   }
   return stages;
 }
-function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
+function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosingArg) {
+  const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   validateLookupShape(expr);
   if (expr.type === "MemberAccess" && expr.member === "length") {
     const innerCall = detectLookupCall(expr.object, outerCtx);

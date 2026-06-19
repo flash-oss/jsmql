@@ -275,9 +275,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
             {
               $lookup: {
                 from: "archive",
-                let: { v_id: "$_id", tier: "$tier" },
+                let: { v0_id: "$_id", v0_tier: "$tier" },
                 pipeline: [
-                  { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v_id"] }, { $eq: ["$tier", "$$tier"] }] } } },
+                  { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $eq: ["$tier", "$$v0_tier"] }] } } },
                 ],
                 as: "__jsmql.__lookup1",
               },
