@@ -9176,8 +9176,8 @@ function isRootStreamLengthNode(e) {
 }
 function captureRootStreamLength(usesRootLen, depth, letVars, subCtx) {
   if (!usesRootLen || depth !== 0) return subCtx;
-  letVars["v0_len"] = `$${LENGTH_SLOT}`;
-  return { ...subCtx, rootStreamLengthVar: "v0_len" };
+  letVars["v0_length"] = `$${LENGTH_SLOT}`;
+  return { ...subCtx, rootStreamLengthVar: "v0_length" };
 }
 function argsReadRootStreamLength(args) {
   return args.some((a) => someArg(a, isRootStreamLengthNode));

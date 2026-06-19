@@ -1286,8 +1286,8 @@ function lowerLookupPivot(
     const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
     // `$$.length` (the ROOT stream count) used in any chain method body →
     // capture the top-materialised `$__jsmql.length` into this lookup's
-    // `$lookup.let` (a top-level pivot is depth 0 → `v0_len`) so the sub-pipeline
-    // reads it as `$$v0_len`. `$$` is always the ROOT stream; inner sub-stream
+    // `$lookup.let` (a top-level pivot is depth 0 → `v0_length`) so the sub-pipeline
+    // reads it as `$$v0_length`. `$$` is always the ROOT stream; inner sub-stream
     // counts use the 3rd-arg handle.
     const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
     const innerCtx = captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx));

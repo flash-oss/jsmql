@@ -139,15 +139,15 @@ describe("$$.length — rejections", () => {
   it("captures `$$.length` (ROOT count) into $lookup.let inside a top-level lookup predicate", () => {
     // `$$` is always the ROOT stream regardless of nesting; the count
     // materialises at the top and is passed into the lookup as
-    // `let: { v0_len: "$__jsmql.length" }`, read inside as `$$v0_len`.
+    // `let: { v0_length: "$__jsmql.length" }`, read inside as `$$v0_length`.
     // Verified end-to-end on a live mongod.
     expect(jsmql("$.peers = $$$.users.filter(u => u.n === $$.length);")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       {
         $lookup: {
           from: "users",
-          let: { v0_len: "$__jsmql.length" },
-          pipeline: [{ $match: { $expr: { $eq: ["$n", "$$v0_len"] } } }],
+          let: { v0_length: "$__jsmql.length" },
+          pipeline: [{ $match: { $expr: { $eq: ["$n", "$$v0_length"] } } }],
           as: "peers",
         },
       },
@@ -185,7 +185,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
   // different counts — a nested lookup `.length` (this order's shipments), the
   // 3rd-arg handle `ordersColl.length` (this user's orders sub-stream), and
   // `$$.length` (the ROOT users stream, captured into the orders $lookup.let as
-  // v0_len). Verified end-to-end on a live mongod: per-order shipment counts,
+  // v0_length). Verified end-to-end on a live mongod: per-order shipment counts,
   // per-user order counts, and a constant root count, all correct, no leak.
   it("compiles three count levels in one block-body .map", () => {
     expect(
@@ -203,7 +203,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
       {
         $lookup: {
           from: "orders",
-          let: { v0_id: "$_id", v0_len: "$__jsmql.length" }, // v0_len captures the root count
+          let: { v0_id: "$_id", v0_length: "$__jsmql.length" }, // v0_length captures the root count
           pipeline: [
             { $match: { $expr: { $eq: ["$$v0_id", "$userId"] } } },
             SWF, // orders sub-stream count (for ordersColl.length)
@@ -213,7 +213,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
               $replaceWith: {
                 totalShipments: "$__jsmql.tmp.2",
                 totalOrders: "$__jsmql.length", // orders sub-stream
-                totalUsers: "$$v0_len", // ROOT (captured)
+                totalUsers: "$$v0_length", // ROOT (captured)
               },
             },
           ],

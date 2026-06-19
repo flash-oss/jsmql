@@ -861,7 +861,7 @@ changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
 **`$$` is always the ROOT stream — at any nesting depth.** Mirroring `$` (the
 root document), `$$` is the top-level stream even when you read `$$.length`
 *inside* a `$lookup` sub-pipeline. There jsmql materialises the root count at the
-top and passes it into the lookup automatically via `$lookup.let` (as `v0_len`),
+top and passes it into the lookup automatically via `$lookup.let` (as `v0_length`),
 so it reads back correctly:
 
 ```js
@@ -869,8 +869,8 @@ so it reads back correctly:
 jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
 // → [
 //     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-//     { $lookup: { from: "users", let: { v0_len: "$__jsmql.length" },
-//         pipeline: [{ $match: { $expr: { $eq: ["$orderCount", "$$v0_len"] } } }], as: "peers" } },
+//     { $lookup: { from: "users", let: { v0_length: "$__jsmql.length" },
+//         pipeline: [{ $match: { $expr: { $eq: ["$orderCount", "$$v0_length"] } } }], as: "peers" } },
 //     { $unset: "__jsmql" }
 //   ]
 ```

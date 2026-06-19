@@ -603,8 +603,8 @@ function isRootStreamLengthNode(e: Expr): boolean {
  * `$$.length` (the ROOT stream count) used inside this lookup's body: when the
  * lookup is at the TOP level (`depth === 0`, where the top-materialised
  * `$__jsmql.length` lives on the input documents), capture it into the
- * `$lookup.let` as `v0_len` and return the sub-ctx with `rootStreamLengthVar`
- * set so codegen emits `$$v0_len`. `$$` is always the ROOT stream regardless of
+ * `$lookup.let` as `v0_length` and return the sub-ctx with `rootStreamLengthVar`
+ * set so codegen emits `$$v0_length`. `$$` is always the ROOT stream regardless of
  * nesting depth; inner sub-stream counts use the named 3rd-arg handle instead.
  * Deeper nesting (`depth > 0`) is left uncaptured — the foreign documents don't
  * carry the root field — so `$$.length` there stays rejected [DEF-033].
@@ -616,8 +616,8 @@ export function captureRootStreamLength(
   subCtx: GenerateCtx,
 ): GenerateCtx {
   if (!usesRootLen || depth !== 0) return subCtx;
-  letVars["v0_len"] = `$${LENGTH_SLOT}`;
-  return { ...subCtx, rootStreamLengthVar: "v0_len" };
+  letVars["v0_length"] = `$${LENGTH_SLOT}`;
+  return { ...subCtx, rootStreamLengthVar: "v0_length" };
 }
 
 /** Does any of these call args read `$$.length` (the ROOT stream count)? */
@@ -785,7 +785,7 @@ export function translatePredicate(
     // are all `lambdaParams` so codegen emits `$$<name>` correctly.
     const subCtxBase = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
     // `$$.length` (ROOT count) in the predicate, at the top level → capture into
-    // `$lookup.let` so the residual `$expr` codegen reads it as `$$v0_len`.
+    // `$lookup.let` so the residual `$expr` codegen reads it as `$$v0_length`.
     const subCtx = captureRootStreamLength(
       someExpr(lookupFree, isRootStreamLengthNode),
       enclosing.foreignParams.length,

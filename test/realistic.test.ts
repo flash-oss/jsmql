@@ -2480,7 +2480,7 @@ describe("Per-user order report with counts at three nesting levels", { features
     // different counts: this order's shipment count (a nested lookup), this
     // user's order count (the 3rd-arg `ordersColl` sub-stream handle), and the
     // total recent-user count (`$$.length` — the ROOT stream, captured into the
-    // orders $lookup.let as `v0_len`). Verified end-to-end on a live mongod.
+    // orders $lookup.let as `v0_length`). Verified end-to-end on a live mongod.
     expect(
       jsmql(`
 $match($.createdAt >= new Date(2026, 1, 1));
@@ -2498,7 +2498,7 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
       {
         $lookup: {
           from: "orders",
-          let: { v0_id: "$_id", v0_len: "$__jsmql.length" },
+          let: { v0_id: "$_id", v0_length: "$__jsmql.length" },
           pipeline: [
             { $match: { $expr: { $eq: ["$$v0_id", "$userId"] } } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
@@ -2508,7 +2508,7 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
               $replaceWith: {
                 totalShipments: "$__jsmql.tmp.2",
                 totalOrders: "$__jsmql.length",
-                totalUsers: "$$v0_len",
+                totalUsers: "$$v0_length",
               },
             },
           ],

@@ -132,7 +132,7 @@ means the root count: jsmql materialises it at the top (`isStreamLengthNode` /
 `containsStreamLength` detect the `$$.length` *anywhere* in the statement,
 including inside the sub-pipeline, so the top-level materialiser fires), then the
 lookup **captures** the root field into its `$lookup.let` as a depth-stamped
-`v0_len: "$__jsmql.length"`, and codegen reads `$$.length` back as `$$v0_len`
+`v0_length: "$__jsmql.length"`, and codegen reads `$$.length` back as `$$v0_length`
 (via `GenerateCtx.rootStreamLengthVar`, set by `captureRootStreamLength` in
 lookup-translation.ts). This is wired into every top-level lookup body — the
 expression-body predicate (`translatePredicate`), the `$.x =` chained pivot
@@ -140,7 +140,7 @@ expression-body predicate (`translatePredicate`), the `$.x =` chained pivot
 so `$$.length` works in all three. Verified on mongod (counts correct, no leak).
 
 Distinct paths, no collision: the root count rides a `$$`-**variable**
-(`v0_len`), an inner sub-stream count rides the `$__jsmql.length` **field**, so a
+(`v0_length`), an inner sub-stream count rides the `$__jsmql.length` **field**, so a
 `.map` body can read both at once (`totalUsers: $$.length`, `totalOrders:
 coll.length`). The detection keys on node type — `$$.length` is a
 `CollectionRef.length`, a handle is a `ParamRef.length` — so the outer scan only
