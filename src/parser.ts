@@ -1862,8 +1862,8 @@ export class Parser {
     this.lexer.next(); // consume =>
     if (this.lexer.peek().type === TokenType.LBrace) {
       if (blockKind === "pipeline") {
-        const block = this.parseLambdaBlockBody();
-        return { type: "Lambda", params: [paramTok.value], block, pos: paramTok.pos };
+        const { block, ret } = this.parseCallbackBlock();
+        return { type: "Lambda", params: [paramTok.value], block, ret, pos: paramTok.pos };
       }
       const exprBlock = this.parseExprBlockBody();
       return { type: "Lambda", params: [paramTok.value], exprBlock, pos: paramTok.pos };
@@ -1893,8 +1893,8 @@ export class Parser {
     this.lexer.expect(TokenType.Arrow);
     if (this.lexer.peek().type === TokenType.LBrace) {
       if (blockKind === "pipeline") {
-        const block = this.parseLambdaBlockBody();
-        return { type: "Lambda", params, block, pos: lparen.pos };
+        const { block, ret } = this.parseCallbackBlock();
+        return { type: "Lambda", params, block, ret, pos: lparen.pos };
       }
       const exprBlock = this.parseExprBlockBody();
       return { type: "Lambda", params, exprBlock, pos: lparen.pos };
@@ -1981,47 +1981,49 @@ export class Parser {
   }
 
   /**
-   * Parse the block-body of a lookup-callback lambda: `{ stmt; stmt; }`.
-   * The block reuses the same machinery as the top-level `;`-separated
-   * pipeline form — every statement must be a stage call, an update op
-   * (`$.x = …`, `delete $.x`), or a `let` binding. The result is normalised
-   * to a `Pipeline` (one stmt = single-stage pipeline, several = multi-stage).
-   * Only callable when the lookup-callback `allowBlockBody` flag is set —
-   * outside that, `=> {` keeps its existing object-literal interpretation.
+   * Parse the block-body of a callback lambda: `{ stmt; stmt; …; [return <expr>;] }`.
+   * The statements reuse the same machinery as the top-level `;`-separated
+   * pipeline form — every statement is a stage call, an update op (`$.x = …`,
+   * `delete $.x`), a `let`/`const` binding, an `assert(...)`, etc. — and the
+   * block MAY end with a single `return <expr>` (which a reshaping array method
+   * like `.map` lowers to `$replaceWith`; `.filter` has none). Returns the
+   * statements as a `Pipeline` plus the optional `ret`. Only callable when the
+   * callback `allowBlockBody` flag is set — outside that, `=> {` keeps its
+   * existing object-literal / expr-block interpretation.
    */
-  private parseLambdaBlockBody(): Pipeline {
+  private parseCallbackBlock(): { block: Pipeline; ret?: Expr } {
     const openBrace = this.lexer.next(); // consume `{`
-    if (this.lexer.peek().type === TokenType.RBrace) {
+    const stmts: PipelineStmt[] = [];
+    let ret: Expr | undefined;
+    while (this.lexer.peek().type !== TokenType.RBrace) {
+      if (this.lexer.peek().type === TokenType.Return) {
+        this.lexer.next(); // consume `return`
+        ret = this.parseExpression();
+        if (this.lexer.peek().type === TokenType.Semi) this.lexer.next(); // optional trailing `;`
+        break; // a `return` is terminal
+      }
+      const stmt = this.collectStatement();
+      stmts.push(stmt);
+      if (this.lexer.peek().type === TokenType.Semi) {
+        this.lexer.next();
+        continue;
+      }
+      // A `function …(){ … }` declaration is self-terminating (no `;` needed).
+      if (this.selfTerminates(stmt) && this.lexer.peek().type !== TokenType.RBrace) continue;
+      break;
+    }
+    if (stmts.length === 0 && ret === undefined) {
       throw new ParseError(
-        `Expected at least one statement inside the lookup callback's block body at position ${openBrace.pos}`,
+        `Expected at least one statement (or a \`return <expr>\`) inside the callback's block body at position ${openBrace.pos}`,
         openBrace.pos,
       );
     }
-    const stmts: PipelineStmt[] = [this.collectStatement()];
-    while (true) {
-      if (this.lexer.peek().type === TokenType.Semi) {
-        this.lexer.next();
-        if (this.lexer.peek().type === TokenType.RBrace) break;
-        stmts.push(this.collectStatement());
-        continue;
-      }
-      // A `function …(){ … }` declaration is self-terminating (no `;` needed
-      // after its `}`), consistent with the other statement loops.
-      if (this.selfTerminates(stmts[stmts.length - 1]) && this.lexer.peek().type !== TokenType.RBrace) {
-        stmts.push(this.collectStatement());
-        continue;
-      }
-      break;
-    }
     const closeTok = this.lexer.peek();
     if (closeTok.type !== TokenType.RBrace) {
-      throw new ParseError(
-        `Expected '}' to close the lookup callback's block body at position ${closeTok.pos}`,
-        closeTok.pos,
-      );
+      throw new ParseError(`Expected '}' to close the callback's block body at position ${closeTok.pos}`, closeTok.pos);
     }
     this.lexer.next(); // consume `}`
-    return { type: "Pipeline", stmts, pos: openBrace.pos };
+    return { block: { type: "Pipeline", stmts, pos: openBrace.pos }, ret };
   }
 
   /**
@@ -2029,7 +2031,7 @@ export class Parser {
    * `{ (const|let <name> = <expr>;)* return <expr>; }`. Codegen lowers it to a
    * right-folded nest of `$let`. This is the JS-faithful meaning of `=> { … }`
    * everywhere outside the lookup-callback positions (which use
-   * `parseLambdaBlockBody`); an object return must be written `=> ({ … })`.
+   * `parseCallbackBlock`); an object return must be written `=> ({ … })`.
    * See docs/specs/method-dispatch.md.
    */
   private parseExprBlockBody(): ExprBlock {

@@ -232,7 +232,7 @@ bindings).
 **Self-termination.** A `function` declaration ends at its closing `}` (JS-style),
 so the next statement may follow with **no `;`** — `function f(x){ return x*2 } $ =
 { … }`. `form: "function"` drives this in the statement loops (`parse`,
-`parseBlockBody`, `parseLambdaBlockBody`); array elements stay `,`-separated.
+`parseBlockBody`, `parseCallbackBlock`); array elements stay `,`-separated.
 A `function` declaration forces Pipeline mode (it can't be a Filter), the same as
 `$ = …` and arrow `FuncDecl`s.
 

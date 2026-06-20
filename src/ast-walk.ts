@@ -52,7 +52,8 @@ export function someExpr(expr: Expr, pred: (e: Expr) => boolean): boolean {
         if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
         if (someExpr(expr.exprBlock.ret, pred)) return true;
       }
-      if (expr.block !== undefined) return expr.block.stmts.some((s) => someStmt(s, pred));
+      if (expr.block !== undefined && expr.block.stmts.some((s) => someStmt(s, pred))) return true;
+      if (expr.ret !== undefined && someExpr(expr.ret, pred)) return true;
       return false;
     case "TypeofExpr":
       return someExpr(expr.operand, pred);
