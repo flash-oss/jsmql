@@ -262,10 +262,82 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     });
   });
 
-  // (Block-body arrows like `d => { … }` are caught by the parser before .map's
-  // validator runs in expression contexts, so a dedicated codegen-level test
-  // isn't reachable from the public surface; the rejection branch in .map's
-  // validator stays as a defence-in-depth guard.)
+  // A statement-block `.map(d => { stmt; …; return <ret> })` on a stream lowers
+  // through the SAME engine `.filter` uses (`extractLetsFromPipeline` →
+  // `lowerBlock`); the trailing `return` is the ONLY difference, appended as the
+  // root-replace stage `$ = <ret>` (→ `$replaceWith`). So the block gets the full
+  // pipeline vocabulary — `assert(...)`, `$match(...)`, `<coll>.length`, nested
+  // `$$$.<coll>` lookups. All shapes below were verified end-to-end on a live mongod.
+  describe(".map(d => { … }) — statement-block body (assert / $match / return)", () => {
+    it("lookup chain: assert + return lowers to a $match guard + $replaceWith inside $lookup.pipeline", () => {
+      expect(
+        jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {
+          assert(o.total > 0, "bad order");
+          return { id: o._id, t: o.total };
+        });`),
+      ).toEqual([
+        {
+          $lookup: {
+            from: "orders",
+            let: { jsmql_f0__id: "$_id" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+              {
+                $match: {
+                  $expr: {
+                    $convert: {
+                      input: true,
+                      to: { $cond: [{ $gt: ["$total", 0] }, "bool", "jsmql assertion failed: bad order"] },
+                    },
+                  },
+                },
+              },
+              { $replaceWith: { id: "$_id", t: "$total" } },
+            ],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        { $unwind: "$__jsmql.tmp.1" },
+        { $replaceWith: "$__jsmql.tmp.1" },
+      ]);
+    });
+
+    it("top-level `$$` stream: a `$match(...)` statement + return", () => {
+      expect(jsmql(`$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });`)).toEqual([
+        { $match: { active: true } },
+        { $replaceWith: { id: "$_id" } },
+      ]);
+    });
+
+    it("3rd-arg `coll.length` is available inside the block (e.g. in an assert)", () => {
+      expect(
+        jsmql(`$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, "empty"); return { id: d._id }; });`),
+      ).toEqual([
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        {
+          $match: {
+            $expr: {
+              $convert: {
+                input: true,
+                to: { $cond: [{ $gt: ["$__jsmql.length", 0] }, "bool", "jsmql assertion failed: empty"] },
+              },
+            },
+          },
+        },
+        { $replaceWith: { id: "$_id" } },
+      ]);
+    });
+
+    it("a block `.map` with no `return` is rejected with an actionable message", () => {
+      expect(() => jsmql(`$$ = $$.map(d => { assert(d.total > 0, "x"); });`)).toThrow(/must end with 'return <expr>'/);
+    });
+
+    it("`$.<field>` inside a block `.map` body is rejected — must use the lambda param", () => {
+      expect(() => jsmql(`$$ = $$.map(d => { return { n: $.name }; });`)).toThrow(
+        /'\$\.<field>'.*use the lambda parameter/,
+      );
+    });
+  });
 
   it("`$.<field>` inside .map body is rejected — must use the lambda param", () => {
     expect(() => jsmql("$$ = $$.map(d => ({ n: $.name }));")).toThrow(/'\$\.<field>'.*use the lambda parameter/);

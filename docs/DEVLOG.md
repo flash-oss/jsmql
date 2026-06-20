@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-20 — feat: statement-block `.map(d => { … ; return <ret> })` on streams (unified `.filter`/`.map` lowering)
+
+A stream `.map` now accepts a full **statement block** ending in `return`, not just an expression body. This closes the gap behind the developer's "make it work" examples — `assert(...)` / `$match(...)` / `let` / `<coll>.length` / nested `$$$.<coll>` lookups inside a `.map`:
+
+```js
+$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {
+  assert(o.total > 0, "bad order");
+  return { id: o._id, t: o.total };
+});
+```
+
+This realises the developer's requested pre-factoring (item 1): `.filter` and `.map` callback sub-pipelines now share **one parser** ([`parseCallbackBlock`](../src/parser.ts), already unified in the prior Phase-1 commit) **and very similar codegen** — the *only* difference is `return` handling. A statement-block `.map` lowers through the SAME engine `.filter` uses (`extractLetsFromPipeline` → `lowerBlock`); the trailing `return <ret>` is appended as the root-replace statement `$ = <ret>` (a synthetic `UpdateFilter`), which `lowerBlock` turns into `$replaceWith` — so the whole sub-pipeline vocabulary (asserts, `$match`, nested lookups, length materialisation) comes for free, no second copy of the block-lowering logic.
+
+Two enabling changes: (1) the parser's block-kind gate is now `STREAM_BLOCK_METHODS` (`find`/`filter`/`map`) × `isStreamRooted` (walks `MemberAccess`/`IndexAccess`/`MethodCall` back to a `$$`/`$$$`/`$$$$` root) — so a chained `.map`'s `=> { … }` parses as a sub-pipeline block, while an in-document array `.map` (`$.items.map`, rooted at a field) keeps its expression-block meaning (`isLookupReceiverRooted` → `isStreamRooted`). (2) `GenerateCtx.slotAllocator` threads the enclosing chain's `__jsmql.tmp.<N>` counter into the block lowering, so a lookup materialised inside a `.map` block gets a slot distinct from the outer lookup's `as` (no `tmp.1`/`tmp.1` collision). Behaviour-preserving for every prior shape (the 3-level count example re-emits byte-identically); the new shape verified end-to-end on a live mongod. See [stream-methods.md](specs/stream-methods.md) `.map` row, [lookup-stage.md](specs/lookup-stage.md) parser section, [LANGUAGE.md](LANGUAGE.md).
+
+---
+
 ## 2026-06-20 — refactor: standard `$lookup.let` correlation-var names — `jsmql_<f|v|s><depth>_<name>`
 
 `$lookup.let` correlation-variable names (the `$$<name>` vars that carry an outer JS scope's value into a nested sub-pipeline) now follow one explicit scheme — single source of truth `letFieldVar` / `letBindingVar` / `letSysVar` in [src/namespace.ts](../src/namespace.ts):

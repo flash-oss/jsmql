@@ -7,11 +7,12 @@
 // See docs/specs/stream-methods.md for the design and the per-method
 // shape/lowering/error table.
 
-import type { ArrayElement, CallArg, Expr } from "./ast.ts";
+import type { ArrayElement, CallArg, Expr, Pipeline, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
   extractLetsFromExpr,
+  extractLetsFromPipeline,
   extractLookupCalls,
   type SlotAllocator,
   type SubPipelineLowerer,
@@ -183,13 +184,13 @@ const CONCAT: StreamMethodDef = {
 // a nested stage inside the outer `$unionWith.pipeline` — valid MQL,
 // since the lookup correlates against the sub-pipeline's local doc (the
 // foreign collection), not any outer-pipeline `let` binding.
-// The expression a `.map` lambda evaluates per element. An expression body
-// (`d => X`) is used directly; a single-`return` block body (`d => { return X }`,
-// which the parser produces as an `exprBlock` with no `let`/`const` decls) yields
-// its `ret`. A block body WITH bindings is rejected with a redirect — rare, and
-// the expression form (or a top-level `let`) covers it. (A multi-statement
-// pipeline block `=> { $match; … }` never reaches `.map`: it's only parsed in
-// lookup-callback position, so `arg.block` is unset here.)
+// The expression a non-block `.map` lambda evaluates per element. An expression
+// body (`d => X`) is used directly; an `exprBlock` body (only the `function`
+// form reaches here now — `.map(function (d) { const a = …; return … })`) yields
+// its `ret` when there are no bindings, else is rejected with a redirect. The
+// statement-block arrow form (`d => { stmt; …; return X }`) is parsed as a
+// pipeline block (`lambda.block` + `lambda.ret`) and handled by MAP.lower's
+// dedicated block path — it never reaches here (callers guard on `lambda.block`).
 function mapBodyExpr(lambda: LambdaNode): Expr {
   if (lambda.body !== undefined) return lambda.body;
   const eb = lambda.exprBlock;
@@ -206,6 +207,72 @@ function mapBodyExpr(lambda: LambdaNode): Expr {
   throw new CodegenError(
     `.map(d => <expr>) requires an expression or single-'return' body — a multi-statement block isn't supported here; split into separate stages ($set, $project, …) instead.`,
     lambda.pos,
+  );
+}
+
+/**
+ * Reject the index (2nd) parameter being *used* anywhere in a `.map` body —
+ * MongoDB streams have no per-doc index. The param may be present positionally
+ * (to reach the 3rd 'collection' param) but never referenced. Works uniformly
+ * over expression, expression-block, and statement-block bodies because
+ * `someExpr` over the whole `Lambda` recurses into `body` / `exprBlock` /
+ * `block` + `ret` (see ast-walk.ts).
+ */
+function rejectUsedIndexParam(lambda: LambdaNode): void {
+  if (lambda.params.length < 2) return;
+  const indexParam = lambda.params[1];
+  if (someExpr(lambda, (e) => e.type === "ParamRef" && e.name === indexParam)) {
+    throw new CodegenError(
+      `.map((${lambda.params[0]}, ${indexParam}) => …) can't use the index parameter '${indexParam}' — MongoDB streams have no per-doc index. ` +
+        `Drop it, or keep it unused (e.g. '(${lambda.params[0]}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
+      lambda.pos,
+    );
+  }
+}
+
+/**
+ * Validate the 3rd 'collection' param and report whether `<coll>.length` is
+ * actually read. Only `coll.length` (the sub-stream's document count) is
+ * available — a stream has no materialised array to index or iterate. Scans
+ * the whole lambda body (expression / block + `ret`); any reference to the
+ * collection param that isn't a `.length` access is rejected.
+ */
+function classifyCollParam(lambda: LambdaNode): boolean {
+  if (lambda.params.length !== 3) return false;
+  const collName = lambda.params[2];
+  let total = 0;
+  let lengthUses = 0;
+  someExpr(lambda, (e) => {
+    if (e.type === "ParamRef" && e.name === collName) total++;
+    if (
+      e.type === "MemberAccess" &&
+      e.member === "length" &&
+      e.object.type === "ParamRef" &&
+      e.object.name === collName
+    ) {
+      lengthUses++;
+    }
+    return false; // visit all
+  });
+  if (total > lengthUses) {
+    throw new CodegenError(
+      `In '.map((${lambda.params[0]}, _i, ${collName}) => …)' over a '$$$.<coll>' stream, only '${collName}.length' (the sub-stream's document count) is available — ` +
+        `there's no materialised array to index or iterate. To work with the array itself, use the materialised form (e.g. '$$$.<coll>.filter(pred).filter((${lambda.params[0]}, i, ${collName}) => …)').`,
+      lambda.pos,
+    );
+  }
+  return lengthUses > 0;
+}
+
+/** Reject a `$.<field>` (local-doc) reference inside a `.map` body — only the
+ * lambda parameter (the current document) is addressable. `letVars` is the
+ * extractor's output; a non-empty map means a `$.<field>` slipped through. */
+function rejectLocalDocRef(letVars: Record<string, string>, param: string, pos: number): void {
+  if (Object.keys(letVars).length === 0) return;
+  const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
+  throw new CodegenError(
+    `'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+    pos,
   );
 }
 
@@ -234,58 +301,71 @@ const MAP: StreamMethodDef = {
         arg.pos,
       );
     }
-    const bodyExpr = mapBodyExpr(arg); // throws for unsupported block bodies
-    // The index (2nd) param has no meaning on a stream — MongoDB has no per-doc
-    // index. It may be present (positional, to reach the 3rd 'collection' param)
-    // but never referenced.
-    if (arg.params.length >= 2 && someExpr(bodyExpr, (e) => e.type === "ParamRef" && e.name === arg.params[1])) {
+    // A statement-block body (`d => { stmt; …; return <expr> }`) must end in a
+    // `return` — the returned value becomes each output document.
+    if (arg.block !== undefined && arg.ret === undefined) {
       throw new CodegenError(
-        `.map((${arg.params[0]}, ${arg.params[1]}) => …) can't use the index parameter '${arg.params[1]}' — MongoDB streams have no per-doc index. ` +
-          `Drop it, or keep it unused (e.g. '(${arg.params[0]}, _${arg.params[1]}, coll)') only to reach the 3rd 'collection' parameter.`,
+        `.map(${arg.params[0]} => { … }) must end with 'return <expr>' — the returned value becomes each output document.`,
         arg.pos,
       );
     }
+    if (arg.block === undefined) mapBodyExpr(arg); // throws for unsupported expr-block bodies
+    rejectUsedIndexParam(arg);
   },
   lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
+    const collLengthUsed = classifyCollParam(lambda);
+    // Bind the 3rd 'collection' param to this sub-stream's materialised count
+    // (`$__jsmql.length`); the `$setWindowFields` `$count` that stamps it is
+    // emitted by `lowerBlock` (block body) or prepended below (expr body),
+    // ahead of whatever reads it.
+    const bodyCtx: GenerateCtx =
+      collName !== undefined && collLengthUsed
+        ? {
+            ...ctx,
+            substreamLengthHandles: new Map([...(ctx.substreamLengthHandles ?? []), [collName, `$${LENGTH_SLOT}`]]),
+          }
+        : ctx;
+
+    // ── Statement-block body: `(d) => { stmt; …; return <ret> }` ──────────────
+    // Lowered through the SAME engine `.filter` uses (`extractLetsFromPipeline`
+    // → `lowerBlock`), so the block statements get the full pipeline vocabulary
+    // — `assert(...)`, `$match(...)`, `let`, nested `$$$.<coll>` lookups,
+    // `<coll>.length`. The ONLY difference from `.filter` is the trailing
+    // `return <ret>`, appended as the root-replace statement `$ = <ret>` (which
+    // `lowerBlock` lowers to `$replaceWith`, including any lookups inside <ret>).
+    if (lambda.block !== undefined) {
+      const ret = lambda.ret as Expr; // validate() guarantees a block has a `ret`
+      // Rewrite `d.<field>` → `$<field>` across the block AND the return; a
+      // `$.<field>` (local-doc) ref surfaces as a non-empty letVars → reject.
+      const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
+      const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
+      rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
+      // `return <ret>` → the root-replace statement `$ = <ret>`. As a
+      // `;`-pipeline statement that's an `UpdateFilter` wrapping the assignment,
+      // which `lowerBlock` lowers to `$replaceWith` (handling lookups in <ret>).
+      const replaceStmt: UpdateFilter = {
+        type: "UpdateFilter",
+        ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: rwRet, pos: ret.pos }],
+        pos: ret.pos,
+      };
+      const synthetic: Pipeline = { type: "Pipeline", stmts: [...rwBlock.stmts, replaceStmt], pos: lambda.block.pos };
+      // Thread the chain's slot allocator in so any `$$$.<coll>` lookup inside
+      // the block/return materialises into a slot distinct from the enclosing
+      // lookup's `as` (shared counter → no `__jsmql.tmp.N` collision).
+      const blockCtx: GenerateCtx = { ...bodyCtx, slotAllocator: allocSlot };
+      return { stages: lowerBlock(synthetic, blockCtx), clearLets: true };
+    }
+
+    // ── Expression body: `(d) => <expr>` ─────────────────────────────────────
     const body = mapBodyExpr(lambda);
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
         lambda.pos,
       );
-    }
-    // 3rd 'collection' param: only `coll.length` (the sub-stream's document
-    // count) is supported — a stream has no materialised array to index or
-    // iterate. Count total references vs `.length` references in one full walk
-    // (the predicate always returns false, so `someExpr` visits every node);
-    // any reference that isn't a `.length` access is rejected.
-    let collLengthUsed = false;
-    if (collName !== undefined) {
-      let total = 0;
-      let lengthUses = 0;
-      someExpr(body, (e) => {
-        if (e.type === "ParamRef" && e.name === collName) total++;
-        if (
-          e.type === "MemberAccess" &&
-          e.member === "length" &&
-          e.object.type === "ParamRef" &&
-          e.object.name === collName
-        ) {
-          lengthUses++;
-        }
-        return false;
-      });
-      if (total > lengthUses) {
-        throw new CodegenError(
-          `In '.map((${param}, _i, ${collName}) => …)' over a '$$$.<coll>' stream, only '${collName}.length' (the sub-stream's document count) is available — ` +
-            `there's no materialised array to index or iterate. To work with the array itself, use the materialised form (e.g. '$$$.<coll>.filter(pred).filter((${param}, i, ${collName}) => …)').`,
-          lambda.pos,
-        );
-      }
-      collLengthUsed = lengthUses > 0;
     }
     // Lookups inside the body are supported in both the top-level `$$` chain
     // and the lookup-body context (`$$$.<coll>.<chain>`). In the latter,
@@ -296,32 +376,14 @@ const MAP: StreamMethodDef = {
     // outer-pipeline `let` bindings, so the let-coordination problem that
     // blocks the general nested-lookup case doesn't apply here.
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
-    if (Object.keys(letVars).length > 0) {
-      const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
-      throw new CodegenError(
-        `'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
-        lambda.pos,
-      );
-    }
+    rejectLocalDocRef(letVars, param, lambda.pos);
     // Materialise any `$$$.<coll>.find/filter(...)` lookups in the rewritten
     // body into prologue stages. `extractLookupCalls` handles the basic-vs-
     // pipeline-form predicate translation, auto-`let` extraction (for the
     // outer-doc paths we just rewrote to bare `FieldRef`s), and `$first`
     // wrapping for `.find`. When there are no lookups it returns prologue=[]
     // and the unchanged expr.
-    const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, ctx, allocSlot, lowerBlock);
-    // When `coll.length` is read, bind the handle to the materialised sub-stream
-    // count (`$__jsmql.length`) and stamp it with a `$setWindowFields` `$count`
-    // FIRST — before the prologue lookups (which don't change the doc count, but
-    // a nested lookup's `let` may need to capture this level's count, so it must
-    // be present) and before the `$replaceWith` that reads it.
-    const bodyCtx: GenerateCtx =
-      collName !== undefined && collLengthUsed
-        ? {
-            ...ctx,
-            substreamLengthHandles: new Map([...(ctx.substreamLengthHandles ?? []), [collName, `$${LENGTH_SLOT}`]]),
-          }
-        : ctx;
+    const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, bodyCtx, allocSlot, lowerBlock);
     const expr = generateWithCtx(rewritten2, bodyCtx);
     const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
     return { stages: [...lengthStages, ...prologue, { $replaceWith: expr }], clearLets: true };

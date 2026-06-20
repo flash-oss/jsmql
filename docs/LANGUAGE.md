@@ -674,6 +674,20 @@ $.recentOrders = $$$.orders
 
 The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
+**`.map(d => { … ; return <ret> })` — statement-block body.** A stream `.map` may take a statement block ending in `return`, exactly like a block-body `.filter` — same `;`-separated statement vocabulary (`assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups). The only difference from `.filter` is the trailing `return`: its value becomes each output document (a `$replaceWith`). This is the idiomatic way to validate or reshape with intermediate steps:
+
+```js
+$.orders = $$$.orders.filter(o => o.userId === $._id).map(o => {
+  assert(o.total > 0, "order total must be positive");
+  return { id: o._id, total: o.total };
+});
+// → the orders $lookup.pipeline gains, after the filter's $match:
+//     { $match: { $expr: { $convert: { input: true, to: { $cond: [{ $gt: ["$total", 0] }, "bool", "jsmql assertion failed: order total must be positive"] } } } } },
+//     { $replaceWith: { id: "$_id", total: "$total" } }
+```
+
+As in an expression-body `.map`, the lambda parameter *is* the current document (`o.total` → `$total`); a `$.<field>` reference is rejected with the "use the lambda parameter" hint, and a block without a `return` is rejected (a `.map` must produce a value).
+
 **Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
 
 **Caveats:**

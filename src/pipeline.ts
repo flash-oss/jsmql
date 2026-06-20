@@ -414,7 +414,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, topLevelStream: true };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
-  const tracking = makeSlotTracking();
+  const tracking = makeSlotTracking(startCtx.slotAllocator);
 
   const flushUpdateOps = () => {
     if (updateBuffer.length === 0) return;
@@ -547,7 +547,7 @@ export function generateImplicitPipeline(
   let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, topLevelStream: container === "top" };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
-  const tracking = makeSlotTracking();
+  const tracking = makeSlotTracking(startCtx.slotAllocator);
   // Sub-stream length handles in scope (a block-body `.filter`/`.map` 3rd param,
   // bound by buildBlockBodyPredicate). Their `.length` materialises a
   // `$setWindowFields` `$count` in THIS pipeline, exactly like `$$.length`.
@@ -1836,8 +1836,13 @@ const lowerBlock: SubPipelineLowerer = (block, ctx) => {
  * cleanup as `let`-bindings, so a pipeline with no lets but at least one
  * lookup still needs the trailing `$unset`.
  */
-function makeSlotTracking(): { alloc: SlotAllocator; used: () => boolean } {
-  const base = createSlotAllocator();
+function makeSlotTracking(external?: SlotAllocator): { alloc: SlotAllocator; used: () => boolean } {
+  // When an enclosing chain threads its allocator in (via ctx.slotAllocator),
+  // continue *its* counter so nested `__jsmql.tmp.<N>` slots stay globally
+  // distinct within the emitted pipeline; otherwise start a fresh per-pipeline
+  // counter. Either way `touched` tracks whether THIS pipeline handed one out
+  // (drives the trailing `$unset "__jsmql"` decision).
+  const base = external ?? createSlotAllocator();
   let touched = false;
   return {
     alloc: () => {

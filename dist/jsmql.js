@@ -2052,7 +2052,7 @@ var Parser = class {
         }
         this.lexer.next();
         if (this.lexer.peek().type === TokenType.LParen) {
-          const blockKind = (member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left) || member.value === "filter" && left.type === "CollectionRef" ? "pipeline" : "expr";
+          const blockKind = STREAM_BLOCK_METHODS.has(member.value) && isStreamRooted(left) ? "pipeline" : "expr";
           const args = this.parseMethodCallArgs(blockKind);
           left = {
             type: "MethodCall",
@@ -2401,8 +2401,8 @@ var Parser = class {
     this.lexer.next();
     if (this.lexer.peek().type === TokenType.LBrace) {
       if (blockKind === "pipeline") {
-        const block = this.parseLambdaBlockBody();
-        return { type: "Lambda", params: [paramTok.value], block, pos: paramTok.pos };
+        const { block, ret } = this.parseCallbackBlock();
+        return { type: "Lambda", params: [paramTok.value], block, ret, pos: paramTok.pos };
       }
       const exprBlock = this.parseExprBlockBody();
       return { type: "Lambda", params: [paramTok.value], exprBlock, pos: paramTok.pos };
@@ -2430,8 +2430,8 @@ var Parser = class {
     this.lexer.expect(TokenType.Arrow);
     if (this.lexer.peek().type === TokenType.LBrace) {
       if (blockKind === "pipeline") {
-        const block = this.parseLambdaBlockBody();
-        return { type: "Lambda", params, block, pos: lparen.pos };
+        const { block, ret } = this.parseCallbackBlock();
+        return { type: "Lambda", params, block, ret, pos: lparen.pos };
       }
       const exprBlock = this.parseExprBlockBody();
       return { type: "Lambda", params, exprBlock, pos: lparen.pos };
@@ -2505,52 +2505,55 @@ var Parser = class {
     return { type: "FuncDecl", name, lambda, kind: "const", form: "function", pos: lambda.pos };
   }
   /**
-   * Parse the block-body of a lookup-callback lambda: `{ stmt; stmt; }`.
-   * The block reuses the same machinery as the top-level `;`-separated
-   * pipeline form — every statement must be a stage call, an update op
-   * (`$.x = …`, `delete $.x`), or a `let` binding. The result is normalised
-   * to a `Pipeline` (one stmt = single-stage pipeline, several = multi-stage).
-   * Only callable when the lookup-callback `allowBlockBody` flag is set —
-   * outside that, `=> {` keeps its existing object-literal interpretation.
+   * Parse the block-body of a callback lambda: `{ stmt; stmt; …; [return <expr>;] }`.
+   * The statements reuse the same machinery as the top-level `;`-separated
+   * pipeline form — every statement is a stage call, an update op (`$.x = …`,
+   * `delete $.x`), a `let`/`const` binding, an `assert(...)`, etc. — and the
+   * block MAY end with a single `return <expr>` (which a reshaping array method
+   * like `.map` lowers to `$replaceWith`; `.filter` has none). Returns the
+   * statements as a `Pipeline` plus the optional `ret`. Only callable when the
+   * callback `allowBlockBody` flag is set — outside that, `=> {` keeps its
+   * existing object-literal / expr-block interpretation.
    */
-  parseLambdaBlockBody() {
+  parseCallbackBlock() {
     const openBrace = this.lexer.next();
-    if (this.lexer.peek().type === TokenType.RBrace) {
+    const stmts = [];
+    let ret;
+    while (this.lexer.peek().type !== TokenType.RBrace) {
+      if (this.lexer.peek().type === TokenType.Return) {
+        this.lexer.next();
+        ret = this.parseExpression();
+        if (this.lexer.peek().type === TokenType.Semi) this.lexer.next();
+        break;
+      }
+      const stmt = this.collectStatement();
+      stmts.push(stmt);
+      if (this.lexer.peek().type === TokenType.Semi) {
+        this.lexer.next();
+        continue;
+      }
+      if (this.selfTerminates(stmt) && this.lexer.peek().type !== TokenType.RBrace) continue;
+      break;
+    }
+    if (stmts.length === 0 && ret === void 0) {
       throw new ParseError(
-        `Expected at least one statement inside the lookup callback's block body at position ${openBrace.pos}`,
+        `Expected at least one statement (or a \`return <expr>\`) inside the callback's block body at position ${openBrace.pos}`,
         openBrace.pos
       );
     }
-    const stmts = [this.collectStatement()];
-    while (true) {
-      if (this.lexer.peek().type === TokenType.Semi) {
-        this.lexer.next();
-        if (this.lexer.peek().type === TokenType.RBrace) break;
-        stmts.push(this.collectStatement());
-        continue;
-      }
-      if (this.selfTerminates(stmts[stmts.length - 1]) && this.lexer.peek().type !== TokenType.RBrace) {
-        stmts.push(this.collectStatement());
-        continue;
-      }
-      break;
-    }
     const closeTok = this.lexer.peek();
     if (closeTok.type !== TokenType.RBrace) {
-      throw new ParseError(
-        `Expected '}' to close the lookup callback's block body at position ${closeTok.pos}`,
-        closeTok.pos
-      );
+      throw new ParseError(`Expected '}' to close the callback's block body at position ${closeTok.pos}`, closeTok.pos);
     }
     this.lexer.next();
-    return { type: "Pipeline", stmts, pos: openBrace.pos };
+    return { block: { type: "Pipeline", stmts, pos: openBrace.pos }, ret };
   }
   /**
    * Parse the expression-block body of an arrow:
    * `{ (const|let <name> = <expr>;)* return <expr>; }`. Codegen lowers it to a
    * right-folded nest of `$let`. This is the JS-faithful meaning of `=> { … }`
    * everywhere outside the lookup-callback positions (which use
-   * `parseLambdaBlockBody`); an object return must be written `=> ({ … })`.
+   * `parseCallbackBlock`); an object return must be written `=> ({ … })`.
    * See docs/specs/method-dispatch.md.
    */
   parseExprBlockBody() {
@@ -3008,15 +3011,12 @@ var Parser = class {
     return { type: "KeyValueEntry", key, value, pos: tok.pos };
   }
 };
-function isLookupReceiverRooted(expr) {
+var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set(["find", "filter", "map"]);
+function isStreamRooted(expr) {
   let node = expr;
   for (; ; ) {
-    if (node.type === "DatabaseRef" || node.type === "ClusterRef") return true;
-    if (node.type === "MemberAccess") {
-      node = node.object;
-      continue;
-    }
-    if (node.type === "IndexAccess") {
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef" || node.type === "CollectionRef") return true;
+    if (node.type === "MemberAccess" || node.type === "IndexAccess" || node.type === "MethodCall") {
       node = node.object;
       continue;
     }
@@ -4208,7 +4208,8 @@ function someExpr(expr, pred) {
         if (expr.exprBlock.decls.some((d) => someExpr(d.value, pred))) return true;
         if (someExpr(expr.exprBlock.ret, pred)) return true;
       }
-      if (expr.block !== void 0) return expr.block.stmts.some((s) => someStmt(s, pred));
+      if (expr.block !== void 0 && expr.block.stmts.some((s) => someStmt(s, pred))) return true;
+      if (expr.ret !== void 0 && someExpr(expr.ret, pred)) return true;
       return false;
     case "TypeofExpr":
       return someExpr(expr.operand, pred);
@@ -4358,6 +4359,7 @@ function extendCtx(ctx, params) {
     topLevelStream: ctx.topLevelStream,
     substreamLengthHandles: ctx.substreamLengthHandles,
     rootStreamLengthVar: ctx.rootStreamLengthVar,
+    slotAllocator: ctx.slotAllocator,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
@@ -8215,6 +8217,44 @@ function mapBodyExpr(lambda) {
     lambda.pos
   );
 }
+function rejectUsedIndexParam(lambda) {
+  if (lambda.params.length < 2) return;
+  const indexParam = lambda.params[1];
+  if (someExpr(lambda, (e) => e.type === "ParamRef" && e.name === indexParam)) {
+    throw new CodegenError(
+      `.map((${lambda.params[0]}, ${indexParam}) => \u2026) can't use the index parameter '${indexParam}' \u2014 MongoDB streams have no per-doc index. Drop it, or keep it unused (e.g. '(${lambda.params[0]}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
+      lambda.pos
+    );
+  }
+}
+function classifyCollParam(lambda) {
+  if (lambda.params.length !== 3) return false;
+  const collName = lambda.params[2];
+  let total = 0;
+  let lengthUses = 0;
+  someExpr(lambda, (e) => {
+    if (e.type === "ParamRef" && e.name === collName) total++;
+    if (e.type === "MemberAccess" && e.member === "length" && e.object.type === "ParamRef" && e.object.name === collName) {
+      lengthUses++;
+    }
+    return false;
+  });
+  if (total > lengthUses) {
+    throw new CodegenError(
+      `In '.map((${lambda.params[0]}, _i, ${collName}) => \u2026)' over a '$$$.<coll>' stream, only '${collName}.length' (the sub-stream's document count) is available \u2014 there's no materialised array to index or iterate. To work with the array itself, use the materialised form (e.g. '$$$.<coll>.filter(pred).filter((${lambda.params[0]}, i, ${collName}) => \u2026)').`,
+      lambda.pos
+    );
+  }
+  return lengthUses > 0;
+}
+function rejectLocalDocRef(letVars, param, pos) {
+  if (Object.keys(letVars).length === 0) return;
+  const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
+  throw new CodegenError(
+    `'$.<field>' inside '.map(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+    pos
+  );
+}
 var MAP = {
   name: "map",
   validate(args, callPos) {
@@ -8240,18 +8280,38 @@ var MAP = {
         arg.pos
       );
     }
-    const bodyExpr = mapBodyExpr(arg);
-    if (arg.params.length >= 2 && someExpr(bodyExpr, (e) => e.type === "ParamRef" && e.name === arg.params[1])) {
+    if (arg.block !== void 0 && arg.ret === void 0) {
       throw new CodegenError(
-        `.map((${arg.params[0]}, ${arg.params[1]}) => \u2026) can't use the index parameter '${arg.params[1]}' \u2014 MongoDB streams have no per-doc index. Drop it, or keep it unused (e.g. '(${arg.params[0]}, _${arg.params[1]}, coll)') only to reach the 3rd 'collection' parameter.`,
+        `.map(${arg.params[0]} => { \u2026 }) must end with 'return <expr>' \u2014 the returned value becomes each output document.`,
         arg.pos
       );
     }
+    if (arg.block === void 0) mapBodyExpr(arg);
+    rejectUsedIndexParam(arg);
   },
   lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0];
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : void 0;
+    const collLengthUsed = classifyCollParam(lambda);
+    const bodyCtx = collName !== void 0 && collLengthUsed ? {
+      ...ctx,
+      substreamLengthHandles: new Map([...ctx.substreamLengthHandles ?? [], [collName, `$${LENGTH_SLOT}`]])
+    } : ctx;
+    if (lambda.block !== void 0) {
+      const ret = lambda.ret;
+      const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
+      const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
+      rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
+      const replaceStmt = {
+        type: "UpdateFilter",
+        ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: rwRet, pos: ret.pos }],
+        pos: ret.pos
+      };
+      const synthetic = { type: "Pipeline", stmts: [...rwBlock.stmts, replaceStmt], pos: lambda.block.pos };
+      const blockCtx = { ...bodyCtx, slotAllocator: allocSlot };
+      return { stages: lowerBlock2(synthetic, blockCtx), clearLets: true };
+    }
     const body = mapBodyExpr(lambda);
     if (containsUnionPush(body)) {
       throw new CodegenError(
@@ -8259,38 +8319,9 @@ var MAP = {
         lambda.pos
       );
     }
-    let collLengthUsed = false;
-    if (collName !== void 0) {
-      let total = 0;
-      let lengthUses = 0;
-      someExpr(body, (e) => {
-        if (e.type === "ParamRef" && e.name === collName) total++;
-        if (e.type === "MemberAccess" && e.member === "length" && e.object.type === "ParamRef" && e.object.name === collName) {
-          lengthUses++;
-        }
-        return false;
-      });
-      if (total > lengthUses) {
-        throw new CodegenError(
-          `In '.map((${param}, _i, ${collName}) => \u2026)' over a '$$$.<coll>' stream, only '${collName}.length' (the sub-stream's document count) is available \u2014 there's no materialised array to index or iterate. To work with the array itself, use the materialised form (e.g. '$$$.<coll>.filter(pred).filter((${param}, i, ${collName}) => \u2026)').`,
-          lambda.pos
-        );
-      }
-      collLengthUsed = lengthUses > 0;
-    }
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
-    if (Object.keys(letVars).length > 0) {
-      const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
-      throw new CodegenError(
-        `'$.<field>' inside '.map(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
-        lambda.pos
-      );
-    }
-    const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, ctx, allocSlot, lowerBlock2);
-    const bodyCtx = collName !== void 0 && collLengthUsed ? {
-      ...ctx,
-      substreamLengthHandles: new Map([...ctx.substreamLengthHandles ?? [], [collName, `$${LENGTH_SLOT}`]])
-    } : ctx;
+    rejectLocalDocRef(letVars, param, lambda.pos);
+    const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, bodyCtx, allocSlot, lowerBlock2);
     const expr = generateWithCtx(rewritten2, bodyCtx);
     const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
     return { stages: [...lengthStages, ...prologue, { $replaceWith: expr }], clearLets: true };
@@ -11082,7 +11113,7 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
   let ctx = { ...startCtx, pipelineContext: true, topLevelStream: true };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
-  const tracking = makeSlotTracking();
+  const tracking = makeSlotTracking(startCtx.slotAllocator);
   const flushUpdateOps = () => {
     if (updateBuffer.length === 0) return;
     for (const stage of generateUpdateOpGroups(updateBuffer, ctx)) out.push(stage);
@@ -11176,7 +11207,7 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   let ctx = { ...startCtx, pipelineContext: true, topLevelStream: container === "top" };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
-  const tracking = makeSlotTracking();
+  const tracking = makeSlotTracking(startCtx.slotAllocator);
   const handleNames = new Set(ctx.substreamLengthHandles?.keys() ?? []);
   let lengthSlotAt = null;
   const ensureStreamLength = () => {
@@ -11877,8 +11908,8 @@ var lowerBlock = (block, ctx) => {
   }
   return generateImplicitPipeline(block, ctx);
 };
-function makeSlotTracking() {
-  const base = createSlotAllocator();
+function makeSlotTracking(external) {
+  const base = external ?? createSlotAllocator();
   let touched = false;
   return {
     alloc: () => {

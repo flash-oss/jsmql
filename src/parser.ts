@@ -1431,23 +1431,22 @@ export class Parser {
         }
         this.lexer.next(); // consume member name
         if (this.lexer.peek().type === TokenType.LParen) {
-          // Method call: left.member(args). Block-body lambdas (a sub-pipeline
-          // body inside the predicate) are allowed for:
-          //   - `$$$.<coll>.find/.filter(...)` (rooted at DatabaseRef) — the
-          //     eventual `$lookup` stage's sub-pipeline body. See
-          //     docs/specs/lookup-stage.md.
-          //   - `$$.filter(...)` (rooted directly at CollectionRef) — the
-          //     facet entry's sub-pipeline body. See
-          //     docs/specs/replace-root-stage.md (#facet pattern).
-          //   Everywhere else a `=> { … }` arrow body is an *expression* block
-          //   (`{ const a = …; return <expr>; }`) lowered to nested `$let` —
-          //   see docs/specs/method-dispatch.md. JS-faithful: `=> {` always
-          //   opens a block; an object return needs `=> ({ … })`.
+          // Method call: left.member(args). A `=> { … }` callback body is a
+          // *sub-pipeline* block (`;`-separated stages + an optional terminal
+          // `return <expr>` — parseCallbackBlock) when the method is a
+          // stream/lookup sub-pipeline method (`.find` / `.filter` / `.map`) on
+          // a STREAM-rooted receiver: `$$$.<coll>` / `$$$$.<db>.<coll>` (→
+          // `$lookup` sub-pipeline), `$$` (→ `$facet` / stream chain), or a
+          // chain off any of those (`$$$.<coll>.filter(p).map(d => { … })`).
+          // See docs/specs/lookup-stage.md, replace-root-stage.md,
+          // stream-methods.md.
+          //   Everywhere else — notably in-document array methods rooted at a
+          //   field (`$.items.map(d => { … })`) — a `=> { … }` body is an
+          //   *expression* block (`{ const a = …; return <expr>; }`) lowered to
+          //   nested `$let`; see docs/specs/method-dispatch.md. JS-faithful:
+          //   `=> {` always opens a block; an object return needs `=> ({ … })`.
           const blockKind: "pipeline" | "expr" =
-            ((member.value === "find" || member.value === "filter") && isLookupReceiverRooted(left)) ||
-            (member.value === "filter" && left.type === "CollectionRef")
-              ? "pipeline"
-              : "expr";
+            STREAM_BLOCK_METHODS.has(member.value) && isStreamRooted(left) ? "pipeline" : "expr";
           const args = this.parseMethodCallArgs(blockKind);
           left = {
             type: "MethodCall",
@@ -2579,31 +2578,36 @@ export class Parser {
  * complaining the target wasn't a field path.
  */
 /**
- * Walk a receiver chain back to its root and report whether the root is one
- * of the lookup-receiver context-ref prefixes — `DatabaseRef` (`$$$`, same
- * database) or `ClusterRef` (`$$$$`, cross-database). Used by `parsePostfix`
- * to decide whether a `.find(...)` / `.filter(...)` method call should accept
- * the lookup-callback grammar (block-body lambda, future-resolved as a
- * `$lookup` sub-pipeline).
- *
- * The chain may include any number of `MemberAccess` and `IndexAccess` hops
- * (so `$$$.users`, `$$$["users"]`, `$$$$.myDb.myColl`, `$$$$["db"]["coll"]`,
- * and the mixed bracket combos all match); method calls and other expression
- * shapes do not — only direct property navigation off the context ref is the
- * lookup-receiver shape. Depth-checking (rejecting `$$$.foo.bar.find(...)`
- * or `$$$$.db.coll.extra.find(...)`) happens at the codegen / lookup-
- * translation layer (`extractLookupTarget` requires exactly one or two
- * static-access levels).
+ * Methods whose `=> { … }` callback body is parsed as a sub-pipeline block
+ * (`parseCallbackBlock`) — but only when the receiver is stream-rooted (see
+ * `isStreamRooted`). `.find` / `.filter` are the lookup heads; `.map` is the
+ * reshaping chain method (`return <expr>` → `$replaceWith`). Other chain
+ * methods (`.toSorted`, `.reduce`, `.slice`, …) take expression-shaped
+ * callbacks, not statement blocks, so they stay out of this set.
  */
-function isLookupReceiverRooted(expr: Expr): boolean {
+const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "map"]);
+
+/**
+ * Walk a receiver chain back to its root and report whether the root is a
+ * stream source: a context-ref prefix `$$$` (`DatabaseRef`, same database),
+ * `$$$$` (`ClusterRef`, cross-database), or `$$` (`CollectionRef`, the current
+ * stream). Used by `parsePostfix` (with `STREAM_BLOCK_METHODS`) to decide
+ * whether a `.find` / `.filter` / `.map` method call accepts the sub-pipeline
+ * block grammar (block-body lambda → `$lookup` sub-pipeline / `$facet` / stream
+ * chain), as opposed to the expression-block grammar used by in-document array
+ * methods (`$.items.map(d => { … })`, rooted at a `FieldRef`).
+ *
+ * The chain may include any number of `MemberAccess`, `IndexAccess`, and
+ * `MethodCall` hops — so `$$$.users`, `$$$["users"]`, `$$$$.myDb.myColl`, and a
+ * chain off any of those (`$$$.orders.filter(p).map(…)`) all match. Only the
+ * root matters; depth-checking (rejecting `$$$.foo.bar.find(...)`) happens at
+ * the lookup-translation layer (`extractLookupTarget`).
+ */
+function isStreamRooted(expr: Expr): boolean {
   let node: Expr = expr;
   for (;;) {
-    if (node.type === "DatabaseRef" || node.type === "ClusterRef") return true;
-    if (node.type === "MemberAccess") {
-      node = node.object;
-      continue;
-    }
-    if (node.type === "IndexAccess") {
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef" || node.type === "CollectionRef") return true;
+    if (node.type === "MemberAccess" || node.type === "IndexAccess" || node.type === "MethodCall") {
       node = node.object;
       continue;
     }

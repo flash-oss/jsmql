@@ -166,6 +166,17 @@ export type GenerateCtx = {
    */
   rootStreamLengthVar?: string;
   /**
+   * Shared `__jsmql.tmp.<N>` slot allocator, threaded in so a sub-pipeline
+   * block lowered through `generateImplicitPipeline` continues the *enclosing*
+   * chain's counter instead of starting a fresh one. Set by the stream `.map`
+   * block path (`stream-methods.ts`) to the chain's `allocSlot`, so a nested
+   * `$$$.<coll>` lookup materialised inside a `.map(d => { … })` body gets a
+   * slot distinct from the outer lookup's `as` (no `__jsmql.tmp.1` collision).
+   * When absent, the pipeline lowerer allocates its own per-pipeline counter
+   * (the default for top-level pipelines and `.filter` sub-pipeline blocks).
+   */
+  slotAllocator?: () => string;
+  /**
    * Accumulator context — set by `pipeline.ts` when descending into a `$group`
    * field-value body (other than `_id`) or a `$setWindowFields.output[<key>]`
    * slot. Used by the operator-call codegen to gate operators that only make
@@ -239,6 +250,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     topLevelStream: ctx.topLevelStream,
     substreamLengthHandles: ctx.substreamLengthHandles,
     rootStreamLengthVar: ctx.rootStreamLengthVar,
+    slotAllocator: ctx.slotAllocator,
     accumulatorContext: ctx.accumulatorContext,
     aggExpr: ctx.aggExpr,
     functions: ctx.functions,
