@@ -2511,7 +2511,14 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
           pipeline: [
             { $match: { $expr: { $eq: ["$$jsmql_f0__id", "$userId"] } } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.2" } },
+            {
+              $lookup: {
+                from: "shipments",
+                let: { jsmql_f1__id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } }],
+                as: "__jsmql.tmp.2",
+              },
+            },
             { $set: { "__jsmql.tmp.2": { $size: "$__jsmql.tmp.2" } } },
             {
               $replaceWith: {
@@ -2520,6 +2527,110 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
                 totalUsers: "$$jsmql_s0_length",
               },
             },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+});
+
+describe("Cross-level references across three nested lookup levels", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+    // The hardest cross-level case: a statement-block `.map` nested inside another
+    // statement-block `.map`, whose asserts reach across THREE scopes —
+    //   • `shpmntsColl.length` — this shipment sub-stream (own 3rd-arg handle)
+    //   • `ordersColl.length`  — the parent order sub-stream (an ANCESTOR handle)
+    //   • `o._id`              — the parent order doc (an enclosing foreign param)
+    //   • `$._id`              — the ROOT user doc (two lookup levels up)
+    // Each is captured into the correct `$lookup.let` (foreign/system vars
+    // `jsmql_f<d>_…` / `jsmql_s<d>_…`) and read deeper via `$$` propagation.
+    // Verified end-to-end on a live mongod (per-user → per-order → per-shipment
+    // data correct; `userId: $._id` resolves to the root user at every order).
+    expect(
+      jsmql(`
+$$ = $$$.orders.filter(o => o.userId === $._id).map((o, i, ordersColl) => {
+  const shipments = $$$.shipments.filter((s, j, shpmntsColl0) => s.orderId === o._id).map((s, k, shpmntsColl) => {
+    assert(shpmntsColl.length > 2, \`order \${o._id} for user \${$._id} has too few shipments\`);
+    assert(shpmntsColl.length < ordersColl.length, "fewer shipments than orders");
+    return { id: s._id, weight: s.weight };
+  });
+  return { orderId: o._id, shipments };
+});
+      `),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" }, // root user._id (used in the inner assert message)
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }, // orders sub-stream count
+            {
+              $lookup: {
+                from: "shipments",
+                // o._id (enclosing foreign) + the orders sub-stream count (ancestor handle)
+                let: { jsmql_f1__id: "$_id", jsmql_s1_length: "$__jsmql.length" },
+                pipeline: [
+                  { $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } },
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }, // shipments sub-stream count
+                  {
+                    $match: {
+                      $expr: {
+                        $convert: {
+                          input: true,
+                          to: {
+                            $cond: [
+                              { $gt: ["$__jsmql.length", 2] }, // shpmntsColl.length
+                              "bool",
+                              {
+                                $concat: [
+                                  "jsmql assertion failed: ",
+                                  {
+                                    $toString: {
+                                      $concat: [
+                                        "order ",
+                                        { $toString: "$$jsmql_f1__id" }, // o._id
+                                        " for user ",
+                                        { $toString: "$$jsmql_f0__id" }, // $._id (root)
+                                        " has too few shipments",
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  {
+                    $match: {
+                      $expr: {
+                        $convert: {
+                          input: true,
+                          to: {
+                            $cond: [
+                              { $lt: ["$__jsmql.length", "$$jsmql_s1_length"] }, // shpmntsColl.length < ordersColl.length
+                              "bool",
+                              "jsmql assertion failed: fewer shipments than orders",
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                  { $replaceWith: { id: "$_id", weight: "$weight" } },
+                ],
+                as: "__jsmql.tmp.2",
+              },
+            },
+            { $set: { "__jsmql.var.shipments": "$__jsmql.tmp.2" } },
+            { $replaceWith: { orderId: "$_id", shipments: "$__jsmql.var.shipments" } },
           ],
           as: "__jsmql.tmp.1",
         },

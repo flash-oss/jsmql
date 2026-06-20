@@ -1300,6 +1300,9 @@ function lowerLookupPivot(
       const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
       if (result.replacesPreviousStage) pipelineBody.pop();
       pipelineBody.push(...result.stages);
+      // A block-body `.map` chain method may capture cross-level reads
+      // (`$.<field>`, …) into this lookup's `$lookup.let`.
+      if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
     }
     lookupStage = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
   }

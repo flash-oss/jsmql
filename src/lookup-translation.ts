@@ -67,7 +67,31 @@ export type SubPipelineLowerer = (block: Pipeline, ctx: GenerateCtx) => object[]
  *   thread the names into the inner's `lambdaParams` so codegen emits
  *   `$$<name>` instead of throwing `UnknownIdentifier`.
  */
-export type EnclosingLookupContext = { foreignParams: ReadonlyArray<string>; inScopeLetNames: ReadonlySet<string> };
+export type EnclosingLookupContext = {
+  foreignParams: ReadonlyArray<string>;
+  inScopeLetNames: ReadonlySet<string>;
+  /**
+   * The live `LetAllocator` of each enclosing lookup, indexed by scope depth
+   * (`parentAllocators[L]` = the lookup at depth L). Threaded ONLY through the
+   * block-body path (where enclosing refs survive as `ParamRef`s, so their
+   * scope level is recoverable). A reference to scope level K — root (`$.x`,
+   * K = −1), an ancestor foreign param (`outer.x`, K = that param's level), or
+   * an ancestor handle — is captured ONCE at the level-(K+1) allocator (its
+   * `$lookup.let` evaluates against level-K's documents, so the captured `$x`
+   * is correct) and read at any deeper level as `$$jsmql_f<K+1>_x` — MQL `$$`
+   * vars propagate through nested `$lookup.pipeline` boundaries, so no
+   * re-capture is needed per level. Empty in the expression-body path (which
+   * pre-rewrites enclosing refs to `FieldRef`s via `rewriteEnclosingForeignParams`).
+   */
+  parentAllocators?: ReadonlyArray<LetAllocator>;
+  /**
+   * Sub-stream length handles (3rd `.map`/`.filter` param) bound by the enclosing
+   * lookups: handle name → the scope depth where it is defined. Lets a nested
+   * block-body `.map`/`.filter` capture an ancestor `<handle>.length` into its own
+   * `$lookup.let`. Block-body path only.
+   */
+  parentHandles?: ReadonlyMap<string, number>;
+};
 
 export const EMPTY_ENCLOSING: EnclosingLookupContext = { foreignParams: [], inScopeLetNames: new Set() };
 
@@ -198,37 +222,6 @@ function rewriteEnclosingForeignParams(expr: Expr, params: ReadonlyArray<string>
     return walk(arg);
   }
   return walk(expr);
-}
-
-/**
- * Pipeline-body counterpart of `rewriteEnclosingForeignParams`: apply that
- * Expr→Expr rewrite to every expression of a block-body sub-pipeline, mirroring
- * `transformStmt`'s statement-shape handling. Used by the block-body branch of
- * `translatePredicate` / `buildPipelineFormPredicate` so a nested lookup whose
- * lambda has a *block* body still has its enclosing-foreign-param refs
- * (`<outer>.field`) lowered into local `FieldRef`s before this level's
- * let-extractor runs — the expression-body `transformExpr` skips nested *block*
- * bodies (see its Lambda case), so each level performs its own rewrite as it is
- * dispatched. No-op at the top level (`params` empty).
- */
-function rewriteEnclosingForeignParamsInPipeline(block: Pipeline, params: ReadonlyArray<string>): Pipeline {
-  if (params.length === 0) return block;
-  const rw = (e: Expr): Expr => rewriteEnclosingForeignParams(e, params);
-  const stmts: PipelineStmt[] = block.stmts.map((stmt): PipelineStmt => {
-    if (stmt.type === "LetDecl") return { ...stmt, value: rw(stmt.value) };
-    if (stmt.type === "FuncDecl") return { ...stmt, lambda: rw(stmt.lambda) as Lambda };
-    if (stmt.type === "UpdateFilter") {
-      const ops: UpdateOp[] = stmt.ops.map(
-        (op): UpdateOp =>
-          op.type === "AssignExpr"
-            ? { type: "AssignExpr", target: rw(op.target), value: rw(op.value), pos: op.pos }
-            : { type: "DeleteStmt", target: rw(op.target), pos: op.pos },
-      );
-      return { type: "UpdateFilter", ops, pos: stmt.pos };
-    }
-    return rw(stmt as Expr) as PipelineStmt;
-  });
-  return { type: "Pipeline", stmts, pos: block.pos };
 }
 
 function matchEnclosingParamPath(
@@ -649,6 +642,11 @@ export function createSlotAllocator(): SlotAllocator {
 type ClassifiedPath =
   | { kind: "local"; segments: string[] }
   | { kind: "foreign"; segments: string[] }
+  // A path rooted at an ENCLOSING lookup's foreign param (block-body path only,
+  // where these survive as `ParamRef`s). `level` is the scope depth of that
+  // param (its index in `enclosingParams`); the resolver captures it at the
+  // level-(`level`+1) allocator. See `LetAllocator.allocateAncestorForeign`.
+  | { kind: "ancestorForeign"; level: number; segments: string[] }
   | {
       // An outer pipeline-scoped `let` binding referenced inside the predicate
       // (optionally with member access on it). The let materialises under
@@ -667,10 +665,13 @@ function classifyPath(
   expr: Expr,
   foreignParam: string,
   outerLets?: ReadonlyMap<string, string>,
+  enclosingParams: readonly string[] = [],
 ): ClassifiedPath | null {
   if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
   if (expr.type === "ParamRef") {
     if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
+    const level = enclosingParams.indexOf(expr.name);
+    if (level !== -1) return { kind: "ancestorForeign", level, segments: [] };
     if (outerLets !== undefined && outerLets.has(expr.name)) {
       const fieldPath = outerLets.get(expr.name);
       if (fieldPath !== undefined) {
@@ -680,7 +681,7 @@ function classifyPath(
     return null;
   }
   if (expr.type === "MemberAccess") {
-    const inner = classifyPath(expr.object, foreignParam, outerLets);
+    const inner = classifyPath(expr.object, foreignParam, outerLets, enclosingParams);
     if (inner === null) return null;
     if (inner.kind === "outerLet") {
       return {
@@ -689,10 +690,13 @@ function classifyPath(
         fieldPath: `${inner.fieldPath}.${expr.member}`,
       };
     }
+    if (inner.kind === "ancestorForeign") {
+      return { kind: "ancestorForeign", level: inner.level, segments: [...inner.segments, expr.member] };
+    }
     return { kind: inner.kind, segments: [...inner.segments, expr.member] };
   }
   if (expr.type === "IndexAccess" && expr.index.type === "StringLiteral") {
-    const inner = classifyPath(expr.object, foreignParam, outerLets);
+    const inner = classifyPath(expr.object, foreignParam, outerLets, enclosingParams);
     if (inner === null) return null;
     if (inner.kind === "outerLet") {
       return {
@@ -700,6 +704,9 @@ function classifyPath(
         segments: [...inner.segments, expr.index.value],
         fieldPath: `${inner.fieldPath}.${expr.index.value}`,
       };
+    }
+    if (inner.kind === "ancestorForeign") {
+      return { kind: "ancestorForeign", level: inner.level, segments: [...inner.segments, expr.index.value] };
     }
     return { kind: inner.kind, segments: [...inner.segments, expr.index.value] };
   }
@@ -885,24 +892,76 @@ function buildBlockBodyPredicate(
     }
   }
 
-  const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
-  const { rewritten, letVars } = extractLetsFromPipeline(
-    preRewritten,
-    foreignParam,
-    outerLets,
-    enclosing.foreignParams.length,
-  );
+  return lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock, enclosing, { collParam });
+}
+
+/**
+ * Shared sub-pipeline lowerer for a callback statement-block body — the single
+ * engine behind a block-body `.filter` predicate (`buildBlockBodyPredicate`)
+ * AND a statement-block `.map` chain method (`stream-methods.ts`). The ONLY
+ * difference between them is the `opts.terminalRet`: `.map` passes its `return`
+ * expression, appended as the root-replace statement `$ = <ret>` (a synthetic
+ * `UpdateFilter` that `lowerBlock` turns into `$replaceWith`); `.filter` passes
+ * none. Everything else — cross-level capture, the 3rd-param length handle,
+ * nested-lookup enclosing — is identical, so the two stay in lock-step.
+ *
+ * Cross-level capture (block-body only — see `EnclosingLookupContext`): a fresh
+ * `LetAllocator` is seeded with this scope's depth, the enclosing foreign params,
+ * and the enclosing allocators, so `transformExpr` resolves a root read (`$.x`)
+ * or an ancestor-foreign read (`outer.x`) to its correct ancestor level instead
+ * of mis-capturing it as a local field of this level's input.
+ */
+export function lowerCallbackBlock(
+  lambda: Lambda,
+  outerCtx: GenerateCtx,
+  outerLets: ReadonlyMap<string, string> | undefined,
+  lowerBlock: SubPipelineLowerer,
+  enclosing: EnclosingLookupContext,
+  opts: { collParam?: string; terminalRet?: Expr } = {},
+): { letVars: Record<string, string>; pipeline: object[] } {
+  const block = lambda.block as Pipeline; // caller guarantees lambda.block !== undefined
+  const foreignParam = lambda.params[0];
+  const depth = enclosing.foreignParams.length;
+  const parents = enclosing.parentAllocators ?? [];
+  const parentHandles = enclosing.parentHandles ?? new Map<string, number>();
+  const allocator = createLetAllocator(depth, parents, enclosing.foreignParams, parentHandles);
+
+  // `.map`'s `return <ret>` → the root-replace statement `$ = <ret>` appended to
+  // the block, so the same extraction + lowering handles the reshape terminal.
+  let workBlock = block;
+  if (opts.terminalRet !== undefined) {
+    const ret = opts.terminalRet;
+    const replaceStmt: UpdateFilter = {
+      type: "UpdateFilter",
+      ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: ret, pos: ret.pos }],
+      pos: ret.pos,
+    };
+    workBlock = { type: "Pipeline", stmts: [...block.stmts, replaceStmt], pos: block.pos };
+  }
+
+  const { rewritten } = extractLetsFromPipeline(workBlock, foreignParam, outerLets, depth, allocator);
+  const letVars = allocator.letVars(); // live ref — picks up any deeper cross-level captures into THIS level
   const innerEnclosing: EnclosingLookupContext = {
     foreignParams: [...enclosing.foreignParams, foreignParam],
     inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+    parentAllocators: [...parents, allocator],
+    // This level's 3rd-param handle becomes an ANCESTOR handle for nested lookups,
+    // recorded at this scope's depth so they can capture its `.length`.
+    parentHandles: opts.collParam !== undefined ? new Map([...parentHandles, [opts.collParam, depth]]) : parentHandles,
   };
   const subCtx: GenerateCtx = {
     ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
     enclosingLookup: innerEnclosing,
+    // `$$.length` (the ROOT stream count) captured by an enclosing chain stays
+    // in scope inside this block — preserve the var `makeSubPipelineCtx`/
+    // `freshSubPipelineCtx` would otherwise drop, so `generateStreamLength`
+    // keeps emitting `$$<rootStreamLengthVar>` rather than the (wrong)
+    // sub-stream `$__jsmql.length`.
+    rootStreamLengthVar: outerCtx.rootStreamLengthVar,
     // Bind the 3rd 'collection' param to this sub-stream's materialised count
     // (`$__jsmql.length`); `generateImplicitPipeline` (via `lowerBlock`) stamps
     // the `$setWindowFields` ahead of the statement that reads `<coll>.length`.
-    ...(collParam !== undefined ? { substreamLengthHandles: new Map([[collParam, `$${LENGTH_SLOT}`]]) } : {}),
+    ...(opts.collParam !== undefined ? { substreamLengthHandles: new Map([[opts.collParam, `$${LENGTH_SLOT}`]]) } : {}),
   };
   return { letVars, pipeline: lowerBlock(rewritten, subCtx) };
 }
@@ -1044,6 +1103,19 @@ function tryBasicForm(
 // ── Let extraction (AST rewriter) ─────────────────────────────────────────────
 
 type LetAllocator = {
+  /** This lookup's scope depth (0 = outermost lookup). */
+  depth: number;
+  /** Foreign-param names of the enclosing lookups, indexed by their scope
+   * depth (`enclosingParams[L]` = the param of the lookup at depth L). Only
+   * populated in the block-body path; see `EnclosingLookupContext.parentAllocators`. */
+  enclosingParams: readonly string[];
+  /** Live allocator of each enclosing lookup, indexed by depth. */
+  parents: readonly LetAllocator[];
+  /** Sub-stream length handles (3rd `.map`/`.filter` param) of the ENCLOSING
+   * lookups: handle name → the scope depth where it is defined. A
+   * `<handle>.length` read of an ancestor handle is captured into the lookup
+   * just inside that handle's level; see `allocateAncestorHandle`. */
+  enclosingHandles: ReadonlyMap<string, number>;
   /** Records "userId" → "$userId"; on second call with same path, returns the existing name. */
   allocateForLocalPath: (segments: string[]) => string;
   /**
@@ -1055,6 +1127,29 @@ type LetAllocator = {
    * uniquified on collision.
    */
   allocateForOuterLet: (segments: string[], fieldPath: string) => string;
+  /**
+   * A ROOT-document read (`$.x`) seen inside a nested lookup (block-body path).
+   * The root doc is the top-level pipeline's current doc; the outermost lookup
+   * (depth 0) is the level whose `$lookup.let` evaluates against it, so the
+   * capture lands in `parents[0]` (or this allocator at depth 0) as
+   * `jsmql_f0_x = "$x"`. Returns the var name; deeper levels read it as
+   * `$$jsmql_f0_x` via `$$` propagation. */
+  allocateRootField: (segments: string[]) => string;
+  /**
+   * A read of an ENCLOSING foreign param at scope level K (`outer.x`, block-body
+   * path). Captured at the level-(K+1) lookup (whose `let` evaluates against
+   * level-K's documents) as `jsmql_f<K+1>_x = "$x"`; for the immediate parent
+   * (K = depth−1) that target is THIS allocator (unchanged from before). */
+  allocateAncestorForeign: (level: number, segments: string[]) => string;
+  /** Capture this level's materialised sub-stream count (`$__jsmql.length`) into
+   * THIS allocator's `let` as `jsmql_s<depth>_length`. Idempotent. */
+  allocateSysLength: () => string;
+  /** A read of an ENCLOSING handle's `.length` (`outerColl.length`), where the
+   * handle is defined at scope level K (`enclosingHandles.get(name)`). Captured
+   * at the level-(K+1) lookup (whose `let` evaluates against level-K's docs,
+   * which carry the materialised `$__jsmql.length`) as `jsmql_s<K+1>_length`;
+   * deeper levels read it via `$$` propagation. */
+  allocateAncestorHandle: (handleName: string) => string;
   /** Final mapping for emit into `$lookup.let`. */
   letVars: () => Record<string, string>;
 };
@@ -1067,7 +1162,12 @@ type LetAllocator = {
 // var and the deeper `let` would shadow the shallower one — the `$$v_id`
 // collision bug. The scope-depth stamp keeps every level distinct.
 
-function createLetAllocator(depth: number): LetAllocator {
+function createLetAllocator(
+  depth: number,
+  parents: readonly LetAllocator[] = [],
+  enclosingParams: readonly string[] = [],
+  enclosingHandles: ReadonlyMap<string, number> = new Map(),
+): LetAllocator {
   const byPath = new Map<string, string>();
   const used = new Set<string>();
   const out: Record<string, string> = {};
@@ -1081,7 +1181,11 @@ function createLetAllocator(depth: number): LetAllocator {
     }
     return candidate;
   }
-  return {
+  const self: LetAllocator = {
+    depth,
+    enclosingParams,
+    parents,
+    enclosingHandles,
     allocateForLocalPath(segments: string[]): string {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
@@ -1103,8 +1207,39 @@ function createLetAllocator(depth: number): LetAllocator {
       out[name] = `$${fieldPath}`;
       return name;
     },
+    // A reference to scope level L is captured at the allocator owning that
+    // depth: `parents[L]` for an ancestor, or `self` for the current level
+    // (L === depth). `allocateForLocalPath` on the chosen allocator names it
+    // `jsmql_f<L>_<field>` with value `$<field>` — correct in that level's
+    // `$lookup.let` context — and the result propagates to deeper levels.
+    allocateRootField(segments: string[]): string {
+      const target = depth === 0 ? self : parents[0];
+      return target.allocateForLocalPath(segments);
+    },
+    allocateAncestorForeign(level: number, segments: string[]): string {
+      const captureDepth = level + 1;
+      const target = captureDepth >= depth ? self : parents[captureDepth];
+      return target.allocateForLocalPath(segments);
+    },
+    allocateSysLength(): string {
+      const key = " syslen"; // distinct from any dotted path / fieldPath
+      const existing = byPath.get(key);
+      if (existing !== undefined) return existing;
+      const name = uniqueName(letSysVar("length", depth));
+      used.add(name);
+      byPath.set(key, name);
+      out[name] = `$${LENGTH_SLOT}`;
+      return name;
+    },
+    allocateAncestorHandle(handleName: string): string {
+      const sourceLevel = enclosingHandles.get(handleName) ?? 0;
+      const captureDepth = sourceLevel + 1;
+      const target = captureDepth >= depth ? self : parents[captureDepth];
+      return target.allocateSysLength();
+    },
     letVars: () => out,
   };
+  return self;
 }
 
 export function extractLetsFromExpr(
@@ -1123,8 +1258,8 @@ export function extractLetsFromPipeline(
   foreignParam: string,
   outerLets?: ReadonlyMap<string, string>,
   depth: number = 0,
+  allocator: LetAllocator = createLetAllocator(depth),
 ): { rewritten: Pipeline; letVars: Record<string, string> } {
-  const allocator = createLetAllocator(depth);
   const stmts: PipelineStmt[] = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }
@@ -1250,7 +1385,7 @@ function transformTarget(
   allocator: LetAllocator,
   outerLets: ReadonlyMap<string, string> | undefined,
 ): Expr {
-  const classified = classifyPath(target, foreignParam, outerLets);
+  const classified = classifyPath(target, foreignParam, outerLets, allocator.enclosingParams);
   if (
     classified !== null &&
     (classified.kind === "local" || classified.kind === "foreign") &&
@@ -1263,21 +1398,23 @@ function transformTarget(
 
 /**
  * Recursive AST rewriter. At each visited node:
+ *   - An ancestor `<handle>.length` read (block-body path) → a `ParamRef` to the
+ *     captured sub-stream-count var (`allocateAncestorHandle`).
  *   - If the node is a `classifyPath`-able sub-tree:
- *     - "local" root → swap for a `ParamRef` whose name is the allocated
- *       let-var (codegen lowers it to `$$<letVar>` — exactly the MQL
- *       binding the sub-pipeline needs).
- *     - "foreign" root → swap for a bare `FieldRef(path)` (lowers to
- *       `"$path"` inside the sub-pipeline, where the foreign doc is the
- *       root).
+ *     - "local" (`$.x`) → a `ParamRef` to the allocated let-var. In a nested
+ *       block (enclosingParams non-empty) `$.x` is a ROOT read, captured at the
+ *       outermost lookup (`allocateRootField`); otherwise a current-level capture.
+ *     - "foreign" (current param) → a bare `FieldRef(path)` (`"$path"`, the
+ *       sub-pipeline's local doc).
+ *     - "ancestorForeign" (an enclosing param, block-body path) → a `ParamRef` to
+ *       the var captured at that param's level (`allocateAncestorForeign`).
  *   - Otherwise recurse into children, producing a fresh node with
  *     transformed sub-trees.
  *
- * Nested lambdas inside the predicate body keep their own params; we
- * recurse into expression bodies with the same foreign param so an
- * enclosing-foreign ref still hoists, but NOT into a nested lambda's
- * statement *block* body (see the Lambda case) — those are handled when
- * the nested lookup is dispatched, via `rewriteEnclosingForeignParamsInPipeline`.
+ * Nested lambdas inside the predicate body keep their own params; we recurse into
+ * expression bodies with the same foreign param so an enclosing-foreign ref still
+ * hoists, but NOT into a nested lambda's statement *block* body (see the Lambda
+ * case) — those are handled when the nested lookup is dispatched (`lowerCallbackBlock`).
  */
 function transformExpr(
   expr: Expr,
@@ -1285,10 +1422,36 @@ function transformExpr(
   allocator: LetAllocator,
   outerLets: ReadonlyMap<string, string> | undefined,
 ): Expr {
-  const classified = classifyPath(expr, foreignParam, outerLets);
+  // `<enclosingHandle>.length` — a read of an ANCESTOR lookup's sub-stream count
+  // (a 3rd `.map`/`.filter` param from an enclosing scope). Capture it into the
+  // lookup just inside that handle's level and read it as `$$jsmql_s<…>_length`.
+  if (
+    expr.type === "MemberAccess" &&
+    expr.member === "length" &&
+    expr.object.type === "ParamRef" &&
+    allocator.enclosingHandles.has(expr.object.name)
+  ) {
+    const letVar = allocator.allocateAncestorHandle(expr.object.name);
+    return { type: "ParamRef", name: letVar, pos: expr.pos } as ParamRef;
+  }
+  const classified = classifyPath(expr, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null) {
     if (classified.kind === "local") {
-      const letVar = allocator.allocateForLocalPath(classified.segments);
+      // `$.x` is a ROOT-document read. In the block-body path inside a nested
+      // lookup (enclosingParams non-empty), capture it at the outermost lookup
+      // (`allocateRootField` → `jsmql_f0_x`) so it resolves to the root doc, not
+      // this level's input. At the top level / expression-body path it stays a
+      // current-level capture (unchanged).
+      const letVar =
+        allocator.enclosingParams.length > 0
+          ? allocator.allocateRootField(classified.segments)
+          : allocator.allocateForLocalPath(classified.segments);
+      return { type: "ParamRef", name: letVar, pos: expr.pos } as ParamRef;
+    }
+    if (classified.kind === "ancestorForeign") {
+      // A read of an enclosing lookup's foreign param (`outer.x`); capture at the
+      // level just inside that param's scope so it threads down correctly.
+      const letVar = allocator.allocateAncestorForeign(classified.level, classified.segments);
       return { type: "ParamRef", name: letVar, pos: expr.pos } as ParamRef;
     }
     if (classified.kind === "outerLet") {
@@ -1796,12 +1959,13 @@ function tryExtractChainedLookup(
   // (via `rootStreamLengthVar`). `$$` is always the ROOT stream regardless of
   // depth; inner sub-stream counts use the 3rd-arg handle instead.
   const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
-  const innerCtx = captureRootStreamLength(
-    usesRootLen,
-    enclosing.foreignParams.length,
-    letVars,
-    freshSubPipelineCtx(outerCtx),
-  );
+  // Carry `enclosing` on the chain ctx so a statement-block `.map` chain method
+  // (`lowerCallbackBlock`) can capture its cross-level reads into the right
+  // ancestor `$lookup.let`.
+  const innerCtx: GenerateCtx = {
+    ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
+    enclosingLookup: enclosing,
+  };
   // Apply each chain method through the stream-methods registry. `inSubPipeline`
   // is true so methods know they're emitting inside a sub-pipeline body.
   for (let i = 1; i < methods.length; i++) {
@@ -1812,6 +1976,8 @@ function tryExtractChainedLookup(
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
     if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
+    // A block-body `.map` may capture cross-level reads into THIS lookup's let.
+    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
   // Build the $lookup stage. `as` is an internal slot; the surrounding
   // expression's codegen reads it. (Future optimisation: detect when the

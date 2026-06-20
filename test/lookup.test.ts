@@ -171,6 +171,61 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
     ]);
   });
 
+  // Deep cross-level capture: a ROOT read (`$.region`) inside a NESTED block-body
+  // lookup is captured at the OUTERMOST lookup (`jsmql_f0_region`, whose let
+  // evaluates against the root doc) and read deeper via `$$` propagation — NOT
+  // mis-captured as a field of the immediate parent. The enclosing foreign param
+  // `a._id` is captured at the level just inside its scope (`jsmql_f1__id`).
+  it("a root `$.<field>` read inside a nested block-body lookup threads to the outermost let", () => {
+    expect(
+      jsmql(`
+        $.a = $$$.A.filter(a => {
+          $.c = $$$.C.filter(c => {
+            $match(c.aId === a._id);
+            assert(c.region === $.region, "region mismatch");
+          });
+        });
+      `),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "A",
+          let: { jsmql_f0_region: "$region" }, // root field, captured at the OUTERMOST lookup
+          pipeline: [
+            {
+              $lookup: {
+                from: "C",
+                let: { jsmql_f1__id: "$_id" }, // enclosing foreign param `a._id`
+                pipeline: [
+                  { $match: { $expr: { $eq: ["$aId", "$$jsmql_f1__id"] } } },
+                  {
+                    $match: {
+                      $expr: {
+                        $convert: {
+                          input: true,
+                          // `$.region` reads the outermost capture, propagated down.
+                          to: {
+                            $cond: [
+                              { $eq: ["$region", "$$jsmql_f0_region"] },
+                              "bool",
+                              "jsmql assertion failed: region mismatch",
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                ],
+                as: "c",
+              },
+            },
+          ],
+          as: "a",
+        },
+      },
+    ]);
+  });
+
   it("rejects a USED index param in the block", () => {
     expect(() =>
       jsmql(`$.x = $$$.orders.filter((o, i, c) => { $match(o.userId === $._id); assert(i > 0, "x"); });`),

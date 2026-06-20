@@ -2,7 +2,7 @@ import { lookupOperator } from "./operators.ts";
 import { validateOperatorArgs } from "./operator-validation.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
-import { LENGTH_SLOT } from "./namespace.ts";
+import { CORRELATION_VAR_RE, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
@@ -333,7 +333,17 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
  * `let`s; a sub-pipeline declares and uses its own.
  */
 export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
-  return { lambdaParams: new Set(), bindings: outer.bindings, pipelineContext: outer.pipelineContext };
+  return {
+    lambdaParams: new Set(),
+    bindings: outer.bindings,
+    pipelineContext: outer.pipelineContext,
+    // The slot allocator is a pipeline-global resource (gensym counter for
+    // `__jsmql.tmp.<N>`), not per-document state, so it crosses sub-pipeline
+    // boundaries — a lookup materialised inside a `.map` block keeps allocating
+    // from the enclosing chain's counter. Undefined unless an enclosing chain
+    // set it, so ordinary sub-pipelines still start their own counter.
+    slotAllocator: outer.slotAllocator,
+  };
 }
 
 /**
@@ -1223,6 +1233,17 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       }
       if (ctx.lambdaParams.has(expr.name)) {
         return `$$${safeVarName(expr.name)}`;
+      }
+      // Compiler-generated `$lookup.let` correlation var (`jsmql_f|v|s<depth>_<name>`,
+      // see namespace.ts). These are produced ONLY by the lookup let-extractor and
+      // are captured into some enclosing lookup's `let` — possibly LAZILY, as a
+      // deeper level's cross-level read induces the capture after this level's
+      // `lambdaParams` set was frozen — so they may not appear in `lambdaParams`.
+      // MQL `$$` vars propagate through nested `$lookup.pipeline` boundaries, so the
+      // var is in scope by construction; emit it directly. (User identifiers can't
+      // collide: this exact reserved shape is never produced from user source.)
+      if (CORRELATION_VAR_RE.test(expr.name)) {
+        return `$$${expr.name}`;
       }
       const letPath = ctx.pipelineLets?.get(expr.name);
       if (letPath !== undefined) {

@@ -100,3 +100,13 @@ export function letSysVar(name: string, depth: number): string {
 
 /** Prefix for `$lookup.let` correlation vars — must start with a letter (no `__`). */
 const JSMQL_NS_VAR = "jsmql_";
+
+/**
+ * Matches a `$lookup.let` correlation-var name produced by `letFieldVar` /
+ * `letBindingVar` / `letSysVar` (`jsmql_<f|v|s><depth>_<name>`). Used by codegen
+ * to recognise a compiler-generated correlation `ParamRef` and emit `$$<name>`
+ * even when it isn't in the current `lambdaParams` set — a deeper level's
+ * cross-level read can capture into an enclosing lookup's `let` after this
+ * level's `lambdaParams` was frozen, and `$$` vars propagate through nested
+ * `$lookup.pipeline` boundaries, so the var is in scope by construction. */
+export const CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;

@@ -11,9 +11,11 @@ import type { ArrayElement, CallArg, Expr, Pipeline, UpdateFilter } from "./ast.
 import { someExpr } from "./ast-walk.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
+  EMPTY_ENCLOSING,
   extractLetsFromExpr,
   extractLetsFromPipeline,
   extractLookupCalls,
+  lowerCallbackBlock,
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
@@ -39,6 +41,15 @@ export type StreamMethodResult = {
    * a new stage. Defaults to false.
    */
   replacesPreviousStage?: boolean;
+  /**
+   * `$lookup.let` correlation vars this method's body captured that must be
+   * merged into the ENCLOSING lookup's `let` clause. Set by a statement-block
+   * `.map` whose body reads cross-level values (`$.<field>`, an enclosing
+   * foreign param, …) — those are hoisted into the lookup the chain is
+   * extending. The chain assembler (`tryExtractChainedLookup` / the pivot)
+   * `Object.assign`s them onto the lookup's `let`. Empty/absent otherwise.
+   */
+  extraLetVars?: Record<string, string>;
 };
 
 export type StreamMethodDef = {
@@ -312,7 +323,7 @@ const MAP: StreamMethodDef = {
     if (arg.block === undefined) mapBodyExpr(arg); // throws for unsupported expr-block bodies
     rejectUsedIndexParam(arg);
   },
-  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
+  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, inSubPipeline) {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
@@ -330,31 +341,40 @@ const MAP: StreamMethodDef = {
         : ctx;
 
     // ── Statement-block body: `(d) => { stmt; …; return <ret> }` ──────────────
-    // Lowered through the SAME engine `.filter` uses (`extractLetsFromPipeline`
-    // → `lowerBlock`), so the block statements get the full pipeline vocabulary
-    // — `assert(...)`, `$match(...)`, `let`, nested `$$$.<coll>` lookups,
-    // `<coll>.length`. The ONLY difference from `.filter` is the trailing
-    // `return <ret>`, appended as the root-replace statement `$ = <ret>` (which
-    // `lowerBlock` lowers to `$replaceWith`, including any lookups inside <ret>).
+    // Lowered through the SAME engine `.filter` uses, so the block statements
+    // get the full pipeline vocabulary — `assert(...)`, `$match(...)`, `let`,
+    // nested `$$$.<coll>` lookups, `<coll>.length`. The ONLY difference from
+    // `.filter` is the trailing `return <ret>` → the root-replace statement
+    // `$ = <ret>` (→ `$replaceWith`).
     if (lambda.block !== undefined) {
       const ret = lambda.ret as Expr; // validate() guarantees a block has a `ret`
-      // Rewrite `d.<field>` → `$<field>` across the block AND the return; a
-      // `$.<field>` (local-doc) ref surfaces as a non-empty letVars → reject.
+      // Inside a `$lookup` sub-pipeline (the pivot / a nested chain), route through
+      // the shared `lowerCallbackBlock`: it captures cross-level reads (`$.<field>`
+      // root, an enclosing foreign param) into the enclosing lookup's `$lookup.let`
+      // (returned as `extraLetVars` for the chain assembler to merge) and appends
+      // the `return` as `$ = <ret>`. The chain's slot allocator threads in so a
+      // block-internal lookup gets a slot distinct from the enclosing `as`.
+      if (inSubPipeline) {
+        const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
+        const blockCtx: GenerateCtx = { ...ctx, slotAllocator: allocSlot };
+        const { letVars, pipeline } = lowerCallbackBlock(lambda, blockCtx, ctx.pipelineLets, lowerBlock, enclosing, {
+          collParam: collName,
+          terminalRet: ret,
+        });
+        return { stages: pipeline, clearLets: true, extraLetVars: letVars };
+      }
+      // Top-level `$$` stream (no enclosing `$lookup.let`): the lambda param IS the
+      // current document, so a `$.<field>` ref is rejected ("use the param"). The
+      // block + synthetic `$ = ret` lower directly to pipeline stages.
       const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
       const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
       rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
-      // `return <ret>` → the root-replace statement `$ = <ret>`. As a
-      // `;`-pipeline statement that's an `UpdateFilter` wrapping the assignment,
-      // which `lowerBlock` lowers to `$replaceWith` (handling lookups in <ret>).
       const replaceStmt: UpdateFilter = {
         type: "UpdateFilter",
         ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: rwRet, pos: ret.pos }],
         pos: ret.pos,
       };
       const synthetic: Pipeline = { type: "Pipeline", stmts: [...rwBlock.stmts, replaceStmt], pos: lambda.block.pos };
-      // Thread the chain's slot allocator in so any `$$$.<coll>` lookup inside
-      // the block/return materialises into a slot distinct from the enclosing
-      // lookup's `as` (shared counter → no `__jsmql.tmp.N` collision).
       const blockCtx: GenerateCtx = { ...bodyCtx, slotAllocator: allocSlot };
       return { stages: lowerBlock(synthetic, blockCtx), clearLets: true };
     }

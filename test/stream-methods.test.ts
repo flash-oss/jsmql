@@ -332,10 +332,53 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       expect(() => jsmql(`$$ = $$.map(d => { assert(d.total > 0, "x"); });`)).toThrow(/must end with 'return <expr>'/);
     });
 
-    it("`$.<field>` inside a block `.map` body is rejected — must use the lambda param", () => {
+    it("`$.<field>` inside a TOP-LEVEL `$$` block `.map` body is rejected — must use the lambda param", () => {
+      // No enclosing `$lookup.let` to correlate into, so `$.field` ≡ the current
+      // doc; the rejection nudges toward the lambda param (`d.field`).
       expect(() => jsmql(`$$ = $$.map(d => { return { n: $.name }; });`)).toThrow(
         /'\$\.<field>'.*use the lambda parameter/,
       );
+    });
+
+    it("inside a lookup pivot, a `$.<field>` (root) read in a `.map` block IS captured into the $lookup.let", () => {
+      // The orders lookup correlates on `$._id`; the `.map` block's `$.minTotal`
+      // (the root user doc) is hoisted into the SAME `$lookup.let` as `jsmql_f0_minTotal`.
+      expect(
+        jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {
+          assert(o.total > $.minTotal, "below min");
+          return { id: o._id };
+        });`),
+      ).toEqual([
+        {
+          $lookup: {
+            from: "orders",
+            let: { jsmql_f0__id: "$_id", jsmql_f0_minTotal: "$minTotal" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+              {
+                $match: {
+                  $expr: {
+                    $convert: {
+                      input: true,
+                      to: {
+                        $cond: [
+                          { $gt: ["$total", "$$jsmql_f0_minTotal"] },
+                          "bool",
+                          "jsmql assertion failed: below min",
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+              { $replaceWith: { id: "$_id" } },
+            ],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        { $unwind: "$__jsmql.tmp.1" },
+        { $replaceWith: "$__jsmql.tmp.1" },
+      ]);
     });
   });
 

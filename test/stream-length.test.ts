@@ -207,7 +207,17 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
           pipeline: [
             { $match: { $expr: { $eq: ["$$jsmql_f0__id", "$userId"] } } },
             SWF, // orders sub-stream count (for ordersColl.length)
-            { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.2" } },
+            // Nested shipments lookup — pipeline form (the `o._id` correlation is
+            // captured into its own `$lookup.let`), consistent with how a
+            // block-body `.filter`'s nested lookups lower.
+            {
+              $lookup: {
+                from: "shipments",
+                let: { jsmql_f1__id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } }],
+                as: "__jsmql.tmp.2",
+              },
+            },
             { $set: { "__jsmql.tmp.2": { $size: "$__jsmql.tmp.2" } } }, // nested .length terminal
             {
               $replaceWith: {

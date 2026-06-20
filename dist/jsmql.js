@@ -4266,6 +4266,7 @@ function letSysVar(name, depth) {
   return `${JSMQL_NS_VAR}s${depth}_${name}`;
 }
 var JSMQL_NS_VAR = "jsmql_";
+var CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;
 
 // src/objectid.ts
 var BSON_MAJOR_VERSION = 7;
@@ -4401,7 +4402,17 @@ function ctxHasLets(ctx) {
   return (ctx.pipelineLets?.size ?? 0) > 0;
 }
 function freshSubPipelineCtx(outer) {
-  return { lambdaParams: /* @__PURE__ */ new Set(), bindings: outer.bindings, pipelineContext: outer.pipelineContext };
+  return {
+    lambdaParams: /* @__PURE__ */ new Set(),
+    bindings: outer.bindings,
+    pipelineContext: outer.pipelineContext,
+    // The slot allocator is a pipeline-global resource (gensym counter for
+    // `__jsmql.tmp.<N>`), not per-document state, so it crosses sub-pipeline
+    // boundaries — a lookup materialised inside a `.map` block keeps allocating
+    // from the enclosing chain's counter. Undefined unless an enclosing chain
+    // set it, so ordinary sub-pipelines still start their own counter.
+    slotAllocator: outer.slotAllocator
+  };
 }
 function freshFacetCtx(outer) {
   return {
@@ -4907,6 +4918,9 @@ function _generateBody(expr, ctx) {
       }
       if (ctx.lambdaParams.has(expr.name)) {
         return `$$${safeVarName(expr.name)}`;
+      }
+      if (CORRELATION_VAR_RE.test(expr.name)) {
+        return `$$${expr.name}`;
       }
       const letPath = ctx.pipelineLets?.get(expr.name);
       if (letPath !== void 0) {
@@ -8289,7 +8303,7 @@ var MAP = {
     if (arg.block === void 0) mapBodyExpr(arg);
     rejectUsedIndexParam(arg);
   },
-  lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
+  lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, inSubPipeline) {
     const lambda = args[0];
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : void 0;
@@ -8300,6 +8314,15 @@ var MAP = {
     } : ctx;
     if (lambda.block !== void 0) {
       const ret = lambda.ret;
+      if (inSubPipeline) {
+        const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
+        const blockCtx2 = { ...ctx, slotAllocator: allocSlot };
+        const { letVars: letVars2, pipeline } = lowerCallbackBlock(lambda, blockCtx2, ctx.pipelineLets, lowerBlock2, enclosing, {
+          collParam: collName,
+          terminalRet: ret
+        });
+        return { stages: pipeline, clearLets: true, extraLetVars: letVars2 };
+      }
       const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
       const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
       rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
@@ -8996,22 +9019,6 @@ function rewriteEnclosingForeignParams(expr, params) {
   }
   return walk(expr);
 }
-function rewriteEnclosingForeignParamsInPipeline(block, params) {
-  if (params.length === 0) return block;
-  const rw = (e) => rewriteEnclosingForeignParams(e, params);
-  const stmts = block.stmts.map((stmt) => {
-    if (stmt.type === "LetDecl") return { ...stmt, value: rw(stmt.value) };
-    if (stmt.type === "FuncDecl") return { ...stmt, lambda: rw(stmt.lambda) };
-    if (stmt.type === "UpdateFilter") {
-      const ops = stmt.ops.map(
-        (op) => op.type === "AssignExpr" ? { type: "AssignExpr", target: rw(op.target), value: rw(op.value), pos: op.pos } : { type: "DeleteStmt", target: rw(op.target), pos: op.pos }
-      );
-      return { type: "UpdateFilter", ops, pos: stmt.pos };
-    }
-    return rw(stmt);
-  });
-  return { type: "Pipeline", stmts, pos: block.pos };
-}
 function matchEnclosingParamPath(node, params) {
   if (node.type === "ParamRef" && params.has(node.name)) {
     return { param: node.name, segments: [] };
@@ -9231,10 +9238,12 @@ function createSlotAllocator() {
     return tmpSlot(n);
   };
 }
-function classifyPath(expr, foreignParam, outerLets) {
+function classifyPath(expr, foreignParam, outerLets, enclosingParams = []) {
   if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
   if (expr.type === "ParamRef") {
     if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
+    const level = enclosingParams.indexOf(expr.name);
+    if (level !== -1) return { kind: "ancestorForeign", level, segments: [] };
     if (outerLets !== void 0 && outerLets.has(expr.name)) {
       const fieldPath = outerLets.get(expr.name);
       if (fieldPath !== void 0) {
@@ -9244,7 +9253,7 @@ function classifyPath(expr, foreignParam, outerLets) {
     return null;
   }
   if (expr.type === "MemberAccess") {
-    const inner = classifyPath(expr.object, foreignParam, outerLets);
+    const inner = classifyPath(expr.object, foreignParam, outerLets, enclosingParams);
     if (inner === null) return null;
     if (inner.kind === "outerLet") {
       return {
@@ -9253,10 +9262,13 @@ function classifyPath(expr, foreignParam, outerLets) {
         fieldPath: `${inner.fieldPath}.${expr.member}`
       };
     }
+    if (inner.kind === "ancestorForeign") {
+      return { kind: "ancestorForeign", level: inner.level, segments: [...inner.segments, expr.member] };
+    }
     return { kind: inner.kind, segments: [...inner.segments, expr.member] };
   }
   if (expr.type === "IndexAccess" && expr.index.type === "StringLiteral") {
-    const inner = classifyPath(expr.object, foreignParam, outerLets);
+    const inner = classifyPath(expr.object, foreignParam, outerLets, enclosingParams);
     if (inner === null) return null;
     if (inner.kind === "outerLet") {
       return {
@@ -9264,6 +9276,9 @@ function classifyPath(expr, foreignParam, outerLets) {
         segments: [...inner.segments, expr.index.value],
         fieldPath: `${inner.fieldPath}.${expr.index.value}`
       };
+    }
+    if (inner.kind === "ancestorForeign") {
+      return { kind: "ancestorForeign", level: inner.level, segments: [...inner.segments, expr.index.value] };
     }
     return { kind: inner.kind, segments: [...inner.segments, expr.index.value] };
   }
@@ -9351,24 +9366,48 @@ function buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclo
       );
     }
   }
-  const preRewritten = rewriteEnclosingForeignParamsInPipeline(block, enclosing.foreignParams);
-  const { rewritten, letVars } = extractLetsFromPipeline(
-    preRewritten,
-    foreignParam,
-    outerLets,
-    enclosing.foreignParams.length
-  );
+  return lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock2, enclosing, { collParam });
+}
+function lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock2, enclosing, opts = {}) {
+  const block = lambda.block;
+  const foreignParam = lambda.params[0];
+  const depth = enclosing.foreignParams.length;
+  const parents = enclosing.parentAllocators ?? [];
+  const parentHandles = enclosing.parentHandles ?? /* @__PURE__ */ new Map();
+  const allocator = createLetAllocator(depth, parents, enclosing.foreignParams, parentHandles);
+  let workBlock = block;
+  if (opts.terminalRet !== void 0) {
+    const ret = opts.terminalRet;
+    const replaceStmt = {
+      type: "UpdateFilter",
+      ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: ret, pos: ret.pos }],
+      pos: ret.pos
+    };
+    workBlock = { type: "Pipeline", stmts: [...block.stmts, replaceStmt], pos: block.pos };
+  }
+  const { rewritten } = extractLetsFromPipeline(workBlock, foreignParam, outerLets, depth, allocator);
+  const letVars = allocator.letVars();
   const innerEnclosing = {
     foreignParams: [...enclosing.foreignParams, foreignParam],
-    inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+    inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+    parentAllocators: [...parents, allocator],
+    // This level's 3rd-param handle becomes an ANCESTOR handle for nested lookups,
+    // recorded at this scope's depth so they can capture its `.length`.
+    parentHandles: opts.collParam !== void 0 ? new Map([...parentHandles, [opts.collParam, depth]]) : parentHandles
   };
   const subCtx = {
     ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
     enclosingLookup: innerEnclosing,
+    // `$$.length` (the ROOT stream count) captured by an enclosing chain stays
+    // in scope inside this block — preserve the var `makeSubPipelineCtx`/
+    // `freshSubPipelineCtx` would otherwise drop, so `generateStreamLength`
+    // keeps emitting `$$<rootStreamLengthVar>` rather than the (wrong)
+    // sub-stream `$__jsmql.length`.
+    rootStreamLengthVar: outerCtx.rootStreamLengthVar,
     // Bind the 3rd 'collection' param to this sub-stream's materialised count
     // (`$__jsmql.length`); `generateImplicitPipeline` (via `lowerBlock`) stamps
     // the `$setWindowFields` ahead of the statement that reads `<coll>.length`.
-    ...collParam !== void 0 ? { substreamLengthHandles: /* @__PURE__ */ new Map([[collParam, `$${LENGTH_SLOT}`]]) } : {}
+    ...opts.collParam !== void 0 ? { substreamLengthHandles: /* @__PURE__ */ new Map([[opts.collParam, `$${LENGTH_SLOT}`]]) } : {}
   };
   return { letVars, pipeline: lowerBlock2(rewritten, subCtx) };
 }
@@ -9448,7 +9487,7 @@ function tryBasicForm(body, foreignParam, outerLets) {
   }
   return null;
 }
-function createLetAllocator(depth) {
+function createLetAllocator(depth, parents = [], enclosingParams = [], enclosingHandles = /* @__PURE__ */ new Map()) {
   const byPath = /* @__PURE__ */ new Map();
   const used = /* @__PURE__ */ new Set();
   const out = {};
@@ -9462,7 +9501,11 @@ function createLetAllocator(depth) {
     }
     return candidate;
   }
-  return {
+  const self = {
+    depth,
+    enclosingParams,
+    parents,
+    enclosingHandles,
     allocateForLocalPath(segments) {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
@@ -9484,16 +9527,46 @@ function createLetAllocator(depth) {
       out[name] = `$${fieldPath}`;
       return name;
     },
+    // A reference to scope level L is captured at the allocator owning that
+    // depth: `parents[L]` for an ancestor, or `self` for the current level
+    // (L === depth). `allocateForLocalPath` on the chosen allocator names it
+    // `jsmql_f<L>_<field>` with value `$<field>` — correct in that level's
+    // `$lookup.let` context — and the result propagates to deeper levels.
+    allocateRootField(segments) {
+      const target = depth === 0 ? self : parents[0];
+      return target.allocateForLocalPath(segments);
+    },
+    allocateAncestorForeign(level, segments) {
+      const captureDepth = level + 1;
+      const target = captureDepth >= depth ? self : parents[captureDepth];
+      return target.allocateForLocalPath(segments);
+    },
+    allocateSysLength() {
+      const key = "\0syslen";
+      const existing = byPath.get(key);
+      if (existing !== void 0) return existing;
+      const name = uniqueName(letSysVar("length", depth));
+      used.add(name);
+      byPath.set(key, name);
+      out[name] = `$${LENGTH_SLOT}`;
+      return name;
+    },
+    allocateAncestorHandle(handleName) {
+      const sourceLevel = enclosingHandles.get(handleName) ?? 0;
+      const captureDepth = sourceLevel + 1;
+      const target = captureDepth >= depth ? self : parents[captureDepth];
+      return target.allocateSysLength();
+    },
     letVars: () => out
   };
+  return self;
 }
 function extractLetsFromExpr(body, foreignParam, outerLets, depth = 0) {
   const allocator = createLetAllocator(depth);
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
-function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0) {
-  const allocator = createLetAllocator(depth);
+function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0, allocator = createLetAllocator(depth)) {
   const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
 }
@@ -9552,17 +9625,25 @@ function transformStmt(stmt, foreignParam, allocator, outerLets) {
   return transformExpr(stmt, foreignParam, allocator, outerLets);
 }
 function transformTarget(target, foreignParam, allocator, outerLets) {
-  const classified = classifyPath(target, foreignParam, outerLets);
+  const classified = classifyPath(target, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null && (classified.kind === "local" || classified.kind === "foreign") && classified.segments.length > 0) {
     return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
   }
   return transformExpr(target, foreignParam, allocator, outerLets);
 }
 function transformExpr(expr, foreignParam, allocator, outerLets) {
-  const classified = classifyPath(expr, foreignParam, outerLets);
+  if (expr.type === "MemberAccess" && expr.member === "length" && expr.object.type === "ParamRef" && allocator.enclosingHandles.has(expr.object.name)) {
+    const letVar = allocator.allocateAncestorHandle(expr.object.name);
+    return { type: "ParamRef", name: letVar, pos: expr.pos };
+  }
+  const classified = classifyPath(expr, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null) {
     if (classified.kind === "local") {
-      const letVar = allocator.allocateForLocalPath(classified.segments);
+      const letVar = allocator.enclosingParams.length > 0 ? allocator.allocateRootField(classified.segments) : allocator.allocateForLocalPath(classified.segments);
+      return { type: "ParamRef", name: letVar, pos: expr.pos };
+    }
+    if (classified.kind === "ancestorForeign") {
+      const letVar = allocator.allocateAncestorForeign(classified.level, classified.segments);
       return { type: "ParamRef", name: letVar, pos: expr.pos };
     }
     if (classified.kind === "outerLet") {
@@ -9915,12 +9996,10 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   }
   const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
   const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
-  const innerCtx = captureRootStreamLength(
-    usesRootLen,
-    enclosing.foreignParams.length,
-    letVars,
-    freshSubPipelineCtx(outerCtx)
-  );
+  const innerCtx = {
+    ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
+    enclosingLookup: enclosing
+  };
   for (let i = 1; i < methods.length; i++) {
     const m = methods[i];
     const def = lookupStreamMethod(m.method);
@@ -9929,6 +10008,7 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
     if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
+    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
   const slot = allocSlot();
   const from = direct.db !== void 0 ? { db: direct.db, coll: direct.collection } : direct.collection;
@@ -11606,6 +11686,7 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
       const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
       if (result.replacesPreviousStage) pipelineBody.pop();
       pipelineBody.push(...result.stages);
+      if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
     }
     lookupStage2 = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
   }
