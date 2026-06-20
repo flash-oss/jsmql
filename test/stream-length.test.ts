@@ -242,4 +242,53 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
     ]);
     expect(() => jsmql("$.x = $$$.s.filter((s, i, c) => s.k === $.k);")).not.toThrow();
   });
+
+  // Four DISTINCT "length"s in one `.map`, none colliding — the disambiguation
+  // matrix: the root STREAM count (`$$.length`), the root DOC field (`$.length`),
+  // an outer-scope `const` derived from that field, and the sub-stream count
+  // (`coll.length`, the 3rd-arg handle). Each lands in its own `$lookup.let` var
+  // (`jsmql_s0_…` system, `jsmql_f0_…` field, `jsmql_v0_…` binding) or the system
+  // `$__jsmql.length` slot. Needs the correlated lookup form (`$$ = $$$.coll.filter(<corr>)…`)
+  // so the outer context survives into the sub-pipeline — a bare `$$ = $$$.coll.map(…)`
+  // is a `$unionWith` source-switch that discards it. Verified on a live mongod:
+  // l0/l1/l2/l3 = 3/7/8/2 for a user with field length=7 and 2 orders (3 users total).
+  it("the four kinds of length resolve to four distinct, non-colliding vars", () => {
+    expect(
+      jsmql(`
+        const length = $.length + 1;
+        $$ = $$$.orders.filter(o => o.userId === $._id).map((o, i, coll) => {
+          return { l0: $$.length, l1: $.length, l2: length, l3: coll.length };
+        });
+      `),
+    ).toEqual([
+      { $set: { "__jsmql.var.length": { $add: ["$length", 1] } } },
+      SWF, // root stream count, materialised at top
+      {
+        $lookup: {
+          from: "orders",
+          let: {
+            jsmql_f0__id: "$_id", // o.userId === $._id correlation
+            jsmql_s0_length: "$__jsmql.length", // l0: $$.length (root stream count)
+            jsmql_f0_length: "$length", // l1: $.length (root doc field)
+            jsmql_v0_length: "$__jsmql.var.length", // l2: the outer const
+          },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            SWF, // orders sub-stream count
+            {
+              $replaceWith: {
+                l0: "$$jsmql_s0_length",
+                l1: "$$jsmql_f0_length",
+                l2: "$$jsmql_v0_length",
+                l3: "$__jsmql.length", // l3: coll.length (orders sub-stream)
+              },
+            },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
 });

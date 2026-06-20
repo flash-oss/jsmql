@@ -8303,26 +8303,40 @@ var MAP = {
     if (arg.block === void 0) mapBodyExpr(arg);
     rejectUsedIndexParam(arg);
   },
-  lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, inSubPipeline) {
+  lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0];
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : void 0;
     const collLengthUsed = classifyCollParam(lambda);
+    if (ctx.enclosingLookup !== void 0) {
+      const ret = lambda.block !== void 0 ? lambda.ret : mapBodyExpr(lambda);
+      if (containsUnionPush(ret)) {
+        throw new CodegenError(
+          `'$$.push(...)' inside a '.map(d => \u2026)' body isn't meaningful \u2014 '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
+          lambda.pos
+        );
+      }
+      const blockLambda = lambda.block !== void 0 ? lambda : {
+        type: "Lambda",
+        params: lambda.params,
+        block: { type: "Pipeline", stmts: [], pos: lambda.pos },
+        ret,
+        pos: lambda.pos
+      };
+      const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
+      const blockCtx = { ...ctx, slotAllocator: allocSlot };
+      const { letVars: letVars2, pipeline } = lowerCallbackBlock(blockLambda, blockCtx, ctx.pipelineLets, lowerBlock2, enclosing, {
+        collParam: collName,
+        terminalRet: ret
+      });
+      return { stages: pipeline, clearLets: true, extraLetVars: letVars2 };
+    }
     const bodyCtx = collName !== void 0 && collLengthUsed ? {
       ...ctx,
       substreamLengthHandles: new Map([...ctx.substreamLengthHandles ?? [], [collName, `$${LENGTH_SLOT}`]])
     } : ctx;
     if (lambda.block !== void 0) {
       const ret = lambda.ret;
-      if (inSubPipeline) {
-        const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
-        const blockCtx2 = { ...ctx, slotAllocator: allocSlot };
-        const { letVars: letVars2, pipeline } = lowerCallbackBlock(lambda, blockCtx2, ctx.pipelineLets, lowerBlock2, enclosing, {
-          collParam: collName,
-          terminalRet: ret
-        });
-        return { stages: pipeline, clearLets: true, extraLetVars: letVars2 };
-      }
       const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
       const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
       rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
@@ -9998,7 +10012,8 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   const innerCtx = {
     ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
-    enclosingLookup: enclosing
+    enclosingLookup: enclosing,
+    pipelineLets: outerCtx.pipelineLets
   };
   for (let i = 1; i < methods.length; i++) {
     const m = methods[i];
@@ -11676,7 +11691,14 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
   } else {
     const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
     const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
-    const innerCtx = captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx));
+    const innerCtx = {
+      ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
+      pipelineLets: outerCtx.pipelineLets,
+      // Signal "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes
+      // through `lowerCallbackBlock` and captures cross-level reads into THIS
+      // lookup's `let` — unlike a flat `$unionWith`, which leaves it unset.
+      enclosingLookup: EMPTY_ENCLOSING
+    };
     for (const m of restMethods) {
       const def = lookupStreamMethod(m.method);
       if (def === null) {

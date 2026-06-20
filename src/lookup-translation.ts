@@ -1961,10 +1961,13 @@ function tryExtractChainedLookup(
   const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   // Carry `enclosing` on the chain ctx so a statement-block `.map` chain method
   // (`lowerCallbackBlock`) can capture its cross-level reads into the right
-  // ancestor `$lookup.let`.
+  // ancestor `$lookup.let`. Carry the outer pipeline's `let`s too, so a chain
+  // `.map` can capture an outer-`let` reference (rewritten to its `$$`-var
+  // before codegen, so no raw read leaks as a sub-pipeline field).
   const innerCtx: GenerateCtx = {
     ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
     enclosingLookup: enclosing,
+    pipelineLets: outerCtx.pipelineLets,
   };
   // Apply each chain method through the stream-methods registry. `inSubPipeline`
   // is true so methods know they're emitting inside a sub-pipeline body.

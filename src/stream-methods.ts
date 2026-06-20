@@ -323,15 +323,57 @@ const MAP: StreamMethodDef = {
     if (arg.block === undefined) mapBodyExpr(arg); // throws for unsupported expr-block bodies
     rejectUsedIndexParam(arg);
   },
-  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, inSubPipeline) {
+  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
     const collLengthUsed = classifyCollParam(lambda);
-    // Bind the 3rd 'collection' param to this sub-stream's materialised count
-    // (`$__jsmql.length`); the `$setWindowFields` `$count` that stamps it is
-    // emitted by `lowerBlock` (block body) or prepended below (expr body),
-    // ahead of whatever reads it.
+
+    // ── Inside a correlated `$lookup` sub-pipeline (the `$$ =` pivot / a nested
+    // chain / a `$.field = $$$.<coll>…` assignment) ───────────────────────────
+    // Gated on `ctx.enclosingLookup` (set by the lookup assemblers, NOT by a flat
+    // `$unionWith` source-switch). BOTH an expression body (`d => X`) and a
+    // statement block (`d => { …; return X }`) lower through the SAME
+    // `lowerCallbackBlock` engine `.filter` uses — an expression body is just
+    // `d => { return X }`. So every form gets the full cross-level capture into the
+    // enclosing `$lookup.let`: a root read (`$.x` / `$$.length`), an enclosing
+    // foreign param, an ancestor `<coll>.length` handle, AND an outer-pipeline `let`
+    // (`const k = …` before the pivot — resolved via the chain ctx's `pipelineLets`).
+    // Captures come back as `extraLetVars` for the chain assembler to merge. The
+    // trailing `return` is the only difference from `.filter` (appended as `$ = <ret>`).
+    // A flat `$unionWith` (no `enclosingLookup`) has no `let` to correlate into, so it
+    // falls through to the direct lowering below.
+    if (ctx.enclosingLookup !== undefined) {
+      const ret = lambda.block !== undefined ? (lambda.ret as Expr) : mapBodyExpr(lambda);
+      if (containsUnionPush(ret)) {
+        throw new CodegenError(
+          `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
+          lambda.pos,
+        );
+      }
+      const blockLambda: LambdaNode =
+        lambda.block !== undefined
+          ? lambda
+          : {
+              type: "Lambda",
+              params: lambda.params,
+              block: { type: "Pipeline", stmts: [], pos: lambda.pos },
+              ret,
+              pos: lambda.pos,
+            };
+      const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
+      const blockCtx: GenerateCtx = { ...ctx, slotAllocator: allocSlot };
+      const { letVars, pipeline } = lowerCallbackBlock(blockLambda, blockCtx, ctx.pipelineLets, lowerBlock, enclosing, {
+        collParam: collName,
+        terminalRet: ret,
+      });
+      return { stages: pipeline, clearLets: true, extraLetVars: letVars };
+    }
+
+    // ── Top-level `$$` stream (no enclosing `$lookup.let`) ────────────────────
+    // Bind the 3rd 'collection' param to the current stream's materialised count
+    // (`$__jsmql.length`); the `$setWindowFields` `$count` that stamps it is emitted
+    // by `lowerBlock` (block body) or prepended below (expr body), ahead of the read.
     const bodyCtx: GenerateCtx =
       collName !== undefined && collLengthUsed
         ? {
@@ -340,32 +382,10 @@ const MAP: StreamMethodDef = {
           }
         : ctx;
 
-    // ── Statement-block body: `(d) => { stmt; …; return <ret> }` ──────────────
-    // Lowered through the SAME engine `.filter` uses, so the block statements
-    // get the full pipeline vocabulary — `assert(...)`, `$match(...)`, `let`,
-    // nested `$$$.<coll>` lookups, `<coll>.length`. The ONLY difference from
-    // `.filter` is the trailing `return <ret>` → the root-replace statement
-    // `$ = <ret>` (→ `$replaceWith`).
     if (lambda.block !== undefined) {
+      // The lambda param IS the current document, so a `$.<field>` ref is rejected
+      // ("use the param"). The block + synthetic `$ = ret` lower directly to stages.
       const ret = lambda.ret as Expr; // validate() guarantees a block has a `ret`
-      // Inside a `$lookup` sub-pipeline (the pivot / a nested chain), route through
-      // the shared `lowerCallbackBlock`: it captures cross-level reads (`$.<field>`
-      // root, an enclosing foreign param) into the enclosing lookup's `$lookup.let`
-      // (returned as `extraLetVars` for the chain assembler to merge) and appends
-      // the `return` as `$ = <ret>`. The chain's slot allocator threads in so a
-      // block-internal lookup gets a slot distinct from the enclosing `as`.
-      if (inSubPipeline) {
-        const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
-        const blockCtx: GenerateCtx = { ...ctx, slotAllocator: allocSlot };
-        const { letVars, pipeline } = lowerCallbackBlock(lambda, blockCtx, ctx.pipelineLets, lowerBlock, enclosing, {
-          collParam: collName,
-          terminalRet: ret,
-        });
-        return { stages: pipeline, clearLets: true, extraLetVars: letVars };
-      }
-      // Top-level `$$` stream (no enclosing `$lookup.let`): the lambda param IS the
-      // current document, so a `$.<field>` ref is rejected ("use the param"). The
-      // block + synthetic `$ = ret` lower directly to pipeline stages.
       const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
       const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
       rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);

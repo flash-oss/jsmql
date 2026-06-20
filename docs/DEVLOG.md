@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-20 — feat: outer-pipeline `let`s thread into a lookup-pivot `.map`; expr/block `.map` unified inside `$lookup`
+
+A statement- or expression-block `.map` chained onto a correlated lookup pivot
+(`$$ = $$$.coll.filter(o => o.x === $.y).map((o, i, coll) => …)`) can now read
+an **outer-pipeline `let`** declared before the pivot — it's captured into the
+lookup's `$lookup.let` as `jsmql_v0_<name>`, alongside the root stream count
+(`$$.length` → `jsmql_s0_length`), the root doc field (`$.length` → `jsmql_f0_length`),
+and the sub-stream count (`coll.length` → `$__jsmql.length`). So the four
+distinct "length"s in `const length = $.length + 1; $$ = $$$.orders.filter(o => o.userId === $._id).map((o,i,coll) => ({ l0: $$.length, l1: $.length, l2: length, l3: coll.length }))`
+each resolve to their own var, none colliding (verified on a live mongod: 3/7/8/2).
+
+Two changes enabled it: (1) the chain assemblers (`lowerLookupPivot` /
+`tryExtractChainedLookup`) now carry the outer pipeline's `pipelineLets` on the
+chain ctx, so the chain `.map`'s let-extractor recognises an outer-`let` ref and
+hoists it (rewritten to its `$$`-var before codegen, so no raw read leaks as a
+sub-pipeline field). (2) Inside a correlated `$lookup` an **expression-body**
+`.map` (`d => X`) now lowers through the SAME `lowerCallbackBlock` as a
+statement block (`X` becomes the `return`), so it gets identical cross-level +
+outer-`let` capture. The route is gated on `ctx.enclosingLookup` being set —
+which the lookup assemblers set (the pivot now seeds `EMPTY_ENCLOSING` to mark
+"inside a lookup") but a flat `$unionWith` source-switch does **not**, since a
+`$unionWith` has no `let` to correlate into. A bare `$$ = $$$.coll.map(…)`
+(no filter) is therefore still a source-switch that discards the outer
+stream/doc/`let`; only `coll.length` is available inside it. See
+[stream-length.md](specs/stream-length.md), [stream-methods.md](specs/stream-methods.md) `.map` row.
+
+---
+
 ## 2026-06-20 — feat: cross-level references in nested block-body lookups / `.map` (root, ancestor params, ancestor `.length` handles)
 
 A block-body lookup (`.filter`/`.map`) nested any number of levels deep can now read across scopes **correctly**: the root document (`$.field`), an enclosing foreign param (`outer.field`), and an ancestor sub-stream count (`outerColl.length`, a 3rd `.map`/`.filter` handle) each resolve to the right document instead of being mis-captured as a field of the immediate parent. This closes the developer's hardest "make it work" example — a statement-block `.map` nested inside another, whose asserts compare `shpmntsColl.length < ordersColl.length` and message `order ${o._id} for user ${$._id}`, reaching across three lookup levels at once (verified end-to-end on a live `mongod`; `userId: $._id` resolves to the root user at every order).

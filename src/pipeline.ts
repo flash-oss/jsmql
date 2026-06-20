@@ -54,6 +54,7 @@ import {
   argsReadRootStreamLength,
   buildPipelineFormPredicate,
   captureRootStreamLength,
+  EMPTY_ENCLOSING,
   detectLookupCall,
   lowerLookup,
   extractLookupCalls,
@@ -1290,7 +1291,19 @@ function lowerLookupPivot(
     // reads it as `$$v0_length`. `$$` is always the ROOT stream; inner sub-stream
     // counts use the 3rd-arg handle.
     const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
-    const innerCtx = captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx));
+    // Carry the outer pipeline's `let`s on the chain ctx so a chain `.map` can
+    // capture an outer-`let` reference into the lookup's `$lookup.let` (the
+    // `.filter` head already does via its own `outerCtx`). The sub-pipeline
+    // lowerer rewrites every such ref to its `$$`-var, so codegen never reads a
+    // raw outer-`let` as a sub-pipeline field.
+    const innerCtx: GenerateCtx = {
+      ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
+      pipelineLets: outerCtx.pipelineLets,
+      // Signal "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes
+      // through `lowerCallbackBlock` and captures cross-level reads into THIS
+      // lookup's `let` — unlike a flat `$unionWith`, which leaves it unset.
+      enclosingLookup: EMPTY_ENCLOSING,
+    };
     for (const m of restMethods) {
       const def = lookupStreamMethod(m.method);
       if (def === null) {
