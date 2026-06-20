@@ -63,3 +63,40 @@ export function streamLengthStage(): object {
  * documented exception to "all temporaries live under `__jsmql.`".
  */
 export const GROUP_TMP = `${JSMQL_NS}Tmp`;
+
+// ── `$lookup.let` correlation-variable names ──────────────────────────────────
+//
+// When a value from an OUTER JS scope is referenced inside a nested
+// sub-pipeline, it's threaded in through that lookup's `$lookup.let` and read
+// back as a `$$<name>` variable. These names are MongoDB **variable** names
+// (NOT document fields), so — unlike the `__jsmql.*` field namespace above —
+// they MUST start with a lowercase ASCII letter: the server rejects a `$$`
+// variable whose name begins with `_`, `$`, or an uppercase letter. Hence the
+// `jsmql_` prefix (no leading `__`).
+//
+// Shape: `jsmql_<kind><scopeDepth>_<name>`, where `scopeDepth` is the nesting
+// depth of the JS scope the value comes from (0 = root pipeline, 1 = first
+// lookup body, …) and `kind` is one of:
+//   f — a document field        (`$._id` → `jsmql_f0__id`, `o.createdAt` → `jsmql_f1_createdAt`)
+//   v — a `let`/`const` binding  (`const startDate = …` at depth 1 → `jsmql_v1_startDate`)
+//   s — a system value          (`$$.length` → `jsmql_s0_length`, `ordersColl.length` → `jsmql_s1_length`)
+// The connector after the depth is always a single `_`, so a field that itself
+// starts with `_` (like `_id`) reads as `jsmql_f0__id` (doubled), by design.
+
+/** `$lookup.let` var for an outer document field — `jsmql_f<depth>_<field>`. */
+export function letFieldVar(field: string, depth: number): string {
+  return `${JSMQL_NS_VAR}f${depth}_${field}`;
+}
+
+/** `$lookup.let` var for an outer `let`/`const` binding — `jsmql_v<depth>_<name>`. */
+export function letBindingVar(name: string, depth: number): string {
+  return `${JSMQL_NS_VAR}v${depth}_${name}`;
+}
+
+/** `$lookup.let` var for a system value (e.g. a stream length) — `jsmql_s<depth>_<name>`. */
+export function letSysVar(name: string, depth: number): string {
+  return `${JSMQL_NS_VAR}s${depth}_${name}`;
+}
+
+/** Prefix for `$lookup.let` correlation vars — must start with a letter (no `__`). */
+const JSMQL_NS_VAR = "jsmql_";

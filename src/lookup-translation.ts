@@ -26,7 +26,7 @@ import type {
 import { someArg, someExpr, someStmt } from "./ast-walk.ts";
 import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
-import { LENGTH_SLOT, tmpSlot } from "./namespace.ts";
+import { LENGTH_SLOT, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "./namespace.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
@@ -603,11 +603,12 @@ function isRootStreamLengthNode(e: Expr): boolean {
  * `$$.length` (the ROOT stream count) used inside this lookup's body: when the
  * lookup is at the TOP level (`depth === 0`, where the top-materialised
  * `$__jsmql.length` lives on the input documents), capture it into the
- * `$lookup.let` as `v0_length` and return the sub-ctx with `rootStreamLengthVar`
- * set so codegen emits `$$v0_length`. `$$` is always the ROOT stream regardless of
- * nesting depth; inner sub-stream counts use the named 3rd-arg handle instead.
- * Deeper nesting (`depth > 0`) is left uncaptured — the foreign documents don't
- * carry the root field — so `$$.length` there stays rejected [DEF-033].
+ * `$lookup.let` as the system var `jsmql_s0_length` and return the sub-ctx with
+ * `rootStreamLengthVar` set so codegen emits `$$jsmql_s0_length`. `$$` is always
+ * the ROOT stream regardless of nesting depth; inner sub-stream counts use the
+ * named 3rd-arg handle instead. Deeper nesting (`depth > 0`) is left uncaptured —
+ * the foreign documents don't carry the root field — so `$$.length` there stays
+ * rejected [DEF-033].
  */
 export function captureRootStreamLength(
   usesRootLen: boolean,
@@ -616,8 +617,9 @@ export function captureRootStreamLength(
   subCtx: GenerateCtx,
 ): GenerateCtx {
   if (!usesRootLen || depth !== 0) return subCtx;
-  letVars["v0_length"] = `$${LENGTH_SLOT}`;
-  return { ...subCtx, rootStreamLengthVar: "v0_length" };
+  const v = letSysVar("length", 0);
+  letVars[v] = `$${LENGTH_SLOT}`;
+  return { ...subCtx, rootStreamLengthVar: v };
 }
 
 /** Does any of these call args read `$$.length` (the ROOT stream count)? */
@@ -1057,25 +1059,13 @@ type LetAllocator = {
   letVars: () => Record<string, string>;
 };
 
-/**
- * Build the `$lookup.let` variable name for a captured field at a given lookup
- * **nesting depth** (0 = outermost lookup, 1 = a lookup nested one level in, …).
- *
- * Shape: `v<depth>_<field>` — e.g. `_id` at depth 0 → `v0_id`, `userId` at
- * depth 1 → `v1_userId`. The depth is load-bearing, not cosmetic: MQL `$$`
- * variables are lexically scoped *through* nested `$lookup.pipeline` boundaries,
- * so two lookups in the same nesting chain that each capture a field of the same
- * name would otherwise allocate the same var, and the deeper `let` would shadow
- * the shallower one — silently mis-resolving a reference meant for the outer doc
- * (the `$$v_id` collision bug). Stamping the declaring lookup's depth into the
- * name keeps every level distinct. Always starts with `v` (a valid `$$`
- * user-variable lead char); a leading `_` in the field doubles as the connector
- * (`_id` → `v0_id`, not `v0__id`), and any other field gets an explicit `_`.
- */
-function letVarName(lastSegment: string, depth: number): string {
-  const connector = lastSegment.startsWith("_") ? "" : "_";
-  return `v${depth}${connector}${lastSegment}`;
-}
+// `$lookup.let` correlation-var names come from `letFieldVar` / `letBindingVar`
+// / `letSysVar` in namespace.ts (`jsmql_f|v|s<depth>_<name>`). The `depth` is
+// load-bearing, not cosmetic: MQL `$$` variables are lexically scoped *through*
+// nested `$lookup.pipeline` boundaries, so two lookups in the same nesting chain
+// that each capture a value of the same name would otherwise allocate the same
+// var and the deeper `let` would shadow the shallower one — the `$$v_id`
+// collision bug. The scope-depth stamp keeps every level distinct.
 
 function createLetAllocator(depth: number): LetAllocator {
   const byPath = new Map<string, string>();
@@ -1096,7 +1086,7 @@ function createLetAllocator(depth: number): LetAllocator {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== undefined) return existing;
-      const base = letVarName(segments[segments.length - 1], depth);
+      const base = letFieldVar(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -1106,7 +1096,7 @@ function createLetAllocator(depth: number): LetAllocator {
     allocateForOuterLet(segments: string[], fieldPath: string): string {
       const existing = byPath.get(fieldPath);
       if (existing !== undefined) return existing;
-      const base = letVarName(segments[segments.length - 1], depth);
+      const base = letBindingVar(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);

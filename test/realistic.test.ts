@@ -58,9 +58,9 @@ $$ = $$$$.archive.orders
         {
           $lookup: {
             from: { db: "archive", coll: "orders" },
-            let: { v0_userId: "$__jsmql.var.userId" },
+            let: { jsmql_v0_userId: "$__jsmql.var.userId" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$v0_userId"] } } },
+              { $match: { $expr: { $eq: ["$userId", "$$jsmql_v0_userId"] } } },
               { $sort: { placedAt: -1 } },
               { $limit: 5 },
             ],
@@ -1624,9 +1624,9 @@ $project({ name: 1, recentOrders: 1, nOrders });
       {
         $lookup: {
           from: "orders",
-          let: { v0_id: "$_id" },
+          let: { jsmql_f0__id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
             { $sort: { createdAt: -1 } },
             { $limit: 5 },
           ],
@@ -1648,9 +1648,10 @@ $project({ name: 1, recentOrders: 1, nOrders });
 // inside the outer orders block. The inner predicate correlates against BOTH
 // enclosing levels at once — `s.orderId === o._id` (the *order*, the current doc
 // of the outer orders sub-pipeline) and `s.userId === $._id` (the outermost
-// *user*). The depth-stamped let names keep them distinct: `$$v1_id` is the
-// order's `_id`, `$$v0_id` is the user's. (With a single shared `$$v_id` they
-// would collide and the user correlation would silently read the order's id.)
+// *user*). The scope-depth-stamped let names keep them distinct: `$$jsmql_f1__id`
+// is the order's `_id`, `$$jsmql_f0__id` is the user's. (With a single shared
+// un-stamped name they would collide and the user correlation would silently
+// read the order's id.)
 // Verified against a live mongod.
 describe(
   "user → recent orders → each order's shipments (nested lookup in a block body)",
@@ -1673,18 +1674,22 @@ $project({ name: 1, recentOrders: 1 });
         {
           $lookup: {
             from: "orders",
-            let: { v0_id: "$_id" },
+            let: { jsmql_f0__id: "$_id" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
               { $sort: { createdAt: -1 } },
               { $limit: 5 },
               {
                 $lookup: {
                   from: "shipments",
-                  let: { v1_id: "$_id" },
+                  let: { jsmql_f1__id: "$_id" },
                   pipeline: [
                     {
-                      $match: { $expr: { $and: [{ $eq: ["$orderId", "$$v1_id"] }, { $eq: ["$userId", "$$v0_id"] }] } },
+                      $match: {
+                        $expr: {
+                          $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$userId", "$$jsmql_f0__id"] }],
+                        },
+                      },
                     },
                   ],
                   as: "shipments",
@@ -2261,9 +2266,9 @@ $.recentOrders = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { v0_id: "$_id" },
+              let: { jsmql_f0__id: "$_id" },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
                 { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
@@ -2318,9 +2323,9 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { v0_id: "$_id" },
+              let: { jsmql_f0__id: "$_id" },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
               ],
@@ -2362,10 +2367,14 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { v0_id: "$_id", v0_minSpend: "$__jsmql.var.minSpend" },
+              let: { jsmql_f0__id: "$_id", jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
               pipeline: [
                 {
-                  $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $gt: ["$total", "$$v0_minSpend"] }] } },
+                  $match: {
+                    $expr: {
+                      $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_minSpend"] }],
+                    },
+                  },
                 },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
@@ -2498,9 +2507,9 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
       {
         $lookup: {
           from: "orders",
-          let: { v0_id: "$_id", v0_length: "$__jsmql.length" },
+          let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$$v0_id", "$userId"] } } },
+            { $match: { $expr: { $eq: ["$$jsmql_f0__id", "$userId"] } } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.2" } },
             { $set: { "__jsmql.tmp.2": { $size: "$__jsmql.tmp.2" } } },
@@ -2508,7 +2517,7 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
               $replaceWith: {
                 totalShipments: "$__jsmql.tmp.2",
                 totalOrders: "$__jsmql.length",
-                totalUsers: "$$v0_length",
+                totalUsers: "$$jsmql_s0_length",
               },
             },
           ],

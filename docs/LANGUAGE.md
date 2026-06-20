@@ -604,9 +604,9 @@ $.recentOrders = $$$.orders.filter(o => {
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { v0_id: "$_id" },
+//       let: { jsmql_f0__id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { createdAt: -1 } },
 //         { $limit: 10 }
 //       ],
@@ -658,9 +658,9 @@ $.recentOrders = $$$.orders
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { v0_id: "$_id" },
+//       let: { jsmql_f0__id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },     // toSorted + toReversed
 //         { $limit: 5 },                    // slice(0, 5)
 //         { $replaceWith: { id: "$_id", total: "$total" } },  // map
@@ -861,7 +861,7 @@ changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
 **`$$` is always the ROOT stream — at any nesting depth.** Mirroring `$` (the
 root document), `$$` is the top-level stream even when you read `$$.length`
 *inside* a `$lookup` sub-pipeline. There jsmql materialises the root count at the
-top and passes it into the lookup automatically via `$lookup.let` (as `v0_length`),
+top and passes it into the lookup automatically via `$lookup.let` (as `jsmql_s0_length`),
 so it reads back correctly:
 
 ```js
@@ -869,8 +869,8 @@ so it reads back correctly:
 jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
 // → [
 //     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-//     { $lookup: { from: "users", let: { v0_length: "$__jsmql.length" },
-//         pipeline: [{ $match: { $expr: { $eq: ["$orderCount", "$$v0_length"] } } }], as: "peers" } },
+//     { $lookup: { from: "users", let: { jsmql_s0_length: "$__jsmql.length" },
+//         pipeline: [{ $match: { $expr: { $eq: ["$orderCount", "$$jsmql_s0_length"] } } }], as: "peers" } },
 //     { $unset: "__jsmql" }
 //   ]
 ```
@@ -2361,9 +2361,9 @@ jsmql`$$ = $$$.orders
 // → [
 //   { $lookup: {
 //       from: "orders",
-//       let: { v0_id: "$_id" },
+//       let: { jsmql_f0__id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],

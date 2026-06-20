@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-20 — refactor: standard `$lookup.let` correlation-var names — `jsmql_<f|v|s><depth>_<name>`
+
+`$lookup.let` correlation-variable names (the `$$<name>` vars that carry an outer JS scope's value into a nested sub-pipeline) now follow one explicit scheme — single source of truth `letFieldVar` / `letBindingVar` / `letSysVar` in [src/namespace.ts](../src/namespace.ts):
+
+- `jsmql_f<scopeDepth>_<field>` — a document field (`$._id` → `jsmql_f0__id`, `o.createdAt` at depth 1 → `jsmql_f1_createdAt`).
+- `jsmql_v<scopeDepth>_<name>` — a `let`/`const` binding (`const startDate = …` at depth 1 → `jsmql_v1_startDate`).
+- `jsmql_s<scopeDepth>_<name>` — a system value (`$$.length` → `jsmql_s0_length`).
+
+`scopeDepth` is the nesting level of the JS scope the value comes from (0 = root pipeline, 1 = first lookup body, …); the connector after the depth is always a single `_`, so a field starting with `_` reads doubled (`_id` → `jsmql_f0__id`). This replaces the previous `v<depth>_<field>` names, which (a) didn't distinguish field/binding/system and (b) special-cased a leading `_` away. The earlier captured-root-length var `v0_length` is now `jsmql_s0_length`.
+
+**Why `jsmql_` and not `__jsmql_`** (the document-field namespace prefix): a `$lookup.let` key is a MongoDB **variable** name, and the server **rejects** a `$$` variable whose name starts with `_`/`$`/uppercase (verified live: `'__jsmql_f0__id' starts with an invalid character`). So these correlation vars must start with a letter — distinct from the `__jsmql.*` *document-field* namespace, which keeps its leading underscores. The `f`/`v`/`s` + depth structure is otherwise the developer's proposed scheme. Behaviour-identical (only the internal `$$`-var spelling changed); all emitted shapes re-verified on a live mongod. Tests/specs across the suite updated to the new names; the `letVarName` helper + its connector special-casing are gone.
+
+---
+
 ## 2026-06-20 — feat: `$$.length` = ROOT stream count at any depth (via `$lookup.let`) + block-body `.map`
 
 Completes the nested stream-length composite. The motivating program now compiles and runs (verified end-to-end on mongod):

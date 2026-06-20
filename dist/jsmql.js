@@ -4255,6 +4255,16 @@ function streamLengthStage() {
   return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
 }
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
+function letFieldVar(field, depth) {
+  return `${JSMQL_NS_VAR}f${depth}_${field}`;
+}
+function letBindingVar(name, depth) {
+  return `${JSMQL_NS_VAR}v${depth}_${name}`;
+}
+function letSysVar(name, depth) {
+  return `${JSMQL_NS_VAR}s${depth}_${name}`;
+}
+var JSMQL_NS_VAR = "jsmql_";
 
 // src/objectid.ts
 var BSON_MAJOR_VERSION = 7;
@@ -9176,8 +9186,9 @@ function isRootStreamLengthNode(e) {
 }
 function captureRootStreamLength(usesRootLen, depth, letVars, subCtx) {
   if (!usesRootLen || depth !== 0) return subCtx;
-  letVars["v0_length"] = `$${LENGTH_SLOT}`;
-  return { ...subCtx, rootStreamLengthVar: "v0_length" };
+  const v = letSysVar("length", 0);
+  letVars[v] = `$${LENGTH_SLOT}`;
+  return { ...subCtx, rootStreamLengthVar: v };
 }
 function argsReadRootStreamLength(args) {
   return args.some((a) => someArg(a, isRootStreamLengthNode));
@@ -9406,10 +9417,6 @@ function tryBasicForm(body, foreignParam, outerLets) {
   }
   return null;
 }
-function letVarName(lastSegment, depth) {
-  const connector = lastSegment.startsWith("_") ? "" : "_";
-  return `v${depth}${connector}${lastSegment}`;
-}
 function createLetAllocator(depth) {
   const byPath = /* @__PURE__ */ new Map();
   const used = /* @__PURE__ */ new Set();
@@ -9429,7 +9436,7 @@ function createLetAllocator(depth) {
       const dotted = segments.join(".");
       const existing = byPath.get(dotted);
       if (existing !== void 0) return existing;
-      const base = letVarName(segments[segments.length - 1], depth);
+      const base = letFieldVar(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(dotted, name);
@@ -9439,7 +9446,7 @@ function createLetAllocator(depth) {
     allocateForOuterLet(segments, fieldPath) {
       const existing = byPath.get(fieldPath);
       if (existing !== void 0) return existing;
-      const base = letVarName(segments[segments.length - 1], depth);
+      const base = letBindingVar(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
       byPath.set(fieldPath, name);

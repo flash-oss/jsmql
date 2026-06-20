@@ -227,9 +227,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         {
           $lookup: {
             from: "orders",
-            let: { v0_id: "$_id" },
+            let: { jsmql_f0__id: "$_id" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$v0_id"] } } },
+              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
               { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
               { $replaceWith: { id: "$_id", n: "$__jsmql.length" } },
             ],
@@ -334,9 +334,13 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
             {
               $lookup: {
                 from: "archive",
-                let: { v0_id: "$_id", v0_tier: "$tier" },
+                let: { jsmql_f0__id: "$_id", jsmql_f0_tier: "$tier" },
                 pipeline: [
-                  { $match: { $expr: { $and: [{ $eq: ["$userId", "$$v0_id"] }, { $eq: ["$tier", "$$v0_tier"] }] } } },
+                  {
+                    $match: {
+                      $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $eq: ["$tier", "$$jsmql_f0_tier"] }] },
+                    },
+                  },
                 ],
                 as: "__jsmql.tmp.1",
               },
