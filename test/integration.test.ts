@@ -197,4 +197,97 @@ $sort({ _id: 1 });`,
       .toArray();
     expect(Number((rows[0] as { latest: unknown }).latest)).toBe(new Date("2026-01-15T00:00:00.000Z").getTime());
   });
+
+  // ── the quirkiest shapes: nested $lookup, assert(), $$.length ──────────────
+
+  // Nested $lookup in a block-body predicate: users → their recent orders →
+  // each order's shipments. The inner predicate correlates on TWO levels —
+  // `s.orderId === o._id` (the order) and `s.userId === $._id` (the outer
+  // user) — which only works because jsmql depth-stamps the `$lookup.let`
+  // names ($$v1_id vs $$v0_id) so they don't collide. (realistic.test.ts
+  // "user → recent orders → each order's shipments".) This is the deepest
+  // pipeline jsmql emits; running it proves the two-level correlation resolves
+  // to the right documents on a real server.
+  it("pipeline: nested $lookup — users → recent orders → each order's shipments", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($.active === true);
+$.recentOrders = $$$.orders.filter(o => {
+  $match(o.userId === $._id);
+  $sort({ placedAt: -1 });
+  $limit(5);
+  $.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id);
+});
+$project({ name: 1, recentOrders: 1 });`,
+    );
+    // 6 active users (u4/u7 are inactive). Order of the outer stream isn't
+    // sorted, so compare names as a set.
+    expect(rows.map((r) => (r as { name: string }).name).sort()).toEqual([
+      "Ada Lovelace",
+      "Alan Turing",
+      "Dorothy Vaughan",
+      "Grace Hopper",
+      "Hedy Lamarr",
+      "Margaret Hamilton",
+    ]);
+    // recentOrders ARE deterministically ordered (the inner $sort placedAt desc).
+    const orderShipments = (name: string) => {
+      const u = rows.find((r) => (r as { name: string }).name === name) as {
+        recentOrders: { _id: unknown; shipments: { _id: unknown }[] }[];
+      };
+      return u.recentOrders.map((o) => ({ order: String(o._id), shipments: o.shipments.map((s) => String(s._id)) }));
+    };
+    // Ada's 3 orders, newest first, each carrying its single shipment.
+    expect(orderShipments("Ada Lovelace")).toEqual([
+      { order: ID.order(15).toHexString(), shipments: [ID.shipment(12).toHexString()] },
+      { order: ID.order(2).toHexString(), shipments: [ID.shipment(2).toHexString()] },
+      { order: ID.order(1).toHexString(), shipments: [ID.shipment(1).toHexString()] },
+    ]);
+    // Grace's set includes her CANCELLED order (o7), which has no shipment —
+    // the nested lookup correctly yields an empty array there, not a wrong match.
+    expect(orderShipments("Grace Hopper")).toEqual([
+      { order: ID.order(18).toHexString(), shipments: [ID.shipment(14).toHexString()] },
+      { order: ID.order(7).toHexString(), shipments: [] },
+      { order: ID.order(6).toHexString(), shipments: [ID.shipment(5).toHexString()] },
+      { order: ID.order(5).toHexString(), shipments: [ID.shipment(4).toHexString()] },
+    ]);
+  });
+
+  // assert(cond, msg) that HOLDS for every document: the aggregate runs to
+  // completion and the following stage computes normally. (realistic.test.ts
+  // "guard against corrupt data before aggregating".)
+  it("pipeline: assert that holds lets the aggregate run", async () => {
+    const rows = await aggregate("orders", `assert($.total > 0, "order total must be positive");\n$.flagged = false;`);
+    expect(rows).toHaveLength(20);
+    expect(rows.every((r) => (r as { flagged: boolean }).flagged === false)).toBe(true);
+  });
+
+  // assert(cond, msg) that FAILS for some document: it lowers to a $match whose
+  // $convert names the message as a bson type, so MongoDB aborts the WHOLE
+  // aggregate with `Unknown type name: jsmql assertion failed: <msg>`. This is
+  // the load-bearing behaviour — proving the server really rejects, not that we
+  // emit a plausible-looking shape.
+  it("pipeline: a failing assert aborts the whole aggregate with its message", async () => {
+    await expect(aggregate("orders", `assert($.total <= 100, "order total exceeds cap");`)).rejects.toThrow(
+      "jsmql assertion failed: order total exceeds cap",
+    );
+  });
+
+  // $$.length — the current stream's document count as a value — materialised
+  // once via $setWindowFields and reused across two $set fields AND an assert,
+  // with the scratch field $unset at the end. (realistic.test.ts "tag each
+  // in-stock product with the category total + size guard".)
+  it("pipeline: $$.length reused across fields + assert guard", async () => {
+    const rows = await aggregate(
+      "products",
+      `$match($.inStock === true);
+$.totalInStock = $$.length;
+$.sharePct = 100 / $$.length;
+assert($$.length <= 1000, "too many in-stock products to render");`,
+    );
+    expect(rows).toHaveLength(8); // 8 of 10 products are in stock
+    expect(rows.every((r) => (r as { totalInStock: number }).totalInStock === 8)).toBe(true);
+    expect(rows.every((r) => (r as { sharePct: number }).sharePct === 12.5)).toBe(true);
+    expect(rows.every((r) => !("__jsmql" in (r as object)))).toBe(true); // scratch namespace cleaned up
+  });
 });

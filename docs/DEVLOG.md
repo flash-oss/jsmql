@@ -148,6 +148,19 @@ A `$$$.<coll>.filter(p).map((o, _i, coll) => …)` chain — and the top-level `
 
 ---
 
+## 2026-06-19 — test: integration coverage for the quirkiest shapes (nested $lookup, assert, $$.length)
+
+Follow-up to the live-MongoDB integration suite (entry below): now that master carries the gnarliest features jsmql has — nested `$lookup` in block-body predicates, `assert(cond, msg)`, and `$$.length` — we run them against the real fixture, because these are exactly the shapes where "compiles to plausible MQL" and "the server actually does the right thing" diverge most. Four new cases in [test/integration.test.ts](../test/integration.test.ts):
+
+- **Nested `$lookup`** (users → recent orders → each order's shipments). The inner predicate correlates on two levels — `s.orderId === o._id` and `s.userId === $._id` — which only resolves correctly because jsmql depth-stamps the `$lookup.let` names (`$$v1_id` vs `$$v0_id`). Live result confirms it: Ada's three orders each carry their one shipment, and Grace's **cancelled** order yields an empty nested `shipments` array (no wrong match). This required a small **dataset expansion** — shipments gained a denormalised `userId` (the owning order's user), with a `validateDataset()` integrity check that it matches the order. The dataset is meant to grow this way (see [test/fixtures/CLAUDE.md](../test/fixtures/CLAUDE.md)); re-seed after any change.
+- **`assert` that holds** → the aggregate runs and the next stage computes (20 orders, all `total > 0`).
+- **`assert` that fails** → the whole aggregate aborts. This is the load-bearing check: the lowering names the message as a bson type via `$convert`, and the live server really does reject with `Unknown type name: jsmql assertion failed: order total exceeds cap` — verified, not assumed.
+- **`$$.length`** materialised once via `$setWindowFields` and reused across two `$set` fields and an `assert` guard (8 in-stock products, `sharePct` 12.5, scratch `__jsmql` field `$unset` from the output).
+
+No `src/` behaviour changed — this is test coverage of merged-in features. The integration suite is now 16 cases.
+
+---
+
 ## 2026-06-19 — feat: array-callback 3rd `(…, array)` param + lazy index pairing
 
 Array-method callbacks (`.map`/`.filter`/`.find`/`.findLast`/`.some`/`.every`/`.flatMap`) now accept the JS 3rd parameter — the iterated array. It binds to the method's input and is typed as an array, so `arr.length` lowers to a clean `$size`: `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics fall out of "the input" — in a `.filter(...).map((el,i,arr)=>…)` chain, `arr` is the post-filter result (it's `map`'s input). `generateLengthAccess` gained an array-typed-`ParamRef` → `$size` case for the clean output. (Lookup-chain `$$$.<coll>.filter(...).map(...)` 3rd arg is a separate, larger piece — the sub-stream count — still pending.)
