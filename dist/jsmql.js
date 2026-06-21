@@ -4942,6 +4942,12 @@ function _generateBody(expr, ctx) {
           expr.pos
         );
       }
+      if (ctx.sourceSwitch?.letNames.has(expr.name)) {
+        throw new CodegenError(
+          `\`${expr.name}\` is a \`let\`/\`const\` declared before \`${ctx.sourceSwitch.desc}\`, which replaces the stream with a different collection (a \`$unionWith\`, which can't correlate) \u2014 so \`${expr.name}\` (along with the outer document and the root \`$$.length\`) isn't available inside the new stream. To read outer values per document, correlate with a \`.filter\` instead: \`$$$.<coll>.filter(d => d.<field> === $.<field>).map(\u2026)\` lowers to a \`$lookup\` and threads \`${expr.name}\`, \`$.<field>\`, and \`$$.length\` into the sub-pipeline.`,
+          expr.pos
+        );
+      }
       throw new UnknownIdentifierError(expr.name, expr.pos);
     }
     case "MemberAccess": {
@@ -8261,9 +8267,15 @@ function classifyCollParam(lambda) {
   }
   return lengthUses > 0;
 }
-function rejectLocalDocRef(letVars, param, pos) {
+function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc) {
   if (Object.keys(letVars).length === 0) return;
   const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
+  if (sourceSwitchDesc !== void 0) {
+    throw new CodegenError(
+      `\`$.${samplePath}\` (the outer document) isn't available inside \`${sourceSwitchDesc}\` \u2014 that source-switch replaces the stream with a different collection, so the original root document is gone (and \`${param}.${samplePath}\` here would be the switched collection's field, not the root's). To read the outer document per row, correlate with a \`.filter\` instead: \`$$$.<coll>.filter(${param} => ${param}.<field> === $.${samplePath}).map(\u2026)\` lowers to a \`$lookup\` and threads \`$.${samplePath}\` into the sub-pipeline.`,
+      pos
+    );
+  }
   throw new CodegenError(
     `'$.<field>' inside '.map(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
     pos
@@ -8339,7 +8351,7 @@ var MAP = {
       const ret = lambda.ret;
       const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
       const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
-      rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
+      rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos, ctx.sourceSwitch?.desc);
       const replaceStmt = {
         type: "UpdateFilter",
         ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: rwRet, pos: ret.pos }],
@@ -8357,7 +8369,7 @@ var MAP = {
       );
     }
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
-    rejectLocalDocRef(letVars, param, lambda.pos);
+    rejectLocalDocRef(letVars, param, lambda.pos, ctx.sourceSwitch?.desc);
     const { stages: prologue, rewritten: rewritten2 } = extractLookupCalls(rewritten, bodyCtx, allocSlot, lowerBlock2);
     const expr = generateWithCtx(rewritten2, bodyCtx);
     const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
@@ -11630,7 +11642,11 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
   if (methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda" && predicateReferencesOuterDoc(methods[0].args[0], outerCtx)) {
     return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
   }
-  const innerCtx = freshSubPipelineCtx(outerCtx);
+  const switchDesc = target.db !== void 0 ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
+  const innerCtx = {
+    ...freshSubPipelineCtx(outerCtx),
+    sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) }
+  };
   const inner = [];
   let i = 0;
   if (methods[0].method === "filter") {

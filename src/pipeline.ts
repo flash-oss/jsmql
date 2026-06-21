@@ -1184,7 +1184,19 @@ function lowerChainOnCollection(
   ) {
     return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
   }
-  const innerCtx = freshSubPipelineCtx(outerCtx);
+  // Non-correlated source-switch: the stream is REPLACED by `target` (a
+  // `$unionWith`), so outer context — the outer document, the root `$$.length`,
+  // and outer `let`s — doesn't cross. Record the switch on the sub-pipeline ctx
+  // so a chain-body reference to any of it produces a precise "correlate with a
+  // `.filter`" error rather than a bare "unknown identifier" / "use the param"
+  // (the head here was already classified as non-correlated, so the outer values
+  // genuinely can't be threaded).
+  const switchDesc =
+    target.db !== undefined ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
+  const innerCtx: GenerateCtx = {
+    ...freshSubPipelineCtx(outerCtx),
+    sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) },
+  };
   const inner: object[] = [];
   let i = 0;
   if (methods[0].method === "filter") {

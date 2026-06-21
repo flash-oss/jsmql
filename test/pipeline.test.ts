@@ -599,6 +599,34 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
+  // Outer context referenced INSIDE a source-switch's chain body (vs the prior
+  // test, which references it in a later top-level stage). A bare
+  // `$$ = $$$.<coll>.map(…)` is a `$unionWith` that REPLACES the stream, so the
+  // outer document / root `$$.length` / outer `let`s aren't carried in — the
+  // error must say so and point at the correlated `.filter` form (which DOES
+  // thread them; see stream-length.test.ts "four kinds of length").
+  it("outer `let` read inside a source-switch `.map` body → 'correlate with a .filter' error", () => {
+    expect(() => jsmql(`const k = $.min + 1; $$ = $$$.orders.map(o => ({ v: k }));`)).toThrow(
+      /`k` is a `let`\/`const` declared before `\$\$ = \$\$\$\.orders`[\s\S]*correlate with a `\.filter`/,
+    );
+  });
+
+  it("root `$.<field>` read inside a source-switch `.map` body → 'outer document is gone' error", () => {
+    // Not the generic "use the param" hint — here `o.length` would be the
+    // SWITCHED collection's field, not the original root's, so that hint misleads.
+    expect(() => jsmql(`$$ = $$$.orders.map(o => ({ v: $.length }));`)).toThrow(
+      /`\$\.length` \(the outer document\) isn't available inside `\$\$ = \$\$\$\.orders`[\s\S]*correlate with a `\.filter`/,
+    );
+  });
+
+  it("a top-level `$$.map` keeps the plain 'use the param' hint (not a source-switch)", () => {
+    // No source-switch here, so the source-switch guidance must NOT leak in.
+    expect(() => jsmql(`$$ = $$.map(o => ({ v: $.x }));`)).toThrow(
+      /use the lambda parameter[\s\S]*IS the current document/,
+    );
+    expect(() => jsmql(`$$ = $$.map(o => ({ v: $.x }));`)).not.toThrow(/source-switch|correlate with/);
+  });
+
   it("`$$ = []` lowers to `$match: { $expr: false }` (drop all docs)", () => {
     // Previously rejected; landed in the deferred-features Wave 5 push as
     // the natural sugar for "empty the stream".

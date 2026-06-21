@@ -83,6 +83,19 @@ export type GenerateCtx = {
    */
   droppedLets?: ReadonlyMap<string, string>;
   /**
+   * Set inside the sub-pipeline of a `$$ = $$$.<coll>…` source-switch (a
+   * non-correlated `$unionWith` that REPLACES the stream with a different
+   * collection). Outer context — the outer document (`$.<field>`), the root
+   * `$$.length`, and outer `let`/`const`s — isn't carried into the new stream,
+   * so a reference to any of it is unsatisfiable here. `desc` is the switch
+   * (`$$ = $$$.orders`) and `letNames` are the outer bindings that were dropped;
+   * both feed a precise "correlate with a `.filter`" error instead of the
+   * generic "unknown identifier" / "use the param" fallback. Distinct from
+   * `droppedLets` (in-place document reshape) because the fix differs (correlate,
+   * not rebind). Seeded only on the union path (`lowerChainOnCollection`).
+   */
+  sourceSwitch?: { desc: string; letNames: ReadonlySet<string> };
+  /**
    * Function-form parameter bindings in scope. Key is the destructured binding
    * name; value is the raw JS value supplied at call time (already validated
    * JSON-safe by `validateInterpolatable`). A `ParamRef` whose name lives here
@@ -1270,6 +1283,17 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
           `\`${expr.name}\` is a \`let\` binding and can't be read after \`${droppedBy}\` — ` +
             `the stage replaces the document. Inline the expression into the \`${droppedBy}\` body, ` +
             `or rebind after the stage with another \`let\`.`,
+          expr.pos,
+        );
+      }
+      if (ctx.sourceSwitch?.letNames.has(expr.name)) {
+        throw new CodegenError(
+          `\`${expr.name}\` is a \`let\`/\`const\` declared before \`${ctx.sourceSwitch.desc}\`, which replaces the stream ` +
+            `with a different collection (a \`$unionWith\`, which can't correlate) — so \`${expr.name}\` ` +
+            `(along with the outer document and the root \`$$.length\`) isn't available inside the new stream. ` +
+            `To read outer values per document, correlate with a \`.filter\` instead: ` +
+            `\`$$$.<coll>.filter(d => d.<field> === $.<field>).map(…)\` lowers to a \`$lookup\` and threads ` +
+            `\`${expr.name}\`, \`$.<field>\`, and \`$$.length\` into the sub-pipeline.`,
           expr.pos,
         );
       }

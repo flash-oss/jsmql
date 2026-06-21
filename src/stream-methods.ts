@@ -277,10 +277,29 @@ function classifyCollParam(lambda: LambdaNode): boolean {
 
 /** Reject a `$.<field>` (local-doc) reference inside a `.map` body — only the
  * lambda parameter (the current document) is addressable. `letVars` is the
- * extractor's output; a non-empty map means a `$.<field>` slipped through. */
-function rejectLocalDocRef(letVars: Record<string, string>, param: string, pos: number): void {
+ * extractor's output; a non-empty map means a `$.<field>` slipped through.
+ * `sourceSwitchDesc` (set when the `.map` runs inside a `$$ = $$$.<coll>…`
+ * source-switch) swaps the generic "use the param" hint for the precise
+ * "the outer root is gone — correlate with a `.filter`" guidance, since here
+ * `<param>.<field>` is the SWITCHED collection's field, not the original root. */
+function rejectLocalDocRef(
+  letVars: Record<string, string>,
+  param: string,
+  pos: number,
+  sourceSwitchDesc?: string,
+): void {
   if (Object.keys(letVars).length === 0) return;
   const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
+  if (sourceSwitchDesc !== undefined) {
+    throw new CodegenError(
+      `\`$.${samplePath}\` (the outer document) isn't available inside \`${sourceSwitchDesc}\` — that source-switch ` +
+        `replaces the stream with a different collection, so the original root document is gone (and \`${param}.${samplePath}\` ` +
+        `here would be the switched collection's field, not the root's). To read the outer document per row, correlate with a ` +
+        `\`.filter\` instead: \`$$$.<coll>.filter(${param} => ${param}.<field> === $.${samplePath}).map(…)\` lowers to a \`$lookup\` ` +
+        `and threads \`$.${samplePath}\` into the sub-pipeline.`,
+      pos,
+    );
+  }
   throw new CodegenError(
     `'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
     pos,
@@ -388,7 +407,7 @@ const MAP: StreamMethodDef = {
       const ret = lambda.ret as Expr; // validate() guarantees a block has a `ret`
       const { rewritten: rwBlock, letVars: blockLets } = extractLetsFromPipeline(lambda.block, param, ctx.pipelineLets);
       const { rewritten: rwRet, letVars: retLets } = extractLetsFromExpr(ret, param, ctx.pipelineLets);
-      rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos);
+      rejectLocalDocRef({ ...blockLets, ...retLets }, param, lambda.pos, ctx.sourceSwitch?.desc);
       const replaceStmt: UpdateFilter = {
         type: "UpdateFilter",
         ops: [{ type: "AssignExpr", target: { type: "FieldRef", path: "", pos: ret.pos }, value: rwRet, pos: ret.pos }],
@@ -416,7 +435,7 @@ const MAP: StreamMethodDef = {
     // outer-pipeline `let` bindings, so the let-coordination problem that
     // blocks the general nested-lookup case doesn't apply here.
     const { rewritten, letVars } = extractLetsFromExpr(body, param);
-    rejectLocalDocRef(letVars, param, lambda.pos);
+    rejectLocalDocRef(letVars, param, lambda.pos, ctx.sourceSwitch?.desc);
     // Materialise any `$$$.<coll>.find/filter(...)` lookups in the rewritten
     // body into prologue stages. `extractLookupCalls` handles the basic-vs-
     // pipeline-form predicate translation, auto-`let` extraction (for the

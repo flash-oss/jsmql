@@ -106,6 +106,22 @@ That difference lives in `lowerReplaceStream`, not in
 `lowerStreamFilterPredicate` — the predicate helper takes whatever ctx the
 caller hands it.
 
+**Source-switch error guidance (`ctx.sourceSwitch`).** Because Form A drops the
+outer context, a reference to it inside the switched-in chain body (e.g. a
+chain `.map`) is unsatisfiable. To turn the otherwise-bare "unknown identifier"
+/ "use the param" failure into actionable DX, `lowerChainOnCollection` seeds
+`ctx.sourceSwitch = { desc, letNames }` on the union sub-pipeline ctx (`desc` =
+the switch, e.g. `$$ = $$$.orders`; `letNames` = the dropped outer bindings).
+Two consumers read it: codegen's identifier resolver (an outer-`let` read →
+"`k` … isn't available inside `$$ = $$$.orders` … correlate with a `.filter`")
+and `.map`'s `rejectLocalDocRef` (a `$.<field>` read → "the outer document … is
+gone; `param.field` here is the switched collection's field, not the root's").
+Both point at the correlated `.filter` form, which lowers to `$lookup` and
+*does* thread outer context (see [lookup-stage.md](lookup-stage.md) §
+Cross-level capture). This is distinct from `droppedLets` (an in-place reshape
+read in a *later* top-level stage): different site (inside the union vs after
+it) and different fix (correlate vs rebind).
+
 ## Rejections
 
 `rejectInvalidReplaceStream(value, ctx)` catalogs the unsupported RHS

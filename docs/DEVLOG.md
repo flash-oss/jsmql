@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-21 — feat: actionable error when outer context is read inside a `$$ = $$$.<coll>` source-switch
+
+A bare `$$ = $$$.<coll>.map(…)` (no correlating filter) is a `$unionWith` that
+*replaces* the stream, so the outer document (`$.<field>`), the root `$$.length`,
+and outer `let`/`const`s aren't carried in. Reading any of them inside the
+switched-in chain body used to fail with a bare `Unknown identifier 'k'` (for an
+outer `let`) or the generic "use the lambda parameter" hint (for `$.<field>`) —
+neither explained *why* or pointed at the fix. Now both name the source-switch
+and redirect to the correlated `.filter` form:
+
+- outer `let`: ``\`k\` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream … correlate with a `.filter` instead …``
+- root `$.<field>`: ``\`$.length\` (the outer document) isn't available inside `$$ = $$$.orders` … `o.length` here would be the switched collection's field, not the root's … correlate with a `.filter` …``
+
+Mechanism: `lowerChainOnCollection` seeds `ctx.sourceSwitch = { desc, letNames }`
+on the union sub-pipeline ctx; codegen's identifier resolver consults it for the
+`let` case, and `.map`'s `rejectLocalDocRef` for the `$.<field>` case. A
+top-level `$$.map` (no source-switch) keeps the plain "use the param" hint —
+the guidance is gated on `ctx.sourceSwitch` so it never leaks where it's wrong.
+Distinct from `droppedLets` (an in-place reshape read in a *later* stage):
+different site and different fix. See
+[replace-stream-stage.md](specs/replace-stream-stage.md) § Source-switch error guidance.
+
+---
+
 ## 2026-06-20 — feat: outer-pipeline `let`s thread into a lookup-pivot `.map`; expr/block `.map` unified inside `$lookup`
 
 A statement- or expression-block `.map` chained onto a correlated lookup pivot
