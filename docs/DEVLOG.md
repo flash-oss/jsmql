@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-23 — docs: record the MongoDB MCP plugin as a known dev aid in CLAUDE.md
+
+Added a `### The MongoDB MCP plugin (plugin:mongodb:mongodb)` subsection under
+*#0 priority: the language axioms* in [CLAUDE.md](../CLAUDE.md), right after the
+HR3 "Verify MQL against a running MongoDB" section, because the plugin's value
+to this repo is exactly those two existing jobs: (1) `search-knowledge` as a
+*reference cross-check* against MongoDB's version-pinned manual when
+adding/auditing operators — explicitly *secondary* to the `vendor/mql-specifications`
+YAML SSOT and to `mongod` as the validity authority, so the note can't be read
+as relocating either source of truth; (2) `aggregate`/`find`/`explain` against a
+connected `mongod` as a faster path for HR3 verification than a one-off
+`tmp/probe.mjs` driver script (same `$addFields`-not-`$project` caveat).
+
+Documented the connection boundary: data tools need a developer-provided
+connection string and are not connected by default (`search-knowledge` needs
+none); never invent a connection string. Framed the plugin as a convenience
+layer, not a dependency — every workflow it supports keeps its driver-/CLI-based
+fallback, so nothing breaks when the plugin is absent.
+
+---
+
 ## 2026-06-21 — feat: actionable error when outer context is read inside a `$$ = $$$.<coll>` source-switch
 
 A bare `$$ = $$$.<coll>.map(…)` (no correlating filter) is a `$unionWith` that
