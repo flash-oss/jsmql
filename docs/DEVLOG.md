@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-27 — docs: complete the SOFT RULES section of LANG_RULES.md (SR1 body + SR2)
+
+[docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section held a single
+bodyless stub (`SR1 — jsmql is trying to guess what you mean.`). Gave SR1 a body
+and added **SR2 — a native JavaScript API behaves as its JavaScript self**,
+codifying a principle that was already true but unwritten: where jsmql accepts a
+JavaScript built-in method/static (`.map`, `.trim`, `Math.max`, …) it lowers to
+MQL that reproduces the JS behaviour and never repurposes the name. It is a SOFT
+rule, not a HARD one, because fidelity is best-effort — where MQL can't reproduce
+JS semantics exactly (null / missing-field handling), the divergence is
+documented rather than hidden.
+
+Deliberately scoped to **named** APIs only, not language operators: `+` / `==` /
+`===` already diverge from JS (string `+` concatenates in JS but lowers to
+`$add`), so promising operator fidelity would make the rule false on day one. The
+rule also notes — without saying where — that jsmql adds APIs of its own for
+brevity; the "where" is left out on purpose so the rule stays about behaviour,
+not surface. No code change: SR2 describes existing behaviour, so README and
+LANGUAGE.md need no update.
+
+---
+
 ## 2026-06-23 — docs: record the MongoDB MCP plugin as a known dev aid in CLAUDE.md
 
 Added a `### The MongoDB MCP plugin (plugin:mongodb:mongodb)` subsection under
