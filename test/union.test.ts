@@ -87,12 +87,18 @@ describe("$$.push — inline document(s)", () => {
 });
 
 describe("$$.push — cross-database via $$$$ is rejected", () => {
-  // The bare (`$$.push(...$$$$.archive.users)`) and `.filter`-spread forms reject
-  // at the same `requireSameDbColl` choke point; one case covers the union path.
-  it("a cross-DB spread source throws (no cross-db $unionWith)", () => {
+  // Two DISTINCT `requireSameDbColl` call sites in union-translation: the
+  // `.filter`/`.find` spread goes through `buildUnionWith`, the bare collection
+  // through the short-form `$unionWith` branch. Each gets a test so a refactor
+  // that bypasses the guard on either path is caught.
+  it("a cross-DB .filter() spread source throws (buildUnionWith path)", () => {
     expect(() => jsmql("$$.push(...$$$$.archive.users.filter(u => u.deleted))")).toThrow(
       /Cross-database reads aren't supported/,
     );
+  });
+
+  it("a bare cross-DB collection spread source throws (short-form $unionWith path)", () => {
+    expect(() => jsmql("$$.push(...$$$$.archive.users)")).toThrow(/Cross-database reads aren't supported/);
   });
 });
 

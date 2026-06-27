@@ -104,11 +104,12 @@ advertising cross-db `$lookup` as valid.
 
 Behaviour change (a `fix!` — pre-1.0, no version bump). Tests: the cross-database output
 assertions across lookup/union/pipeline/stream-methods were replaced with rejection tests —
-consolidated to one per distinct lowering path that reaches `requireSameDbColl` (lookup-value,
-chained terminal, source-switch, `$$.push` union), plus the bare-`$$$$.<db>.<coll>` message
-(codegen). Syntax variations (dot vs bracket, `.find` vs `.filter`, flat vs correlated,
-with/without a trailing chain method) reach the same choke point and aren't re-tested
-(suite 2427 → 2402, all green). Docs: [LANGUAGE.md](LANGUAGE.md) § "Cross-database reads: not
+one per distinct `requireSameDbColl` call site (seven: lookup field-assign, chained terminal,
+replace-root, flat source-switch, correlated pivot, bare union, `.filter`-spread union), plus
+the bare-`$$$$.<db>.<coll>` message (codegen). Each call site is tested so a refactor that
+bypasses the guard on any one path is caught; pure syntax variations that reach the *same* call
+site (dot vs bracket access, `.find` vs `.filter`, a trailing `.slice`/chain method) aren't
+re-tested (suite 2427 → 2405, all green). Docs: [LANGUAGE.md](LANGUAGE.md) § "Cross-database reads: not
 supported", [lookup-stage.md](specs/lookup-stage.md) § "Cross-database reads are rejected",
 [union-stage.md](specs/union-stage.md), [context-references.md](specs/context-references.md),
 [replace-stream-stage.md](specs/replace-stream-stage.md), README, and the generated `ops.ts`

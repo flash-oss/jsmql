@@ -287,6 +287,15 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     ]);
   });
 
+  it("cross-database replace-root `$ = $$$$.<db>.<coll>.find(...)` is rejected", () => {
+    // Distinct lowering path from the field-assign/source-switch/union cases:
+    // the cross-DB guard fires from `lowerReplaceRoot` (its own `requireSameDbColl`
+    // call site), so it gets its own coverage.
+    expect(() => jsmql("[ $ = $$$$.analytics.users.find(u => u._id === $.userId) ]")).toThrow(
+      /Cross-database reads aren't supported/,
+    );
+  });
+
   it("adjacent update ops flush correctly around `$ = ...`", () => {
     expect(jsmql("$.a = 1; $ = $.profile; $.b = 2")).toEqual([
       { $set: { a: 1 } },
@@ -753,8 +762,15 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  // (Cross-database pivot rejection is covered once by the source-switch case in
-  // the "replace stream" describe — same `requireSameDbColl` choke point.)
+  it("cross-database correlated pivot ($$$$.<db>.<coll>) is rejected", () => {
+    // A correlated predicate dispatches to `lowerLookupPivot` — a DIFFERENT
+    // `requireSameDbColl` call site than the flat source-switch (the union branch,
+    // covered in the "replace stream" describe). Distinct path → own test.
+    expect(() => jsmql(`$$ = $$$$.analytics.events.filter(e => e.userId === $._id);`)).toThrow(
+      /Cross-database reads aren't supported/,
+    );
+  });
+
   it("non-correlated predicate keeps using $unionWith (no regression)", () => {
     // No `$.<field>` ref — the predicate is a flat scan, so the existing
     // `$limit:0 + $unionWith` lowering is correct.

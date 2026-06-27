@@ -27,24 +27,27 @@ const truthy = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
 });
 
-describe("snapshot one user, then pivot to their 5 most-recent orders", { features: ["Pipelines"] }, () => {
-  it(
-    "narrow + assert + correlated source-switch — a few lines that would be ~30 of MQL",
-    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
-    () => {
-      // The "look up the logged-in user, then fetch their recent orders"
-      // shape that shows up in every web app. Three jsmql statements compose:
-      //   1) narrow the users stream to the matching doc(s) ($match)
-      //   2) assert exactly one matched — `$$.length` is the stream count
-      //      ($setWindowFields), guarded by a $convert-error $match
-      //   3) pivot the stream onto that user's orders, newest-first, top 5
-      // The correlated `o.userId === $._id` makes the root user's `_id` a
-      // $lookup.let var ($$jsmql_f0__id) on the next stage — the only MQL shape
-      // that can carry outer-doc context across a source switch ($unionWith has
-      // no `let:` slot). Every line is JavaScript a Node developer already
-      // knows; the lowering does the MQL bookkeeping.
-      expect(
-        jsmql`
+describe(
+  "look up one user (assert unique), then pivot to their 5 most-recent orders",
+  { features: ["Pipelines"] },
+  () => {
+    it(
+      "narrow + assert + correlated source-switch — a few lines that would be ~30 of MQL",
+      { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+      () => {
+        // The "look up the logged-in user, then fetch their recent orders"
+        // shape that shows up in every web app. Three jsmql statements compose:
+        //   1) narrow the users stream to the matching doc(s) ($match)
+        //   2) assert exactly one matched — `$$.length` is the stream count
+        //      ($setWindowFields), guarded by a $convert-error $match
+        //   3) pivot the stream onto that user's orders, newest-first, top 5
+        // The correlated `o.userId === $._id` makes the root user's `_id` a
+        // $lookup.let var ($$jsmql_f0__id) on the next stage — the only MQL shape
+        // that can carry outer-doc context across a source switch ($unionWith has
+        // no `let:` slot). Every line is JavaScript a Node developer already
+        // knows; the lowering does the MQL bookkeeping.
+        expect(
+          jsmql`
 $$ = $$.filter(u => u.email === "me@example.com");
 assert($$.length === 1, "More than one user with such email found");
 $$ = $$$.orders
@@ -53,50 +56,51 @@ $$ = $$$.orders
   .toReversed()
   .slice(0, 5);
           `,
-      ).toEqual([
-        { $match: { email: "me@example.com" } },
-        // `$$.length` (the stream count) materialises here, then the assert
-        // guards it: a `$convert` to bool that errors with the message when the
-        // count isn't 1. On a 1-doc stream it passes; on 2+ it aborts the run.
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-        {
-          $match: {
-            $expr: {
-              $convert: {
-                input: true,
-                to: {
-                  $cond: [
-                    { $eq: ["$__jsmql.length", 1] },
-                    "bool",
-                    "jsmql assertion failed: More than one user with such email found",
-                  ],
+        ).toEqual([
+          { $match: { email: "me@example.com" } },
+          // `$$.length` (the stream count) materialises here, then the assert
+          // guards it: a `$convert` to bool that errors with the message when the
+          // count isn't 1. On a 1-doc stream it passes; on 2+ it aborts the run.
+          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+          {
+            $match: {
+              $expr: {
+                $convert: {
+                  input: true,
+                  to: {
+                    $cond: [
+                      { $eq: ["$__jsmql.length", 1] },
+                      "bool",
+                      "jsmql assertion failed: More than one user with such email found",
+                    ],
+                  },
                 },
               },
             },
           },
-        },
-        {
-          $lookup: {
-            from: "orders",
-            // The correlated `o.userId === $._id` makes the root user's `_id`
-            // a $lookup.let correlation var (read inside as `$$jsmql_f0__id`).
-            let: { jsmql_f0__id: "$_id" },
-            pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-              { $sort: { placedAt: -1 } },
-              { $limit: 5 },
-            ],
-            as: "__jsmql.tmp.1",
+          {
+            $lookup: {
+              from: "orders",
+              // The correlated `o.userId === $._id` makes the root user's `_id`
+              // a $lookup.let correlation var (read inside as `$$jsmql_f0__id`).
+              let: { jsmql_f0__id: "$_id" },
+              pipeline: [
+                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+                { $sort: { placedAt: -1 } },
+                { $limit: 5 },
+              ],
+              as: "__jsmql.tmp.1",
+            },
           },
-        },
-        { $unwind: "$__jsmql.tmp.1" },
-        // The final $replaceWith drops the whole document (including the scratch
-        // `__jsmql` fields), so no trailing $unset is needed.
-        { $replaceWith: "$__jsmql.tmp.1" },
-      ]);
-    },
-  );
-});
+          { $unwind: "$__jsmql.tmp.1" },
+          // The final $replaceWith drops the whole document (including the scratch
+          // `__jsmql` fields), so no trailing $unset is needed.
+          { $replaceWith: "$__jsmql.tmp.1" },
+        ]);
+      },
+    );
+  },
+);
 
 describe("top-orders report by department", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
