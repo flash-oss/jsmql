@@ -2236,7 +2236,7 @@ declare global {
    */
   const $$$: { [key: string]: any };
   /**
-   * jsmql cluster/server context reference (`$$$$`, run on the admin database). Names a cluster-scoped diagnostic source stage, or heads cross-database joins (`$$$$.db.coll.find/filter(...)` → `$lookup`) and writes (`$$$$.db.coll = ...`).
+   * jsmql cluster/server context reference (`$$$$`, run on the admin database). Names a cluster-scoped diagnostic source stage, or heads cross-database `$out` writes (`$$$$.db.coll = ...`). Cross-database READS aren't supported — MongoDB rejects the `{ db, coll }` `$lookup`/`$unionWith` namespace on a regular server; use a same-database reference (`$$$.coll`) instead.
    *
    * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
    */

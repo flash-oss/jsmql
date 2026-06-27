@@ -541,19 +541,19 @@ jsmql provides three further prefix levels, parallel to `$.`, for cross-collecti
 | `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
 | `$$`   | Current collection             | **live for `.push(...)` → `$unionWith`** ([Collection union](#collection-union-push)) and collection-scoped **diagnostics** (`$$.indexStats()`, … — [System stages](#system--diagnostic-stages-indexstats-currentop-)). `.find` / `.filter` data reads on `$$` still need schema/driver binding (deferred). |
 | `$$$`  | Current database               | **live for `.find/.filter` joins** ([below](#cross-collection-lookups-coll-find--filter)) and the `$$$.<coll> = …` `$out` write. No diagnostics — they're collection- or server-scoped. |
-| `$$$$` | Current cluster / server       | **live for cross-database `.find/.filter`** (Atlas Data Federation; below) and server/cluster-scoped **diagnostics** (`$$$$.currentOp()`, `$$$$.shardedDataDistribution()`, …) |
+| `$$$$` | Current cluster / server       | **live for the cross-database `$$$$.<db>.<coll> = …` `$out` write** ([below](#out-write-the-pipeline-to-a-collection)) and server/cluster-scoped **diagnostics** (`$$$$.currentOp()`, `$$$$.shardedDataDistribution()`, …). Cross-database **reads** (`.find/.filter`) are **rejected** — see below. |
 
 Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
 
 ```js
 jsmql.expr("$$$.myColl");              // ❌ CodegenError: '$$$.<coll>' must be followed by .find(pred) or .filter(pred)
-jsmql.expr('$$$$["db"]["coll"]');      // ❌ '$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred)
+jsmql.expr('$$$$["db"]["coll"]');      // ❌ '$$$$.<db>.<coll>' is only usable as a cross-database $out destination — cross-database READS aren't supported
 jsmql("$$");                            // ❌ ParseError: Expected '.<name>' or '[<expr>]' after '$$'
 jsmql("$$.foo");                        // ❌ '$$' is statement-only and only supports '.push(...)'
 jsmql("$$$$$.x");                       // ❌ LexError: Up to 4 levels of context reference are supported
 ```
 
-The full `$$$.<coll>.find/filter(...)`, `$$$$.<db>.<coll>.find/filter(...)`, and `$$.push(...)` syntaxes are documented next.
+The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documented next. Cross-database **reads** through `$$$$.<db>.<coll>.find/filter(...)` are **not supported** (a `{ db, coll }` join/union namespace is rejected by every non-federated MongoDB) — see [Cross-database reads](#cross-database-reads-not-supported). The only cross-database `$$$$` write that *is* supported is the `$$$$.<db>.<coll> = …` `$out` destination ([below](#out-write-the-pipeline-to-a-collection)).
 
 ### Cross-collection lookups: `$$$.<coll>.find / .filter`
 
@@ -697,31 +697,37 @@ As in an expression-body `.map`, the lambda parameter *is* the current document 
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
 
-### Cross-database lookups: `$$$$.<db>.<coll>.find / .filter`
+### Cross-database reads: not supported
 
-The `$$$$` (current-cluster) prefix is the cross-database counterpart of `$$$`. The same `.find` / `.filter` methods, the same predicate-translation rules, the same chained terminals, the same block-body lambdas — the only difference is that the receiver names the *database* as well, and the compiled MQL uses MongoDB's `from: { db, coll }` object shape instead of the bare-string `from`:
+A cross-database **read** — naming another database in a `.find` / `.filter` join or in a `$$.push(...)` union — is **rejected at compile time**. Any of these forms throws:
 
 ```js
-$.archivedOrders = $$$$.cold_storage.orders.filter(o => o.userId === $._id);
-// → [{
-//     $lookup: {
-//       from: { db: "cold_storage", coll: "orders" },
-//       localField: "_id",
-//       foreignField: "userId",
-//       as: "archivedOrders"
-//     }
-//   }]
-
-$.profile = $$$$.users_db.profiles.find(p => p.userId === $._id);
-// → $lookup with from: { db: "users_db", coll: "profiles" }, plus the
-//   standard $set { $first } for .find's scalar-or-null contract.
+// All of these throw a CodegenError:
+$.archivedOrders = $$$$.cold_storage.orders.filter(o => o.userId === $._id);  // cross-db $lookup
+$ = $$$$.cold_storage.orders.find(o => o.userId === $._id);                    // replace-root via cross-db $lookup
+$$ = $$$$.cold_storage.orders.filter(o => o.active);                           // source-switch via cross-db read
+$$.push(...$$$$.archive_db.users.filter(u => u.deleted));                       // cross-db $unionWith
 ```
 
-All four bracket combinations are accepted: `$$$$.db.coll`, `$$$$["db"]["coll"]`, `$$$$.db["coll"]`, `$$$$["db"].coll`. Block-body lambdas, chained `.length` / `.reduce`, member access on `.find` results, and intermixing with same-DB `$$$.<coll>` lookups in one pipeline all work exactly the same as the `$$$` surface.
+The error names the fix:
 
-**Deployment requirement.** The `from: { db, coll }` object shape is documented and accepted by **MongoDB Atlas Data Federation** (where cross-database / cross-cluster joins are a first-class feature). The standard community MongoDB server **does not accept the object form of `$lookup.from`** — it expects a bare collection-name string and rejects the object at runtime. Use `$$$$.<db>.<coll>` only when your runtime is Atlas Data Federation (or a deployment that follows the same federated-query syntax); on a non-federated deployment you'll get a server-side error pointing at the `from` field's shape. jsmql does not gate on deployment — the lowering is the same regardless, and you'll see the runtime error if you target the wrong server.
+```
+Cross-database reads aren't supported: '$$$$.cold_storage.orders' would emit a
+$lookup/$unionWith with a '{ db, coll }' namespace, which a standalone /
+replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation only).
+Reference a collection in the CURRENT database instead — write '$$$.orders'
+(drop the '$$$$.cold_storage.' prefix) …
+```
 
-**Compile-time names only.** The `db` and `coll` names must be resolvable to strings at compile time. That includes static string literals (`$$$$.db.coll` / `$$$$["db"]["coll"]`) *and* [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter bindings — `jsmql.compile(({ dbName }, $) => ($.x = $$$$[dbName].coll.find(...)))({ dbName: "warehouse" })` resolves `dbName` to its bound value at call time and inlines it into `$lookup.from`. What's *not* supported is runtime field refs (`$$$$[$.tenantDb].coll.find(...)`) — `$.tenantDb` is per-document and can't materialise into the `$lookup.from` field, which MongoDB resolves at plan time. Non-string parameter values (a number, an array, …) are rejected with a precise "parameter binding must be a string" error.
+**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form is **Atlas-Data-Federation-only**: every regular MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), we reject these reads at compile time rather than emit a shape that won't run. The rejection lives at the `requireSameDbColl` choke point in [`src/lookup-translation.ts`](../../src/lookup-translation.ts).
+
+**What to write instead.** Reference the collection in the *current* database with same-database `$$$.<coll>` (drop the `$$$$.<db>.` prefix) and run the pipeline against the database that holds the data:
+
+```js
+$.archivedOrders = $$$.orders.filter(o => o.userId === $._id);  // ✅ same-db $lookup
+```
+
+**Cross-database writes still work.** The one cross-database `$$$$` form that *is* supported is the `$out` destination — `$$$$.<db>.<coll> = $$` lowers to `{ $out: { db, coll } }`, which MongoDB does accept. See [`$out`](#out-write-the-pipeline-to-a-collection). Server/cluster-scoped diagnostics on `$$$$` (`$$$$.currentOp()`, `$$$$.shardedDataDistribution()`, …) are also unaffected — see [System / diagnostic stages](#system--diagnostic-stages-indexstats-currentop-).
 
 ### Collection union: `$$.push(...)`
 
@@ -752,9 +758,11 @@ $$.push({ a: 1 }, { a: 2 }, ...$$$.archive, { b: 3 });
 //   { $unionWith: "archive" },
 //   { $unionWith: { pipeline: [{ $documents: [{ b: 3 }] }] } }
 
-// 6. Cross-database (same Atlas Data Federation caveat as $$$$ lookups).
+// 6. Cross-database union — REJECTED. A '{ db, coll }' $unionWith namespace
+//    is Atlas-Data-Federation-only; reference a current-database collection.
 $$.push(...$$$$.archive_db.users.filter(u => u.deleted));
-// → { $unionWith: { coll: { db: "archive_db", coll: "users" }, pipeline: [...] } }
+// → ❌ CodegenError: Cross-database reads aren't supported … write '$$$.users'
+//    (See "Cross-database reads: not supported" above.)
 
 // 7. Block-body filter — full sub-pipeline.
 $$.push(...$$$.archive_users.filter(u => {
@@ -2412,27 +2420,29 @@ $$ = $$$.users.filter(u => u._id === uid);
 
 Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist together into the `$lookup.let` slot of the pipeline-form lookup.
 
-**Putting it all together — narrow, snapshot, pivot.** The full idiom is three statements: narrow the current stream down to one doc, snapshot a scalar via `let`, then pivot to another collection with the snapshot as the correlated value. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
+**Putting it all together — narrow, guard, pivot.** The full idiom is three statements: narrow the current stream down to the matching doc(s), assert exactly one matched, then pivot to another collection correlated by the root doc's field. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
 
 ```js
 jsmql(`
-  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
-  let userId = $._id;
+  $$ = $$.filter(u => u.email === "me@example.com");
+  assert($$.length === 1, "More than one user with such email found");
   $$ = $$$.orders
-    .filter(o => o.userId === userId)
+    .filter(o => o.userId === $._id)
     .toSorted((a, b) => a.placedAt - b.placedAt)
     .toReversed()
     .slice(0, 5);
 `);
 // → [
 //   { $match: { email: "me@example.com" } },
-//   { $limit: 1 },
-//   { $set: { "__jsmql.var.userId": "$_id" } },
+//   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+//   { $match: { $expr: { $convert: { input: true, to: { $cond: [
+//       { $eq: ["$__jsmql.length", 1] }, "bool",
+//       "jsmql assertion failed: More than one user with such email found" ] } } } } },
 //   { $lookup: {
 //       from: "orders",
-//       let: { userId: "$__jsmql.var.userId" },
+//       let: { jsmql_f0__id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
@@ -2443,7 +2453,7 @@ jsmql(`
 // ]
 ```
 
-Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the snapshotted `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name. The three statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline.
+Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the user's `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation var `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.length` materialises via `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. The statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
 
 **Empty the stream.** `$$ = []` drops every document — it lowers to `[{ $match: { $expr: false } }]` (a never-matching `$match`). MongoDB rejects `$limit: 0` ("the limit must be positive"), so the never-matching `$match` is what jsmql emits. The explicit-stage spelling is `$match(false)`.
 

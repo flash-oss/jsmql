@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-27 — docs: complete the SOFT RULES section of LANG_RULES.md (SR1 body + SR2)
+
+[docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section held a single
+bodyless stub (`SR1 — jsmql is trying to guess what you mean.`). Gave SR1 a body
+and added **SR2 — a native JavaScript API behaves as its JavaScript self**,
+codifying a principle that was already true but unwritten: where jsmql accepts a
+JavaScript built-in method/static (`.map`, `.trim`, `Math.max`, …) it lowers to
+MQL that reproduces the JS behaviour and never repurposes the name. It is a SOFT
+rule, not a HARD one, because fidelity is best-effort — where MQL can't reproduce
+JS semantics exactly (null / missing-field handling), the divergence is
+documented rather than hidden.
+
+Deliberately scoped to **named** APIs only, not language operators: `+` / `==` /
+`===` already diverge from JS (string `+` concatenates in JS but lowers to
+`$add`), so promising operator fidelity would make the rule false on day one. The
+rule also notes — without saying where — that jsmql adds APIs of its own for
+brevity; the "where" is left out on purpose so the rule stays about behaviour,
+not surface. No code change: SR2 describes existing behaviour, so README and
+LANGUAGE.md need no update.
+
+---
+
 ## 2026-06-27 — docs: future-proof-prose rule (no current-state enumerations) + de-list SR2
 
 Added a sub-rule to the "Single source of truth" section of [CLAUDE.md](../CLAUDE.md):
@@ -35,25 +57,62 @@ Motivated by a recurring stale-prose problem the developer flagged. The trailing
 
 ---
 
-## 2026-06-27 — docs: complete the SOFT RULES section of LANG_RULES.md (SR1 body + SR2)
+## 2026-06-27 — docs: showcase "snapshot one user → 5 newest orders" now asserts uniqueness + same-DB pivot
 
-[docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section held a single
-bodyless stub (`SR1 — jsmql is trying to guess what you mean.`). Gave SR1 a body
-and added **SR2 — a native JavaScript API behaves as its JavaScript self**,
-codifying a principle that was already true but unwritten: where jsmql accepts a
-JavaScript built-in method/static (`.map`, `.trim`, `Math.max`, …) it lowers to
-MQL that reproduces the JS behaviour and never repurposes the name. It is a SOFT
-rule, not a HARD one, because fidelity is best-effort — where MQL can't reproduce
-JS semantics exactly (null / missing-field handling), the divergence is
-documented rather than hidden.
+The headline example (README, LANGUAGE.md "narrow, guard, pivot", and the
+`realistic.test.ts` describe of the same name — the one the playground surfaces)
+was reworked: instead of `.filter(...).slice(0, 1)` + a `let userId = $._id`
+snapshot, it now `assert($$.length === 1, …)` (an explicit uniqueness guard) and
+correlates the pivot directly on `o.userId === $._id`. It also switches the
+source from cross-DB `$$$$.archive.orders` to same-DB `$$$.orders`: MongoDB
+rejects cross-DB `$lookup` for regular collections ("$lookup with syntax
+{from: {db, coll}} is not supported"), so the old example never actually ran —
+verified on a live mongod, the same-DB form does (returns the 5 newest orders;
+the assert aborts the run on a duplicate email). The emitted MQL shown in the
+docs was also stale (un-depth-stamped `let: { userId }` + a spurious trailing
+`$unset`); both now match the compiler — `jsmql_f0__id` correlation var, and no
+`$unset` because the final `$replaceWith` drops the whole `__jsmql` namespace.
+No `src/` change — example / docs / test only.
 
-Deliberately scoped to **named** APIs only, not language operators: `+` / `==` /
-`===` already diverge from JS (string `+` concatenates in JS but lowers to
-`$add`), so promising operator fidelity would make the rule false on day one. The
-rule also notes — without saying where — that jsmql adds APIs of its own for
-brevity; the "where" is left out on purpose so the rule stays about behaviour,
-not surface. No code change: SR2 describes existing behaviour, so README and
-LANGUAGE.md need no update.
+---
+
+## 2026-06-27 — fix!: stop lowering cross-database READS (`$$$$.<db>.<coll>` joins/unions) — reject at compile time
+
+Cross-database **reads** are no longer lowered — they're rejected at compile time. The
+forms removed: `$$$$.<db>.<coll>.find/filter(...)` (cross-db `$lookup`), the replace-root
+`$ = $$$$.<db>.<coll>.find(...)`, the source-switch `$$ = $$$$.<db>.<coll>.filter(...)`, and
+the union `$$.push(...$$$$.<db>.<coll>...)`. All of them could only compile to a `$lookup` /
+`$unionWith` with a `from`/`coll` = `{ db, coll }` **namespace object**, which is the Atlas
+Data Federation form — a standalone / replica-set / sharded MongoDB **rejects** it at runtime
+(verified on a live mongod: `$lookup` → "not supported"; `$unionWith.coll` → "wrong type
+'object', expected 'string'"). jsmql was knowingly emitting un-runnable MQL (HR3 violation),
+so the surface is withdrawn.
+
+**Mechanism — one choke point.** New `requireSameDbColl(db, collection, pos)` in
+[`src/lookup-translation.ts`](../src/lookup-translation.ts): same-database (`db === undefined`,
+i.e. `$$$.<coll>`) returns the bare collection string; cross-database (`db` set) **throws** a
+`CodegenError` (matches `/Cross-database reads aren't supported/`) that redirects to a
+same-database `$$$.<coll>` reference. Every read-side `from`/`coll` builder funnels through it —
+`lowerLookup`, `tryExtractChainedLookup`, the replace-root + source-switch + lookup-pivot
+builders in `pipeline.ts`, and the `$$.push` builders in `union-translation.ts` — so `from`
+simplifies to always-`string`. The bare-`$$$$.<db>.<coll>` codegen message was updated to stop
+advertising cross-db `$lookup` as valid.
+
+**Kept (verified working on mongod):** cross-database **WRITES** — `$$$$.<db>.<coll> = $$` →
+`{ $out: { db, coll } }` (its own builder in `out-translation.ts`, untouched); same-database
+(`$$$.<coll>`) reads; and the `$$$$` server/cluster diagnostic stages (`$$$$.currentOp()`, …).
+
+Behaviour change (a `fix!` — pre-1.0, no version bump). Tests: the cross-database output
+assertions across lookup/union/pipeline/stream-methods were replaced with rejection tests —
+consolidated to one per distinct lowering path that reaches `requireSameDbColl` (lookup-value,
+chained terminal, source-switch, `$$.push` union), plus the bare-`$$$$.<db>.<coll>` message
+(codegen). Syntax variations (dot vs bracket, `.find` vs `.filter`, flat vs correlated,
+with/without a trailing chain method) reach the same choke point and aren't re-tested
+(suite 2427 → 2402, all green). Docs: [LANGUAGE.md](LANGUAGE.md) § "Cross-database reads: not
+supported", [lookup-stage.md](specs/lookup-stage.md) § "Cross-database reads are rejected",
+[union-stage.md](specs/union-stage.md), [context-references.md](specs/context-references.md),
+[replace-stream-stage.md](specs/replace-stream-stage.md), README, and the generated `ops.ts`
+`$$$$` description. (No DEFERRED §B entry, per the developer.)
 
 ---
 
@@ -102,6 +161,41 @@ different site and different fix. See
 
 ---
 
+## 2026-06-20 — feat: `$$.length` = ROOT stream count at any depth (via `$lookup.let`) + block-body `.map`
+
+Completes the nested stream-length composite. The motivating program now compiles and runs (verified end-to-end on mongod):
+
+```js
+$match($.createdAt >= new Date(2026, 1, 1));
+$$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
+  return {
+    totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length, // nested lookup .length
+    totalOrders: ordersColl.length,  // 3rd-arg handle — the orders sub-stream
+    totalUsers: $$.length,           // the ROOT users stream
+  };
+});
+```
+
+Three pieces landed:
+
+**1. `$$.length` is the ROOT stream, at any nesting depth** — mirroring `$` = root document (the developer's design call). Inside a top-level `$lookup`, the root count materialises at the top (`$setWindowFields` → `$__jsmql.length`) and is **captured into the `$lookup.let`** as `v0_length`, read back as `$$v0_length`. New `GenerateCtx.rootStreamLengthVar` + `captureRootStreamLength` (lookup-translation.ts), wired into all three top-level lookup bodies: the expression predicate (`translatePredicate`), the `$.x =` chained pivot (`tryExtractChainedLookup`), and the `$$ =` replace-stream pivot (pipeline.ts). The root count rides a `$$`-variable while a sub-stream count rides the `$__jsmql.length` field, so a `.map` body reads both at once with no collision (detection keys on `CollectionRef.length` vs `ParamRef.length`). `generateStreamLength` returns `$$<var>` when the var is set. This **narrows DEF-033**: top-level `$lookup` `$$.length` ships; `$facet`/`$unionWith`, depth > 1, and reusable-function bodies stay deferred (the message now lists those).
+
+**2. Block-body `.map`** — `(o, i, coll) => { return <expr>; }` (an `exprBlock` with no `let`/`const` decls) is accepted as the expression form (`mapBodyExpr` in stream-methods.ts); decls redirect to the expression / top-level-`let` form.
+
+**3. Unused extra params on an expression-body `.filter` predicate** — `(s, i, shipmntsColl) => …` is valid JS, so it no longer throws; `validateLookupShape` rejects only a *used* index/array param on a predicate (with a block-body redirect), mirroring `.map`.
+
+Docs: [LANGUAGE.md](LANGUAGE.md) § `$$.length` (root semantics) + § Cross-collection lookups; spec [stream-length.md](specs/stream-length.md) §§ ROOT-count-inside-`$lookup` / Scope; [DEFERRED.md](DEFERRED.md) DEF-033 narrowed. Tests: a nested-three-levels unit case in [test/stream-length.test.ts](../test/stream-length.test.ts) and a realistic showcase in [test/realistic.test.ts](../test/realistic.test.ts), both the mongod-verified shape.
+
+---
+
+## 2026-06-20 — feat: cross-level references in nested block-body lookups / `.map` (root, ancestor params, ancestor `.length` handles)
+
+A block-body lookup (`.filter`/`.map`) nested any number of levels deep can now read across scopes **correctly**: the root document (`$.field`), an enclosing foreign param (`outer.field`), and an ancestor sub-stream count (`outerColl.length`, a 3rd `.map`/`.filter` handle) each resolve to the right document instead of being mis-captured as a field of the immediate parent. This closes the developer's hardest "make it work" example — a statement-block `.map` nested inside another, whose asserts compare `shpmntsColl.length < ordersColl.length` and message `order ${o._id} for user ${$._id}`, reaching across three lookup levels at once (verified end-to-end on a live `mongod`; `userId: $._id` resolves to the root user at every order).
+
+The fix builds on MQL's `$$`-variable propagation through nested `$lookup.pipeline` boundaries: an ancestor value is captured **once**, into the `$lookup.let` of the level whose `let` evaluates against the document that holds it (root → outermost lookup `jsmql_f0_…`; a level-K param/handle → the level-(K+1) lookup `jsmql_f<K+1>_…` / `jsmql_s<K+1>_…`), and read at deeper levels by `$$`-name. Implementation: the block-body path no longer pre-rewrites enclosing-param refs to `FieldRef`s; instead `transformExpr` + a depth-aware `LetAllocator` (carrying the enclosing params, the live ancestor allocators, and the ancestor handles) resolve each ref to its correct level via `allocateRootField` / `allocateAncestorForeign` / `allocateAncestorHandle`. Because `letVars()` is a live reference, a deep capture into an ancestor allocator is reflected when that ancestor finalises its `let`; a correlation `ParamRef` captured after the consuming level's `lambdaParams` froze is emitted as `$$<name>` for any `jsmql_[fvs]<d>_…` name (`CORRELATION_VAR_RE` in namespace.ts), since it is in scope by construction. `lowerCallbackBlock` is now the single engine for both `.filter` heads and statement-block `.map` (the latter returns its captures as `StreamMethodResult.extraLetVars`, merged onto the lookup by the chain assembler). This also fixes the pre-existing block-body `.filter` deep-ancestor bug (a 3-level `.filter` reading a grandparent field previously captured the wrong doc). Consequence: a nested lookup inside a statement-block `.map` now lowers in pipeline form (like `.filter` blocks already did) rather than the leaner basic form the old `.map` path emitted — correct + consistent, slightly more verbose. See [lookup-stage.md](specs/lookup-stage.md) § Nested lookups, [LANGUAGE.md](LANGUAGE.md).
+
+---
+
 ## 2026-06-20 — feat: outer-pipeline `let`s thread into a lookup-pivot `.map`; expr/block `.map` unified inside `$lookup`
 
 A statement- or expression-block `.map` chained onto a correlated lookup pivot
@@ -127,14 +221,6 @@ which the lookup assemblers set (the pivot now seeds `EMPTY_ENCLOSING` to mark
 (no filter) is therefore still a source-switch that discards the outer
 stream/doc/`let`; only `coll.length` is available inside it. See
 [stream-length.md](specs/stream-length.md), [stream-methods.md](specs/stream-methods.md) `.map` row.
-
----
-
-## 2026-06-20 — feat: cross-level references in nested block-body lookups / `.map` (root, ancestor params, ancestor `.length` handles)
-
-A block-body lookup (`.filter`/`.map`) nested any number of levels deep can now read across scopes **correctly**: the root document (`$.field`), an enclosing foreign param (`outer.field`), and an ancestor sub-stream count (`outerColl.length`, a 3rd `.map`/`.filter` handle) each resolve to the right document instead of being mis-captured as a field of the immediate parent. This closes the developer's hardest "make it work" example — a statement-block `.map` nested inside another, whose asserts compare `shpmntsColl.length < ordersColl.length` and message `order ${o._id} for user ${$._id}`, reaching across three lookup levels at once (verified end-to-end on a live `mongod`; `userId: $._id` resolves to the root user at every order).
-
-The fix builds on MQL's `$$`-variable propagation through nested `$lookup.pipeline` boundaries: an ancestor value is captured **once**, into the `$lookup.let` of the level whose `let` evaluates against the document that holds it (root → outermost lookup `jsmql_f0_…`; a level-K param/handle → the level-(K+1) lookup `jsmql_f<K+1>_…` / `jsmql_s<K+1>_…`), and read at deeper levels by `$$`-name. Implementation: the block-body path no longer pre-rewrites enclosing-param refs to `FieldRef`s; instead `transformExpr` + a depth-aware `LetAllocator` (carrying the enclosing params, the live ancestor allocators, and the ancestor handles) resolve each ref to its correct level via `allocateRootField` / `allocateAncestorForeign` / `allocateAncestorHandle`. Because `letVars()` is a live reference, a deep capture into an ancestor allocator is reflected when that ancestor finalises its `let`; a correlation `ParamRef` captured after the consuming level's `lambdaParams` froze is emitted as `$$<name>` for any `jsmql_[fvs]<d>_…` name (`CORRELATION_VAR_RE` in namespace.ts), since it is in scope by construction. `lowerCallbackBlock` is now the single engine for both `.filter` heads and statement-block `.map` (the latter returns its captures as `StreamMethodResult.extraLetVars`, merged onto the lookup by the chain assembler). This also fixes the pre-existing block-body `.filter` deep-ancestor bug (a 3-level `.filter` reading a grandparent field previously captured the wrong doc). Consequence: a nested lookup inside a statement-block `.map` now lowers in pipeline form (like `.filter` blocks already did) rather than the leaner basic form the old `.map` path emitted — correct + consistent, slightly more verbose. See [lookup-stage.md](specs/lookup-stage.md) § Nested lookups, [LANGUAGE.md](LANGUAGE.md).
 
 ---
 
@@ -169,30 +255,13 @@ Two enabling changes: (1) the parser's block-kind gate is now `STREAM_BLOCK_METH
 
 ---
 
-## 2026-06-20 — feat: `$$.length` = ROOT stream count at any depth (via `$lookup.let`) + block-body `.map`
+## 2026-06-19 — feat: array-callback 3rd `(…, array)` param + lazy index pairing
 
-Completes the nested stream-length composite. The motivating program now compiles and runs (verified end-to-end on mongod):
+Array-method callbacks (`.map`/`.filter`/`.find`/`.findLast`/`.some`/`.every`/`.flatMap`) now accept the JS 3rd parameter — the iterated array. It binds to the method's input and is typed as an array, so `arr.length` lowers to a clean `$size`: `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics fall out of "the input" — in a `.filter(...).map((el,i,arr)=>…)` chain, `arr` is the post-filter result (it's `map`'s input). `generateLengthAccess` gained an array-typed-`ParamRef` → `$size` case for the clean output. (Lookup-chain `$$$.<coll>.filter(...).map(...)` 3rd arg is a separate, larger piece — the sub-stream count — still pending.)
 
-```js
-$match($.createdAt >= new Date(2026, 1, 1));
-$$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
-  return {
-    totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length, // nested lookup .length
-    totalOrders: ordersColl.length,  // 3rd-arg handle — the orders sub-stream
-    totalUsers: $$.length,           // the ROOT users stream
-  };
-});
-```
+**Lazy index pairing (the motivating fix).** The `$zip`/`$range` index machinery is now emitted **only when the index param is actually referenced** (a complete `someExpr` `Expr`-union walk). When it isn't — including the common `(el, i, arr) => …arr…` where `i` is only positional to reach `arr` — the plain `$map`/`$filter` is used instead. This also tightened the pre-existing 2-param case: `.map((x, i) => x)` (unused `i`) no longer zips. `arrayIterInput` returns a `paired` flag so `.filter`/`.find`/`.findLast` know whether to project elements back out of the `[index, element]` pairs (previously keyed on param *count*, which no longer matches whether pairs were used).
 
-Three pieces landed:
-
-**1. `$$.length` is the ROOT stream, at any nesting depth** — mirroring `$` = root document (the developer's design call). Inside a top-level `$lookup`, the root count materialises at the top (`$setWindowFields` → `$__jsmql.length`) and is **captured into the `$lookup.let`** as `v0_length`, read back as `$$v0_length`. New `GenerateCtx.rootStreamLengthVar` + `captureRootStreamLength` (lookup-translation.ts), wired into all three top-level lookup bodies: the expression predicate (`translatePredicate`), the `$.x =` chained pivot (`tryExtractChainedLookup`), and the `$$ =` replace-stream pivot (pipeline.ts). The root count rides a `$$`-variable while a sub-stream count rides the `$__jsmql.length` field, so a `.map` body reads both at once with no collision (detection keys on `CollectionRef.length` vs `ParamRef.length`). `generateStreamLength` returns `$$<var>` when the var is set. This **narrows DEF-033**: top-level `$lookup` `$$.length` ships; `$facet`/`$unionWith`, depth > 1, and reusable-function bodies stay deferred (the message now lists those).
-
-**2. Block-body `.map`** — `(o, i, coll) => { return <expr>; }` (an `exprBlock` with no `let`/`const` decls) is accepted as the expression form (`mapBodyExpr` in stream-methods.ts); decls redirect to the expression / top-level-`let` form.
-
-**3. Unused extra params on an expression-body `.filter` predicate** — `(s, i, shipmntsColl) => …` is valid JS, so it no longer throws; `validateLookupShape` rejects only a *used* index/array param on a predicate (with a block-body redirect), mirroring `.map`.
-
-Docs: [LANGUAGE.md](LANGUAGE.md) § `$$.length` (root semantics) + § Cross-collection lookups; spec [stream-length.md](specs/stream-length.md) §§ ROOT-count-inside-`$lookup` / Scope; [DEFERRED.md](DEFERRED.md) DEF-033 narrowed. Tests: a nested-three-levels unit case in [test/stream-length.test.ts](../test/stream-length.test.ts) and a realistic showcase in [test/realistic.test.ts](../test/realistic.test.ts), both the mongod-verified shape.
+To reuse the complete `Expr`-union walker in both codegen (the index-usage check) and pipeline (`containsStreamLength`) without an import cycle, the `someExpr`/`someElement`/`someStmt` family moved to a new leaf module [src/ast-walk.ts](../src/ast-walk.ts). Implementation in [src/codegen.ts](../src/codegen.ts) (`arrayIterInput`, `generateLengthAccess`); spec [docs/specs/method-dispatch.md](specs/method-dispatch.md) § Callback parameters; user doc [docs/LANGUAGE.md](LANGUAGE.md). Verified on a live mongod 8.2 (`map(el*arr.length)` → `[30,60,90]`; `filter(arr.length>2)` keeps 3 / drops 2); 2340 tests pass, `tsc` clean.
 
 ---
 
@@ -229,16 +298,6 @@ No `src/` behaviour changed — this is test coverage of merged-in features. The
 
 ---
 
-## 2026-06-19 — feat: array-callback 3rd `(…, array)` param + lazy index pairing
-
-Array-method callbacks (`.map`/`.filter`/`.find`/`.findLast`/`.some`/`.every`/`.flatMap`) now accept the JS 3rd parameter — the iterated array. It binds to the method's input and is typed as an array, so `arr.length` lowers to a clean `$size`: `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics fall out of "the input" — in a `.filter(...).map((el,i,arr)=>…)` chain, `arr` is the post-filter result (it's `map`'s input). `generateLengthAccess` gained an array-typed-`ParamRef` → `$size` case for the clean output. (Lookup-chain `$$$.<coll>.filter(...).map(...)` 3rd arg is a separate, larger piece — the sub-stream count — still pending.)
-
-**Lazy index pairing (the motivating fix).** The `$zip`/`$range` index machinery is now emitted **only when the index param is actually referenced** (a complete `someExpr` `Expr`-union walk). When it isn't — including the common `(el, i, arr) => …arr…` where `i` is only positional to reach `arr` — the plain `$map`/`$filter` is used instead. This also tightened the pre-existing 2-param case: `.map((x, i) => x)` (unused `i`) no longer zips. `arrayIterInput` returns a `paired` flag so `.filter`/`.find`/`.findLast` know whether to project elements back out of the `[index, element]` pairs (previously keyed on param *count*, which no longer matches whether pairs were used).
-
-To reuse the complete `Expr`-union walker in both codegen (the index-usage check) and pipeline (`containsStreamLength`) without an import cycle, the `someExpr`/`someElement`/`someStmt` family moved to a new leaf module [src/ast-walk.ts](../src/ast-walk.ts). Implementation in [src/codegen.ts](../src/codegen.ts) (`arrayIterInput`, `generateLengthAccess`); spec [docs/specs/method-dispatch.md](specs/method-dispatch.md) § Callback parameters; user doc [docs/LANGUAGE.md](LANGUAGE.md). Verified on a live mongod 8.2 (`map(el*arr.length)` → `[30,60,90]`; `filter(arr.length>2)` keeps 3 / drops 2); 2340 tests pass, `tsc` clean.
-
----
-
 ## 2026-06-19 — test: live-MongoDB integration suite + deterministic fixture instance
 
 jsmql can emit MQL that *looks* valid and passes a `toEqual(...)` but that the server doesn't actually run the way the user meant — exactly the failure mode HR3 exists to prevent. We now have [test/integration.test.ts](../test/integration.test.ts): 12 curated cases that compile a jsmql source, run it against a **real MongoDB**, and assert on the documents returned. Expected values were derived from a live run, never guessed. Building it immediately surfaced a real DX trap — the fixture's first deterministic ObjectIds were zero-padded (`0000…a1`), whose embedded timestamp decodes to 1970, so jsmql's `assertPlausibleObjectId` guard (correctly) rejected "find by `_id` via the `0x` literal"; the fix was to give fixture ids a plausible `0x65000000…` (2023) timestamp prefix so the `0x` literal works end-to-end.
@@ -260,21 +319,6 @@ The read-only requirement drove the instance design. A server-enforced read-only
 **Scope.** Top-level pipeline only, gated by a new `topLevelStream` ctx flag (set by both pipeline lowerers, preserved by `extendCtx` for same-document lambdas, dropped by `freshSubPipelineCtx`). Rejected in Filter/`jsmql.expr` (no stream), inside a `$lookup`/`$facet`/`$unionWith` sub-pipeline, and inside a reusable function body — the latter two tracked as **[DEF-033]**. A top-level `.map`/`.filter` lambda is allowed (the stamped field is on the same document). Single-statement no-`;` forms (`$.n = $$.length`) reroute through the pipeline lowerer the same way lookup/`$out`/replace-root do.
 
 Implementation: `generateStreamLength` + the `topLevelStream` flag in [src/codegen.ts](../src/codegen.ts); the lazy materialiser, freshness allowlist, complete detection walk, sub-pipeline + function-body rejection in [src/pipeline.ts](../src/pipeline.ts); `LENGTH_SLOT` in [src/namespace.ts](../src/namespace.ts); reroutes in [src/index.ts](../src/index.ts). Spec [docs/specs/stream-length.md](specs/stream-length.md); user doc [docs/LANGUAGE.md](LANGUAGE.md) § `$$.length`; tests [test/stream-length.test.ts](../test/stream-length.test.ts) (19 cases) + a realistic case; every shape (compute/reuse/recompute, all call forms, rejections) verified executing against a live mongod 8.2.
-
----
-
-## 2026-06-18 — refactor: standardise the `__jsmql.` temp namespace, bucketed by kind
-
-Compiler-generated temporaries the document carries between stages now live in **kind-bucketed** sub-fields of the single `__jsmql` object, with a new single source of truth at [src/namespace.ts](../src/namespace.ts). Before, `let`/`const` bindings sat flat at `__jsmql.<name>`, lookup/scratch slots at `__jsmql.__lookup<n>`, and the dict-build reducer used a rogue **top-level** `__jsmqlDict` sibling (outside the `__jsmql` object entirely). Now:
-
-- `__jsmql.var.<name>` — `let` **and** `const` bindings (merged: let-vs-const is compile-time, a name is unique per scope, and codegen already tracks const-ness — so the keyword needn't leak into the field path). `bindingSlot()`.
-- `__jsmql.tmp.<n>` — anonymous scratch: lookup result slots, fan-out/`$unwind` slots, stream-method intermediates. The per-pipeline counter `createSlotAllocator()` stays in `lookup-translation.ts` (import-cycle reasons) but builds its path via `tmpSlot()`.
-- `__jsmql.<reservedName>` — named system values; the first lands with the stream-length feature (`__jsmql.length`).
-- Exception: `$group`/`$bucket` accumulator output keys can't be dotted, so group-produced scratch uses the flat reserved `GROUP_TMP` (`__jsmqlTmp`, formerly `__jsmqlDict`) and is consumed by the immediately-following stage.
-
-**Why:** bucketing makes user/compiler collisions structurally impossible — a user `let length` is `__jsmql.var.length`, distinct from the system `__jsmql.length`, so no name needs reserving — and keeps the developer's output clean behind one trailing `{ $unset: "__jsmql" }`. This is the prerequisite for `$$.length` (Phase 2) and any future temp-using feature, and the rule is now codified in [src/CLAUDE.md](../src/CLAUDE.md) § the `__jsmql` namespace.
-
-**Behaviour-identical:** these fields are internal and stripped before output, so final documents are byte-for-byte unchanged — only the intermediate field paths moved. The full suite (2317 tests) passes with no count change; the shipped `assert()` uses no `__jsmql` temp and is untouched. All four shapes (`var`/`tmp`/system/group-exception) plus the single `$unset` cleanup were verified executing against a live `mongod` 8.2. Touched `pipeline.ts` (binding paths + `$unset`), `lookup-translation.ts` (slot allocator), `stream-methods.ts` (dict-build), the new `namespace.ts`, and the path-stating comments + test expectations across the suite.
 
 ---
 
@@ -315,6 +359,21 @@ A nested lookup that captured the same field name at two enclosing levels produc
 Fix: every auto-extracted `$lookup.let` variable name now carries the **nesting depth** of the lookup that declares it — `v<depth>_<field>` (`letVarName` in [src/lookup-translation.ts](../src/lookup-translation.ts)). Depth is `enclosing.foreignParams.length`, threaded via a new `depth` parameter on `extractLetsFromExpr` / `extractLetsFromPipeline` → `createLetAllocator`. The reported case now emits `let: { v0_id: "$_id" }` (outer) and `let: { v1_id: "$_id" }` (inner), with the deepest `$match` reading `$$v1_id` (order) and `$$v0_id` (user) distinctly — verified joining correctly on `mongod`. This is deterministic (same input → same output; no heuristic), in keeping with the no-output-drift rule.
 
 Because the depth must disambiguate *any* shared field name (not just `_id`), the prefix is uniform: a single-level lookup's `let` changes from `v_id` / `userId` to `v0_id` / `v0_userId`, etc. These are internal correlation variables the user never writes by name, so the rename is a non-breaking, MQL-equivalent change. `$let` / `$map` / `$reduce` `vars` (which still use codegen's `safeVarName`) are untouched — this change is scoped to `$lookup.let`. Supersedes the "cross-level field-name collision" known-limitation note in [docs/specs/lookup-stage.md](specs/lookup-stage.md) (now resolved). Expected MQL across `test/lookup.test.ts`, `test/pipeline.test.ts`, `test/realistic.test.ts`, `test/stream-methods.test.ts`, and `test/literal-passthrough.test.ts` updated to the depth-prefixed names.
+
+---
+
+## 2026-06-18 — refactor: standardise the `__jsmql.` temp namespace, bucketed by kind
+
+Compiler-generated temporaries the document carries between stages now live in **kind-bucketed** sub-fields of the single `__jsmql` object, with a new single source of truth at [src/namespace.ts](../src/namespace.ts). Before, `let`/`const` bindings sat flat at `__jsmql.<name>`, lookup/scratch slots at `__jsmql.__lookup<n>`, and the dict-build reducer used a rogue **top-level** `__jsmqlDict` sibling (outside the `__jsmql` object entirely). Now:
+
+- `__jsmql.var.<name>` — `let` **and** `const` bindings (merged: let-vs-const is compile-time, a name is unique per scope, and codegen already tracks const-ness — so the keyword needn't leak into the field path). `bindingSlot()`.
+- `__jsmql.tmp.<n>` — anonymous scratch: lookup result slots, fan-out/`$unwind` slots, stream-method intermediates. The per-pipeline counter `createSlotAllocator()` stays in `lookup-translation.ts` (import-cycle reasons) but builds its path via `tmpSlot()`.
+- `__jsmql.<reservedName>` — named system values; the first lands with the stream-length feature (`__jsmql.length`).
+- Exception: `$group`/`$bucket` accumulator output keys can't be dotted, so group-produced scratch uses the flat reserved `GROUP_TMP` (`__jsmqlTmp`, formerly `__jsmqlDict`) and is consumed by the immediately-following stage.
+
+**Why:** bucketing makes user/compiler collisions structurally impossible — a user `let length` is `__jsmql.var.length`, distinct from the system `__jsmql.length`, so no name needs reserving — and keeps the developer's output clean behind one trailing `{ $unset: "__jsmql" }`. This is the prerequisite for `$$.length` (Phase 2) and any future temp-using feature, and the rule is now codified in [src/CLAUDE.md](../src/CLAUDE.md) § the `__jsmql` namespace.
+
+**Behaviour-identical:** these fields are internal and stripped before output, so final documents are byte-for-byte unchanged — only the intermediate field paths moved. The full suite (2317 tests) passes with no count change; the shipped `assert()` uses no `__jsmql` temp and is untouched. All four shapes (`var`/`tmp`/system/group-exception) plus the single `$unset` cleanup were verified executing against a live `mongod` 8.2. Touched `pipeline.ts` (binding paths + `$unset`), `lookup-translation.ts` (slot allocator), `stream-methods.ts` (dict-build), the new `namespace.ts`, and the path-stating comments + test expectations across the suite.
 
 ---
 

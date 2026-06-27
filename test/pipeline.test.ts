@@ -573,11 +573,10 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     ]);
   });
 
-  it("cross-DB source switch emits the `{ db, coll }` shape", () => {
-    expect(jsmql(`$$ = $$$$.analytics.events.filter(e => e.type === "purchase");`)).toEqual([
-      { $match: { $expr: false } },
-      { $unionWith: { coll: { db: "analytics", coll: "events" }, pipeline: [{ $match: { type: "purchase" } }] } },
-    ]);
+  it("cross-DB source switch is rejected", () => {
+    expect(() => jsmql(`$$ = $$$$.analytics.events.filter(e => e.type === "purchase");`)).toThrow(
+      /Cross-database reads aren't supported/,
+    );
   });
 
   it("`$$ = $$.filter(...)` preserves the outer let scope", () => {
@@ -754,21 +753,8 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  it("cross-database pivot ($$$$.<db>.<coll>) emits `from: { db, coll }`", () => {
-    expect(jsmql(`$$ = $$$$.analytics.events.filter(e => e.userId === $._id);`)).toEqual([
-      {
-        $lookup: {
-          from: { db: "analytics", coll: "events" },
-          localField: "_id",
-          foreignField: "userId",
-          as: "__jsmql.tmp.1",
-        },
-      },
-      { $unwind: "$__jsmql.tmp.1" },
-      { $replaceWith: "$__jsmql.tmp.1" },
-    ]);
-  });
-
+  // (Cross-database pivot rejection is covered once by the source-switch case in
+  // the "replace stream" describe — same `requireSameDbColl` choke point.)
   it("non-correlated predicate keeps using $unionWith (no regression)", () => {
     // No `$.<field>` ref — the predicate is a flat scan, so the existing
     // `$limit:0 + $unionWith` lowering is correct.

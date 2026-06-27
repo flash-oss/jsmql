@@ -58,15 +58,8 @@ describe(".slice — on $$$.<coll> (source switch)", () => {
       { $unionWith: { coll: "archive", pipeline: [{ $match: { tier: "gold" } }, { $limit: 10 }] } },
     ]);
   });
-
-  it("cross-database $$$$.<db>.<coll>.filter(...).slice(...)", () => {
-    expect(jsmql("$$ = $$$$.archive.users.filter(u => u.tier === 'gold').slice(0, 5);")).toEqual([
-      { $match: { $expr: false } },
-      {
-        $unionWith: { coll: { db: "archive", coll: "users" }, pipeline: [{ $match: { tier: "gold" } }, { $limit: 5 }] },
-      },
-    ]);
-  });
+  // (A cross-database source-switch — `$$ = $$$$.<db>.<coll>.filter(...)` — is
+  // rejected; covered once in pipeline.test.ts, not re-tested per chain method.)
 });
 
 describe(".slice — preserves existing $$.filter(...) behaviour", () => {

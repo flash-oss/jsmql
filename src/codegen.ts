@@ -1107,14 +1107,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         expr.pos,
       );
     case "ClusterRef":
-      // Like DatabaseRef: the two supported uses of `$$$$.<db>.<coll>` are
-      // `.find/.filter(pred)` (cross-db lookup) and `= <RHS>` (cross-db $out).
-      // Both are materialised pre-codegen. Reaching this case means a use
-      // outside those shapes (bare reference, expression-only position,
-      // wrong depth, dynamic db/coll names, etc.).
+      // The one value-position use of `$$$$.<db>.<coll>` is `= <RHS>` (cross-db
+      // $out), materialised pre-codegen. Cross-database READS (`.find/.filter`,
+      // `$$.push(...)`, `$$ = …`) are NOT supported — MongoDB rejects the
+      // `{ db, coll }` join/union namespace on a regular server — and are rejected
+      // at their own lowering site (`requireSameDbColl`). Reaching this case means
+      // a bare reference / expression-only position / wrong depth / dynamic names.
       throw new CodegenError(
-        `'$$$$.<db>.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a cross-database $lookup), ` +
-          `or assigned to as a destination ('$$$$.<db>.<coll> = $$' → cross-database $out). A direct call on '$$$$' is a server/cluster-scoped diagnostic source stage ` +
+        `'$$$$.<db>.<coll>' is only usable as a cross-database $out destination ('$$$$.<db>.<coll> = $$'). ` +
+          `Cross-database READS aren't supported (a $lookup/$unionWith with a '{ db, coll }' namespace is rejected by a standalone / replica-set / sharded MongoDB) — use a same-database reference '$$$.<coll>' instead. ` +
+          `A direct call on '$$$$' is a server/cluster-scoped diagnostic source stage ` +
           `(\`$$$$.currentOp({...})\`, \`$$$$.listSessions({...})\`, \`$$$$.listLocalSessions({...})\`, \`$$$$.listSampledQueries({...})\`, \`$$$$.shardedDataDistribution()\`) as the first Pipeline stage. ` +
           `Bare '$$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos,

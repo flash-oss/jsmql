@@ -63,8 +63,10 @@ import {
   validateLookupShape,
   translatePredicate,
   extractLookupTarget,
+  requireSameDbColl,
   lowerLambdaPredicate,
   type LookupCall,
+  type LookupTarget,
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
@@ -807,8 +809,7 @@ function lowerReplaceRoot(
     }
     const slot = allocSlot();
     const pred = translatePredicate(direct, ctx, lowerBlockFn);
-    const from: string | { db: string; coll: string } =
-      direct.db !== undefined ? { db: direct.db, coll: direct.collection } : direct.collection;
+    const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
     const stages: object[] = [];
     if (pred.kind === "basic") {
       stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
@@ -1168,7 +1169,7 @@ function applyStreamMethods(
  */
 function lowerChainOnCollection(
   methods: MethodCallNode[],
-  target: { db?: string; collection: string },
+  target: LookupTarget,
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
   allocSlot: SlotAllocator,
@@ -1219,8 +1220,7 @@ function lowerChainOnCollection(
     if (result.replacesPreviousStage) inner.pop();
     inner.push(...result.stages);
   }
-  const from: string | { db: string; coll: string } =
-    target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   // Drop the incoming stream, then union in the switched source. `$limit: 0`
   // is rejected by the server ("the limit must be positive"), so clear the
   // stream with a never-matching `$match` instead.
@@ -1263,7 +1263,7 @@ function lowerChainOnCollection(
  */
 function lowerLookupPivot(
   methods: MethodCallNode[],
-  target: { db?: string; collection: string },
+  target: LookupTarget,
   outerCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
   allocSlot: SlotAllocator,
@@ -1272,8 +1272,7 @@ function lowerLookupPivot(
   const restMethods = methods.slice(1);
   const lambda = filterMethod.args[0] as LambdaNode;
   const slot = allocSlot();
-  const from: string | { db: string; coll: string } =
-    target.db !== undefined ? { db: target.db, coll: target.collection } : target.collection;
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   let lookupStage: object;
   if (restMethods.length === 0) {
     // No chain methods after `.filter` — basic form is fine when the

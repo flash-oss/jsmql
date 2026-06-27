@@ -353,6 +353,35 @@ export function extractLookupTarget(receiver: Expr, ctx: GenerateCtx): LookupTar
 }
 
 /**
+ * Resolve a lookup/union READ target to its `$lookup.from` / `$unionWith.coll`
+ * value — and **reject cross-database reads**. A same-database target
+ * (`$$$.<coll>`, `db === undefined`) returns the bare collection string. A
+ * cross-database target (`$$$$.<db>.<coll>`) is NOT lowered: it would emit a
+ * `$lookup`/`$unionWith` with a `{ db, coll }` namespace, which a standalone /
+ * replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation
+ * only) — so emitting it violates HR3. The error redirects to a same-database
+ * reference. Cross-database WRITES are unaffected: `$out` builds its own
+ * `{ db, coll }` body in `out-translation.ts`, and the server accepts that.
+ *
+ * Single choke point for every read-side `from`/`coll`: lookup (`lowerLookup`,
+ * `tryExtractChainedLookup`), `$ =`/`$$ =` lookup-pivots and source-switch
+ * unions (pipeline.ts), and `$$.push(...)` unions (union-translation.ts).
+ */
+export function requireSameDbColl(db: string | undefined, collection: string, pos: number): string {
+  if (db !== undefined) {
+    throw new CodegenError(
+      `Cross-database reads aren't supported: '$$$$.${db}.${collection}' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, ` +
+        `which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation only). ` +
+        `Reference a collection in the CURRENT database instead — write '$$$.${collection}' (drop the '$$$$.${db}.' prefix) — ` +
+        `and run the pipeline against the '${db}' database if that's where the data lives. ` +
+        `(Cross-database WRITES still work: '$$$$.${db}.${collection} = $$' lowers to $out.)`,
+      pos,
+    );
+  }
+  return collection;
+}
+
+/**
  * Recognise `$$$.<coll>.find(pred)` / `$$$.<coll>.filter(pred)` /
  * `$$$$.<db>.<coll>.find(pred)` / `$$$$.<db>.<coll>.filter(pred)` and all
  * their bracket variants — including `jsmql.compile`-parameter-bound
@@ -1767,15 +1796,10 @@ export function lowerLookup(
 ): object[] {
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const pred = translatePredicate(call, outerCtx, lowerBlock, enclosing);
-  // `$lookup.from` is a bare string for same-database joins (`$$$.<coll>`) and
-  // an object `{ db, coll }` for cross-database joins (`$$$$.<db>.<coll>`).
-  // The object shape is the Atlas Data Federation form — community-server
-  // MongoDB does not accept it; we still emit it because the surface lights
-  // up on Atlas Data Federation and the runtime error on community Mongo
-  // names the offending shape if a user runs it on the wrong deployment.
-  // See docs/specs/lookup-stage.md and the DEVLOG entry.
-  const from: string | { db: string; coll: string } =
-    call.db !== undefined ? { db: call.db, coll: call.collection } : call.collection;
+  // `$lookup.from` is the bare collection string. Same-database joins only —
+  // a cross-database `$$$$.<db>.<coll>` target is rejected by `requireSameDbColl`
+  // (MongoDB doesn't accept the `{ db, coll }` join namespace; see HR3).
+  const from = requireSameDbColl(call.db, call.collection, call.pos);
   const stages: object[] = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
@@ -1987,8 +2011,7 @@ function tryExtractChainedLookup(
   // chain is the entire RHS of a `$.<field> = <chain>` and use the field
   // path as `as` directly, dropping the trailing `$set` + `$unset`.)
   const slot = allocSlot();
-  const from: string | { db: string; coll: string } =
-    direct.db !== undefined ? { db: direct.db, coll: direct.collection } : direct.collection;
+  const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
   return {
     stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }],
     rewritten: { type: "FieldRef", path: slot, pos: expr.pos },
