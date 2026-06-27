@@ -5286,20 +5286,13 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("$$$$ — current cluster", () => {
-    // Like $$$, the four bracket combos all reach the same bare-reference
-    // error when used outside the supported cross-database lookup or $out
-    // sugar shapes. Lookup behaviour: test/lookup.test.ts; $out: test/out.test.ts.
-    it("dot.dot: $$$$.myDb.myColl is not a value outside a lookup or $out chain", () => {
-      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(/cross-database \$lookup.*cross-database \$out/);
-    });
-    it('bracket[bracket]: $$$$["db"]["coll"] is not a value either', () => {
-      expect(() => jsmql.expr('$$$$["db"]["coll"]')).toThrow(/cross-database \$lookup.*cross-database \$out/);
-    });
-    it('bracket.dot: $$$$["db"].coll is not a value either', () => {
-      expect(() => jsmql.expr('$$$$["db"].coll')).toThrow(/cross-database \$lookup.*cross-database \$out/);
-    });
-    it('dot.bracket: $$$$.db["coll"] is not a value either', () => {
-      expect(() => jsmql.expr('$$$$.db["coll"]')).toThrow(/cross-database \$lookup.*cross-database \$out/);
+    // A bare `$$$$.<db>.<coll>` (no .find/.filter, no `= …`) is only usable as a
+    // cross-database $out destination — cross-database reads aren't supported. The
+    // bracket/mixed-access combos reach the same error via the same path (bracket
+    // parsing itself is exercised by the $out cases in test/out.test.ts), so one
+    // representative case suffices here.
+    it("dot.dot: $$$$.myDb.myColl is only a cross-db $out destination", () => {
+      expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(/only usable as a cross-database \$out destination/);
     });
     it(".pos points at the $$$$ prefix", () => {
       const r = jsmql.validate("  $$$$.db.coll");

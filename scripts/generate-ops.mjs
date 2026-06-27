@@ -102,8 +102,10 @@ const CONTEXT_REFS = {
     name: "$$$$",
     doc:
       "jsmql cluster/server context reference (`$$$$`, run on the admin database). " +
-      "Names a cluster-scoped diagnostic source stage, or heads cross-database joins " +
-      "(`$$$$.db.coll.find/filter(...)` → `$lookup`) and writes (`$$$$.db.coll = ...`).",
+      "Names a cluster-scoped diagnostic source stage, or heads cross-database `$out` writes " +
+      "(`$$$$.db.coll = ...`). Cross-database READS aren't supported — MongoDB rejects the " +
+      "`{ db, coll }` `$lookup`/`$unionWith` namespace on a regular server; use a same-database " +
+      "reference (`$$$.coll`) instead.",
   },
 };
 

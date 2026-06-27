@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-27 — fix!: stop lowering cross-database READS (`$$$$.<db>.<coll>` joins/unions) — reject at compile time
+
+Cross-database **reads** are no longer lowered — they're rejected at compile time. The
+forms removed: `$$$$.<db>.<coll>.find/filter(...)` (cross-db `$lookup`), the replace-root
+`$ = $$$$.<db>.<coll>.find(...)`, the source-switch `$$ = $$$$.<db>.<coll>.filter(...)`, and
+the union `$$.push(...$$$$.<db>.<coll>...)`. All of them could only compile to a `$lookup` /
+`$unionWith` with a `from`/`coll` = `{ db, coll }` **namespace object**, which is the Atlas
+Data Federation form — a standalone / replica-set / sharded MongoDB **rejects** it at runtime
+(verified on a live mongod: `$lookup` → "not supported"; `$unionWith.coll` → "wrong type
+'object', expected 'string'"). jsmql was knowingly emitting un-runnable MQL (HR3 violation),
+so the surface is withdrawn.
+
+**Mechanism — one choke point.** New `requireSameDbColl(db, collection, pos)` in
+[`src/lookup-translation.ts`](../src/lookup-translation.ts): same-database (`db === undefined`,
+i.e. `$$$.<coll>`) returns the bare collection string; cross-database (`db` set) **throws** a
+`CodegenError` (matches `/Cross-database reads aren't supported/`) that redirects to a
+same-database `$$$.<coll>` reference. Every read-side `from`/`coll` builder funnels through it —
+`lowerLookup`, `tryExtractChainedLookup`, the replace-root + source-switch + lookup-pivot
+builders in `pipeline.ts`, and the `$$.push` builders in `union-translation.ts` — so `from`
+simplifies to always-`string`. The bare-`$$$$.<db>.<coll>` codegen message was updated to stop
+advertising cross-db `$lookup` as valid.
+
+**Kept (verified working on mongod):** cross-database **WRITES** — `$$$$.<db>.<coll> = $$` →
+`{ $out: { db, coll } }` (its own builder in `out-translation.ts`, untouched); same-database
+(`$$$.<coll>`) reads; and the `$$$$` server/cluster diagnostic stages (`$$$$.currentOp()`, …).
+
+Behaviour change (a `fix!` — pre-1.0, no version bump). Tests: the cross-database output
+assertions across lookup/union/pipeline/stream-methods were replaced with rejection tests —
+consolidated to one per distinct lowering path that reaches `requireSameDbColl` (lookup-value,
+chained terminal, source-switch, `$$.push` union), plus the bare-`$$$$.<db>.<coll>` message
+(codegen). Syntax variations (dot vs bracket, `.find` vs `.filter`, flat vs correlated,
+with/without a trailing chain method) reach the same choke point and aren't re-tested
+(suite 2427 → 2402, all green). Docs: [LANGUAGE.md](LANGUAGE.md) § "Cross-database reads: not
+supported", [lookup-stage.md](specs/lookup-stage.md) § "Cross-database reads are rejected",
+[union-stage.md](specs/union-stage.md), [context-references.md](specs/context-references.md),
+[replace-stream-stage.md](specs/replace-stream-stage.md), README, and the generated `ops.ts`
+`$$$$` description. (No DEFERRED §B entry, per the developer.)
+
+---
+
 ## 2026-06-27 — docs: showcase "snapshot one user → 5 newest orders" now asserts uniqueness + same-DB pivot
 
 The headline example (README, LANGUAGE.md "narrow, guard, pivot", and the

@@ -24,8 +24,8 @@ for the user-facing reference.
 | `...$$$.<coll>.filter(pred)` | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>] } }` |
 | `$$$.<coll>.find(pred)` (no spread) | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>, { $limit: 1 }] } }` |
 | `{ inline document }` (one or more, consecutive) | `{ $unionWith: { pipeline: [{ $documents: [<docs>] }] } }` (consecutive inline docs batch into one stage) |
-| `...$$$$.<db>.<coll>[.filter(pred)]` | `{ $unionWith: { coll: { db, coll }, pipeline?: [...] } }` (Atlas Data Federation; community server rejects at runtime) |
-| `$$$$.<db>.<coll>.find(pred)` | Cross-DB variant of the `.find` line, same `$match` + `$limit: 1` body |
+| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace is Atlas-Data-Federation-only; `requireSameDbColl` throws (message matches `/Cross-database reads aren't supported/`, redirects to `...$$$.<coll>`) |
+| `$$$$.<db>.<coll>.find(pred)` | **rejected** — same cross-database read rejection as the line above |
 
 Source order across the argument list is preserved exactly. A `{...}` between
 two non-inline args produces three stages — the implementation flushes the
@@ -132,6 +132,7 @@ argument, the inline doc, or the entire push call as appropriate).
 | `$$.push(...$$$.coll.find(p))` (spurious `...`) | `$$.push(...arg) was given ...$$$.<coll>.find(pred) — .find returns a single document, not an array, so spreading isn't meaningful (JS would TypeError). Drop the ... to append the matched document, or switch to ...$$$.<coll>.filter(pred) to append every match.` |
 | `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | `$$.push(...) argument must be a document literal ({…}), a $$$.<coll>.find(pred) scalar, or a spread of $$$.<coll>[.filter(pred)]. Got a number/string/null literal — collections only hold documents.` |
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (correlated) | `$$.push(...$$$.<coll>.filter(pred)) — predicate references the local document ($.<field>), but MongoDB's $unionWith has no let slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a $match(...) stage before $$.push(...).` |
+| `$$.push(...$$$$.<db>.<coll>[.filter(p)])` / `$$.push($$$$.<db>.<coll>.find(p))` (cross-database) | `Cross-database reads aren't supported: '$$$$.<db>.<coll>' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects … write '$$$.<coll>' (drop the '$$$$.<db>.' prefix) … (Cross-database WRITES still work: '$$$$.<db>.<coll> = $$' lowers to $out.)` — thrown at the shared `requireSameDbColl` choke point in `lookup-translation.ts`. |
 | `$$.push(...)` inside a lookup block-body | `'$$.push(...)' inside a lookup's block-body lambda is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.` |
 | `$$.push(...)` inside a `$facet.*` / `$lookup.pipeline` / `$unionWith.pipeline` sub-pipeline | `'$$.push(...)' inside a sub-pipeline (…) is not supported — $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.` |
 | `jsmql.filter("$$.push(...)")` / `jsmql.expr(...)` | `<apiName>() does not allow '$$.push(...)' — collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.` |
@@ -150,8 +151,12 @@ pushes work on every version that supports `$unionWith` (4.4+).
   via a `$set` stage *before* the push and a `$match` against that captured
   value inside the sub-pipeline. Out of scope for v1 — the explicit "no
   correlation" error is the documented contract.
-- **Negative tests against community server.** A live-server smoke test for
-  the cross-DB `from: { db, coll }` rejection is filed in
-  [`docs/specs/lookup-stage.md`](./lookup-stage.md) and applies here too.
+- **Cross-database unions are rejected at compile time.** A cross-database
+  `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`
+  no longer emits a `{ db, coll }` `$unionWith` namespace (that shape is
+  Atlas-Data-Federation-only and a regular server rejects it at runtime);
+  it throws at the shared `requireSameDbColl` choke point — see
+  [`docs/specs/lookup-stage.md`](./lookup-stage.md) § Cross-database reads
+  are rejected. The cross-database `$out` write is unaffected.
 - **Auto-`$documents`-only `$unionWith` server-version guard.** No compile-time
   check that the deployment is 6.0+ — the runtime error is precise enough.

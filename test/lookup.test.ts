@@ -478,16 +478,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     expect(innermost.let).toEqual({ jsmql_f2_x: "$x" });
   });
 
-  it("cross-database outer with same-database inner", () => {
-    const out = jsmql("$.x = $$$$.dw.archive.filter(a => $$$.local.filter(l => l.x === a.x).length > 0)") as Array<
-      Record<string, unknown>
-    >;
-    const outer = out[0].$lookup as { from: { db: string; coll: string }; pipeline: Array<Record<string, unknown>> };
-    expect(outer.from).toEqual({ db: "dw", coll: "archive" });
-    const inner = outer.pipeline[0].$lookup as { from: string };
-    expect(inner.from).toBe("local");
-  });
-
   it("inner lookup with a non-trivial predicate (compound &&) still extracts let-vars correctly", () => {
     const out = jsmql(
       "$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).length > 0)",
@@ -614,210 +604,25 @@ describe("$$$.coll.find/filter — interactions with other features", () => {
   });
 });
 
-describe("$$$$.<db>.<coll>.find/filter — cross-database lookups", () => {
-  // The cross-database surface uses MongoDB's `from: { db, coll }` shape —
-  // accepted on Atlas Data Federation, rejected by community MongoDB. The
-  // emitted MQL is the same for both; whether it works at runtime depends
-  // on the deployment. Same predicate-dispatch and chained-terminal rules
-  // as the same-database `$$$.<coll>` surface.
+describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", () => {
+  // Cross-database reads no longer lower to a `$lookup`/`$unionWith` with a
+  // `{ db, coll }` namespace (rejected by standalone / replica-set / sharded
+  // MongoDB). Every read shape throws; the fix is the same-database `$$$.<coll>`
+  // form. (Cross-database WRITES — `$$$$.<db>.<coll> = $$` → $out — still work.)
 
-  it("dot.dot form: $$$$.<db>.<coll>.filter emits `from: { db, coll }`", () => {
-    expect(jsmql("$.orders = $$$$.analytics.orders.filter(o => o.userId === $._id);")).toEqual([
-      {
-        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
-      },
-    ]);
-  });
-
-  it("dot.dot form: .find adds the $set $first follow-up", () => {
-    expect(jsmql("$.user = $$$$.analytics.users.find(u => u._id === $.userId);")).toEqual([
-      { $lookup: { from: { db: "analytics", coll: "users" }, localField: "userId", foreignField: "_id", as: "user" } },
-      { $set: { user: { $first: "$user" } } },
-    ]);
-  });
-
-  it("bracket.bracket form: $$$$['db']['coll']", () => {
-    expect(jsmql(`$.orders = $$$$["analytics"]["orders"].filter(o => o.userId === $._id);`)).toEqual([
-      {
-        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
-      },
-    ]);
-  });
-
-  it("dot.bracket form: $$$$.db['coll']", () => {
-    expect(jsmql(`$.orders = $$$$.analytics["orders"].filter(o => o.userId === $._id);`)).toEqual([
-      {
-        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
-      },
-    ]);
-  });
-
-  it("bracket.dot form: $$$$['db'].coll", () => {
-    expect(jsmql(`$.orders = $$$$["analytics"].orders.filter(o => o.userId === $._id);`)).toEqual([
-      {
-        $lookup: { from: { db: "analytics", coll: "orders" }, localField: "_id", foreignField: "userId", as: "orders" },
-      },
-    ]);
-  });
-
-  it("compound predicate falls through to pipeline form with auto-let extraction", () => {
-    const out = jsmql("$.user = $$$$.analytics.users.find(u => u._id === $.userId && u.active);");
-    const lookup = ((out as object[])[0] as { $lookup: { from: object; let: object } }).$lookup;
-    expect(lookup.from).toEqual({ db: "analytics", coll: "users" });
-    expect(lookup.let).toEqual({ jsmql_f0_userId: "$userId" });
-  });
-
-  it("block-body lambdas work the same as `$$$.<coll>`", () => {
-    const out = jsmql(`
-      $.recent = $$$$.analytics.orders.filter(o => {
-        $match(o.userId === $._id);
-        $sort({ createdAt: -1 });
-        $limit(5);
-      });
-    `);
-    expect(out).toEqual([
-      {
-        $lookup: {
-          from: { db: "analytics", coll: "orders" },
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { createdAt: -1 } },
-            { $limit: 5 },
-          ],
-          as: "recent",
-        },
-      },
-    ]);
-  });
-
-  it("chained .length on .filter works against a cross-DB lookup", () => {
-    const out = jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;");
-    expect(out).toEqual([
-      {
-        $lookup: {
-          from: { db: "analytics", coll: "orders" },
-          localField: "_id",
-          foreignField: "userId",
-          as: "__jsmql.tmp.1",
-        },
-      },
-      { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
-      { $set: { "__jsmql.var.n": "$__jsmql.tmp.1" } },
-      { $unset: "__jsmql" },
-    ]);
-  });
-
-  it("chained .reduce on .filter folds over the cross-DB result", () => {
-    const out = jsmql(
-      "let total = $$$$.bank.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);",
-    );
-    const lookup = ((out as object[])[0] as { $lookup: { from: object } }).$lookup;
-    expect(lookup.from).toEqual({ db: "bank", coll: "tx" });
-  });
-
-  it("member access on a cross-DB .find result", () => {
-    const out = jsmql("let name = $$$$.analytics.users.find(u => u._id === $.userId).name;");
-    expect(out).toEqual([
-      {
-        $lookup: {
-          from: { db: "analytics", coll: "users" },
-          localField: "userId",
-          foreignField: "_id",
-          as: "__jsmql.tmp.1",
-        },
-      },
-      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
-      { $set: { "__jsmql.var.name": "$__jsmql.tmp.1.name" } },
-      { $unset: "__jsmql" },
-    ]);
-  });
-
-  it("wrong method on $$$$.<db>.<coll> uses the cluster spelling in the error", () => {
-    expect(() => jsmql("$.x = $$$$.analytics.users.fnid(u => u._id === $._id);")).toThrow(
-      /'\$\$\$\$\.<db>\.<coll>' supports \.find\(pred\) and \.filter\(pred\), not \.fnid\(\)\. Did you mean '\.find'\?/,
+  it("a .filter lookup is rejected", () => {
+    expect(() => jsmql("$.x = $$$$.analytics.orders.filter(o => o.userId === $._id)")).toThrow(
+      /Cross-database reads aren't supported/,
     );
   });
 
-  it(".find().length on a cross-DB lookup is rejected (same rule as $$$)", () => {
-    expect(() => jsmql("let n = $$$$.analytics.users.find(u => u._id === $._id).length;")).toThrow(
-      /\.length on a \.find\(\) result is not meaningful/,
-    );
-  });
-
-  it("Filter-mode rejection uses the generic lookup message (covers both $$$ and $$$$)", () => {
-    expect(() => jsmql.filter("$.x = $$$$.analytics.users.find(u => u._id === $._id)")).toThrow(
-      /jsmql\.filter\(\) does not allow lookup syntax/,
-    );
-  });
-
-  it("intermixes $$$ and $$$$ lookups in one pipeline", () => {
-    const out = jsmql(`
-      $.orders = $$$.orders.filter(o => o.userId === $._id);
-      $.archivedOrders = $$$$.cold_storage.orders.filter(o => o.userId === $._id);
-    `);
-    expect(out).toEqual([
-      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } },
-      {
-        $lookup: {
-          from: { db: "cold_storage", coll: "orders" },
-          localField: "_id",
-          foreignField: "userId",
-          as: "archivedOrders",
-        },
-      },
-    ]);
-  });
-
-  it("compile-time-bound db name resolves to the cross-DB $lookup from", () => {
-    // `jsmql.compile` parameter bindings are compile-time constants — the
-    // value is validated as JSON-safe at call time. Resolving them into the
-    // `$lookup.from` object matches the rule MongoDB itself enforces (plan-
-    // time constant). The promise in docs/specs/context-references.md is
-    // honoured: the inner expression can be "a jsmql.compile parameter".
-    const fn = jsmql.compile(({ dbName }, $) => ($.archived = $$$$[dbName].orders.filter((o) => o.userId === $._id)));
-    expect(fn({ dbName: "cold_storage" })).toEqual([
-      {
-        $lookup: {
-          from: { db: "cold_storage", coll: "orders" },
-          localField: "_id",
-          foreignField: "userId",
-          as: "archived",
-        },
-      },
-    ]);
-  });
-
-  it("compile-time-bound coll name (same DB) resolves the $$$[collVar] form", () => {
-    const fn = jsmql.compile(({ collName }, $) => ($.rows = $$$[collName].filter((o) => o.userId === $._id)));
-    expect(fn({ collName: "orders" })).toEqual([
-      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "rows" } },
-    ]);
-  });
-
-  it("compile-time-bound db AND coll names compose", () => {
-    const fn = jsmql.compile(({ db, coll }, $) => ($.rows = $$$$[db][coll].filter((o) => o.userId === $._id)));
-    expect(fn({ db: "cold_storage", coll: "orders" })).toEqual([
-      {
-        $lookup: {
-          from: { db: "cold_storage", coll: "orders" },
-          localField: "_id",
-          foreignField: "userId",
-          as: "rows",
-        },
-      },
-    ]);
-  });
-
-  it("non-string parameter binding in a name position is rejected with a precise error", () => {
-    const fn = jsmql.compile(({ dbId }, $) => ($.rows = $$$$[dbId].orders.filter((o) => o.userId === $._id)));
-    expect(() => fn({ dbId: 42 })).toThrow(/parameter binding must be a string/);
-  });
-
-  it("a runtime field-ref in the name position is rejected (bare-reference error)", () => {
-    // $.field is runtime-only and can't materialise into $lookup.from at compile time.
-    expect(() => jsmql("$.x = $$$$[$.dynDb].orders.filter(o => o.userId === $._id);")).toThrow(
-      /'\$\$\$\$\.<db>\.<coll>'/,
+  // `.find` vs `.filter`, dot vs bracket access, and the nested-with-same-db-inner
+  // case all reject at the SAME `requireSameDbColl` point as the `.filter` case
+  // above — not retested. The chained terminal is a DISTINCT lowering path
+  // (`tryExtractChainedLookup`, not `lowerLookup`), so it keeps its own case:
+  it("a chained .length on a cross-DB .filter is rejected", () => {
+    expect(() => jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;")).toThrow(
+      /Cross-database reads aren't supported/,
     );
   });
 });

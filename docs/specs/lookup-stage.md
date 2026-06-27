@@ -1,8 +1,8 @@
-# `$$$.<coll>` / `$$$$.<db>.<coll>` `.find / .filter` → `$lookup`
+# `$$$.<coll>` `.find / .filter` → `$lookup` (cross-database `$$$$.<db>.<coll>` reads are rejected)
 
 ## What this covers
 
-The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection (both `$$$.<coll>` same-database and `$$$$.<db>.<coll>` cross-database shapes), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.tmp.<N>` slots, the mode-gate behaviour, the deployment requirement for the cross-database `from: { db, coll }` shape, and the error catalog.
+The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection of the `$$$.<coll>` same-database shape (a `$$$$.<db>.<coll>` cross-database **read** is detected only to be **rejected** — see § Cross-database reads are rejected), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.tmp.<N>` slots, the mode-gate behaviour, the cross-database rejection at the `requireSameDbColl` choke point, and the error catalog.
 
 ## Why `$$$` (and not `this.`)
 
@@ -99,20 +99,25 @@ A chained terminal that doesn't carry its own predicate (`<lookup>.length`, `.re
 
 The slot allocator (`makeSlotTracking`) returns `{ alloc, used }` so the trailing `$unset "__jsmql"` cleanup fires whenever either a `let` was declared **or** at least one internal lookup slot was used — keeping the trailing cleanup symmetric with the existing `let`-only path.
 
-## Cluster-rooted (`$$$$`) cross-database joins
+## Cross-database reads are rejected
 
-The cluster-rooted surface (`$$$$.<db>.<coll>.find/filter(...)`) is identical to the database-rooted surface in every respect *except* the `$lookup.from` shape:
+A cluster-rooted **read** — `$$$$.<db>.<coll>.find/filter(...)` (a cross-database `$lookup`), and by extension the cross-database `$unionWith` (`$$.push(...$$$$.<db>.<coll>...)`), the replace-root (`$ = $$$$.<db>.<coll>.find(...)`), and the source-switch (`$$ = $$$$.<db>.<coll>.filter(...)`) forms — is **rejected at compile time**.
 
-- **Same-database (`$$$.<coll>`):** `lowerLookup` emits `from: "<coll>"` (bare string) — the only shape standard community MongoDB accepts.
-- **Cross-database (`$$$$.<db>.<coll>`):** `lowerLookup` emits `from: { db: "<db>", coll: "<coll>" }` (object) — the [MongoDB Atlas Data Federation form](https://www.mongodb.com/docs/atlas/data-federation/query/sql/aggregation-pipeline-stages/). The community MongoDB server **does not** accept this form (`$lookup.from` is server-validated to be a string), so the lowered MQL only runs on Atlas Data Federation or equivalent federated deployments. jsmql does not gate on deployment — the lowering is the same regardless, and the user sees the runtime error if they target the wrong server. The docs section in [LANGUAGE.md → Cross-database lookups](../LANGUAGE.md#cross-database-lookups-dbcollfind--filter) names this requirement up front.
+A cross-database read can only compile to `$lookup` (or `$unionWith`) with `from: { db: "<db>", coll: "<coll>" }` — a `{ db, coll }` *namespace object*. That object form is the [Atlas Data Federation form](https://www.mongodb.com/docs/atlas/data-federation/query/sql/aggregation-pipeline-stages/); every **regular** MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` / `$unionWith` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (never knowingly emit invalid MQL), jsmql rejects these reads at compile time rather than emit a shape that won't run on a non-federated server.
 
-Detection differences:
-- `LookupCall.db` carries the database name when extracted from `$$$$.<db>.<coll>`; undefined for `$$$.<coll>`.
-- `extractLookupTarget` walks one or two `StaticAccess` steps. The outer step yields the collection name; the inner (if present) yields the db name. The leaf must be a `DatabaseRef` (one step) or `ClusterRef` (two steps); deeper chains return null and the bare-reference codegen path then surfaces the targeted "must be followed by .find/.filter" error.
-- `validateLookupShape`'s `classifyLookupReceiver` returns `'$$$.<coll>'` for DatabaseRef-rooted chains and `'$$$$.<db>.<coll>'` for ClusterRef-rooted chains, so the wrong-method / wrong-arity error messages name the right spelling.
-- The parser's `isStreamRooted` (used to enable sub-pipeline block-body lambdas for `find` / `filter` / `map`) accepts a `DatabaseRef`, `ClusterRef`, or `CollectionRef` leaf, walking through `MemberAccess` / `IndexAccess` / `MethodCall` hops.
+**The choke point: `requireSameDbColl`.** `requireSameDbColl(db, collection, pos)` ([`src/lookup-translation.ts`](../../src/lookup-translation.ts)) is the single gate every lowering path funnels through to resolve the `from` slot. When `db` is set (a `$$$$.<db>.<coll>` source) it throws a `CodegenError` (message matches `/Cross-database reads aren't supported/`) that names the same-database fix — `'$$$.<coll>'` (drop the `$$$$.<db>.` prefix) — and notes that cross-database *writes* (`$$$$.<db>.<coll> = $$` → `$out`) still work. When `db` is undefined it returns the bare collection-name string. Both `lowerLookup` and the union-direct path call it, so `$lookup`, `$unionWith`, replace-root, and source-switch all reject cross-db reads uniformly. The user-facing wording lives in [LANGUAGE.md → Cross-database reads](../LANGUAGE.md#cross-database-reads-not-supported).
 
-Same in every other respect: same predicate-translation (basic vs pipeline form), same auto-`let` extraction, same chained-terminal materialisation, same nested-lookup rejection, same mode-gate behaviour, same `.find` $first follow-up, same `__jsmql.tmp.<N>` slot scheme.
+**Same-database (`$$$.<coll>`) is unchanged:** `lowerLookup` emits `from: "<coll>"` (bare string) — the only shape a standard MongoDB server accepts — and everything below (predicate translation, auto-`let` extraction, chained terminals, nested-lookup handling, mode gates) applies to it as before.
+
+**A bare `$$$$.<db>.<coll>`** (no `.find/.filter`, no `= …`) hits the codegen `ClusterRef` case, whose message says the form is *only usable as a cross-database `$out` destination* and that cross-database READS aren't supported (redirecting to same-db `$$$.<coll>`). The old "valid cross-database `$lookup`" framing is gone.
+
+**Detection still recognises the cross-db shape** — only to reject it:
+- `LookupCall.db` carries the database name when extracted from `$$$$.<db>.<coll>`; undefined for `$$$.<coll>`. A set `db` is what makes `requireSameDbColl` throw.
+- `extractLookupTarget` walks one or two `StaticAccess` steps. The outer step yields the collection name; the inner (if present) yields the db name. The leaf must be a `DatabaseRef` (one step) or `ClusterRef` (two steps); deeper chains return null and the bare-reference codegen path then surfaces the targeted error.
+- `validateLookupShape`'s `classifyLookupReceiver` returns `'$$$.<coll>'` for DatabaseRef-rooted chains and `'$$$$.<db>.<coll>'` for ClusterRef-rooted chains, so the *shape* errors (wrong method, wrong arity) still name the right spelling before the cross-db rejection fires.
+- The parser's `isStreamRooted` (used to enable sub-pipeline block-body lambdas for `find` / `filter` / `map`) accepts a `DatabaseRef`, `ClusterRef`, or `CollectionRef` leaf, walking through `MemberAccess` / `IndexAccess` / `MethodCall` hops. The cluster-rooted chain still *parses*; it's the lowering that rejects.
+
+The cross-database **write** (`$$$$.<db>.<coll> = $$` → `{ $out: { db, coll } }`) is unaffected — `$out` does accept the namespace object and MongoDB runs it. See [out-stage.md](./out-stage.md).
 
 **Compile-time names — three accepted index kinds.** `staticAccess(node, ctx)` resolves one step of a lookup-receiver chain to a compile-time string name. It accepts:
 
@@ -148,7 +153,8 @@ All errors use `CodegenError` with a meaningful `.pos`, so `validate()` returns 
 | Trigger                                                | Message (paraphrased)                                                                                          | Where                              |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | Bare `$$$.<coll>` (no `.find/.filter`)                  | `'$$$.<coll>' must be followed by .find(pred) or .filter(pred) and consumed as a value …`                       | codegen `DatabaseRef` case         |
-| Bare `$$$$.<db>.<coll>` (no `.find/.filter`)            | `'$$$$.<db>.<coll>' must be followed by .find(pred) or .filter(pred) … cross-database lookups are only valid in Pipeline mode …` | codegen `ClusterRef` case          |
+| Bare `$$$$.<db>.<coll>` (no `.find/.filter`, no `= …`)  | `'$$$$.<db>.<coll>' is only usable as a cross-database $out destination ('$$$$.<db>.<coll> = $$'). Cross-database READS aren't supported … use a same-database reference '$$$.<coll>' instead …` | codegen `ClusterRef` case          |
+| Cross-database read `$$$$.<db>.<coll>.find/filter(...)` (and the `$unionWith` / replace-root / source-switch variants) | `Cross-database reads aren't supported: '$$$$.<db>.<coll>' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects … write '$$$.<coll>' (drop the '$$$$.<db>.' prefix) … (Cross-database WRITES still work: '$$$$.<db>.<coll> = $$' lowers to $out.)` | `requireSameDbColl`                |
 | `$$$.<coll>.<other-method>(...)` (e.g. `.fnid(...)`)    | `'$$$.<coll>' supports .find(pred) and .filter(pred), not .<m>(). Did you mean '.find'?`                        | `validateLookupShape`              |
 | `$$$$.<db>.<coll>.<other-method>(...)`                  | `'$$$$.<db>.<coll>' supports .find(pred) and .filter(pred), not .<m>(). Did you mean '.find'?`                  | `validateLookupShape`              |
 | `$$$.<coll>.find()` (no args)                           | `.find(predicate) takes exactly one argument …`                                                                | `validateLookupShape`              |

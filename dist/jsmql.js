@@ -4864,7 +4864,7 @@ function _generateBody(expr, ctx) {
       );
     case "ClusterRef":
       throw new CodegenError(
-        `'$$$$.<db>.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a cross-database $lookup), or assigned to as a destination ('$$$$.<db>.<coll> = $$' \u2192 cross-database $out). A direct call on '$$$$' is a server/cluster-scoped diagnostic source stage (\`$$$$.currentOp({...})\`, \`$$$$.listSessions({...})\`, \`$$$$.listLocalSessions({...})\`, \`$$$$.listSampledQueries({...})\`, \`$$$$.shardedDataDistribution()\`) as the first Pipeline stage. Bare '$$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
+        `'$$$$.<db>.<coll>' is only usable as a cross-database $out destination ('$$$$.<db>.<coll> = $$'). Cross-database READS aren't supported (a $lookup/$unionWith with a '{ db, coll }' namespace is rejected by a standalone / replica-set / sharded MongoDB) \u2014 use a same-database reference '$$$.<coll>' instead. A direct call on '$$$$' is a server/cluster-scoped diagnostic source stage (\`$$$$.currentOp({...})\`, \`$$$$.listSessions({...})\`, \`$$$$.listLocalSessions({...})\`, \`$$$$.listSampledQueries({...})\`, \`$$$$.shardedDataDistribution()\`) as the first Pipeline stage. Bare '$$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()).`,
         expr.pos
       );
     case "ArrayLiteral":
@@ -8095,10 +8095,7 @@ function lowerSpreadArg(arg, outerCtx, lowerBlock2) {
   }
   const target = extractLookupTarget(inner, outerCtx);
   if (target !== null) {
-    if (target.db !== void 0) {
-      return { $unionWith: { coll: { db: target.db, coll: target.collection } } };
-    }
-    return { $unionWith: target.collection };
+    return { $unionWith: requireSameDbColl(target.db, target.collection, target.pos) };
   }
   throw new CodegenError(
     `$$.push(...arg) \u2014 spread argument must be \`$$$.<coll>\`, \`$$$.<coll>.filter(pred)\`, or the cross-DB \`$$$$.<db>.<coll>[.filter(pred)]\` form. Spreading anything else isn't meaningful for collection union.`,
@@ -8117,7 +8114,7 @@ function lowerFindAsUnion(call, outerCtx, lowerBlock2) {
 function buildUnionWith(call, outerCtx, lowerBlock2, limitOne) {
   const pipeline = translateUnionPredicate(call, outerCtx, lowerBlock2);
   if (limitOne) pipeline.push({ $limit: 1 });
-  const from = call.db !== void 0 ? { db: call.db, coll: call.collection } : call.collection;
+  const from = requireSameDbColl(call.db, call.collection, call.pos);
   if (pipeline.length === 0) {
     return { $unionWith: from };
   }
@@ -9091,6 +9088,15 @@ function extractLookupTarget(receiver, ctx) {
   if (inner.object.type !== "ClusterRef") return null;
   return { pos: inner.object.pos, db: inner.name, collection: outer.name };
 }
+function requireSameDbColl(db, collection, pos) {
+  if (db !== void 0) {
+    throw new CodegenError(
+      `Cross-database reads aren't supported: '$$$$.${db}.${collection}' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation only). Reference a collection in the CURRENT database instead \u2014 write '$$$.${collection}' (drop the '$$$$.${db}.' prefix) \u2014 and run the pipeline against the '${db}' database if that's where the data lives. (Cross-database WRITES still work: '$$$$.${db}.${collection} = $$' lowers to $out.)`,
+      pos
+    );
+  }
+  return collection;
+}
 function detectLookupCall(expr, ctx) {
   if (expr.type !== "MethodCall") return null;
   if (expr.method !== "find" && expr.method !== "filter") return null;
@@ -9940,7 +9946,7 @@ function transformCallArgs(args, foreignParam, allocator, outerLets) {
 function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const pred = translatePredicate(call, outerCtx, lowerBlock2, enclosing);
-  const from = call.db !== void 0 ? { db: call.db, coll: call.collection } : call.collection;
+  const from = requireSameDbColl(call.db, call.collection, call.pos);
   const stages = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
@@ -10038,7 +10044,7 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
   const slot = allocSlot();
-  const from = direct.db !== void 0 ? { db: direct.db, coll: direct.collection } : direct.collection;
+  const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
   return {
     stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }],
     rewritten: { type: "FieldRef", path: slot, pos: expr.pos }
@@ -11475,7 +11481,7 @@ function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
     }
     const slot = allocSlot();
     const pred = translatePredicate(direct, ctx, lowerBlockFn);
-    const from = direct.db !== void 0 ? { db: direct.db, coll: direct.collection } : direct.collection;
+    const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
     const stages = [];
     if (pred.kind === "basic") {
       stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
@@ -11669,7 +11675,7 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
     if (result.replacesPreviousStage) inner.pop();
     inner.push(...result.stages);
   }
-  const from = target.db !== void 0 ? { db: target.db, coll: target.collection } : target.collection;
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   const stages = [{ $match: { $expr: false } }];
   if (inner.length === 0) {
     if (typeof from === "string") {
@@ -11687,7 +11693,7 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
   const restMethods = methods.slice(1);
   const lambda = filterMethod.args[0];
   const slot = allocSlot();
-  const from = target.db !== void 0 ? { db: target.db, coll: target.collection } : target.collection;
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   let lookupStage2;
   if (restMethods.length === 0) {
     const fakeCall = {

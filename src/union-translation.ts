@@ -12,6 +12,7 @@ import {
   detectLookupCall,
   extractLookupTarget,
   lowerLambdaPredicate,
+  requireSameDbColl,
   validateLookupShape,
   type LookupCall,
   type SubPipelineLowerer,
@@ -220,9 +221,10 @@ export function lowerUnionPush(call: UnionPushCall, outerCtx: GenerateCtx, lower
  * Lower one `...inner` argument inside `$$.push(...)`. Accepted shapes for
  * `inner`: bare `$$$.coll` (no method, short-form `$unionWith`), or
  * `$$$.coll.filter(pred)` (pipeline-form `$unionWith`). Cross-DB variants
- * (`$$$$.<db>.<coll>[.filter(pred)]`) lower to the Atlas Data Federation
- * `from: { db, coll }` shape. `.find(pred)` is rejected here (scalar; can't
- * be spread).
+ * (`$$$$.<db>.<coll>[.filter(pred)]`) are REJECTED by `requireSameDbColl` — a
+ * regular MongoDB doesn't accept the `{ db, coll }` `$unionWith` namespace. The
+ * error redirects to a same-database `$$$.<coll>` reference. `.find(pred)` is
+ * rejected here too (scalar; can't be spread).
  */
 function lowerSpreadArg(arg: SpreadElement, outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object {
   const inner = arg.argument;
@@ -247,10 +249,7 @@ function lowerSpreadArg(arg: SpreadElement, outerCtx: GenerateCtx, lowerBlock: S
   // Bare `$$$.coll` (no method): short-form `{ $unionWith: "<coll>" }`.
   const target = extractLookupTarget(inner, outerCtx);
   if (target !== null) {
-    if (target.db !== undefined) {
-      return { $unionWith: { coll: { db: target.db, coll: target.collection } } };
-    }
-    return { $unionWith: target.collection };
+    return { $unionWith: requireSameDbColl(target.db, target.collection, target.pos) };
   }
   // Catch-all: malformed shapes that still parsed (e.g. `...someVar`).
   // Surface the same actionable hint that `lowerUnionPush` uses for non-spread args.
@@ -279,8 +278,7 @@ function buildUnionWith(
 ): object {
   const pipeline = translateUnionPredicate(call, outerCtx, lowerBlock);
   if (limitOne) pipeline.push({ $limit: 1 });
-  const from: string | { db: string; coll: string } =
-    call.db !== undefined ? { db: call.db, coll: call.collection } : call.collection;
+  const from = requireSameDbColl(call.db, call.collection, call.pos);
   if (pipeline.length === 0) {
     // Vacuous predicate (e.g. a block body with no stages) collapses to short
     // form. Only reachable for `.filter` with an empty block body — `.find`

@@ -86,23 +86,13 @@ describe("$$.push — inline document(s)", () => {
   });
 });
 
-describe("$$.push — cross-database via $$$$", () => {
-  it("emits the Atlas Data Federation `from: { db, coll }` shape", () => {
-    expect(jsmql("$$.push(...$$$$.archive.users.filter(u => u.deleted))")).toEqual([
-      { $unionWith: { coll: { db: "archive", coll: "users" }, pipeline: [{ $match: { $expr: "$deleted" } }] } },
-    ]);
-  });
-
-  it("bare cross-DB collection (no filter) emits no pipeline key", () => {
-    expect(jsmql("$$.push(...$$$$.archive.users)")).toEqual([
-      { $unionWith: { coll: { db: "archive", coll: "users" } } },
-    ]);
-  });
-
-  it("cross-DB .find no-spread → $match + $limit: 1 against the cross-DB coll", () => {
-    expect(jsmql("$$.push($$$$.archive.users.find(u => u._id === 'X'))")).toEqual([
-      { $unionWith: { coll: { db: "archive", coll: "users" }, pipeline: [{ $match: { _id: "X" } }, { $limit: 1 }] } },
-    ]);
+describe("$$.push — cross-database via $$$$ is rejected", () => {
+  // The bare (`$$.push(...$$$$.archive.users)`) and `.filter`-spread forms reject
+  // at the same `requireSameDbColl` choke point; one case covers the union path.
+  it("a cross-DB spread source throws (no cross-db $unionWith)", () => {
+    expect(() => jsmql("$$.push(...$$$$.archive.users.filter(u => u.deleted))")).toThrow(
+      /Cross-database reads aren't supported/,
+    );
   });
 });
 

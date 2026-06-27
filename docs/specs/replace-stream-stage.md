@@ -31,7 +31,7 @@ A `$$.<chain>;` bare statement (no `$$ =` head) is statement sugar for
 | `$$ = $$.filter(t => true)` (vacuous) | `[{ $match: { $expr: true } }]` |
 | `$$ = $$$.t.filter(t => t.x > 5)` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |
 | `$$ = $$$.t.filter(t => true)` (vacuous) | `[{ $match: { $expr: false } }, { $unionWith: "t" }]` (short form) |
-| `$$ = $$$$.db.coll.filter(p)` | Same as above but `from: { db, coll }` (Atlas Data Federation form) |
+| `$$ = $$$$.db.coll.filter(p)` | **rejected** — a cross-database source-switch would emit `$unionWith`/`$lookup` with a `{ db, coll }` namespace, which a regular MongoDB rejects; `requireSameDbColl` throws and redirects to same-database `$$$.coll`. (Cross-database `$out` writes still work — see [out-stage.md](out-stage.md).) |
 | `$$ = $$$.t.filter(t => { $match(t.x > 5); $sort({x:-1}); $limit(3); })` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: {x:{$gt:5}} }, { $sort:{x:-1} }, { $limit:3 }] } }]` (block-body) |
 
 The two RHS shapes both reuse `lowerStreamFilterPredicate` for predicate
