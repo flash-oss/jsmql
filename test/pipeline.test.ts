@@ -203,6 +203,32 @@ describe("pipeline — sub-pipelines", () => {
   });
 });
 
+describe("raw MQL stage bodies pass through UNGUARDED (escape hatch — see src/CLAUDE.md)", () => {
+  // The complement of the cross-database SUGAR rejection (lookup.test.ts /
+  // "replace stream"): jsmql rejects `$$$$.<db>.<coll>` reads because it minted
+  // that surface (HR3), but it must NEVER guard the RAW operator/stage form — the
+  // developer owns hand-written MQL, and a `{ db, coll }` namespace IS valid on
+  // Atlas Data Federation. A guard creeping onto these (e.g. extending
+  // requireSameDbColl to raw stages) must fail here.
+  it("a raw cross-database $lookup `{ db, coll }` from is emitted verbatim", () => {
+    expect(
+      jsmql(`[{ $lookup: { from: { db: "x", coll: "y" }, localField: "a", foreignField: "b", as: "c" } }]`),
+    ).toEqual([{ $lookup: { from: { db: "x", coll: "y" }, localField: "a", foreignField: "b", as: "c" } }]);
+  });
+
+  it("a raw cross-database $unionWith `coll: { db, coll }` is emitted verbatim", () => {
+    expect(jsmql(`[{ $unionWith: { coll: { db: "x", coll: "y" } } }]`)).toEqual([
+      { $unionWith: { coll: { db: "x", coll: "y" } } },
+    ]);
+  });
+
+  it("an Atlas-only operator ($search) passes through (unknown-operator fallthrough)", () => {
+    expect(jsmql(`[$search({ text: { query: "x", path: "title" } })]`)).toEqual([
+      { $search: { text: { query: "x", path: "title" } } },
+    ]);
+  });
+});
+
 describe("pipeline — error cases", () => {
   it("rejects unknown stage name with did-you-mean suggestion", () => {
     expect(() => jsmql("[{ $macth: $.age > 18 }]")).toThrow(/'\$match'/);
