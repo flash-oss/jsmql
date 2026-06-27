@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-27 — docs: showcase "snapshot one user → 5 newest orders" now asserts uniqueness + same-DB pivot
+
+The headline example (README, LANGUAGE.md "narrow, guard, pivot", and the
+`realistic.test.ts` describe of the same name — the one the playground surfaces)
+was reworked: instead of `.filter(...).slice(0, 1)` + a `let userId = $._id`
+snapshot, it now `assert($$.length === 1, …)` (an explicit uniqueness guard) and
+correlates the pivot directly on `o.userId === $._id`. It also switches the
+source from cross-DB `$$$$.archive.orders` to same-DB `$$$.orders`: MongoDB
+rejects cross-DB `$lookup` for regular collections ("$lookup with syntax
+{from: {db, coll}} is not supported"), so the old example never actually ran —
+verified on a live mongod, the same-DB form does (returns the 5 newest orders;
+the assert aborts the run on a duplicate email). The emitted MQL shown in the
+docs was also stale (un-depth-stamped `let: { userId }` + a spurious trailing
+`$unset`); both now match the compiler — `jsmql_f0__id` correlation var, and no
+`$unset` because the final `$replaceWith` drops the whole `__jsmql` namespace.
+No `src/` change — example / docs / test only.
+
+---
+
 ## 2026-06-23 — docs: record the MongoDB MCP plugin as a known dev aid in CLAUDE.md
 
 Added a `### The MongoDB MCP plugin (plugin:mongodb:mongodb)` subsection under

@@ -2412,27 +2412,29 @@ $$ = $$$.users.filter(u => u._id === uid);
 
 Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist together into the `$lookup.let` slot of the pipeline-form lookup.
 
-**Putting it all together — narrow, snapshot, pivot.** The full idiom is three statements: narrow the current stream down to one doc, snapshot a scalar via `let`, then pivot to another collection with the snapshot as the correlated value. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
+**Putting it all together — narrow, guard, pivot.** The full idiom is three statements: narrow the current stream down to the matching doc(s), assert exactly one matched, then pivot to another collection correlated by the root doc's field. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
 
 ```js
 jsmql(`
-  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
-  let userId = $._id;
+  $$ = $$.filter(u => u.email === "me@example.com");
+  assert($$.length === 1, "More than one user with such email found");
   $$ = $$$.orders
-    .filter(o => o.userId === userId)
+    .filter(o => o.userId === $._id)
     .toSorted((a, b) => a.placedAt - b.placedAt)
     .toReversed()
     .slice(0, 5);
 `);
 // → [
 //   { $match: { email: "me@example.com" } },
-//   { $limit: 1 },
-//   { $set: { "__jsmql.var.userId": "$_id" } },
+//   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+//   { $match: { $expr: { $convert: { input: true, to: { $cond: [
+//       { $eq: ["$__jsmql.length", 1] }, "bool",
+//       "jsmql assertion failed: More than one user with such email found" ] } } } } },
 //   { $lookup: {
 //       from: "orders",
-//       let: { userId: "$__jsmql.var.userId" },
+//       let: { jsmql_f0__id: "$_id" },
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
@@ -2443,7 +2445,7 @@ jsmql(`
 // ]
 ```
 
-Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the snapshotted `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name. The three statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline.
+Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the user's `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation var `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.length` materialises via `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. The statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
 
 **Empty the stream.** `$$ = []` drops every document — it lowers to `[{ $match: { $expr: false } }]` (a never-matching `$match`). MongoDB rejects `$limit: 0` ("the limit must be positive"), so the never-matching `$match` is what jsmql emits. The explicit-stage spelling is `$match(false)`.
 

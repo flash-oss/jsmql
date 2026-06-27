@@ -11,28 +11,29 @@ let filter = jsmql`$.age > ${age} && $.status === "active"`
 // → { age: { $gt: 18 }, status: "active" }   ← index-friendly query doc
 
 // Pipeline — for db.coll.aggregate(pipeline). Any `;` flips to stage mode.
-// Snapshot one user, then pivot the stream onto their 5 most-recent orders.
+// Narrow to one user, assert it's the only match, then pivot to their 5 newest orders.
 let pipeline = jsmql`
-  $$ = $$.filter(u => u.email === "me@example.com").slice(0, 1);
-  let userId = $._id;
-  $$ = $$$$.archive.orders
-    .filter(o => o.userId === userId)
+  $$ = $$.filter(u => u.email === "me@example.com");
+  assert($$.length === 1, "More than one user with such email found");
+  $$ = $$$.orders
+    .filter(o => o.userId === $._id)
     .toSorted((a, b) => a.placedAt - b.placedAt)
     .toReversed()
     .slice(0, 5);
 `;
 // → [
 //   { $match: { email: "me@example.com" } },
-//   { $limit: 1 },
-//   { $set: { "__jsmql.var.userId": "$_id" } },
-//   { $lookup: { from: { db: "archive", coll: "orders" }, let: { userId: "$__jsmql.var.userId" }, pipeline: [
-//       { $match: { $expr: { $eq: ["$userId", "$$userId"] } } },
+//   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+//   { $match: { $expr: { $convert: { input: true, to: { $cond: [
+//       { $eq: ["$__jsmql.length", 1] }, "bool",
+//       "jsmql assertion failed: More than one user with such email found" ] } } } } },
+//   { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" }, pipeline: [
+//       { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //       { $sort: { placedAt: -1 } },
 //       { $limit: 5 },
 //   ], as: "__jsmql.tmp.1" } },
 //   { $unwind: "$__jsmql.tmp.1" },
 //   { $replaceWith: "$__jsmql.tmp.1" },
-//   { $unset: "__jsmql" }
 // ]
 
 // Raw expression — for inside a stage body, or db.coll.updateOne(filter, update).
