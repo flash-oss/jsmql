@@ -53,9 +53,11 @@ HR3 governs both: the raw MQL given to it and the MQL it emits by compiling JS t
 
 **SR1 — jsmql is trying to guess what you mean.** When a construct could lower more than one way, jsmql leans toward the reading a developer most likely intended, accepting the shorter, idiomatic form over the most literal one. The guessing stays conservative: where intent is genuinely ambiguous, or the likely reading would emit invalid MQL, it raises an actionable error rather than guess wrong.
 
-**SR2 — a native JavaScript API behaves as its JavaScript self.** When jsmql accepts a JS built-in — a method (`.map`, `.filter`, `.trim`, `.slice`) or a static (`Math.max`, `Number.isInteger`) — it lowers to MQL that reproduces the JavaScript behaviour and never repurposes that name to mean something else. Best-effort: where MQL can't match the JavaScript semantics exactly (e.g. how `null` or a missing field is handled), the divergence is documented, not hidden. This covers named APIs only, not operators — `+`, `==`, `===` already diverge from JS (string `+` concatenates in JS, but jsmql's `+` is `$add`). jsmql also adds some APIs of its own for brevity.
+**SR2 — a native JavaScript API behaves as its JavaScript self.** When jsmql accepts a JavaScript built-in — a method or static you'd reach for in plain JS — it lowers to MQL that reproduces the JavaScript behaviour. Best-effort: where MQL can't reproduce the JavaScript semantics exactly, the divergence is documented, not hidden.
 
 ```js
 $.name.trim().toLowerCase()  // → { $toLower: { $trim: { input: "$name" } } }   (same result as JS)
 $.items.map(x => x * 1.1)    // → { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 1.1] } } }   (same as Array.prototype.map)
 ```
+
+**SR3 — jsmql also adds some APIs of its own for brevity and better DX.**

@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-27 — docs: future-proof-prose rule (no current-state enumerations) + de-list SR2
+
+Added a sub-rule to the "Single source of truth" section of [CLAUDE.md](../CLAUDE.md):
+restating the *current membership of an evolving set* (an inline list of
+methods/operators/stages, a count, a "currently supports …", a version/status
+snapshot) is the same drift as copying a paragraph, and rots faster. Prose must
+state the stable rule and point at the registry/code SSOT for the live list; one
+illustrative example stays fine, an enumeration-as-membership does not;
+counts/versions/status stay out of prose (the asserting test and
+`docs/DEFERRED.md` own them).
+
+Applied it to [docs/LANG_RULES.md](LANG_RULES.md): SR2 had named a concrete
+method/static list (`.map`, `.filter`, `.trim`, `.slice`, `Math.max`,
+`Number.isInteger`) that duplicated the `METHODS` / `MATH_METHODS` registries and
+would go stale as they grow. Reworded down to the bare principle — native JS APIs
+behave as their JS selves, best-effort with documented divergences — dropping the
+method/static enumeration, the operator carve-out (`+` / `==` / `===`), and the
+inline divergence example from the prose; the example block still carries the
+illustration. "API" already implies named methods/statics, not operators.
+Motivated by a recurring stale-prose problem the developer flagged. The trailing
+"jsmql adds APIs of its own" clause was also promoted out of SR2 into its own
+**SR3 — jsmql also adds some APIs of its own for brevity and better DX.**
+
+---
+
 ## 2026-06-27 — docs: complete the SOFT RULES section of LANG_RULES.md (SR1 body + SR2)
 
 [docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section held a single
