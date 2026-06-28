@@ -1045,7 +1045,7 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
   });
 
   it("RegExp binding lands as a real RegExp inside an update op", () => {
-    const q = jsmql.compile(({ pat }: { pat: RegExp }) => ($.name = pat));
+    const q = jsmql.compile(({ pat }: { pat: RegExp }, $) => ($.name = pat));
     const pat = /^alice/i;
     const out = q({ pat }) as Array<{ $set: { name: RegExp } }>;
     expect(out[0].$set.name).toBe(pat);
