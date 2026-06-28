@@ -2302,6 +2302,21 @@ declare global {
    * @see https://www.mongodb.com/docs/manual/reference/method/ObjectId/
    */
   var ObjectId: ObjectIdConstructor;
+
+  // ── Statement-form built-ins (assert) ─────────────────────────────────
+  /**
+   * Pipeline-statement guard — raises a runtime error from inside an
+   * aggregation pipeline when `condition` fails (the MongoDB equivalent of a
+   * guard clause). When `condition` holds the document passes through
+   * untouched; otherwise the operation aborts and the server returns an error
+   * whose text carries `message`. Statement-only — it has no value, so it
+   * can't appear on a RHS, as an operand, or in a Filter / `jsmql.expr`.
+   * Lowers to a single `$match` stage (a `$convert` to an unknown type name).
+   *
+   * @example assert($.qty >= 0, "qty must be >= 0")
+   * @see https://github.com/koresar/jsmql/blob/master/docs/specs/assert.md
+   */
+  function assert(condition: any, message?: any): void;
 }
 
 export {};

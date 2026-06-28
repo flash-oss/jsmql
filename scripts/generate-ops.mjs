@@ -477,6 +477,29 @@ function constructionFormsBlock() {
   );
 }
 
+// The statement-form built-ins that aren't `$`-prefixed operators/stages and so
+// have no registry entry, but still need an ambient declaration for the arrow
+// form to type-check. `assert(condition[, message])` is a pipeline-statement
+// guard with no value (it lowers to a `$match`), so it's typed as returning
+// `void` — using it in expression position is a compile error in jsmql too.
+// See src/codegen.ts (generateAssertGuardExpr) and docs/specs/assert.md.
+function statementFormsBlock() {
+  const jsdoc =
+    "/**\n" +
+    " * Pipeline-statement guard — raises a runtime error from inside an\n" +
+    " * aggregation pipeline when `condition` fails (the MongoDB equivalent of a\n" +
+    " * guard clause). When `condition` holds the document passes through\n" +
+    " * untouched; otherwise the operation aborts and the server returns an error\n" +
+    " * whose text carries `message`. Statement-only — it has no value, so it\n" +
+    " * can't appear on a RHS, as an operand, or in a Filter / `jsmql.expr`.\n" +
+    " * Lowers to a single `$match` stage (a `$convert` to an unknown type name).\n" +
+    " *\n" +
+    ' * @example assert($.qty >= 0, "qty must be >= 0")\n' +
+    " * @see https://github.com/koresar/jsmql/blob/master/docs/specs/assert.md\n" +
+    " */";
+  return jsdoc + "\nfunction assert(condition: any, message?: any): void;";
+}
+
 export function generateOpsSource() {
   const spec = loadSpec();
 
@@ -562,6 +585,9 @@ export function generateOpsSource() {
     "",
     "  // ── JS construction forms (ObjectId) ──────────────────────────────────",
     indent(constructionFormsBlock()),
+    "",
+    "  // ── Statement-form built-ins (assert) ─────────────────────────────────",
+    indent(statementFormsBlock()),
   ];
 
   const footer = ["}", "", "export {};", ""];

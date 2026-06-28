@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-06-28 — fix: surface `assert()` in the generated `@koresar/jsmql/ops` types
+
+`assert(condition[, message])` shipped as a recognised pipeline-statement guard
+but was never declared in `src/ops.ts`, so arrow-form code that imported
+`@koresar/jsmql/ops` (`($) => { assert($.qty >= 0, "…"); … }`) tripped
+`noImplicitAny` / "cannot find name 'assert'" under a strict tsconfig. Added a
+`statementFormsBlock()` to [`scripts/generate-ops.mjs`](../scripts/generate-ops.mjs)
+that emits `function assert(condition: any, message?: any): void` in a new
+"Statement-form built-ins" section, mirroring how `ObjectId` is hand-declared
+(neither lives in the `OPERATORS`/`STAGES` registries). Typed `void` because
+`assert` is statement-only and has no value — using it in expression position is
+a compile error in jsmql too, so the type now matches the language. Regenerated
+`src/ops.ts`; the drift test keeps the two in lockstep.
+
 ## 2026-06-27 — docs: complete the SOFT RULES section of LANG_RULES.md (SR1 body + SR2)
 
 [docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section held a single

@@ -26,12 +26,13 @@ Exports `generateOpsSource()` so [`test/operator-spec-coverage.test.ts`](../../t
 
 ### Output
 
-A single `src/ops.ts` file containing one `declare global { … } export {};` block, alphabetised within three sections:
+A single `src/ops.ts` file containing one `declare global { … } export {};` block, alphabetised within five sections:
 
 1. **Stages** — every key of `STAGES`.
 2. **Expression operators (incl. accumulators and window functions)** — every key of `OPERATORS`. Accumulators sit in the same registry; the section header reflects that this set covers all non-stage callables.
 3. **Context references (`$$`, `$$$`, `$$$$`)** — three ambient declarations (`var $$`, `const $$$`, `const $$$$`) so arrow-form context-ref code type-checks. See § Context references below.
 4. **JS construction forms** — non-`$` builtins that have no registry entry but still need an ambient declaration for the arrow form. Currently just `ObjectId`: an `interface ObjectIdConstructor` with both a call and a construct signature (so `ObjectId("…")` and `new ObjectId("…")` resolve) plus `var ObjectId: ObjectIdConstructor`. Emitted by `constructionFormsBlock()`.
+5. **Statement-form built-ins** — non-`$` statement-position builtins with no registry entry. Currently just `assert(condition[, message])`, emitted by `statementFormsBlock()` as `function assert(condition: any, message?: any): void` — typed `void` because it's a pipeline-statement guard with no value (see [`assert.md`](assert.md)).
 
 For each operator the generator emits:
 
