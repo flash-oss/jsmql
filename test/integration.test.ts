@@ -76,7 +76,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   it("filter: fetch one document by its 0x ObjectId literal", async () => {
     const rows = await find("users", `$._id === 0x6500000000000000000000a1`);
     expect(rows).toHaveLength(1);
-    expect((rows[0] as { name: string }).name).toBe("Ada Lovelace");
+    expect(rows[0].name).toBe("Ada Lovelace");
   });
 
   // Date literal folded into the query doc (not trapped in $expr) + status match.

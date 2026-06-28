@@ -309,8 +309,8 @@ function updateDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unk
  * `JsmqlOutput` for `jsmql.compile` / `jsmql.expr`).
  */
 type CompileBuilder<R extends JsmqlOutput> = {
-  <P extends Record<string, unknown>>(fn: JsmqlCompileFn<P>): (params: P) => R;
-  (src: string): (params: Record<string, unknown>) => R;
+  <P extends Record<string, any>>(fn: JsmqlCompileFn<P>): (params?: P) => R;
+  (src: string): (params?: Record<string, any>) => R;
 };
 
 /**
@@ -397,7 +397,7 @@ const compileFunction: CompileBuilder<JsmqlOutput> = makeCompile(lowerWithCtx, "
  * `($: any, ops: JsmqlOps)` shape (which would mis-type the second slot as
  * `JsmqlOps`).
  */
-function validateInput<P extends Record<string, unknown>>(fn: JsmqlCompileFn<P>): ValidationResult;
+function validateInput<P extends Record<string, any>>(fn: JsmqlCompileFn<P>): ValidationResult;
 function validateInput(input: JsmqlInput): ValidationResult;
 function validateInput(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult;
 function validateInput(

@@ -1038,7 +1038,7 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
   // op body, an aggregation expression, etc. now pass through intact.
 
   it("Date binding lands as a real Date inside an update op", () => {
-    const q = jsmql.compile(({ at }: { at: Date }) => ($.lastSeenAt = at));
+    const q = jsmql.compile(({ at }: { at: Date }, $) => ($.lastSeenAt = at));
     const at = new Date("2026-01-01");
     const out = q({ at }) as Array<{ $set: { lastSeenAt: Date } }>;
     expect(out[0].$set.lastSeenAt).toBe(at);
