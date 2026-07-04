@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-04 — chore: add `verify-mql` and `devlog` Claude Code skills
+
+Added two project-level Claude Code skills under [.claude/skills/](../.claude/skills):
+`verify-mql` and `devlog`. Each turns a workflow this repo already mandates in
+prose into one the agent reliably *applies* — `verify-mql` encodes the HR3 "run
+the emitted MQL against a real `mongod` before trusting it" ritual (pipe the
+`jsmql` CLI into [test/probe](../test/probe), or use the MongoDB MCP), and
+`devlog` encodes this file's entry format plus the
+[scripts/merge-devlog.mjs](../scripts/merge-devlog.mjs) conflict resolver. A
+described convention and an *applied* one are not the same thing; skills close
+that gap.
+
+Wired one-line pointers into the sections that already own each convention — the
+"Verify MQL against a running MongoDB" section and the DEVLOG bullet of the root
+[CLAUDE.md](../CLAUDE.md), the `test/probe` how-to in
+[test/CLAUDE.md](../test/CLAUDE.md), and the DEVLOG note in
+[docs/CLAUDE.md](CLAUDE.md) — per the single-source-of-truth rule (link, don't
+restate). The skill files live under `.claude/`, which the deferred-coverage
+drift test skips, so they don't touch the DEF gates. No library behaviour changed.
+
 ## 2026-06-28 — fix: surface `assert()` in the generated `@koresar/jsmql/ops` types
 
 `assert(condition[, message])` shipped as a recognised pipeline-statement guard
