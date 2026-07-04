@@ -1165,8 +1165,8 @@ var Parser = class {
    *     can inline values supplied at call time.
    *
    * The legal slot orderings are: `()`, `({ $, … })`, `(params)`, and
-   * `(params, { $, … })`. A bare identifier or bare `$` slot (the old
-   * `($) => …`), a third slot, or a params destructure after the toolbox all
+   * `(params, { $, … })`. A bare identifier or bare `$` slot,
+   * a third slot, or a params destructure after the toolbox all
    * throw `FunctionInputError` with a precise message.
    *
    * Returns the binding names extracted from the params slot (in source
