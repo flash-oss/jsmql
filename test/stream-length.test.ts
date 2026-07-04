@@ -78,7 +78,7 @@ describe("$$.length — compute-once / reuse / recompute", () => {
 describe("$$.length — call forms", () => {
   it("single-statement arrow block (no trailing ;)", () => {
     expect(
-      jsmql(($) => {
+      jsmql(({ $ }) => {
         $.n = $$.length;
       }),
     ).toEqual([SWF, { $set: { n: "$__jsmql.length" } }, UNSET]);

@@ -25,7 +25,7 @@ describe("jsmql.filter() — strict Filter shape", () => {
   });
 
   it("accepts the arrow form", () => {
-    expect(jsmql.filter(($) => $.age > 18)).toEqual({ age: { $gt: 18 } });
+    expect(jsmql.filter(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18 } });
   });
 
   it("accepts the template-tag form with an interpolated literal", () => {
@@ -101,7 +101,7 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
 
   it("accepts the block-body arrow form", () => {
     expect(
-      jsmql.pipeline(($, { $match, $sort }) => {
+      jsmql.pipeline(({ $, $match, $sort }) => {
         $match($.age > 18);
         $sort({ age: 1 });
       }),
@@ -164,7 +164,9 @@ describe("jsmql.update() — strict aggregation-pipeline update", () => {
   });
 
   it("accepts the arrow form", () => {
-    expect(jsmql.update(($) => ($.name = $.name.toUpperCase()))).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
+    expect(jsmql.update(({ $ }) => ($.name = $.name.toUpperCase()))).toEqual([
+      { $set: { name: { $toUpper: "$name" } } },
+    ]);
   });
 
   it("allows `let` bindings (they lower to whitelisted $set / $unset stages)", () => {
@@ -192,12 +194,12 @@ describe("strict-shape `.compile` builders", () => {
   });
 
   it("jsmql.filter.compile accepts the arrow as a source string", () => {
-    const q = jsmql.filter.compile("({ minAge }, $) => $.age > minAge");
+    const q = jsmql.filter.compile("({ minAge }, { $ }) => $.age > minAge");
     expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
   });
 
   it("jsmql.filter.compile throws on a Pipeline-shaped arrow body", () => {
-    const q = jsmql.filter.compile("($) => { $match($.x > 0); $sort({ x: 1 }) }");
+    const q = jsmql.filter.compile("({ $ }) => { $match($.x > 0); $sort({ x: 1 }) }");
     expect(() => q({})).toThrow(/jsmql\.filter\(\) expects a Filter/);
   });
 
@@ -210,7 +212,7 @@ describe("strict-shape `.compile` builders", () => {
   });
 
   it("jsmql.pipeline.compile throws on a bare-expression arrow body", () => {
-    const q = jsmql.pipeline.compile("({ minAge }, $) => $.age > minAge");
+    const q = jsmql.pipeline.compile("({ minAge }, { $ }) => $.age > minAge");
     expect(() => q({ minAge: 18 })).toThrow(/jsmql\.pipeline\(\) expects a Pipeline.*bare expression/);
   });
 
@@ -220,7 +222,7 @@ describe("strict-shape `.compile` builders", () => {
   });
 
   it("jsmql.update.compile throws when the body uses a non-whitelisted stage", () => {
-    const q = jsmql.update.compile("($) => { $match($.x > 0) }");
+    const q = jsmql.update.compile("({ $ }) => { $match($.x > 0) }");
     expect(() => q({})).toThrow(/jsmql\.update\(\) rejected '\$match'/);
   });
 

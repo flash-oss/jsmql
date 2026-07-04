@@ -659,7 +659,7 @@ describe("let bindings — `let` is still usable as a field name and operator na
 
 describe("let bindings — function-form input", () => {
   it("block-body arrow with let works the same as the string form", () => {
-    const result = jsmql(($, { $match, $project }) => {
+    const result = jsmql(({ $, $match, $project }) => {
       let x = $.a + 1;
       $match(x > 0);
       $project({ x });
@@ -673,10 +673,10 @@ describe("let bindings — function-form input", () => {
   });
 
   it("expression-body arrow rejects a top-level let with the precise error", () => {
-    // `($) => let x = 5` would be a single-statement expression body — no
+    // `({ $ }) => let x = 5` would be a single-statement expression body — no
     // pipeline context, so the parser raises the "only valid inside a pipeline"
     // error. (The block-body form above is the way to get pipeline-mode here.)
-    expect(() => jsmql(($) => (eval as any)("let x = 5"))).toThrow(); // any throw is acceptable
+    expect(() => jsmql(({ $ }) => (eval as any)("let x = 5"))).toThrow(); // any throw is acceptable
   });
 });
 

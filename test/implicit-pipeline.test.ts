@@ -115,7 +115,7 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
 
 describe("implicit pipeline — block-body arrow input", () => {
   it("block body with `;`-separated statements compiles as a pipeline", () => {
-    const result = jsmql(($, { $match }) => {
+    const result = jsmql(({ $, $match }) => {
       $match($.active);
       $.score += 1;
       $.touched = true;
@@ -128,7 +128,7 @@ describe("implicit pipeline — block-body arrow input", () => {
   });
 
   it("block body with `,`-grouped chunk preserves in-stage coalescing", () => {
-    const result = jsmql(($, { $match }) => {
+    const result = jsmql(({ $, $match }) => {
       $match($.active);
       (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
       $.status = "complete";
@@ -141,7 +141,7 @@ describe("implicit pipeline — block-body arrow input", () => {
   });
 
   it("single statement block body without `;` stays object-shaped", () => {
-    const result = jsmql(($) => {
+    const result = jsmql(({ $ }) => {
       $.a = 1;
     });
     // One statement with a trailing `;` ⇒ pipeline (one stage).
@@ -150,10 +150,10 @@ describe("implicit pipeline — block-body arrow input", () => {
 
   it("block body `{ return <expr> }` is the value form (≡ the expression body)", () => {
     // A brace body opening directly with `return` is the value form, identical
-    // to `($) => $.a > 18`. (A `;`-separated body of stage statements stays a
+    // to `({ $ }) => $.a > 18`. (A `;`-separated body of stage statements stays a
     // pipeline; a stray statement-position `return` mixed into one is rejected.)
     expect(
-      jsmql(($) => {
+      jsmql(({ $ }) => {
         return $.a > 18;
       }),
     ).toEqual({ a: { $gt: 18 } });
@@ -161,7 +161,7 @@ describe("implicit pipeline — block-body arrow input", () => {
 
   it("a stray `return` in a `;`-separated block body is rejected with guidance", () => {
     expect(() =>
-      jsmql(($) => {
+      jsmql(({ $ }) => {
         $.a = 1;
         return $.a;
       }),
@@ -172,7 +172,7 @@ describe("implicit pipeline — block-body arrow input", () => {
     // The arrow source as toString'd ends with `;` — formatter quirk that the
     // adapter strips so a single-statement expression arrow lowers as an
     // UpdateFilter, which `jsmql()` wraps as a one-stage pipeline.
-    const fn = ($: any) => ($.a = 1);
+    const fn = ({ $ }: any) => ($.a = 1);
     expect(jsmql(fn)).toEqual([{ $set: { a: 1 } }]);
   });
 });

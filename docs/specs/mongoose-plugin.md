@@ -13,14 +13,14 @@ Mongoose's documented signatures put MQL JSON at fixed argument positions (`find
 ```js
 // Before
 User.find(jsmql.filter("$.age > 18"));
-User.aggregate(jsmql.pipeline(($) => { $match($.age > 18); $sort({ age: 1 }); }));
-User.updateMany({}, jsmql.update(($) => $.score += 1));
+User.aggregate(jsmql.pipeline(({ $ }) => { $match($.age > 18); $sort({ age: 1 }); }));
+User.updateMany({}, jsmql.update(({ $ }) => $.score += 1));
 
 // After registration
 require("@koresar/jsmql/mongoose")(mongoose);
 User.find("$.age > 18");
-User.aggregate(($) => { $match($.age > 18); $sort({ age: 1 }); });
-User.updateMany({}, ($) => $.score += 1);
+User.aggregate(({ $ }) => { $match($.age > 18); $sort({ age: 1 }); });
+User.updateMany({}, ({ $ }) => $.score += 1);
 ```
 
 The strict-shape entries throw on wrong-shape input (e.g. a stage array passed to a filter slot, or `$match` inside an update pipeline). Routing through them at the mongoose surface means a misuse like `User.updateMany({}, "$.age > 18")` fails at the patched call site with the actionable strict-mode message — instead of mongoose silently sending a bad document to the server.
@@ -59,7 +59,7 @@ This is deliberately not abstracted into a generic helper or a lookup table:
 
 ## TypeScript module augmentation
 
-The bottom of [src/mongoose.ts](../../src/mongoose.ts) carries a `declare module "mongoose" { interface Model<…> { … } }` block that adds overloads to every patched mongoose static. Each overload extends one parameter slot to accept `JsmqlInput` (`string | JsmqlFn`), so `User.find("$.age > 18")` and `User.aggregate(($) => { $match(...) })` type-check after `import "@koresar/jsmql/mongoose"` — no per-call cast required.
+The bottom of [src/mongoose.ts](../../src/mongoose.ts) carries a `declare module "mongoose" { interface Model<…> { … } }` block that adds overloads to every patched mongoose static. Each overload extends one parameter slot to accept `JsmqlInput` (`string | JsmqlFn`), so `User.find("$.age > 18")` and `User.aggregate(({ $ }) => { $match(...) })` type-check after `import "@koresar/jsmql/mongoose"` — no per-call cast required.
 
 The augmentation is intentionally narrow:
 

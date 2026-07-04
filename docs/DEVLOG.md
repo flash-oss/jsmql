@@ -10,7 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-06-28 — fix: surface `assert()` in the generated `@koresar/jsmql/ops` types
+## 2026-07-04 — feat!: arrow entry form is now `({ $ }) => …` (toolbox destructure), old `($) =>` removed
+
+The function-entry arrow shape changed: the bare document parameter `$` is gone,
+replaced by a single destructured **toolbox** object. `($) => …` becomes
+`({ $ }) => …`; the parameterised compile form `({ email }, $, { $match }) => …`
+collapses from three positional slots to two — `({ email }, { $, $match }) => …`
+— with `$` merged into the ops destructure (which now also accepts the bare `$`
+and the context refs `$$` / `$$$` / `$$$$` as keys). The old spellings
+(`($) =>`, `(doc) =>`, `(params, $, ops) =>`, `($, { $op }) =>`, and their
+`function` counterparts) are **rejected** at parse time — a bare identifier or
+bare `$` is no longer a valid parameter slot. Pre-1.0, no users: removed
+outright rather than dual-supported, no migration path.
+
+*Why:* one destructured bag reads as "here's your toolbox — take what you need",
+and it kills the positional awkwardness of `(params, $, { $match })` where `$`
+was wedged between two destructures. Emitted MQL is byte-identical — only the
+input spelling changed. Runtime change is confined to `parseParameterList` /
+`parseParameterSlot` / `parseDestructureSlot` in [`src/parser.ts`](../src/parser.ts)
+(reject bare-ident/bare-`$` slots; accept `$`/`$$`/`$$$`/`$$$$` as toolbox keys;
+2-slot `(params, toolbox)` rule); the params-vs-toolbox "no mixed keys in one
+destructure" rule is unchanged. Types live entirely in
+[`src/index.ts`](../src/index.ts): `JsmqlFn` / `JsmqlCompileFn` now take a
+`JsmqlToolbox` (`{ [K in \`$${string}\`]: any }`) — the ambient
+`@koresar/jsmql/ops` globals (unchanged) remain the source of rich signatures, so
+listing ops in the toolbox stays optional. Spec: [`function-form-params.md`](specs/function-form-params.md).
 
 `assert(condition[, message])` shipped as a recognised pipeline-statement guard
 but was never declared in `src/ops.ts`, so arrow-form code that imported

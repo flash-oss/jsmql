@@ -7,8 +7,8 @@
  *     require("@koresar/jsmql/mongoose")(mongoose);
  *
  *     User.find("$.age > 18");                       // → Model.find({ age: { $gt: 18 } })
- *     User.aggregate(($) => { $match($.age > 18); $sort({ age: 1 }); });
- *     User.updateMany({}, ($) => $.score += 1);      // → updateMany({}, [{ $set: { score: { $add: ["$score", 1] } } }])
+ *     User.aggregate(({ $ }) => { $match($.age > 18); $sort({ age: 1 }); });
+ *     User.updateMany({}, ({ $ }) => $.score += 1);  // → updateMany({}, [{ $set: { score: { $add: ["$score", 1] } } }])
  *
  * ## Detection rule
  *
@@ -200,7 +200,7 @@ export default function jsmqlMongoose(mongoose: any): void {
 
 // TypeScript module augmentation. Adds JSMQL-shaped overloads to every
 // mongoose `Model` static the plugin patches at runtime, so call sites like
-// `User.find("$.age > 18")` and `User.aggregate(($) => { $match(...) })`
+// `User.find("$.age > 18")` and `User.aggregate(({ $ }) => { $match(...) })`
 // type-check after `import "@koresar/jsmql/mongoose"` (or after calling the
 // default export — the augmentation rides along with the value import).
 //

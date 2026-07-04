@@ -37,7 +37,7 @@ let pipeline = jsmql`
 // ]
 
 // Raw expression — for inside a stage body, or db.coll.updateOne(filter, update).
-let expr = jsmql.expr(($) => $.items.map((i) => i.price * i.qty).reduce((a, x) => a + x, 0))
+let expr = jsmql.expr(({ $ }) => $.items.map((i) => i.price * i.qty).reduce((a, x) => a + x, 0))
 // → { $reduce: { input: { $map: { input: "$items", as: "i",
 //     in: { $multiply: ["$$i.price", "$$i.qty"] } } },
 //   initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
@@ -61,11 +61,11 @@ import { jsmql } from "@koresar/jsmql";
 
 // Arrow form — your prettier/oxfmt handles formatting.
 // No `;` at top level → query Filter (the doc db.coll.find(filter) takes).
-jsmql(($) => $.email === $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
+jsmql(({ $ }) => $.email === $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
 // → {"$expr":{"$eq":["$email",{"$eq":[{"$substrCP":[{"$toLower":{"$trim":{"input":"$email"}}},{"$subtract":[{"$strLenCP":{"$toLower":{"$trim":{"input":"$email"}}}},{"$strLenCP":"@flash-payments.com"}]},{"$strLenCP":"@flash-payments.com"}]},"@flash-payments.com"]}]}}
 
 // Pipelines — any `;` flips to stage mode (the array db.coll.aggregate(pipeline) takes).
-jsmql(($) => {
+jsmql(({ $ }) => {
   $match($.age >= 18 && $.region === "AU");      // → query doc, indexes still work
   $group({ _id: $.shopId, total: { $sum: $.amount } });
   $sort({ total: -1 });
@@ -91,7 +91,7 @@ jsmql`$.status === "open" && $.id in ${ids}`
 // → { "status": "open", "$expr": { "$in": ["$id", [1, 2, 3]] } }
 
 // jsmql.compile — parse once, bind many. Output stays index-friendly.
-const eligible = jsmql.compile(({ minAge, region }, $) => {
+const eligible = jsmql.compile(({ minAge, region }, { $ }) => {
   $match($.age >= minAge && $.region === region);
   $project({ age: 1, email: 1, address: 1 });
 });
@@ -99,7 +99,7 @@ eligible({ minAge: 21, region: "AU" });
 // → [{"$match":{"age":{"$gte":21},"region":"AU"}},{"$project":{"age":1,"email":1,"address":1}}]
 
 // JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
-jsmql(($) => {
+jsmql(({ $ }) => {
   $.score += 1;
   delete $.tempToken;
   $.status = "done";
@@ -139,11 +139,11 @@ $$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 10);
 // ]
 
 // `jsmql()` returns an UpdateFilter as a pipeline, to avoid common footgun of wiping out the whole collection.
-db.users.updateMany({}, jsmql(($) => $.name = $.name.toUpperCase()))
+db.users.updateMany({}, jsmql(({ $ }) => $.name = $.name.toUpperCase()))
 // → [{ "$set": { "name": { "$toUpper": "$name" } } }] -> will upper-case all names in the collection
 
 // `jsmql.expr()` returns a partial MQL JSON. Won't protect from the same footgun.
-db.users.updateMany({}, jsmql.expr(($) => $.name = $.name.toUpperCase()))
+db.users.updateMany({}, jsmql.expr(({ $ }) => $.name = $.name.toUpperCase()))
 // → { "$set": { "name": { "$toUpper": "$name" } } } -> will WIPE OUT all names in the collection
 
 // Strict-shape entry points — throw if the input would produce the wrong shape.
@@ -157,20 +157,20 @@ db.users.updateOne({ _id: 1 }, jsmql.update("$.name = $.name.toUpperCase()"));
 // so a misplaced `$match` is caught at compile time instead of at the server.
 
 // Raw expression — for embedding inside a hand-written stage body
-const stage = { $addFields: { discount: jsmql.expr(($) => $.price * (1 - $.loyalty.multiplier)) } }
+const stage = { $addFields: { discount: jsmql.expr(({ $ }) => $.price * (1 - $.loyalty.multiplier)) } }
 // → { $addFields: { discount: { $multiply: ["$price", { $subtract: [1, "$loyalty.multiplier"] }] } } }
 
 // Escape hatch — call any MongoDB operator as a function - $dateTrunc in this case
-jsmql.expr(($) => $set({ createdAtWeek: $dateTrunc({ date: $.createdAt, unit: "week" }) }))
+jsmql.expr(({ $ }) => $set({ createdAtWeek: $dateTrunc({ date: $.createdAt, unit: "week" }) }))
 // → { $set: { "createdAtWeek": { "$dateTrunc": { "date": "$createdAt", "unit": "week" } } } }
 
-jsmql(($) => $.age = 18); // generates a pipeline, to make sure you can use this in updateOne(), updateMany(), etc
+jsmql(({ $ }) => $.age = 18); // generates a pipeline, to make sure you can use this in updateOne(), updateMany(), etc
 // → [{ "$set": { "age": 18 } }]
-jsmql.expr(($) => $.age = 18); // generates an partial expression, to use within OTHER aggregation or filter expressions
+jsmql.expr(({ $ }) => $.age = 18); // generates an partial expression, to use within OTHER aggregation or filter expressions
 // → { "$set": { "age": 18 }
 
 // Validate without throwing — every error carries { message, pos, code }
-jsmql.validate(($) => $.age > 18)
+jsmql.validate(({ $ }) => $.age > 18)
 // → { valid: true, errors: [] }
 ```
 
@@ -204,7 +204,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **JS mutators mutate at statement position** — `$.events.sort(e => e.t)`, `.push(x)`, `.reverse()`, `.splice(...)`, … desugar to a `$set` that reassigns the field; the `.toSorted` / `.toReversed` / `.with` family stays immutable. `Object.assign(target, ...sources)` is the object equivalent — at statement position it merges into its target (a `$.field` or an in-scope `let`/`const` binding, even a `const`), mirroring JS's mutating `Object.assign`. Mutators in expression position throw with the fix called out. See [docs/LANGUAGE.md → Mutators](docs/LANGUAGE.md#mutators-at-statement-position-they-mutate-the-field).
 - **Conditional errors via `assert`** — `assert(condition[, message])` is a pipeline guard clause: when the condition fails the whole operation aborts with a server error carrying your message (`Unknown type name: jsmql assertion failed: …`). It lowers to a portable `$match`+`$convert` shape — no deprecated server-side JS (`$function`), so it works under the Stable API and on every Atlas tier. Statement-only; expression-position uses throw with a hint. See [docs/LANGUAGE.md → `assert`](docs/LANGUAGE.md#assert-fail-the-pipeline-when-an-invariant-breaks).
 - **Stream count as `$$.length`** — `$$.length` is the current stream's document count, usable as a value anywhere (`$.n = $$.length`, `assert($$.length <= 1, …)`, arithmetic). It materialises a `$setWindowFields` `$count` once, reuses it, and recomputes after a count-changing stage (`$match`/`$group`/`$unwind`/…). Pipeline-only. See [docs/LANGUAGE.md → `$$.length`](docs/LANGUAGE.md#length).
-- **Three call shapes** — arrow `jsmql(($) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
+- **Three call shapes** — arrow `jsmql(({ $ }) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
 - **Polymorphic by default, strict on demand** — `jsmql()` picks Filter or Pipeline from the input; `jsmql.filter()`, `jsmql.pipeline()`, and `jsmql.update()` lock it to one shape and throw an actionable error otherwise (with the offending stage named, for `update()`). `jsmql.compile(fn)` parses once for parameterised parse-once-bind-many — and each strict entry has a shape-locked `.compile` (`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`). `jsmql.expr()` returns the raw aggregation expression that drops into a stage body. The three call shapes (string / arrow / template tag) apply to all of them.
 - **`@koresar/jsmql/ops`** — a pure-types side-effect import that adds ambient `$match` / `$dateAdd` / … globals. Zero runtime cost; bundlers tree-shake it to nothing.
 - **Pre-flight validation** — jsmql rejects the pipeline mistakes the MongoDB server would otherwise reject, at compile time: stage placement (`$out`/`$merge` must be last, `$collStats`/`$geoNear`/`$changeStream` and friends must be first, stages forbidden inside `$facet`/`$lookup`/`$unionWith`), stage-body shape (literal type/range/enum/required-key/mutual-exclusivity rules — `$limit(-5)`, `$count('')`, `$group("externalId")`, `$project` mixing include/exclude, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo), `$match` query placement (`$text` must be first; `$near`/`$where` aren't allowed), and operator arguments (operand count — `$divide(6, 2, 1)`; required & unknown object keys — `$dateAdd({ startdate })` → "Did you mean 'startDate'?"; enum slots — `unit`/`$convert.to`/regex flags; literal types — `$year("2020")`, `$abs("x")`). Only 100%-certain violations throw — a value jsmql can't evaluate (`$limit($.n)`, `$year($.d)`) or a deployment-dependent rule (sharding, memory limits, Atlas availability) still emits MQL. See [docs/LANGUAGE.md → Mistakes caught at compile time](docs/LANGUAGE.md#mistakes-caught-at-compile-time).
@@ -224,12 +224,12 @@ require("@koresar/jsmql/mongoose")(mongoose);
 const User = mongoose.model("User", new mongoose.Schema({ name: String, age: Number, score: Number }));
 
 User.find("$.age > 18");                            // → find({ age: { $gt: 18 } })
-User.find(($) => $.age > 18 && $.region === "AU"); // → find({ age: { $gt: 18 }, region: "AU" })
+User.find(({ $ }) => $.age > 18 && $.region === "AU"); // → find({ age: { $gt: 18 }, region: "AU" })
 
-User.updateMany({}, ($) => $.score += 1);
+User.updateMany({}, ({ $ }) => $.score += 1);
 // → updateMany({}, [{ $set: { score: { $add: ["$score", 1] } } }])
 
-User.aggregate(($) => {
+User.aggregate(({ $ }) => {
   $match($.status === "active");
   $group({ _id: $.region, total: { $sum: $.amount } });
   $sort({ total: -1 });
@@ -240,7 +240,7 @@ User.find({ age: { $gt: 18 } });                    // plain MQL JSON still pass
 
 **Detection rule.** A patched argument is treated as jsmql source only when it's a **string** or a **function**. Plain objects/arrays (the regular MQL JSON forms) pass through to mongoose unchanged, so existing call sites need no migration. Template-tag inputs (`jsmql\`…\``) lower to an object at the user's call site, so they take the pass-through path too.
 
-**TypeScript.** The plugin ships a `declare module "mongoose"` augmentation that adds JSMQL-shaped overloads (`string | JsmqlFn`) to every patched `Model` static, so `User.find("$.age > 18")` and `User.aggregate(($) => …)` type-check after `import "@koresar/jsmql/mongoose"` — no per-call cast required. Mongoose's own `FilterQuery<T>` / `UpdateQuery<T>` overloads still apply on the MQL-JSON pass-through path.
+**TypeScript.** The plugin ships a `declare module "mongoose"` augmentation that adds JSMQL-shaped overloads (`string | JsmqlFn`) to every patched `Model` static, so `User.find("$.age > 18")` and `User.aggregate(({ $ }) => …)` type-check after `import "@koresar/jsmql/mongoose"` — no per-call cast required. Mongoose's own `FilterQuery<T>` / `UpdateQuery<T>` overloads still apply on the MQL-JSON pass-through path.
 
 **Patched methods** (with the slot used): `find` / `findOne` / `findOneAnd{Delete,Replace,Update}` / `countDocuments` / `deleteOne` / `deleteMany` / `replaceOne` / `exists` (filter at 0), `updateOne` / `updateMany` / `findOneAndUpdate` / `findByIdAndUpdate` (update at 1), `distinct` (filter at 1), `aggregate` (pipeline at 0). Each slot lowers through the matching strict-shape entry (`jsmql.filter` / `jsmql.update` / `jsmql.pipeline`), so a wrong-shape input — e.g. a bare expression at an `aggregate` slot — throws with the actionable strict-mode error at the patched call site instead of silently going wrong server-side. Registering twice on the same `mongoose` is a no-op.
 
@@ -277,7 +277,7 @@ With no flag the output shape is picked the same way `jsmql()` picks it (a top-l
 Formatting is pretty 2-space by default (like `jq`); use `-c`/`--compact`, `--tab`, or `--indent N`. Parameterise a query with jq's own flags — the source must then be a parameterised arrow:
 
 ```sh
-echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
+echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 # { "age": { "$gt": 18 } }
 ```
 

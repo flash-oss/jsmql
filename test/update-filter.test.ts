@@ -328,7 +328,7 @@ describe("update filters: in pipelines", () => {
 describe("update filters: parenthesized form (formatter-friendly)", () => {
   // Formatters (oxfmt, prettier) wrap assignment expressions in parens when
   // they appear in array element position. The parser unwraps these so the
-  // function-input form `jsmql(($) => [($.a = 1)])` produces the same output
+  // function-input form `jsmql(({ $ }) => [($.a = 1)])` produces the same output
   // as the bare `jsmql("[$.a = 1]")`.
 
   it("parens around an assignment at the top level work", () => {
@@ -364,7 +364,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
 
   it("comma-chained parenthesized assignments in a block-body arrow", () => {
     expect(
-      jsmql(($, { $match }) => {
+      jsmql(({ $, $match }) => {
         $match($.status === "pending");
         (($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1));
         $.status = "complete";

@@ -79,7 +79,7 @@ Reserved TS keywords used as argument names (e.g. `default` for `$bucket`) are q
 
 ### Context references (`$$` / `$$$` / `$$$$`)
 
-`contextRefBlock(spec)` emits one ambient declaration per context-ref prefix, in scope order (collection → database → cluster), so arrow-form code like `jsmql(($) => $$.indexStats())` or `jsmql(($) => $$$.orders.find(...))` type-checks under TypeScript instead of erroring on an undeclared identifier.
+`contextRefBlock(spec)` emits one ambient declaration per context-ref prefix, in scope order (collection → database → cluster), so arrow-form code like `jsmql(({ $ }) => $$.indexStats())` or `jsmql(({ $ }) => $$$.orders.find(...))` type-checks under TypeScript instead of erroring on an undeclared identifier.
 
 The declaration keyword differs by ref. **`$$` is declared `var`**, not `const`: the `$$ = …` replace-stream / `$facet` sugar reassigns it wholesale, and `const $$` would make TypeScript reject that valid jsmql with `TS2588: Cannot assign to '$$' because it is a constant.`. **`$$$` / `$$$$` stay `const`** — they only ever take *property* writes (`$$$.coll = …`, `$$$$.db.coll = …` → `$out`), which `const` permits, while `const` still flags the invalid `$$$ = …` whole-reassignment (there is no such sugar).
 

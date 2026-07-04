@@ -127,7 +127,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
       // Plain `function (…) { return … }` inputs are accepted now (they lower
       // exactly like the arrow form); a generator is still unsupported and must
       // surface a positioned SYNTAX_ERROR.
-      const result = jsmql.validate(function* ($) {
+      const result = jsmql.validate(function* ({ $ }) {
         return $.age > 18;
       } as never);
       expect(result.valid).toBe(false);
@@ -136,7 +136,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     });
 
     it("malformed params destructure rest pattern", () => {
-      const result = jsmql.validate((({ ...rest }, $) => $.x) as never);
+      const result = jsmql.validate((({ ...rest }, { $ }) => $.x) as never);
       expect(result.valid).toBe(false);
       expect(result.errors[0].code).toBe("SYNTAX_ERROR");
       expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);

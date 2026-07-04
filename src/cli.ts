@@ -49,7 +49,7 @@ Input:
   -f, --file PATH read source from PATH instead of stdin/positional
 
 Parameters (the source must be a parameterised arrow, e.g.
-'({ minAge }, $) => $.age > minAge'; combine with any output-shape flag above):
+'({ minAge }, { $ }) => $.age > minAge'; combine with any output-shape flag above):
       --arg NAME VALUE      bind NAME to the string VALUE
       --argjson NAME VALUE  bind NAME to the JSON-parsed VALUE
 
@@ -60,8 +60,8 @@ Meta:
 Examples:
   echo '$.age > 18' | jsmql
   echo '$.age > 18; $sort({ age: -1 })' | jsmql --pipeline
-  echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
-  echo '({ minAge }, $) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
+  echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
+  echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
 `;
 
 type Mode = "auto" | "filter" | "pipeline" | "expr" | "update" | "validate";

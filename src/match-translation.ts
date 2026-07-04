@@ -782,7 +782,7 @@ function paramRefAsLiteral(
   const value = ctx.bindings.get(expr.name);
   if (orderedOnly) {
     // Ordered comparisons accept numbers, strings, and `Date` instances —
-    // `Date` so `jsmql.compile(($) => $.createdAt >= params.cutoff)({ cutoff: new Date(…) })`
+    // `Date` so `jsmql.compile(({ cutoff }, { $ }) => $.createdAt >= cutoff)({ cutoff: new Date(…) })`
     // emits index-friendly field-form instead of $expr.
     if (typeof value !== "number" && typeof value !== "string" && !(value instanceof Date)) return null;
   } else {

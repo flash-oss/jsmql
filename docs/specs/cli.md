@@ -56,7 +56,7 @@ arrow**, and it is routed through `jsmql.compile(source)(params)` (see
 [function-form-params.md](function-form-params.md)):
 
 ```sh
-echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
+echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 # → { "age": { "$gt": 18 } }
 ```
 
@@ -71,9 +71,9 @@ builder — `jsmql.filter.compile` / `jsmql.pipeline.compile` /
 which binds the values and still enforces that mode's shape contract:
 
 ```sh
-echo '({ minAge }, $) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
+echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
 # → [ { "$match": { "age": { "$gt": 18 } } } ]
-echo '({ minAge }, $) => $.age > minAge' | jsmql --pipeline --argjson minAge 18
+echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --pipeline --argjson minAge 18
 # → exit 1: jsmql.pipeline() expects a Pipeline … (the arrow lowers to a Filter)
 ```
 

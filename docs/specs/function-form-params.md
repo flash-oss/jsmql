@@ -10,27 +10,27 @@ Every rule below applies identically to the strict-shape `.compile` builders (`j
 
 ## Accepted input
 
-`jsmql.compile()` accepts either an arrow function or a **string** containing the arrow source text. The function form goes through `Function.prototype.toString.call` to obtain the source; the string form is passed through unchanged. Both paths converge on the same `Parser.parseFunctionInput()` call, so every rule below applies identically. A string without an arrow shape surfaces the same `FunctionInputError` the function-form path would have raised (`"jsmql expects an arrow function \`($) => …\` as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
+`jsmql.compile()` accepts either an arrow function or a **string** containing the arrow source text. The function form goes through `Function.prototype.toString.call` to obtain the source; the string form is passed through unchanged. Both paths converge on the same `Parser.parseFunctionInput()` call, so every rule below applies identically. A string without an arrow shape surfaces the same `FunctionInputError` the function-form path would have raised (`"jsmql expects an arrow function \`({ $ }) => …\` … as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
 
 Placeholder syntaxes inside the string (`${name}`, `$1`, etc.) are **not** supported — the destructure pattern remains the single parameter-declaration mechanism. Adding inline placeholders would violate the strict-JS-subset invariant (`${id}` is not valid JS outside a template literal) and silently collide with real template literals: a user writing `` jsmql.compile(`… ${id} …`) `` with backticks would have `id` resolved by JS before jsmql ever saw the string.
 
 ## Arrow signature
 
 ```
-(paramsObj?, $?, { $opsHint }?) => body
+(params?, { $, …ops }?) => body
 ```
 
-All three slots are optional. The parser classifies each slot by **shape**, not by position name, so users may name the doc-context slot anything they want and still get the right disambiguation:
+Two optional slots, each an **object destructure**. The parser classifies each by **shape**, not position:
 
 | Slot shape | Interpretation |
 |------------|----------------|
-| Plain identifier | Doc context (the canonical `$`; discarded after parsing). |
-| Destructure with all `$`-prefixed keys | Ops-hint (types-only IDE autocomplete; the keys are discarded). See note below. |
-| Destructure with at least one non-`$` key | Params slot — names become bindings. |
+| Destructure with ≥1 non-`$` key (`{ minAge }`) | Params slot — names become bindings. |
+| Destructure with only `$`-prefixed keys (`{ $ }`, `{ $, $match }`, incl. the context refs `$$` / `$$$` / `$$$$`) | Toolbox slot — the document root `$`, context refs, and operators; keys are discarded after parsing. See note below. |
+| Bare identifier or bare `$` (`$`, `doc`) | **Rejected** — the document context must be destructured (`({ $ }) => …`). |
 
-> The ops-hint slot remains supported, but the **preferred alternative** is `import type "@koresar/jsmql/ops"` (see [`ops-generation.md`](ops-generation.md)). The subpath module surfaces every stage and operator as an ambient global with a spec-derived signature, so users get IDE autocomplete without listing names per call site. The slot stays in the grammar for back-compat with existing code.
+> The toolbox slot is types-only convenience; the **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/ops"` (see [`ops-generation.md`](ops-generation.md)), which surfaces every stage and operator as an ambient global — no need to list them per call site. Listing `$` (and any op) in the toolbox lets the arrow type-check even without that import.
 
-When all three appear, the only legal order is `(params, doc, ops)`. Shorter combinations preserve that relative order: `(params, doc)`, `(params, ops)`, `(doc, ops)`, `(params)`, `(doc)`, `(ops)`, and `()`. Anything else throws `FunctionInputError` with the actual and expected orderings.
+When both appear, the only legal order is `(params, { $, … })`. Shorter combinations: `(params)`, `({ $, … })`, and `()`. Anything else — a third slot, a bare-identifier / bare-`$` slot, or the toolbox before params — throws `FunctionInputError` with the actual and expected shape.
 
 ## Parser
 
@@ -38,22 +38,22 @@ When all three appear, the only legal order is `(params, doc, ops)`. Shorter com
 
 `parseParameterList` walks each top-level slot inside the parens, calling `parseParameterSlot` for each:
 
-- A plain `Ident` or `$` token → `{ kind: "doc" }`. The name is discarded.
-- An `LBrace` token → `parseDestructureSlot`. Returns either `{ kind: "ops" }` or `{ kind: "params", bindings: ParamBinding[] }`.
+- An `LBrace` token → `parseDestructureSlot`. Returns either `{ kind: "toolbox" }` or `{ kind: "params", bindings: ParamBinding[] }`.
+- A bare `Ident` or bare `$` / `$$` / `$$$` / `$$$$` token → immediate `FunctionInputError`: a parameter must be an object destructure (`({ $ }) => …`).
 - An `LBracket` → immediate `FunctionInputError` (array destructure rejected).
 
-`parseDestructureSlot` walks the `{ … }` body. Each key is either `Ident` (params key) or `Dollar` + `Ident` (ops key). For each entry it also handles:
+`parseDestructureSlot` walks the `{ … }` body. Each key is either `Ident` (params key) or a `$`-prefixed toolbox key — the bare `$` (a lone `Dollar`), an operator `$name` (`Dollar` + `Ident`), or a context ref `$$` / `$$$` / `$$$$` (`DoubleDollar` / `TripleDollar` / `QuadDollar`). For each entry it also handles:
 
-- `key: alias` — sets the binding's `name` field to the alias (params keys only; aliases are stripped on ops keys because they only matter for autocomplete, which the original key already provides).
+- `key: alias` — sets the binding's `name` field to the alias (params keys only; aliases are stripped on toolbox keys because they only matter for autocomplete, which the original key already provides).
 - `key = expr` — rejected with the explanatory message, regardless of what `expr` is. See [§ Why defaults are rejected](#why-defaults-are-rejected).
 - `...rest`, nested patterns, array patterns — each rejected with its own targeted message.
-- Mixed `$`-and-non-`$` keys in the same destructure → rejected; user must split into two slots.
+- Mixed `$`-and-non-`$` keys in the same destructure → rejected; the params and toolbox destructures stay separate slots.
 
 A `ParamBinding` is `{ key: string; name: string }`:
 - `key` is the property looked up on the params object at call time (the *outer* destructure key).
 - `name` is the identifier used inside the function body (the *inner* alias, or the same as `key` when there's no rename).
 
-The slot-ordering validator runs after the slots are collected. Slot count > 3 throws immediately. Each slot kind may appear at most once; the order must match `(params, doc, ops)`.
+The slot-ordering validator runs after the slots are collected. Slot count > 2 throws immediately. Each slot kind may appear at most once; the order must be `(params, { $, … })` — params before the toolbox.
 
 ### Why defaults are rejected
 
@@ -134,7 +134,7 @@ jsmql.validate(input)     // MOVED: was top-level export
 | `jsmql.compile(fn)` (parse time) | Default in destructure | `FunctionInputError` |
 | `jsmql.compile(fn)` (parse time) | Nested / rest / array destructure | `FunctionInputError` |
 | `jsmql.compile(fn)` (parse time) | Mixed `$`/non-`$` keys | `FunctionInputError` |
-| `jsmql.compile(fn)` (parse time) | > 3 params or wrong slot ordering | `FunctionInputError` |
+| `jsmql.compile(fn)` (parse time) | > 2 params, bare-identifier slot, or wrong slot ordering | `FunctionInputError` |
 | Compiled callable (bind time) | Body references binding not in params | `UnknownIdentifierError` |
 | Compiled callable (bind time) | Param value not JSON-safe | `JsmqlInterpolationError` |
 | Compiled callable (bind time) | `let <name>` shadows binding (defensive) | `CodegenError` |

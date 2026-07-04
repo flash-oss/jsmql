@@ -1038,14 +1038,14 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
   // op body, an aggregation expression, etc. now pass through intact.
 
   it("Date binding lands as a real Date inside an update op", () => {
-    const q = jsmql.compile(({ at }: { at: Date }, $) => ($.lastSeenAt = at));
+    const q = jsmql.compile(({ at }: { at: Date }, { $ }) => ($.lastSeenAt = at));
     const at = new Date("2026-01-01");
     const out = q({ at }) as Array<{ $set: { lastSeenAt: Date } }>;
     expect(out[0].$set.lastSeenAt).toBe(at);
   });
 
   it("RegExp binding lands as a real RegExp inside an update op", () => {
-    const q = jsmql.compile(({ pat }: { pat: RegExp }, $) => ($.name = pat));
+    const q = jsmql.compile(({ pat }: { pat: RegExp }, { $ }) => ($.name = pat));
     const pat = /^alice/i;
     const out = q({ pat }) as Array<{ $set: { name: RegExp } }>;
     expect(out[0].$set.name).toBe(pat);
@@ -4336,36 +4336,37 @@ describe("flex-shape operators", () => {
 
 describe("function overload", () => {
   it("accepts a no-param arrow", () => {
-    expect(jsmql.expr(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql.expr(({ $ }) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
   });
 
   it("accepts a $-param arrow (recommended idiom)", () => {
-    expect(jsmql.expr(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql.expr(({ $ }) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
   });
 
   it("produces identical MQL to the equivalent string", () => {
-    expect(jsmql.expr(($) => $.status === "active")).toEqual(jsmql.expr('$.status === "active"'));
+    expect(jsmql.expr(({ $ }) => $.status === "active")).toEqual(jsmql.expr('$.status === "active"'));
   });
 
-  it("the wrapper parameter is not bound inside the body — references resolve via $", () => {
-    // `(doc) =>` is a typing/IDE hook only. Inside the body, `doc.foo` is treated as
-    // an unknown identifier (and the user gets pointed at `$.doc` and the jsmql tag).
-    expect(() => jsmql.expr((doc) => doc.foo)).toThrow(/Unknown identifier 'doc'/);
+  it("the document is referenced via `$` from the toolbox; a bare-identifier param is rejected", () => {
+    // The document lives in the destructured toolbox — `({ $ }) => $.foo`.
+    expect(jsmql.expr(({ $ }) => $.foo)).toEqual("$foo");
+    // The old bare-identifier `(doc) =>` shape is no longer a valid parameter slot.
+    expect(() => jsmql.expr(new Function("return (doc) => doc.foo")() as never)).toThrow(/object destructure pattern/);
   });
 
   it("handles nested arrows in the body", () => {
-    expect(jsmql.expr(($) => $.items.map((x) => x * 2))).toEqual({
+    expect(jsmql.expr(({ $ }) => $.items.map((x) => x * 2))).toEqual({
       $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
     });
   });
 
   it("handles a parenthesised object-literal body", () => {
-    expect(jsmql.expr(($) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
+    expect(jsmql.expr(({ $ }) => ({ doubled: $.x * 2 }))).toEqual({ doubled: { $multiply: ["$x", 2] } });
   });
 
   it("accepts a `{ return <expr> }` block-body arrow (value form ≡ the expression body)", () => {
     expect(
-      jsmql.expr(($) => {
+      jsmql.expr(({ $ }) => {
         return $.age > 18;
       }),
     ).toEqual({ $gt: ["$age", 18] });
@@ -4373,7 +4374,7 @@ describe("function overload", () => {
 
   it("accepts a `function` input (≡ the arrow form)", () => {
     expect(
-      jsmql.expr(function ($) {
+      jsmql.expr(function ({ $ }) {
         return $.age > 18;
       }),
     ).toEqual({ $gt: ["$age", 18] });
@@ -4381,24 +4382,24 @@ describe("function overload", () => {
 
   it("accepts a named `function` input — the name is discarded", () => {
     expect(
-      jsmql.expr(function predicate($) {
+      jsmql.expr(function predicate({ $ }) {
         return $.age > 18;
       }),
     ).toEqual({ $gt: ["$age", 18] });
   });
 
   it("rejects an async arrow", () => {
-    expect(() => jsmql.expr(async ($) => $.age > 18)).toThrow(/async/);
+    expect(() => jsmql.expr(async ({ $ }) => $.age > 18)).toThrow(/async/);
   });
 
   it("appends a jsmql`` hint when an outer-scope identifier is referenced", () => {
     const minAge = 21; // referenced from the closure on purpose
-    expect(() => jsmql(($) => $.age > minAge)).toThrow(/jsmql`` template tag/);
+    expect(() => jsmql(({ $ }) => $.age > minAge)).toThrow(/jsmql`` template tag/);
   });
 
   it("jsmql.validate() reports the augmented hint for closure refs", () => {
     const minAge = 21;
-    const r = jsmql.validate(($) => $.age > minAge);
+    const r = jsmql.validate(({ $ }) => $.age > minAge);
     expect(r.valid).toBe(false);
     expect(r.errors[0]?.code).toBe("CODEGEN_ERROR");
     expect(r.errors[0]?.message).toMatch(/Unknown identifier 'minAge'/);
@@ -4406,23 +4407,23 @@ describe("function overload", () => {
   });
 
   it("jsmql.validate() reports SYNTAX_ERROR for an unsupported function shape (async)", () => {
-    const r = jsmql.validate(async ($) => $.age > 18);
+    const r = jsmql.validate(async ({ $ }) => $.age > 18);
     expect(r.valid).toBe(false);
     expect(r.errors[0]?.code).toBe("SYNTAX_ERROR");
   });
 
   it("inline arrow in a hot loop produces consistent MQL across calls", () => {
-    const make = () => jsmql.expr(($) => $.status === "active");
+    const make = () => jsmql.expr(({ $ }) => $.status === "active");
     const a = make();
     const b = make();
     expect(a).toEqual(b);
   });
 
-  it("destructured operator in the second parameter compiles to the same MQL as the string form", () => {
-    // The second arg is types-only — it gives users a destructure site that
-    // silences IDE warnings on `$dateDiff`. The runtime strips the param list,
-    // so this produces identical MQL to the string equivalent.
-    const fromFn = jsmql.expr(($, { $dateDiff }) => $dateDiff({ startDate: $.a, endDate: $.b, unit: "day" }));
+  it("destructured operator alongside `$` in the toolbox compiles to the same MQL as the string form", () => {
+    // The toolbox destructure is types-only — it gives users a destructure site
+    // that silences IDE warnings on `$dateDiff`. The runtime strips the param
+    // list, so this produces identical MQL to the string equivalent.
+    const fromFn = jsmql.expr(({ $, $dateDiff }) => $dateDiff({ startDate: $.a, endDate: $.b, unit: "day" }));
     const fromStr = jsmql.expr('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day" })');
     expect(fromFn).toEqual(fromStr);
   });
@@ -4524,7 +4525,7 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
     // The same compile + $-prefixed binding inside an aggregation context
     // (e.g. inside `$addFields`) still gets the wrap — covered in the
     // pipeline-integration tests below.
-    const q = jsmql.compile(({ name }: { name: string }, $) => $.x === name);
+    const q = jsmql.compile(({ name }: { name: string }, { $ }) => $.x === name);
     expect(q({ name: "$dangerous" })).toEqual({ x: "$dangerous" });
   });
 
@@ -4532,7 +4533,7 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
     // `in` is not query-translatable, so the residual goes through $expr,
     // which re-enters aggregation codegen — and that path still applies the
     // auto-$literal wrap to $-prefixed strings inside the array binding.
-    const q = jsmql.compile(({ allowed }: { allowed: string[] }, $) => $.grade in allowed);
+    const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
     expect(q({ allowed: ["$a", "$b", "safe"] })).toEqual({
       $expr: { $in: ["$grade", [{ $literal: "$a" }, { $literal: "$b" }, "safe"]] },
     });
@@ -4682,19 +4683,19 @@ describe("window operators ($setWindowFields-only — Wave 5 #41)", () => {
 describe("jsmql.compile()", () => {
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
-      const q = jsmql.compile(({ minAge }: { minAge: number }, $) => $.age > minAge);
+      const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);
       expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
     });
 
     it("string binding inlines as a literal string", () => {
-      const q = jsmql.compile(({ region }: { region: string }, $) => $.region === region);
+      const q = jsmql.compile(({ region }: { region: string }, { $ }) => $.region === region);
       expect(q({ region: "AU" })).toEqual({ region: "AU" });
     });
 
     it("array binding inlines into $in", () => {
       // `in` is not query-translatable today, so the residual goes through
       // $expr — the binding still inlines into `$in`'s second slot.
-      const q = jsmql.compile(({ allowed }: { allowed: string[] }, $) => $.grade in allowed);
+      const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
       expect(q({ allowed: ["A", "B"] })).toEqual({ $expr: { $in: ["$grade", ["A", "B"]] } });
     });
 
@@ -4708,13 +4709,13 @@ describe("jsmql.compile()", () => {
     });
 
     it("the same compiled query is reusable with different params", () => {
-      const q = jsmql.compile(({ n }: { n: number }, $) => $.age > n);
+      const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.age > n);
       expect(q({ n: 18 })).toEqual({ age: { $gt: 18 } });
       expect(q({ n: 65 })).toEqual({ age: { $gt: 65 } });
     });
 
     it("aliased destructure key binds the alias name", () => {
-      const q = jsmql.compile(({ minAge: floor }: { minAge: number }, $) => $.age >= floor);
+      const q = jsmql.compile(({ minAge: floor }: { minAge: number }, { $ }) => $.age >= floor);
       expect(q({ minAge: 18 })).toEqual({ age: { $gte: 18 } });
     });
   });
@@ -4725,37 +4726,37 @@ describe("jsmql.compile()", () => {
       expect(q({ flag: true })).toEqual({ $expr: true });
     });
 
-    it("(params, $) two-slot form", () => {
-      const q = jsmql.compile(({ n }: { n: number }, $) => $.age > n);
+    it("(params, { $ }) two-slot form", () => {
+      const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.age > n);
       expect(q({ n: 18 })).toEqual({ age: { $gt: 18 } });
     });
 
-    it("(params, $, ops) three-slot form — ops hint is types-only", () => {
+    it("(params, { $, ...ops }) toolbox form — ops hint is types-only", () => {
       const q = jsmql.compile(
-        ({ minScore }: { minScore: number }, $, { $match }: { $match: (...args: unknown[]) => unknown }) => [
+        ({ minScore }: { minScore: number }, { $, $match }: { $match: (...args: unknown[]) => unknown }) => [
           $match($.score >= minScore),
         ],
       );
       expect(q({ minScore: 75 })).toEqual([{ $match: { score: { $gte: 75 } } }]);
     });
 
-    it("existing one-arg `($) => …` form still works unchanged via jsmql.expr()", () => {
-      expect(jsmql.expr(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    it("the one-slot `({ $ }) => …` toolbox form works via jsmql.expr()", () => {
+      expect(jsmql.expr(({ $ }) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
     });
 
-    it("existing two-arg `($, { $dateDiff }) => …` form still works unchanged via jsmql.expr()", () => {
-      expect(jsmql.expr(($) => $.x === "ok")).toEqual({ $eq: ["$x", "ok"] });
+    it("the toolbox form with a destructured op (`({ $, $dateDiff }) => …`) works via jsmql.expr()", () => {
+      expect(jsmql.expr(({ $ }) => $.x === "ok")).toEqual({ $eq: ["$x", "ok"] });
     });
   });
 
   describe("scope and shadowing", () => {
     it("lambda parameter shadows a binding of the same name", () => {
-      const q = jsmql.compile(({ x }: { x: number }, $) => $.items.map((x) => x * 2));
+      const q = jsmql.compile(({ x }: { x: number }, { $ }) => $.items.map((x) => x * 2));
       expect(q({ x: 999 })).toEqual({ $expr: { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } } });
     });
 
     it("binding visible alongside other refs translates to a query-doc conjunction", () => {
-      const q = jsmql.compile(({ minAge }: { minAge: number }, $) => $.age >= minAge && $.country === "US");
+      const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age >= minAge && $.country === "US");
       expect(q({ minAge: 21 })).toEqual({ age: { $gte: 21 }, country: "US" });
     });
   });
@@ -4763,7 +4764,7 @@ describe("jsmql.compile()", () => {
   describe("$match index-friendly translation (a75eb35)", () => {
     it("scalar binding against a field becomes a query-language $match", () => {
       const q = jsmql.compile(
-        ({ minAge }: { minAge: number }, $, { $match }: { $match: (...a: unknown[]) => unknown }) => [
+        ({ minAge }: { minAge: number }, { $, $match }: { $match: (...a: unknown[]) => unknown }) => [
           $match($.age >= minAge),
         ],
       );
@@ -4772,7 +4773,7 @@ describe("jsmql.compile()", () => {
 
     it("string binding equals a field becomes a query-language $match", () => {
       const q = jsmql.compile(
-        ({ region }: { region: string }, $, { $match }: { $match: (...a: unknown[]) => unknown }) => [
+        ({ region }: { region: string }, { $, $match }: { $match: (...a: unknown[]) => unknown }) => [
           $match($.region === region),
         ],
       );
@@ -4782,13 +4783,13 @@ describe("jsmql.compile()", () => {
     it("Date binding against a field becomes a query-language $match", () => {
       // BSON `Date` instances are query-doc values — MongoDB indexes work on
       // them. Without this, a Date parameter would fall through to $expr.
-      const q = jsmql.compile(({ cutoff }: { cutoff: Date }, $) => $.createdAt >= cutoff);
+      const q = jsmql.compile(({ cutoff }: { cutoff: Date }, { $ }) => $.createdAt >= cutoff);
       const cutoff = new Date("2026-01-01");
       expect(q({ cutoff })).toEqual({ createdAt: { $gte: cutoff } });
     });
 
     it("RegExp binding inlines as a query-doc regex match", () => {
-      const q = jsmql.compile(({ name }: { name: RegExp }, $) => $.username === name);
+      const q = jsmql.compile(({ name }: { name: RegExp }, { $ }) => $.username === name);
       const name = /^alice/i;
       expect(q({ name })).toEqual({ username: name });
     });
@@ -4799,8 +4800,8 @@ describe("jsmql.compile()", () => {
       const q = jsmql.compile(
         (
           { min, limit }: { min: number; limit: number },
-          $,
           {
+            $,
             $match,
             $project,
             $limit,
@@ -4824,8 +4825,7 @@ describe("jsmql.compile()", () => {
       const q = jsmql.compile(
         (
           { region }: { region: string },
-          $,
-          { $lookup, $match }: { $lookup: (...a: unknown[]) => unknown; $match: (...a: unknown[]) => unknown },
+          { $, $lookup, $match }: { $lookup: (...a: unknown[]) => unknown; $match: (...a: unknown[]) => unknown },
         ) => [
           $lookup({
             from: "addresses",
@@ -4852,7 +4852,7 @@ describe("jsmql.compile()", () => {
 
   describe("error: missing binding at call time", () => {
     it("throws UnknownIdentifierError naming the missing key", () => {
-      const q = jsmql.compile(({ foo }: { foo: number }, $) => $.x > foo);
+      const q = jsmql.compile(({ foo }: { foo: number }, { $ }) => $.x > foo);
       let err: unknown;
       try {
         q({} as { foo: number });
@@ -4868,7 +4868,7 @@ describe("jsmql.compile()", () => {
       // `({ minAge: floor })` looks up `minAge` on the params object and binds
       // it to `floor` in the body. A missing `minAge` key names both so the
       // user can find either side of the rename.
-      const q = jsmql.compile(({ minAge: floor }: { minAge: number }, $) => $.age >= floor);
+      const q = jsmql.compile(({ minAge: floor }: { minAge: number }, { $ }) => $.age >= floor);
       let err: unknown;
       try {
         q({} as { minAge: number });
@@ -4882,20 +4882,20 @@ describe("jsmql.compile()", () => {
 
   describe("error: defaults in destructure are rejected", () => {
     it("literal default rejected with the explanatory message", () => {
-      expect(() => jsmql.compile(({ minAge = 18 }: { minAge?: number }, $) => $.age > minAge)).toThrow(
+      expect(() => jsmql.compile(({ minAge = 18 }: { minAge?: number }, { $ }) => $.age > minAge)).toThrow(
         /does not support default values/,
       );
     });
 
     it("expression default rejected with the explanatory message", () => {
-      expect(() => jsmql.compile(({ now = Date.now() }: { now?: number }, $) => $.createdAt > now)).toThrow(
+      expect(() => jsmql.compile(({ now = Date.now() }: { now?: number }, { $ }) => $.createdAt > now)).toThrow(
         /does not support default values/,
       );
     });
 
     it("rejection message points at the call-site `??` fallback", () => {
       try {
-        jsmql.compile(({ x = 1 }: { x?: number }, $) => $.y > x);
+        jsmql.compile(({ x = 1 }: { x?: number }, { $ }) => $.y > x);
       } catch (err) {
         expect((err as Error).message).toMatch(/JS's `\?\?` at the call site/);
       }
@@ -4903,7 +4903,7 @@ describe("jsmql.compile()", () => {
 
     it("rejection message points at the template-tag form", () => {
       try {
-        jsmql.compile(({ x = 1 }: { x?: number }, $) => $.y > x);
+        jsmql.compile(({ x = 1 }: { x?: number }, { $ }) => $.y > x);
       } catch (err) {
         expect((err as Error).message).toMatch(/template-tag form/);
       }
@@ -4912,20 +4912,20 @@ describe("jsmql.compile()", () => {
 
   describe("error: malformed destructure patterns", () => {
     it("nested destructure is rejected", () => {
-      // Equivalent source: ({ a: { b } }, $) => $.x > b
-      const src = "({ a: { b } }, $) => $.x > b";
+      // Equivalent source: ({ a: { b } }, { $ }) => $.x > b
+      const src = "({ a: { b } }, { $ }) => $.x > b";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         /does not support nested destructure/,
       );
     });
 
     it("rest pattern is rejected", () => {
-      const src = "({ ...rest }, $) => $.x > rest.a";
+      const src = "({ ...rest }, { $ }) => $.x > rest.a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(/does not support rest patterns/);
     });
 
     it("array destructure is rejected", () => {
-      const src = "([a, b], $) => $.x > a";
+      const src = "([a, b], { $ }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         /must be an object destructure pattern/,
       );
@@ -4933,20 +4933,20 @@ describe("jsmql.compile()", () => {
   });
 
   describe("error: slot ordering and counts", () => {
-    it("more than three parameters is rejected", () => {
-      const src = "({ a }, $, { $match }, extra) => $.x > a";
-      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(/at most three parameters/);
+    it("more than two parameters is rejected", () => {
+      const src = "({ a }, { $ }, { $match }) => $.x > a";
+      expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(/at most two parameters/);
     });
 
-    it("(doc, params) — params after doc — is rejected", () => {
-      const src = "($, { a }) => $.x > a";
+    it("(toolbox, params) — the toolbox before params — is rejected", () => {
+      const src = "({ $ }, { a }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
-        /Reorder to `\(params, \$, opsHint\)`/,
+        /params destructure to appear before the toolbox/,
       );
     });
 
     it("mixed `$`/non-`$` keys in one destructure is rejected", () => {
-      const src = "({ $match, minAge }, $) => $.age > minAge";
+      const src = "({ $match, minAge }) => $.age > minAge";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         /separate from the params destructure/,
       );
@@ -4955,57 +4955,57 @@ describe("jsmql.compile()", () => {
 
   describe("error: unsafe param values at call time", () => {
     it("NaN is rejected at bind time", () => {
-      const q = jsmql.compile(({ n }: { n: number }, $) => $.x > n);
+      const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.x > n);
       expect(() => q({ n: NaN })).toThrow(/NaN/);
     });
 
     it("Infinity is rejected at bind time", () => {
-      const q = jsmql.compile(({ n }: { n: number }, $) => $.x > n);
+      const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.x > n);
       expect(() => q({ n: Infinity })).toThrow(/Infinity/);
     });
 
     it("function value is rejected at bind time", () => {
-      const q = jsmql.compile(({ x }: { x: unknown }, $) => $.y === x);
+      const q = jsmql.compile(({ x }: { x: unknown }, { $ }) => $.y === x);
       expect(() => q({ x: () => 1 })).toThrow(/has no JSON representation/);
     });
 
     it("BigInt value is rejected at bind time", () => {
-      const q = jsmql.compile(({ x }: { x: unknown }, $) => $.y === x);
+      const q = jsmql.compile(({ x }: { x: unknown }, { $ }) => $.y === x);
       expect(() => q({ x: BigInt(1) })).toThrow(/could not be serialised/);
     });
   });
 
   describe("extra params keys are allowed silently", () => {
     it("extra keys not referenced in the body are ignored", () => {
-      const q = jsmql.compile(({ a }: { a: number }, $) => $.x > a);
+      const q = jsmql.compile(({ a }: { a: number }, { $ }) => $.x > a);
       expect(q({ a: 1, unused: 99 } as unknown as { a: number })).toEqual({ x: { $gt: 1 } });
     });
   });
 
   describe("string input", () => {
     it("string containing an arrow compiles like the function form", () => {
-      const q = jsmql.compile("({ minAge }, $) => $.age > minAge");
+      const q = jsmql.compile("({ minAge }, { $ }) => $.age > minAge");
       expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
     });
 
     it("aliased destructure works in the string form too", () => {
-      const q = jsmql.compile("({ minAge: floor }, $) => $.age >= floor");
+      const q = jsmql.compile("({ minAge: floor }, { $ }) => $.age >= floor");
       expect(q({ minAge: 18 })).toEqual({ age: { $gte: 18 } });
     });
 
     it("string form returns a reusable closure", () => {
-      const q = jsmql.compile("({ n }, $) => $.age > n");
+      const q = jsmql.compile("({ n }, { $ }) => $.age > n");
       expect(q({ n: 18 })).toEqual({ age: { $gt: 18 } });
       expect(q({ n: 65 })).toEqual({ age: { $gt: 65 } });
     });
 
     it("string input drives a pipeline end-to-end", () => {
-      const q = jsmql.compile("({ id, count }, $, { $match, $limit }) => [$match($._id === id), $limit(count)]");
+      const q = jsmql.compile("({ id, count }, { $, $match, $limit }) => [$match($._id === id), $limit(count)]");
       expect(q({ id: 42, count: 10 })).toEqual([{ $match: { _id: 42 } }, { $limit: 10 }]);
     });
 
     it("missing param at call time names the binding (same path as fn form)", () => {
-      const q = jsmql.compile("({ foo }, $) => $.x > foo");
+      const q = jsmql.compile("({ foo }, { $ }) => $.x > foo");
       expect(() => q({})).toThrow(/Unknown identifier 'foo'/);
     });
 
@@ -5113,7 +5113,7 @@ describe("Filter dispatch (no semicolons)", () => {
 
   describe("compile-form parameter substitution", () => {
     it("a scalar binding inlines into the query-doc literal slot", () => {
-      const q = jsmql.compile(({ minAge }: { minAge: number }, $) => $.age >= minAge);
+      const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age >= minAge);
       expect(q({ minAge: 21 })).toEqual({ age: { $gte: 21 } });
     });
   });
@@ -5164,11 +5164,11 @@ describe("Pipeline dispatch (semicolons present)", () => {
 
 describe("function-form dispatch parity", () => {
   it("expression-body arrow lowers as a Filter", () => {
-    expect(jsmql(($) => $.age > 18)).toEqual({ age: { $gt: 18 } });
+    expect(jsmql(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18 } });
   });
 
   it("block-body arrow lowers as a Pipeline", () => {
-    const result = jsmql(($, { $match, $sort }) => {
+    const result = jsmql(({ $, $match, $sort }) => {
       $match($.age > 18);
       $sort({ age: 1 });
     });
@@ -5204,7 +5204,7 @@ describe("jsmql.expr()", () => {
   });
 
   it("accepts the arrow form", () => {
-    expect(jsmql.expr(($) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
+    expect(jsmql.expr(({ $ }) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
   });
 
   it("accepts the template-tag form", () => {
@@ -5428,7 +5428,9 @@ describe("trailing commas (JS syntax)", () => {
     // Only reachable via a source string: a real arrow can't carry it (JS
     // rejects `a = 1, b = 2,` as a statement), but the parser must still accept
     // the trailing `,` before the block's closing `}`.
-    expect(jsmql.compile("($) => { $.a = 1, $.b = 2, }")()).toEqual(jsmql.compile("($) => { $.a = 1, $.b = 2 }")());
+    expect(jsmql.compile("({ $ }) => { $.a = 1, $.b = 2, }")()).toEqual(
+      jsmql.compile("({ $ }) => { $.a = 1, $.b = 2 }")(),
+    );
   });
 
   it("function declaration parameter list (pipeline)", () => {
@@ -5439,8 +5441,9 @@ describe("trailing commas (JS syntax)", () => {
 
   it("compile-form params destructure and slot list", () => {
     // String entry so the trailing commas survive the formatter: one inside the
-    // params destructure (`{ min, }`) and one after the `$` doc slot (`$,`).
-    expect(jsmql.compile("({ min, }, $,) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
-    expect(jsmql.compile("({ min }, $) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+    // params destructure (`{ min, }`) and one after the `{ $ }` toolbox slot
+    // (`{ $ },`).
+    expect(jsmql.compile("({ min, }, { $ },) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+    expect(jsmql.compile("({ min }, { $ }) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
   });
 });

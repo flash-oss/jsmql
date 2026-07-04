@@ -37,7 +37,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/update-filter.md` | Assignment + `delete` statements → `$set` / `$unset` stages |
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`) |
 | `specs/reusable-functions.md` | Reusable named functions (`const f = (a) => …`) → inline IIFE/`$let` per call |
-| `specs/function-form-params.md` | `jsmql.compile(fn)` parameter bindings: the three-slot arrow signature |
+| `specs/function-form-params.md` | `jsmql.compile(fn)` parameter bindings: the two-slot `(params, { $, … })` arrow signature |
 | `specs/ops-generation.md` | How `src/ops.ts` (`@koresar/jsmql/ops`) is generated + its drift test |
 | `specs/strict-shape-entries.md` | `jsmql.filter` / `jsmql.pipeline` / `jsmql.update`: strict-shape dispatch + the update whitelist |
 | `specs/mongoose-plugin.md` | The `@koresar/jsmql/mongoose` plugin |

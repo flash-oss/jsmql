@@ -89,7 +89,7 @@ Targets validate the same way as for assignments — only `FieldRef` or chained 
 
 ### Parenthesized assignments
 
-Formatters wrap assignment expressions in parens when they appear in array element position (`[($.a = 5)]`). Without parser support, `jsmql(($) => [($.a = 5)])` would fail outside Vite/Vitest's transform (which silently strips the parens). To match user expectations, `parseGrouped` recognises an assignment-op after the inner expression: it parses the assignment chain inside the parens, validates the target, and returns the resulting `AssignExpr` cast as `Expr` (one localised type assertion). Single chains only — `($.a = $.b = 5)` is rejected with a precise error.
+Formatters wrap assignment expressions in parens when they appear in array element position (`[($.a = 5)]`). Without parser support, `jsmql(({ $ }) => [($.a = 5)])` would fail outside Vite/Vitest's transform (which silently strips the parens). To match user expectations, `parseGrouped` recognises an assignment-op after the inner expression: it parses the assignment chain inside the parens, validates the target, and returns the resulting `AssignExpr` cast as `Expr` (one localised type assertion). Single chains only — `($.a = $.b = 5)` is rejected with a precise error.
 
 Downstream:
 

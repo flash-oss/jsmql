@@ -64,35 +64,35 @@ export class JsmqlInterpolationError extends Error {
   }
 }
 
-// Accept any callable shape: the canonical idiom is `($) => …` (one
-// parameter named `$`, used as the document-context placeholder), but `()
-// => …` and `(doc) => …` are equally valid — the parameter list is
-// stripped at extraction time. `any` for the `$` parameter lets users
-// write unannotated `$` and still get IDE autocomplete (`$.foo.bar`)
-// without `noImplicitAny` complaining.
+// Accept any callable shape. The canonical idiom is `({ $ }) => …`: the arrow
+// receives a single destructured "toolbox" object carrying the document root
+// `$`, the context refs `$$` / `$$$` / `$$$$`, and every `$`-prefixed operator
+// / stage. The parameter list is stripped at extraction time (jsmql parses the
+// arrow's source; it never calls it), so the destructure is types-only — its
+// job is to give the body's `$` / `$op` names a declaration site.
 //
-// The optional second parameter is types-only: it gives users a destructure
-// site for escape-hatch operators (`($, { $dateDiff }) => $dateDiff(…)`) so
-// IDEs don't flag `$dateDiff` as an unknown identifier. The parameter list
-// is stripped before the parser runs, so this never reaches the runtime.
-export type JsmqlOps = Record<`$${string}`, (...args: any[]) => any>;
-type JsmqlFn = ($: any, ops: JsmqlOps) => unknown;
+// Everything on the toolbox is typed `any`: `$` so `$.foo.bar` autocompletes
+// without `noImplicitAny` complaining, and each `$op` so a destructured
+// `({ $, $dateDiff }) => $dateDiff(…)` type-checks even without importing
+// `@koresar/jsmql/ops`. Rich signatures come from that ambient-globals import
+// (use the names un-destructured); listing them here is optional convenience.
+export type JsmqlToolbox = { [K in `$${string}`]: any };
+type JsmqlFn = (toolbox: JsmqlToolbox) => unknown;
 export type JsmqlInput = string | JsmqlFn;
 
-// Function-form parameter binding (used by `jsmql.compile`). The arrow's
-// first slot is a destructure pattern that names the bindings; the same names
-// must appear as keys on the params object passed at call time. The `$` and
-// ops-hint slots remain optional and order-disambiguated by shape — see
+// Function-form parameter binding (used by `jsmql.compile`). The arrow's first
+// slot is a params destructure that names the bindings; the same names must
+// appear as keys on the params object passed at call time. The toolbox
+// destructure (`{ $, … }`) is the optional second slot — see
 // `Parser.parseParameterList` for the rule and docs/LANGUAGE.md for the
 // user-facing reference.
 //
-// `$` and `ops` are declared as required (not `?:`) so that users who
-// explicitly annotate them with a destructure type — `({ $match }: JsmqlOps)`
-// — get clean type inference. TypeScript already lets users omit trailing
-// parameters when assigning to a function type, so `(params) => …` and
-// `(params, $) => …` still work; the parser also strips the parameter list
-// at extraction time, so the runtime never sees any of these declarations.
-type JsmqlCompileFn<P> = (params: P, $: any, ops: JsmqlOps) => unknown;
+// The toolbox is declared as required (not `?:`) so a user who annotates it —
+// `(params, { $ }: JsmqlToolbox) => …` — gets clean inference. TypeScript still
+// lets callers omit trailing parameters when assigning to a function type, so
+// `(params) => …` works too; and the parser strips the whole parameter list at
+// extraction time, so the runtime never sees any of these declarations.
+type JsmqlCompileFn<P> = (params: P, toolbox: JsmqlToolbox) => unknown;
 
 // `jsmql()` returns either a single compiled MQL expression object, or — when
 // the input is a top-level aggregation pipeline `[ { $stage: ... }, ... ]` —
@@ -330,7 +330,7 @@ type CompileBuilder<R extends JsmqlOutput> = {
  * (`$lookup`, `$unionWith`, `$facet`) without `$$name` collisions.
  *
  * The input may also be a **string** containing the arrow source text — e.g.
- * `jsmql.compile("({ minAge }, $) => $.age > minAge")`. Useful when the query
+ * `jsmql.compile("({ minAge }, { $ }) => $.age > minAge")`. Useful when the query
  * is stored externally (config, file, database) and the caller still wants the
  * parse-once-bind-many semantics. The destructure pattern is the only
  * parameter-declaration mechanism for both call shapes; placeholder syntaxes
@@ -392,10 +392,10 @@ const compileFunction: CompileBuilder<JsmqlOutput> = makeCompile(lowerWithCtx, "
  * so callers can drive editor tooling, form validation, and similar use cases.
  *
  * The overload set is the union of `jsmql.compile`'s and `jsmql()`'s — the
- * compile-form arrow comes first so IDEs contextually type `({ minAge }, $)`
- * against `(params: P, $: any, ops: JsmqlOps)` rather than the one-shot
- * `($: any, ops: JsmqlOps)` shape (which would mis-type the second slot as
- * `JsmqlOps`).
+ * compile-form arrow comes first so IDEs contextually type `({ minAge }, { $ })`
+ * against `(params: P, toolbox: JsmqlToolbox)` rather than the one-shot
+ * `(toolbox: JsmqlToolbox)` shape (which would mis-type the params slot as the
+ * toolbox).
  */
 function validateInput<P extends Record<string, any>>(fn: JsmqlCompileFn<P>): ValidationResult;
 function validateInput(input: JsmqlInput): ValidationResult;
@@ -404,8 +404,8 @@ function validateInput(
   // The implementation signature must be assignable from every overload, so it
   // widens to include the compile-form arrow shape (`JsmqlCompileFn<any>`)
   // alongside `JsmqlInput` and the template-tag array. The compile-form arrow
-  // doesn't fit `JsmqlInput`'s `JsmqlFn = ($: any, ops: JsmqlOps) => unknown`
-  // shape because its first slot is the params destructure, not `$`.
+  // doesn't fit `JsmqlInput`'s `JsmqlFn = (toolbox: JsmqlToolbox) => unknown`
+  // shape because its first slot is the params destructure, not the toolbox.
   input: JsmqlInput | TemplateStringsArray | JsmqlCompileFn<any>,
   ...values: unknown[]
 ): ValidationResult {
@@ -488,7 +488,7 @@ function isCompileFormArrow(src: string): boolean {
  * True iff the remaining tokens (the lexer is positioned just after a leading
  * `function`) are a single `name?(...) { ... }` function expression that spans
  * the whole input — i.e. EOF immediately follows the body. Used to tell a
- * compile-form `function (params, $, $$) { … }` string from a reusable-function
+ * compile-form `function (params, { $ }) { … }` string from a reusable-function
  * pipeline (`function foo(a){…}; …`), which has statements after the body.
  */
 function functionSpansWholeInput(lex: Lexer): boolean {
@@ -818,7 +818,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   // and would reach the `DatabaseRef` / `ClusterRef` codegen case and throw
   // the wrong error. Wrap as a synthetic single-stmt Pipeline so the lookup-
   // aware pipeline integration in `pipeline.ts` intercepts the assignment-RHS
-  // lookup. This is the path that lights up `jsmql.compile(({ coll }, $) =>
+  // lookup. This is the path that lights up `jsmql.compile(({ coll }, { $ }) =>
   // ($.x = $$$[coll].find(...)))` — a single-stmt arrow body parses as an
   // UpdateFilter, not a Pipeline, and without this reroute the bound bracket
   // index would never reach the lookup translator.
@@ -1228,7 +1228,7 @@ function augmentForFunctionInput(err: unknown): unknown {
       `${err.message}\n` +
       `If '${err.identifier}' is a binding you want to supply at call time, use ` +
       `jsmql.compile(fn)({ ${err.identifier}: … }) and add it to the params destructure: ` +
-      `({ ${err.identifier} }, $) => …\n` +
+      `({ ${err.identifier} }, { $ }) => …\n` +
       `If '${err.identifier}' is a value from outer scope, use the jsmql\`\` template tag: ` +
       `jsmql\`… \${${err.identifier}} …\``;
   }

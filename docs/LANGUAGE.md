@@ -36,7 +36,7 @@ jsmql`$.age >= ${minAge} && $.status === 'active'`;
 // → { age: { $gte: 21 }, status: "active" }
 ```
 
-The same rule applies to the [function form](#function-form): an **expression-body** arrow (`($) => …`) lowers as a Filter, while a **block-body** arrow (`($) => { …; … }`) lowers as a Pipeline.
+The same rule applies to the [function form](#function-form): an **expression-body** arrow (`({ $ }) => …`) lowers as a Filter, while a **block-body** arrow (`({ $ }) => { …; … }`) lowers as a Pipeline.
 
 ---
 
@@ -147,16 +147,16 @@ predicate, wrap it as `$match(...)` — e.g. `$match($.age > 18)`. …
 
 ### Function form mirrors the rule
 
-An **expression-body** arrow (`($) => …`) is the function equivalent of a no-`;` string — it lowers as a Filter, unless the body is itself a stage call (then auto-wrap fires). A **block-body** arrow (`($) => { …; … }`) is the equivalent of a `;`-separated string — it lowers as a Pipeline.
+An **expression-body** arrow (`({ $ }) => …`) is the function equivalent of a no-`;` string — it lowers as a Filter, unless the body is itself a stage call (then auto-wrap fires). A **block-body** arrow (`({ $ }) => { …; … }`) is the equivalent of a `;`-separated string — it lowers as a Pipeline.
 
 ```js
-jsmql(($) => $.age > 18);
+jsmql(({ $ }) => $.age > 18);
 // → { age: { $gt: 18 } }                            (Filter)
 
-jsmql(($) => $match($.age > 18));
+jsmql(({ $ }) => $match($.age > 18));
 // → [ { $match: { age: { $gt: 18 } } } ]            (Pipeline — stage call auto-wraps)
 
-jsmql(($, { $match, $sort }) => {
+jsmql(({ $, $match, $sort }) => {
   $match($.age > 18);
   $sort({ age: 1 });
 });
@@ -810,7 +810,7 @@ aborts** with a server error carrying your `message`. It's the closest thing to
 
 ```js
 // 1. Guard, then transform. A failing doc aborts the aggregate.
-jsmql(($) => {
+jsmql(({ $ }) => {
   assert($.qty >= 0, "qty must be >= 0");
   $.fee = $.qty * 0.01;
 });
@@ -821,7 +821,7 @@ jsmql(($) => {
 //   ]
 
 // 2. Dynamic message — interpolate a runtime value.
-jsmql(($) => { assert($.qty >= 0, `qty was ${$.qty}`); });
+jsmql(({ $ }) => { assert($.qty >= 0, `qty was ${$.qty}`); });
 
 // 3. Message optional (uses a generic default), truthiness is JS-like.
 jsmql("assert($.active)");   // 0 / "" / null / missing all fail
@@ -1612,7 +1612,7 @@ $ = { subtotal: money($.price), tax: money($.tax) };
 // …identical MQL to `const money = (n) => …`
 
 $.items.map(function (x) { return x * 1.1 })   // inline callback — same as `(x) => x * 1.1`
-jsmql(function ($) { return $.age >= 18 })      // entry form — same as `($) => $.age >= 18`
+jsmql(function ({ $ }) { return $.age >= 18 })  // entry form — same as `({ $ }) => $.age >= 18`
 ```
 
 A named function *expression* (`.map(function scale(x) { … })`) is accepted, but the name is ignored — MQL has no recursion, so the name is unreachable. `async function` and generator `function*` are rejected with a pointer to the plain form.
@@ -2593,7 +2593,7 @@ Write each stage as a top-level statement separated by `;`. Any `;` at the top l
 
 ```js
 // Stages read like a script — one statement per stage.
-jsmql(($) => {
+jsmql(({ $ }) => {
   $match($.age > 18);
   $project({ name: 1, total: $.price * $.qty });
   $group({ _id: $.dept, total: $sum($.salary) });
@@ -2891,22 +2891,22 @@ All 45 stages defined in the MongoDB aggregation spec, including: `$addFields`, 
 
 ## Function Form
 
-In addition to a string, `jsmql()` and `jsmql.validate()` accept a **function** whose body is the expression — either an arrow `($) => …` or the `function` keyword (`function ($) { return … }`). The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
+In addition to a string, `jsmql()` and `jsmql.validate()` accept a **function** whose body is the expression — either an arrow `({ $ }) => …` or the `function` keyword (`function ({ $ }) { return … }`). The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
 
-jsmql(($) => $.age > 18);
+jsmql(({ $ }) => $.age > 18);
 // → { age: { $gt: 18 } }                          (Filter — no `;`, so it dispatches like the string form)
 
-jsmql(function ($) { return $.age > 18 });
+jsmql(function ({ $ }) { return $.age > 18 });
 // → { age: { $gt: 18 } } — same result; the `function` keyword is equivalent
 
-jsmql(function named($) { return $.age > 18 });
+jsmql(function named({ $ }) { return $.age > 18 });
 // → identical; a named function expression's name is parsed and discarded
 //   (it's unreachable in MQL — there is no recursion)
 
-jsmql(($) =>
+jsmql(({ $ }) =>
   [$.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
     .filter((x) => typeof x === "string" && x !== "")
     .map((x) => x.trim())
@@ -2920,10 +2920,10 @@ jsmql(($) =>
 
 ### Block-body arrows for pipelines
 
-A block-body arrow `($) => { stmt; stmt; }` is the function-form mirror of the canonical `;`-separated pipeline string form. The body is a sequence of jsmql statements separated by `;`, with `,` keeping its in-stage role:
+A block-body arrow `({ $ }) => { stmt; stmt; }` is the function-form mirror of the canonical `;`-separated pipeline string form. The body is a sequence of jsmql statements separated by `;`, with `,` keeping its in-stage role:
 
 ```js
-jsmql(($, { $match }) => {
+jsmql(({ $, $match }) => {
   $match($.status === "pending" && $.paidAt != null);
   ($.lineTotal = $.qty * $.unitPrice), ($.invoiceCount += 1);
   delete $.tempToken, delete $._processingState;
@@ -2937,7 +2937,7 @@ jsmql(($, { $match }) => {
 //   ]
 ```
 
-The `function` keyword mirrors both shapes: `function ($) { return <expr> }` is the value form (≡ `($) => <expr>`), and `function ($) { stmt; stmt; }` is the pipeline form (≡ the block-body arrow above).
+The `function` keyword mirrors both shapes: `function ({ $ }) { return <expr> }` is the value form (≡ `({ $ }) => <expr>`), and `function ({ $ }) { stmt; stmt; }` is the pipeline form (≡ the block-body arrow above).
 
 Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage update op chain, identical to the string form.
 
@@ -2945,30 +2945,30 @@ Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-lev
 
 ### Restrictions
 
-- **Arrow or `function`, but synchronous and non-generator.** Both `($) => …` and `function ($) { … }` are accepted as the input (a named function expression's name is parsed but discarded — it's unreachable in MQL). `async` functions and generators (`function*`) are rejected, with a message pointing at the synchronous form.
-- **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`. (A single-`return` `function` body is the exception: `function ($) { return <expr> }` *is* the value form, exactly like `($) => <expr>`.)
+- **Arrow or `function`, but synchronous and non-generator.** Both `({ $ }) => …` and `function ({ $ }) { … }` are accepted as the input (a named function expression's name is parsed but discarded — it's unreachable in MQL). `async` functions and generators (`function*`) are rejected, with a message pointing at the synchronous form.
+- **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`. (A single-`return` `function` body is the exception: `function ({ $ }) { return <expr> }` *is* the value form, exactly like `({ $ }) => <expr>`.)
 - **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Two options for parameterising a query exist instead: the [template-tag form](#template-tag-form-jsmql) for one-shot interpolation, and the [`jsmql.compile(fn)` form](#parameterised-queries-jsmqlcompile) for reusable parameterised queries:
   ```js
   const minAge = 21;
-  jsmql(($) => $.age > minAge);                  // ❌ error: Unknown identifier 'minAge'
+  jsmql(({ $ }) => $.age > minAge);              // ❌ error: Unknown identifier 'minAge'
   jsmql`$.age > ${minAge}`;                      // ✓ template tag — value interpolated
-  jsmql.compile(({ minAge }, $) => $.age > minAge)({ minAge });   // ✓ named param
+  jsmql.compile(({ minAge }, { $ }) => $.age > minAge)({ minAge });   // ✓ named param
   ```
-- **The wrapper's parameter is not bound inside the body.** `($) =>` is the recommended idiom because `$` is also the document context, but other names (`(doc) =>`) act as a typing/IDE hook only — `doc.foo` in the body resolves as an unknown identifier, not as `$.foo`.
+- **The toolbox destructure binds `$` to the document context.** `({ $ }) =>` is the idiom — the destructured `$` is the document root; the `$$` / `$$$` / `$$$$` context refs and `$`-operators come from the same object. Destructuring nothing (or a plain identifier) is rejected.
 
 When an unknown identifier is encountered in the function-form path, the error message also points at the template-tag form of `jsmql` as the right tool for closure interpolation.
 
 ### Escape-hatch operators (`$op` destructure)
 
-Direct `$op(...)` calls (e.g. `$dateDiff`, `$sampleRate`, `$stdDevPop`) work inside the function body, but TypeScript / your IDE will flag the operator name as an unknown identifier. To silence that warning, destructure the operators you use from the function's optional second parameter:
+Direct `$op(...)` calls (e.g. `$dateDiff`, `$sampleRate`, `$stdDevPop`) work inside the function body, but TypeScript / your IDE will flag the operator name as an unknown identifier. To silence that warning, list the operators you use alongside `$` in the toolbox destructure:
 
 ```js
-jsmql(($, { $dateDiff }) =>
+jsmql(({ $, $dateDiff }) =>
   $dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }) ?? -1,
 );
 ```
 
-The second parameter is types-only — the destructured names are typed as callables but never evaluated. The runtime strips the parameter list before parsing, so the body is identical to writing the call directly. Any `$`-prefixed name destructured from the second parameter is accepted by the type system; whether it is a real MongoDB operator is checked at compile time by the codegen.
+The arrow receives a single destructured toolbox object — the document root `$`, the context refs, and the `$`-operators — and listing the names is optional, types-only convenience: the destructured names are typed as callables but never evaluated. The runtime strips the parameter list before parsing, so the body is identical to writing the call directly. Any `$`-prefixed name in the toolbox destructure is accepted by the type system; whether it is a real MongoDB operator is checked at compile time by the codegen.
 
 ---
 
@@ -3123,11 +3123,11 @@ With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level
 Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. Parameterise a query with `jq`'s own flags — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
 
 ```sh
-echo '({ minAge }, $) => $.age > minAge' | jsmql --argjson minAge 18
+echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 # { "age": { "$gt": 18 } }
 
 # Params combine with any shape flag — routed through the matching *.compile():
-echo '({ minAge }, $) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
+echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
 # [{ "$match": { "age": { "$gt": 18 } } }]
 ```
 
@@ -3143,7 +3143,7 @@ For queries that run repeatedly with different values — a typical "list users 
 const { jsmql } = require("@koresar/jsmql");
 
 const eligibleUsersQuery = jsmql.compile(
-  ({ minAge, region }, $, { $match, $project }) => [
+  ({ minAge, region }, { $, $match, $project }) => [
     $match($.age >= minAge && $.region === region && $.status === "active"),
     $project({ id: $._id, name: $.name, email: $.email }),
   ],
@@ -3165,39 +3165,39 @@ The first argument may also be a **string** containing the same arrow source —
 
 ```js
 const eligibleUsersQuery = jsmql.compile(
-  "({ minAge, region }, $) => $.age >= minAge && $.region === region",
+  "({ minAge, region }, { $ }) => $.age >= minAge && $.region === region",
 );
 
 eligibleUsersQuery({ minAge: 21, region: "AU" });
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$region", "AU"] }] }
 ```
 
-The destructure is still the only way to declare parameters; placeholder syntaxes like `${name}` inside the string are deliberately **not** supported — they would break jsmql's strict-JS-subset rule and collide with real template literals. If the query string isn't function-shaped (an arrow `(params, $) => …` or a `function (params, $) { … }`), you get the same `FunctionInputError` the function form would have raised.
+The destructure is still the only way to declare parameters; placeholder syntaxes like `${name}` inside the string are deliberately **not** supported — they would break jsmql's strict-JS-subset rule and collide with real template literals. If the query string isn't function-shaped (an arrow `(params, { $ }) => …` or a `function (params, { $ }) { … }`), you get the same `FunctionInputError` the function form would have raised.
 
 ### The arrow signature
 
-The compile-form arrow takes up to three parameters, all optional, in this order:
+The compile-form arrow takes up to two destructures, both optional, in this order — the params destructure first, the toolbox destructure second:
 
 ```
-(paramsObj?, $?, { $opsHint }?) => body
+(params?, { $, …ops }?) => body
 ```
 
 Each slot is recognised by **shape**:
 
 | Slot shape | Interpretation |
 |------------|----------------|
-| Plain identifier (`$`, `doc`, anything else) | Doc-context slot — same role as the existing `($) => …` form. |
-| Destructure with all `$`-prefixed keys (`{ $match, $project }`) | Ops-hint slot — types-only, for IDE autocomplete on escape-hatch calls and stage names. |
 | Destructure with at least one non-`$` key (`{ minAge, region }`) | Params slot — the binding names listed here must be keys on the params object at call time. |
+| Destructure whose keys are all `$`-prefixed (`{ $ }`, and any of `$$` / `$$$` / `$$$$` and `$op` names, e.g. `{ $, $match, $project }`) | Toolbox slot — the document root `$`, context refs, and `$`-operators; listing operator names is types-only IDE convenience. |
+| A bare identifier or a bare `$` (not destructured) | Rejected. |
 
-You can omit any combination as long as the remaining slots stay in the order above. `jsmql.compile(({ minAge }) => …)` is the minimal form when you only need the params.
+You can omit either slot as long as the remaining one keeps its position. `jsmql.compile(({ minAge }) => …)` is the minimal form when you only need the params.
 
 ### Values are inlined as MQL literals
 
 A binding value flows into the MQL output exactly the way an interpolated template-tag value does — as a JSON literal:
 
 ```js
-jsmql.compile(({ allowed }, $) => $.grade in allowed)({ allowed: ["A", "B"] });
+jsmql.compile(({ allowed }, { $ }) => $.grade in allowed)({ allowed: ["A", "B"] });
 // → { $in: ["$grade", ["A", "B"]] }
 ```
 
@@ -3209,7 +3209,7 @@ In particular, `$match` keeps its **index-friendly** translation when the compar
 - **No nested destructure** — `({ a: { b } })`. Use a flat key→value map.
 - **No rest pattern** — `({ ...rest })`. List bindings explicitly.
 - **No array destructure** — `[a, b]`. Params is always an object.
-- **No mixing `$`-keys and non-`$`-keys** in the same destructure. Split into separate parameters: `(params, $, opsHint) => …`.
+- **No mixing `$`-keys and non-`$`-keys** in the same destructure. Keep them as two separate destructures: `(params, { $, … }) => …`.
 
 Each restriction produces a clear `FunctionInputError` that names the problem and points at the fix.
 
@@ -3222,7 +3222,7 @@ BSON instance values — `Date`, `RegExp`, `Uint8Array` (and `Buffer`), and Obje
 ```js
 // Top-level Date binding — lands in the query doc as a real Date, so MongoDB
 // uses the index on `createdAt` for the range scan.
-const recentByMethod = jsmql.compile(({ method, cutoff }, $) =>
+const recentByMethod = jsmql.compile(({ method, cutoff }, { $ }) =>
   $.method === method && $.createdAt >= cutoff,
 );
 recentByMethod({ method: "postalDelivery", cutoff: new Date("2026-01-01") });
@@ -3246,38 +3246,38 @@ If a binding referenced in the body is missing from the params object, the call 
 `jsmql.compile` is polymorphic — the compiled callable returns a Filter or a Pipeline depending on the arrow body, exactly like `jsmql()`. When the call site has a fixed shape, each strict entry point carries its own `.compile` that locks the output:
 
 ```js
-const adultsInRegion = jsmql.filter.compile(({ minAge, region }, $) =>
+const adultsInRegion = jsmql.filter.compile(({ minAge, region }, { $ }) =>
   $.age >= minAge && $.region === region,
 );
 db.users.find(adultsInRegion({ minAge: 18, region: "AU" }));
 // → { age: { $gte: 18 }, region: "AU" }
 
-const recentFirst = jsmql.pipeline.compile(({ minAge }, $) => {
+const recentFirst = jsmql.pipeline.compile(({ minAge }, { $ }) => {
   $match($.age >= minAge);
   $sort({ createdAt: -1 });
 });
 db.users.aggregate(recentFirst({ minAge: 18 }));
 // → [ { $match: { age: { $gte: 18 } } }, { $sort: { createdAt: -1 } } ]
 
-const bumpTier = jsmql.update.compile(({ tier }, $) => ($.tier = tier));
+const bumpTier = jsmql.update.compile(({ tier }, { $ }) => ($.tier = tier));
 db.users.updateMany({}, bumpTier({ tier: 2 }));
 // → [ { $set: { tier: 2 } } ]
 ```
 
-`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` share `jsmql.compile`'s binding mechanics exactly — they only narrow the output and enforce the same shape contract their one-shot siblings do. A compiled builder whose arrow body lowers to the wrong shape throws the identical error the one-shot strict entry would (e.g. `jsmql.pipeline.compile(({ m }, $) => $.age > m)` throws "expects a Pipeline … but received a bare expression" when called).
+`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` share `jsmql.compile`'s binding mechanics exactly — they only narrow the output and enforce the same shape contract their one-shot siblings do. A compiled builder whose arrow body lowers to the wrong shape throws the identical error the one-shot strict entry would (e.g. `jsmql.pipeline.compile(({ m }, { $ }) => $.age > m)` throws "expects a Pipeline … but received a bare expression" when called).
 
 ### Operator autocomplete (`@koresar/jsmql/ops`)
 
-Listing every stage and operator in the ops-hint destructure gets tedious. A real-world pipeline mentions five to ten stages plus a handful of escape-hatch expression ops; spelling them out at every call site is bookkeeping the user shouldn't have to do.
+Listing every stage and operator alongside `$` in the toolbox destructure gets tedious. A real-world pipeline mentions five to ten stages plus a handful of escape-hatch expression ops; spelling them out at every call site is bookkeeping the user shouldn't have to do.
 
-The `@koresar/jsmql/ops` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, drop the ops-hint destructure entirely, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
+The `@koresar/jsmql/ops` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, keep just `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
 
 ```ts
 import "@koresar/jsmql/ops"; // ← side-effect import; loads only `declare global` types
 import { jsmql } from "@koresar/jsmql";
 
 const eligibleUsersQuery = jsmql.compile(
-  ({ minAge, region }: { minAge: number; region: string }, $) => [
+  ({ minAge, region }: { minAge: number; region: string }, { $ }) => [
     $match($.age >= minAge && $.region == region),
     $project({ id: $._id, name: $.name }),
     $sort({ name: 1 }),
@@ -3293,9 +3293,9 @@ Object-form operators get full key autocomplete from the spec:
 import "@koresar/jsmql/ops";
 
 const recent = jsmql(
-  ($) => $dateAdd({ startDate: $.purchaseDate, unit: "day", amount: 3 }),
-  //              ╰── autocomplete suggests: startDate, unit, amount, timezone?
-  //              ╰── `unit` is typed as the MQL timeUnit literal union
+  ({ $ }) => $dateAdd({ startDate: $.purchaseDate, unit: "day", amount: 3 }),
+  //                  ╰── autocomplete suggests: startDate, unit, amount, timezone?
+  //                  ╰── `unit` is typed as the MQL timeUnit literal union
 );
 ```
 
@@ -3306,17 +3306,17 @@ How it works:
 - The declarations are **global** (via TypeScript's `declare global`): once any file in your project imports the module, the names are visible everywhere. **This is intentional** — every alternative (named imports, namespace imports) gets rewritten by bundlers into `(0, _ops.$match)(…)` form, which the jsmql parser can't recognise. Globals are the only shape that survives every transform. The names all start with `$`, so realistic collisions with user identifiers are nil — `$` as an identifier prefix is the MongoDB convention and isn't used elsewhere in the TS ecosystem.
 - The runtime path is unchanged. The jsmql parser already recognises bare `$stage(…)` and `$op(…)` calls regardless of TypeScript's view; this import only quiets TypeScript and gives your IDE something to autocomplete.
 
-The ops-hint destructure (`(…, $, { $match, $project })`) remains supported — `@koresar/jsmql/ops` is the preferred alternative when you don't want to maintain per-callsite lists, but existing code keeps working.
+Listing operator names in the toolbox destructure (`(…, { $, $match, $project })`) is the per-call-site alternative — `@koresar/jsmql/ops` is preferred when you don't want to maintain those lists.
 
 The import also declares the context-reference prefixes `$$`, `$$$`, and `$$$$`, so arrow-form code using them type-checks instead of erroring on an undeclared name. The collection-scoped (`$$`) and cluster-scoped (`$$$$`) **diagnostic source stages** get full completion and hover docs with annotated option objects:
 
 ```ts
 import "@koresar/jsmql/ops";
 
-jsmql(($) => $$.collStats({ storageStats: { scale: 1024 } }));
-//                ╰── autocomplete: indexStats, collStats, planCacheStats, listSearchIndexes
-jsmql(($) => $$$$.currentOp({ allUsers: true }));
-//                  ╰── autocomplete: currentOp, listSessions, shardedDataDistribution, …
+jsmql(({ $ }) => $$.collStats({ storageStats: { scale: 1024 } }));
+//                    ╰── autocomplete: indexStats, collStats, planCacheStats, listSearchIndexes
+jsmql(({ $ }) => $$$$.currentOp({ allUsers: true }));
+//                      ╰── autocomplete: currentOp, listSessions, shardedDataDistribution, …
 ```
 
 The other context-ref forms (`$$.push(...)`, `$$$.orders.find(...)`, `$$$.reports = …`, stream methods) type-check too, but as `any` for now — precise per-collection typing is future work `[DEF-015]`.
@@ -3545,7 +3545,7 @@ For the full pros and cons of server-side JavaScript, see the [README](../README
 
 **jsmql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
 
-Each migration below shows the deprecated form on top, then the jsmql replacement in **template-tag form** (`` jsmql`…` ``) and **function form** (`jsmql(($) => …)`).
+Each migration below shows the deprecated form on top, then the jsmql replacement in **template-tag form** (`` jsmql`…` ``) and **function form** (`jsmql(({ $ }) => …)`).
 
 ### `$function` — per-document JavaScript expression
 
@@ -3563,7 +3563,7 @@ Field arithmetic:
 jsmql`{ doubled: $.qty * 2 }`;
 
 // Function form
-jsmql(($) => ({ doubled: $.qty * 2 }));
+jsmql(({ $ }) => ({ doubled: $.qty * 2 }));
 ```
 
 Conditional reshaping:
@@ -3580,7 +3580,7 @@ Conditional reshaping:
 jsmql`$.score > 100 ? "high" : "low"`;
 
 // Function form
-jsmql(($) => ($.score > 100 ? "high" : "low"));
+jsmql(({ $ }) => ($.score > 100 ? "high" : "low"));
 ```
 
 String cleanup:
@@ -3597,7 +3597,7 @@ String cleanup:
 jsmql`$.email.toLowerCase().trim()`;
 
 // Function form
-jsmql(($) => $.email.toLowerCase().trim());
+jsmql(({ $ }) => $.email.toLowerCase().trim());
 ```
 
 ### `$where` — predicate inside `find()` / `$match`
@@ -3612,7 +3612,7 @@ db.users.find({ $where: "function() { return this.age > 18; }" });
 db.users.find({ $expr: jsmql`$.age > 18` });
 
 // Function form
-db.users.find({ $expr: jsmql(($) => $.age > 18) });
+db.users.find({ $expr: jsmql(({ $ }) => $.age > 18) });
 ```
 
 Inside an aggregation pipeline, you can use `$match` directly — jsmql translates index-safe predicates to query-document form so MongoDB still uses indexes, and falls back to `$expr` only for parts that can't be expressed as a query (see [Pipelines](#pipelines)):
@@ -3623,7 +3623,7 @@ jsmql`[{ $match: $.age > 18 }]`;
 // → [{ $match: { age: { $gt: 18 } } }]
 
 // Function form
-jsmql(($) => [{ $match: $.age > 18 }]);
+jsmql(({ $ }) => [{ $match: $.age > 18 }]);
 ```
 
 ### `$accumulator` — custom accumulator inside `$group` / `$setWindowFields`
@@ -3647,7 +3647,7 @@ Most uses of `$accumulator` map to a built-in accumulator. Average:
 jsmql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
 
 // Function form
-jsmql(($) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
+jsmql(({ $ }) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 ```
 
 For accumulators that need custom state, `$reduce` handles the common shapes natively. Running min/max alongside count:
@@ -3666,7 +3666,7 @@ jsmql`
 `;
 
 // Function form
-jsmql(($) =>
+jsmql(({ $ }) =>
   $.values.reduce(
     (acc, x) => ({
       min: acc.min == null ? x : x < acc.min ? x : acc.min,

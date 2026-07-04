@@ -123,55 +123,55 @@ describe("cli: validate", () => {
 
 describe("cli: parameters", () => {
   it("--argjson binds a JSON value through jsmql.compile", () => {
-    const r = run(["--argjson", "minAge", "18"], "({ minAge }, $) => $.age > minAge");
+    const r = run(["--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("--arg binds a string value", () => {
-    const r = run(["--arg", "name", "ann"], "({ name }, $) => $.name === name");
+    const r = run(["--arg", "name", "ann"], "({ name }, { $ }) => $.name === name");
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual({ name: "ann" });
   });
 
   it("binds params under --filter (routes through jsmql.filter.compile)", () => {
-    const r = run(["--filter", "--argjson", "minAge", "18"], "({ minAge }, $) => $.age > minAge");
+    const r = run(["--filter", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("binds params under --pipeline and enforces the Pipeline shape", () => {
-    const r = run(["--pipeline", "--argjson", "minAge", "18"], "({ minAge }, $) => { $match($.age > minAge) }");
+    const r = run(["--pipeline", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => { $match($.age > minAge) }");
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("--pipeline + params rejects a bare-expression arrow (inherited shape error)", () => {
-    const r = run(["--pipeline", "--argjson", "minAge", "18"], "({ minAge }, $) => $.age > minAge");
+    const r = run(["--pipeline", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("jsmql.pipeline() expects a Pipeline");
   });
 
   it("binds params under --update and enforces the update-stage whitelist", () => {
-    const r = run(["--update", "--argjson", "tier", "2"], "({ tier }, $) => ($.tier = tier)");
+    const r = run(["--update", "--argjson", "tier", "2"], "({ tier }, { $ }) => ($.tier = tier)");
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual([{ $set: { tier: 2 } }]);
   });
 
   it("validates a parameterised arrow under --validate (exit 0 for valid)", () => {
-    const r = run(["--validate", "--argjson", "minAge", "18"], "({ minAge }, $) => $.age > minAge");
+    const r = run(["--validate", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual({ valid: true, errors: [] });
   });
 
   it("validates a parameterised arrow under --validate (exit 1 for invalid)", () => {
-    const r = run(["--validate", "--argjson", "minAge", "18"], "({ minAge }, $) => $.age >");
+    const r = run(["--validate", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age >");
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout).valid).toBe(false);
   });
 
   it("reports invalid --argjson values as a usage error (exit 2)", () => {
-    const r = run(["--argjson", "x", "{not json"], "({ x }, $) => $.v == x");
+    const r = run(["--argjson", "x", "{not json"], "({ x }, { $ }) => $.v == x");
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("not valid JSON");
   });

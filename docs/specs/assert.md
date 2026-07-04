@@ -95,8 +95,8 @@ into pipeline mode via `isStageCandidate`, and is auto-wrapped into a one-stage
 pipeline by the `jsmql()` / `jsmql.pipeline()` entry points (so no trailing `;`
 is needed). All of these work:
 
-- `($) => { assert($.q >= 0, "m"); $.fee = … }` — multi-statement pipeline
-- `($) => { assert($.q >= 0, "m") }` — single-statement block
+- `({ $ }) => { assert($.q >= 0, "m"); $.fee = … }` — multi-statement pipeline
+- `({ $ }) => { assert($.q >= 0, "m") }` — single-statement block
 - `"assert($.q >= 0, 'm'); …"` / `"assert($.q >= 0, 'm')"` — string forms
 - `"[assert($.q >= 0, 'm'), $sort({ q: 1 })]"` — bracketed array
 - `jsmql.pipeline(…)` — strict pipeline entry

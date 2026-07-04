@@ -112,7 +112,7 @@ describe("@koresar/jsmql/mongoose — Filter-accepting methods", () => {
     it(`Model.${name}: arrow filter is lowered through jsmql.filter`, () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
-      Model[name](($: any) => $.age > 18);
+      Model[name](({ $ }: any) => $.age > 18);
       expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
     });
 
@@ -148,7 +148,7 @@ describe("@koresar/jsmql/mongoose — Filter + update slots", () => {
     it(`Model.${name}(filter, update): both slots are lowered`, () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
-      Model[name]("$.status === 'active'", ($: any) => ($.score += 1));
+      Model[name]("$.status === 'active'", ({ $ }: any) => ($.score += 1));
       expect(recorded[0].args[0]).toEqual({ status: "active" });
       expect(recorded[0].args[1]).toEqual([{ $set: { score: { $add: ["$score", 1] } } }]);
     });
@@ -192,7 +192,7 @@ describe("@koresar/jsmql/mongoose — findByIdAndUpdate (id-at-0)", () => {
   it("leaves the id slot alone and lowers only the update slot", () => {
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
-    Model.findByIdAndUpdate("507f1f77bcf86cd799439011", ($: any) => ($.lastSeen = new Date(0)));
+    Model.findByIdAndUpdate("507f1f77bcf86cd799439011", ({ $ }: any) => ($.lastSeen = new Date(0)));
     expect(recorded[0].args[0]).toBe("507f1f77bcf86cd799439011");
     expect(Array.isArray(recorded[0].args[1])).toBe(true);
   });
@@ -226,7 +226,7 @@ describe("@koresar/jsmql/mongoose — aggregate (pipeline-at-0)", () => {
   it("arrow pipeline is lowered through jsmql.pipeline", () => {
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
-    Model.aggregate(($: any) => {
+    Model.aggregate(({ $ }: any) => {
       $match($.x > 0);
       $sort({ x: 1 });
     });

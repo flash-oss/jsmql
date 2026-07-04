@@ -98,7 +98,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 - Regression: plain value array `[1, 2, 3]` stays expression-mode.
 - `validate()` surfaces pipeline errors as `CODEGEN_ERROR`.
 - The template-tag form of `jsmql` composes naturally.
-- Function-input form (`jsmql(($) => [ ... ])`).
+- Function-input form (`jsmql(({ $ }) => [ ... ])`).
 
 A realistic, multi-stage example using the canonical `;`-separated form lives in [test/realistic.test.ts](../../test/realistic.test.ts) under "pipeline: top-orders report by department".
 

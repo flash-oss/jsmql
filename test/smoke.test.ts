@@ -74,7 +74,7 @@ describe("smoke: built dist", () => {
         if (JSON.stringify(tag) !== '{"x":{"$gt":5}}') {
           throw new Error("jsmql template-tag mismatch: " + JSON.stringify(tag));
         }
-        const fn = jsmql(($) => $.age > 18);
+        const fn = jsmql(({ $ }) => $.age > 18);
         if (JSON.stringify(fn) !== '{"age":{"$gt":18}}') {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }
@@ -103,7 +103,7 @@ describe("smoke: built dist", () => {
         if (JSON.stringify(tag) !== '{"x":{"$gt":5}}') {
           throw new Error("jsmql template-tag mismatch: " + JSON.stringify(tag));
         }
-        const fn = jsmql(($) => $.age > 18);
+        const fn = jsmql(({ $ }) => $.age > 18);
         if (JSON.stringify(fn) !== '{"age":{"$gt":18}}') {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }

@@ -267,7 +267,7 @@ describe("pipeline — jsmql template-tag form", () => {
 
 describe("pipeline — function input", () => {
   it("compiles an arrow returning a pipeline", () => {
-    expect(jsmql(($) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }])).toEqual([
+    expect(jsmql(({ $ }) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }])).toEqual([
       { $match: { active: true } },
       { $sort: { created: -1 } },
       { $limit: 10 },

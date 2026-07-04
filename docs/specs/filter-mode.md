@@ -68,8 +68,8 @@ Without this auto-wrap, the bare expression would silently produce `{ $expr: { $
 
 [`Parser.parseFunctionInput`](../../src/parser.ts) already classifies the arrow's body shape:
 
-- **Expression-body arrow** (`($) => <expr>`) → returns a single `Expr` program → routes to `generateFilter`.
-- **Block-body arrow** (`($) => { stmt; stmt; }`) → returns a `Pipeline` program → routes to `generateImplicitPipeline`.
+- **Expression-body arrow** (`({ $ }) => <expr>`) → returns a single `Expr` program → routes to `generateFilter`.
+- **Block-body arrow** (`({ $ }) => { stmt; stmt; }`) → returns a `Pipeline` program → routes to `generateImplicitPipeline`.
 
 No additional wiring in this module — the body-shape split already mirrored the string form's `;` split before this change; only the no-`;` codepath needed updating.
 

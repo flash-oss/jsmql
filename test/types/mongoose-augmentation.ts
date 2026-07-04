@@ -41,24 +41,24 @@ const UserModel = mongoose.model<User>("User", userSchema);
 // find — filter at 0
 UserModel.find({ age: { $gt: 18 } });
 UserModel.find("$.age > 18");
-UserModel.find(($) => $.age > 18);
+UserModel.find(({ $ }) => $.age > 18);
 
 // findOne — filter at 0
 UserModel.findOne({ age: 18 });
 UserModel.findOne("$.age === 18");
-UserModel.findOne(($) => $.age === 18);
+UserModel.findOne(({ $ }) => $.age === 18);
 
 // findOneAndUpdate — filter at 0, update at 1
 UserModel.findOneAndUpdate({ age: 18 }, { $set: { name: "x" } });
 UserModel.findOneAndUpdate("$.age > 18", { $set: { name: "x" } });
-UserModel.findOneAndUpdate(($) => $.age > 18, { $set: { name: "x" } });
+UserModel.findOneAndUpdate(({ $ }) => $.age > 18, { $set: { name: "x" } });
 UserModel.findOneAndUpdate({ age: 18 }, "$.name = $.name.toUpperCase()");
-UserModel.findOneAndUpdate({ age: 18 }, ($) => ($.score += 1));
+UserModel.findOneAndUpdate({ age: 18 }, ({ $ }) => ($.score += 1));
 
 // findOneAndDelete — filter at 0
 UserModel.findOneAndDelete({ age: 18 });
 UserModel.findOneAndDelete("$.age === 18");
-UserModel.findOneAndDelete(($) => $.age === 18);
+UserModel.findOneAndDelete(({ $ }) => $.age === 18);
 
 // findOneAndReplace — filter at 0; replacement at 1 stays untyped against jsmql
 UserModel.findOneAndReplace({ age: 18 }, { name: "x", age: 19, region: "AU", score: 0, email: "x", status: "y" });
@@ -66,20 +66,20 @@ UserModel.findOneAndReplace("$.age === 18", { name: "x", age: 19, region: "AU", 
 
 // findByIdAndUpdate — id at 0 (no jsmql), update at 1
 UserModel.findByIdAndUpdate("507f1f77bcf86cd799439011", "$.name = $.name.toUpperCase()");
-UserModel.findByIdAndUpdate("507f1f77bcf86cd799439011", ($) => ($.score += 1));
+UserModel.findByIdAndUpdate("507f1f77bcf86cd799439011", ({ $ }) => ($.score += 1));
 
 // updateOne — filter at 0, doc at 1
 UserModel.updateOne({ age: 18 }, { $set: { name: "x" } });
 UserModel.updateOne("$.age > 18", { $set: { name: "x" } });
-UserModel.updateOne(($) => $.age > 18, { $set: { name: "x" } });
+UserModel.updateOne(({ $ }) => $.age > 18, { $set: { name: "x" } });
 UserModel.updateOne({ age: 18 }, "$.name = $.name.toUpperCase()");
-UserModel.updateOne({ age: 18 }, ($) => ($.score += 1));
+UserModel.updateOne({ age: 18 }, ({ $ }) => ($.score += 1));
 
 // updateMany — filter at 0, update at 1
 UserModel.updateMany({}, { $set: { score: 1 } });
 UserModel.updateMany("$.region === 'AU'", { $set: { score: 1 } });
 UserModel.updateMany({}, "$.score += 1");
-UserModel.updateMany({}, ($) => ($.score += 1));
+UserModel.updateMany({}, ({ $ }) => ($.score += 1));
 
 // replaceOne — filter at 0
 UserModel.replaceOne({ age: 18 }, { name: "x", age: 19, region: "AU", score: 0, email: "x", status: "y" });
@@ -90,7 +90,7 @@ UserModel.deleteOne({ age: 18 });
 UserModel.deleteOne("$.age > 18");
 UserModel.deleteMany({});
 UserModel.deleteMany("$.region === 'AU'");
-UserModel.deleteMany(($) => $.region === "AU");
+UserModel.deleteMany(({ $ }) => $.region === "AU");
 
 // countDocuments — filter at 0
 UserModel.countDocuments({ age: { $gt: 18 } });
@@ -104,12 +104,12 @@ UserModel.exists("$.age > 18");
 UserModel.distinct("email");
 UserModel.distinct("email", { region: "AU" });
 UserModel.distinct("email", "$.region === 'AU'");
-UserModel.distinct("email", ($) => $.region === "AU");
+UserModel.distinct("email", ({ $ }) => $.region === "AU");
 
 // aggregate — pipeline at 0
 UserModel.aggregate([{ $match: { age: { $gt: 18 } } }]);
 UserModel.aggregate("$match($.age > 18); $sort({ age: 1 })");
-UserModel.aggregate(($) => {
+UserModel.aggregate(({ $ }) => {
   $match($.age > 18);
   $sort({ age: 1 });
 });

@@ -217,8 +217,8 @@ stays an ordinary identifier (not a lexer keyword), intercepted **by value**:
 - **Statement / array-element position** (`collectStatement` / `parseArrayLiteral`):
   `function name(params) { … }` → a `FuncDecl` with `form: "function"`, identical
   to `const name = (params) => …`.
-- **Entry form** (`parseFunctionInput`): `jsmql(function ($) { … })` /
-  `jsmql.compile(function (params, $) { … })`.
+- **Entry form** (`parseFunctionInput`): `jsmql(function ({ $ }) { … })` /
+  `jsmql.compile(function (params, { $ }) { … })`.
 
 **Body grammar.** A `function` body reuses `parseExprBlockBody` — `{ (const|let
 …;)* return <expr>; }`. A body whose only statement is `return E` is normalised to
@@ -237,9 +237,9 @@ A `function` declaration forces Pipeline mode (it can't be a Filter), the same a
 `$ = …` and arrow `FuncDecl`s.
 
 **Entry block-body reconciliation.** At the entry, a brace body that opens with
-`return` is the value form (`{ return E }` ≡ `($) => E`); otherwise it is the
+`return` is the value form (`{ return E }` ≡ `({ $ }) => E`); otherwise it is the
 existing `;`-pipeline body. This applies to both `=> {` and `function {`, which
-also fixes the long-broken `($) => { return E }`. A stray statement-position
+also fixes the long-broken `({ $ }) => { return E }`. A stray statement-position
 `return` in a pipeline body is rejected by `rejectReturn` with guidance.
 
 Rejected (matching the arrow form): `async function` / `function*` (generator),

@@ -1477,7 +1477,7 @@ function generateStreamLength(ctx: GenerateCtx, pos: number): unknown {
   if (!ctx.pipelineContext) {
     throw new CodegenError(
       `'$$.length' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. ` +
-        `Use it inside a pipeline (e.g. \`($) => { $.n = $$.length; … }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
+        `Use it inside a pipeline (e.g. \`({ $ }) => { $.n = $$.length; … }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
       pos,
     );
   }
@@ -3756,7 +3756,7 @@ function generateCallExpression(callee: Expr, args: CallArg[], ctx: GenerateCtx,
       throw new CodegenError(
         `'assert(...)' is a pipeline statement, not a value — it can't appear inside an expression. ` +
           `Use it as its own statement in a pipeline body, e.g. ` +
-          `\`($) => { assert($.qty >= 0, "qty must be >= 0"); … }\`.`,
+          `\`({ $ }) => { assert($.qty >= 0, "qty must be >= 0"); … }\`.`,
         pos,
       );
     }

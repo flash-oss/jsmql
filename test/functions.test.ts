@@ -310,20 +310,63 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(fn).toEqual(arrow);
   });
 
-  it("entry form `jsmql(function ($) { return … })` lowers like the arrow entry", () => {
+  it("entry form `jsmql(function ({ $ }) { return … })` lowers like the arrow entry", () => {
     expect(
-      jsmql(function ($) {
+      jsmql(function ({ $ }) {
         return $.age >= 18;
       }),
-    ).toEqual(jsmql(($) => $.age >= 18));
+    ).toEqual(jsmql(({ $ }) => $.age >= 18));
   });
 
-  it("`jsmql.compile(function (params, $) { return … })` lowers like the arrow compile form", () => {
-    const fn = jsmql.compile(function ({ min }, $) {
+  it("`jsmql.compile(function (params, { $ }) { return … })` lowers like the arrow compile form", () => {
+    const fn = jsmql.compile(function ({ min }, { $ }) {
       return $.age >= min;
     });
-    const arrow = jsmql.compile(({ min }, $) => $.age >= min);
+    const arrow = jsmql.compile(({ min }, { $ }) => $.age >= min);
     expect(fn({ min: 21 })).toEqual(arrow({ min: 21 }));
+  });
+
+  // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). The
+  // old positional shapes — a bare `$`, a bare doc identifier, the two-slot
+  // `($, { $op })`, and the three-slot `(params, $, { $op })` — are rejected.
+  // (String inputs route through the same `parseFunctionInput` path as live
+  // arrows without tripping the toolbox param type in this .ts file.)
+  it("rejects the old bare-`$` arrow entry form `($) => …`", () => {
+    expect(() => jsmql.compile("($) => $.age > 18")).toThrow(/object destructure pattern/);
+  });
+
+  it("rejects a bare-identifier doc parameter `(doc) => …`", () => {
+    expect(() => jsmql.compile("(doc) => doc.age > 18")).toThrow(/object destructure pattern/);
+  });
+
+  it("rejects the old two-slot ops-hint form `($, { $op }) => …`", () => {
+    expect(() => jsmql.compile("($, { $dateDiff }) => $.age > 18")).toThrow(/object destructure pattern/);
+  });
+
+  it("rejects the old three-slot compile form `(params, $, { $op }) => …`", () => {
+    expect(() => jsmql.compile("({ minAge }, $, { $match }) => $.age > minAge")).toThrow(/object destructure pattern/);
+  });
+
+  it("rejects the old `function ($) { … }` entry form", () => {
+    expect(() => jsmql.compile("function ($) { return $.age > 18 }")).toThrow(/object destructure pattern/);
+  });
+
+  it("accepts the bare `$` plus context refs `$$` / `$$$` / `$$$$` as toolbox keys", () => {
+    expect(jsmql.compile("({ $, $$, $$$, $$$$ }) => $.age > 18")()).toEqual({ age: { $gt: 18 } });
+  });
+
+  it("rejects mixing params and toolbox keys in one destructure", () => {
+    expect(() => jsmql.compile("({ minAge, $ }) => $.age > minAge")).toThrow(/separate|toolbox destructure/);
+  });
+
+  it("rejects a third parameter slot", () => {
+    expect(() => jsmql.compile("({ minAge }, { $ }, { $match }) => $.age > minAge")).toThrow(/at most two parameters/);
+  });
+
+  it("rejects the toolbox destructure before params", () => {
+    expect(() => jsmql.compile("({ $ }, { minAge }) => $.age > minAge")).toThrow(
+      /params destructure to appear before the toolbox/,
+    );
   });
 
   it("rejects a generator `function*` with an actionable message", () => {

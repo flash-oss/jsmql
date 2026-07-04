@@ -6,7 +6,7 @@ The implementation-facing companion to the user-facing reference in [LANGUAGE.md
 
 ## Why `$$$` (and not `this.`)
 
-The first attempt at this surface used `this.<coll>.find(pred)` ([reverted commit `1dc2c7b`](../DEVLOG.md)). It read well, but `this` is a JavaScript reserved word that's *parse-rejected* outside class/method bodies, which violates the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md): `($) => this.users.find(...)` would refuse to round-trip through a `.js` file. The reverted spec moved to plain `this.` but the new direction uses the reserved context-reference prefixes (`$$`/`$$$`/`$$$$`) instead — they parse anywhere, never collide with the JS host language, and provide a single uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and AST nodes.
+The first attempt at this surface used `this.<coll>.find(pred)` ([reverted commit `1dc2c7b`](../DEVLOG.md)). It read well, but `this` is a JavaScript reserved word that's *parse-rejected* outside class/method bodies, which violates the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md): `({ $ }) => this.users.find(...)` would refuse to round-trip through a `.js` file. The reverted spec moved to plain `this.` but the new direction uses the reserved context-reference prefixes (`$$`/`$$$`/`$$$$`) instead — they parse anywhere, never collide with the JS host language, and provide a single uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and AST nodes.
 
 ## Grammar
 
@@ -123,7 +123,7 @@ The cross-database **write** (`$$$$.<db>.<coll> = $$` → `{ $out: { db, coll } 
 
 1. **`MemberAccess`** (`$$$.coll` / `$$$$.db.coll`) — the dotted member name.
 2. **`IndexAccess` with a `StringLiteral` index** (`$$$["coll"]` / `$$$$["db"]["coll"]`) — the literal value.
-3. **`IndexAccess` with a `ParamRef` index whose name resolves in `ctx.bindings` to a string** (`jsmql.compile(({ coll }, $) => $$$[coll].find(...))`) — the bound value. The `jsmql.compile` parameter-binding machinery has already validated the value as a JSON-safe compile-time constant, so reading it here matches the rule MongoDB itself enforces on `$lookup.from` (a plan-time string).
+3. **`IndexAccess` with a `ParamRef` index whose name resolves in `ctx.bindings` to a string** (`jsmql.compile(({ coll }, { $ }) => $$$[coll].find(...))`) — the bound value. The `jsmql.compile` parameter-binding machinery has already validated the value as a JSON-safe compile-time constant, so reading it here matches the rule MongoDB itself enforces on `$lookup.from` (a plan-time string).
 
 The third kind is the new compile-time-binding case. Non-string bindings (a number, an array, …) throw a precise "parameter binding must be a string" error at the `IndexAccess.index` position; unbound names return null (the codegen path then surfaces `UnknownIdentifierError`); runtime field-refs (`$.tenantDb`) fail to classify entirely and reach the bare-reference codegen error.
 
@@ -131,7 +131,7 @@ The `ctx` threads through `detectLookupCall` → `extractLookupTarget` → `stat
 
 - **Lowering paths** (`pipeline.ts:lowerUpdateFilterWithLookups`, `generatePipeline`, `generateImplicitPipeline`, and `extractLookupCalls`) — pass the local `ctx` so bindings resolve.
 - **Detection helpers without a meaningful ctx** (`walkContainsLookup` called from mode-gates; `findFirstLookupPos`; `findFirstLookupInExpr`) — `containsLookupCall` accepts an optional `ctx` parameter (default `EMPTY_CTX`) so mode-gates that lack one still work, and callers with one (`lowerWithCtx`, `rejectNestedLookup`) pass it explicitly so bound-bracket lookups detect correctly.
-- **`UpdateFilter` reroute in `lowerWithCtx`** — a single-stmt arrow body like `jsmql.compile(({ coll }, $) => ($.x = $$$[coll].find(...)))` parses as an `UpdateFilter`, not a `Pipeline`. Bare `generateUpdateFilter` doesn't know about lookups, so `lowerWithCtx` checks `containsLookupCall(ast, ctx)` and reroutes the lookup-bearing `UpdateFilter` through a synthetic single-stmt Pipeline → `generateImplicitPipeline` → the lookup-aware pipeline integration.
+- **`UpdateFilter` reroute in `lowerWithCtx`** — a single-stmt arrow body like `jsmql.compile(({ coll }, { $ }) => ($.x = $$$[coll].find(...)))` parses as an `UpdateFilter`, not a `Pipeline`. Bare `generateUpdateFilter` doesn't know about lookups, so `lowerWithCtx` checks `containsLookupCall(ast, ctx)` and reroutes the lookup-bearing `UpdateFilter` through a synthetic single-stmt Pipeline → `generateImplicitPipeline` → the lookup-aware pipeline integration.
 
 ## Mode gates
 
@@ -203,5 +203,5 @@ A nested lookup inside a *block-body* lambda works the same as the expression-bo
 
 ## Future work
 
-- **Ambient TS types for `$$$`** so the function-form lookup (`($) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).
+- **Ambient TS types for `$$$`** so the function-form lookup (`({ $ }) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).
 - **Optimised chained terminals.** `.map`, `.at`, second `.filter` currently fall through the generic path (one extra `$set` stage); they could emit specialised single-stage transforms.

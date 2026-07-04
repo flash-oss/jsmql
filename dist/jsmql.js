@@ -1050,7 +1050,7 @@ var Parser = class {
     return stmt.type === "FuncDecl" && stmt.form === "function";
   }
   /**
-   * Entry point for the function-input form (`jsmql(($) => …)`). The source
+   * Entry point for the function-input form (`jsmql(({ $ }) => …)`). The source
    * is the result of `Function.prototype.toString.call(fn)` — a full arrow
    * function expression. We consume the parameter list and `=>`, then dispatch
    * to either a block-body parser (`{ stmt; stmt; }`, the function-form mirror
@@ -1067,7 +1067,7 @@ var Parser = class {
     const first = this.lexer.peek();
     if (first.type === TokenType.Ident && first.value === "async") {
       throw new FunctionInputError(
-        "jsmql does not support async functions. Use a synchronous arrow `($) => \u2026` or `function ($) { return \u2026 }`.",
+        "jsmql does not support async functions. Use a synchronous arrow `({ $ }) => \u2026` or `function ({ $ }) { return \u2026 }`.",
         first.pos
       );
     }
@@ -1076,7 +1076,7 @@ var Parser = class {
       this.lexer.next();
       if (this.lexer.peek().type === TokenType.Star) {
         throw new FunctionInputError(
-          "jsmql does not support generator functions (`function*`). Use `function ($) { return \u2026 }` or an arrow `($) => \u2026`.",
+          "jsmql does not support generator functions (`function*`). Use `function ({ $ }) { return \u2026 }` or an arrow `({ $ }) => \u2026`.",
           this.lexer.peek().pos
         );
       }
@@ -1086,7 +1086,7 @@ var Parser = class {
     if (this.lexer.peek().type !== TokenType.LParen) {
       const tok = this.lexer.peek();
       throw new FunctionInputError(
-        isFunctionForm ? "jsmql expected '(' to start the parameter list of the `function` input." : "jsmql expects an arrow function `($) => \u2026` (or `function ($) { return \u2026 }`) as the function-form input.",
+        isFunctionForm ? "jsmql expected '(' to start the parameter list of the `function` input." : "jsmql expects an arrow function `({ $ }) => \u2026` (or `function ({ $ }) { return \u2026 }`) as the function-form input.",
         tok.pos
       );
     }
@@ -1095,7 +1095,7 @@ var Parser = class {
       if (this.lexer.peek().type !== TokenType.LBrace) {
         const tok = this.lexer.peek();
         throw new FunctionInputError(
-          "jsmql expected '{' to start the body of the `function` input \u2014 a `function` body is a block, e.g. `function ($) { return <expr> }`.",
+          "jsmql expected '{' to start the body of the `function` input \u2014 a `function` body is a block, e.g. `function ({ $ }) { return <expr> }`.",
           tok.pos
         );
       }
@@ -1104,7 +1104,7 @@ var Parser = class {
     const arrowTok = this.lexer.peek();
     if (arrowTok.type !== TokenType.Arrow) {
       throw new FunctionInputError(
-        "jsmql could not find an arrow operator (`=>`) in the function source. Use: `($) => \u2026`",
+        "jsmql could not find an arrow operator (`=>`) in the function source. Use: `({ $ }) => \u2026`",
         arrowTok.pos
       );
     }
@@ -1113,14 +1113,14 @@ var Parser = class {
     return { program: this.parseExpressionBody(), bindings };
   }
   /**
-   * Dispatch the brace body of an entry-form function/arrow (`jsmql(($) => { … })`
-   * / `jsmql(function ($) { … })`). Cursor is at `{`. Two shapes, mirroring what
+   * Dispatch the brace body of an entry-form function/arrow (`jsmql(({ $ }) => { … })`
+   * / `jsmql(function ({ $ }) { … })`). Cursor is at `{`. Two shapes, mirroring what
    * arrows can already express at the entry:
    *   - **Value form** `{ return <expr> }` — the body opens directly with
-   *     `return`. Equivalent to the expression-body entry `($) => <expr>`; the
+   *     `return`. Equivalent to the expression-body entry `({ $ }) => <expr>`; the
    *     program is the bare `<expr>` (so it lowers to a Filter / expression /
    *     parameterised builder, with no `$let` envelope). This also makes the
-   *     long-broken `($) => { return … }` work, in line with value-position
+   *     long-broken `({ $ }) => { return … }` work, in line with value-position
    *     lambdas.
    *   - **Pipeline form** `{ stmt; stmt; … }` — anything else; a `;`-separated
    *     sequence of stage / update-op / let / `function`-decl statements.
@@ -1154,20 +1154,20 @@ var Parser = class {
   }
   /**
    * Parse and classify the parenthesised parameter list of the function-form
-   * arrow. Each top-level parameter slot is one of three *shapes*:
+   * arrow. There are at most two *slots*, each an object destructure:
    *
-   *   - **Plain identifier** (`$`, `doc`, anything) — the document-context slot.
-   *     Discarded; the body parser doesn't need the name.
-   *   - **Destructure pattern with all keys starting with `$`** (`{ $dateDiff }`,
-   *     `{ $match, $project }`) — the ops-hint slot (types-only IDE
-   *     autocomplete). Discarded; the keys don't reach codegen.
-   *   - **Destructure pattern with at least one non-`$` key** (`{ minAge }`) —
-   *     the function-form parameter bindings. Names are returned so codegen can
-   *     inline values supplied at `jsmql.compile()` call time.
+   *   - **Toolbox** — a destructure whose keys are all `$`-prefixed: the bare
+   *     document root `$`, the context refs `$$` / `$$$` / `$$$$`, and any
+   *     `$op` (`{ $, $match, $dateDiff }`). Types-only IDE convenience;
+   *     discarded — the keys don't reach codegen.
+   *   - **Params** — a destructure with at least one non-`$` key (`{ minAge }`).
+   *     The `jsmql.compile()` parameter bindings; names are returned so codegen
+   *     can inline values supplied at call time.
    *
-   * The legal slot orderings are: `()`, `(doc)`, `(ops)`, `(params)`,
-   * `(doc, ops)`, `(params, doc)`, `(params, ops)`, `(params, doc, ops)`.
-   * Anything else throws `FunctionInputError` with a precise message.
+   * The legal slot orderings are: `()`, `({ $, … })`, `(params)`, and
+   * `(params, { $, … })`. A bare identifier or bare `$` slot (the old
+   * `($) => …`), a third slot, or a params destructure after the toolbox all
+   * throw `FunctionInputError` with a precise message.
    *
    * Returns the binding names extracted from the params slot (in source
    * order). Cursor is left immediately after the closing `)`.
@@ -1192,15 +1192,14 @@ var Parser = class {
       }
     }
     const closeParen = this.lexer.next();
-    if (slots.length > 3) {
+    if (slots.length > 2) {
       throw new FunctionInputError(
-        `jsmql's compile-form arrow takes at most three parameters in the order \`(params, $, opsHint)\`. Got ${slots.length} parameters. Reorder to \`(params, $, opsHint)\` and drop any extras.`,
+        `jsmql's arrow takes at most two parameters: \`(params, { $, \u2026 })\`. Got ${slots.length}. Combine into a params destructure followed by a single toolbox destructure.`,
         closeParen.pos
       );
     }
     let sawParams = false;
-    let sawDoc = false;
-    let sawOps = false;
+    let sawToolbox = false;
     let bindings = [];
     for (const slot of slots) {
       if (slot.kind === "params") {
@@ -1210,36 +1209,22 @@ var Parser = class {
             slot.pos
           );
         }
-        if (sawDoc || sawOps) {
+        if (sawToolbox) {
           throw new FunctionInputError(
-            "jsmql expects the params destructure to appear before the `$` doc-context parameter and the ops-hint destructure. Reorder to `(params, $, opsHint)`.",
+            "jsmql expects the params destructure to appear before the toolbox destructure. Reorder to `(params, { $, \u2026 })`.",
             slot.pos
           );
         }
         sawParams = true;
         bindings = slot.bindings;
-      } else if (slot.kind === "doc") {
-        if (sawDoc) {
-          throw new FunctionInputError(
-            "jsmql's compile-form arrow takes at most one document-context parameter (`$`).",
-            slot.pos
-          );
-        }
-        if (sawOps) {
-          throw new FunctionInputError(
-            "jsmql expects the `$` doc-context parameter to appear before the ops-hint destructure. Reorder to `(params, $, opsHint)`.",
-            slot.pos
-          );
-        }
-        sawDoc = true;
       } else {
-        if (sawOps) {
+        if (sawToolbox) {
           throw new FunctionInputError(
-            "jsmql's compile-form arrow takes at most one ops-hint destructure (e.g. `{ $match }`).",
+            "jsmql's arrow takes at most one toolbox destructure (e.g. `{ $, $match }`).",
             slot.pos
           );
         }
-        sawOps = true;
+        sawToolbox = true;
       }
     }
     return bindings;
@@ -1256,35 +1241,28 @@ var Parser = class {
         head.pos
       );
     }
-    if (head.type === TokenType.Ident) {
-      this.lexer.next();
-      return { kind: "doc", pos: head.pos };
-    }
-    if (head.type === TokenType.Dollar) {
-      this.lexer.next();
-      return { kind: "doc", pos: head.pos };
-    }
     if (head.type !== TokenType.LBrace) {
       throw new FunctionInputError(
-        `jsmql expects each parameter to be an identifier or an object destructure pattern. Got '${head.value}' at position ${head.pos}.`,
+        `jsmql expects each parameter to be an object destructure pattern (\`{ \u2026 }\`), got '${head.value}' at position ${head.pos}. Write the document context as \`({ $ }) => \u2026\`.`,
         head.pos
       );
     }
     return this.parseDestructureSlot();
   }
   /**
-   * Parse `{ key (: alias)? (, key)* (,)? }` and classify the slot as `ops`
-   * (every key starts with `$`) or `params` (at least one non-`$` key).
+   * Parse `{ key (: alias)? (, key)* (,)? }` and classify the slot as `toolbox`
+   * (every key starts with `$` — including the bare `$` and the context refs
+   * `$$` / `$$$` / `$$$$`) or `params` (at least one non-`$` key).
    * Rejects defaults, nested destructure, rest, and mixed `$`/non-`$` keys
    * with the user-facing error messages from `docs/LANGUAGE.md`.
    */
   parseDestructureSlot() {
     const openBrace = this.lexer.next();
-    const opsKeys = [];
+    const toolboxKeys = [];
     const paramBindings = [];
     if (this.lexer.peek().type === TokenType.RBrace) {
       this.lexer.next();
-      return { kind: "ops", pos: openBrace.pos };
+      return { kind: "toolbox", pos: openBrace.pos };
     }
     while (true) {
       const key = this.lexer.peek();
@@ -1295,23 +1273,25 @@ var Parser = class {
         );
       }
       let keyName;
-      let isOpsKey;
+      let isToolboxKey;
       if (key.type === TokenType.Dollar) {
         this.lexer.next();
-        const ident = this.lexer.peek();
-        if (ident.type !== TokenType.Ident) {
-          throw new FunctionInputError(
-            `jsmql expected an identifier after '$' in the destructure key at position ${ident.pos}.`,
-            ident.pos
-          );
+        const after = this.lexer.peek();
+        if (after.type === TokenType.Ident) {
+          this.lexer.next();
+          keyName = `$${after.value}`;
+        } else {
+          keyName = "$";
         }
+        isToolboxKey = true;
+      } else if (key.type === TokenType.DoubleDollar || key.type === TokenType.TripleDollar || key.type === TokenType.QuadDollar) {
         this.lexer.next();
-        keyName = `$${ident.value}`;
-        isOpsKey = true;
+        keyName = key.value;
+        isToolboxKey = true;
       } else if (key.type === TokenType.Ident) {
         this.lexer.next();
         keyName = key.value;
-        isOpsKey = false;
+        isToolboxKey = false;
       } else {
         throw new FunctionInputError(
           `jsmql expected an identifier in the destructure pattern at position ${key.pos}, got '${key.value}'.`,
@@ -1344,7 +1324,7 @@ var Parser = class {
           defaultTok.pos
         );
       }
-      if (isOpsKey) opsKeys.push(keyName);
+      if (isToolboxKey) toolboxKeys.push(keyName);
       else paramBindings.push({ key: keyName, name: bindingName });
       const sep = this.lexer.peek();
       if (sep.type === TokenType.Comma) {
@@ -1359,14 +1339,14 @@ var Parser = class {
       );
     }
     this.lexer.next();
-    if (opsKeys.length > 0 && paramBindings.length > 0) {
+    if (toolboxKeys.length > 0 && paramBindings.length > 0) {
       throw new FunctionInputError(
-        "jsmql expects the operator-hint destructure (e.g. `{ $match, $project }`) to be separate from the params destructure (e.g. `{ minAge }`). Split into two parameters: `(params, $, opsHint) => \u2026`.",
+        "jsmql keeps the toolbox destructure (e.g. `{ $, $match }`) separate from the params destructure (e.g. `{ minAge }`). Use two parameters: `(params, { $, \u2026 }) => \u2026`.",
         openBrace.pos
       );
     }
     if (paramBindings.length > 0) return { kind: "params", bindings: paramBindings, pos: openBrace.pos };
-    return { kind: "ops", pos: openBrace.pos };
+    return { kind: "toolbox", pos: openBrace.pos };
   }
   /**
    * Parse the body of a block-body arrow: `{ stmt (; stmt)* ;? }`. This is
@@ -1427,7 +1407,7 @@ var Parser = class {
    * with one optional trailing `;` consumed as a formatter artifact. The
    * trailing `;` does NOT trigger pipeline mode here — single-statement
    * expression bodies preserve their object-shaped output, matching the
-   * documented contract for `jsmql(($) => …)`.
+   * documented contract for `jsmql(({ $ }) => …)`.
    */
   parseExpressionBody() {
     const stmt = this.collectStatement();
@@ -1460,7 +1440,7 @@ var Parser = class {
    * **pipeline** block body. The pure value form `{ return <expr> }` is routed
    * away before reaching here (see `parseFunctionInput`), so a `return` that
    * lands here is a control-flow `return` mixed into a `;`-separated pipeline
-   * body (e.g. `($) => { $.x = 1; return $.y }`) — which has no MQL meaning. The
+   * body (e.g. `({ $ }) => { $.x = 1; return $.y }`) — which has no MQL meaning. The
    * check is statement-position-only, so a `return` used as a property name
    * (`$.return`) — which lexes as a `Return` token after a `.` — never reaches a
    * statement-start position and so doesn't false-fire.
@@ -1469,7 +1449,7 @@ var Parser = class {
     const tok = this.lexer.peek();
     if (tok.type === TokenType.Return) {
       throw new FunctionInputError(
-        "A `return` here isn't a jsmql statement. A function/arrow body is either a single `{ return <expr> }` (the value form, e.g. `($) => { return $.age }`) or a `;`-separated sequence of jsmql statements (no `return`). For a value computed from locals, use `jsmql.expr` or fold the bindings into the returned expression.",
+        "A `return` here isn't a jsmql statement. A function/arrow body is either a single `{ return <expr> }` (the value form, e.g. `({ $ }) => { return $.age }`) or a `;`-separated sequence of jsmql statements (no `return`). For a value computed from locals, use `jsmql.expr` or fold the bindings into the returned expression.",
         tok.pos
       );
     }
@@ -5035,7 +5015,7 @@ function generateLengthAccess(object, optional, ctx) {
 function generateStreamLength(ctx, pos) {
   if (!ctx.pipelineContext) {
     throw new CodegenError(
-      `'$$.length' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. \`($) => { $.n = $$.length; \u2026 }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
+      `'$$.length' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. \`({ $ }) => { $.n = $$.length; \u2026 }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
       pos
     );
   }
@@ -6565,7 +6545,7 @@ function generateCallExpression(callee, args, ctx, pos) {
     }
     if (callee.name === ASSERT_FN_NAME) {
       throw new CodegenError(
-        `'assert(...)' is a pipeline statement, not a value \u2014 it can't appear inside an expression. Use it as its own statement in a pipeline body, e.g. \`($) => { assert($.qty >= 0, "qty must be >= 0"); \u2026 }\`.`,
+        `'assert(...)' is a pipeline statement, not a value \u2014 it can't appear inside an expression. Use it as its own statement in a pipeline body, e.g. \`({ $ }) => { assert($.qty >= 0, "qty must be >= 0"); \u2026 }\`.`,
         pos
       );
     }
@@ -12690,7 +12670,7 @@ function errorToValidationResult(err) {
 function augmentForFunctionInput(err) {
   if (err instanceof UnknownIdentifierError) {
     err.message = `${err.message}
-If '${err.identifier}' is a binding you want to supply at call time, use jsmql.compile(fn)({ ${err.identifier}: \u2026 }) and add it to the params destructure: ({ ${err.identifier} }, $) => \u2026
+If '${err.identifier}' is a binding you want to supply at call time, use jsmql.compile(fn)({ ${err.identifier}: \u2026 }) and add it to the params destructure: ({ ${err.identifier} }, { $ }) => \u2026
 If '${err.identifier}' is a value from outer scope, use the jsmql\`\` template tag: jsmql\`\u2026 \${${err.identifier}} \u2026\``;
   }
   return err;

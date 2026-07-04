@@ -74,7 +74,7 @@ describe("assert — lowering", () => {
 describe("assert — call forms", () => {
   it("works as a single-statement arrow block (no trailing `;`)", () => {
     expect(
-      jsmql(($) => {
+      jsmql(({ $ }) => {
         assert($.qty >= 0, "m");
       }),
     ).toEqual([guard({ $gte: ["$qty", 0] }, "jsmql assertion failed: m")]);

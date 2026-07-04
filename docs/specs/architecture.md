@@ -81,18 +81,19 @@ MQL JSON (plain JS object, or array of stage objects)
 ## Public API surface (`src/index.ts`)
 
 ```ts
-export type JsmqlOps = Record<`$${string}`, (...args: any[]) => any>;
-type JsmqlFn = ($: any, ops: JsmqlOps) => unknown;
+export type JsmqlToolbox = { [K in `$${string}`]: any };
+type JsmqlFn = (toolbox: JsmqlToolbox) => unknown;
 type JsmqlInput = string | JsmqlFn;
-// Accepts any callable shape — `() => …`, `($) => …`, `($, { $dateDiff }) => …`
-// all work, by JS function variance. The parameter list is stripped at
-// extraction time; `$` is `any` so unannotated `$.foo` keeps autocomplete
-// without `noImplicitAny`. The optional second parameter is **types-only** —
-// it gives users a destructure site for escape-hatch operators (e.g.
-// `$dateDiff`) so the IDE doesn't flag them as unknown identifiers. Its
-// template-literal key (`` `$${string}` ``) accepts any `$`-prefixed name as
-// a callable; correctness against the real operator registry is enforced at
-// codegen time, not by the type.
+// The canonical arrow form is `({ $ }) => …`: the arrow receives a single
+// destructured "toolbox" object carrying the document root `$`, the context
+// refs `$$` / `$$$` / `$$$$`, and every `$`-prefixed operator / stage. The
+// parameter list is stripped at extraction time (jsmql parses the source; it
+// never calls the arrow), so the destructure is types-only. Every key is `any`:
+// `$` so unannotated `$.foo` keeps autocomplete without `noImplicitAny`, and
+// each `$op` so a destructured `({ $, $dateDiff }) => …` type-checks even
+// without the `@koresar/jsmql/ops` ambient import (which is where rich
+// signatures come from). A bare `$` / bare identifier is no longer a valid
+// parameter slot — the document context must be destructured.
 
 type JsmqlOutput = object | object[];
 // Single compiled MQL expression, or — for top-level aggregation pipelines —
@@ -115,23 +116,23 @@ jsmql(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput
 // LexError | ParseError | CodegenError | FunctionInputError |
 // JsmqlInterpolationError | TypeError.
 
-jsmql.compile<P>(fn: (params: P, $?, ops?) => unknown): (params: P) => JsmqlOutput
+jsmql.compile<P>(fn: (params: P, toolbox?: JsmqlToolbox) => unknown): (params: P) => JsmqlOutput
 // Parse once, bind many. The arrow's first slot is a destructure pattern naming
 // the parameter bindings; the returned callable inlines fresh values from the
 // params object into the AST on each call (no re-parse). Output shape matches
 // the template-tag form — values appear as JSON literals, never wrapped in
 // $let. See specs/function-form-params.md.
 
-jsmql.validate<P>(fn: (params: P, $?, ops?) => unknown): ValidationResult
+jsmql.validate<P>(fn: (params: P, toolbox?: JsmqlToolbox) => unknown): ValidationResult
 jsmql.validate(input: JsmqlInput): ValidationResult
 jsmql.validate(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult
 // Accepts every input shape jsmql() or jsmql.compile() accepts. Same parsing
 // pipeline — but catches all errors and returns { valid, errors[] } instead.
 // Total — never throws (see error-mapping table below). The compile-form
-// arrow overload is listed first so IDEs contextually type `({ params }, $)`
-// against `(params: P, $: any, ops: JsmqlOps)` rather than the one-shot
-// `($: any, ops: JsmqlOps)` shape (which would mis-type the second slot as
-// JsmqlOps). For validation, parameter bindings resolve to null placeholders —
+// arrow overload is listed first so IDEs contextually type `({ params }, { $ })`
+// against `(params: P, toolbox: JsmqlToolbox)` rather than the one-shot
+// `(toolbox: JsmqlToolbox)` shape (which would mis-type the params slot as the
+// toolbox). For validation, parameter bindings resolve to null placeholders —
 // values don't affect syntactic validity. The compile *invocation* path
 // (`jsmql.compile(fn)(params)`) remains throw-style; there is intentionally
 // no `jsmql.validate.compile` sub-namespace.

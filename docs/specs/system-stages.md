@@ -137,7 +137,7 @@ lists the diagnostic forms among the supported shapes for each prefix.
 
 - **Arrow-form / TS types.** `$$`/`$$$`/`$$$$` are not yet ambient globals (see
   [context-references.md → Future work](./context-references.md#future-work)), so
-  `jsmql(($) => $$.indexStats())` won't type-check. String form works fully. When
+  `jsmql(({ $ }) => $$.indexStats())` won't type-check. String form works fully. When
   the ambient globals land, the diagnostic methods are declared alongside the
   existing `.push`/`.find` sugar.
 - `$documents` and `$sample` are **not** diagnostics — they're source/regular
