@@ -11,7 +11,7 @@
 
 Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples in the specs. Each spec is the **single source of truth** for its feature's internals (see root `CLAUDE.md` § "Single source of truth"); the table below is an **index** — one short scope phrase per spec, not a second copy of its contents.
 
-`DEVLOG.md` is the single historical record — there is no separate CHANGELOG or ROADMAP. Newest entries on top. See the file's own header for the format.
+`DEVLOG.md` is the single historical record — there is no separate CHANGELOG or ROADMAP. Newest entries on top. See the file's own header for the format. The [`devlog`](../.claude/skills/devlog/SKILL.md) project skill captures that format and the `merge-devlog.mjs` conflict resolver.
 
 ## docs/LANGUAGE.md
 

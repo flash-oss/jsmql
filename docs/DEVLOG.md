@@ -36,6 +36,52 @@ destructure" rule is unchanged. Types live entirely in
 `@koresar/jsmql/ops` globals (unchanged) remain the source of rich signatures, so
 listing ops in the toolbox stays optional. Spec: [`function-form-params.md`](specs/function-form-params.md).
 
+## 2026-07-04 — docs: give SR3 a body in LANG_RULES.md (jsmql's own convenience APIs)
+
+[docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section ended on a bodyless
+stub (`SR3 — jsmql also adds some APIs of its own for brevity and better DX.`).
+Gave it a body, completing the trio started by the
+[SR1 + SR2 entry](DEVLOG.md#2026-06-27--docs-complete-the-soft-rules-section-of-lang_rulesmd-sr1-body--sr2).
+Where SR2 governs *native* JavaScript APIs (lower to their JS behaviour), SR3
+governs the ones jsmql **invents** — for constructs JS has no natural spelling
+for, nested pipelines above all (the motivating case for a driver-style
+`.aggregate()` on a `$$` stream).
+
+The body codifies three constraints so the invented surface stays DX-friendly and
+non-ambiguous: (1) reach for an invented API only where JS has no spelling, rather
+than leaving the user in the `$op(…)` escape hatch; (2) borrow a name the developer
+already recognises — a MongoDB driver method (`.aggregate()`, `.count()`) or a
+widely-known JS date idiom (`.plus` / `.minus` / `.diff`, à la Temporal/Luxon) —
+and **never mint a new `$foo()`**, which keeps HR4 and the "every `$op` is a real
+MongoDB op" model intact; (3) each lowers to a real MQL operator or stage that
+stays reachable by hand, so the sugar is always additive. This is a SOFT rule
+because it states design intent for a surface still being built — the examples
+(`.aggregate` / `$$.count` / `Date.prototype.plus`/`.minus`/`.diff` / `Date.parse`
+with a format) are illustrative proposals, not yet-shipped features, so their
+comments name the target operator (`→ $dateAdd`) rather than assert emitted MQL.
+
+## 2026-07-04 — chore: add `verify-mql` and `devlog` Claude Code skills
+
+Added two project-level Claude Code skills under [.claude/skills/](../.claude/skills):
+`verify-mql` and `devlog`. Each turns a workflow this repo already mandates in
+prose into one the agent reliably *applies* — `verify-mql` encodes the HR3 "run
+the emitted MQL against a real `mongod` before trusting it" ritual (pipe the
+`jsmql` CLI into [test/probe](../test/probe), or use the MongoDB MCP), and
+`devlog` encodes this file's entry format plus the
+[scripts/merge-devlog.mjs](../scripts/merge-devlog.mjs) conflict resolver. A
+described convention and an *applied* one are not the same thing; skills close
+that gap.
+
+Wired one-line pointers into the sections that already own each convention — the
+"Verify MQL against a running MongoDB" section and the DEVLOG bullet of the root
+[CLAUDE.md](../CLAUDE.md), the `test/probe` how-to in
+[test/CLAUDE.md](../test/CLAUDE.md), and the DEVLOG note in
+[docs/CLAUDE.md](CLAUDE.md) — per the single-source-of-truth rule (link, don't
+restate). The skill files live under `.claude/`, which the deferred-coverage
+drift test skips, so they don't touch the DEF gates. No library behaviour changed.
+
+## 2026-06-28 — fix: surface `assert()` in the generated `@koresar/jsmql/ops` types
+
 `assert(condition[, message])` shipped as a recognised pipeline-statement guard
 but was never declared in `src/ops.ts`, so arrow-form code that imported
 `@koresar/jsmql/ops` (`($) => { assert($.qty >= 0, "…"); … }`) tripped
