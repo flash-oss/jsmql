@@ -60,4 +60,12 @@ $.name.trim().toLowerCase()  // → { $toLower: { $trim: { input: "$name" } } } 
 $.items.map(x => x * 1.1)    // → { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 1.1] } } }   (same as Array.prototype.map)
 ```
 
-**SR3 — jsmql also adds some APIs of its own for brevity and better DX.**
+**SR3 — jsmql also adds some APIs of its own for brevity and better DX.** Where a construct has no natural JavaScript spelling — nested pipelines above all — jsmql invents a convenience API rather than leave you in the `$op(…)` escape hatch. To stay unsurprising it borrows a name developers already know — a MongoDB driver method (`.aggregate()`, `.count()`) or a widely-recognised JS date idiom (`.plus` / `.minus` / `.diff`, as in Temporal/Luxon) — and lowers to a real MQL operator or stage; it never mints a `$foo()` of its own, and the underlying MQL stays reachable by hand, so the sugar is always additive.
+
+```js
+$$.orders.aggregate(…)          // nested sub-pipeline (the driver's own .aggregate)
+$$.count("total")               // → $count stage
+$.createdAt.plus({ days: 7 })   // → $dateAdd  (.minus → $dateSubtract)
+$.start.diff($.end, "hour")     // → $dateDiff
+Date.parse($.s, "%Y-%m-%d")     // → $dateFromString  (JS Date.parse + a format)
+```

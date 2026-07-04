@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-04 — docs: give SR3 a body in LANG_RULES.md (jsmql's own convenience APIs)
+
+[docs/LANG_RULES.md](LANG_RULES.md)'s `## SOFT RULES` section ended on a bodyless
+stub (`SR3 — jsmql also adds some APIs of its own for brevity and better DX.`).
+Gave it a body, completing the trio started by the
+[SR1 + SR2 entry](DEVLOG.md#2026-06-27--docs-complete-the-soft-rules-section-of-lang_rulesmd-sr1-body--sr2).
+Where SR2 governs *native* JavaScript APIs (lower to their JS behaviour), SR3
+governs the ones jsmql **invents** — for constructs JS has no natural spelling
+for, nested pipelines above all (the motivating case for a driver-style
+`.aggregate()` on a `$$` stream).
+
+The body codifies three constraints so the invented surface stays DX-friendly and
+non-ambiguous: (1) reach for an invented API only where JS has no spelling, rather
+than leaving the user in the `$op(…)` escape hatch; (2) borrow a name the developer
+already recognises — a MongoDB driver method (`.aggregate()`, `.count()`) or a
+widely-known JS date idiom (`.plus` / `.minus` / `.diff`, à la Temporal/Luxon) —
+and **never mint a new `$foo()`**, which keeps HR4 and the "every `$op` is a real
+MongoDB op" model intact; (3) each lowers to a real MQL operator or stage that
+stays reachable by hand, so the sugar is always additive. This is a SOFT rule
+because it states design intent for a surface still being built — the examples
+(`.aggregate` / `$$.count` / `Date.prototype.plus`/`.minus`/`.diff` / `Date.parse`
+with a format) are illustrative proposals, not yet-shipped features, so their
+comments name the target operator (`→ $dateAdd`) rather than assert emitted MQL.
+
 ## 2026-07-04 — chore: add `verify-mql` and `devlog` Claude Code skills
 
 Added two project-level Claude Code skills under [.claude/skills/](../.claude/skills):
