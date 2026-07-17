@@ -801,9 +801,9 @@ function lowerReplaceRoot(
   const direct = detectLookupCall(el.value, ctx);
   if (direct !== null) {
     validateLookupShape(el.value);
-    if (direct.method === "filter") {
+    if (direct.method === "filter" || direct.method === "aggregate") {
       throw new CodegenError(
-        `Cannot replace root with an array — '.filter(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.filter(...) }'.`,
+        `Cannot replace root with an array — '.${direct.method}(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.${direct.method}(...) }'.`,
         el.value.pos,
       );
     }
@@ -1123,6 +1123,16 @@ function applyStreamMethods(
   }
   for (; i < methods.length; i++) {
     const m = methods[i];
+    if (m.method === "aggregate") {
+      // `.aggregate(...)` on the CURRENT stream would just inline its stages —
+      // a redundant spelling of writing them directly. It only earns its keep
+      // against a FOREIGN collection (where it lowers to `$lookup`/`$unionWith`).
+      throw new CodegenError(
+        `.aggregate(...) runs a sub-pipeline against a FOREIGN collection — write '$$$.<coll>.aggregate((o) => { ... })' ` +
+          `(optionally after '.filter(...)'). To add stages to the CURRENT stream, write them directly (e.g. '$group(...); $sort(...);').`,
+        m.pos,
+      );
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$");

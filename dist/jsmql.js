@@ -2991,7 +2991,7 @@ var Parser = class {
     return { type: "KeyValueEntry", key, value, pos: tok.pos };
   }
 };
-var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set(["find", "filter", "map"]);
+var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set(["find", "filter", "map", "aggregate"]);
 function isStreamRooted(expr) {
   let node = expr;
   for (; ; ) {
@@ -8033,6 +8033,9 @@ function lowerUnionPush(call, outerCtx, lowerBlock2) {
     }
     const lookupCall = detectLookupCall(arg, outerCtx);
     if (lookupCall !== null) {
+      if (lookupCall.method === "aggregate") {
+        throw aggregateInUnionError(lookupCall, arg.pos);
+      }
       if (lookupCall.method === "filter") {
         const recv = formatReceiver(lookupCall);
         throw new CodegenError(
@@ -8061,6 +8064,10 @@ function lowerSpreadArg(arg, outerCtx, lowerBlock2) {
         inner.pos
       );
     }
+  }
+  const aggLookup = detectLookupCall(inner, outerCtx);
+  if (aggLookup !== null && aggLookup.method === "aggregate") {
+    throw aggregateInUnionError(aggLookup, inner.pos);
   }
   const lookup = detectLookupCall(inner, outerCtx);
   if (lookup !== null && lookup.method === "filter") {
@@ -8133,6 +8140,13 @@ function rejectNonDocumentArg(arg) {
   throw new CodegenError(
     `$$.push(...) argument must be a document literal (\`{ ... }\`), a \`$$$.<coll>.find(pred)\` scalar, or a spread of \`$$$.<coll>[.filter(pred)]\`.${hint}`,
     arg.pos ?? 0
+  );
+}
+function aggregateInUnionError(call, pos) {
+  const recv = formatReceiver(call);
+  return new CodegenError(
+    `\`${recv}.aggregate(...)\` can't be unioned into the stream with \`$$.push(...)\` / \`.concat(...)\` yet \u2014 MongoDB's \`$unionWith\` has no \`let\` slot to correlate an aggregate sub-pipeline. Assign the aggregate to a field instead: \`$.<field> = ${recv}.aggregate((o) => { ... })\`.`,
+    pos
   );
 }
 function formatReceiver(call) {
@@ -8351,6 +8365,41 @@ var MAP = {
     const expr = generateWithCtx(rewritten2, bodyCtx);
     const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
     return { stages: [...lengthStages, ...prologue, { $replaceWith: expr }], clearLets: true };
+  }
+};
+var AGGREGATE = {
+  name: "aggregate",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.aggregate(pipeline) takes exactly one argument \u2014 a block-body arrow '(o) => { $stage(...); ... }' or a stage-array literal '[{ $stage: ... }, ...]', got ${args.length}.`,
+        callPos
+      );
+    }
+    validateAggregateArg(args[0], callPos);
+  },
+  lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
+    const lambda = aggregateArgToLambda(args[0]);
+    const param = lambda.params.length > 0 ? lambda.params[0] : void 0;
+    const collName = lambda.params.length === 3 ? lambda.params[2] : void 0;
+    if (ctx.enclosingLookup !== void 0) {
+      const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
+      const blockCtx2 = { ...ctx, slotAllocator: allocSlot };
+      const { letVars: letVars2, pipeline } = lowerCallbackBlock(lambda, blockCtx2, ctx.pipelineLets, lowerBlock2, enclosing, {
+        collParam: collName
+      });
+      return { stages: pipeline, clearLets: true, extraLetVars: letVars2 };
+    }
+    const collLengthUsed = collName !== void 0 && classifyCollParam(lambda);
+    const block = lambda.block;
+    const { rewritten, letVars } = extractLetsFromPipeline(block, param ?? "", ctx.pipelineLets);
+    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc);
+    const blockCtx = collName !== void 0 && collLengthUsed ? {
+      ...ctx,
+      slotAllocator: allocSlot,
+      substreamLengthHandles: new Map([...ctx.substreamLengthHandles ?? [], [collName, `$${LENGTH_SLOT}`]])
+    } : { ...ctx, slotAllocator: allocSlot };
+    return { stages: lowerBlock2(rewritten, blockCtx), clearLets: true };
   }
 };
 function classifyComparatorPath(expr, paramA, paramB) {
@@ -8884,6 +8933,7 @@ var STREAM_METHODS = {
   slice: SLICE,
   concat: CONCAT,
   map: MAP,
+  aggregate: AGGREGATE,
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
   flatMap: FLAT_MAP
@@ -9079,20 +9129,37 @@ function requireSameDbColl(db, collection, pos) {
 }
 function detectLookupCall(expr, ctx) {
   if (expr.type !== "MethodCall") return null;
-  if (expr.method !== "find" && expr.method !== "filter") return null;
+  if (expr.method !== "find" && expr.method !== "filter" && expr.method !== "aggregate") return null;
   const target = extractLookupTarget(expr.object, ctx);
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
-  if (arg.type !== "Lambda") return null;
+  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : null;
+  if (lambda === null) return null;
   return {
     pos: target.pos,
     callPos: expr.pos,
     db: target.db,
     collection: target.collection,
     method: expr.method,
-    lambda: arg
+    lambda
   };
+}
+function aggregateArgToLambda(arg) {
+  if (arg.type === "Lambda") return arg.block !== void 0 ? arg : null;
+  if (arg.type === "ArrayLiteral") {
+    const stmts = [];
+    for (const el of arg.elements) {
+      if (el.type === "SpreadElement") return null;
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+        stmts.push({ type: "UpdateFilter", ops: [el], pos: el.pos });
+      } else {
+        stmts.push(el);
+      }
+    }
+    return { type: "Lambda", params: [], block: { type: "Pipeline", stmts, pos: arg.pos }, pos: arg.pos };
+  }
+  return null;
 }
 function containsLookupCall(node, ctx = EMPTY_CTX) {
   return walkContainsLookup(node, ctx);
@@ -9192,10 +9259,14 @@ function validateLookupShape(expr) {
   const shape = classifyLookupReceiver(expr.object);
   if (shape === null) return;
   const spell = shape.spelling;
+  if (expr.method === "aggregate") {
+    validateAggregateShape(expr, spell);
+    return;
+  }
   if (expr.method !== "find" && expr.method !== "filter") {
-    const hint = didYouMean(expr.method, ["find", "filter"], (s) => `.${s}`);
+    const hint = didYouMean(expr.method, ["find", "filter", "aggregate"], (s) => `.${s}`);
     throw new CodegenError(
-      `'${spell}' supports .find(pred) and .filter(pred), not .${expr.method}().${hint} For richer queries, use a block-body lambda: \`${spell}.filter(o => { $match(...); $sort(...); ... })\`.`,
+      `'${spell}' supports .find(pred), .filter(pred), and .aggregate(pipeline), not .${expr.method}().${hint} For a full sub-pipeline (grouping, sort + limit, reshaping), use \`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
       expr.pos
     );
   }
@@ -9228,6 +9299,96 @@ function validateLookupShape(expr) {
           );
         }
       }
+    }
+  }
+}
+function validateAggregateShape(expr, spell) {
+  if (expr.args.length !== 1) {
+    throw new CodegenError(
+      `.aggregate(pipeline) takes exactly one argument \u2014 a block-body arrow \`(o) => { $stage(...); ... }\` or a stage-array literal \`[{ $stage: ... }, ...]\`, got ${expr.args.length}.`,
+      expr.pos
+    );
+  }
+  validateAggregateArg(expr.args[0], expr.pos, spell);
+}
+function validateAggregateArg(arg, callPos, spell = "$$$.<coll>") {
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(
+      `.aggregate(...) does not accept a spread argument \u2014 pass a block-body arrow \`(o) => { ... }\` or a stage-array literal \`[{ ... }, ...]\`.`,
+      arg.pos
+    );
+  }
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) {
+      throw new CodegenError(
+        `.aggregate([]) \u2014 an empty pipeline has nothing to run. List at least one stage, e.g. \`${spell}.aggregate([{ $sort: { \u2026 } }, { $limit: 5 }])\`.`,
+        arg.pos
+      );
+    }
+    for (const el of arg.elements) {
+      if (el.type === "SpreadElement") {
+        throw new CodegenError(
+          `.aggregate([...]) \u2014 a spread element isn't a pipeline stage. List the stages directly, e.g. \`${spell}.aggregate([{ $sort: { \u2026 } }, { $limit: 5 }])\`.`,
+          el.pos
+        );
+      }
+    }
+    return;
+  }
+  if (arg.type !== "Lambda") {
+    throw new CodegenError(
+      `.aggregate(pipeline) requires a block-body arrow \`(o) => { $stage(...); ... }\` or a stage-array literal \`[{ $stage: ... }, ...]\`.`,
+      arg.pos
+    );
+  }
+  if (arg.block === void 0) {
+    throw new CodegenError(
+      `.aggregate(pipeline) needs a block body \u2014 write \`${spell}.aggregate((o) => { $match(...); $group(...); ... })\` (each statement is a stage) \u2014 or pass a stage-array literal \`[{ ... }, ...]\`. An expression-body arrow isn't a pipeline.`,
+      arg.pos
+    );
+  }
+  if (arg.ret !== void 0) {
+    throw new CodegenError(
+      `.aggregate((o) => { \u2026 }) doesn't take a \`return\` \u2014 each statement is a pipeline stage, not a per-document reshape. To shape the output add a \`$project\`/\`$replaceWith\` stage; for a per-document transform use \`.map(o => \u2026)\`.`,
+      arg.pos
+    );
+  }
+  if (arg.params.length > 3) {
+    throw new CodegenError(
+      `.aggregate((element, index, collection) => \u2026) takes at most 3 parameters, got ${arg.params.length}.`,
+      arg.pos
+    );
+  }
+  validateAggregateParams(arg);
+}
+function validateAggregateParams(lambda) {
+  if (lambda.block === void 0) return;
+  const block = lambda.block;
+  const element = lambda.params[0];
+  const indexParam = lambda.params.length >= 2 ? lambda.params[1] : void 0;
+  const collParam = lambda.params.length === 3 ? lambda.params[2] : void 0;
+  const uses = (pred) => block.stmts.some((s) => someStmt(s, pred));
+  if (indexParam !== void 0 && uses((e) => e.type === "ParamRef" && e.name === indexParam)) {
+    throw new CodegenError(
+      `'${indexParam}' (the 2nd, index parameter) has no meaning inside '.aggregate((${element}, ${indexParam}, \u2026) => \u2026)' \u2014 MongoDB streams have no per-doc index. Keep it unused (e.g. '(${element}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
+      lambda.pos
+    );
+  }
+  if (collParam !== void 0) {
+    let total = 0;
+    let lengthUses = 0;
+    uses((e) => {
+      if (e.type === "ParamRef" && e.name === collParam) total++;
+      if (e.type === "MemberAccess" && e.member === "length" && e.object.type === "ParamRef" && e.object.name === collParam) {
+        lengthUses++;
+      }
+      return false;
+    });
+    if (total > lengthUses) {
+      throw new CodegenError(
+        `In '.aggregate((${element}, _i, ${collParam}) => { \u2026 })', only '${collParam}.length' (the sub-stream count) is available \u2014 there's no materialised array to index or iterate inside the pipeline.`,
+        lambda.pos
+      );
     }
   }
 }
@@ -9930,6 +10091,8 @@ function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
   const stages = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
+  } else if (call.method === "aggregate" && Object.keys(pred.letVars).length === 0) {
+    stages.push({ $lookup: { from, pipeline: pred.pipeline, as } });
   } else {
     stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
   }
@@ -9977,6 +10140,15 @@ function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosingArg
       const reduceExpr = generateWithCtx(reduceCall, outerCtx);
       stages.push({ $set: { [slot]: reduceExpr } });
       return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
+    }
+  }
+  if (expr.type === "MethodCall" && expr.method === "aggregate") {
+    const innerCall = detectLookupCall(expr.object, outerCtx);
+    if (innerCall !== null && innerCall.method === "find") {
+      throw new CodegenError(
+        `.aggregate() on a .find() result is not meaningful \u2014 .find returns a scalar-or-null, not a collection to aggregate. Use .filter(pred).aggregate(...) to run a sub-pipeline over the matches.`,
+        expr.pos
+      );
     }
   }
   const direct = detectLookupCall(expr, outerCtx);
@@ -11453,9 +11625,9 @@ function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
   const direct = detectLookupCall(el.value, ctx);
   if (direct !== null) {
     validateLookupShape(el.value);
-    if (direct.method === "filter") {
+    if (direct.method === "filter" || direct.method === "aggregate") {
       throw new CodegenError(
-        `Cannot replace root with an array \u2014 '.filter(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.filter(...) }'.`,
+        `Cannot replace root with an array \u2014 '.${direct.method}(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.${direct.method}(...) }'.`,
         el.value.pos
       );
     }
@@ -11612,6 +11784,12 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) 
   }
   for (; i < methods.length; i++) {
     const m = methods[i];
+    if (m.method === "aggregate") {
+      throw new CodegenError(
+        `.aggregate(...) runs a sub-pipeline against a FOREIGN collection \u2014 write '$$$.<coll>.aggregate((o) => { ... })' (optionally after '.filter(...)'). To add stages to the CURRENT stream, write them directly (e.g. '$group(...); $sort(...);').`,
+        m.pos
+      );
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$");
@@ -12491,7 +12669,7 @@ function lowerWithCtx(ast, ctx) {
   }
   if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) === null && containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      "Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
+      "Lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') requires Pipeline mode. Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
       ast.pos
     );
   }
@@ -12551,7 +12729,7 @@ function lowerPipelineStrict(ast, ctx) {
 function lowerUpdateStrict(ast, ctx) {
   if (containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter(...)'): MongoDB's aggregation-pipeline update form only accepts " + Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") + ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
+      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter/aggregate(...)'): MongoDB's aggregation-pipeline update form only accepts " + Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") + ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
       ast.pos
     );
   }
@@ -12577,7 +12755,7 @@ function lowerUpdateStrict(ast, ctx) {
 function rejectLookupOutsidePipeline(ast, apiName, ctx) {
   if (containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter(...)') \u2014 joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.`,
+      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') \u2014 joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.`,
       ast.pos
     );
   }

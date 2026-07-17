@@ -2682,3 +2682,49 @@ describe("$near is not allowed inside an aggregation $match", { features: ["Pipe
     },
   );
 });
+
+describe(
+  "Customer report: correlated monthly spend + global top products via .aggregate",
+  { features: ["Pipelines"] },
+  () => {
+    it("compiles to the expected MQL", { kind: "pipeline", usage: "db.customers.aggregate(jsmql(...))" }, () => {
+      // For each active customer, attach a correlated month-by-month spend rollup
+      // (a `$group` the per-element `.filter` predicate can't express) plus the
+      // global top-5 products (an uncorrelated `.aggregate` in the driver-paste
+      // array form). `.aggregate` lowers to `$lookup`; `$.customerId`-style outer
+      // refs auto-hoist into `$lookup.let` exactly as `.filter` does.
+      expect(
+        jsmql(`
+$match($.status === "active");
+$.monthlySpend = $$$.orders.aggregate((o) => {
+  $match(o.customerId === $._id);
+  $group({ _id: { $month: o.placedAt }, spent: $sum(o.total) });
+  $sort({ _id: 1 });
+});
+$.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 }, { $project: { name: 1 } }]);
+      `),
+      ).toEqual([
+        { $match: { status: "active" } },
+        {
+          $lookup: {
+            from: "orders",
+            let: { jsmql_f0__id: "$_id" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$customerId", "$$jsmql_f0__id"] } } },
+              { $group: { _id: { $month: "$placedAt" }, spent: { $sum: "$total" } } },
+              { $sort: { _id: 1 } },
+            ],
+            as: "monthlySpend",
+          },
+        },
+        {
+          $lookup: {
+            from: "products",
+            pipeline: [{ $sort: { sales: -1 } }, { $limit: 5 }, { $project: { name: 1 } }],
+            as: "topProducts",
+          },
+        },
+      ]);
+    });
+  },
+);

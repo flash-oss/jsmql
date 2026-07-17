@@ -195,6 +195,9 @@ export function lowerUnionPush(call: UnionPushCall, outerCtx: GenerateCtx, lower
     // `.find(pred)` without spread → append a single doc.
     const lookupCall = detectLookupCall(arg, outerCtx);
     if (lookupCall !== null) {
+      if (lookupCall.method === "aggregate") {
+        throw aggregateInUnionError(lookupCall, arg.pos);
+      }
       if (lookupCall.method === "filter") {
         const recv = formatReceiver(lookupCall);
         throw new CodegenError(
@@ -239,6 +242,12 @@ function lowerSpreadArg(arg: SpreadElement, outerCtx: GenerateCtx, lowerBlock: S
         inner.pos,
       );
     }
+  }
+  // `.aggregate(...)` result union isn't supported yet — `$unionWith` has no
+  // `let` slot, so a correlated aggregate can't thread the outer doc in. [DEF-034]
+  const aggLookup = detectLookupCall(inner, outerCtx);
+  if (aggLookup !== null && aggLookup.method === "aggregate") {
+    throw aggregateInUnionError(aggLookup, inner.pos);
   }
   // `.filter(pred)` → pipeline-form `$unionWith`.
   const lookup = detectLookupCall(inner, outerCtx);
@@ -351,6 +360,22 @@ function rejectNonDocumentArg(arg: Expr): never {
     `$$.push(...) argument must be a document literal (\`{ ... }\`), a \`$$$.<coll>.find(pred)\` scalar, ` +
       `or a spread of \`$$$.<coll>[.filter(pred)]\`.${hint}`,
     (arg as { pos?: number }).pos ?? 0,
+  );
+}
+
+/**
+ * `.aggregate(...)` used as a `$$.push(...)` / `.concat(...)` union source isn't
+ * supported yet [DEF-034]: a `$unionWith` sub-pipeline has no `let` slot, so a
+ * correlated `.aggregate` can't thread the outer document in, and the uncorrelated
+ * case needs its own design pass. Points at the supported field-assignment form.
+ */
+function aggregateInUnionError(call: LookupCall, pos: number): CodegenError {
+  const recv = formatReceiver(call);
+  return new CodegenError(
+    `\`${recv}.aggregate(...)\` can't be unioned into the stream with \`$$.push(...)\` / \`.concat(...)\` yet — ` +
+      `MongoDB's \`$unionWith\` has no \`let\` slot to correlate an aggregate sub-pipeline. ` +
+      `Assign the aggregate to a field instead: \`$.<field> = ${recv}.aggregate((o) => { ... })\`.`,
+    pos,
   );
 }
 

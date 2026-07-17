@@ -135,6 +135,10 @@ const STREAM_METHOD_SIGNATURES = {
     params: "(predicate: (doc: any) => any)",
   },
   map: { doc: "Reshape each document → `$replaceWith`.", params: "(transform: (doc: any) => any)" },
+  aggregate: {
+    doc: "Run a sub-pipeline against a foreign collection → `$lookup`. Only valid on `$$$.<coll>` (a foreign collection), not the current stream.",
+    params: "(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[])",
+  },
   slice: { doc: "Take a window of the stream → `$skip` / `$limit`.", params: "(start: number, end?: number)" },
   concat: { doc: "Append documents / union collections → `$unionWith`.", params: "(...sources: any[])" },
   toSorted: { doc: "Sort the stream → `$sort`.", params: "(compare: (a: any, b: any) => number)" },
@@ -142,6 +146,13 @@ const STREAM_METHOD_SIGNATURES = {
   flatMap: { doc: "Unwind an array field → `$unwind`.", params: "(transform: (doc: any) => any)" },
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
+
+// Registry methods that are NOT valid on the current stream (`$$`) — they only
+// work against a foreign collection (`$$$.<coll>`), which reaches them via the
+// permissive tail. They keep a signature (below) to document their shape and to
+// satisfy the completeness check, but are not emitted as `$$.<method>()` members
+// (jsmql rejects them there, so offering completion would mislead).
+const STREAM_METHODS_FOREIGN_ONLY = new Set(["aggregate"]);
 
 // Emission order for the `$$` stream methods (registry order, then the two
 // non-registry entries). Asserts every registered stream method has a signature.
@@ -154,7 +165,7 @@ function streamMethodMembers() {
         `but have no signature in STREAM_METHOD_SIGNATURES. Add one so '$$.<method>()' gets completion.`,
     );
   }
-  const order = [...registry, "filter", "push"];
+  const order = [...registry.filter((n) => !STREAM_METHODS_FOREIGN_ONLY.has(n)), "filter", "push"];
   const members = [];
   for (const name of order) {
     const { doc, params } = STREAM_METHOD_SIGNATURES[name];

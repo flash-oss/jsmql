@@ -615,6 +615,40 @@ $.recentOrders = $$$.orders.filter(o => {
 //   }]
 ```
 
+**`.aggregate(pipeline)` — a full sub-pipeline (grouping, top-N, reshaping).** When you need more than "keep matching docs" — a `$group`, a `$sort`+`$limit` top-N, a `$bucket`, a window stage — reach for `.aggregate()`, named after the driver's own `db.coll.aggregate(pipeline)`. It runs an arbitrary sub-pipeline against the foreign collection and lowers to `$lookup`. The argument is a **block-body arrow** `(o) => { $stage(...); ... }` (each statement is a stage — no `return`) or a **stage-array literal** `[{ $stage: ... }, ...]`. Inside, `o.<field>` is the foreign document's field and `$.<field>` is the outer document (auto-hoisted into `let`, exactly as `.filter`):
+
+```js
+// Uncorrelated — same result attached to every doc (no $. refs → no `let`)
+$.topProducts = $$$.products.aggregate((p) => { $sort({ sales: -1 }); $limit(5); });
+// → [{ $lookup: { from: "products", pipeline: [{ $sort: { sales: -1 } }, { $limit: 5 }], as: "topProducts" } }]
+
+// Correlated group-by — per-outer-doc, via the same auto-`let` hoist as `.filter`
+$.monthlyTotals = $$$.orders.aggregate((o) => {
+  $match(o.userId === $._id);
+  $group({ _id: { $month: o.createdAt }, total: $sum(o.amount) });
+  $sort({ _id: 1 });
+});
+// → [{ $lookup: {
+//     from: "orders",
+//     let: { jsmql_f0__id: "$_id" },
+//     pipeline: [
+//       { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+//       { $group: { _id: { $month: "$createdAt" }, total: { $sum: "$amount" } } },
+//       { $sort: { _id: 1 } }
+//     ],
+//     as: "monthlyTotals" } }]
+```
+
+`.aggregate` also **chains after `.filter`** — the filter correlates, the aggregate reshapes:
+
+```js
+$.byMonth = $$$.orders.filter(o => o.userId === $._id).aggregate((o) => {
+  $group({ _id: { $month: o.createdAt }, total: $sum(o.amount) });
+});
+```
+
+The same `(element, index, collection)` params as `.filter`/`.map` apply (the index is positional-only; `coll.length` is the sub-stream count). How it differs from a block-body `.filter`: `.aggregate` is the pipeline-oriented spelling (reshape / roll up, and the array-paste form), while `.find`/`.filter` are the element-predicate spellings. Running `.aggregate(...)` on the current stream (`$$.aggregate(...)`) is rejected — just write the stages directly; it only earns its keep against a foreign collection.
+
 **The sub-stream count inside a block (`(o, _i, coll) => …`).** A block-body `.filter` may take a 3rd param naming the **post-filter sub-stream**; `coll.length` is how many documents matched, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
 
 ```js
@@ -646,7 +680,7 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 
 A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
-**Stream-method chains push into the `$lookup.pipeline` body.** Any sequence of registered stream methods (`.map`, `.filter`, `.toSorted`, `.toReversed`, `.slice`, `.flatMap`, `.concat`) chained after `$$$.coll.filter(<pred>)` becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly:
+**Stream-method chains push into the `$lookup.pipeline` body.** Any sequence of registered stream methods (`.map`, `.filter`, `.aggregate`, `.toSorted`, `.slice`, … — the stream-method vocabulary) chained after `$$$.coll.filter(<pred>)` becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly:
 
 ```js
 $.recentOrders = $$$.orders

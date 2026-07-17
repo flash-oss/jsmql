@@ -10,6 +10,60 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-10 — feat: `$$$.<coll>.aggregate(pipeline)` — full sub-pipeline joins (SR3)
+
+Shipped the `.aggregate()` convenience API from [SR3](LANG_RULES.md) (jsmql invents
+brevity APIs for constructs JS has no spelling for — nested pipelines above all —
+borrowing a name developers know, here the driver's own `db.coll.aggregate`).
+`$$$.<coll>.aggregate(<pipeline>)` runs an arbitrary sub-pipeline (`$group`,
+`$bucket`, `$sort`+`$limit` top-N, window stages, multi-stage reshapes) against a
+foreign collection and lowers to `$lookup` — the shapes `.find`/`.filter`'s
+per-element predicate can't express. Verified end-to-end against a live MongoDB
+(uncorrelated, correlated `let`+`$expr`, source-switch `$unionWith`, chained
+`.length`).
+
+**Surface.** Two argument forms — a block-body arrow `(o) => { $stage(...); ... }`
+(statements are stages, no `return`) and a stage-array literal `[{ ... }, ...]`,
+normalised to one block lambda by `aggregateArgToLambda`. The `(element, index,
+collection)` param triplet mirrors `.filter`/`.map` (the developer's call — a named
+`o.createdAt` reads far clearer than a bare `"$createdAt"`): `o.<field>` = foreign,
+`$.<field>` = the outer doc auto-hoisted into `$lookup.let` via the **existing**
+`jsmql_*` correlation system (no new outer-doc sigil). Two positions: a **head**
+(`$$$.<coll>.aggregate(...)`, a `detectLookupCall` method alongside find/filter) and
+a **chain** after `.filter` (`$$$.<coll>.filter(pred).aggregate(...)`, a registered
+stream-method modelled on `.map` minus the terminal `return`). Both reuse the
+block-body `.filter` engine (`buildBlockBodyPredicate` / `lowerCallbackBlock`), so
+`translatePredicate` needed no aggregate branch. `$$ = $$$.<coll>.aggregate(...)`
+(source-switch) composes for free via the stream-method registry. Uncorrelated
+lowerings omit the empty `let`.
+
+**Rejections (all actionable).** `$$.aggregate(...)` on the current stream (redundant
+— write the stages directly); `$ = $$$.<coll>.aggregate(...)` replace-root (result is
+an array, not a document); expression-body arrow; a trailing `return` (that's `.map`'s
+reshape terminal, not a stage — silently dropping it would lose intent); `.aggregate()`
+chained on a `.find()` result (scalar, not a collection); used index param / non-`.length`
+use of the 3rd param; empty pipeline; cross-DB `$$$$.<db>.<coll>.aggregate`;
+Filter/`jsmql.expr`/`jsmql.update` modes. `$$.push(...)` / `.concat(...)` union of an
+aggregate result is deferred — `$unionWith` has no `let` slot to correlate — see DEF-034.
+
+A 5-lens adversarial review (correctness / HR3 / DX / doc-drift / test-gaps, each finding
+verified by a skeptic) shaped the final surface — the `return`-drop, `.find().aggregate()`,
+and `coll.length`-in-source-switch (parity with `.map`) fixes above all came from it. It
+also surfaced pre-existing, cross-cutting limitations left for a separate change (not
+introduced here): `$$.length` inside a block-body top-level `$lookup` reports the foreign
+sub-stream count rather than the root count (also in `.filter`/`.map` blocks; narrows
+DEF-033's "block body supported" claim), and the block-param index/collection check
+(`buildBlockBodyPredicate` / `validateAggregateParams`) matches by name and so
+false-rejects a nested lambda param that shadows the index/collection name.
+
+Code: `src/parser.ts` (`STREAM_BLOCK_METHODS` += `aggregate`), `src/lookup-translation.ts`
+(`detectLookupCall` + `aggregateArgToLambda` + `validateAggregateArg`/`validateAggregateParams`
++ empty-`let` omission in `lowerLookup`), `src/stream-methods.ts` (`AGGREGATE` def +
+registry), `src/pipeline.ts` (`applyStreamMethods` guard + `lowerReplaceRoot` array
+reject), `src/union-translation.ts` (`aggregateInUnionError` `[DEF-034]`), `src/index.ts`
+(mode-gate wording). Spec: [docs/specs/lookup-stage.md](specs/lookup-stage.md) §
+`.aggregate`; user-facing: [docs/LANGUAGE.md → Cross-collection lookups](LANGUAGE.md#cross-collection-lookups-coll-find--filter).
+
 ## 2026-07-04 — feat!: arrow entry form is now `({ $ }) => …` (toolbox destructure), old `($) =>` removed
 
 The function-entry arrow shape changed: the bare document parameter `$` is gone,

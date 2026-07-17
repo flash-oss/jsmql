@@ -11,11 +11,13 @@ import type { ArrayElement, CallArg, Expr, Pipeline, UpdateFilter } from "./ast.
 import { someExpr } from "./ast-walk.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
+  aggregateArgToLambda,
   EMPTY_ENCLOSING,
   extractLetsFromExpr,
   extractLetsFromPipeline,
   extractLookupCalls,
   lowerCallbackBlock,
+  validateAggregateArg,
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
@@ -446,6 +448,75 @@ const MAP: StreamMethodDef = {
     const expr = generateWithCtx(rewritten2, bodyCtx);
     const lengthStages = collLengthUsed ? [streamLengthStage()] : [];
     return { stages: [...lengthStages, ...prologue, { $replaceWith: expr }], clearLets: true };
+  },
+};
+
+// ── .aggregate((o, i, coll) => { … }) → sub-pipeline stages ───────────────────
+//
+// The full-sub-pipeline chain method: contributes its block's stages verbatim to
+// the surrounding `$lookup.pipeline` (correlated chain / `$$ =` pivot / `$.field =`
+// assignment) or `$unionWith.pipeline` (`$$ =` source-switch). Unlike `.map` it
+// has NO terminal `return` — it's a pipeline, not a per-element reshape. Params
+// mirror `.filter`/`.map`: `o.<field>` → `$<field>` (foreign), `$.<field>` → the
+// outer doc (auto-`let`), `coll.length` → the sub-stream count. A stage-array
+// literal argument (`.aggregate([{ … }])`) normalises to a zero-param block lambda.
+//
+// Shape + param validation is shared with the head form via `validateAggregateArg`
+// (lookup-translation.ts); lowering reuses the same `lowerCallbackBlock` engine
+// `.filter`/`.map` use, so cross-level `$lookup.let` capture works. Chaining
+// `.aggregate` onto the CURRENT stream (`$$.aggregate(...)`) is rejected in
+// `applyStreamMethods` — there it would be a redundant spelling of writing the
+// stages directly; `.aggregate` only earns its keep against a foreign collection.
+const AGGREGATE: StreamMethodDef = {
+  name: "aggregate",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.aggregate(pipeline) takes exactly one argument — a block-body arrow '(o) => { $stage(...); ... }' ` +
+          `or a stage-array literal '[{ $stage: ... }, ...]', got ${args.length}.`,
+        callPos,
+      );
+    }
+    validateAggregateArg(args[0], callPos);
+  },
+  lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
+    const lambda = aggregateArgToLambda(args[0]) as LambdaNode; // validate() guarantees non-null
+    const param = lambda.params.length > 0 ? lambda.params[0] : undefined;
+    const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
+
+    // Inside a correlated `$lookup` sub-pipeline: same engine `.filter`/`.map`
+    // use. Cross-level reads (`$.x`, an enclosing foreign param, an ancestor
+    // `coll.length`) capture into the enclosing `$lookup.let`, returned as
+    // `extraLetVars` for the chain assembler to merge. No terminal `return`, so
+    // no `$replaceWith` is appended (that's the only difference from `.map`).
+    if (ctx.enclosingLookup !== undefined) {
+      const enclosing = ctx.enclosingLookup ?? EMPTY_ENCLOSING;
+      const blockCtx: GenerateCtx = { ...ctx, slotAllocator: allocSlot };
+      const { letVars, pipeline } = lowerCallbackBlock(lambda, blockCtx, ctx.pipelineLets, lowerBlock, enclosing, {
+        collParam: collName,
+      });
+      return { stages: pipeline, clearLets: true, extraLetVars: letVars };
+    }
+
+    // Top-level source-switch (`$$ = $$$.<coll>.aggregate(...)`): the switched
+    // stream flows through a `$unionWith.pipeline`, which has no `let` slot — so an
+    // outer-doc `$.<field>` reference is rejected (mirrors `.map`), pointing at the
+    // correlated `.filter` form. The block's stages lower directly. The 3rd
+    // 'collection' param binds to this stream's materialised count (`$__jsmql.length`,
+    // stamped by `lowerBlock`), exactly as `.map`'s source-switch form does.
+    const collLengthUsed = collName !== undefined && classifyCollParam(lambda);
+    const block = lambda.block as Pipeline;
+    const { rewritten, letVars } = extractLetsFromPipeline(block, param ?? "", ctx.pipelineLets);
+    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc);
+    const blockCtx: GenerateCtx =
+      collName !== undefined && collLengthUsed
+        ? {
+            ...ctx,
+            slotAllocator: allocSlot,
+            substreamLengthHandles: new Map([...(ctx.substreamLengthHandles ?? []), [collName, `$${LENGTH_SLOT}`]]),
+          }
+        : { ...ctx, slotAllocator: allocSlot };
+    return { stages: lowerBlock(rewritten, blockCtx), clearLets: true };
   },
 };
 
@@ -1339,6 +1410,7 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   slice: SLICE,
   concat: CONCAT,
   map: MAP,
+  aggregate: AGGREGATE,
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
   flatMap: FLAT_MAP,

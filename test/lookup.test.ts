@@ -313,9 +313,9 @@ describe("$$$.coll.find/filter — error cases", () => {
     expect(() => jsmql.expr("$$$.myColl")).toThrow(/\$lookup read.*\$out write/);
   });
 
-  it("wrong method on $$$.<coll> suggests .find / .filter via closestNameTo", () => {
+  it("wrong method on $$$.<coll> suggests .find / .filter / .aggregate via closestNameTo", () => {
     expect(() => jsmql("$.x = $$$.users.fnid(u => u._id === $._id);")).toThrow(
-      /'\$\$\$\.<coll>' supports \.find\(pred\) and \.filter\(pred\), not \.fnid\(\)\. Did you mean '\.find'\?/,
+      /'\$\$\$\.<coll>' supports \.find\(pred\), \.filter\(pred\), and \.aggregate\(pipeline\), not \.fnid\(\)\. Did you mean '\.find'\?/,
     );
   });
 
@@ -732,5 +732,255 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       { $set: { firstName: "$__jsmql.tmp.1.name" } },
       { $unset: "__jsmql" },
     ]);
+  });
+});
+
+describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () => {
+  it("uncorrelated head (arrow-block): no $. refs → no let", () => {
+    expect(jsmql("$.top = $$$.products.aggregate((p) => { $sort({ sales: -1 }); $limit(5); });")).toEqual([
+      { $lookup: { from: "products", pipeline: [{ $sort: { sales: -1 } }, { $limit: 5 }], as: "top" } },
+    ]);
+  });
+
+  it("array form lowers identically to the arrow-block form", () => {
+    expect(jsmql("$.top = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 }]);")).toEqual([
+      { $lookup: { from: "products", pipeline: [{ $sort: { sales: -1 } }, { $limit: 5 }], as: "top" } },
+    ]);
+  });
+
+  it("zero-param arrow (bare stage keys) works", () => {
+    expect(jsmql("$.top = $$$.products.aggregate(() => { $sort({ sales: -1 }); $limit(3); });")).toEqual([
+      { $lookup: { from: "products", pipeline: [{ $sort: { sales: -1 } }, { $limit: 3 }], as: "top" } },
+    ]);
+  });
+
+  it("correlated head: $. auto-lets into $lookup.let; foreign via o.<field>", () => {
+    expect(
+      jsmql(
+        "$.monthlyTotals = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: { $month: o.createdAt }, total: $sum(o.amount) }); $sort({ _id: 1 }); });",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $group: { _id: { $month: "$createdAt" }, total: { $sum: "$amount" } } },
+            { $sort: { _id: 1 } },
+          ],
+          as: "monthlyTotals",
+        },
+      },
+    ]);
+  });
+
+  it("chained after a correlating .filter — aggregate stages extend the $lookup.pipeline", () => {
+    expect(
+      jsmql(
+        "$.recentOrders = $$$.orders.filter(o => o.userId === $._id).aggregate((o) => { $sort({ placedAt: -1 }); $limit(5); });",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $sort: { placedAt: -1 } },
+            { $limit: 5 },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { recentOrders: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("let RHS materialises into __jsmql.var.<name>", () => {
+    expect(jsmql("let top = $$$.products.aggregate((o) => { $sort({ sales: -1 }); $limit(5); });")).toEqual([
+      { $lookup: { from: "products", pipeline: [{ $sort: { sales: -1 } }, { $limit: 5 }], as: "__jsmql.var.top" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("chained .length counts the aggregate result", () => {
+    expect(
+      jsmql(
+        '$.n = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$productId" }); }).length;',
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $group: { _id: "$productId" } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { n: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("$$ = source-switch: aggregate over a foreign collection → $unionWith.pipeline", () => {
+    expect(
+      jsmql('$$ = $$$.orders.aggregate((o) => { $group({ _id: "$status", n: $sum(1) }); $sort({ n: -1 }); });'),
+    ).toEqual([
+      { $match: { $expr: false } },
+      {
+        $unionWith: {
+          coll: "orders",
+          pipeline: [{ $group: { _id: "$status", n: { $sum: 1 } } }, { $sort: { n: -1 } }],
+        },
+      },
+    ]);
+  });
+
+  it("3rd 'collection' param exposes .length via $setWindowFields", () => {
+    expect(
+      jsmql('$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: "$s" }); assert(coll.length > 0, "empty"); });'),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "c",
+          pipeline: [
+            { $group: { _id: "$s" } },
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            {
+              $match: {
+                $expr: {
+                  $convert: {
+                    input: true,
+                    to: { $cond: [{ $gt: ["$__jsmql.length", 0] }, "bool", "jsmql assertion failed: empty"] },
+                  },
+                },
+              },
+            },
+            { $unset: "__jsmql" },
+          ],
+          as: "g",
+        },
+      },
+    ]);
+  });
+
+  it("array form correlates: an outer $. ref inside $expr auto-lets into $lookup.let", () => {
+    expect(
+      jsmql('$.x = $$$.orders.aggregate([{ $match: { $expr: { $eq: ["$userId", $._id] } } }, { $sort: { a: 1 } }]);'),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $sort: { a: 1 } }],
+          as: "x",
+        },
+      },
+    ]);
+  });
+
+  it("$$ = source-switch binds the 3rd 'collection' param's .length (parity with .map)", () => {
+    expect(jsmql("$$ = $$$.products.aggregate((o, _i, coll) => { $set({ n: coll.length }); });")).toEqual([
+      { $match: { $expr: false } },
+      {
+        $unionWith: {
+          coll: "products",
+          pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            { $set: { n: "$__jsmql.length" } },
+            { $unset: "__jsmql" },
+          ],
+        },
+      },
+    ]);
+  });
+});
+
+describe("$$$.coll.aggregate — error cases", () => {
+  it("expression-body arrow is rejected (needs block or array)", () => {
+    expect(() => jsmql("$.x = $$$.c.aggregate(o => o.v);")).toThrow(/\.aggregate\(pipeline\) needs a block body/);
+  });
+
+  it("a used index (2nd) param is rejected", () => {
+    expect(() => jsmql("$.x = $$$.c.aggregate((o, i) => { $match(o.n === i); });")).toThrow(
+      /'i' \(the 2nd, index parameter\) has no meaning inside '\.aggregate/,
+    );
+  });
+
+  it("non-.length use of the 3rd 'collection' param is rejected", () => {
+    expect(() => jsmql("$.x = $$$.c.aggregate((o, _i, coll) => { $match(o.n === coll[0]); });")).toThrow(
+      /only 'coll\.length' \(the sub-stream count\) is available/,
+    );
+  });
+
+  it("a spread element in the array form is rejected", () => {
+    expect(() => jsmql("$.x = $$$.c.aggregate([{ $sort: { a: 1 } }, ...$.more]);")).toThrow(
+      /a spread element isn't a pipeline stage/,
+    );
+  });
+
+  it("an empty pipeline is rejected (array form; the arrow form's empty block is a parse error)", () => {
+    expect(() => jsmql("$.x = $$$.c.aggregate([]);")).toThrow(/an empty pipeline has nothing to run/);
+  });
+
+  it("$$.aggregate (current stream) redirects to the foreign form", () => {
+    expect(() => jsmql('$$.aggregate((o) => { $group({ _id: "$s" }); });')).toThrow(
+      /\.aggregate\(\.\.\.\) runs a sub-pipeline against a FOREIGN collection/,
+    );
+  });
+
+  it("$ = replace-root with an aggregate (array) is rejected", () => {
+    expect(() => jsmql('$ = $$$.c.aggregate((o) => { $group({ _id: "$s" }); });')).toThrow(
+      /Cannot replace root with an array — '\.aggregate\(\.\.\.\)' returns an array/,
+    );
+  });
+
+  it("$$.push union of an aggregate result is deferred [DEF-034]", () => {
+    expect(() => jsmql('$$.push(...$$$.c.aggregate((o) => { $group({ _id: "$s" }); }));')).toThrow(
+      /can't be unioned into the stream with `\$\$\.push\(\.\.\.\)`/,
+    );
+  });
+
+  it("cross-database aggregate read is rejected", () => {
+    expect(() => jsmql("$.x = $$$$.db.c.aggregate((o) => { $sort({ a: 1 }); });")).toThrow(
+      /Cross-database reads aren't supported/,
+    );
+  });
+
+  it("aggregate syntax outside Pipeline mode is rejected", () => {
+    expect(() => jsmql("$$$.c.aggregate((o) => { $limit(5); })")).toThrow(
+      /Lookup syntax \('\$\$\$\.<coll>\.find\/filter\/aggregate\(\.\.\.\)'\) requires Pipeline mode/,
+    );
+  });
+
+  it("a trailing `return` inside an aggregate block is rejected (it's not a per-doc reshape)", () => {
+    expect(() => jsmql("$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });")).toThrow(
+      /doesn't take a `return`/,
+    );
+  });
+
+  it(".aggregate chained on a .find() result is rejected (scalar, not a collection)", () => {
+    expect(() => jsmql("$.x = $$$.c.find(o => o.x === 1).aggregate((o) => { $sort({ a: 1 }); });")).toThrow(
+      /\.aggregate\(\) on a \.find\(\) result is not meaningful/,
+    );
+  });
+
+  it("$$ = source-switch rejects an outer-doc $. reference (no let slot)", () => {
+    expect(() =>
+      jsmql('$$ = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$s" }); });'),
+    ).toThrow(/correlate with a `\.filter`/);
+  });
+
+  it("the chained form (.filter(p).aggregate(bad)) validates via the same rules", () => {
+    // Routes through AGGREGATE.validate (stream-methods), not validateAggregateShape.
+    expect(() => jsmql("$.x = $$$.c.filter(o => o.v > 1).aggregate(o => o.v);")).toThrow(
+      /\.aggregate\(pipeline\) needs a block body/,
+    );
+    expect(() => jsmql("$.x = $$$.c.filter(o => o.v > 1).aggregate((o, i) => { $match(o.n === i); });")).toThrow(
+      /'i' \(the 2nd, index parameter\) has no meaning/,
+    );
   });
 });

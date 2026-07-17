@@ -259,9 +259,18 @@ export type LookupCall = {
   db?: string;
   /** Collection name extracted from `.<name>` or `["<name>"]`. */
   collection: string;
-  /** `.find` returns scalar-or-null; `.filter` returns an array. */
-  method: "find" | "filter";
-  /** The predicate lambda. May be expression-body OR block-body. */
+  /**
+   * `.find` returns scalar-or-null; `.filter` / `.aggregate` return an array.
+   * `.aggregate(<pipeline>)` is the full-sub-pipeline join — see
+   * docs/specs/lookup-stage.md § `.aggregate`.
+   */
+  method: "find" | "filter" | "aggregate";
+  /**
+   * The lambda that becomes the `$lookup.pipeline`. For `.find`/`.filter` it's
+   * the predicate arrow (expression-body OR block-body). For `.aggregate` it's
+   * the block-body arrow; a stage-array literal argument is normalised to a
+   * synthetic zero-parameter block lambda by `aggregateArgToLambda`.
+   */
   lambda: Lambda;
 };
 
@@ -397,20 +406,55 @@ export function requireSameDbColl(db: string | undefined, collection: string, po
  */
 export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | null {
   if (expr.type !== "MethodCall") return null;
-  if (expr.method !== "find" && expr.method !== "filter") return null;
+  if (expr.method !== "find" && expr.method !== "filter" && expr.method !== "aggregate") return null;
   const target = extractLookupTarget(expr.object, ctx);
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
-  if (arg.type !== "Lambda") return null;
+  // `.aggregate(<pipeline>)` accepts a block-body arrow OR a stage-array literal;
+  // both normalise to a block-body `Lambda` so the rest of the lookup machinery
+  // (translatePredicate → buildBlockBodyPredicate, chained-terminal
+  // materialisation, cross-DB gate) treats it exactly like a block-body join.
+  // A malformed argument (expression-body arrow, spread-bearing array) returns
+  // null here; `validateLookupShape` surfaces the actionable error.
+  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : null;
+  if (lambda === null) return null;
   return {
     pos: target.pos,
     callPos: expr.pos,
     db: target.db,
     collection: target.collection,
     method: expr.method,
-    lambda: arg,
+    lambda,
   };
+}
+
+/**
+ * Normalise a `.aggregate(...)` argument into the block-body `Lambda` the lookup
+ * machinery consumes. A block-body arrow (`(o) => { $sort(...); ... }`) is
+ * returned as-is; a stage-array literal (`[{ $sort: ... }, ...]`) is wrapped in a
+ * synthetic zero-parameter block lambda whose statements are the array elements
+ * (so `$.<field>` correlation auto-lets and raw `"$field"` refs pass through, as
+ * in any sub-pipeline). Returns null for an expression-body arrow or a
+ * spread-bearing array — `validateLookupShape` throws the actionable error.
+ */
+export function aggregateArgToLambda(arg: CallArg): Lambda | null {
+  if (arg.type === "Lambda") return arg.block !== undefined ? arg : null;
+  if (arg.type === "ArrayLiteral") {
+    const stmts: PipelineStmt[] = [];
+    for (const el of arg.elements) {
+      if (el.type === "SpreadElement") return null;
+      // Bare update ops (`$.x = …`, `delete $.x`) wrap into an UpdateFilter stmt
+      // (→ `$set`/`$unset` stage); every other element is already a PipelineStmt.
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+        stmts.push({ type: "UpdateFilter", ops: [el], pos: el.pos });
+      } else {
+        stmts.push(el);
+      }
+    }
+    return { type: "Lambda", params: [], block: { type: "Pipeline", stmts, pos: arg.pos }, pos: arg.pos };
+  }
+  return null;
 }
 
 /**
@@ -554,12 +598,16 @@ export function validateLookupShape(expr: Expr): void {
   if (shape === null) return;
   // We're on a `$$$.<coll>.<method>(...)` or `$$$$.<db>.<coll>.<method>(...)` chain.
   const spell = shape.spelling;
+  if (expr.method === "aggregate") {
+    validateAggregateShape(expr, spell);
+    return;
+  }
   if (expr.method !== "find" && expr.method !== "filter") {
-    const hint = didYouMean(expr.method, ["find", "filter"], (s) => `.${s}`);
+    const hint = didYouMean(expr.method, ["find", "filter", "aggregate"], (s) => `.${s}`);
     throw new CodegenError(
-      `'${spell}' supports .find(pred) and .filter(pred), not .${expr.method}().${hint} ` +
-        `For richer queries, use a block-body lambda: ` +
-        `\`${spell}.filter(o => { $match(...); $sort(...); ... })\`.`,
+      `'${spell}' supports .find(pred), .filter(pred), and .aggregate(pipeline), not .${expr.method}().${hint} ` +
+        `For a full sub-pipeline (grouping, sort + limit, reshaping), use ` +
+        `\`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
       expr.pos,
     );
   }
@@ -603,6 +651,138 @@ export function validateLookupShape(expr: Expr): void {
           );
         }
       }
+    }
+  }
+}
+
+/**
+ * Validate a `$$$.<coll>.aggregate(<pipeline>)` shape. The argument must be a
+ * block-body arrow (`(o) => { $stage(...); ... }`) or a stage-array literal
+ * (`[{ $stage: ... }, ...]`). Params mirror `.filter`/`.map`: `(element, index,
+ * collection)`, at most 3; the index is positional-only and only `<collection>.
+ * length` is available (checked by `validateAggregateParams`).
+ */
+function validateAggregateShape(expr: MethodCall, spell: string): void {
+  if (expr.args.length !== 1) {
+    throw new CodegenError(
+      `.aggregate(pipeline) takes exactly one argument — a block-body arrow \`(o) => { $stage(...); ... }\` ` +
+        `or a stage-array literal \`[{ $stage: ... }, ...]\`, got ${expr.args.length}.`,
+      expr.pos,
+    );
+  }
+  validateAggregateArg(expr.args[0], expr.pos, spell);
+}
+
+/**
+ * Validate a single `.aggregate(...)` argument (shape + param semantics). Shared
+ * by the head form (`validateAggregateShape`) and the chain form (the `AGGREGATE`
+ * stream-method's `validate`). `spell` tailors the example in the error to the
+ * receiver (`$$$.<coll>` by default).
+ */
+export function validateAggregateArg(arg: CallArg, callPos: number, spell: string = "$$$.<coll>"): void {
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(
+      `.aggregate(...) does not accept a spread argument — pass a block-body arrow \`(o) => { ... }\` ` +
+        `or a stage-array literal \`[{ ... }, ...]\`.`,
+      arg.pos,
+    );
+  }
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) {
+      // Consistent with the arrow form, whose empty block the parser rejects.
+      throw new CodegenError(
+        `.aggregate([]) — an empty pipeline has nothing to run. List at least one stage, ` +
+          `e.g. \`${spell}.aggregate([{ $sort: { … } }, { $limit: 5 }])\`.`,
+        arg.pos,
+      );
+    }
+    for (const el of arg.elements) {
+      if (el.type === "SpreadElement") {
+        throw new CodegenError(
+          `.aggregate([...]) — a spread element isn't a pipeline stage. List the stages directly, ` +
+            `e.g. \`${spell}.aggregate([{ $sort: { … } }, { $limit: 5 }])\`.`,
+          el.pos,
+        );
+      }
+    }
+    return;
+  }
+  if (arg.type !== "Lambda") {
+    throw new CodegenError(
+      `.aggregate(pipeline) requires a block-body arrow \`(o) => { $stage(...); ... }\` ` +
+        `or a stage-array literal \`[{ $stage: ... }, ...]\`.`,
+      arg.pos,
+    );
+  }
+  if (arg.block === undefined) {
+    throw new CodegenError(
+      `.aggregate(pipeline) needs a block body — write \`${spell}.aggregate((o) => { $match(...); $group(...); ... })\` ` +
+        `(each statement is a stage) — or pass a stage-array literal \`[{ ... }, ...]\`. An expression-body arrow isn't a pipeline.`,
+      arg.pos,
+    );
+  }
+  if (arg.ret !== undefined) {
+    // A trailing `return` is `.map`'s reshape terminal, not `.aggregate`'s —
+    // silently dropping it would discard the user's intent, so reject.
+    throw new CodegenError(
+      `.aggregate((o) => { … }) doesn't take a \`return\` — each statement is a pipeline stage, not a per-document reshape. ` +
+        `To shape the output add a \`$project\`/\`$replaceWith\` stage; for a per-document transform use \`.map(o => …)\`.`,
+      arg.pos,
+    );
+  }
+  if (arg.params.length > 3) {
+    throw new CodegenError(
+      `.aggregate((element, index, collection) => …) takes at most 3 parameters, got ${arg.params.length}.`,
+      arg.pos,
+    );
+  }
+  validateAggregateParams(arg);
+}
+
+/**
+ * Enforce the `(element, index, collection)` param semantics shared by
+ * `.aggregate`'s head form (via `validateAggregateShape`) and its chain form
+ * (via the `AGGREGATE` stream-method's `validate`): the index (2nd) param is
+ * positional-only — MongoDB streams have no per-doc index — and the 3rd
+ * 'collection' param exposes only `<coll>.length` (the sub-stream count). A
+ * no-op for the array form (a synthetic zero-parameter lambda) and any lambda
+ * with fewer than two params.
+ */
+export function validateAggregateParams(lambda: Lambda): void {
+  if (lambda.block === undefined) return;
+  const block = lambda.block;
+  const element = lambda.params[0];
+  const indexParam = lambda.params.length >= 2 ? lambda.params[1] : undefined;
+  const collParam = lambda.params.length === 3 ? lambda.params[2] : undefined;
+  const uses = (pred: (e: Expr) => boolean): boolean => block.stmts.some((s) => someStmt(s, pred));
+  if (indexParam !== undefined && uses((e) => e.type === "ParamRef" && e.name === indexParam)) {
+    throw new CodegenError(
+      `'${indexParam}' (the 2nd, index parameter) has no meaning inside '.aggregate((${element}, ${indexParam}, …) => …)' — ` +
+        `MongoDB streams have no per-doc index. Keep it unused (e.g. '(${element}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
+      lambda.pos,
+    );
+  }
+  if (collParam !== undefined) {
+    let total = 0;
+    let lengthUses = 0;
+    uses((e) => {
+      if (e.type === "ParamRef" && e.name === collParam) total++;
+      if (
+        e.type === "MemberAccess" &&
+        e.member === "length" &&
+        e.object.type === "ParamRef" &&
+        e.object.name === collParam
+      ) {
+        lengthUses++;
+      }
+      return false; // visit all
+    });
+    if (total > lengthUses) {
+      throw new CodegenError(
+        `In '.aggregate((${element}, _i, ${collParam}) => { … })', only '${collParam}.length' (the sub-stream count) is available — ` +
+          `there's no materialised array to index or iterate inside the pipeline.`,
+        lambda.pos,
+      );
     }
   }
 }
@@ -1803,6 +1983,10 @@ export function lowerLookup(
   const stages: object[] = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
+  } else if (call.method === "aggregate" && Object.keys(pred.letVars).length === 0) {
+    // Uncorrelated `.aggregate` — no `$.<field>` correlation, so no `let`. Emit
+    // the lean `{ from, pipeline, as }` shape (an empty `let` is pure noise).
+    stages.push({ $lookup: { from, pipeline: pred.pipeline, as } });
   } else {
     stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
   }
@@ -1899,6 +2083,18 @@ export function extractLookupCalls(
       const reduceExpr = generateWithCtx(reduceCall, outerCtx);
       stages.push({ $set: { [slot]: reduceExpr } });
       return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
+    }
+  }
+  // Chained `.aggregate(...)` on a `.find()` result (scalar-or-null) — not
+  // meaningful, mirror the `.length`/`.reduce`-on-`.find` rejections.
+  if (expr.type === "MethodCall" && expr.method === "aggregate") {
+    const innerCall = detectLookupCall(expr.object, outerCtx);
+    if (innerCall !== null && innerCall.method === "find") {
+      throw new CodegenError(
+        `.aggregate() on a .find() result is not meaningful — .find returns a scalar-or-null, not a collection to aggregate. ` +
+          `Use .filter(pred).aggregate(...) to run a sub-pipeline over the matches.`,
+        expr.pos,
+      );
     }
   }
   // Direct lookup as the whole expression
