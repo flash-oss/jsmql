@@ -72,6 +72,33 @@ MongoDB operators (no minted `$foo`) and is the first item shipped from the
 [`method-dispatch.md`](specs/method-dispatch.md); reference:
 [`LANGUAGE.md`](LANGUAGE.md).
 
+## 2026-07-17 — feat: `Date.prototype.getUTC*` getters → UTC-anchored date-part operators
+
+Added the eight `getUTC*` component getters (`getUTCFullYear`, `getUTCMonth`,
+`getUTCDate`, `getUTCDay`, `getUTCHours`, `getUTCMinutes`, `getUTCSeconds`,
+`getUTCMilliseconds`) as the UTC-reading siblings of the local getters that
+already shipped. Each lowers to the *same* MongoDB date-part operator as its
+local counterpart, but passes the object form `{ date, timezone: "UTC" }` instead
+of the bare date — so the extraction is anchored to UTC rather than the server
+process's zone, mirroring JavaScript's own `getHours()` (local) vs
+`getUTCHours()` (UTC) split. The 0-based shims carry over unchanged
+(`getUTCMonth` subtracts 1 from `$month`; `getUTCDay` subtracts 1 from
+`$dayOfWeek`, Sunday=0). This finishes a parallel codepath: a developer who
+learned `.getMonth()` works would previously hit "Unknown method" on
+`.getUTCMonth()`, which is a DX cliff.
+
+Deliberately **not** added: `getUTCTime` (JS has no such method — `getTime()` is
+already UTC epoch milliseconds) and `getTimezoneOffset` (MongoDB has no ambient
+"local" zone to offset from; left as a plain unknown-method for now rather than
+introducing a `won't-implement` rejection without the maintainer's sign-off).
+Implementation mirrors the local getters exactly via a small `utcDate()` helper in
+[src/codegen.ts](src/codegen.ts); registry entries in the same `METHODS` table auto-feed the
+`didYouMean` suggestion list. Emitted shapes were verified against a live `mongod`
+(all eight return the JS-correct values for a known instant). See
+[docs/LANGUAGE.md](docs/LANGUAGE.md) and [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md).
+
+---
+
 ## 2026-07-04 — feat!: arrow entry form is now `({ $ }) => …` (toolbox destructure), old `($) =>` removed
 
 The function-entry arrow shape changed: the bare document parameter `$` is gone,

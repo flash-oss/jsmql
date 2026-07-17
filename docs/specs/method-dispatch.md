@@ -202,7 +202,15 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = â€
 | `.getMinutes()` | `{ $minute: expr }` | |
 | `.getSeconds()` | `{ $second: expr }` | |
 | `.getMilliseconds()` | `{ $millisecond: expr }` | |
-| `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS) |
+| `.getUTCFullYear()` | `{ $year: { date: expr, timezone: "UTC" } }` | UTC-anchored |
+| `.getUTCMonth()` | `{ $subtract: [{ $month: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based |
+| `.getUTCDate()` | `{ $dayOfMonth: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCDay()` | `{ $subtract: [{ $dayOfWeek: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based, Sunday=0 |
+| `.getUTCHours()` | `{ $hour: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCMinutes()` | `{ $minute: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCSeconds()` | `{ $second: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCMilliseconds()` | `{ $millisecond: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS; already UTC, no `getUTCTime`) |
 | `.toISOString()` | `{ $dateToString: { date: expr, format: "%Y-%m-%dT%H:%M:%S.%LZ" } }` | |
 | `.plus(amount, unit[, tz])` | `{ $dateAdd: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
 | `.minus(amount, unit[, tz])` | `{ $dateSubtract: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |

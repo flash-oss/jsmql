@@ -4519,6 +4519,14 @@ var METHODS = {
   getMinutes: { receiver: "date" },
   getSeconds: { receiver: "date" },
   getMilliseconds: { receiver: "date" },
+  getUTCFullYear: { receiver: "date" },
+  getUTCMonth: { receiver: "date" },
+  getUTCDate: { receiver: "date" },
+  getUTCDay: { receiver: "date" },
+  getUTCHours: { receiver: "date" },
+  getUTCMinutes: { receiver: "date" },
+  getUTCSeconds: { receiver: "date" },
+  getUTCMilliseconds: { receiver: "date" },
   getTime: {},
   // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
   toISOString: { returns: "string", receiver: "date" },
@@ -5551,6 +5559,9 @@ function generateTemplateLiteral(quasis, expressions, ctx) {
   if (tail !== "") parts.push(tail);
   return { $concat: parts };
 }
+function utcDate(date) {
+  return { date, timezone: "UTC" };
+}
 function generateMethodCall(object, method, args, ctx, callPos, optional = false) {
   if (object.type === "NewSet") {
     return generateSetMethodCall(object, method, args, ctx);
@@ -6085,6 +6096,23 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return { $second: genObj };
     case "getMilliseconds":
       return { $millisecond: genObj };
+    // UTC variants: same operators, anchored to UTC via `timezone: "UTC"`.
+    case "getUTCFullYear":
+      return { $year: utcDate(genObj) };
+    case "getUTCMonth":
+      return { $subtract: [{ $month: utcDate(genObj) }, 1] };
+    case "getUTCDate":
+      return { $dayOfMonth: utcDate(genObj) };
+    case "getUTCDay":
+      return { $subtract: [{ $dayOfWeek: utcDate(genObj) }, 1] };
+    case "getUTCHours":
+      return { $hour: utcDate(genObj) };
+    case "getUTCMinutes":
+      return { $minute: utcDate(genObj) };
+    case "getUTCSeconds":
+      return { $second: utcDate(genObj) };
+    case "getUTCMilliseconds":
+      return { $millisecond: utcDate(genObj) };
     case "getTime":
       return { $toLong: genObj };
     case "toISOString":

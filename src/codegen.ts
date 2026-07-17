@@ -528,6 +528,14 @@ const METHODS: Record<string, MethodMeta> = {
   getMinutes: { receiver: "date" },
   getSeconds: { receiver: "date" },
   getMilliseconds: { receiver: "date" },
+  getUTCFullYear: { receiver: "date" },
+  getUTCMonth: { receiver: "date" },
+  getUTCDate: { receiver: "date" },
+  getUTCDay: { receiver: "date" },
+  getUTCHours: { receiver: "date" },
+  getUTCMinutes: { receiver: "date" },
+  getUTCSeconds: { receiver: "date" },
+  getUTCMilliseconds: { receiver: "date" },
   getTime: {}, // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
@@ -2365,6 +2373,14 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
 
 // ── Method calls ──────────────────────────────────────────────────────────────
 
+// The date argument the `getUTC*` getters hand to MongoDB's date-part operators.
+// The local getters pass the bare date (extraction uses the server process zone);
+// the UTC variants pass `{ date, timezone: "UTC" }` so the result is UTC-anchored,
+// mirroring JS's `getHours()` (local) vs `getUTCHours()` (UTC) split.
+function utcDate(date: unknown): { date: unknown; timezone: string } {
+  return { date, timezone: "UTC" };
+}
+
 function generateMethodCall(
   object: Expr,
   method: string,
@@ -2996,8 +3012,27 @@ function generateMethodCall(
       return { $second: genObj };
     case "getMilliseconds":
       return { $millisecond: genObj };
+    // UTC variants: same operators, anchored to UTC via `timezone: "UTC"`.
+    case "getUTCFullYear":
+      return { $year: utcDate(genObj) };
+    case "getUTCMonth":
+      // 0-based: MongoDB $month is 1-based
+      return { $subtract: [{ $month: utcDate(genObj) }, 1] };
+    case "getUTCDate":
+      return { $dayOfMonth: utcDate(genObj) };
+    case "getUTCDay":
+      // 0-based: MongoDB $dayOfWeek is 1-based (Sunday=1)
+      return { $subtract: [{ $dayOfWeek: utcDate(genObj) }, 1] };
+    case "getUTCHours":
+      return { $hour: utcDate(genObj) };
+    case "getUTCMinutes":
+      return { $minute: utcDate(genObj) };
+    case "getUTCSeconds":
+      return { $second: utcDate(genObj) };
+    case "getUTCMilliseconds":
+      return { $millisecond: utcDate(genObj) };
     case "getTime":
-      // Match JS: ms since epoch
+      // Match JS: ms since epoch (already UTC; no getUTCTime exists in JS)
       return { $toLong: genObj };
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
