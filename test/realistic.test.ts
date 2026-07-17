@@ -1473,6 +1473,23 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
   );
 });
 
+describe("event fell within UTC business hours (.getUTCHours)", { features: ["Date and time"] }, () => {
+  it(
+    "compiles to the expected MQL",
+    { kind: "expression", usage: "db.events.aggregate([{ $addFields: { inBusinessHours: jsmql.expr(...) } }])" },
+    () => {
+      // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
+      // (not the server's local zone) keeps the window stable across deployments.
+      expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
+        $and: [
+          { $gte: [{ $hour: { date: "$event.ts", timezone: "UTC" } }, 9] },
+          { $lt: [{ $hour: { date: "$event.ts", timezone: "UTC" } }, 17] },
+        ],
+      });
+    },
+  );
+});
+
 describe("annotated insurance underwriting rule with // and /* */", { features: ["Comments"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.applicants.find(jsmql(...))" }, () => {
     expect(

@@ -1831,7 +1831,20 @@ $.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoc
 $.createdAt.toISOString()          // { $dateToString: { date: "$createdAt", format: "%Y-%m-%dT%H:%M:%S.%LZ" } }
 ```
 
-**Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; jsmql subtracts 1 automatically.
+Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone — matching JavaScript's `getHours()` (local) vs `getUTCHours()` (UTC) split:
+
+```js
+$.createdAt.getUTCFullYear()       // { $year: { date: "$createdAt", timezone: "UTC" } }
+$.createdAt.getUTCMonth()          // { $subtract: [{ $month: { date: "$createdAt", timezone: "UTC" } }, 1] }  (0-indexed)
+$.createdAt.getUTCDate()           // { $dayOfMonth: { date: "$createdAt", timezone: "UTC" } }
+$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: { date: "$createdAt", timezone: "UTC" } }, 1] }  (0=Sun)
+$.createdAt.getUTCHours()          // { $hour: { date: "$createdAt", timezone: "UTC" } }
+$.createdAt.getUTCMinutes()        // { $minute: { date: "$createdAt", timezone: "UTC" } }
+$.createdAt.getUTCSeconds()        // { $second: { date: "$createdAt", timezone: "UTC" } }
+$.createdAt.getUTCMilliseconds()   // { $millisecond: { date: "$createdAt", timezone: "UTC" } }
+```
+
+**Note:** `getMonth()` / `getUTCMonth()` and `getDay()` / `getUTCDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; jsmql subtracts 1 automatically. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
 
 ### Date Operator Calls
 
