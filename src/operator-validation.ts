@@ -29,7 +29,17 @@ import { lookupOperator } from "./operators.ts";
 // timeUnit is case-SENSITIVE lowercase (mongod rejects "Day"); weekday is
 // case-INSENSITIVE (mongod accepts "Monday"/"monday"); bsonTypeName is the full
 // $type/$convert alias set (verified recognised by $convert.to on mongod).
-const TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] as const;
+export const TIME_UNIT = [
+  "year",
+  "quarter",
+  "month",
+  "week",
+  "day",
+  "hour",
+  "minute",
+  "second",
+  "millisecond",
+] as const;
 const WEEKDAY = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
 // Keep in sync with the BSON type aliases MongoDB accepts; bump when a new type lands.
 const BSON_TYPE_NAME = [
@@ -198,7 +208,7 @@ function typeHint(expected: ArgType): string {
  * literal no-op — only a certain-wrong literal throws. `slot` is the key name
  * (object form) or "" for a single/positional operand.
  */
-function checkArgType(name: string, slot: string, value: Expr, expected: ArgType): void {
+export function checkArgType(name: string, slot: string, value: Expr, expected: ArgType): void {
   const kind = literalKind(value);
   if (kind === null || kind === "null") return;
   if (typeMatches(kind, value, expected)) return;

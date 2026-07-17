@@ -1831,6 +1831,17 @@ $.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoc
 $.createdAt.toISOString()          // { $dateToString: { date: "$createdAt", format: "%Y-%m-%dT%H:%M:%S.%LZ" } }
 ```
 
+**Date arithmetic** — add or subtract a span of time with `.plus(amount, unit)` and `.minus(amount, unit)`, with an optional third `timezone` argument:
+
+```js
+$.subscribedAt.plus(30, "day")     // { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } }
+$.expiresAt.minus(1, "month")      // { $dateSubtract: { startDate: "$expiresAt", unit: "month", amount: 1 } }
+$.t.plus(2, "hour", "America/New_York")
+// { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
+```
+
+`unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below); a literal typo is rejected with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer and a literal `timezone` must be a string — otherwise you get the same compile-time error the `$dateAdd(…)` operator form gives; a field path or parameter in either slot passes through unchecked. The method name follows Temporal/Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)` — `amount` first, `unit` second.
+
 **Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; jsmql subtracts 1 automatically.
 
 ### Date Operator Calls

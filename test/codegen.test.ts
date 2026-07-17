@@ -2222,6 +2222,57 @@ describe("date methods", () => {
   });
 });
 
+describe("date arithmetic (.plus / .minus)", () => {
+  it("plus(amount, unit) → $dateAdd", () => {
+    expect(jsmql.expr('$.subscribedAt.plus(30, "day")')).toEqual({
+      $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 },
+    });
+  });
+  it("minus(amount, unit) → $dateSubtract", () => {
+    expect(jsmql.expr('$.expiresAt.minus(1, "month")')).toEqual({
+      $dateSubtract: { startDate: "$expiresAt", unit: "month", amount: 1 },
+    });
+  });
+  it("optional timezone third arg", () => {
+    expect(jsmql.expr('$.t.plus(2, "hour", "America/New_York")')).toEqual({
+      $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" },
+    });
+  });
+  it("amount may be a runtime expression", () => {
+    expect(jsmql.expr('$.order.createdAt.plus($.slaDays, "day")')).toEqual({
+      $dateAdd: { startDate: "$order.createdAt", unit: "day", amount: "$slaDays" },
+    });
+  });
+  it("a non-literal unit is not enum-checked (literal-gating)", () => {
+    expect(jsmql.expr("$.t.plus(1, $.unit)")).toEqual({ $dateAdd: { startDate: "$t", unit: "$unit", amount: 1 } });
+  });
+  it("rejects an unknown unit with a suggestion", () => {
+    expect(() => jsmql.expr('$.t.plus(30, "days")')).toThrow(
+      /'\.plus' unit must be one of: .* — got 'days'\. Did you mean 'day'\?/,
+    );
+  });
+  it("rejects the wrong argument count, naming the parameters", () => {
+    expect(() => jsmql.expr("$.t.plus(30)")).toThrow(
+      /\.plus\(amount, unit\[, timezone\]\) requires 2 or 3 arguments, got 1/,
+    );
+  });
+  it("rejects a non-integer literal amount (mongod requires an integer)", () => {
+    expect(() => jsmql.expr('$.t.plus(1.5, "day")')).toThrow(/'\.plus' amount expects an integer, but got a number\./);
+    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow(
+      /'\.minus' amount expects an integer, but got a string\./,
+    );
+  });
+  it("rejects a non-string literal timezone", () => {
+    expect(() => jsmql.expr('$.t.plus(1, "day", 5)')).toThrow(/'\.plus' timezone expects a string, but got a number\./);
+  });
+  it("allows a negative integer amount and dynamic amount/timezone (literal-gating)", () => {
+    expect(jsmql.expr('$.t.plus(-5, "day")')).toEqual({ $dateAdd: { startDate: "$t", unit: "day", amount: -5 } });
+    expect(jsmql.expr('$.t.plus($.n, "day", $.tz)')).toEqual({
+      $dateAdd: { startDate: "$t", unit: "day", amount: "$n", timezone: "$tz" },
+    });
+  });
+});
+
 describe("typeof", () => {
   it("typeof fieldref", () => {
     expect(jsmql.expr("typeof $.x")).toEqual({ $type: "$x" });

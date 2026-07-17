@@ -299,6 +299,29 @@ $ = { ...$, computedScore: $.points * 1.1 };
   });
 });
 
+describe("derive subscription grace + reminder dates (`.plus` / `.minus`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.subscriptions.aggregate(jsmql(...))" }, () => {
+    // For each active subscription, project a 30-day grace-period end and a
+    // 3-days-before-expiry reminder. `.plus(amount, unit)` → $dateAdd and
+    // `.minus(amount, unit)` → $dateSubtract — the receiver is the start date.
+    expect(
+      jsmql`
+$match($.plan === "active");
+$ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.expiresAt.minus(3, "day") };
+      `,
+    ).toEqual([
+      { $match: { plan: "active" } },
+      {
+        $replaceWith: {
+          userId: "$_id",
+          graceEndsAt: { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } },
+          remindAt: { $dateSubtract: { startDate: "$expiresAt", unit: "day", amount: 3 } },
+        },
+      },
+    ]);
+  });
+});
+
 describe("explode order line-items into per-item documents (`$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Flatten each paid order into one document per line item, carrying the

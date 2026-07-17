@@ -204,6 +204,10 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.getMilliseconds()` | `{ $millisecond: expr }` | |
 | `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS) |
 | `.toISOString()` | `{ $dateToString: { date: expr, format: "%Y-%m-%dT%H:%M:%S.%LZ" } }` | |
+| `.plus(amount, unit[, tz])` | `{ $dateAdd: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
+| `.minus(amount, unit[, tz])` | `{ $dateSubtract: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
+
+`.plus` / `.minus` take Temporal/Luxon's method name with Moment's `(amount, unit)` argument order — the receiver is the `startDate`, `amount` first, `unit` second, and an optional third `timezone`. Argument count is checked by `checkArity` (2 or 3 args); the literal slots are gated to the same shapes the `$dateAdd` / `$dateSubtract` operator path rejects, reusing its own helpers so both spellings error identically: `checkEnum` against `TIME_UNIT` (the shared time-unit enum in `operator-validation.ts`) for `unit`, and `checkArgType` for `amount` (`int-or-long`) and `timezone` (`string`). All three are literal-gated — a field-path or parameter in any slot passes through unchecked.
 
 ## Lambda scoping (`GenerateCtx`)
 

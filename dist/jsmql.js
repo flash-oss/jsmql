@@ -3891,7 +3891,17 @@ function checkIntBound(stage, body, opts) {
 }
 
 // src/operator-validation.ts
-var TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
+var TIME_UNIT = [
+  "year",
+  "quarter",
+  "month",
+  "week",
+  "day",
+  "hour",
+  "minute",
+  "second",
+  "millisecond"
+];
 var WEEKDAY = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 var BSON_TYPE_NAME = [
   "double",
@@ -4511,6 +4521,8 @@ var METHODS = {
   getMilliseconds: {},
   getTime: {},
   toISOString: { returns: "string" },
+  plus: {},
+  minus: {},
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -6074,6 +6086,21 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return { $toLong: genObj };
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
+    case "plus":
+    case "minus": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
+      checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
+      if (exprArgs.length === 3) checkArgType(`.${method}`, "timezone", exprArgs[2], "string");
+      const spec = {
+        startDate: genObj,
+        unit: _generate(exprArgs[1], ctx),
+        amount: _generate(exprArgs[0], ctx)
+      };
+      if (exprArgs.length === 3) spec.timezone = _generate(exprArgs[2], ctx);
+      return { [method === "plus" ? "$dateAdd" : "$dateSubtract"]: spec };
+    }
     // ── DX shims: mutating Array methods ────────────────────────────────────
     // These all mutate the receiver in JavaScript. In expression position
     // jsmql is immutable, so we surface a tailored "use the immutable

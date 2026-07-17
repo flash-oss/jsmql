@@ -1,5 +1,6 @@
 import { lookupOperator } from "./operators.ts";
-import { validateOperatorArgs } from "./operator-validation.ts";
+import { checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
+import { checkEnum } from "./literal-gate.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, LENGTH_SLOT } from "./namespace.ts";
@@ -525,6 +526,8 @@ const METHODS: Record<string, MethodMeta> = {
   getMilliseconds: {},
   getTime: {},
   toISOString: { returns: "string" },
+  plus: {},
+  minus: {},
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -2987,6 +2990,27 @@ function generateMethodCall(
       return { $toLong: genObj };
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
+    case "plus":
+    case "minus": {
+      // Date arithmetic: `d.plus(amount, unit[, timezone])` → $dateAdd,
+      // `.minus(...)` → $dateSubtract. Temporal/Luxon method name with Moment's
+      // (amount, unit) argument order — both map 1:1 to the operator's fields.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      // Gate the literal slots to the same shapes the $dateAdd/$dateSubtract
+      // operator path rejects (unit enum, integer amount, string timezone) so
+      // both spellings error identically; each no-ops on a non-literal.
+      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
+      checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
+      if (exprArgs.length === 3) checkArgType(`.${method}`, "timezone", exprArgs[2], "string");
+      const spec: Record<string, unknown> = {
+        startDate: genObj,
+        unit: _generate(exprArgs[1], ctx),
+        amount: _generate(exprArgs[0], ctx),
+      };
+      if (exprArgs.length === 3) spec.timezone = _generate(exprArgs[2], ctx);
+      return { [method === "plus" ? "$dateAdd" : "$dateSubtract"]: spec };
+    }
 
     // ── DX shims: mutating Array methods ────────────────────────────────────
     // These all mutate the receiver in JavaScript. In expression position

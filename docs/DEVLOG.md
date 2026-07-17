@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-17 — feat: `.plus` / `.minus` date arithmetic → `$dateAdd` / `$dateSubtract`
+
+Date values gained arithmetic methods: `$.d.plus(amount, unit)` lowers to
+`{ $dateAdd: { startDate, unit, amount } }` and `.minus(...)` to
+`$dateSubtract`, with an optional third `timezone` argument threaded to the
+operator's `timezone` field. The receiver is the `startDate`; `amount` comes
+first, `unit` second. Arg count (2 or 3) is validated via `checkArity`, and the
+literal slots are gated to the same shapes the `$dateAdd`/`$dateSubtract`
+operator path rejects — reusing its own helpers so both spellings error
+identically: `checkEnum` against the shared `TIME_UNIT` enum for `unit` (so
+`.plus(30, "days")` → *"Did you mean 'day'?"*), and `checkArgType` for `amount`
+(`int-or-long`, so `.plus(1.5, "day")` is rejected) and `timezone` (`string`).
+All are literal-gated — a field-path/param in any slot passes through. The
+`startDate` receiver is left unchecked, matching the other date methods.
+Implementation is a
+single `case "plus"/"minus"` in `generateMethodCall` plus two `METHODS`
+entries ([`src/codegen.ts`](../src/codegen.ts)); `TIME_UNIT` and `checkArgType`
+were promoted to `export`s from
+[`src/operator-validation.ts`](../src/operator-validation.ts) so the method
+path and the `$op` path share one enum and one literal-type checker (no second
+copy). Verified on
+a live `mongod` (`2020-01-31.plus(30,"day")` → `2020-03-01`, `.minus(1,"month")`
+→ `2019-12-31`, tz + dynamic-amount forms).
+
+*Why:* date math was the biggest gap in the JS-API surface — `new Date`,
+`Date.now`, and the `.getX()` getters shipped, but there was no way to shift a
+date. Temporal/Luxon/Moment all spell this as `.plus`/`.minus` (or `.add`), so
+the name reuses vocabulary developers already know; neither is a real
+`Date.prototype` method, so there is no JS collision. This maps to real
+MongoDB operators (no minted `$foo`) and is the first item shipped from the
+"JS API vocabulary we expand" exploration. Spec:
+[`method-dispatch.md`](specs/method-dispatch.md); reference:
+[`LANGUAGE.md`](LANGUAGE.md).
+
 ## 2026-07-04 — feat!: arrow entry form is now `({ $ }) => …` (toolbox destructure), old `($) =>` removed
 
 The function-entry arrow shape changed: the bare document parameter `$` is gone,
