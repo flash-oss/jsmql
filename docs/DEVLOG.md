@@ -10,6 +10,93 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-17 — fix: date methods reject a literal non-date receiver (parity with the operator form)
+
+The date methods (`.getFullYear()`, `.getMonth()`, …, `.toISOString()`, and the
+new `.plus()` / `.minus()`) now type-check their receiver: a literal non-date
+like `"2020-01-01".getFullYear()` is rejected at compile time with the same
+message the operator form gives (`'.getFullYear' expects a date, but got a
+string. Use a field path or new Date(…).`), instead of silently emitting
+`{ $year: "2020-01-01" }` — MQL the server rejects at runtime (verified: mongod
+`Location16006`). Implemented declaratively: `MethodMeta` gained a
+`receiver?: "date"` field, set on every date method whose target operator
+declares `singleType: "date"` (or a `date`-typed key), and `generateMethodCall`
+runs the shared `checkArgType(…, "date")` before dispatch. Literal-gated as
+always — a field ref / `new Date(…)` / param no-ops, and the HR1 `"$ts"`
+field-ref string passes through.
+
+`.getTime()` is deliberately **excluded** (the one date method without
+`receiver: "date"`): it lowers to `$toLong`, which converts numeric
+strings/numbers, so `"2020".getTime()` → `{ $toLong: "2020" }` is valid MQL the
+server accepts (verified) — rejecting it would violate the literal-gating
+invariant (reject only shapes invalid on *every* deployment).
+
+*Why:* closes the method-vs-operator asymmetry surfaced while implementing
+`.plus`/`.minus` — the operator forms already gated their date args, but the
+method spellings didn't, so identical mistakes errored in one spelling and
+silently produced bad MQL in the other. Applying it uniformly (rather than only
+to the new `.plus`/`.minus`) avoids minting a fresh inconsistency. Spec:
+[`method-dispatch.md`](specs/method-dispatch.md).
+
+## 2026-07-17 — feat: `.plus` / `.minus` date arithmetic → `$dateAdd` / `$dateSubtract`
+
+Date values gained arithmetic methods: `$.d.plus(amount, unit)` lowers to
+`{ $dateAdd: { startDate, unit, amount } }` and `.minus(...)` to
+`$dateSubtract`, with an optional third `timezone` argument threaded to the
+operator's `timezone` field. The receiver is the `startDate`; `amount` comes
+first, `unit` second. Arg count (2 or 3) is validated via `checkArity`, and the
+literal slots are gated to the same shapes the `$dateAdd`/`$dateSubtract`
+operator path rejects — reusing its own helpers so both spellings error
+identically: `checkEnum` against the shared `TIME_UNIT` enum for `unit` (so
+`.plus(30, "days")` → *"Did you mean 'day'?"*), and `checkArgType` for `amount`
+(`int-or-long`, so `.plus(1.5, "day")` is rejected) and `timezone` (`string`).
+All are literal-gated — a field-path/param in any slot passes through. The
+`startDate` receiver is left unchecked, matching the other date methods.
+Implementation is a
+single `case "plus"/"minus"` in `generateMethodCall` plus two `METHODS`
+entries ([`src/codegen.ts`](../src/codegen.ts)); `TIME_UNIT` and `checkArgType`
+were promoted to `export`s from
+[`src/operator-validation.ts`](../src/operator-validation.ts) so the method
+path and the `$op` path share one enum and one literal-type checker (no second
+copy). Verified on
+a live `mongod` (`2020-01-31.plus(30,"day")` → `2020-03-01`, `.minus(1,"month")`
+→ `2019-12-31`, tz + dynamic-amount forms).
+
+*Why:* date math was the biggest gap in the JS-API surface — `new Date`,
+`Date.now`, and the `.getX()` getters shipped, but there was no way to shift a
+date. Temporal/Luxon/Moment all spell this as `.plus`/`.minus` (or `.add`), so
+the name reuses vocabulary developers already know; neither is a real
+`Date.prototype` method, so there is no JS collision. This maps to real
+MongoDB operators (no minted `$foo`) and is the first item shipped from the
+"JS API vocabulary we expand" exploration. Spec:
+[`method-dispatch.md`](specs/method-dispatch.md); reference:
+[`LANGUAGE.md`](LANGUAGE.md).
+
+## 2026-07-17 — feat: `Date.prototype.getUTC*` getters → UTC-anchored date-part operators
+
+Added the eight `getUTC*` component getters (`getUTCFullYear`, `getUTCMonth`,
+`getUTCDate`, `getUTCDay`, `getUTCHours`, `getUTCMinutes`, `getUTCSeconds`,
+`getUTCMilliseconds`) as the UTC-reading siblings of the local getters that
+already shipped. Each lowers to the *same* MongoDB date-part operator as its
+local counterpart, but passes the object form `{ date, timezone: "UTC" }` instead
+of the bare date — so the extraction is anchored to UTC rather than the server
+process's zone, mirroring JavaScript's own `getHours()` (local) vs
+`getUTCHours()` (UTC) split. The 0-based shims carry over unchanged
+(`getUTCMonth` subtracts 1 from `$month`; `getUTCDay` subtracts 1 from
+`$dayOfWeek`, Sunday=0). This finishes a parallel codepath: a developer who
+learned `.getMonth()` works would previously hit "Unknown method" on
+`.getUTCMonth()`, which is a DX cliff.
+
+Deliberately **not** added: `getUTCTime` (JS has no such method — `getTime()` is
+already UTC epoch milliseconds) and `getTimezoneOffset` (MongoDB has no ambient
+"local" zone to offset from; left as a plain unknown-method for now rather than
+introducing a `won't-implement` rejection without the maintainer's sign-off).
+Implementation mirrors the local getters exactly via a small `utcDate()` helper in
+[src/codegen.ts](src/codegen.ts); registry entries in the same `METHODS` table auto-feed the
+`didYouMean` suggestion list. Emitted shapes were verified against a live `mongod`
+(all eight return the JS-correct values for a known instant). See
+[docs/LANGUAGE.md](docs/LANGUAGE.md) and [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md).
+
 ## 2026-07-10 — feat: `$$$.<coll>.aggregate(pipeline)` — full sub-pipeline joins (SR3)
 
 Shipped the `.aggregate()` convenience API from [SR3](LANG_RULES.md) (jsmql invents

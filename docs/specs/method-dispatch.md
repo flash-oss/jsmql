@@ -202,8 +202,22 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.getMinutes()` | `{ $minute: expr }` | |
 | `.getSeconds()` | `{ $second: expr }` | |
 | `.getMilliseconds()` | `{ $millisecond: expr }` | |
-| `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS) |
+| `.getUTCFullYear()` | `{ $year: { date: expr, timezone: "UTC" } }` | UTC-anchored |
+| `.getUTCMonth()` | `{ $subtract: [{ $month: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based |
+| `.getUTCDate()` | `{ $dayOfMonth: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCDay()` | `{ $subtract: [{ $dayOfWeek: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based, Sunday=0 |
+| `.getUTCHours()` | `{ $hour: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCMinutes()` | `{ $minute: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCSeconds()` | `{ $second: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getUTCMilliseconds()` | `{ $millisecond: { date: expr, timezone: "UTC" } }` | UTC |
+| `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS; already UTC, no `getUTCTime`) |
 | `.toISOString()` | `{ $dateToString: { date: expr, format: "%Y-%m-%dT%H:%M:%S.%LZ" } }` | |
+| `.plus(amount, unit[, tz])` | `{ $dateAdd: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
+| `.minus(amount, unit[, tz])` | `{ $dateSubtract: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
+
+`.plus` / `.minus` take Temporal/Luxon's method name with Moment's `(amount, unit)` argument order — the receiver is the `startDate`, `amount` first, `unit` second, and an optional third `timezone`. Argument count is checked by `checkArity` (2 or 3 args); the literal slots are gated to the same shapes the `$dateAdd` / `$dateSubtract` operator path rejects, reusing its own helpers so both spellings error identically: `checkEnum` against `TIME_UNIT` (the shared time-unit enum in `operator-validation.ts`) for `unit`, and `checkArgType` for `amount` (`int-or-long`) and `timezone` (`string`). All three are literal-gated — a field-path or parameter in any slot passes through unchecked.
+
+**Receiver type-check.** Every date method that lowers to a date-requiring operator carries `receiver: "date"` in the `METHODS` registry, and `generateMethodCall` runs `checkArgType(\`.${method}\`, "", <receiver>, "date")` before dispatch — so a literal non-date receiver (`"2020-01-01".getFullYear()`, `"x".plus(1, "day")`) is rejected at compile time with the same wording the operator form gives, while a field ref / `new Date(…)` / param no-ops. `.getTime()` is the one date method **without** `receiver: "date"`: it lowers to `$toLong`, which converts strings/numbers, so a non-date receiver is valid there and must pass through.
 
 ## Lambda scoping (`GenerateCtx`)
 

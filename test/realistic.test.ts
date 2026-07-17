@@ -299,6 +299,29 @@ $ = { ...$, computedScore: $.points * 1.1 };
   });
 });
 
+describe("derive subscription grace + reminder dates (`.plus` / `.minus`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.subscriptions.aggregate(jsmql(...))" }, () => {
+    // For each active subscription, project a 30-day grace-period end and a
+    // 3-days-before-expiry reminder. `.plus(amount, unit)` → $dateAdd and
+    // `.minus(amount, unit)` → $dateSubtract — the receiver is the start date.
+    expect(
+      jsmql`
+$match($.plan === "active");
+$ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.expiresAt.minus(3, "day") };
+      `,
+    ).toEqual([
+      { $match: { plan: "active" } },
+      {
+        $replaceWith: {
+          userId: "$_id",
+          graceEndsAt: { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } },
+          remindAt: { $dateSubtract: { startDate: "$expiresAt", unit: "day", amount: 3 } },
+        },
+      },
+    ]);
+  });
+});
+
 describe("explode order line-items into per-item documents (`$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Flatten each paid order into one document per line item, carrying the
@@ -1468,6 +1491,23 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
     () => {
       expect(jsmql.expr(`Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)`)).toEqual({
         $floor: { $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] },
+      });
+    },
+  );
+});
+
+describe("event fell within UTC business hours (.getUTCHours)", { features: ["Date and time"] }, () => {
+  it(
+    "compiles to the expected MQL",
+    { kind: "expression", usage: "db.events.aggregate([{ $addFields: { inBusinessHours: jsmql.expr(...) } }])" },
+    () => {
+      // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
+      // (not the server's local zone) keeps the window stable across deployments.
+      expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
+        $and: [
+          { $gte: [{ $hour: { date: "$event.ts", timezone: "UTC" } }, 9] },
+          { $lt: [{ $hour: { date: "$event.ts", timezone: "UTC" } }, 17] },
+        ],
       });
     },
   );

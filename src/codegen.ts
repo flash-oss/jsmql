@@ -1,5 +1,6 @@
 import { lookupOperator } from "./operators.ts";
-import { validateOperatorArgs } from "./operator-validation.ts";
+import { checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
+import { checkEnum } from "./literal-gate.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, LENGTH_SLOT } from "./namespace.ts";
@@ -448,7 +449,11 @@ const STRING_OUTPUT_OPS = new Set([
 //             whose underlying operator handles null cleanly (date/set/regex).
 type MethodReturn = "string" | "array" | "bool";
 type MethodOptional = "string" | "array" | "either";
-type MethodMeta = { returns?: MethodReturn; optional?: MethodOptional };
+//   receiver: the receiver's required type, literal-gated at dispatch — a literal
+//             receiver of the wrong type is rejected at compile time (same as the
+//             operator form). Only "date" today (the date methods); a field ref /
+//             new Date(…) / param no-ops.
+type MethodMeta = { returns?: MethodReturn; optional?: MethodOptional; receiver?: "date" };
 
 const METHODS: Record<string, MethodMeta> = {
   // ── String ────────────────────────────────────────────────────────────────
@@ -515,16 +520,26 @@ const METHODS: Record<string, MethodMeta> = {
   values: {},
   toLocaleString: {},
   // ── Date ────────────────────────────────────────────────────────────────────
-  getFullYear: {},
-  getMonth: {},
-  getDate: {},
-  getDay: {},
-  getHours: {},
-  getMinutes: {},
-  getSeconds: {},
-  getMilliseconds: {},
-  getTime: {},
-  toISOString: { returns: "string" },
+  getFullYear: { receiver: "date" },
+  getMonth: { receiver: "date" },
+  getDate: { receiver: "date" },
+  getDay: { receiver: "date" },
+  getHours: { receiver: "date" },
+  getMinutes: { receiver: "date" },
+  getSeconds: { receiver: "date" },
+  getMilliseconds: { receiver: "date" },
+  getUTCFullYear: { receiver: "date" },
+  getUTCMonth: { receiver: "date" },
+  getUTCDate: { receiver: "date" },
+  getUTCDay: { receiver: "date" },
+  getUTCHours: { receiver: "date" },
+  getUTCMinutes: { receiver: "date" },
+  getUTCSeconds: { receiver: "date" },
+  getUTCMilliseconds: { receiver: "date" },
+  getTime: {}, // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
+  toISOString: { returns: "string", receiver: "date" },
+  plus: { receiver: "date" },
+  minus: { receiver: "date" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -2358,6 +2373,14 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
 
 // ── Method calls ──────────────────────────────────────────────────────────────
 
+// The date argument the `getUTC*` getters hand to MongoDB's date-part operators.
+// The local getters pass the bare date (extraction uses the server process zone);
+// the UTC variants pass `{ date, timezone: "UTC" }` so the result is UTC-anchored,
+// mirroring JS's `getHours()` (local) vs `getUTCHours()` (UTC) split.
+function utcDate(date: unknown): { date: unknown; timezone: string } {
+  return { date, timezone: "UTC" };
+}
+
 function generateMethodCall(
   object: Expr,
   method: string,
@@ -2383,6 +2406,13 @@ function generateMethodCall(
   const wrapReceiver = optional || chainHasOptional(object);
   const neutral = wrapReceiver ? neutralForMethod(method, object) : undefined;
   const genObj = neutral !== undefined ? wrapIfNull(rawObj, neutral) : rawObj;
+
+  // Date methods require a date receiver — reject a literal non-date at compile
+  // time, the same shape the operator form ($year / $dateAdd / …) gates. The
+  // check is literal-gated (a field ref / new Date(…) / param no-ops), so only
+  // a certain-wrong literal like "2020-01-01".getFullYear() throws.
+  const receiverType = METHODS[method]?.receiver;
+  if (receiverType !== undefined) checkArgType(`.${method}`, "", object, receiverType);
 
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
@@ -2982,11 +3012,51 @@ function generateMethodCall(
       return { $second: genObj };
     case "getMilliseconds":
       return { $millisecond: genObj };
+    // UTC variants: same operators, anchored to UTC via `timezone: "UTC"`.
+    case "getUTCFullYear":
+      return { $year: utcDate(genObj) };
+    case "getUTCMonth":
+      // 0-based: MongoDB $month is 1-based
+      return { $subtract: [{ $month: utcDate(genObj) }, 1] };
+    case "getUTCDate":
+      return { $dayOfMonth: utcDate(genObj) };
+    case "getUTCDay":
+      // 0-based: MongoDB $dayOfWeek is 1-based (Sunday=1)
+      return { $subtract: [{ $dayOfWeek: utcDate(genObj) }, 1] };
+    case "getUTCHours":
+      return { $hour: utcDate(genObj) };
+    case "getUTCMinutes":
+      return { $minute: utcDate(genObj) };
+    case "getUTCSeconds":
+      return { $second: utcDate(genObj) };
+    case "getUTCMilliseconds":
+      return { $millisecond: utcDate(genObj) };
     case "getTime":
-      // Match JS: ms since epoch
+      // Match JS: ms since epoch (already UTC; no getUTCTime exists in JS)
       return { $toLong: genObj };
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
+    case "plus":
+    case "minus": {
+      // Date arithmetic: `d.plus(amount, unit[, timezone])` → $dateAdd,
+      // `.minus(...)` → $dateSubtract. Temporal/Luxon method name with Moment's
+      // (amount, unit) argument order — both map 1:1 to the operator's fields.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      // Gate the literal slots to the same shapes the $dateAdd/$dateSubtract
+      // operator path rejects (unit enum, integer amount, string timezone) so
+      // both spellings error identically; each no-ops on a non-literal.
+      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
+      checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
+      if (exprArgs.length === 3) checkArgType(`.${method}`, "timezone", exprArgs[2], "string");
+      const spec: Record<string, unknown> = {
+        startDate: genObj,
+        unit: _generate(exprArgs[1], ctx),
+        amount: _generate(exprArgs[0], ctx),
+      };
+      if (exprArgs.length === 3) spec.timezone = _generate(exprArgs[2], ctx);
+      return { [method === "plus" ? "$dateAdd" : "$dateSubtract"]: spec };
+    }
 
     // ── DX shims: mutating Array methods ────────────────────────────────────
     // These all mutate the receiver in JavaScript. In expression position

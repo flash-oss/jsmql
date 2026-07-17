@@ -3891,7 +3891,17 @@ function checkIntBound(stage, body, opts) {
 }
 
 // src/operator-validation.ts
-var TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
+var TIME_UNIT = [
+  "year",
+  "quarter",
+  "month",
+  "week",
+  "day",
+  "hour",
+  "minute",
+  "second",
+  "millisecond"
+];
 var WEEKDAY = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 var BSON_TYPE_NAME = [
   "double",
@@ -4501,16 +4511,27 @@ var METHODS = {
   values: {},
   toLocaleString: {},
   // ── Date ────────────────────────────────────────────────────────────────────
-  getFullYear: {},
-  getMonth: {},
-  getDate: {},
-  getDay: {},
-  getHours: {},
-  getMinutes: {},
-  getSeconds: {},
-  getMilliseconds: {},
+  getFullYear: { receiver: "date" },
+  getMonth: { receiver: "date" },
+  getDate: { receiver: "date" },
+  getDay: { receiver: "date" },
+  getHours: { receiver: "date" },
+  getMinutes: { receiver: "date" },
+  getSeconds: { receiver: "date" },
+  getMilliseconds: { receiver: "date" },
+  getUTCFullYear: { receiver: "date" },
+  getUTCMonth: { receiver: "date" },
+  getUTCDate: { receiver: "date" },
+  getUTCDay: { receiver: "date" },
+  getUTCHours: { receiver: "date" },
+  getUTCMinutes: { receiver: "date" },
+  getUTCSeconds: { receiver: "date" },
+  getUTCMilliseconds: { receiver: "date" },
   getTime: {},
-  toISOString: { returns: "string" },
+  // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
+  toISOString: { returns: "string", receiver: "date" },
+  plus: { receiver: "date" },
+  minus: { receiver: "date" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -5538,6 +5559,9 @@ function generateTemplateLiteral(quasis, expressions, ctx) {
   if (tail !== "") parts.push(tail);
   return { $concat: parts };
 }
+function utcDate(date) {
+  return { date, timezone: "UTC" };
+}
 function generateMethodCall(object, method, args, ctx, callPos, optional = false) {
   if (object.type === "NewSet") {
     return generateSetMethodCall(object, method, args, ctx);
@@ -5549,6 +5573,8 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
   const wrapReceiver = optional || chainHasOptional(object);
   const neutral = wrapReceiver ? neutralForMethod(method, object) : void 0;
   const genObj = neutral !== void 0 ? wrapIfNull(rawObj, neutral) : rawObj;
+  const receiverType = METHODS[method]?.receiver;
+  if (receiverType !== void 0) checkArgType(`.${method}`, "", object, receiverType);
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
     case "trim":
@@ -6070,10 +6096,42 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return { $second: genObj };
     case "getMilliseconds":
       return { $millisecond: genObj };
+    // UTC variants: same operators, anchored to UTC via `timezone: "UTC"`.
+    case "getUTCFullYear":
+      return { $year: utcDate(genObj) };
+    case "getUTCMonth":
+      return { $subtract: [{ $month: utcDate(genObj) }, 1] };
+    case "getUTCDate":
+      return { $dayOfMonth: utcDate(genObj) };
+    case "getUTCDay":
+      return { $subtract: [{ $dayOfWeek: utcDate(genObj) }, 1] };
+    case "getUTCHours":
+      return { $hour: utcDate(genObj) };
+    case "getUTCMinutes":
+      return { $minute: utcDate(genObj) };
+    case "getUTCSeconds":
+      return { $second: utcDate(genObj) };
+    case "getUTCMilliseconds":
+      return { $millisecond: utcDate(genObj) };
     case "getTime":
       return { $toLong: genObj };
     case "toISOString":
       return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
+    case "plus":
+    case "minus": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
+      checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
+      if (exprArgs.length === 3) checkArgType(`.${method}`, "timezone", exprArgs[2], "string");
+      const spec = {
+        startDate: genObj,
+        unit: _generate(exprArgs[1], ctx),
+        amount: _generate(exprArgs[0], ctx)
+      };
+      if (exprArgs.length === 3) spec.timezone = _generate(exprArgs[2], ctx);
+      return { [method === "plus" ? "$dateAdd" : "$dateSubtract"]: spec };
+    }
     // ── DX shims: mutating Array methods ────────────────────────────────────
     // These all mutate the receiver in JavaScript. In expression position
     // jsmql is immutable, so we surface a tailored "use the immutable
