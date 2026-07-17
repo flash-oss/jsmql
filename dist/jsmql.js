@@ -4511,18 +4511,19 @@ var METHODS = {
   values: {},
   toLocaleString: {},
   // ── Date ────────────────────────────────────────────────────────────────────
-  getFullYear: {},
-  getMonth: {},
-  getDate: {},
-  getDay: {},
-  getHours: {},
-  getMinutes: {},
-  getSeconds: {},
-  getMilliseconds: {},
+  getFullYear: { receiver: "date" },
+  getMonth: { receiver: "date" },
+  getDate: { receiver: "date" },
+  getDay: { receiver: "date" },
+  getHours: { receiver: "date" },
+  getMinutes: { receiver: "date" },
+  getSeconds: { receiver: "date" },
+  getMilliseconds: { receiver: "date" },
   getTime: {},
-  toISOString: { returns: "string" },
-  plus: {},
-  minus: {},
+  // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
+  toISOString: { returns: "string", receiver: "date" },
+  plus: { receiver: "date" },
+  minus: { receiver: "date" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -5561,6 +5562,8 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
   const wrapReceiver = optional || chainHasOptional(object);
   const neutral = wrapReceiver ? neutralForMethod(method, object) : void 0;
   const genObj = neutral !== void 0 ? wrapIfNull(rawObj, neutral) : rawObj;
+  const receiverType = METHODS[method]?.receiver;
+  if (receiverType !== void 0) checkArgType(`.${method}`, "", object, receiverType);
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
     case "trim":

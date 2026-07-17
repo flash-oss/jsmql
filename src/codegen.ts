@@ -449,7 +449,11 @@ const STRING_OUTPUT_OPS = new Set([
 //             whose underlying operator handles null cleanly (date/set/regex).
 type MethodReturn = "string" | "array" | "bool";
 type MethodOptional = "string" | "array" | "either";
-type MethodMeta = { returns?: MethodReturn; optional?: MethodOptional };
+//   receiver: the receiver's required type, literal-gated at dispatch — a literal
+//             receiver of the wrong type is rejected at compile time (same as the
+//             operator form). Only "date" today (the date methods); a field ref /
+//             new Date(…) / param no-ops.
+type MethodMeta = { returns?: MethodReturn; optional?: MethodOptional; receiver?: "date" };
 
 const METHODS: Record<string, MethodMeta> = {
   // ── String ────────────────────────────────────────────────────────────────
@@ -516,18 +520,18 @@ const METHODS: Record<string, MethodMeta> = {
   values: {},
   toLocaleString: {},
   // ── Date ────────────────────────────────────────────────────────────────────
-  getFullYear: {},
-  getMonth: {},
-  getDate: {},
-  getDay: {},
-  getHours: {},
-  getMinutes: {},
-  getSeconds: {},
-  getMilliseconds: {},
-  getTime: {},
-  toISOString: { returns: "string" },
-  plus: {},
-  minus: {},
+  getFullYear: { receiver: "date" },
+  getMonth: { receiver: "date" },
+  getDate: { receiver: "date" },
+  getDay: { receiver: "date" },
+  getHours: { receiver: "date" },
+  getMinutes: { receiver: "date" },
+  getSeconds: { receiver: "date" },
+  getMilliseconds: { receiver: "date" },
+  getTime: {}, // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
+  toISOString: { returns: "string", receiver: "date" },
+  plus: { receiver: "date" },
+  minus: { receiver: "date" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -2386,6 +2390,13 @@ function generateMethodCall(
   const wrapReceiver = optional || chainHasOptional(object);
   const neutral = wrapReceiver ? neutralForMethod(method, object) : undefined;
   const genObj = neutral !== undefined ? wrapIfNull(rawObj, neutral) : rawObj;
+
+  // Date methods require a date receiver — reject a literal non-date at compile
+  // time, the same shape the operator form ($year / $dateAdd / …) gates. The
+  // check is literal-gated (a field ref / new Date(…) / param no-ops), so only
+  // a certain-wrong literal like "2020-01-01".getFullYear() throws.
+  const receiverType = METHODS[method]?.receiver;
+  if (receiverType !== undefined) checkArgType(`.${method}`, "", object, receiverType);
 
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────

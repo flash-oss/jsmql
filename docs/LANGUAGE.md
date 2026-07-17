@@ -1844,6 +1844,8 @@ $.t.plus(2, "hour", "America/New_York")
 
 **Note:** `getMonth()` and `getDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; jsmql subtracts 1 automatically.
 
+**Note:** these methods require a date receiver, so a literal non-date is rejected at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings/numbers.
+
 ### Date Operator Calls
 
 ```js

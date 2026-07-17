@@ -2273,6 +2273,24 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("date-method receiver type-check", () => {
+  it("rejects a literal non-date receiver, consistent with the operator form", () => {
+    expect(() => jsmql.expr('"2020-01-01".getFullYear()')).toThrow(
+      /'\.getFullYear' expects a date, but got a string\. Use a field path or new Date\(…\)\./,
+    );
+    expect(() => jsmql.expr('"2020".toISOString()')).toThrow(/'\.toISOString' expects a date, but got a string\./);
+    expect(() => jsmql.expr('"2020-01-01".plus(1, "day")')).toThrow(/'\.plus' expects a date, but got a string\./);
+  });
+  it("allows a literal non-date receiver on .getTime() — $toLong converts strings/numbers", () => {
+    expect(jsmql.expr('"2020".getTime()')).toEqual({ $toLong: "2020" });
+  });
+  it("no-ops on a field ref, new Date(…), or an HR1 $-string receiver (literal-gating)", () => {
+    expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr('"$ts".getHours()')).toEqual({ $hour: "$ts" }); // HR1: a source "$ts" is the field ref $ts
+  });
+});
+
 describe("typeof", () => {
   it("typeof fieldref", () => {
     expect(jsmql.expr("typeof $.x")).toEqual({ $type: "$x" });

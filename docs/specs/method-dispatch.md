@@ -209,6 +209,8 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 
 `.plus` / `.minus` take Temporal/Luxon's method name with Moment's `(amount, unit)` argument order — the receiver is the `startDate`, `amount` first, `unit` second, and an optional third `timezone`. Argument count is checked by `checkArity` (2 or 3 args); the literal slots are gated to the same shapes the `$dateAdd` / `$dateSubtract` operator path rejects, reusing its own helpers so both spellings error identically: `checkEnum` against `TIME_UNIT` (the shared time-unit enum in `operator-validation.ts`) for `unit`, and `checkArgType` for `amount` (`int-or-long`) and `timezone` (`string`). All three are literal-gated — a field-path or parameter in any slot passes through unchecked.
 
+**Receiver type-check.** Every date method that lowers to a date-requiring operator carries `receiver: "date"` in the `METHODS` registry, and `generateMethodCall` runs `checkArgType(\`.${method}\`, "", <receiver>, "date")` before dispatch — so a literal non-date receiver (`"2020-01-01".getFullYear()`, `"x".plus(1, "day")`) is rejected at compile time with the same wording the operator form gives, while a field ref / `new Date(…)` / param no-ops. `.getTime()` is the one date method **without** `receiver: "date"`: it lowers to `$toLong`, which converts strings/numbers, so a non-date receiver is valid there and must pass through.
+
 ## Lambda scoping (`GenerateCtx`)
 
 All codegen functions accept a `GenerateCtx`:

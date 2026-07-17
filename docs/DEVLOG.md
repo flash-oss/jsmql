@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-17 — fix: date methods reject a literal non-date receiver (parity with the operator form)
+
+The date methods (`.getFullYear()`, `.getMonth()`, …, `.toISOString()`, and the
+new `.plus()` / `.minus()`) now type-check their receiver: a literal non-date
+like `"2020-01-01".getFullYear()` is rejected at compile time with the same
+message the operator form gives (`'.getFullYear' expects a date, but got a
+string. Use a field path or new Date(…).`), instead of silently emitting
+`{ $year: "2020-01-01" }` — MQL the server rejects at runtime (verified: mongod
+`Location16006`). Implemented declaratively: `MethodMeta` gained a
+`receiver?: "date"` field, set on every date method whose target operator
+declares `singleType: "date"` (or a `date`-typed key), and `generateMethodCall`
+runs the shared `checkArgType(…, "date")` before dispatch. Literal-gated as
+always — a field ref / `new Date(…)` / param no-ops, and the HR1 `"$ts"`
+field-ref string passes through.
+
+`.getTime()` is deliberately **excluded** (the one date method without
+`receiver: "date"`): it lowers to `$toLong`, which converts numeric
+strings/numbers, so `"2020".getTime()` → `{ $toLong: "2020" }` is valid MQL the
+server accepts (verified) — rejecting it would violate the literal-gating
+invariant (reject only shapes invalid on *every* deployment).
+
+*Why:* closes the method-vs-operator asymmetry surfaced while implementing
+`.plus`/`.minus` — the operator forms already gated their date args, but the
+method spellings didn't, so identical mistakes errored in one spelling and
+silently produced bad MQL in the other. Applying it uniformly (rather than only
+to the new `.plus`/`.minus`) avoids minting a fresh inconsistency. Spec:
+[`method-dispatch.md`](specs/method-dispatch.md).
+
 ## 2026-07-17 — feat: `.plus` / `.minus` date arithmetic → `$dateAdd` / `$dateSubtract`
 
 Date values gained arithmetic methods: `$.d.plus(amount, unit)` lowers to
