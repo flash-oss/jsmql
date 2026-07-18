@@ -3186,6 +3186,46 @@ describe("toSorted / sort key function", () => {
   });
 });
 
+describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
+  it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
+    expect(jsmql.expr("$.s.capitalize()")).toEqual({
+      $concat: [{ $toUpper: { $substrCP: ["$s", 0, 1] } }, { $toLower: { $substrCP: ["$s", 1, { $strLenCP: "$s" }] } }],
+    });
+    expect(jsmql.expr("$.s.upperFirst()")).toEqual({
+      $concat: [{ $toUpper: { $substrCP: ["$s", 0, 1] } }, { $substrCP: ["$s", 1, { $strLenCP: "$s" }] }],
+    });
+    expect(jsmql.expr("$.s.lowerFirst()")).toEqual({
+      $concat: [{ $toLower: { $substrCP: ["$s", 0, 1] } }, { $substrCP: ["$s", 1, { $strLenCP: "$s" }] }],
+    });
+  });
+  it(".words() → $regexFindAll with the ASCII word pattern (splits camelCase)", () => {
+    expect(jsmql.expr("$.s.words()")).toEqual({
+      $map: {
+        input: { $regexFindAll: { input: "$s", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+        as: "jsmqlWord",
+        in: "$$jsmqlWord.match",
+      },
+    });
+  });
+  it(".truncate() default (length 30, '...'); .truncate({ length }) overrides", () => {
+    expect(jsmql.expr("$.s.truncate()")).toEqual({
+      $cond: [{ $gt: [{ $strLenCP: "$s" }, 30] }, { $concat: [{ $substrCP: ["$s", 0, 27] }, "..."] }, "$s"],
+    });
+    expect(jsmql.expr("$.s.truncate({ length: 10 })")).toEqual({
+      $cond: [{ $gt: [{ $strLenCP: "$s" }, 10] }, { $concat: [{ $substrCP: ["$s", 0, 7] }, "..."] }, "$s"],
+    });
+    expect(() => jsmql.expr('$.s.truncate({ separator: " " })')).toThrow(/word-boundary/);
+  });
+  // camelCase/kebabCase/snakeCase/startCase/escape emit large deterministic trees;
+  // their behaviour was verified against a live mongod (fooBarBaz → foo-bar-baz, etc.).
+  it("kebabCase / snakeCase lower-join words; startCase capitalizes; escape nests $replaceAll", () => {
+    expect(jsmql.expr("$.s.kebabCase()")).toHaveProperty("$toLower");
+    expect(jsmql.expr("$.s.camelCase()")).toHaveProperty("$let");
+    expect(jsmql.expr("$.s.escape()")).toHaveProperty("$replaceAll");
+    expect(() => jsmql.expr("$.s.capitalize(1)")).toThrow(/takes no arguments|requires exactly 0/);
+  });
+});
+
 describe("lodash number methods (per-doc value vocabulary)", () => {
   it(".clamp(lower, upper) → $min of $max", () => {
     expect(jsmql.expr("$.n.clamp(0, 100)")).toEqual({ $min: [{ $max: ["$n", 0] }, 100] });

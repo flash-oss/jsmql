@@ -540,6 +540,17 @@ const METHODS: Record<string, MethodMeta> = {
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
+  // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
+  capitalize: { returns: "string", optional: "string" },
+  upperFirst: { returns: "string", optional: "string" },
+  lowerFirst: { returns: "string", optional: "string" },
+  words: { returns: "array", optional: "string" },
+  kebabCase: { returns: "string", optional: "string" },
+  snakeCase: { returns: "string", optional: "string" },
+  startCase: { returns: "string", optional: "string" },
+  camelCase: { returns: "string", optional: "string" },
+  escape: { returns: "string", optional: "string" },
+  truncate: { returns: "string", optional: "string" },
   // ── lodash number methods (Phase 1) ─────────────────────────────────────────
   clamp: {},
   inRange: { returns: "bool" },
@@ -2379,6 +2390,53 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
 
 // ── Method calls ──────────────────────────────────────────────────────────────
 
+// Shared expression builders for the lodash string methods (Phase 1). ASCII-only
+// by design: `$toUpper`/`$toLower` are ASCII, and word splitting matches ASCII
+// alphanumerics (accented text passes through / is treated as separators).
+function strTail(s: unknown, from: number): unknown {
+  return { $substrCP: [s, from, { $strLenCP: s }] };
+}
+function capitalizeExpr(s: unknown): unknown {
+  return { $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }] };
+}
+function firstCharExpr(s: unknown, op: "$toUpper" | "$toLower"): unknown {
+  return { $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)] };
+}
+// The ASCII words of a string, splitting on non-alphanumerics AND camelCase
+// boundaries — e.g. "foo-barBaz 9" → ["foo", "bar", "Baz", "9"], "FOOBar" →
+// ["FOO", "Bar"]. This is lodash's ASCII word pattern (`[A-Z]?[a-z]+ |
+// [A-Z]+(?![a-z]) | [A-Z] | [0-9]+`, negative lookahead and all). `$regexFindAll`
+// needs 4.4+.
+const ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
+function wordsExpr(s: unknown): unknown {
+  return {
+    $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: "jsmqlWord", in: "$$jsmqlWord.match" },
+  };
+}
+// Join word expressions with `sep`, optionally transforming each word first.
+function joinWords(words: unknown, sep: string, transform?: (w: unknown) => unknown): unknown {
+  const items = transform === undefined ? words : { $map: { input: words, as: "jsmqlW", in: transform("$$jsmqlW") } };
+  return {
+    $reduce: {
+      input: items,
+      initialValue: "",
+      in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", sep, "$$this"] }] },
+    },
+  };
+}
+function escapeHtmlExpr(s: unknown): unknown {
+  const pairs: [string, string][] = [
+    ["&", "&amp;"], // must run first
+    ["<", "&lt;"],
+    [">", "&gt;"],
+    ['"', "&quot;"],
+    ["'", "&#39;"],
+  ];
+  let e: unknown = s;
+  for (const [find, replacement] of pairs) e = { $replaceAll: { input: e, find, replacement } };
+  return e;
+}
+
 // The date argument the `getUTC*` getters hand to MongoDB's date-part operators.
 // The local getters pass the bare date (extraction uses the server process zone);
 // the UTC variants pass `{ date, timezone: "UTC" }` so the result is UTC-anchored,
@@ -3151,6 +3209,86 @@ function generateMethodCall(
         `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
         callPos,
       );
+
+    // ── lodash string methods (Phase 1 value vocabulary; ASCII-only) ─────────
+    case "capitalize":
+    case "upperFirst":
+    case "lowerFirst":
+    case "words":
+    case "kebabCase":
+    case "snakeCase":
+    case "startCase":
+    case "camelCase":
+    case "escape": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      switch (method) {
+        case "capitalize":
+          return capitalizeExpr(genObj);
+        case "upperFirst":
+          return firstCharExpr(genObj, "$toUpper");
+        case "lowerFirst":
+          return firstCharExpr(genObj, "$toLower");
+        case "words":
+          return wordsExpr(genObj);
+        case "kebabCase":
+          return { $toLower: joinWords(wordsExpr(genObj), "-") };
+        case "snakeCase":
+          return { $toLower: joinWords(wordsExpr(genObj), "_") };
+        case "startCase":
+          return joinWords(wordsExpr(genObj), " ", capitalizeExpr);
+        case "camelCase":
+          // Pascal-case (capitalize each word, no separator) then lower the first char.
+          return {
+            $let: {
+              vars: { jsmqlPascal: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
+              in: firstCharExpr("$$jsmqlPascal", "$toLower"),
+            },
+          };
+        default:
+          return escapeHtmlExpr(genObj);
+      }
+    }
+    case "truncate": {
+      const exprArgs = exprArgsOnly(args, "truncate");
+      checkArity("truncate", { sig: "[{ length, omission }]", allowed: [0, 1] }, exprArgs.length, callPos);
+      let length = 30;
+      let omission = "...";
+      if (exprArgs.length === 1) {
+        const opts = exprArgs[0];
+        if (opts.type !== "ObjectLiteral") {
+          throw new CodegenError(
+            `.truncate(...) takes an options object, e.g. '.truncate({ length: 24, omission: "…" })'.`,
+            opts.pos,
+          );
+        }
+        for (const entry of opts.entries) {
+          if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
+            throw new CodegenError(`.truncate({ … }) options must be static keys ('length', 'omission').`, entry.pos);
+          }
+          if (entry.key.name === "length" && entry.value.type === "NumberLiteral") length = entry.value.value;
+          else if (entry.key.name === "omission" && entry.value.type === "StringLiteral") omission = entry.value.value;
+          else if (entry.key.name === "separator") {
+            throw new CodegenError(
+              `.truncate({ separator }) (word-boundary truncation) isn't supported — MQL has no back-search. Use 'length' + 'omission'.`,
+              entry.value.pos,
+            );
+          } else {
+            throw new CodegenError(
+              `.truncate({ ${entry.key.name} }) — only literal 'length' and 'omission' are supported.`,
+              entry.value.pos,
+            );
+          }
+        }
+      }
+      const keep = Math.max(0, length - omission.length);
+      return {
+        $cond: [
+          { $gt: [{ $strLenCP: genObj }, length] },
+          { $concat: [{ $substrCP: [genObj, 0, keep] }, omission] },
+          genObj,
+        ],
+      };
+    }
 
     // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────
     case "clamp": {

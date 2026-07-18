@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash string methods (Phase 1, ASCII-only) — `.capitalize` / `.camelCase` / `.kebabCase` / …
+
+Per-doc string value methods: `.capitalize`, `.upperFirst`, `.lowerFirst`,
+`.words`, `.camelCase`, `.kebabCase`, `.snakeCase`, `.startCase`, `.escape`,
+`.truncate`. Built from shared expression helpers (`capitalizeExpr`, `wordsExpr`,
+`joinWords`, `escapeHtmlExpr` in codegen.ts): `$toUpper`/`$toLower` + `$substrCP`
+for the case ops, `$regexFindAll` with the ASCII word pattern
+`[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+` (lodash's non-Unicode words regex —
+the negative lookahead is accepted by `$regexFindAll`, verified) for
+words/case-conversions, nested `$replaceAll` for `escape`, and a `$strLenCP`
+`$cond` for `truncate`.
+
+ASCII-only per the project decision: accented text passes through `$toUpper`/
+`$toLower` unchanged and is treated as word separators. `deburr` is omitted (a
+no-op without Unicode); `truncate`'s word-boundary `separator` option is rejected
+(no back-search in MQL). `.repeat` already existed (unchanged). Verified on a
+live mongod (`fooBarBaz` → `foo-bar-baz`, `camelCase("Foo bar-baz")` →
+`fooBarBaz`, `escape`, `truncate`, …). Spec: [`method-dispatch.md`](specs/method-dispatch.md).
+
 ## 2026-07-18 — feat: lodash number methods (Phase 1) — `.clamp` / `.inRange` / `.round` / `.ceil` / `.floor`
 
 First slice of the per-doc (value-mode) lodash vocabulary — number methods on a

@@ -1248,6 +1248,24 @@ $.note.padEnd(10)                  // (default pad char is space)
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent, so jsmql drops them from the emitted `options` (keeping `i`/`m`/`s`). Dropping `g` is harmless: `$regexFindAll` is inherently global, and `g` is irrelevant to `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex (matching JS, which throws without it), but the `g` doesn't appear in the output.
 
+#### lodash string methods (ASCII-only)
+
+```js
+$.s.capitalize()         // "foo BAR" → "Foo bar"    (upper-first + lower-rest)
+$.s.upperFirst()         // "foo" → "Foo"
+$.s.lowerFirst()         // "FOO" → "fOO"
+$.s.words()              // "fooBarBaz 9" → ["foo", "Bar", "Baz", "9"]  ($regexFindAll)
+$.s.camelCase()          // "Foo bar-baz" → "fooBarBaz"
+$.s.kebabCase()          // "fooBarBaz" → "foo-bar-baz"
+$.s.snakeCase()          // "fooBarBaz" → "foo_bar_baz"
+$.s.startCase()          // "foo_bar" → "Foo Bar"
+$.s.escape()             // "a<b>&" → "a&lt;b&gt;&amp;"   (&<>"' → HTML entities)
+$.s.truncate()           // > 30 chars → first 27 + "..."
+$.s.truncate({ length: 24, omission: "…" })
+```
+
+**ASCII-only, by design.** `$toUpper`/`$toLower` are ASCII (accented letters pass through unchanged), and word-splitting uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+` (splits camelCase boundaries and non-alphanumerics; accented characters act as separators). `truncate`'s word-boundary `separator` option is not supported (MQL has no back-search); `deburr` is omitted (a no-op without Unicode). All verified against a live mongod.
+
 ```js
 // Property access — DOT access is interpreted, BRACKET access is raw
 $.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
