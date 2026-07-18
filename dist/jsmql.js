@@ -4565,6 +4565,10 @@ var METHODS = {
   last: { optional: "array" },
   nth: { optional: "array" },
   size: { optional: "array" },
+  takeWhile: { returns: "array", optional: "array" },
+  dropWhile: { returns: "array", optional: "array" },
+  takeRightWhile: { returns: "array", optional: "array" },
+  dropRightWhile: { returns: "array", optional: "array" },
   zipObject: { optional: "array" },
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
@@ -5707,6 +5711,16 @@ function resolvePredicate(pred, method, ctx) {
     pred.pos
   );
 }
+function takeDropWhile(arrExpr, pred, drop) {
+  const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
+  const body = drop ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] } : { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", 0, "$$jsmqlFi"] }] };
+  return {
+    $let: {
+      vars: { jsmqlArr: arrExpr },
+      in: { $let: { vars: { jsmqlFi: { $indexOfArray: [preds, false] } }, in: body } }
+    }
+  };
+}
 function distinctKeysExpr(arr, it) {
   return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
 }
@@ -6556,6 +6570,18 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       if (isArrayProducing(object)) return { $size: genObj };
       if (isObjectProducing(object)) return { $size: { $objectToArray: genObj } };
       return cond({ $isArray: genObj }, { $size: genObj }, { $size: { $objectToArray: genObj } });
+    }
+    case "takeWhile":
+    case "dropWhile":
+    case "takeRightWhile":
+    case "dropRightWhile": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
+      const pred = resolvePredicate(exprArgs[0], method, ctx);
+      const drop = method === "dropWhile" || method === "dropRightWhile";
+      const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
+      if (!fromRight) return takeDropWhile(genObj, pred, drop);
+      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop) };
     }
     case "difference":
     case "intersection": {

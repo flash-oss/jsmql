@@ -3449,6 +3449,43 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
   });
 });
 
+describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightWhile", () => {
+  it(".takeWhile(pred) → slice up to the first falsy element (first-false index via $indexOfArray)", () => {
+    expect(jsmql.expr("$.a.takeWhile(x => x < 3)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$a" },
+        in: {
+          $let: {
+            vars: {
+              jsmqlFi: {
+                $indexOfArray: [
+                  { $map: { input: "$$jsmqlArr", as: "x", in: { $cond: [{ $lt: ["$$x", 3] }, true, false] } } },
+                  false,
+                ],
+              },
+            },
+            in: { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", 0, "$$jsmqlFi"] }] },
+          },
+        },
+      },
+    });
+  });
+  it(".dropWhile keeps from the boundary; all-truthy → []", () => {
+    expect(jsmql.expr("$.a.dropWhile(x => x < 3)")).toMatchObject({ $let: { vars: { jsmqlArr: "$a" } } });
+    // drop branch slices from the boundary to the end.
+    expect(JSON.stringify(jsmql.expr("$.a.dropWhile(x => x < 3)"))).toContain('"$slice":["$$jsmqlArr","$$jsmqlFi"');
+  });
+  it(".takeRightWhile / .dropRightWhile scan the reversed array, then reverse back", () => {
+    expect(jsmql.expr("$.a.takeRightWhile(x => x < 3)")).toMatchObject({
+      $reverseArray: { $let: { vars: { jsmqlArr: { $reverseArray: "$a" } } } },
+    });
+    expect(jsmql.expr("$.a.dropRightWhile(x => x < 3)")).toMatchObject({ $reverseArray: {} });
+  });
+  it(".takeWhile accepts a matches-object predicate (like .reject / .partition)", () => {
+    expect(JSON.stringify(jsmql.expr("$.objs.takeWhile({ ok: true })"))).toContain('"$eq":["$$jsmqlItem.ok",true]');
+  });
+});
+
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({

@@ -1521,7 +1521,11 @@ $.keys.zipObject($.vals)                    // { keys[i]: vals[i] }
 $.a.zip($.b, $.c)                           // [[a0,b0,c0], …]   (groups run to the longest; short arrays pad with null)
 $.a.zipWith($.b, (x, y) => x + y)           // [x0+y0, x1+y1, …] (N-param arrow, one per array)
 $.tuples.unzip()                            // inverse of zip — transpose an array of equal-length tuples
+$.a.takeWhile(x => x < 3) / .dropWhile(p)   // from the START, up to / from the first falsy element
+$.a.takeRightWhile(p) / .dropRightWhile(p)  // same, scanning from the END
 ```
+
+> Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (MQL truthiness, as in `.filter`). The `*RightWhile` pair scans the reversed array and reverses the result back.
 
 > **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash, but it *errors* on an object/array key); group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
 

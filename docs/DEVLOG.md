@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash predicate-run value methods — `.takeWhile` / `.dropWhile` / `.takeRightWhile` / `.dropRightWhile`
+
+Fourth family. Boundary-then-slice, no stateful `$reduce`:
+
+    .takeWhile(pred) → find the first FALSY element (`$indexOfArray` of `false` on the
+                       strict-boolified predicate array) → slice(0, boundary); -1 ⇒ whole
+    .dropWhile(pred) → slice(boundary, end); -1 (all truthy) ⇒ []
+    .takeRightWhile / .dropRightWhile → run the left-side scan on `$reverseArray(a)`, then
+                       `$reverseArray` the result back (predicate is per-value, so order-safe)
+
+Shared `takeDropWhile(arrExpr, pred, drop)` helper. Predicates use `resolvePredicate`, so
+an arrow (`x => x < 3`) or a `_.matches` object (`{ ok: true }`) both work; the predicate
+is strict-boolified with `{$cond:[cond,true,false]}` so `$indexOfArray` can find the first
+`false` under MQL truthiness (consistent with `.filter`). All eight cases verified on a
+live mongod (mid-array stop, all-truthy → whole/`[]`, from-the-end, matches-object).
+
 ## 2026-07-18 — feat: lodash transpose value methods — `.zip` / `.unzip` / `.zipWith`
 
 Third family. `$map`-over-`$range` transposition:

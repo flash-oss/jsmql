@@ -573,6 +573,10 @@ const METHODS: Record<string, MethodMeta> = {
   last: { optional: "array" },
   nth: { optional: "array" },
   size: { optional: "array" },
+  takeWhile: { returns: "array", optional: "array" },
+  dropWhile: { returns: "array", optional: "array" },
+  takeRightWhile: { returns: "array", optional: "array" },
+  dropRightWhile: { returns: "array", optional: "array" },
   zipObject: { optional: "array" },
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
@@ -2541,6 +2545,24 @@ function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): { as: s
   );
 }
 
+// `.takeWhile` / `.dropWhile` from the LEFT: find the first element whose predicate
+// is falsy (`$indexOfArray` on the strict-boolified predicate array → -1 if none),
+// then slice on that boundary. The receiver is bound to `$$jsmqlArr`; the caller
+// passes the (possibly reversed) array in. `drop` picks the keep-from-boundary slice;
+// otherwise the take-up-to-boundary slice.
+function takeDropWhile(arrExpr: unknown, pred: { as: string; cond: unknown }, drop: boolean): unknown {
+  const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
+  const body = drop
+    ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] }
+    : { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", 0, "$$jsmqlFi"] }] };
+  return {
+    $let: {
+      vars: { jsmqlArr: arrExpr },
+      in: { $let: { vars: { jsmqlFi: { $indexOfArray: [preds, false] } }, in: body } },
+    },
+  };
+}
+
 // group/count key set of an array: distinct STRINGIFIED iteratee values (lodash
 // coerces group keys to strings). `$setUnion` needs a 2-arg form to be valid.
 function distinctKeysExpr(arr: unknown, it: ResolvedIteratee): unknown {
@@ -3536,6 +3558,19 @@ function generateMethodCall(
       if (isArrayProducing(object)) return { $size: genObj };
       if (isObjectProducing(object)) return { $size: { $objectToArray: genObj } };
       return cond({ $isArray: genObj }, { $size: genObj }, { $size: { $objectToArray: genObj } });
+    }
+    case "takeWhile":
+    case "dropWhile":
+    case "takeRightWhile":
+    case "dropRightWhile": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
+      const pred = resolvePredicate(exprArgs[0], method, ctx);
+      const drop = method === "dropWhile" || method === "dropRightWhile";
+      const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
+      // From the right = do the left-side scan on the reversed array, then reverse back.
+      if (!fromRight) return takeDropWhile(genObj, pred, drop);
+      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop) };
     }
     case "difference":
     case "intersection": {
