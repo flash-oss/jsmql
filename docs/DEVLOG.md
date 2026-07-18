@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash set-ops & `By`-iteratee value methods — `.without` / `.xor` / `.differenceBy` / `.unionBy` / …
+
+Second family of the lodash value-mode push. Set-shaped array ops, all order-preserving
+`$filter` / `$reduce` forms (never `$setDifference`, which reorders):
+
+    .without(...values) → $filter excluding the variadic values
+    .xor(other)         → uniq( A∖B ++ B∖A )  (chain .xor(c) for >2 arrays)
+    .differenceBy(other, it)  / .intersectionBy(other, it)   → $filter by iteratee KEY membership
+    .unionBy(other, it) → concat then keep-first dedupe by key
+    .xorBy(other, it)   → symmetric difference by key
+    .sortedUniq() / .sortedUniqBy(it) → aliases of .uniq / .uniqBy (MQL has no sorted-array fast path)
+
+Factored `uniqByReduce(input, it)` (the keep-first-by-key `{seen,out}` reduce) out of the
+existing `.uniqBy` so `.unionBy`/`.xorBy` reuse it, and `iterateeKeys(arr, it)` for the
+`$in`-membership key arrays. `.xor`/`.xorBy` bind their operands once via `$let` (nested,
+since `$let` vars can't reference their siblings) to avoid recomputing the receiver.
+All six shapes verified on a live mongod (numeric symmetric difference, `differenceBy`/
+`unionBy`/`xorBy` over objects keyed by `id`). Docs:
+[`LANGUAGE.md`](LANGUAGE.md § lodash array methods).
+
 ## 2026-07-18 — feat: lodash positional / slicing value methods — `.take` / `.drop` / `.head` / `.last` / `.nth` / `.size` / …
 
 First family of the broader "value-mode covers all sensible lodash Array + Collection

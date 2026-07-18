@@ -3345,6 +3345,52 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
   });
 });
 
+describe("lodash set-ops & By-iteratee value methods", () => {
+  it(".without(...values) → $filter excluding the given values", () => {
+    expect(jsmql.expr("$.a.without(2, 4)")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [2, 4]] }] } },
+    });
+  });
+  it(".xor(other) → order-preserving deduped symmetric difference", () => {
+    expect(jsmql.expr("$.a.xor($.b)")).toEqual({
+      $let: {
+        vars: { jsmqlA: "$a", jsmqlB: "$b" },
+        in: {
+          $reduce: {
+            input: {
+              $concatArrays: [
+                { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } },
+                { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } },
+              ],
+            },
+            initialValue: [],
+            in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+          },
+        },
+      },
+    });
+  });
+  it(".differenceBy / .intersectionBy compare by iteratee key", () => {
+    expect(jsmql.expr('$.a.differenceBy($.b, "id")')).toEqual({
+      $let: {
+        vars: { jsmqlOtherKeys: { $map: { input: "$b", as: "jsmqlItem", in: "$$jsmqlItem.id" } } },
+        in: {
+          $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem.id", "$$jsmqlOtherKeys"] }] } },
+        },
+      },
+    });
+    expect(jsmql.expr('$.a.intersectionBy($.b, "id")')).toHaveProperty("$let");
+  });
+  it(".unionBy → concat then keep-first dedupe by key; .xorBy → symmetric difference by key", () => {
+    expect(jsmql.expr('$.a.unionBy($.b, "id")')).toMatchObject({ $getField: { field: "out" } });
+    expect(jsmql.expr('$.a.xorBy($.b, "id")')).toMatchObject({ $let: { vars: { jsmqlA: "$a", jsmqlB: "$b" } } });
+  });
+  it(".sortedUniq / .sortedUniqBy alias .uniq / .uniqBy (no sorted-array optimisation in MQL)", () => {
+    expect(jsmql.expr("$.a.sortedUniq()")).toEqual(jsmql.expr("$.a.uniq()"));
+    expect(jsmql.expr('$.a.sortedUniqBy("id")')).toEqual(jsmql.expr('$.a.uniqBy("id")'));
+  });
+});
+
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({

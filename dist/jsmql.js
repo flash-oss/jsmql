@@ -4543,6 +4543,14 @@ var METHODS = {
   maxBy: { optional: "array" },
   uniq: { returns: "array", optional: "array" },
   uniqBy: { returns: "array", optional: "array" },
+  sortedUniq: { returns: "array", optional: "array" },
+  sortedUniqBy: { returns: "array", optional: "array" },
+  without: { returns: "array", optional: "array" },
+  xor: { returns: "array", optional: "array" },
+  differenceBy: { returns: "array", optional: "array" },
+  intersectionBy: { returns: "array", optional: "array" },
+  unionBy: { returns: "array", optional: "array" },
+  xorBy: { returns: "array", optional: "array" },
   compact: { returns: "array", optional: "array" },
   flatten: { returns: "array", optional: "array" },
   chunk: { returns: "array", optional: "array" },
@@ -5699,6 +5707,37 @@ function resolvePredicate(pred, method, ctx) {
 function distinctKeysExpr(arr, it) {
   return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
 }
+function iterateeKeys(arr, it) {
+  return { $map: { input: arr, as: it.as, in: it.value } };
+}
+function uniqByReduce(input, it) {
+  return {
+    $getField: {
+      field: "out",
+      input: {
+        $reduce: {
+          input,
+          initialValue: { seen: [], out: [] },
+          in: {
+            $let: {
+              vars: { [it.as]: "$$this" },
+              in: {
+                $cond: [
+                  { $in: [it.value, "$$value.seen"] },
+                  "$$value",
+                  {
+                    seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                    out: { $concatArrays: ["$$value.out", ["$$this"]] }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+}
 function resolveObjIteratee(iteratee, method, ctx) {
   if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length >= 1 && iteratee.params.length <= 2) {
     const vars = { [safeVarName(iteratee.params[0])]: "$$jsmqlKv.v" };
@@ -6415,8 +6454,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         }
       };
     }
+    case "sortedUniq":
+    // MQL has no sorted-array optimisation; alias of the general form.
     case "uniq": {
-      checkArity("uniq", { sig: "", none: true }, exprArgsOnly(args, "uniq").length, callPos);
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
       return {
         $reduce: {
           input: genObj,
@@ -6425,36 +6466,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         }
       };
     }
+    case "sortedUniqBy":
+    // alias of .uniqBy (no sorted-array optimisation in MQL)
     case "uniqBy": {
-      const exprArgs = exprArgsOnly(args, "uniqBy");
-      checkArity("uniqBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[0], "uniqBy", ctx);
-      return {
-        $getField: {
-          field: "out",
-          input: {
-            $reduce: {
-              input: genObj,
-              initialValue: { seen: [], out: [] },
-              in: {
-                $let: {
-                  vars: { [it.as]: "$$this" },
-                  in: {
-                    $cond: [
-                      { $in: [it.value, "$$value.seen"] },
-                      "$$value",
-                      {
-                        seen: { $concatArrays: ["$$value.seen", [it.value]] },
-                        out: { $concatArrays: ["$$value.out", ["$$this"]] }
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        }
-      };
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx));
     }
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
@@ -6555,6 +6572,76 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           input: { $concatArrays: [genObj, _generate(exprArgs[0], ctx)] },
           initialValue: [],
           in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] }
+        }
+      };
+    }
+    case "without": {
+      const exprArgs = exprArgsOnly(args, "without");
+      checkArity("without", { sig: "...values", atLeast: 1 }, exprArgs.length, callPos);
+      const values = exprArgs.map((a) => _generate(a, ctx));
+      return { $filter: { input: genObj, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", values] }] } } };
+    }
+    case "xor": {
+      const exprArgs = exprArgsOnly(args, "xor");
+      checkArity("xor", { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      const other = _generate(exprArgs[0], ctx);
+      const notInB = { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } };
+      const notInA = { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } };
+      return {
+        $let: {
+          vars: { jsmqlA: genObj, jsmqlB: other },
+          in: {
+            $reduce: {
+              input: { $concatArrays: [notInB, notInA] },
+              initialValue: [],
+              in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] }
+            }
+          }
+        }
+      };
+    }
+    case "differenceBy":
+    case "intersectionBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[1], method, ctx);
+      const otherKeys = iterateeKeys(_generate(exprArgs[0], ctx), it);
+      const inOther = { $in: [it.value, "$$jsmqlOtherKeys"] };
+      return {
+        $let: {
+          vars: { jsmqlOtherKeys: otherKeys },
+          in: {
+            $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } }
+          }
+        }
+      };
+    }
+    case "unionBy": {
+      const exprArgs = exprArgsOnly(args, "unionBy");
+      checkArity("unionBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[1], "unionBy", ctx);
+      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it);
+    }
+    case "xorBy": {
+      const exprArgs = exprArgsOnly(args, "xorBy");
+      checkArity("xorBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[1], "xorBy", ctx);
+      const other = _generate(exprArgs[0], ctx);
+      const aNotInB = {
+        $filter: { input: "$$jsmqlA", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlBKeys"] }] } }
+      };
+      const bNotInA = {
+        $filter: { input: "$$jsmqlB", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlAKeys"] }] } }
+      };
+      return {
+        $let: {
+          vars: { jsmqlA: genObj, jsmqlB: other },
+          in: {
+            $let: {
+              vars: { jsmqlAKeys: iterateeKeys("$$jsmqlA", it), jsmqlBKeys: iterateeKeys("$$jsmqlB", it) },
+              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it)
+            }
+          }
         }
       };
     }

@@ -1512,6 +1512,11 @@ $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size:
 $.xs.flatten()                              // one level (with an $isArray guard)
 $.xs.compact()                              // drop MQL-falsy (false/null/0/missing; keeps ""/NaN)
 $.a.difference($.b) / .intersection($.b) / .union($.b)   // order-preserving set ops
+$.a.without(2, 4)                           // exclude the given values (variadic)
+$.a.xor($.b)                                // symmetric difference (chain .xor(c) for more)
+$.a.differenceBy($.b, "id")                 // set ops compared BY an iteratee key…
+$.a.intersectionBy($.b, x => x.id) / .unionBy($.b, "id") / .xorBy($.b, "id")
+$.a.sortedUniq() / .sortedUniqBy("id")      // aliases of uniq / uniqBy (no sorted-only optimisation in MQL)
 $.keys.zipObject($.vals)                    // { keys[i]: vals[i] }
 ```
 

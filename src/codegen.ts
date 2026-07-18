@@ -551,6 +551,14 @@ const METHODS: Record<string, MethodMeta> = {
   maxBy: { optional: "array" },
   uniq: { returns: "array", optional: "array" },
   uniqBy: { returns: "array", optional: "array" },
+  sortedUniq: { returns: "array", optional: "array" },
+  sortedUniqBy: { returns: "array", optional: "array" },
+  without: { returns: "array", optional: "array" },
+  xor: { returns: "array", optional: "array" },
+  differenceBy: { returns: "array", optional: "array" },
+  intersectionBy: { returns: "array", optional: "array" },
+  unionBy: { returns: "array", optional: "array" },
+  xorBy: { returns: "array", optional: "array" },
   compact: { returns: "array", optional: "array" },
   flatten: { returns: "array", optional: "array" },
   chunk: { returns: "array", optional: "array" },
@@ -2536,6 +2544,44 @@ function distinctKeysExpr(arr: unknown, it: ResolvedIteratee): unknown {
   return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
 }
 
+// The iteratee-keyed values of an array: `[it(x) for x in arr]` (NOT stringified —
+// used for `$in` membership in the `*By` set ops).
+function iterateeKeys(arr: unknown, it: ResolvedIteratee): unknown {
+  return { $map: { input: arr, as: it.as, in: it.value } };
+}
+
+// Order-preserving keep-first dedupe of `input` BY iteratee key (`.uniqBy`, and the
+// `.unionBy`/`.xorBy` tails). Tracks seen keys in a `{ seen, out }` accumulator, then
+// projects `out`.
+function uniqByReduce(input: unknown, it: ResolvedIteratee): unknown {
+  return {
+    $getField: {
+      field: "out",
+      input: {
+        $reduce: {
+          input,
+          initialValue: { seen: [], out: [] },
+          in: {
+            $let: {
+              vars: { [it.as]: "$$this" },
+              in: {
+                $cond: [
+                  { $in: [it.value, "$$value.seen"] },
+                  "$$value",
+                  {
+                    seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                    out: { $concatArrays: ["$$value.out", ["$$this"]] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 // A lodash (value[, key]) iteratee over `$objectToArray` entries (used by
 // `.mapValues`/`.mapKeys`/`.pickBy`/`.omitBy`). Binds the arrow's 1–2 params to
 // the entry's value (`$$jsmqlKv.v`) and key (`$$jsmqlKv.k`) via `$let`; the `$map`/
@@ -3380,8 +3426,9 @@ function generateMethodCall(
         },
       };
     }
+    case "sortedUniq": // MQL has no sorted-array optimisation; alias of the general form.
     case "uniq": {
-      checkArity("uniq", { sig: "", none: true }, exprArgsOnly(args, "uniq").length, callPos);
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
       // Order-preserving, keep-first dedupe ($setUnion would reorder).
       return {
         $reduce: {
@@ -3391,37 +3438,12 @@ function generateMethodCall(
         },
       };
     }
+    case "sortedUniqBy": // alias of .uniqBy (no sorted-array optimisation in MQL)
     case "uniqBy": {
-      const exprArgs = exprArgsOnly(args, "uniqBy");
-      checkArity("uniqBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[0], "uniqBy", ctx);
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       // Track seen keys, keep the first element for each; then drop the tracker.
-      return {
-        $getField: {
-          field: "out",
-          input: {
-            $reduce: {
-              input: genObj,
-              initialValue: { seen: [], out: [] },
-              in: {
-                $let: {
-                  vars: { [it.as]: "$$this" },
-                  in: {
-                    $cond: [
-                      { $in: [it.value, "$$value.seen"] },
-                      "$$value",
-                      {
-                        seen: { $concatArrays: ["$$value.seen", [it.value]] },
-                        out: { $concatArrays: ["$$value.out", ["$$this"]] },
-                      },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-      };
+      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx));
     }
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
@@ -3533,6 +3555,84 @@ function generateMethodCall(
           input: { $concatArrays: [genObj, _generate(exprArgs[0], ctx)] },
           initialValue: [],
           in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+        },
+      };
+    }
+    case "without": {
+      // lodash `without(arr, ...values)` — exclude the given values (variadic).
+      const exprArgs = exprArgsOnly(args, "without");
+      checkArity("without", { sig: "...values", atLeast: 1 }, exprArgs.length, callPos);
+      const values = exprArgs.map((a) => _generate(a, ctx));
+      return { $filter: { input: genObj, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", values] }] } } };
+    }
+    case "xor": {
+      // Symmetric difference of two arrays (chain `.xor(b).xor(c)` for more), order-
+      // preserving + deduped: uniq( A∖B ++ B∖A ) by value.
+      const exprArgs = exprArgsOnly(args, "xor");
+      checkArity("xor", { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      const other = _generate(exprArgs[0], ctx);
+      const notInB = { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } };
+      const notInA = { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } };
+      return {
+        $let: {
+          vars: { jsmqlA: genObj, jsmqlB: other },
+          in: {
+            $reduce: {
+              input: { $concatArrays: [notInB, notInA] },
+              initialValue: [],
+              in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+            },
+          },
+        },
+      };
+    }
+    case "differenceBy":
+    case "intersectionBy": {
+      // Like difference/intersection but compared by iteratee key.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[1], method, ctx);
+      const otherKeys = iterateeKeys(_generate(exprArgs[0], ctx), it);
+      const inOther = { $in: [it.value, "$$jsmqlOtherKeys"] };
+      return {
+        $let: {
+          vars: { jsmqlOtherKeys: otherKeys },
+          in: {
+            $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } },
+          },
+        },
+      };
+    }
+    case "unionBy": {
+      // Concatenate then keep-first dedupe BY iteratee key.
+      const exprArgs = exprArgsOnly(args, "unionBy");
+      checkArity("unionBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[1], "unionBy", ctx);
+      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it);
+    }
+    case "xorBy": {
+      // Symmetric difference BY iteratee key: uniqBy( A∖B ++ B∖A ) on the keys.
+      const exprArgs = exprArgsOnly(args, "xorBy");
+      checkArity("xorBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[1], "xorBy", ctx);
+      const other = _generate(exprArgs[0], ctx);
+      const aNotInB = {
+        $filter: { input: "$$jsmqlA", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlBKeys"] }] } },
+      };
+      const bNotInA = {
+        $filter: { input: "$$jsmqlB", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlAKeys"] }] } },
+      };
+      // Outer $let binds the two arrays once; inner derives their key sets from the
+      // bound copies (MongoDB $let vars can't reference their siblings).
+      return {
+        $let: {
+          vars: { jsmqlA: genObj, jsmqlB: other },
+          in: {
+            $let: {
+              vars: { jsmqlAKeys: iterateeKeys("$$jsmqlA", it), jsmqlBKeys: iterateeKeys("$$jsmqlB", it) },
+              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it),
+            },
+          },
         },
       };
     }
