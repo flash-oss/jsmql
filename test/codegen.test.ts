@@ -3186,6 +3186,71 @@ describe("toSorted / sort key function", () => {
   });
 });
 
+describe("lodash array methods (per-doc value vocabulary)", () => {
+  it(".sum()/.mean()/.max()/.min() → $sum/$avg/$max/$min of the array", () => {
+    expect(jsmql.expr("$.a.sum()")).toEqual({ $sum: "$a" });
+    expect(jsmql.expr("$.a.mean()")).toEqual({ $avg: "$a" });
+    expect(jsmql.expr("$.a.max()")).toEqual({ $max: "$a" });
+    expect(jsmql.expr("$.a.min()")).toEqual({ $min: "$a" });
+  });
+  it(".sumBy(iteratee) accepts a field string or an arrow", () => {
+    expect(jsmql.expr('$.a.sumBy("x")')).toEqual({
+      $sum: { $map: { input: "$a", as: "jsmqlItem", in: "$$jsmqlItem.x" } },
+    });
+    expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({ $sum: { $map: { input: "$a", as: "o", in: "$$o.x" } } });
+  });
+  it(".uniq() → order-preserving keep-first dedupe", () => {
+    expect(jsmql.expr("$.a.uniq()")).toEqual({
+      $reduce: {
+        input: "$a",
+        initialValue: [],
+        in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+      },
+    });
+  });
+  it(".compact() → $filter by MQL truthiness", () => {
+    expect(jsmql.expr("$.a.compact()")).toEqual({ $filter: { input: "$a", as: "jsmqlItem", cond: "$$jsmqlItem" } });
+  });
+  it(".chunk(size) → $range/$slice; rejects a non-positive-int size", () => {
+    expect(jsmql.expr("$.a.chunk(2)")).toEqual({
+      $map: { input: { $range: [0, { $size: "$a" }, 2] }, as: "jsmqlI", in: { $slice: ["$a", "$$jsmqlI", 2] } },
+    });
+    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow(/positive integer/);
+  });
+  it(".difference / .intersection on a plain array (order-preserving $filter)", () => {
+    expect(jsmql.expr("$.a.difference($.b)")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", "$b"] }] } },
+    });
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $in: ["$$jsmqlItem", "$b"] } },
+    });
+  });
+  it(".keyBy(iteratee) → $arrayToObject (last wins, key stringified)", () => {
+    expect(jsmql.expr('$.a.keyBy("id")')).toEqual({
+      $arrayToObject: {
+        $map: { input: "$a", as: "jsmqlItem", in: { k: { $toString: "$$jsmqlItem.id" }, v: "$$jsmqlItem" } },
+      },
+    });
+  });
+  it(".partition(pred) → [matches, non]; .reject(pred) → non (matches-object shorthand)", () => {
+    expect(jsmql.expr("$.a.partition(o => o.ok)")).toEqual([
+      { $filter: { input: "$a", as: "o", cond: "$$o.ok" } },
+      { $filter: { input: "$a", as: "o", cond: { $not: ["$$o.ok"] } } },
+    ]);
+    expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $and: [{ $eq: ["$$jsmqlItem.ok", true] }] }] } },
+    });
+  });
+  it("groupBy/countBy/uniqBy/minBy/maxBy/zipObject/union emit their (verified) shapes", () => {
+    expect(jsmql.expr('$.a.groupBy("t")')).toHaveProperty("$arrayToObject");
+    expect(jsmql.expr('$.a.countBy("t")')).toHaveProperty("$arrayToObject");
+    expect(jsmql.expr('$.a.uniqBy("id")')).toHaveProperty("$getField");
+    expect(jsmql.expr('$.a.maxBy("x")')).toHaveProperty("$let");
+    expect(jsmql.expr("$.a.union($.b)")).toHaveProperty("$reduce");
+    expect(jsmql.expr("$.a.zipObject($.b)")).toHaveProperty("$arrayToObject");
+  });
+});
+
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({

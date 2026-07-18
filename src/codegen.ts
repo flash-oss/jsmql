@@ -540,6 +540,26 @@ const METHODS: Record<string, MethodMeta> = {
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
+  // ── lodash array methods (Phase 1) ──────────────────────────────────────────
+  sum: { optional: "array" },
+  mean: { optional: "array" },
+  max: { optional: "array" },
+  min: { optional: "array" },
+  sumBy: { optional: "array" },
+  meanBy: { optional: "array" },
+  minBy: { optional: "array" },
+  maxBy: { optional: "array" },
+  uniq: { returns: "array", optional: "array" },
+  uniqBy: { returns: "array", optional: "array" },
+  compact: { returns: "array", optional: "array" },
+  flatten: { returns: "array", optional: "array" },
+  chunk: { returns: "array", optional: "array" },
+  zipObject: { optional: "array" },
+  keyBy: { optional: "array" },
+  groupBy: { optional: "array" },
+  countBy: { optional: "array" },
+  partition: { returns: "array", optional: "array" },
+  reject: { returns: "array", optional: "array" },
   // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
   capitalize: { returns: "string", optional: "string" },
   upperFirst: { returns: "string", optional: "string" },
@@ -2437,6 +2457,59 @@ function escapeHtmlExpr(s: unknown): unknown {
   return e;
 }
 
+// A lodash *iteratee* for the array methods (`.keyBy`, `.sumBy`, `.uniqBy`, …):
+// a property-name string (`"id"` → `$$x.id`), a single-parameter arrow
+// (`x => x.id`), or omitted (identity). Returns the `$map`/`$filter` element var
+// name and the iteratee expression evaluated against it.
+type ResolvedIteratee = { as: string; elem: string; value: unknown };
+function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: GenerateCtx): ResolvedIteratee {
+  const AS = "jsmqlItem";
+  if (iteratee === undefined) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
+  if (iteratee.type === "StringLiteral") {
+    if (iteratee.value === "" || iteratee.value.startsWith("$")) {
+      throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, iteratee.pos);
+    }
+    return { as: AS, elem: `$$${AS}`, value: `$$${AS}.${iteratee.value}` };
+  }
+  if (iteratee.type === "Lambda" && iteratee.block === undefined && iteratee.params.length === 1) {
+    const as = safeVarName(iteratee.params[0]);
+    return { as, elem: `$$${as}`, value: _generate(iteratee.body as Expr, extendCtx(ctx, [iteratee.params[0]])) };
+  }
+  throw new CodegenError(
+    `.${method}(iteratee) takes a field name ("id") or a single-parameter arrow ('x => x.id').`,
+    iteratee.pos,
+  );
+}
+
+// A lodash *predicate* for `.partition` / `.reject`: a single-parameter arrow, or
+// the `_.matches` object shorthand (`{ active: true }` → `$and` of `$eq`).
+function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): { as: string; cond: unknown } {
+  if (pred.type === "ObjectLiteral") {
+    const AS = "jsmqlItem";
+    const conds = pred.entries.map((entry) => {
+      if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
+        throw new CodegenError(`.${method}({ … }) matcher keys must be plain field names.`, entry.pos);
+      }
+      return { $eq: [`$$${AS}.${entry.key.name}`, _generate(entry.value, ctx)] };
+    });
+    return { as: AS, cond: { $and: conds } };
+  }
+  if (pred.type === "Lambda" && pred.block === undefined && pred.params.length === 1) {
+    const as = safeVarName(pred.params[0]);
+    return { as, cond: _generate(pred.body as Expr, extendCtx(ctx, [pred.params[0]])) };
+  }
+  throw new CodegenError(
+    `.${method}(predicate) takes a single-parameter arrow ('x => x.active') or a matches-object ('{ active: true }').`,
+    pred.pos,
+  );
+}
+
+// group/count key set of an array: distinct STRINGIFIED iteratee values (lodash
+// coerces group keys to strings). `$setUnion` needs a 2-arg form to be valid.
+function distinctKeysExpr(arr: unknown, it: ResolvedIteratee): unknown {
+  return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
+}
+
 // The date argument the `getUTC*` getters hand to MongoDB's date-part operators.
 // The local getters pass the bare date (extraction uses the server process zone);
 // the UTC variants pass `{ date, timezone: "UTC" }` so the result is UTC-anchored,
@@ -3209,6 +3282,194 @@ function generateMethodCall(
         `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
         callPos,
       );
+
+    // ── lodash array methods (Phase 1 value vocabulary) ──────────────────────
+    case "sum":
+    case "mean":
+    case "max":
+    case "min": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      const op = method === "sum" ? "$sum" : method === "mean" ? "$avg" : method === "max" ? "$max" : "$min";
+      return { [op]: genObj };
+    }
+    case "sumBy":
+    case "meanBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], method, ctx);
+      return { [method === "sumBy" ? "$sum" : "$avg"]: { $map: { input: genObj, as: it.as, in: it.value } } };
+    }
+    case "minBy":
+    case "maxBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], method, ctx);
+      // Decorate each element with its key, sort ascending, take the last (max) or
+      // first (min) element back out.
+      return {
+        $let: {
+          vars: {
+            jsmqlSorted: {
+              $sortArray: {
+                input: { $map: { input: genObj, as: it.as, in: { k: it.value, v: it.elem } } },
+                sortBy: { k: 1 },
+              },
+            },
+          },
+          in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", method === "maxBy" ? -1 : 0] } } },
+        },
+      };
+    }
+    case "uniq": {
+      checkArity("uniq", { sig: "", none: true }, exprArgsOnly(args, "uniq").length, callPos);
+      // Order-preserving, keep-first dedupe ($setUnion would reorder).
+      return {
+        $reduce: {
+          input: genObj,
+          initialValue: [],
+          in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+        },
+      };
+    }
+    case "uniqBy": {
+      const exprArgs = exprArgsOnly(args, "uniqBy");
+      checkArity("uniqBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], "uniqBy", ctx);
+      // Track seen keys, keep the first element for each; then drop the tracker.
+      return {
+        $getField: {
+          field: "out",
+          input: {
+            $reduce: {
+              input: genObj,
+              initialValue: { seen: [], out: [] },
+              in: {
+                $let: {
+                  vars: { [it.as]: "$$this" },
+                  in: {
+                    $cond: [
+                      { $in: [it.value, "$$value.seen"] },
+                      "$$value",
+                      {
+                        seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                        out: { $concatArrays: ["$$value.out", ["$$this"]] },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+    case "compact": {
+      checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
+      // MQL truthiness (drops false/null/0/missing; keeps ""/NaN — per project call).
+      return { $filter: { input: genObj, as: "jsmqlItem", cond: "$$jsmqlItem" } };
+    }
+    case "flatten": {
+      checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);
+      // One level; `$isArray` guard so non-array elements pass through.
+      return {
+        $reduce: {
+          input: genObj,
+          initialValue: [],
+          in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+        },
+      };
+    }
+    case "chunk": {
+      const exprArgs = exprArgsOnly(args, "chunk");
+      checkArity("chunk", { sig: "size", exact: 1 }, exprArgs.length, callPos);
+      const size = exprArgs[0];
+      if (size.type !== "NumberLiteral" || !Number.isInteger(size.value) || size.value < 1) {
+        throw new CodegenError(
+          `.chunk(size) requires a positive integer literal (got ${size.type === "NumberLiteral" ? size.value : "a non-literal"}).`,
+          size.pos,
+        );
+      }
+      return {
+        $map: {
+          input: { $range: [0, { $size: genObj }, size.value] },
+          as: "jsmqlI",
+          in: { $slice: [genObj, "$$jsmqlI", size.value] },
+        },
+      };
+    }
+    case "difference":
+    case "intersection": {
+      // On a plain array receiver (Set receivers were intercepted earlier). Order-
+      // preserving vs `$setDifference`/`$setIntersection`.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      const other = _generate(exprArgs[0], ctx);
+      const inOther = { $in: ["$$jsmqlItem", other] };
+      return {
+        $filter: { input: genObj, as: "jsmqlItem", cond: method === "intersection" ? inOther : { $not: [inOther] } },
+      };
+    }
+    case "union": {
+      const exprArgs = exprArgsOnly(args, "union");
+      checkArity("union", { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      // Order-preserving unique of the concatenation.
+      return {
+        $reduce: {
+          input: { $concatArrays: [genObj, _generate(exprArgs[0], ctx)] },
+          initialValue: [],
+          in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+        },
+      };
+    }
+    case "zipObject": {
+      const exprArgs = exprArgsOnly(args, "zipObject");
+      checkArity("zipObject", { sig: "values", exact: 1 }, exprArgs.length, callPos);
+      const values = _generate(exprArgs[0], ctx);
+      // Pair keys with values by index (keys.length); stringify keys for $arrayToObject.
+      return {
+        $arrayToObject: {
+          $map: {
+            input: { $range: [0, { $size: genObj }] },
+            as: "jsmqlI",
+            in: { k: { $toString: { $arrayElemAt: [genObj, "$$jsmqlI"] } }, v: { $arrayElemAt: [values, "$$jsmqlI"] } },
+          },
+        },
+      };
+    }
+    case "keyBy": {
+      const exprArgs = exprArgsOnly(args, "keyBy");
+      checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
+      // { <key>: <last element with that key> } — $arrayToObject keeps the last.
+      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: { $toString: it.value }, v: it.elem } } } };
+    }
+    case "groupBy":
+    case "countBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], method, ctx);
+      const filtered = {
+        $filter: { input: genObj, as: it.as, cond: { $eq: [{ $toString: it.value }, "$$jsmqlKey"] } },
+      };
+      return {
+        $arrayToObject: {
+          $map: {
+            input: distinctKeysExpr(genObj, it),
+            as: "jsmqlKey",
+            in: { k: "$$jsmqlKey", v: method === "countBy" ? { $size: filtered } : filtered },
+          },
+        },
+      };
+    }
+    case "partition":
+    case "reject": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
+      const p = resolvePredicate(exprArgs[0], method, ctx);
+      const yes = { $filter: { input: genObj, as: p.as, cond: p.cond } };
+      const no = { $filter: { input: genObj, as: p.as, cond: { $not: [p.cond] } } };
+      return method === "reject" ? no : [yes, no];
+    }
 
     // ── lodash string methods (Phase 1 value vocabulary; ASCII-only) ─────────
     case "capitalize":

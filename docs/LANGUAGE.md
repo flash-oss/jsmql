@@ -1483,6 +1483,30 @@ $.events.sort({ distance: -1 });          // statement position → $set with $s
 
 Comparator-style lambdas (`(a, b) => a.x - b.x`) and key functions more complex than `x => x.path` (optionally negated) are rejected at compile time — use a `{ field: dir }` spec, or `$op($sortArray, { input, sortBy })` for a non-trivial sort.
 
+#### lodash array methods
+
+Value-mode methods on an array field. Iteratee-taking methods (`keyBy`, `sumBy`, …) accept a **field-name string** (`"id"`) or a **single-parameter arrow** (`x => x.id`); predicate methods (`partition`, `reject`) accept an arrow or a `_.matches` object (`{ active: true }`).
+
+```js
+$.nums.sum()  / .mean() / .max() / .min()   // $sum / $avg / $max / $min of the array
+$.items.sumBy("price")  / .meanBy(x => x.p) // $sum / $avg of the mapped values
+$.items.minBy("score")  / .maxBy("score")   // the element with the min/max key
+$.tags.uniq()                               // order-preserving keep-first dedupe
+$.items.uniqBy("id")                        // dedupe by key, keep first
+$.items.keyBy("id")                         // { <id>: <last item with that id> }
+$.items.groupBy("type")                     // { <type>: [items…] }
+$.items.countBy("type")                     // { <type>: <count> }
+$.items.partition(x => x.ok)                // [ [matches…], [non-matches…] ]
+$.items.reject({ active: false })           // items NOT matching
+$.xs.chunk(3)                               // [[…3], […3], [rest]]   (size: positive int literal)
+$.xs.flatten()                              // one level (with an $isArray guard)
+$.xs.compact()                              // drop MQL-falsy (false/null/0/missing; keeps ""/NaN)
+$.a.difference($.b) / .intersection($.b) / .union($.b)   // order-preserving set ops
+$.keys.zipObject($.vals)                    // { keys[i]: vals[i] }
+```
+
+> **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash, but it *errors* on an object/array key); group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
+
 ### Bare type-cast callbacks
 
 `Boolean`, `Number`, and `String` can be passed bare as the callback to any of the lambda-taking array methods, just like in plain JavaScript:

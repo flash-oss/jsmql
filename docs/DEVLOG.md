@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash array methods (Phase 1) — `.groupBy` / `.keyBy` / `.uniq` / `.chunk` / `.partition` / …
+
+Per-doc array value methods: `.sum`/`.mean`/`.max`/`.min` (→ `$sum`/`$avg`/`$max`/
+`$min`), `.sumBy`/`.meanBy`/`.minBy`/`.maxBy`, `.uniq`/`.uniqBy`, `.keyBy`/
+`.groupBy`/`.countBy`, `.partition`/`.reject`, `.chunk`, `.flatten`, `.compact`,
+`.difference`/`.intersection`/`.union` (order-preserving `$filter`/dedupe on a
+plain array receiver — the Set-typed receivers still route to `generateSetMethodCall`),
+`.zipObject`. Two shared resolvers in codegen.ts: `resolveIteratee` (a field-name
+string, a 1-arg arrow, or omitted-identity → `$map`/`$filter` element binding) and
+`resolvePredicate` (arrow or `_.matches` object → `$and` of `$eq`).
+
+Semantics chosen for faithfulness: `uniq` is order-preserving keep-first (not
+`$setUnion`, which reorders); `minBy`/`maxBy` decorate-sort-undecorate to return the
+element; `groupBy`/`keyBy`/`countBy` stringify keys like lodash (documented
+`$toString` hazard on non-scalar keys); `compact` uses MQL truthiness (drops
+`false`/`null`/`0`/missing, keeps `""`/`NaN` — the earlier project call). `.max`/
+`.min`/`.difference`/… don't collide with `generateMathCall`/`generateSetMethodCall`
+(those are separate node types / receiver intercepts). Every shape verified on a live
+mongod. Spec: [`method-dispatch.md`](specs/method-dispatch.md).
+
 ## 2026-07-18 — feat: lodash string methods (Phase 1, ASCII-only) — `.capitalize` / `.camelCase` / `.kebabCase` / …
 
 Per-doc string value methods: `.capitalize`, `.upperFirst`, `.lowerFirst`,
