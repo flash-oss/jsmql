@@ -503,6 +503,21 @@ describe("stamp login activity (multi-field update)", { features: ["Update filte
   );
 });
 
+describe("race podium via lodash .orderBy + .take", { features: ["Update filters"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.races.updateOne({ _id: 7 }, jsmql(...))" }, () => {
+    // The top 3 finishers: highest score first, ties broken by the faster finish
+    // time. `.orderBy(keys, orders)` is the lodash multi-key sort (→ $sortArray),
+    // `.take(3)` keeps the leading three (→ $slice). Verified on a live mongod.
+    expect(jsmql(`$.podium = $.results.orderBy(["score", "finishSeconds"], ["desc", "asc"]).take(3);`)).toEqual([
+      {
+        $set: {
+          podium: { $slice: [{ $sortArray: { input: "$results", sortBy: { score: -1, finishSeconds: 1 } } }, 3] },
+        },
+      },
+    ]);
+  });
+});
+
 describe("order pricing with derived helpers + commentary", { features: ["Let bindings"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     expect(
