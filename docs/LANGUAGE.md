@@ -1493,9 +1493,23 @@ $.events.sort({ distance: -1 });          // statement position → $set with $s
 
 Comparator-style lambdas (`(a, b) => a.x - b.x`) and key functions more complex than `x => x.path` (optionally negated) are rejected at compile time — use a `{ field: dir }` spec, or `$op($sortArray, { input, sortBy })` for a non-trivial sort.
 
+#### lodash iteratee / predicate shorthands
+
+Every higher-order value method — the native JS ones (`.map` / `.filter` / `.find` / `.findIndex` / `.findLast` / `.some` / `.every` / `.flatMap`) **and** the lodash ones (`.sumBy` / `.uniqBy` / `.groupBy` / `.reject` / `.takeWhile` / `.differenceBy` / …) — accepts the same lodash iteratee/predicate vocabulary, each desugaring to exactly what the equivalent one-parameter arrow would emit:
+
+| shorthand | example | equivalent arrow |
+|---|---|---|
+| property string (dotted paths ok) | `.map("addr.city")` | `x => x.addr.city` |
+| `_.matches` object | `.filter({ role: "admin", active: true })` | `x => x.role === "admin" && x.active === true` |
+| `_.matchesProperty` pair | `.find(["status.code", 200])` | `x => x.status.code === 200` |
+| single-parameter arrow | `.map(x => x.total * 1.1)` | — |
+| omitted (identity) | `.uniq()` | `x => x` |
+
+An iteratee context reads the result as a value (`.map("name")` plucks the field); a predicate context reads it as a boolean (`.filter("active")` keeps the truthy ones). The `_.matches` object compares each key with `$eq` (flat equality, not lodash's deep partial match); a single key emits a bare `$eq`, multiple keys an `$and`.
+
 #### lodash array methods
 
-Value-mode methods on an array field. Iteratee-taking methods (`keyBy`, `sumBy`, …) accept a **field-name string** (`"id"`) or a **single-parameter arrow** (`x => x.id`); predicate methods (`partition`, `reject`) accept an arrow or a `_.matches` object (`{ active: true }`).
+Value-mode methods on an array field (iteratee/predicate args take any of the shorthands above).
 
 ```js
 $.nums.sum()  / .mean() / .max() / .min()   // $sum / $avg / $max / $min of the array

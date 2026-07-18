@@ -3282,8 +3282,10 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       { $filter: { input: "$a", as: "o", cond: "$$o.ok" } },
       { $filter: { input: "$a", as: "o", cond: { $not: ["$$o.ok"] } } },
     ]);
+    // A single-key matches shorthand lowers to a bare `$eq` (the arrow-equivalent),
+    // not an `$and`-wrapped one — same shape a hand-written `o => o.ok === true` gives.
     expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $and: [{ $eq: ["$$jsmqlItem.ok", true] }] }] } },
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $eq: ["$$jsmqlItem.ok", true] }] } },
     });
   });
   it("groupBy/countBy/uniqBy/minBy/maxBy/zipObject/union emit their (verified) shapes", () => {
@@ -3293,6 +3295,67 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr('$.a.maxBy("x")')).toHaveProperty("$let");
     expect(jsmql.expr("$.a.union($.b)")).toHaveProperty("$reduce");
     expect(jsmql.expr("$.a.zipObject($.b)")).toHaveProperty("$arrayToObject");
+  });
+});
+
+describe("lodash iteratee / predicate shorthands (uniform across higher-order methods)", () => {
+  // Every higher-order method — native `.map`/`.filter`/`.find`/… and the lodash
+  // `.sumBy`/`.uniqBy`/`.reject`/… — accepts the same shorthand vocabulary, each
+  // desugaring to exactly what the equivalent one-parameter arrow would emit.
+  it("property string on .map is a pluck; on a predicate it is a truthy test", () => {
+    expect(jsmql.expr('$.a.map("name")')).toEqual({ $map: { input: "$a", as: "jsmqlItem", in: "$$jsmqlItem.name" } });
+    // Predicate context applies JS truthiness (the same cond `.filter(x => x.active)`
+    // emits — modulo the internal element-var name).
+    expect(jsmql.expr('$.a.filter("active")')).toEqual({
+      $filter: {
+        input: "$a",
+        as: "jsmqlItem",
+        cond: {
+          $and: [
+            { $ne: [{ $ifNull: ["$$jsmqlItem.active", null] }, null] },
+            { $ne: ["$$jsmqlItem.active", false] },
+            { $ne: ["$$jsmqlItem.active", ""] },
+            { $ne: ["$$jsmqlItem.active", 0] },
+          ],
+        },
+      },
+    });
+  });
+  it("nested property paths work in the shorthand ('a.b.c')", () => {
+    expect(jsmql.expr('$.a.map("addr.city")')).toEqual({
+      $map: { input: "$a", as: "jsmqlItem", in: "$$jsmqlItem.addr.city" },
+    });
+  });
+  it("matches-object shorthand → $eq per key (single key bare, multiple $and-joined)", () => {
+    expect(jsmql.expr("$.a.filter({ ok: true })")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $eq: ["$$jsmqlItem.ok", true] } },
+    });
+    expect(jsmql.expr('$.a.filter({ role: "admin", active: true })')).toEqual({
+      $filter: {
+        input: "$a",
+        as: "jsmqlItem",
+        cond: { $and: [{ $eq: ["$$jsmqlItem.role", "admin"] }, { $eq: ["$$jsmqlItem.active", true] }] },
+      },
+    });
+  });
+  it("matchesProperty pair shorthand ['path', value] → a single $eq (nested path ok)", () => {
+    expect(jsmql.expr('$.a.find(["status.code", 200])')).toEqual({
+      $arrayElemAt: [{ $filter: { input: "$a", as: "jsmqlItem", cond: { $eq: ["$$jsmqlItem.status.code", 200] } } }, 0],
+    });
+  });
+  it("shorthands reach the lodash iteratee/predicate methods too (.sumBy / .reject / .some)", () => {
+    expect(jsmql.expr('$.a.sumBy("price")')).toEqual({
+      $sum: { $map: { input: "$a", as: "jsmqlItem", in: "$$jsmqlItem.price" } },
+    });
+    expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $eq: ["$$jsmqlItem.ok", true] }] } },
+    });
+    expect(jsmql.expr("$.a.some({ ok: true })")).toEqual({
+      $anyElementTrue: { $map: { input: "$a", as: "jsmqlItem", in: { $eq: ["$$jsmqlItem.ok", true] } } },
+    });
+  });
+  it("a bad matchesProperty shape is rejected with a shape hint", () => {
+    expect(() => jsmql.expr("$.a.filter([1, 2])")).toThrow(/matchesProperty shorthand needs a field-name string/);
   });
 });
 

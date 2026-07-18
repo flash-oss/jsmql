@@ -5679,43 +5679,71 @@ function escapeHtmlExpr(s) {
   for (const [find, replacement] of pairs) e = { $replaceAll: { input: e, find, replacement } };
   return e;
 }
+function shorthandToLambda(arg, method, param) {
+  const pos = arg.pos;
+  const paramRef = { type: "ParamRef", name: param, pos };
+  const memberPath = (base, path) => {
+    let e = base;
+    for (const seg of path.split(".")) e = { type: "MemberAccess", object: e, member: seg, pos };
+    return e;
+  };
+  const lambda = (body) => ({ type: "Lambda", params: [param], body, pos });
+  if (arg.type === "StringLiteral") {
+    if (arg.value === "" || arg.value.startsWith("$")) {
+      throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, pos);
+    }
+    return lambda(memberPath(paramRef, arg.value));
+  }
+  if (arg.type === "ObjectLiteral") {
+    if (arg.entries.length === 0) throw new CodegenError(`.${method}({ \u2026 }) needs at least one field to match.`, pos);
+    const eqs = arg.entries.map((entry) => {
+      if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
+        throw new CodegenError(`.${method}({ \u2026 }) matcher keys must be plain field names.`, entry.pos);
+      }
+      return {
+        type: "BinaryExpr",
+        op: "===",
+        left: memberPath(paramRef, entry.key.name),
+        right: entry.value,
+        pos: entry.pos
+      };
+    });
+    return lambda(eqs.reduce((a, b) => ({ type: "BinaryExpr", op: "&&", left: a, right: b, pos })));
+  }
+  if (arg.type === "ArrayLiteral") {
+    const els = arg.elements;
+    const path = els[0];
+    const value = els[1];
+    const valueIsExpr = value !== void 0 && value.type !== "SpreadElement" && value.type !== "AssignExpr" && value.type !== "DeleteStmt" && value.type !== "LetDecl" && value.type !== "FuncDecl";
+    if (els.length !== 2 || path.type !== "StringLiteral" || !valueIsExpr) {
+      throw new CodegenError(
+        `.${method}(["field", value]) matchesProperty shorthand needs a field-name string and a value.`,
+        pos
+      );
+    }
+    return lambda({ type: "BinaryExpr", op: "===", left: memberPath(paramRef, path.value), right: value, pos });
+  }
+  return null;
+}
 function resolveIteratee(iteratee, method, ctx) {
   const AS = "jsmqlItem";
   if (iteratee === void 0) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
-  if (iteratee.type === "StringLiteral") {
-    if (iteratee.value === "" || iteratee.value.startsWith("$")) {
-      throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, iteratee.pos);
-    }
-    return { as: AS, elem: `$$${AS}`, value: `$$${AS}.${iteratee.value}` };
-  }
   if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
     return { as, elem: `$$${as}`, value: _generate(iteratee.body, extendCtx(ctx, [iteratee.params[0]])) };
   }
+  const lam = shorthandToLambda(iteratee, method, AS);
+  if (lam !== null) {
+    return { as: AS, elem: `$$${AS}`, value: _generate(lam.body, extendCtx(ctx, [AS])) };
+  }
   throw new CodegenError(
-    `.${method}(iteratee) takes a field name ("id") or a single-parameter arrow ('x => x.id').`,
+    `.${method}(iteratee) takes a field name ("id"), a matches object ({ active: true }), a ["field", value] pair, or a single-parameter arrow ('x => x.id').`,
     iteratee.pos
   );
 }
 function resolvePredicate(pred, method, ctx) {
-  if (pred.type === "ObjectLiteral") {
-    const AS = "jsmqlItem";
-    const conds = pred.entries.map((entry) => {
-      if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
-        throw new CodegenError(`.${method}({ \u2026 }) matcher keys must be plain field names.`, entry.pos);
-      }
-      return { $eq: [`$$${AS}.${entry.key.name}`, _generate(entry.value, ctx)] };
-    });
-    return { as: AS, cond: { $and: conds } };
-  }
-  if (pred.type === "Lambda" && pred.block === void 0 && pred.params.length === 1) {
-    const as = safeVarName(pred.params[0]);
-    return { as, cond: _generate(pred.body, extendCtx(ctx, [pred.params[0]])) };
-  }
-  throw new CodegenError(
-    `.${method}(predicate) takes a single-parameter arrow ('x => x.active') or a matches-object ('{ active: true }').`,
-    pred.pos
-  );
+  const it = resolveIteratee(pred, method, ctx);
+  return { as: it.as, cond: it.value };
 }
 function takeDropWhile(arrExpr, pred, drop) {
   const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
@@ -7423,6 +7451,10 @@ function requireLambda(args, method, callerPos, ctx) {
       },
       pos: first.pos
     };
+  }
+  if (first !== void 0 && (first.type === "StringLiteral" || first.type === "ObjectLiteral" || first.type === "ArrayLiteral")) {
+    const sh = shorthandToLambda(first, method, "jsmqlItem");
+    if (sh !== null) return sh;
   }
   if (!first || first.type !== "Lambda") {
     if (first?.type === "ParamRef" && ctx?.functions?.has(first.name)) {

@@ -2504,51 +2504,98 @@ function escapeHtmlExpr(s: unknown): unknown {
   return e;
 }
 
+// Desugar a lodash iteratee / predicate SHORTHAND into a synthetic one-parameter
+// arrow, so every higher-order method accepts the same forms and lowers each to
+// exactly what the equivalent arrow would (whether the method reads the result as a
+// value or a boolean is the method's business — `.map("x")` plucks, `.filter("x")`
+// truthy-tests). Three forms; returns null for anything else (a real arrow, a bare
+// `Boolean`/`Math.floor` cast, …) so the caller keeps its own handling:
+//   • property string   `"a.b"`       → `it => it.a.b`                    (_.property)
+//   • matches object    `{ a: 1, b }` → `it => it.a === 1 && it.b === b`  (_.matches, flat $eq per key)
+//   • matchesProperty   `["a.b", v]`  → `it => it.a.b === v`              (_.matchesProperty)
+function shorthandToLambda(arg: Expr, method: string, param: string): Lambda | null {
+  const pos = arg.pos;
+  const paramRef: Expr = { type: "ParamRef", name: param, pos };
+  const memberPath = (base: Expr, path: string): Expr => {
+    let e = base;
+    for (const seg of path.split(".")) e = { type: "MemberAccess", object: e, member: seg, pos };
+    return e;
+  };
+  const lambda = (body: Expr): Lambda => ({ type: "Lambda", params: [param], body, pos });
+  if (arg.type === "StringLiteral") {
+    if (arg.value === "" || arg.value.startsWith("$")) {
+      throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, pos);
+    }
+    return lambda(memberPath(paramRef, arg.value));
+  }
+  if (arg.type === "ObjectLiteral") {
+    if (arg.entries.length === 0) throw new CodegenError(`.${method}({ … }) needs at least one field to match.`, pos);
+    const eqs: Expr[] = arg.entries.map((entry) => {
+      if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
+        throw new CodegenError(`.${method}({ … }) matcher keys must be plain field names.`, entry.pos);
+      }
+      return {
+        type: "BinaryExpr",
+        op: "===",
+        left: memberPath(paramRef, entry.key.name),
+        right: entry.value,
+        pos: entry.pos,
+      };
+    });
+    return lambda(eqs.reduce((a, b) => ({ type: "BinaryExpr", op: "&&", left: a, right: b, pos })));
+  }
+  if (arg.type === "ArrayLiteral") {
+    const els = arg.elements;
+    const path = els[0];
+    const value = els[1];
+    // The value must be a plain expression (not a spread or an update/decl statement,
+    // which are only valid inside a pipeline-shaped array literal).
+    const valueIsExpr =
+      value !== undefined &&
+      value.type !== "SpreadElement" &&
+      value.type !== "AssignExpr" &&
+      value.type !== "DeleteStmt" &&
+      value.type !== "LetDecl" &&
+      value.type !== "FuncDecl";
+    if (els.length !== 2 || path.type !== "StringLiteral" || !valueIsExpr) {
+      throw new CodegenError(
+        `.${method}(["field", value]) matchesProperty shorthand needs a field-name string and a value.`,
+        pos,
+      );
+    }
+    return lambda({ type: "BinaryExpr", op: "===", left: memberPath(paramRef, path.value), right: value, pos });
+  }
+  return null;
+}
+
 // A lodash *iteratee* for the array methods (`.keyBy`, `.sumBy`, `.uniqBy`, …):
-// a property-name string (`"id"` → `$$x.id`), a single-parameter arrow
-// (`x => x.id`), or omitted (identity). Returns the `$map`/`$filter` element var
-// name and the iteratee expression evaluated against it.
+// a single-parameter arrow (`x => x.id`), one of the `shorthandToLambda` forms
+// (`"id"` / `{ active: true }` / `["a.b", v]`), or omitted (identity). Returns the
+// `$map`/`$filter` element var name and the iteratee expression evaluated against it.
 type ResolvedIteratee = { as: string; elem: string; value: unknown };
 function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: GenerateCtx): ResolvedIteratee {
   const AS = "jsmqlItem";
   if (iteratee === undefined) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
-  if (iteratee.type === "StringLiteral") {
-    if (iteratee.value === "" || iteratee.value.startsWith("$")) {
-      throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, iteratee.pos);
-    }
-    return { as: AS, elem: `$$${AS}`, value: `$$${AS}.${iteratee.value}` };
-  }
   if (iteratee.type === "Lambda" && iteratee.block === undefined && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
     return { as, elem: `$$${as}`, value: _generate(iteratee.body as Expr, extendCtx(ctx, [iteratee.params[0]])) };
   }
+  const lam = shorthandToLambda(iteratee, method, AS);
+  if (lam !== null) {
+    return { as: AS, elem: `$$${AS}`, value: _generate(lam.body as Expr, extendCtx(ctx, [AS])) };
+  }
   throw new CodegenError(
-    `.${method}(iteratee) takes a field name ("id") or a single-parameter arrow ('x => x.id').`,
+    `.${method}(iteratee) takes a field name ("id"), a matches object ({ active: true }), a ["field", value] pair, or a single-parameter arrow ('x => x.id').`,
     iteratee.pos,
   );
 }
 
-// A lodash *predicate* for `.partition` / `.reject`: a single-parameter arrow, or
-// the `_.matches` object shorthand (`{ active: true }` → `$and` of `$eq`).
+// A lodash *predicate* for `.partition` / `.reject` / `.takeWhile` / …: any of the
+// iteratee forms above, read as a boolean. Shares `resolveIteratee` so the shorthand
+// vocabulary and lowering stay identical to the value-producing methods.
 function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): { as: string; cond: unknown } {
-  if (pred.type === "ObjectLiteral") {
-    const AS = "jsmqlItem";
-    const conds = pred.entries.map((entry) => {
-      if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
-        throw new CodegenError(`.${method}({ … }) matcher keys must be plain field names.`, entry.pos);
-      }
-      return { $eq: [`$$${AS}.${entry.key.name}`, _generate(entry.value, ctx)] };
-    });
-    return { as: AS, cond: { $and: conds } };
-  }
-  if (pred.type === "Lambda" && pred.block === undefined && pred.params.length === 1) {
-    const as = safeVarName(pred.params[0]);
-    return { as, cond: _generate(pred.body as Expr, extendCtx(ctx, [pred.params[0]])) };
-  }
-  throw new CodegenError(
-    `.${method}(predicate) takes a single-parameter arrow ('x => x.active') or a matches-object ('{ active: true }').`,
-    pred.pos,
-  );
+  const it = resolveIteratee(pred, method, ctx);
+  return { as: it.as, cond: it.value };
 }
 
 // `.takeWhile` / `.dropWhile` from the LEFT: find the first element whose predicate
@@ -4730,6 +4777,17 @@ function requireLambda(
       },
       pos: first.pos,
     };
+  }
+  // lodash iteratee/predicate shorthands: `"a.b"` / `{ active: true }` / `["a.b", v]`
+  // desugar to the equivalent one-parameter arrow, so `.map`/`.filter`/`.find`/… all
+  // accept them. The method's own value/boolean handling (e.g. `jsBoolIfNeeded` for a
+  // predicate) then applies, matching lodash.
+  if (
+    first !== undefined &&
+    (first.type === "StringLiteral" || first.type === "ObjectLiteral" || first.type === "ArrayLiteral")
+  ) {
+    const sh = shorthandToLambda(first, method, "jsmqlItem");
+    if (sh !== null) return sh;
   }
   if (!first || first.type !== "Lambda") {
     // A reusable function passed as a bare callback (`arr.map(double)`) — name it

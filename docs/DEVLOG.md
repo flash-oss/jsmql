@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: full lodash iteratee/predicate shorthands across ALL higher-order value methods
+
+The `_.identity`-family shorthands now work on **every** higher-order value method, not just
+the `By` family. A single desugarer, `shorthandToLambda(arg, method, param)`, turns each
+shorthand into the equivalent one-parameter arrow:
+
+    "a.b"                 → it => it.a.b                     (_.property; dotted paths ok)
+    { a: 1, b: 2 }        → it => it.a === 1 && it.b === 2   (_.matches; flat $eq per key)
+    ["a.b", v]            → it => it.a.b === v               (_.matchesProperty)
+
+Three insertion points share it: `requireLambda` (the native `.map`/`.filter`/`.find`/
+`.findIndex`/`.findLast`/`.some`/`.every`/`.flatMap` funnel), `resolveIteratee` (the `By`
+family), and `resolvePredicate` (`.reject`/`.partition`/`.takeWhile`/…, now a thin delegate
+to `resolveIteratee`). Because a shorthand becomes an ordinary arrow before lowering, each
+method's own value/boolean handling applies unchanged — `.map("name")` plucks, `.filter("active")`
+gets full JS truthiness via `jsBoolIfNeeded`, `.filter({role:"admin"})` compares with `$eq`.
+
+Consolidation also fixed an inconsistency: `resolvePredicate`'s matches-object used to always
+`$and`-wrap even a single key (`{$and:[{$eq}]}`); it now emits the arrow-equivalent bare `$eq`
+for one key, `$and` for several — the same shape a hand-written arrow gives (one reject test
+updated). The `_.matches` comparison is **flat `$eq`**, not lodash's deep partial match
+(documented). Verified on a live mongod across `.map`/`.filter`/`.find`/`.some`/`.every`/
+`.reject`/`.sumBy`/`.countBy` with property / matches / matchesProperty / truthy-property forms.
+This is what was asked for at the start of the lodash work (the `_.identity` shorthand family),
+now delivered uniformly. Spec: [`method-dispatch.md`](specs/method-dispatch.md).
+
 ## 2026-07-18 — feat: lodash `.sortBy` / `.orderBy` value aliases → `$sortArray`
 
 Final family of the lodash value-mode push. The developer chose to add these lodash-named
