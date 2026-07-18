@@ -1736,6 +1736,23 @@ Number.isNaN($.x)                  // { $ne: ["$x", "$x"] }   — NaN is the onl
 
 `Number.isFinite()` is **not supported** — MongoDB has no Infinity literal that can be referenced cleanly. For finite-bound checks, write the bounds explicitly (e.g. `$.x > -1e300 && $.x < 1e300`) or use `$convert` with an `onError` clause.
 
+### lodash number methods
+
+Value-mode methods on a number field (per-doc, not stream methods):
+
+```js
+$.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
+$.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
+$.n.inRange(5, 10)     // 5 <= n < 10
+$.n.round()            // { $round: ["$n", 0] }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
+$.n.round(2)           // { $round: ["$n", 2] }
+$.n.ceil()             // { $ceil: "$n" }
+$.n.ceil(2)            // scale by 10² via $pow, $ceil, scale back
+$.n.floor(1)           // as ceil, with $floor
+```
+
+> `round` uses MongoDB's `$round`, which rounds half-to-even — this **differs from lodash** (`_.round(2.5) === 3`). It's kept deliberately so jsmql emits the native operator rather than an emulation.
+
 ### MongoDB Type Conversion Utilities
 
 ```js

@@ -540,6 +540,12 @@ const METHODS: Record<string, MethodMeta> = {
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
+  // ── lodash number methods (Phase 1) ─────────────────────────────────────────
+  clamp: {},
+  inRange: { returns: "bool" },
+  round: {},
+  ceil: {},
+  floor: {},
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -3145,6 +3151,39 @@ function generateMethodCall(
         `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
         callPos,
       );
+
+    // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────
+    case "clamp": {
+      const exprArgs = exprArgsOnly(args, "clamp");
+      checkArity("clamp", { sig: "lower, upper", exact: 2 }, exprArgs.length, callPos);
+      return { $min: [{ $max: [genObj, _generate(exprArgs[0], ctx)] }, _generate(exprArgs[1], ctx)] };
+    }
+    case "inRange": {
+      const exprArgs = exprArgsOnly(args, "inRange");
+      checkArity("inRange", { sig: "[start, ]end", allowed: [1, 2] }, exprArgs.length, callPos);
+      // lodash: `.inRange(end)` is [0, end); `.inRange(start, end)` is [start, end);
+      // the bounds swap when start > end (so negative ranges work) — `$min`/`$max`.
+      const lo = exprArgs.length === 2 ? _generate(exprArgs[0], ctx) : 0;
+      const hi = _generate(exprArgs[exprArgs.length === 2 ? 1 : 0], ctx);
+      return { $and: [{ $gte: [genObj, { $min: [lo, hi] }] }, { $lt: [genObj, { $max: [lo, hi] }] }] };
+    }
+    case "round": {
+      const exprArgs = exprArgsOnly(args, "round");
+      checkArity("round", { sig: "[precision]", allowed: [0, 1] }, exprArgs.length, callPos);
+      // → MongoDB `$round` (half-to-even / banker's rounding, per project decision).
+      const place = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : 0;
+      return { $round: [genObj, place] };
+    }
+    case "ceil":
+    case "floor": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "[precision]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const op = method === "ceil" ? "$ceil" : "$floor";
+      if (exprArgs.length === 0) return { [op]: genObj };
+      // precision p: divide(op(multiply(n, 10^p)), 10^p).
+      const factor = { $pow: [10, _generate(exprArgs[0], ctx)] };
+      return { $divide: [{ [op]: { $multiply: [genObj, factor] } }, factor] };
+    }
 
     default: {
       const hint = didYouMean(method, KNOWN_METHODS);

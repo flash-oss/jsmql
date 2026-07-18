@@ -3186,6 +3186,32 @@ describe("toSorted / sort key function", () => {
   });
 });
 
+describe("lodash number methods (per-doc value vocabulary)", () => {
+  it(".clamp(lower, upper) → $min of $max", () => {
+    expect(jsmql.expr("$.n.clamp(0, 100)")).toEqual({ $min: [{ $max: ["$n", 0] }, 100] });
+    expect(() => jsmql.expr("$.n.clamp(0)")).toThrow(/exactly 2 argument/);
+  });
+  it(".inRange(end) → [0, end); .inRange(start, end) → [start, end) (bounds swap via $min/$max)", () => {
+    expect(jsmql.expr("$.n.inRange(10)")).toEqual({
+      $and: [{ $gte: ["$n", { $min: [0, 10] }] }, { $lt: ["$n", { $max: [0, 10] }] }],
+    });
+    expect(jsmql.expr("$.n.inRange(5, 10)")).toEqual({
+      $and: [{ $gte: ["$n", { $min: [5, 10] }] }, { $lt: ["$n", { $max: [5, 10] }] }],
+    });
+  });
+  it(".round([p]) → MongoDB $round (banker's rounding)", () => {
+    expect(jsmql.expr("$.n.round()")).toEqual({ $round: ["$n", 0] });
+    expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });
+  });
+  it(".ceil()/.floor() → $ceil/$floor; with precision, scale via $pow", () => {
+    expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: "$n" });
+    expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: "$n" });
+    expect(jsmql.expr("$.n.ceil(2)")).toEqual({
+      $divide: [{ $ceil: { $multiply: ["$n", { $pow: [10, 2] }] } }, { $pow: [10, 2] }],
+    });
+  });
+});
+
 describe("statement-position mutators", () => {
   it(".sort() — 0-arg ascending", () => {
     expect(jsmql("$.events.sort();")).toEqual([{ $set: { events: { $sortArray: { input: "$events", sortBy: 1 } } } }]);

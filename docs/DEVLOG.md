@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash number methods (Phase 1) — `.clamp` / `.inRange` / `.round` / `.ceil` / `.floor`
+
+First slice of the per-doc (value-mode) lodash vocabulary — number methods on a
+field, distinct from the stream methods. `$.n.clamp(lo, hi)` → `$min`/`$max`;
+`.inRange([start,] end)` → `$and` of `$gte`/`$lt` with the bounds run through
+`$min`/`$max` so negative ranges swap like lodash; `.round([p])` → `$round`;
+`.ceil([p])` / `.floor([p])` → `$ceil`/`$floor`, scaling by `$pow(10, p)` for a
+precision argument. New `case`s in `generateMethodCall` + `METHODS` entries
+(`inRange` returns bool). `round` maps to MongoDB's `$round` (half-to-even),
+which diverges from lodash's half-away-from-zero — kept per the earlier decision
+to emit the native operator, documented as a surprise. Verified on a live mongod
+(clamp→100, inRange true/false, round(2.5)→2, ceil/floor precision). Spec:
+[`method-dispatch.md`](specs/method-dispatch.md).
+
 ## 2026-07-18 — feat!: consolidate stream/array sort onto `.sort` / `.toSorted`; drop `.toReversedBy` / `.sortBy` / `.orderBy`
 
 `.sort(<sort>)` and `.toSorted(<sort>)` now accept a flexible sort argument on
