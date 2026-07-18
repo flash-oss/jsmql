@@ -2312,15 +2312,15 @@ describe(
   { features: ["Pipelines"] },
   () => {
     it(
-      "the chain after $$$.coll.filter(...) becomes the $lookup's pipeline body",
+      "the .filter/.toSorted/.slice build the $lookup body; the terminal .map reshapes the result",
       { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
       () => {
         // `$.<field> = $$$.<coll>.filter(p).<chain>` is a single-statement way
         // to embed a *filtered, sorted, sliced* slice of a foreign collection
-        // into each input doc. The chain methods after `.filter` push into
-        // the `$lookup.pipeline` body — no temp slot, no expression-form
-        // `$sortArray` / `$slice` gymnastics. The reverse-then-slice gets the
-        // five most recent orders per user.
+        // into each input doc. `.filter`/`.toSorted`/`.slice` push into the
+        // `$lookup.pipeline` body; the **terminal `.map`** is peeled off and runs
+        // as a value-mode `$map` over the result array in the `$set` (a
+        // `$replaceWith` inside the pipeline would be invalid MQL for a scalar map).
         expect(
           jsmql`
 $.recentOrders = $$$.orders
@@ -2339,12 +2339,21 @@ $.recentOrders = $$$.orders
                 { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
-                { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
               ],
               as: "__jsmql.tmp.1",
             },
           },
-          { $set: { recentOrders: "$__jsmql.tmp.1" } },
+          {
+            $set: {
+              recentOrders: {
+                $map: {
+                  input: "$__jsmql.tmp.1",
+                  as: "o",
+                  in: { id: "$$o._id", total: "$$o.total", placedAt: "$$o.placedAt" },
+                },
+              },
+            },
+          },
           { $unset: "__jsmql" },
         ]);
       },

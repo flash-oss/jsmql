@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — fix: a terminal `.map` on a `$$$.<coll>.filter(...)` chain lowers to `$set`+`$map`, not an in-pipeline `$replaceWith`
+
+`$.userIds = $$$.orders.filter(o => o.uid === $.id).map("userId")` used to emit a
+`{ $replaceWith: "$userId" }` **inside** the `$lookup.pipeline` — invalid MQL when
+`userId` is a scalar (mongod rejects a non-document `$replaceWith` root; verified:
+Location40228 "'replacement document' must evaluate to an object"). It now lowers to
+the shape the user asked for: the sub-pipeline is just the `.filter`'s `$match`, and
+the terminal `.map` runs as a value-mode `$map` over the lookup result array in the
+`$set`:
+
+    { $lookup: { …, pipeline: [ { $match: … } ], as: "__jsmql.tmp.1" } },
+    { $set: { userIds: { $map: { input: "$__jsmql.tmp.1", in: "$$…​.userId" } } } }
+
+Implemented in `tryExtractChainedLookup` (lookup-translation.ts): `peelableTerminalMap`
+detects a value-extracting terminal `.map` (a `"field"` string — synthesized to
+`el => el.field` — or an expression-body arrow), the sub-pipeline chain loop stops
+before it (`chainEnd`), and the returned `rewritten` becomes `<slot>.map(iteratee)`
+so codegen emits the value-mode `$map`. Non-terminal chain methods (`.toSorted`/
+`.slice`/…) still build the sub-pipeline, and object maps peel the same way (they'd
+work in-pipeline, but the value-mode form is consistent and correct). A block-body
+terminal `.map` stays in the sub-pipeline (unchanged). One change covers both the
+field-assignment and `const`/`let`-binding forms (shared `rewritten`). Verified on a
+live mongod (scalar extraction, mixed chains, object maps). The separate `$$ = …`
+replace-stream pivot (`lowerLookupPivot`) has the same latent bug but different
+semantics ($unwind into the stream) — left for a follow-up. Spec:
+[`lookup-stage.md`](specs/lookup-stage.md § Terminal-`.map` peel).
+
 ## 2026-07-18 — feat: lodash object methods (Phase 1) — `.mapValues` / `.pick` / `.omit` / `.invert` / …
 
 Per-doc object value methods, completing the Phase 1 value vocabulary:

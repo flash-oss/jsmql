@@ -628,21 +628,29 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", (
 });
 
 describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup.pipeline body", () => {
-  it(".map(...) becomes $replaceWith inside the lookup's pipeline body", () => {
-    // The previous behaviour materialised the lookup into a slot and applied
-    // an expression-form `$map` afterwards (two stages + a temp slot). The
-    // chain-extension path pushes `.map`'s `$replaceWith` straight into the
-    // sub-pipeline — the slot holds the already-transformed array.
+  it("a terminal .map(...) is peeled to a value-mode $map on the lookup result", () => {
+    // A terminal `.map` does NOT go into the `$lookup.pipeline` (a `$replaceWith`
+    // there is invalid MQL when the mapped value is a scalar — mongod rejects a
+    // non-document root). Instead the sub-pipeline is just the `.filter`'s `$match`,
+    // and the map runs as a value-mode `$map` over the result array in the `$set`.
     expect(jsmql("$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));")).toEqual([
+      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $set: { stats: { $map: { input: "$__jsmql.tmp.1", as: "u", in: { id: "$$u._id", name: "$$u.name" } } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it('a terminal .map("field") string shorthand extracts a scalar array (was invalid $replaceWith)', () => {
+    expect(jsmql('$.userIds = $$$.orders.filter(o => o.uid === $.id).map("userId");')).toEqual([
       {
         $lookup: {
-          from: "users",
-          let: {},
-          pipeline: [{ $match: { $expr: "$active" } }, { $replaceWith: { id: "$_id", name: "$name" } }],
+          from: "orders",
+          let: { jsmql_f0_id: "$id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$jsmql_f0_id"] } } }],
           as: "__jsmql.tmp.1",
         },
       },
-      { $set: { stats: "$__jsmql.tmp.1" } },
+      { $set: { userIds: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.userId" } } } },
       { $unset: "__jsmql" },
     ]);
   });

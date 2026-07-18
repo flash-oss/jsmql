@@ -4532,6 +4532,53 @@ var METHODS = {
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
+  // ── lodash array methods (Phase 1) ──────────────────────────────────────────
+  sum: { optional: "array" },
+  mean: { optional: "array" },
+  max: { optional: "array" },
+  min: { optional: "array" },
+  sumBy: { optional: "array" },
+  meanBy: { optional: "array" },
+  minBy: { optional: "array" },
+  maxBy: { optional: "array" },
+  uniq: { returns: "array", optional: "array" },
+  uniqBy: { returns: "array", optional: "array" },
+  compact: { returns: "array", optional: "array" },
+  flatten: { returns: "array", optional: "array" },
+  chunk: { returns: "array", optional: "array" },
+  zipObject: { optional: "array" },
+  keyBy: { optional: "array" },
+  groupBy: { optional: "array" },
+  countBy: { optional: "array" },
+  partition: { returns: "array", optional: "array" },
+  reject: { returns: "array", optional: "array" },
+  // ── lodash object methods (Phase 1) ─────────────────────────────────────────
+  mapValues: {},
+  mapKeys: {},
+  pick: {},
+  omit: {},
+  pickBy: {},
+  omitBy: {},
+  invert: {},
+  toPairs: { returns: "array" },
+  fromPairs: { optional: "array" },
+  // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
+  capitalize: { returns: "string", optional: "string" },
+  upperFirst: { returns: "string", optional: "string" },
+  lowerFirst: { returns: "string", optional: "string" },
+  words: { returns: "array", optional: "string" },
+  kebabCase: { returns: "string", optional: "string" },
+  snakeCase: { returns: "string", optional: "string" },
+  startCase: { returns: "string", optional: "string" },
+  camelCase: { returns: "string", optional: "string" },
+  escape: { returns: "string", optional: "string" },
+  truncate: { returns: "string", optional: "string" },
+  // ── lodash number methods (Phase 1) ─────────────────────────────────────────
+  clamp: {},
+  inRange: { returns: "bool" },
+  round: {},
+  ceil: {},
+  floor: {},
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -5559,6 +5606,107 @@ function generateTemplateLiteral(quasis, expressions, ctx) {
   if (tail !== "") parts.push(tail);
   return { $concat: parts };
 }
+function strTail(s, from) {
+  return { $substrCP: [s, from, { $strLenCP: s }] };
+}
+function capitalizeExpr(s) {
+  return { $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }] };
+}
+function firstCharExpr(s, op) {
+  return { $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)] };
+}
+var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
+function wordsExpr(s) {
+  return {
+    $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: "jsmqlWord", in: "$$jsmqlWord.match" }
+  };
+}
+function joinWords(words, sep, transform) {
+  const items = transform === void 0 ? words : { $map: { input: words, as: "jsmqlW", in: transform("$$jsmqlW") } };
+  return {
+    $reduce: {
+      input: items,
+      initialValue: "",
+      in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", sep, "$$this"] }] }
+    }
+  };
+}
+function escapeHtmlExpr(s) {
+  const pairs = [
+    ["&", "&amp;"],
+    // must run first
+    ["<", "&lt;"],
+    [">", "&gt;"],
+    ['"', "&quot;"],
+    ["'", "&#39;"]
+  ];
+  let e = s;
+  for (const [find, replacement] of pairs) e = { $replaceAll: { input: e, find, replacement } };
+  return e;
+}
+function resolveIteratee(iteratee, method, ctx) {
+  const AS = "jsmqlItem";
+  if (iteratee === void 0) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
+  if (iteratee.type === "StringLiteral") {
+    if (iteratee.value === "" || iteratee.value.startsWith("$")) {
+      throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, iteratee.pos);
+    }
+    return { as: AS, elem: `$$${AS}`, value: `$$${AS}.${iteratee.value}` };
+  }
+  if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length === 1) {
+    const as = safeVarName(iteratee.params[0]);
+    return { as, elem: `$$${as}`, value: _generate(iteratee.body, extendCtx(ctx, [iteratee.params[0]])) };
+  }
+  throw new CodegenError(
+    `.${method}(iteratee) takes a field name ("id") or a single-parameter arrow ('x => x.id').`,
+    iteratee.pos
+  );
+}
+function resolvePredicate(pred, method, ctx) {
+  if (pred.type === "ObjectLiteral") {
+    const AS = "jsmqlItem";
+    const conds = pred.entries.map((entry) => {
+      if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
+        throw new CodegenError(`.${method}({ \u2026 }) matcher keys must be plain field names.`, entry.pos);
+      }
+      return { $eq: [`$$${AS}.${entry.key.name}`, _generate(entry.value, ctx)] };
+    });
+    return { as: AS, cond: { $and: conds } };
+  }
+  if (pred.type === "Lambda" && pred.block === void 0 && pred.params.length === 1) {
+    const as = safeVarName(pred.params[0]);
+    return { as, cond: _generate(pred.body, extendCtx(ctx, [pred.params[0]])) };
+  }
+  throw new CodegenError(
+    `.${method}(predicate) takes a single-parameter arrow ('x => x.active') or a matches-object ('{ active: true }').`,
+    pred.pos
+  );
+}
+function distinctKeysExpr(arr, it) {
+  return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
+}
+function resolveObjIteratee(iteratee, method, ctx) {
+  if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length >= 1 && iteratee.params.length <= 2) {
+    const vars = { [safeVarName(iteratee.params[0])]: "$$jsmqlKv.v" };
+    if (iteratee.params.length === 2) vars[safeVarName(iteratee.params[1])] = "$$jsmqlKv.k";
+    return { $let: { vars, in: _generate(iteratee.body, extendCtx(ctx, iteratee.params)) } };
+  }
+  throw new CodegenError(`.${method}((value[, key]) => \u2026) takes a one- or two-parameter arrow.`, iteratee.pos);
+}
+function pickKeys(arg, method) {
+  if (arg.type !== "ArrayLiteral") {
+    throw new CodegenError(
+      `.${method}([keys]) takes an array of field-name strings, e.g. '.${method}(["name", "age"])'.`,
+      arg.pos
+    );
+  }
+  return arg.elements.map((el) => {
+    if (el.type !== "StringLiteral" || el.value === "" || el.value.startsWith("$")) {
+      throw new CodegenError(`.${method}([keys]) entries must be plain field-name strings (no leading '$').`, el.pos);
+    }
+    return el.value;
+  });
+}
 function utcDate(date) {
   return { date, timezone: "UTC" };
 }
@@ -5787,8 +5935,13 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         return { $sortArray: { input: genObj, sortBy: 1 } };
       }
       const exprArgs = exprArgsOnly(args, "toSorted");
-      checkArity("toSorted", { sig: "keyFn", allowed: [0, 1] }, exprArgs.length, callPos);
-      const sortBy = lambdaToSortBy(exprArgs[0], "toSorted");
+      checkArity(
+        "toSorted",
+        { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] },
+        exprArgs.length,
+        callPos
+      );
+      const sortBy = argToSortBy(exprArgs[0], "toSorted");
       return { $sortArray: { input: genObj, sortBy } };
     }
     case "toSpliced": {
@@ -6213,6 +6366,362 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
         callPos
       );
+    // ── lodash array methods (Phase 1 value vocabulary) ──────────────────────
+    case "sum":
+    case "mean":
+    case "max":
+    case "min": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      const op = method === "sum" ? "$sum" : method === "mean" ? "$avg" : method === "max" ? "$max" : "$min";
+      return { [op]: genObj };
+    }
+    case "sumBy":
+    case "meanBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], method, ctx);
+      return { [method === "sumBy" ? "$sum" : "$avg"]: { $map: { input: genObj, as: it.as, in: it.value } } };
+    }
+    case "minBy":
+    case "maxBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], method, ctx);
+      return {
+        $let: {
+          vars: {
+            jsmqlSorted: {
+              $sortArray: {
+                input: { $map: { input: genObj, as: it.as, in: { k: it.value, v: it.elem } } },
+                sortBy: { k: 1 }
+              }
+            }
+          },
+          in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", method === "maxBy" ? -1 : 0] } } }
+        }
+      };
+    }
+    case "uniq": {
+      checkArity("uniq", { sig: "", none: true }, exprArgsOnly(args, "uniq").length, callPos);
+      return {
+        $reduce: {
+          input: genObj,
+          initialValue: [],
+          in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] }
+        }
+      };
+    }
+    case "uniqBy": {
+      const exprArgs = exprArgsOnly(args, "uniqBy");
+      checkArity("uniqBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], "uniqBy", ctx);
+      return {
+        $getField: {
+          field: "out",
+          input: {
+            $reduce: {
+              input: genObj,
+              initialValue: { seen: [], out: [] },
+              in: {
+                $let: {
+                  vars: { [it.as]: "$$this" },
+                  in: {
+                    $cond: [
+                      { $in: [it.value, "$$value.seen"] },
+                      "$$value",
+                      {
+                        seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                        out: { $concatArrays: ["$$value.out", ["$$this"]] }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+    }
+    case "compact": {
+      checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
+      return { $filter: { input: genObj, as: "jsmqlItem", cond: "$$jsmqlItem" } };
+    }
+    case "flatten": {
+      checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);
+      return {
+        $reduce: {
+          input: genObj,
+          initialValue: [],
+          in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] }
+        }
+      };
+    }
+    case "chunk": {
+      const exprArgs = exprArgsOnly(args, "chunk");
+      checkArity("chunk", { sig: "size", exact: 1 }, exprArgs.length, callPos);
+      const size = exprArgs[0];
+      if (size.type !== "NumberLiteral" || !Number.isInteger(size.value) || size.value < 1) {
+        throw new CodegenError(
+          `.chunk(size) requires a positive integer literal (got ${size.type === "NumberLiteral" ? size.value : "a non-literal"}).`,
+          size.pos
+        );
+      }
+      return {
+        $map: {
+          input: { $range: [0, { $size: genObj }, size.value] },
+          as: "jsmqlI",
+          in: { $slice: [genObj, "$$jsmqlI", size.value] }
+        }
+      };
+    }
+    case "difference":
+    case "intersection": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      const other = _generate(exprArgs[0], ctx);
+      const inOther = { $in: ["$$jsmqlItem", other] };
+      return {
+        $filter: { input: genObj, as: "jsmqlItem", cond: method === "intersection" ? inOther : { $not: [inOther] } }
+      };
+    }
+    case "union": {
+      const exprArgs = exprArgsOnly(args, "union");
+      checkArity("union", { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      return {
+        $reduce: {
+          input: { $concatArrays: [genObj, _generate(exprArgs[0], ctx)] },
+          initialValue: [],
+          in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] }
+        }
+      };
+    }
+    case "zipObject": {
+      const exprArgs = exprArgsOnly(args, "zipObject");
+      checkArity("zipObject", { sig: "values", exact: 1 }, exprArgs.length, callPos);
+      const values = _generate(exprArgs[0], ctx);
+      return {
+        $arrayToObject: {
+          $map: {
+            input: { $range: [0, { $size: genObj }] },
+            as: "jsmqlI",
+            in: { k: { $toString: { $arrayElemAt: [genObj, "$$jsmqlI"] } }, v: { $arrayElemAt: [values, "$$jsmqlI"] } }
+          }
+        }
+      };
+    }
+    case "keyBy": {
+      const exprArgs = exprArgsOnly(args, "keyBy");
+      checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
+      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: { $toString: it.value }, v: it.elem } } } };
+    }
+    case "groupBy":
+    case "countBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const it = resolveIteratee(exprArgs[0], method, ctx);
+      const filtered = {
+        $filter: { input: genObj, as: it.as, cond: { $eq: [{ $toString: it.value }, "$$jsmqlKey"] } }
+      };
+      return {
+        $arrayToObject: {
+          $map: {
+            input: distinctKeysExpr(genObj, it),
+            as: "jsmqlKey",
+            in: { k: "$$jsmqlKey", v: method === "countBy" ? { $size: filtered } : filtered }
+          }
+        }
+      };
+    }
+    case "partition":
+    case "reject": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
+      const p = resolvePredicate(exprArgs[0], method, ctx);
+      const yes = { $filter: { input: genObj, as: p.as, cond: p.cond } };
+      const no = { $filter: { input: genObj, as: p.as, cond: { $not: [p.cond] } } };
+      return method === "reject" ? no : [yes, no];
+    }
+    // ── lodash object methods (Phase 1 value vocabulary) ─────────────────────
+    case "mapValues":
+    case "mapKeys": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const mapped = resolveObjIteratee(exprArgs[0], method, ctx);
+      const entry = method === "mapValues" ? { k: "$$jsmqlKv.k", v: mapped } : { k: { $toString: mapped }, v: "$$jsmqlKv.v" };
+      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: entry } } };
+    }
+    case "pick": {
+      const exprArgs = exprArgsOnly(args, "pick");
+      checkArity("pick", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
+      const keys = pickKeys(exprArgs[0], "pick");
+      const out = {};
+      for (const k of keys) out[k] = { $getField: { field: k, input: "$$jsmqlObj" } };
+      return { $let: { vars: { jsmqlObj: genObj }, in: out } };
+    }
+    case "omit": {
+      const exprArgs = exprArgsOnly(args, "omit");
+      checkArity("omit", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
+      const keys = pickKeys(exprArgs[0], "omit");
+      return {
+        $arrayToObject: {
+          $filter: {
+            input: { $objectToArray: genObj },
+            as: "jsmqlKv",
+            cond: { $not: [{ $in: ["$$jsmqlKv.k", keys] }] }
+          }
+        }
+      };
+    }
+    case "pickBy":
+    case "omitBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
+      const cond2 = resolveObjIteratee(exprArgs[0], method, ctx);
+      return {
+        $arrayToObject: {
+          $filter: {
+            input: { $objectToArray: genObj },
+            as: "jsmqlKv",
+            cond: method === "pickBy" ? cond2 : { $not: [cond2] }
+          }
+        }
+      };
+    }
+    case "invert": {
+      checkArity("invert", { sig: "", none: true }, exprArgsOnly(args, "invert").length, callPos);
+      return {
+        $arrayToObject: {
+          $map: {
+            input: { $objectToArray: genObj },
+            as: "jsmqlKv",
+            in: { k: { $toString: "$$jsmqlKv.v" }, v: "$$jsmqlKv.k" }
+          }
+        }
+      };
+    }
+    case "toPairs": {
+      checkArity("toPairs", { sig: "", none: true }, exprArgsOnly(args, "toPairs").length, callPos);
+      return { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } };
+    }
+    case "fromPairs": {
+      checkArity("fromPairs", { sig: "", none: true }, exprArgsOnly(args, "fromPairs").length, callPos);
+      return {
+        $arrayToObject: {
+          $map: {
+            input: genObj,
+            as: "jsmqlP",
+            in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }]
+          }
+        }
+      };
+    }
+    // ── lodash string methods (Phase 1 value vocabulary; ASCII-only) ─────────
+    case "capitalize":
+    case "upperFirst":
+    case "lowerFirst":
+    case "words":
+    case "kebabCase":
+    case "snakeCase":
+    case "startCase":
+    case "camelCase":
+    case "escape": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      switch (method) {
+        case "capitalize":
+          return capitalizeExpr(genObj);
+        case "upperFirst":
+          return firstCharExpr(genObj, "$toUpper");
+        case "lowerFirst":
+          return firstCharExpr(genObj, "$toLower");
+        case "words":
+          return wordsExpr(genObj);
+        case "kebabCase":
+          return { $toLower: joinWords(wordsExpr(genObj), "-") };
+        case "snakeCase":
+          return { $toLower: joinWords(wordsExpr(genObj), "_") };
+        case "startCase":
+          return joinWords(wordsExpr(genObj), " ", capitalizeExpr);
+        case "camelCase":
+          return {
+            $let: {
+              vars: { jsmqlPascal: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
+              in: firstCharExpr("$$jsmqlPascal", "$toLower")
+            }
+          };
+        default:
+          return escapeHtmlExpr(genObj);
+      }
+    }
+    case "truncate": {
+      const exprArgs = exprArgsOnly(args, "truncate");
+      checkArity("truncate", { sig: "[{ length, omission }]", allowed: [0, 1] }, exprArgs.length, callPos);
+      let length = 30;
+      let omission = "...";
+      if (exprArgs.length === 1) {
+        const opts = exprArgs[0];
+        if (opts.type !== "ObjectLiteral") {
+          throw new CodegenError(
+            `.truncate(...) takes an options object, e.g. '.truncate({ length: 24, omission: "\u2026" })'.`,
+            opts.pos
+          );
+        }
+        for (const entry of opts.entries) {
+          if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
+            throw new CodegenError(`.truncate({ \u2026 }) options must be static keys ('length', 'omission').`, entry.pos);
+          }
+          if (entry.key.name === "length" && entry.value.type === "NumberLiteral") length = entry.value.value;
+          else if (entry.key.name === "omission" && entry.value.type === "StringLiteral") omission = entry.value.value;
+          else if (entry.key.name === "separator") {
+            throw new CodegenError(
+              `.truncate({ separator }) (word-boundary truncation) isn't supported \u2014 MQL has no back-search. Use 'length' + 'omission'.`,
+              entry.value.pos
+            );
+          } else {
+            throw new CodegenError(
+              `.truncate({ ${entry.key.name} }) \u2014 only literal 'length' and 'omission' are supported.`,
+              entry.value.pos
+            );
+          }
+        }
+      }
+      const keep = Math.max(0, length - omission.length);
+      return {
+        $cond: [
+          { $gt: [{ $strLenCP: genObj }, length] },
+          { $concat: [{ $substrCP: [genObj, 0, keep] }, omission] },
+          genObj
+        ]
+      };
+    }
+    // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────
+    case "clamp": {
+      const exprArgs = exprArgsOnly(args, "clamp");
+      checkArity("clamp", { sig: "lower, upper", exact: 2 }, exprArgs.length, callPos);
+      return { $min: [{ $max: [genObj, _generate(exprArgs[0], ctx)] }, _generate(exprArgs[1], ctx)] };
+    }
+    case "inRange": {
+      const exprArgs = exprArgsOnly(args, "inRange");
+      checkArity("inRange", { sig: "[start, ]end", allowed: [1, 2] }, exprArgs.length, callPos);
+      const lo = exprArgs.length === 2 ? _generate(exprArgs[0], ctx) : 0;
+      const hi = _generate(exprArgs[exprArgs.length === 2 ? 1 : 0], ctx);
+      return { $and: [{ $gte: [genObj, { $min: [lo, hi] }] }, { $lt: [genObj, { $max: [lo, hi] }] }] };
+    }
+    case "round": {
+      const exprArgs = exprArgsOnly(args, "round");
+      checkArity("round", { sig: "[precision]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const place = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : 0;
+      return { $round: [genObj, place] };
+    }
+    case "ceil":
+    case "floor": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "[precision]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const op = method === "ceil" ? "$ceil" : "$floor";
+      if (exprArgs.length === 0) return { [op]: genObj };
+      const factor = { $pow: [10, _generate(exprArgs[0], ctx)] };
+      return { $divide: [{ [op]: { $multiply: [genObj, factor] } }, factor] };
+    }
     default: {
       const hint = didYouMean(method, KNOWN_METHODS);
       throw new CodegenError(`Unknown method '.${method}()'.${hint}`, callPos);
@@ -6259,6 +6768,54 @@ function arrayIterInput(lambda, genObj, ctx, method, inputExpr) {
       }
     })
   };
+}
+function sortDirLiteral(e) {
+  if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral" && e.operand.value === 1) return -1;
+  if (e.type === "StringLiteral") return e.value === "asc" ? 1 : e.value === "desc" ? -1 : null;
+  return null;
+}
+function argToSortBy(arg, method) {
+  if (arg.type === "StringLiteral") {
+    if (arg.value === "" || arg.value.startsWith("$")) {
+      throw new CodegenError(
+        `.${method}("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+        arg.pos
+      );
+    }
+    return { [arg.value]: 1 };
+  }
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0)
+      throw new CodegenError(`.${method}([fields]) needs at least one field name.`, arg.pos);
+    const spec = {};
+    for (const el of arg.elements) {
+      if (el.type !== "StringLiteral")
+        throw new CodegenError(`.${method}([fields]) entries must be field-name strings.`, el.pos);
+      spec[el.value] = 1;
+    }
+    return spec;
+  }
+  if (arg.type === "ObjectLiteral") {
+    if (arg.entries.length === 0) throw new CodegenError(`.${method}({ \u2026 }) needs at least one field.`, arg.pos);
+    const spec = {};
+    for (const entry of arg.entries) {
+      if (entry.type === "SpreadElement")
+        throw new CodegenError(`.${method}({ \u2026 }) does not accept spread entries.`, entry.pos);
+      if (entry.key.kind !== "static")
+        throw new CodegenError(`.${method}({ \u2026 }) keys must be plain field names.`, entry.pos);
+      const dir = sortDirLiteral(entry.value);
+      if (dir === null) {
+        throw new CodegenError(
+          `.${method}({ ${entry.key.name}: \u2026 }) direction must be 1 / -1 / "asc" / "desc".`,
+          entry.value.pos
+        );
+      }
+      spec[entry.key.name] = dir;
+    }
+    return spec;
+  }
+  return lambdaToSortBy(arg, method);
 }
 function lambdaToSortBy(arg, method) {
   if (arg.type !== "Lambda") {
@@ -8240,6 +8797,89 @@ var SLICE = {
     return { stages };
   }
 };
+function validateSingleIntArg(sig, args, callPos, min) {
+  if (args.length !== 1) {
+    throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type !== "NumberLiteral") {
+    throw new CodegenError(
+      `${sig} requires an integer literal; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams \u2014 write the literal in source.`,
+      arg.pos
+    );
+  }
+  if (!Number.isInteger(arg.value) || arg.value < min) {
+    throw new CodegenError(`${sig} requires an integer >= ${min}; got ${arg.value}.`, arg.pos);
+  }
+}
+function validateSingleFieldArg(sig, args, callPos) {
+  if (args.length !== 1) {
+    throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type !== "StringLiteral") {
+    throw new CodegenError(
+      `${sig} requires a field-name string literal, e.g. '.countBy("status")'. Computed or dynamic arguments aren't supported on streams.`,
+      arg.pos
+    );
+  }
+  if (arg.value === "" || arg.value.startsWith("$")) {
+    throw new CodegenError(
+      `${sig} requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+      arg.pos
+    );
+  }
+}
+var TAKE = {
+  name: "take",
+  validate(args, callPos) {
+    validateSingleIntArg(".take(n)", args, callPos, 0);
+  },
+  lower(args) {
+    const n = args[0].value;
+    return { stages: n === 0 ? [{ $match: { $expr: false } }] : [{ $limit: n }] };
+  }
+};
+var DROP = {
+  name: "drop",
+  validate(args, callPos) {
+    validateSingleIntArg(".drop(n)", args, callPos, 0);
+  },
+  lower(args) {
+    const n = args[0].value;
+    return { stages: n === 0 ? [] : [{ $skip: n }] };
+  }
+};
+var SAMPLE_SIZE = {
+  name: "sampleSize",
+  validate(args, callPos) {
+    validateSingleIntArg(".sampleSize(n)", args, callPos, 1);
+  },
+  lower(args) {
+    const n = args[0].value;
+    return { stages: [{ $sample: { size: n } }] };
+  }
+};
+var SAMPLE = {
+  name: "sample",
+  validate(args, callPos) {
+    if (args.length !== 0) {
+      throw new CodegenError(
+        `.sample() takes no arguments, got ${args.length}. For n random documents use '.sampleSize(n)'.`,
+        callPos
+      );
+    }
+  },
+  lower() {
+    return { stages: [{ $sample: { size: 1 } }] };
+  }
+};
 var CONCAT = {
   name: "concat",
   validate(args, callPos) {
@@ -8316,6 +8956,15 @@ function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc) {
     pos
   );
 }
+function rejectNonDocumentMapBody(body) {
+  const kind = body.type === "NumberLiteral" ? "a number" : body.type === "BigIntLiteral" ? "a bigint" : body.type === "BooleanLiteral" ? "a boolean" : body.type === "NullLiteral" ? "null" : body.type === "RegexLiteral" ? "a regex" : body.type === "ArrayLiteral" ? "an array" : body.type === "StringLiteral" && !body.value.startsWith("$") ? "a string" : null;
+  if (kind !== null) {
+    throw new CodegenError(
+      `.map(d => \u2026) must return a document, but this maps each document to ${kind} \u2014 MongoDB's '$replaceWith' requires an object root. To reshape into a new document write '.map(d => ({ \u2026 }))'; to keep a single value under a key, wrap it: '.map(d => ({ value: \u2026 }))'.`,
+      body.pos
+    );
+  }
+}
 var MAP = {
   name: "map",
   validate(args, callPos) {
@@ -8329,9 +8978,18 @@ var MAP = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.map(...) does not accept a spread argument \u2014 pass a '(d) => <expr>' arrow.`, arg.pos);
     }
+    if (arg.type === "StringLiteral") {
+      if (arg.value === "" || arg.value.startsWith("$")) {
+        throw new CodegenError(
+          `.map("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+          arg.pos
+        );
+      }
+      return;
+    }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.map(d => <expr>) requires an arrow function as its argument, e.g. '.map(d => ({ id: d._id, name: d.name }))'.`,
+        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))') or a field-name string ('.map("userId")').`,
         arg.pos
       );
     }
@@ -8351,12 +9009,17 @@ var MAP = {
     rejectUsedIndexParam(arg);
   },
   lower(args, ctx, _callPos, lowerBlock2, _prevStages, allocSlot, _inSubPipeline) {
+    const shorthand = args[0];
+    if (shorthand.type === "StringLiteral") {
+      return { stages: [{ $replaceWith: `$${shorthand.value}` }], clearLets: true };
+    }
     const lambda = args[0];
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : void 0;
     const collLengthUsed = classifyCollParam(lambda);
     if (ctx.enclosingLookup !== void 0) {
       const ret = lambda.block !== void 0 ? lambda.ret : mapBodyExpr(lambda);
+      if (lambda.block === void 0) rejectNonDocumentMapBody(ret);
       if (containsUnionPush(ret)) {
         throw new CodegenError(
           `'$$.push(...)' inside a '.map(d => \u2026)' body isn't meaningful \u2014 '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
@@ -8397,6 +9060,7 @@ var MAP = {
       return { stages: lowerBlock2(synthetic, blockCtx), clearLets: true };
     }
     const body = mapBodyExpr(lambda);
+    rejectNonDocumentMapBody(body);
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => \u2026)' body isn't meaningful \u2014 '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
@@ -8433,10 +9097,10 @@ function classifyComparatorPath(expr, paramA, paramB) {
   if (segments.length === 0) return null;
   return { param: which, path: segments.join(".") };
 }
-function parseComparatorBody(body, paramA, paramB, callPos) {
+function parseComparatorBody(body, paramA, paramB, callPos, method) {
   if (body.type === "BinaryExpr" && body.op === "||") {
-    const left = parseComparatorBody(body.left, paramA, paramB, callPos);
-    const right = parseComparatorBody(body.right, paramA, paramB, callPos);
+    const left = parseComparatorBody(body.left, paramA, paramB, callPos, method);
+    const right = parseComparatorBody(body.right, paramA, paramB, callPos, method);
     return { ...left, ...right };
   }
   if (body.type === "BinaryExpr" && body.op === "-") {
@@ -8448,48 +9112,55 @@ function parseComparatorBody(body, paramA, paramB, callPos) {
     }
   }
   throw new CodegenError(
-    `.toSorted((${paramA}, ${paramB}) => \u2026) accepts only '${paramA}.<field> - ${paramB}.<field>' (ascending) or '${paramB}.<field> - ${paramA}.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.`,
+    `.${method}((${paramA}, ${paramB}) => \u2026) accepts only '${paramA}.<field> - ${paramB}.<field>' (ascending) or '${paramB}.<field> - ${paramA}.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.`,
     body.pos ?? callPos
   );
 }
-var TO_SORTED = {
-  name: "toSorted",
-  validate(args, callPos) {
-    if (args.length === 0) {
-      throw new CodegenError(
-        `.toSorted(<comparator>) requires a comparator arrow \u2014 MongoDB streams have no natural document ordering. Write '.toSorted((a, b) => a.<field> - b.<field>)' for ascending, 'b.<field> - a.<field>' for descending.`,
-        callPos
-      );
-    }
-    if (args.length > 1) {
-      throw new CodegenError(`.toSorted(<comparator>) takes exactly one argument, got ${args.length}.`, callPos);
-    }
-    const arg = args[0];
-    if (arg.type === "SpreadElement") {
-      throw new CodegenError(`.toSorted(...) does not accept a spread argument.`, arg.pos);
-    }
-    if (arg.type !== "Lambda") {
-      throw new CodegenError(
-        `.toSorted(<comparator>) requires an arrow function, e.g. '.toSorted((a, b) => a.age - b.age)'.`,
-        arg.pos
-      );
-    }
+function buildStreamSortSpec(args, callPos, method) {
+  if (args.length === 0) {
+    throw new CodegenError(
+      `.${method}(<sort>) needs a sort key \u2014 MongoDB streams have no natural document ordering. Pass a field name ('.${method}("createdAt")'), a '{ field: 1 | -1 | "asc" | "desc" }' spec, or a comparator '(a, b) => a.x - b.x'.`,
+      callPos
+    );
+  }
+  if (args.length > 1) {
+    throw new CodegenError(`.${method}(<sort>) takes exactly one argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`.${method}(...) does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type === "Lambda") {
     if (arg.params.length !== 2) {
       throw new CodegenError(
-        `.toSorted(<comparator>) requires a two-parameter arrow '(a, b) => \u2026' (got ${arg.params.length} params).`,
+        `.${method}((a, b) => \u2026) comparator requires a two-parameter arrow (got ${arg.params.length} params).`,
         arg.pos
       );
     }
     if (arg.body === void 0) {
-      throw new CodegenError(`.toSorted(<comparator>) requires an expression body, not a block.`, arg.pos);
+      throw new CodegenError(`.${method}((a, b) => \u2026) requires an expression body, not a block.`, arg.pos);
     }
+    const [paramA, paramB] = arg.params;
+    return parseComparatorBody(arg.body, paramA, paramB, callPos, method);
+  }
+  return buildKeySortSpec(arg, `.${method}(...)`);
+}
+var TO_SORTED = {
+  name: "toSorted",
+  validate(args, callPos) {
+    buildStreamSortSpec(args, callPos, "toSorted");
   },
-  lower(args, _ctx, callPos, _lowerBlock) {
-    const lambda = args[0];
-    const [paramA, paramB] = lambda.params;
-    const body = lambda.body;
-    const spec = parseComparatorBody(body, paramA, paramB, callPos);
-    return { stages: [{ $sort: spec }] };
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildStreamSortSpec(args, callPos, "toSorted") }] };
+  }
+};
+var SORT = {
+  name: "sort",
+  validate(args, callPos) {
+    buildStreamSortSpec(args, callPos, "sort");
+  },
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildStreamSortSpec(args, callPos, "sort") }] };
   }
 };
 var TO_REVERSED = {
@@ -8520,6 +9191,149 @@ var TO_REVERSED = {
       flipped[key] = dir === 1 ? -1 : 1;
     }
     return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
+  }
+};
+function fieldNameLiteral(e, sig) {
+  if (e.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
+  }
+  if (e.type !== "StringLiteral") {
+    throw new CodegenError(`${sig} requires field-name string literals; got '${e.type}'.`, e.pos);
+  }
+  if (e.value === "" || e.value.startsWith("$")) {
+    throw new CodegenError(
+      `${sig} requires plain field names (no leading '$'), got ${JSON.stringify(e.value)}.`,
+      e.pos
+    );
+  }
+  return e.value;
+}
+function sortDirection(e) {
+  if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral" && e.operand.value === 1) return -1;
+  if (e.type === "StringLiteral") return e.value === "asc" ? 1 : e.value === "desc" ? -1 : null;
+  return null;
+}
+function buildKeySortSpec(arg, sig) {
+  if (arg.type === "StringLiteral") {
+    return { [fieldNameLiteral(arg, sig)]: 1 };
+  }
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) {
+      throw new CodegenError(`${sig} needs at least one field name.`, arg.pos);
+    }
+    const spec2 = {};
+    for (const el of arg.elements) spec2[fieldNameLiteral(el, sig)] = 1;
+    return spec2;
+  }
+  if (arg.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `${sig} takes a field name ("age"), an array of field names (["a", "b"]), or a '{ field: 1 | -1 | "asc" | "desc" }' spec.`,
+      arg.pos
+    );
+  }
+  if (arg.entries.length === 0) {
+    throw new CodegenError(`${sig} needs at least one field.`, arg.pos);
+  }
+  const spec = {};
+  for (const entry of arg.entries) {
+    if (entry.type === "SpreadElement") {
+      throw new CodegenError(`${sig} does not accept spread entries.`, entry.pos);
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(`${sig} keys must be plain field names \u2014 computed keys aren't supported.`, entry.pos);
+    }
+    const dir = sortDirection(entry.value);
+    if (dir === null) {
+      throw new CodegenError(
+        `${sig} direction for '${entry.key.name}' must be 1 / -1 / "asc" / "desc".`,
+        entry.value.pos
+      );
+    }
+    spec[entry.key.name] = dir;
+  }
+  return spec;
+}
+function generateGroupBody(obj2, ctx, callPos) {
+  const out = {};
+  let hasId = false;
+  for (const entry of obj2.entries) {
+    if (entry.type === "SpreadElement") {
+      throw new CodegenError(
+        `.groupBy({ \u2026 }) does not accept spread entries \u2014 write an explicit '$group' body.`,
+        entry.pos
+      );
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(
+        `.groupBy({ \u2026 }) keys must be static field names \u2014 computed keys aren't supported.`,
+        entry.pos
+      );
+    }
+    const key = entry.key.name;
+    const slotCtx = key === "_id" ? ctx : { ...ctx, accumulatorContext: "group" };
+    out[key] = generateWithCtx(entry.value, slotCtx);
+    if (key === "_id") hasId = true;
+  }
+  if (!hasId) {
+    throw new CodegenError(
+      `.groupBy({ \u2026 }) requires an '_id' key (the group key). Use '.groupBy("field")' to group by a single field.`,
+      callPos
+    );
+  }
+  return out;
+}
+var GROUP_BY = {
+  name: "groupBy",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.groupBy(key | { _id: \u2026, <field>: <accumulator>, \u2026 }) takes exactly 1 argument, got ${args.length}.`,
+        callPos
+      );
+    }
+    const a = args[0];
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`.groupBy(...) does not accept a spread argument.`, a.pos);
+    }
+    if (a.type !== "StringLiteral" && a.type !== "ObjectLiteral") {
+      throw new CodegenError(
+        `.groupBy(...) takes a field name ("dept") or a '$group' body ({ _id: "$dept", n: $sum(1) }).`,
+        a.pos
+      );
+    }
+    if (a.type === "StringLiteral") fieldNameLiteral(a, ".groupBy(key)");
+  },
+  lower(args, ctx, callPos) {
+    const a = args[0];
+    if (a.type === "StringLiteral") {
+      return { stages: [{ $group: { _id: `$${a.value}` } }], clearLets: true };
+    }
+    const body = generateGroupBody(a, ctx, callPos);
+    return { stages: [{ $group: body }], clearLets: true };
+  }
+};
+var COUNT_BY = {
+  name: "countBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".countBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = args[0].value;
+    return { stages: [{ $sortByCount: `$${key}` }], clearLets: true };
+  }
+};
+var UNIQ_BY = {
+  name: "uniqBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".uniqBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = args[0].value;
+    return {
+      stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
+      clearLets: true
+    };
   }
 };
 function paramFieldPath(expr, param) {
@@ -8556,9 +9370,18 @@ var FLAT_MAP = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.flatMap(...) does not accept a spread argument.`, arg.pos);
     }
+    if (arg.type === "StringLiteral") {
+      if (arg.value === "" || arg.value.startsWith("$")) {
+        throw new CodegenError(
+          `.flatMap("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+          arg.pos
+        );
+      }
+      return;
+    }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.flatMap(d => d.<path>) requires an arrow function \u2014 in v1 the body must be a bare field-path on the lambda param (e.g. 'd.items', 'd.profile.tags').`,
+        `.flatMap(...) requires an arrow whose body is a bare field-path on the param (e.g. '.flatMap(d => d.items)') or a field-name string ('.flatMap("items")').`,
         arg.pos
       );
     }
@@ -8573,6 +9396,10 @@ var FLAT_MAP = {
     }
   },
   lower(args, _ctx, callPos, _lowerBlock, _prevStages) {
+    const shorthand = args[0];
+    if (shorthand.type === "StringLiteral") {
+      return { stages: [{ $unwind: `$${shorthand.value}` }] };
+    }
     const lambda = args[0];
     const param = lambda.params[0];
     const body = lambda.body;
@@ -8940,10 +9767,18 @@ function classifyConcatCall(expr, accParam, dParam) {
 }
 var STREAM_METHODS = {
   slice: SLICE,
+  sample: SAMPLE,
+  take: TAKE,
+  drop: DROP,
+  sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,
+  sort: SORT,
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
+  groupBy: GROUP_BY,
+  countBy: COUNT_BY,
+  uniqBy: UNIQ_BY,
   flatMap: FLAT_MAP
   // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
   // returns a scalar / object / array in JS depending on the reducer. A
@@ -10047,6 +10882,21 @@ function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosingArg
   if (chained !== null) return chained;
   return descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing);
 }
+function fieldPathLambda(path, pos) {
+  const param = "jsmqlEl";
+  let body = { type: "ParamRef", name: param, pos };
+  for (const seg of path.split(".")) body = { type: "MemberAccess", object: body, member: seg, pos };
+  return { type: "Lambda", params: [param], body, pos };
+}
+function peelableTerminalMap(m) {
+  if (m.method !== "map" || m.args.length !== 1) return null;
+  const arg = m.args[0];
+  if (arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0) return arg;
+  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
+    return fieldPathLambda(arg.value, arg.pos);
+  }
+  return null;
+}
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
   const methods = [];
@@ -10064,14 +10914,16 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   for (let i = 1; i < methods.length; i++) {
     if (lookupStreamMethod(methods[i].method) === null) return null;
   }
+  const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
+  const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
   const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
-  const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const usesRootLen = methods.slice(1, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   const innerCtx = {
     ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
     enclosingLookup: enclosing,
     pipelineLets: outerCtx.pipelineLets
   };
-  for (let i = 1; i < methods.length; i++) {
+  for (let i = 1; i < chainEnd; i++) {
     const m = methods[i];
     const def = lookupStreamMethod(m.method);
     if (def === null) return null;
@@ -10083,10 +10935,9 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   }
   const slot = allocSlot();
   const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
-  return {
-    stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }],
-    rewritten: { type: "FieldRef", path: slot, pos: expr.pos }
-  };
+  const slotRef = { type: "FieldRef", path: slot, pos: expr.pos };
+  const rewritten = terminalMap !== null ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos } : slotRef;
+  return { stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }], rewritten };
 }
 function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   const stages = [];
@@ -11658,18 +12509,12 @@ function lowerChainOnStream(methods, outerCtx, lowerBlockFn, allocSlot, rhs) {
 }
 function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) {
   let clearLets = false;
-  let i = 0;
-  if (methods[0].method === "filter") {
-    const m = methods[0];
-    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
-      rejectInvalidReplaceStream(rhs, ctx);
-    }
-    const matchStages = lowerStreamFilterPredicate(m.args[0], ctx, lowerBlockFn);
-    target.push(...matchStages);
-    i = 1;
-  }
-  for (; i < methods.length; i++) {
+  for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (m.method === "filter") {
+      target.push(...lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, i === 0));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$");
@@ -11681,6 +12526,19 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) 
     if (result.clearLets) clearLets = true;
   }
   return clearLets;
+}
+function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {
+  if (m.args.length === 1 && m.args[0].type === "Lambda") {
+    return lowerStreamFilterPredicate(m.args[0], ctx, lowerBlockFn);
+  }
+  if (m.args.length === 1 && m.args[0].type === "ObjectLiteral") {
+    return [{ $match: generateWithCtx(m.args[0], ctx) }];
+  }
+  if (isHead) rejectInvalidReplaceStream(rhs, ctx);
+  throw new CodegenError(
+    `.filter(<predicate> | { field: value, \u2026 }) takes a single arrow predicate ('o => \u2026') or a matches-object.`,
+    m.pos
+  );
 }
 function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSlot, rhs) {
   if (methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda" && predicateReferencesOuterDoc(methods[0].args[0], outerCtx)) {

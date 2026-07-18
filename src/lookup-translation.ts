@@ -1945,6 +1945,32 @@ export function extractLookupCalls(
  * couldn't represent or represented as the bulkier `$map` / `$filter` / `$slice`
  * operators).
  */
+// A synthesized `el => el.<path>` lambda for the `.map("<path>")` shorthand, used
+// when peeling a terminal map off a lookup chain (below).
+function fieldPathLambda(path: string, pos: number): Lambda {
+  const param = "jsmqlEl";
+  let body: Expr = { type: "ParamRef", name: param, pos };
+  for (const seg of path.split(".")) body = { type: "MemberAccess", object: body, member: seg, pos };
+  return { type: "Lambda", params: [param], body, pos };
+}
+
+// If a chain's terminal method is a value-extracting `.map(iteratee)` — a field
+// string or an expression-body arrow — return its iteratee as a lambda so it can
+// be applied as a value-mode `$map` on the lookup RESULT array (in the surrounding
+// `$set`) rather than as a `$replaceWith` inside the `$lookup.pipeline`. That in-
+// pipeline `$replaceWith` is invalid MQL when the mapped value is a scalar (mongod:
+// "'replacement document' must evaluate to an object"). Returns null (leave it in
+// the sub-pipeline) for a block-body arrow or a non-map terminal.
+function peelableTerminalMap(m: MethodCall): Lambda | null {
+  if (m.method !== "map" || m.args.length !== 1) return null;
+  const arg = m.args[0];
+  if (arg.type === "Lambda" && arg.block === undefined && arg.body !== undefined) return arg;
+  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
+    return fieldPathLambda(arg.value, arg.pos);
+  }
+  return null;
+}
+
 function tryExtractChainedLookup(
   expr: Expr,
   outerCtx: GenerateCtx,
@@ -1973,6 +1999,11 @@ function tryExtractChainedLookup(
   for (let i = 1; i < methods.length; i++) {
     if (lookupStreamMethod(methods[i].method) === null) return null;
   }
+  // A value-extracting terminal `.map` is peeled off the sub-pipeline and applied
+  // to the RESULT array instead (see `peelableTerminalMap`). `chainEnd` bounds the
+  // sub-pipeline chain loop below to exclude it.
+  const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
+  const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
   // Force pipeline form for the lookup so the chain stages can extend it.
   // The enclosing context flows through so nested lookups inside the
   // predicate materialise correctly with their own let-bindings.
@@ -1982,7 +2013,7 @@ function tryExtractChainedLookup(
   // (depth-stamped `v<d>_len`) so the sub-pipeline reads it as `$$v<d>_len`
   // (via `rootStreamLengthVar`). `$$` is always the ROOT stream regardless of
   // depth; inner sub-stream counts use the 3rd-arg handle instead.
-  const usesRootLen = methods.slice(1).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const usesRootLen = methods.slice(1, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   // Carry `enclosing` on the chain ctx so a statement-block `.map` chain method
   // (`lowerCallbackBlock`) can capture its cross-level reads into the right
   // ancestor `$lookup.let`. Carry the outer pipeline's `let`s too, so a chain
@@ -1995,7 +2026,7 @@ function tryExtractChainedLookup(
   };
   // Apply each chain method through the stream-methods registry. `inSubPipeline`
   // is true so methods know they're emitting inside a sub-pipeline body.
-  for (let i = 1; i < methods.length; i++) {
+  for (let i = 1; i < chainEnd; i++) {
     const m = methods[i];
     const def = lookupStreamMethod(m.method);
     if (def === null) return null; // (defensive — already filtered above)
@@ -2012,10 +2043,14 @@ function tryExtractChainedLookup(
   // path as `as` directly, dropping the trailing `$set` + `$unset`.)
   const slot = allocSlot();
   const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
-  return {
-    stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }],
-    rewritten: { type: "FieldRef", path: slot, pos: expr.pos },
-  };
+  const slotRef: Expr = { type: "FieldRef", path: slot, pos: expr.pos };
+  // A peeled terminal `.map` becomes `<slot>.map(iteratee)` — codegen lowers it to
+  // a value-mode `$map` over the lookup result array in the surrounding assignment.
+  const rewritten: Expr =
+    terminalMap !== null
+      ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos }
+      : slotRef;
+  return { stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }], rewritten };
 }
 
 function descendAndExtract(

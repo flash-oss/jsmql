@@ -84,6 +84,10 @@ Patterns not specifically recognised (`<lookup>.map(fn)`, `<lookup>.at(idx)`, se
 
 A chained terminal that doesn't carry its own predicate (`<lookup>.length`, `.reduce`, `.map`) **requires** a `.find/.filter(pred)` first — bare `$$$.coll.reduce(...)` cannot be reached because `$$$.coll` alone is not a `MethodCall` and `detectLookupCall` won't match. The bare-reference codegen error then fires with the actionable "must be followed by `.find/.filter`" message.
 
+### Terminal-`.map` peel (`tryExtractChainedLookup`)
+
+For a `$$$.<coll>.filter(pred).<stream-chain>` chain, `tryExtractChainedLookup` builds the `$lookup` (pipeline-form) and pushes each subsequent registered stream method into the sub-pipeline. **Exception: a value-extracting terminal `.map`** — the *last* method when it's `.map("field")` or `.map(x => <expr>)` (an expression-body arrow) — is **peeled off** the sub-pipeline (`peelableTerminalMap`) and returned as `<slot>.map(iteratee)` in `rewritten`, so codegen lowers it to a value-mode `$map` over the lookup result array in the surrounding `$set`/binding. Rationale: `.map`'s in-pipeline lowering is a `$replaceWith`, and `$replaceWith: "$scalar"` is **invalid MQL** (mongod: "'replacement document' must evaluate to an object" — verified) whenever the mapped field is a scalar (the `.map("userId")` extraction case). A **block-body** terminal `.map(x => { … ; return <ret> })` is *not* peeled (it stays in the sub-pipeline via `lowerCallbackBlock`'s `terminalRet` → `$replaceWith`, § "block-body `.map`"). The peel is uniform across the field-assignment and `const`/`let`-binding forms because both consume the same returned `rewritten`.
+
 ## Pipeline integration
 
 `src/pipeline.ts` wires lookup-translation into the two top-level lowering entry points:
