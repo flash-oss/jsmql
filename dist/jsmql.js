@@ -9223,6 +9223,66 @@ var TAIL = {
     return { stages: [{ $skip: 1 }] };
   }
 };
+function reverseSortTrick(prevStages, op, n, method, callPos) {
+  const last = prevStages[prevStages.length - 1];
+  const sortSpec = last !== void 0 ? last["$sort"] : void 0;
+  if (sortSpec !== void 0) {
+    const flipped = {};
+    for (const key of Object.keys(sortSpec)) {
+      const dir = sortSpec[key];
+      if (dir !== 1 && dir !== -1) {
+        throw new CodegenError(
+          `.${method}() counts 'from the end' by reversing the preceding sort, but that $sort on '${key}' isn't a directional 1/-1 sort. Precede '.${method}()' with a '.sort(...)' on 1/-1 fields (or remove the non-directional sort).`,
+          callPos
+        );
+      }
+      flipped[key] = dir === 1 ? -1 : 1;
+    }
+    return { stages: [{ $sort: flipped }, { [op]: n }, { $sort: sortSpec }], replacesPreviousStage: true };
+  }
+  return { stages: [{ $sort: { _id: -1 } }, { [op]: n }, { $sort: { _id: 1 } }] };
+}
+var TAKE_RIGHT = {
+  name: "takeRight",
+  validate(args, callPos) {
+    validateSingleIntArg(".takeRight(n)", args, callPos, 0);
+  },
+  lower(args, _ctx, callPos, _lb, prevStages) {
+    const n = args[0].value;
+    if (n === 0) return { stages: [{ $match: { $expr: false } }] };
+    return reverseSortTrick(prevStages, "$limit", n, "takeRight", callPos);
+  }
+};
+var DROP_RIGHT = {
+  name: "dropRight",
+  validate(args, callPos) {
+    validateSingleIntArg(".dropRight(n)", args, callPos, 0);
+  },
+  lower(args, _ctx, callPos, _lb, prevStages) {
+    const n = args[0].value;
+    if (n === 0) return { stages: [] };
+    return reverseSortTrick(prevStages, "$skip", n, "dropRight", callPos);
+  }
+};
+var INITIAL = {
+  name: "initial",
+  validate(args, callPos) {
+    if (args.length !== 0) throw new CodegenError(`.initial() takes no arguments, got ${args.length}.`, callPos);
+  },
+  lower(_args, _ctx, callPos, _lb, prevStages) {
+    return reverseSortTrick(prevStages, "$skip", 1, "initial", callPos);
+  }
+};
+var SHUFFLE = {
+  name: "shuffle",
+  validate(args, callPos) {
+    if (args.length !== 0) throw new CodegenError(`.shuffle() takes no arguments, got ${args.length}.`, callPos);
+  },
+  lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot) {
+    const slot = allocSlot();
+    return { stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }, { $unset: slot }] };
+  }
+};
 var SAMPLE_SIZE = {
   name: "sampleSize",
   validate(args, callPos) {
@@ -10205,6 +10265,10 @@ var STREAM_METHODS = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
+  takeRight: TAKE_RIGHT,
+  dropRight: DROP_RIGHT,
+  initial: INITIAL,
+  shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,
@@ -13166,6 +13230,12 @@ function unknownStreamMethod(m, receiver) {
     const streamHint = single2 ? ` For a one-document stream, use '${receiver}.filter(<pred>).take(1)' / '.slice(...)'.` : "";
     return new CodegenError(
       `'.${m.method}(...)' returns a single value, not a stream \u2014 it collapses '${receiver}' to one value, so it's only valid in a VALUE position: 'const x = ${receiver}.${m.method}(...)' or '$.field = ${receiver}.${m.method}(...)', not as a '$$ = \u2026' pivot or a bare statement.${streamHint}`,
+      m.pos
+    );
+  }
+  if (m.method === "takeWhile" || m.method === "dropWhile") {
+    return new CodegenError(
+      `'.${m.method}(...)' as a stream method is not yet supported [DEF-034] \u2014 it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
       m.pos
     );
   }

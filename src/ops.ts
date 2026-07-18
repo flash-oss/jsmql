@@ -2215,6 +2215,14 @@ declare global {
     drop(n: number): JsmqlCollectionRef;
     /** All but the first document → `$skip: 1` (lodash `_.tail`). */
     tail(): JsmqlCollectionRef;
+    /** Last `n` documents → reverse-sort + `$limit` + restore (reverses a preceding `$sort`, else orders by `_id`). */
+    takeRight(n: number): JsmqlCollectionRef;
+    /** All but the last `n` documents → reverse-sort + `$skip` + restore. */
+    dropRight(n: number): JsmqlCollectionRef;
+    /** All but the last document → `.dropRight(1)`. */
+    initial(): JsmqlCollectionRef;
+    /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
+    shuffle(): JsmqlCollectionRef;
     /** `n` random documents → `$sample`. */
     sampleSize(n: number): JsmqlCollectionRef;
     /** Append documents / union collections → `$unionWith`. */

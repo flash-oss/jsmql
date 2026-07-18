@@ -229,6 +229,20 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
+### DEF-034 — stream `.takeWhile(pred)` / `.dropWhile(pred)` (running-flag over an ordered stream)
+
+- **What's blocked.** The lodash predicate-run methods as **stream** methods on `$$` / `$$$.<coll>`. The value-mode forms (on an array) already ship (`.takeWhile`/`.dropWhile` → first-falsy-index `$slice`); only the stream forms are deferred.
+- **Target lowering.** MongoDB streams have no cross-document running state except `$setWindowFields`. `takeWhile(p)` ≈ compute a running max of the negated predicate over an ordered stream (`$setWindowFields` with an unbounded preceding window), then `$match` documents before the first `p`-failure; `dropWhile` keeps the complement. Requires a defined order (a preceding `.sort(...)` or `_id`), and the boundary semantics (stop at the FIRST failure) make the window/`$match` interplay fiddly.
+- **Why blocked.** Contorted and rarely needed on a stream — the running-flag `$setWindowFields` + boundary `$match` is heavy, and the far more common intent (take while sorted-key < X) is already expressible as `.sort(<key>)` + `.filter(o => o.<key> < X)`. Deferred by developer decision (2026-07-19) after implementing the rest of the lodash stream Tier 3 (`.takeRight`/`.dropRight`/`.initial`/`.shuffle`).
+- **Attempted approaches.** None yet — deferred at design time.
+- **Success criteria.** `$$.sort("t").takeWhile(o => o.t < cutoff)` keeps the leading run below the cutoff; `.dropWhile` keeps the complement; both reject (or default to `_id`) when no order is defined.
+- **Rejection site(s).** `src/pipeline.ts` `unknownStreamMethod` (the `takeWhile`/`dropWhile` branch), tagged `[DEF-034]`.
+- **Spec.** `docs/specs/stream-methods.md`.
+- **Status.** open
+- **Effort.** M
+
+---
+
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.

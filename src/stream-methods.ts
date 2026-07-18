@@ -233,6 +233,90 @@ const TAIL: StreamMethodDef = {
   },
 };
 
+// ── .takeRight(n) / .dropRight(n) / .initial() → the reverse-sort trick ────────
+//
+// "From the end" of a stream needs an ordering. If the immediately-preceding
+// stage is a directional `$sort` S, reverse it (S'), apply `$limit`/`$skip`, then
+// restore S — so `takeRight(n)` is the last n IN S ORDER. With no preceding sort,
+// order by `_id` (`$sort:{_id:-1}` … `$sort:{_id:1}`) — the n largest-`_id`
+// documents, roughly insertion order.
+function reverseSortTrick(
+  prevStages: readonly object[],
+  op: "$limit" | "$skip",
+  n: number,
+  method: string,
+  callPos: number,
+): StreamMethodResult {
+  const last = prevStages[prevStages.length - 1] as Record<string, unknown> | undefined;
+  const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
+  if (sortSpec !== undefined) {
+    const flipped: Record<string, 1 | -1> = {};
+    for (const key of Object.keys(sortSpec)) {
+      const dir = sortSpec[key];
+      if (dir !== 1 && dir !== -1) {
+        throw new CodegenError(
+          `.${method}() counts 'from the end' by reversing the preceding sort, but that $sort on '${key}' isn't a directional 1/-1 sort. Precede '.${method}()' with a '.sort(...)' on 1/-1 fields (or remove the non-directional sort).`,
+          callPos,
+        );
+      }
+      flipped[key] = dir === 1 ? -1 : 1;
+    }
+    // Reverse the prior sort, apply the op, then restore the original order.
+    return { stages: [{ $sort: flipped }, { [op]: n }, { $sort: sortSpec }], replacesPreviousStage: true };
+  }
+  return { stages: [{ $sort: { _id: -1 } }, { [op]: n }, { $sort: { _id: 1 } }] };
+}
+
+const TAKE_RIGHT: StreamMethodDef = {
+  name: "takeRight",
+  validate(args, callPos) {
+    validateSingleIntArg(".takeRight(n)", args, callPos, 0);
+  },
+  lower(args, _ctx, callPos, _lb, prevStages) {
+    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
+    if (n === 0) return { stages: [{ $match: { $expr: false } }] }; // last 0 → empty
+    return reverseSortTrick(prevStages, "$limit", n, "takeRight", callPos);
+  },
+};
+
+const DROP_RIGHT: StreamMethodDef = {
+  name: "dropRight",
+  validate(args, callPos) {
+    validateSingleIntArg(".dropRight(n)", args, callPos, 0);
+  },
+  lower(args, _ctx, callPos, _lb, prevStages) {
+    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
+    if (n === 0) return { stages: [] }; // drop last 0 → identity
+    return reverseSortTrick(prevStages, "$skip", n, "dropRight", callPos);
+  },
+};
+
+const INITIAL: StreamMethodDef = {
+  name: "initial",
+  validate(args, callPos) {
+    if (args.length !== 0) throw new CodegenError(`.initial() takes no arguments, got ${args.length}.`, callPos);
+  },
+  lower(_args, _ctx, callPos, _lb, prevStages) {
+    return reverseSortTrick(prevStages, "$skip", 1, "initial", callPos); // dropRight(1)
+  },
+};
+
+// ── .shuffle() → $rand sort ───────────────────────────────────────────────────
+//
+// Random order: stamp each doc with a `$rand` key, sort by it, drop the key.
+// Non-deterministic at runtime (like `.sample`). The temp lives in the `__jsmql`
+// scratch namespace, so the trailing `$unset: "__jsmql"` clears any residue.
+const SHUFFLE: StreamMethodDef = {
+  name: "shuffle",
+  validate(args, callPos) {
+    if (args.length !== 0) throw new CodegenError(`.shuffle() takes no arguments, got ${args.length}.`, callPos);
+  },
+  lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot) {
+    const slot = allocSlot();
+    return { stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }, { $unset: slot }] };
+  },
+};
+
 // ── .sampleSize(n) → $sample ──────────────────────────────────────────────────
 //
 // lodash `_.sampleSize(coll, n)` — `n` random documents. Maps to the `$sample`
@@ -1837,6 +1921,10 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
+  takeRight: TAKE_RIGHT,
+  dropRight: DROP_RIGHT,
+  initial: INITIAL,
+  shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,

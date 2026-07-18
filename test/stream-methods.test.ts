@@ -160,6 +160,50 @@ describe(".tail() → $skip: 1 — lodash all-but-first", () => {
   });
 });
 
+describe(".takeRight / .dropRight / .initial — the reverse-sort trick", () => {
+  it("no preceding sort → reverses by _id", () => {
+    expect(jsmql("$$ = $$.takeRight(3);")).toEqual([{ $sort: { _id: -1 } }, { $limit: 3 }, { $sort: { _id: 1 } }]);
+    expect(jsmql("$$ = $$.dropRight(2);")).toEqual([{ $sort: { _id: -1 } }, { $skip: 2 }, { $sort: { _id: 1 } }]);
+  });
+  it("a preceding directional $sort is reversed, applied, then restored", () => {
+    expect(jsmql('$$ = $$.sort("createdAt").takeRight(3);')).toEqual([
+      { $sort: { createdAt: -1 } },
+      { $limit: 3 },
+      { $sort: { createdAt: 1 } },
+    ]);
+    expect(jsmql("$$ = $$.sort({ score: -1 }).dropRight(2);")).toEqual([
+      { $sort: { score: 1 } },
+      { $skip: 2 },
+      { $sort: { score: -1 } },
+    ]);
+  });
+  it(".initial() is .dropRight(1)", () => {
+    expect(jsmql('$$ = $$.sort("v").initial();')).toEqual([{ $sort: { v: -1 } }, { $skip: 1 }, { $sort: { v: 1 } }]);
+  });
+  it(".takeRight(0) is empty; .dropRight(0) is identity", () => {
+    expect(jsmql("$$ = $$.takeRight(0);")).toEqual([{ $match: { $expr: false } }]);
+    expect(jsmql("$$ = $$.dropRight(0);")).toEqual([]);
+  });
+});
+
+describe(".shuffle() → $rand sort", () => {
+  it("stamps a $rand key, sorts by it, then drops it (residue cleared by the trailing $unset)", () => {
+    expect(jsmql("$$.shuffle();")).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $rand: {} } } },
+      { $sort: { "__jsmql.tmp.1": 1 } },
+      { $unset: "__jsmql.tmp.1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
+describe("stream .takeWhile / .dropWhile are deferred [DEF-034]", () => {
+  it("throw an actionable error pointing at the value-mode / sort+filter forms", () => {
+    expect(() => jsmql("$$.takeWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
+    expect(() => jsmql("$$.dropWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
+  });
+});
+
 describe(".sampleSize(n) → $sample", () => {
   it("lowers to $sample", () => {
     expect(jsmql("$$ = $$.sampleSize(3);")).toEqual([{ $sample: { size: 3 } }]);

@@ -156,6 +156,13 @@ const STREAM_METHOD_SIGNATURES = {
   take: { doc: "First `n` documents → `$limit`.", params: "(n: number)" },
   drop: { doc: "Skip the first `n` documents → `$skip`.", params: "(n: number)" },
   tail: { doc: "All but the first document → `$skip: 1` (lodash `_.tail`).", params: "()" },
+  takeRight: {
+    doc: "Last `n` documents → reverse-sort + `$limit` + restore (reverses a preceding `$sort`, else orders by `_id`).",
+    params: "(n: number)",
+  },
+  dropRight: { doc: "All but the last `n` documents → reverse-sort + `$skip` + restore.", params: "(n: number)" },
+  initial: { doc: "All but the last document → `.dropRight(1)`.", params: "()" },
+  shuffle: { doc: "Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`).", params: "()" },
   sampleSize: { doc: "`n` random documents → `$sample`.", params: "(n: number)" },
   sort: {
     doc: 'Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator.',

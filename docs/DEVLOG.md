@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-19 — feat: stream Tier 3 — `.takeRight` / `.dropRight` / `.initial` / `.shuffle` (reverse-sort trick); `.takeWhile`/`.dropWhile` deferred [DEF-034]
+
+The "from-the-end" and random stream reshapers. A document stream has no inherent order, so
+"last n" only means something relative to one — `reverseSortTrick` reverses a preceding
+directional `$sort` (via `replacesPreviousStage`), applies `$limit`/`$skip`, then restores it;
+with no preceding sort it orders by `_id` (developer's choice):
+
+    $$.takeRight(3)              → [{ $sort:{_id:-1} }, { $limit:3 }, { $sort:{_id:1} }]
+    $$.sort("createdAt").takeRight(3) → [{ $sort:{createdAt:-1} }, { $limit:3 }, { $sort:{createdAt:1} }]
+    $$.dropRight(2)              → …$skip:2…            $$.initial() = .dropRight(1)
+    $$.shuffle()                → [{ $addFields:{ <__jsmql.tmp.N>: {$rand:{}} } }, { $sort:{<slot>:1} }, { $unset:<slot> }]
+
+`takeRight(0)` → empty (`$match:{$expr:false}`); `dropRight(0)` → identity. A non-directional
+preceding `$sort` is rejected (sort by 1/-1 first). `.shuffle` stamps a `$rand` key via a
+`__jsmql.tmp` slot and `$unset`s it; the trailing `$unset:"__jsmql"` clears the residue
+(verified — no `__jsmql` leaks to output). All verified on a live mongod (`takeRight`/`dropRight`/
+`initial` with and without a prior sort; `shuffle` randomises with no residual).
+
+Stream `.takeWhile`/`.dropWhile` are **deferred** ([DEF-034], developer decision): a stream
+running-flag needs `$setWindowFields` over an ordered stream, which is heavy and rarely needed
+(the common intent is `.sort(key)` + `.filter(o => o.key < X)`). They throw an actionable error
+pointing at the value-mode forms (which ship) or the sort+filter workaround. Value-mode
+`.takeWhile`/`.dropWhile` on arrays are unaffected.
+
 ## 2026-07-18 — feat: value-collapsing stream terminals are value-position-only (`.head`/`.size`/`.every`/… pivot to value-mode)
 
 Formalises the rule the developer asked for: a value-collapsing lodash terminal —
