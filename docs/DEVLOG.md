@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: stream `.sortBy` / `.orderBy` → `$sort` (re-added; lodash sort aliases on the document stream)
+
+First family of the **document-stream** lodash coverage (mirroring the value-mode push). The
+lodash sort aliases as stream methods:
+
+    $$.sortBy("age")                       → [{ $sort: { age: 1 } }]
+    $$.orderBy(["age", "name"], ["desc", "asc"]) → [{ $sort: { age: -1, name: 1 } }]
+
+Registered in `STREAM_METHODS`, so they work in every stream context (top-level `$$`, the
+`$$$.<coll>` lookup sub-pipeline, the `$$ =` source-switch). `.sortBy` is ascending by a
+field / `[fields]` (an object arg is rejected — a lodash matches-shorthand, not a direction,
+pointing at `.orderBy` / `.sort`); `.orderBy` zips parallel `keys` + `orders` arrays.
+
+Correction: these were dropped from streams in `efce89f` (alongside the genuinely-unwanted
+`.toReversedBy`) — that was over-removal. The developer never intended to remove `sortBy`/
+`orderBy`; the earlier "sort / sortBy / orderBy" list was a guide to implement them all.
+Verified on a live mongod.
+
 ## 2026-07-18 — fix: a value-collapsing `.map` in a `$$ =` replace-stream pivot is rejected, not lowered to runtime-invalid MQL
 
 Companion to the assignment-form fix (`8505a01`). `$$ = $$$.orders.filter(...).map("productId")`

@@ -160,6 +160,11 @@ const STREAM_METHOD_SIGNATURES = {
     doc: 'Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator.',
     params: '(sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number))',
   },
+  sortBy: { doc: "Ascending sort by a key → `$sort` (lodash `_.sortBy`).", params: "(key: string | string[])" },
+  orderBy: {
+    doc: "Multi-key sort with per-key directions → `$sort` (lodash `_.orderBy`).",
+    params: '(keys: string | string[], orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[])',
+  },
   groupBy: {
     doc: "Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name.",
     params: "(spec: string | Record<string, any>)",

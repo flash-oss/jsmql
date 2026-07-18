@@ -9521,6 +9521,61 @@ var SORT = {
     return { stages: [{ $sort: buildStreamSortSpec(args, callPos, "sort") }] };
   }
 };
+function buildSortByStreamSpec(args, callPos) {
+  if (args.length !== 1) {
+    throw new CodegenError(`.sortBy(<field> | [fields]) takes exactly one argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "ObjectLiteral") {
+    throw new CodegenError(
+      `.sortBy({ \u2026 }) isn't supported \u2014 an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.sort({ field: -1 })' for directions.`,
+      arg.pos
+    );
+  }
+  return buildKeySortSpec(arg, ".sortBy(...)");
+}
+function orderByStreamDir(e) {
+  if (e.type !== "StringLiteral" && e.type !== "NumberLiteral" && e.type !== "UnaryExpr") {
+    throw new CodegenError(`.orderBy(keys, orders) directions must be 1 / -1 / "asc" / "desc".`, e.pos);
+  }
+  const dir = sortDirection(e);
+  if (dir === null) {
+    throw new CodegenError(`.orderBy(keys, orders) directions must be 1 / -1 / "asc" / "desc".`, e.pos);
+  }
+  return dir;
+}
+function buildOrderByStreamSpec(args, callPos) {
+  if (args.length < 1 || args.length > 2) {
+    throw new CodegenError(`.orderBy(keys[, orders]) takes one or two arguments, got ${args.length}.`, callPos);
+  }
+  const keysArg = args[0];
+  const ordersArg = args[1];
+  const names = keysArg.type === "ArrayLiteral" ? keysArg.elements.map((el) => fieldNameLiteral(el, ".orderBy(keys)")) : [fieldNameLiteral(keysArg, ".orderBy(keys)")];
+  const dirs = ordersArg === void 0 ? [] : ordersArg.type === "ArrayLiteral" ? ordersArg.elements.map((el) => orderByStreamDir(el)) : [orderByStreamDir(ordersArg)];
+  const spec = {};
+  names.forEach((nm, i) => {
+    spec[nm] = dirs[i] ?? 1;
+  });
+  return spec;
+}
+var SORT_BY = {
+  name: "sortBy",
+  validate(args, callPos) {
+    buildSortByStreamSpec(args, callPos);
+  },
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildSortByStreamSpec(args, callPos) }] };
+  }
+};
+var ORDER_BY = {
+  name: "orderBy",
+  validate(args, callPos) {
+    buildOrderByStreamSpec(args, callPos);
+  },
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildOrderByStreamSpec(args, callPos) }] };
+  }
+};
 var TO_REVERSED = {
   name: "toReversed",
   validate(args, callPos) {
@@ -10133,6 +10188,8 @@ var STREAM_METHODS = {
   map: MAP,
   sort: SORT,
   toSorted: TO_SORTED,
+  sortBy: SORT_BY,
+  orderBy: ORDER_BY,
   toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,

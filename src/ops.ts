@@ -2227,6 +2227,13 @@ declare global {
     toSorted(
       sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
     ): JsmqlCollectionRef;
+    /** Ascending sort by a key → `$sort` (lodash `_.sortBy`). */
+    sortBy(key: string | string[]): JsmqlCollectionRef;
+    /** Multi-key sort with per-key directions → `$sort` (lodash `_.orderBy`). */
+    orderBy(
+      keys: string | string[],
+      orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
+    ): JsmqlCollectionRef;
     /** Reverse the preceding sort — flips the preceding `$sort`. */
     toReversed(): JsmqlCollectionRef;
     /** Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name. */

@@ -206,6 +206,19 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
     expect(jsmql("$$ = $$.toSorted({ n: -1 });")).toEqual([{ $sort: { n: -1 } }]);
   });
 
+  it(".sortBy(field | [fields]) → ascending $sort (lodash alias); object arg is rejected", () => {
+    expect(jsmql('$$ = $$.sortBy("age");')).toEqual([{ $sort: { age: 1 } }]);
+    expect(jsmql('$$ = $$.sortBy(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
+    expect(() => jsmql("$$ = $$.sortBy({ age: -1 });")).toThrow(/matches-shorthand.*orderBy/s);
+  });
+
+  it(".orderBy(keys, orders) → $sort with per-key directions (fewer orders default asc)", () => {
+    expect(jsmql('$$ = $$.orderBy("age", "desc");')).toEqual([{ $sort: { age: -1 } }]);
+    expect(jsmql('$$ = $$.orderBy(["age", "name"], ["desc", "asc"]);')).toEqual([{ $sort: { age: -1, name: 1 } }]);
+    expect(jsmql('$$ = $$.orderBy(["a", "b"]);')).toEqual([{ $sort: { a: 1, b: 1 } }]);
+    expect(() => jsmql('$$ = $$.orderBy("age", "up");')).toThrow(/directions must be 1 \/ -1/);
+  });
+
   it("runs inside a $$$.<coll> source-switch sub-pipeline", () => {
     expect(jsmql("$$ = $$$.archive.sort({ createdAt: -1 }).take(5);")).toEqual([
       { $match: { $expr: false } },

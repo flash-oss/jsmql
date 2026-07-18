@@ -731,6 +731,78 @@ const SORT: StreamMethodDef = {
   },
 };
 
+// ── .sortBy(field | [fields]) / .orderBy(keys, orders) → $sort ─────────────────
+// The lodash sort names, value-mode siblings re-added for streams. `.sortBy` is
+// ascending by one or more keys; `.orderBy` takes parallel keys + directions.
+function buildSortByStreamSpec(args: readonly CallArg[], callPos: number): Record<string, 1 | -1> {
+  if (args.length !== 1) {
+    throw new CodegenError(`.sortBy(<field> | [fields]) takes exactly one argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "ObjectLiteral") {
+    throw new CodegenError(
+      `.sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.sort({ field: -1 })' for directions.`,
+      arg.pos,
+    );
+  }
+  return buildKeySortSpec(arg as Expr, ".sortBy(...)"); // field / [fields] → ascending
+}
+
+// A single `.orderBy` direction slot: 1 / -1 / "asc" / "desc".
+function orderByStreamDir(e: Expr | SpreadElement): 1 | -1 {
+  if (e.type !== "StringLiteral" && e.type !== "NumberLiteral" && e.type !== "UnaryExpr") {
+    throw new CodegenError(`.orderBy(keys, orders) directions must be 1 / -1 / "asc" / "desc".`, e.pos);
+  }
+  const dir = sortDirection(e);
+  if (dir === null) {
+    throw new CodegenError(`.orderBy(keys, orders) directions must be 1 / -1 / "asc" / "desc".`, e.pos);
+  }
+  return dir;
+}
+
+function buildOrderByStreamSpec(args: readonly CallArg[], callPos: number): Record<string, 1 | -1> {
+  if (args.length < 1 || args.length > 2) {
+    throw new CodegenError(`.orderBy(keys[, orders]) takes one or two arguments, got ${args.length}.`, callPos);
+  }
+  const keysArg = args[0];
+  const ordersArg = args[1];
+  const names =
+    keysArg.type === "ArrayLiteral"
+      ? keysArg.elements.map((el) => fieldNameLiteral(el as Expr | SpreadElement, ".orderBy(keys)"))
+      : [fieldNameLiteral(keysArg, ".orderBy(keys)")];
+  const dirs =
+    ordersArg === undefined
+      ? []
+      : ordersArg.type === "ArrayLiteral"
+        ? ordersArg.elements.map((el) => orderByStreamDir(el as Expr | SpreadElement))
+        : [orderByStreamDir(ordersArg)];
+  const spec: Record<string, 1 | -1> = {};
+  names.forEach((nm, i) => {
+    spec[nm] = dirs[i] ?? 1; // fewer orders than keys ⇒ remainder ascending (lodash)
+  });
+  return spec;
+}
+
+const SORT_BY: StreamMethodDef = {
+  name: "sortBy",
+  validate(args, callPos) {
+    buildSortByStreamSpec(args, callPos);
+  },
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildSortByStreamSpec(args, callPos) }] };
+  },
+};
+
+const ORDER_BY: StreamMethodDef = {
+  name: "orderBy",
+  validate(args, callPos) {
+    buildOrderByStreamSpec(args, callPos);
+  },
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildOrderByStreamSpec(args, callPos) }] };
+  },
+};
+
 // ── .toReversed() → flips the preceding $sort spec ────────────────────────────
 //
 // Zero-arg. Only valid when the immediately preceding stage is a `$sort` —
@@ -1734,6 +1806,8 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   map: MAP,
   sort: SORT,
   toSorted: TO_SORTED,
+  sortBy: SORT_BY,
+  orderBy: ORDER_BY,
   toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
