@@ -12954,6 +12954,13 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
 function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
   const filterMethod = methods[0];
   const restMethods = methods.slice(1);
+  const collapsing = restMethods.find(isValueCollapsingMap);
+  if (collapsing !== void 0) {
+    throw new CodegenError(
+      `'.map(...)' in a '$$ = $$$.<coll>.filter(...)' pivot must return a DOCUMENT \u2014 the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ \u2026 }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.filter(...).map(...)'.`,
+      collapsing.pos
+    );
+  }
   const lambda = filterMethod.args[0];
   const slot = allocSlot();
   const from = requireSameDbColl(target.db, target.collection, target.pos);

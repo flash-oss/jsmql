@@ -93,6 +93,8 @@ For a `$$$.<coll>.filter(pred).<stream-chain>` chain, `tryExtractChainedLookup` 
 
 An **object-literal-body** `.map(x => ({ … }))` yields a document, so its `$replaceWith` is valid — it stays in the sub-pipeline (and a following `.take` etc. lowers to `$limit` there as usual). A **block-body** `.map(x => { … ; return <ret> })` likewise stays in the sub-pipeline via `lowerCallbackBlock`'s `terminalRet` → `$replaceWith` (§ "block-body `.map`"). Both the peel and the bail are uniform across the field-assignment and `const`/`let`-binding forms.
 
+**The `$$ =` pivot rejects a value-collapsing `.map` instead of peeling.** The replace-stream pivot (`$$ = $$$.<coll>.filter(pred).<chain>` → `$lookup` + `$unwind` + `$replaceWith`, in `lowerLookupPivot`) produces a **document stream**: the mapped result *is* the new stream root. An object/subdoc map is fine (verified on mongod — the sub-pipeline `$replaceWith` reshapes each source doc, then `$unwind`/`$replaceWith` explode the array). But a value-collapsing map (`isValueCollapsingMap`, exported from this module) would make a stream of scalars — impossible, and mongod rejects the scalar `$replaceWith` at runtime (Location40228). Unlike the assignment form there is **no value-mode target to peel to** (the pivot has no destination field), so `lowerLookupPivot` rejects it at compile time with an actionable error naming the two valid alternatives — reshape with `.map(o => ({ … }))`, or collect the values into a field via the `$.<field> = …` assignment form.
+
 ## Pipeline integration
 
 `src/pipeline.ts` wires lookup-translation into the two top-level lowering entry points:

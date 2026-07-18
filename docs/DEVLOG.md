@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — fix: a value-collapsing `.map` in a `$$ =` replace-stream pivot is rejected, not lowered to runtime-invalid MQL
+
+Companion to the assignment-form fix (`8505a01`). `$$ = $$$.orders.filter(...).map("productId")`
+emitted a scalar `$replaceWith` (inside the `$lookup.pipeline` AND after the `$unwind`);
+mongod rejects it at runtime (Location40228 "'replacement document' must evaluate to an
+object" — verified). Unlike the `$.field = …` assignment form, a `$$ =` pivot's result IS
+the new **document stream**, so there is no value-mode array target to peel the map onto —
+a stream simply can't hold scalars.
+
+Verified on a live mongod: an **object** map (`.map(o => ({ pid: o.productId }))`) and a
+**subdocument** field map (`.map("details")`) both lower correctly (`$replaceWith` the
+reshaped doc in the sub-pipeline, then `$unwind`/`$replaceWith` explode it) — only a
+scalar map fails. Since jsmql can't statically tell a scalar field from a subdocument, and
+`.map("field")` means "pluck the value" everywhere else in the lodash vocabulary,
+`lowerLookupPivot` now rejects any value-collapsing map (`isValueCollapsingMap`, exported
+from `lookup-translation.ts`) at **compile time** with an actionable error: reshape with
+`.map(o => ({ … }))`, or collect the values into a field via `$.<field> = $$$.<coll>
+.filter(...).map(...)` (the assignment form, which peels to a value-mode `$map`). Spec:
+[`lookup-stage.md`](specs/lookup-stage.md § Value-extracting `.map`).
+
 ## 2026-07-18 — feat: full lodash iteratee/predicate shorthands across ALL higher-order value methods
 
 The `_.identity`-family shorthands now work on **every** higher-order value method, not just

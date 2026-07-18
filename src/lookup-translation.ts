@@ -1982,7 +1982,7 @@ function peelableTerminalMap(m: MethodCall): Lambda | null {
 // path that already handles `.map("f").flatten().uniq()` (flatten/uniq aren't
 // stream methods, so that chain always took the expression form). An object-
 // literal body / statement block returns a document and is fine in-pipeline.
-function isValueCollapsingMap(m: MethodCall): boolean {
+export function isValueCollapsingMap(m: MethodCall): boolean {
   if (m.method !== "map" || m.args.length !== 1) return false;
   const arg = m.args[0];
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;

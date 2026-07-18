@@ -65,6 +65,7 @@ import {
   extractLookupTarget,
   requireSameDbColl,
   lowerLambdaPredicate,
+  isValueCollapsingMap,
   type LookupCall,
   type LookupTarget,
   type SlotAllocator,
@@ -1294,6 +1295,19 @@ function lowerLookupPivot(
 ): { stages: object[]; clearLets: boolean } {
   const filterMethod = methods[0];
   const restMethods = methods.slice(1);
+  // A value-collapsing `.map` (a `"field"` string or a non-object arrow) would make the
+  // new stream a stream of scalars/arrays — but a `$$ =` pivot's result IS the document
+  // stream, and MongoDB streams hold documents. (Its `$replaceWith` root would be a
+  // non-document; mongod rejects it — Location40228.) Unlike the `$.field = …`
+  // assignment form there's no value-mode target to peel to, so reject with the two
+  // valid alternatives rather than emit runtime-invalid MQL.
+  const collapsing = restMethods.find(isValueCollapsingMap);
+  if (collapsing !== undefined) {
+    throw new CodegenError(
+      `'.map(...)' in a '$$ = $$$.<coll>.filter(...)' pivot must return a DOCUMENT — the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ … }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.filter(...).map(...)'.`,
+      collapsing.pos,
+    );
+  }
   const lambda = filterMethod.args[0] as LambdaNode;
   const slot = allocSlot();
   const from = requireSameDbColl(target.db, target.collection, target.pos);

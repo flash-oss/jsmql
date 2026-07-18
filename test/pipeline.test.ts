@@ -788,6 +788,43 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
+  it("an object-returning .map reshapes each source doc into the new stream root", () => {
+    // The mapped result becomes the new document stream, so it must be a document.
+    // An object-literal body is fine: $replaceWith the reshaped doc in the sub-pipeline,
+    // then $unwind + $replaceWith explode the array into the stream. Verified on mongod.
+    expect(jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => ({ pid: o.productId }));`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $replaceWith: { pid: "$productId" } },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+
+  it("a value-collapsing .map (scalar field / non-object arrow) is rejected — a stream can't hold scalars", () => {
+    // A document stream can't be made of scalars; without a value-mode target to peel
+    // to (unlike the `$.field = …` assignment form) this must be rejected, not emit the
+    // runtime-invalid scalar `$replaceWith` (mongod Location40228).
+    expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map("productId");`)).toThrow(
+      /pivot must return a DOCUMENT.*collect the values into a field/s,
+    );
+    expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => o.productId);`)).toThrow(
+      /pivot must return a DOCUMENT/,
+    );
+    // Non-terminal collapsing map (followed by a stream method) is rejected too.
+    expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map("productId").take(5);`)).toThrow(
+      /pivot must return a DOCUMENT/,
+    );
+  });
+
   it("cross-database correlated pivot ($$$$.<db>.<coll>) is rejected", () => {
     // A correlated predicate dispatches to `lowerLookupPivot` — a DIFFERENT
     // `requireSameDbColl` call site than the flat source-switch (the union branch,
