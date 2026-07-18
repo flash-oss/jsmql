@@ -10897,6 +10897,12 @@ function peelableTerminalMap(m) {
   }
   return null;
 }
+function isValueCollapsingMap(m) {
+  if (m.method !== "map" || m.args.length !== 1) return false;
+  const arg = m.args[0];
+  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
+  return arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0 && arg.body.type !== "ObjectLiteral";
+}
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
   const methods = [];
@@ -10916,6 +10922,9 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   }
   const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
   const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
+  for (let i = 1; i < chainEnd; i++) {
+    if (isValueCollapsingMap(methods[i])) return null;
+  }
   const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
   const usesRootLen = methods.slice(1, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   const innerCtx = {

@@ -1971,6 +1971,26 @@ function peelableTerminalMap(m: MethodCall): Lambda | null {
   return null;
 }
 
+// A `.map` whose result is NOT provably a document — a field-string shorthand or
+// an expression-body arrow whose body is anything but an object literal. Such a
+// map COLLAPSES the document stream into a value stream: it can't stay in the
+// `$lookup.pipeline`, because its lowering there is `$replaceWith <that value>`
+// and mongod rejects a non-document new root ("'replacement document' must
+// evaluate to an object"). When one appears NON-terminally (the terminal case is
+// handled by the peel above), we bail the whole chain to the expression form,
+// which lowers every method value-mode over the lookup RESULT array — the same
+// path that already handles `.map("f").flatten().uniq()` (flatten/uniq aren't
+// stream methods, so that chain always took the expression form). An object-
+// literal body / statement block returns a document and is fine in-pipeline.
+function isValueCollapsingMap(m: MethodCall): boolean {
+  if (m.method !== "map" || m.args.length !== 1) return false;
+  const arg = m.args[0];
+  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
+  return (
+    arg.type === "Lambda" && arg.block === undefined && arg.body !== undefined && arg.body.type !== "ObjectLiteral"
+  );
+}
+
 function tryExtractChainedLookup(
   expr: Expr,
   outerCtx: GenerateCtx,
@@ -2004,6 +2024,13 @@ function tryExtractChainedLookup(
   // sub-pipeline chain loop below to exclude it.
   const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
   const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
+  // A value-collapsing `.map` anywhere in the SUB-PIPELINE portion (before the
+  // peeled terminal) can't lower here — its in-pipeline `$replaceWith` would take a
+  // non-document root. Bail to the expression form, which lowers the whole chain
+  // value-mode over the result array (see `isValueCollapsingMap`).
+  for (let i = 1; i < chainEnd; i++) {
+    if (isValueCollapsingMap(methods[i])) return null;
+  }
   // Force pipeline form for the lookup so the chain stages can extend it.
   // The enclosing context flows through so nested lookups inside the
   // predicate materialise correctly with their own let-bindings.

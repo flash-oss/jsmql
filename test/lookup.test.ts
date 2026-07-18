@@ -655,6 +655,83 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
+  it("a value-collapsing .map anywhere in the chain (not just terminal) lowers value-mode, never an in-pipeline $replaceWith", () => {
+    // `.map("productIds")` is NOT terminal here — it is followed by `.slice`, a
+    // stream-registry method. Keeping the map in the sub-pipeline would emit
+    // `{$replaceWith:"$productIds"}` (a non-document root — mongod rejects it). The
+    // whole chain instead routes to the expression form: the sub-pipeline is just
+    // the `.filter`'s `$match`, and map+slice run value-mode over the result array.
+    expect(jsmql('$.r = $$$.orders.filter(o => o.userId === $._id).map("productIds").slice(0, 3);')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      {
+        $set: {
+          r: { $slice: [{ $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } }, 0, 3] },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a mid-chain .map('field') feeding value methods (.flatten().uniq()) collapses to a value-mode expression", () => {
+    expect(jsmql('$.r = $$$.orders.filter(o => o.userId === $._id).map("productIds").flatten().uniq();')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      {
+        $set: {
+          r: {
+            $reduce: {
+              input: {
+                $reduce: {
+                  input: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } },
+                  initialValue: [],
+                  in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+                },
+              },
+              initialValue: [],
+              in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("an object-literal-body .map mid-chain still stays in the sub-pipeline ($replaceWith of a document is valid)", () => {
+    // The collapse only fires for a NON-document map. `o => ({ t: o.total })`
+    // yields a document, so `$replaceWith` is valid and the following `.take`
+    // lowers to `$limit` inside the same sub-pipeline (no value-mode detour).
+    expect(jsmql("$.r = $$$.orders.filter(o => o.userId === $._id).map(o => ({ t: o.total })).take(5);")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $replaceWith: { t: "$total" } },
+            { $limit: 5 },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { r: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
   it(".toSorted((a, b) => …) — comparator-shape sort that has no clean expression-form equivalent", () => {
     // The bare `.toSorted((a, b) => …)` shape couldn't be lowered in
     // expression position before this change (no `$sortArray` comparator

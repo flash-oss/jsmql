@@ -648,7 +648,7 @@ A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.f
 
 **Stream-method chains push into the `$lookup.pipeline` body.** Any sequence of registered stream methods (`.filter`, `.toSorted`, `.toReversed`, `.slice`, `.flatMap`, `.concat`) chained after `$$$.coll.filter(<pred>)` becomes the `$lookup`'s sub-pipeline. The slot then holds the transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
 
-**A terminal `.map` is peeled onto the result.** The *last* method, when it's a value-extracting `.map("field")` / `.map(x => <expr>)`, does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar (MongoDB requires a document root). Instead the terminal map runs as a value-mode `$map` over the lookup result array in the surrounding `$set`:
+**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`:
 
 ```js
 $.recentOrders = $$$.orders
@@ -676,9 +676,13 @@ $.recentOrders = $$$.orders
 // Scalar extraction — the case a sub-pipeline $replaceWith can't express:
 $.userIds = $$$.orders.filter(o => o.uid === $.id).map("userId");
 // → $lookup (pipeline: [$match]) + $set { userIds: { $map: { input, in: "$$…​.userId" } } }
+
+// Mid-chain: the extraction feeds further value methods — the whole tail is value-mode:
+$.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flatten().uniq();
+// → $lookup (pipeline: [$match]) + $set { productIds: uniq(flatten($map(result, "productIds"))) }
 ```
 
-The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. A **block-body** terminal `.map(x => { … ; return <ret> })` stays inside the sub-pipeline (as a `$replaceWith`) — only a value-extracting expression/string map is peeled. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
+The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith` (a following `.take` etc. lowers to `$limit` there); a **block-body** `.map(x => { … ; return <ret> })` likewise stays in the sub-pipeline. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
 **`.map(d => { … ; return <ret> })` — statement-block body.** A stream `.map` may take a statement block ending in `return`, exactly like a block-body `.filter` — same `;`-separated statement vocabulary (`assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups). The only difference from `.filter` is the trailing `return`: its value becomes each output document (a `$replaceWith`). This is the idiomatic way to validate or reshape with intermediate steps:
 

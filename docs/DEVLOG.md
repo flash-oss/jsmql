@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — fix: a value-extracting `.map` *anywhere* in a `$$$.<coll>.filter(...)` chain lowers value-mode, not just when terminal
+
+The terminal-`.map` peel (entry below) fixed only the *last* method. A value-extracting
+`.map` **mid-chain**, followed by another registered stream method, still emitted the
+invalid in-pipeline `$replaceWith`:
+
+    $.r = $$$.orders.filter(o => o.userId === $._id).map("productIds").slice(0, 3);
+    // was: $lookup.pipeline: [ $match, { $replaceWith: "$productIds" }, { $slice? no — } ]
+    //      → { $replaceWith: "$productIds" } takes a non-document root; mongod rejects it (Location40228, verified)
+
+Root cause: `.take`/`.slice`/`.sort`/`.groupBy`/… are registered stream methods, so a
+chain of them kept `tryExtractChainedLookup` on the sub-pipeline path, where the
+non-terminal `.map("field")` string shorthand lowers straight to `$replaceWith` with no
+guard ([stream-methods.ts](../src/stream-methods.ts) MAP `lower`). (Chains whose tail
+used a *non*-stream method — `.map("f").flatten().uniq()` — already worked, because
+`flatten`/`uniq` aren't registered stream methods, so the chain always fell to the
+expression form.) `isValueCollapsingMap` now detects a non-document map (`"field"`
+string, or an expr-body arrow that isn't an object literal) in the sub-pipeline portion
+and `tryExtractChainedLookup` **bails to the expression form** (`descendAndExtract`),
+which lowers the whole tail value-mode over the result array — the same path the
+`.flatten().uniq()` case already took. An **object-literal-body** map mid-chain still
+stays in the sub-pipeline (its `$replaceWith` root is a valid document; a following
+`.take` → `$limit` there). Verified on a live mongod: `.map("productIds").slice(0, 3)`
+→ `[["a","b"],["b","c"]]`; `.map("productIds").flatten().uniq()` → `["a","b","c"]`.
+
+Follow-on gap (not yet closed): a value-extracting map followed by a stream-only method
+with **no** value-mode counterpart — `.map("f").take(5)` / `.drop(5)` — now errors
+cleanly at compile time ("Unknown method '.take()'") instead of emitting invalid MQL,
+because value-mode `.take`/`.drop` don't exist yet. Adding them (`$slice`) would let that
+tail lower too. Spec:
+[`lookup-stage.md`](specs/lookup-stage.md § Value-extracting `.map` → value-mode).
+
 ## 2026-07-18 — fix: a terminal `.map` on a `$$$.<coll>.filter(...)` chain lowers to `$set`+`$map`, not an in-pipeline `$replaceWith`
 
 `$.userIds = $$$.orders.filter(o => o.uid === $.id).map("userId")` used to emit a
