@@ -3296,6 +3296,55 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
   });
 });
 
+describe("lodash positional / slicing methods (per-doc value vocabulary)", () => {
+  it(".take([n=1]) / .takeRight([n=1]) → $slice (first / last n)", () => {
+    expect(jsmql.expr("$.a.take(2)")).toEqual({ $slice: ["$a", 2] });
+    expect(jsmql.expr("$.a.take()")).toEqual({ $slice: ["$a", 1] });
+    expect(jsmql.expr("$.a.takeRight(2)")).toEqual({ $slice: ["$a", -2] });
+    expect(jsmql.expr("$.a.takeRight()")).toEqual({ $slice: ["$a", -1] });
+  });
+  it(".drop([n=1]) / .dropRight([n=1]) → $slice (skip first / last n), receiver bound once", () => {
+    expect(jsmql.expr("$.a.drop(2)")).toEqual({
+      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 2, { $size: "$$jsmqlArr" }] } },
+    });
+    expect(jsmql.expr("$.a.dropRight(2)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$a" },
+        in: { $slice: ["$$jsmqlArr", 0, { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 2] }] }] },
+      },
+    });
+  });
+  it(".head()/.first()/.last() → $first/$last; .nth([n=0]) → $arrayElemAt (negative ok)", () => {
+    expect(jsmql.expr("$.a.head()")).toEqual({ $first: "$a" });
+    expect(jsmql.expr("$.a.first()")).toEqual({ $first: "$a" });
+    expect(jsmql.expr("$.a.last()")).toEqual({ $last: "$a" });
+    expect(jsmql.expr("$.a.nth(2)")).toEqual({ $arrayElemAt: ["$a", 2] });
+    expect(jsmql.expr("$.a.nth(-1)")).toEqual({ $arrayElemAt: ["$a", -1] });
+    expect(jsmql.expr("$.a.nth()")).toEqual({ $arrayElemAt: ["$a", 0] });
+  });
+  it(".tail()/.initial() → $slice (all but first / all but last)", () => {
+    expect(jsmql.expr("$.a.tail()")).toEqual({
+      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 1, { $size: "$$jsmqlArr" }] } },
+    });
+    expect(jsmql.expr("$.a.initial()")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$a" },
+        in: { $slice: ["$$jsmqlArr", 0, { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
+      },
+    });
+  });
+  it(".size() counts array elements or object keys (runtime $isArray guard on an unknown receiver)", () => {
+    expect(jsmql.expr("$.a.size()")).toEqual({
+      $cond: { if: { $isArray: "$a" }, then: { $size: "$a" }, else: { $size: { $objectToArray: "$a" } } },
+    });
+  });
+  it(".take / .takeRight / .drop reject a negative count with a mirror-method hint", () => {
+    expect(() => jsmql.expr("$.a.take(-1)")).toThrow(/non-negative count.*takeRight/);
+    expect(() => jsmql.expr("$.a.takeRight(-1)")).toThrow(/non-negative count.*\.take/);
+    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow(/non-negative count/);
+  });
+});
+
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({

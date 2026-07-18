@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash positional / slicing value methods — `.take` / `.drop` / `.head` / `.last` / `.nth` / `.size` / …
+
+First family of the broader "value-mode covers all sensible lodash Array + Collection
+methods" push (scope agreed with the developer: everything doable except `shuffle`;
+the won't-implement set is recorded in DEFERRED §B). Positional / slicing accessors on
+an array field, all lowering to `$slice` / `$first` / `$last` / `$arrayElemAt`:
+
+    .take([n=1]) → { $slice: [a, n] }              .takeRight([n=1]) → { $slice: [a, -n] }
+    .drop([n=1]) → $slice from n (receiver $let-bound once, count = $size)
+    .dropRight([n=1]) → $slice count = max(0, size-n)
+    .head()/.first() → { $first: a }               .last() → { $last: a }
+    .tail() → drop(1)                              .initial() → dropRight(1)
+    .nth([n=0]) → { $arrayElemAt: [a, n] }         (negative index supported)
+    .size() → array element count / object key count ($isArray-guarded on an unknown receiver)
+
+`take`/`drop`/`takeRight`/`dropRight` reject a negative literal count, with a hint at the
+opposite-end method (`take`↔`takeRight`, `drop`↔`dropRight`). Every shape verified on a
+live mongod (16 cases: first/last/skip N, N past length, negative `nth`, object `size`).
+Registry `METHODS` entries added for inference + `didYouMean`. Docs:
+[`LANGUAGE.md`](LANGUAGE.md § lodash positional / slicing methods).
+
 ## 2026-07-18 — fix: a value-extracting `.map` *anywhere* in a `$$$.<coll>.filter(...)` chain lowers value-mode, not just when terminal
 
 The terminal-`.map` peel (entry below) fixed only the *last* method. A value-extracting

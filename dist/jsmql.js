@@ -4546,6 +4546,17 @@ var METHODS = {
   compact: { returns: "array", optional: "array" },
   flatten: { returns: "array", optional: "array" },
   chunk: { returns: "array", optional: "array" },
+  take: { returns: "array", optional: "array" },
+  drop: { returns: "array", optional: "array" },
+  takeRight: { returns: "array", optional: "array" },
+  dropRight: { returns: "array", optional: "array" },
+  tail: { returns: "array", optional: "array" },
+  initial: { returns: "array", optional: "array" },
+  head: { optional: "array" },
+  first: { optional: "array" },
+  last: { optional: "array" },
+  nth: { optional: "array" },
+  size: { optional: "array" },
   zipObject: { optional: "array" },
   keyBy: { optional: "array" },
   groupBy: { optional: "array" },
@@ -4806,6 +4817,9 @@ function sliceArray(genObj, exprArgs, ctx) {
   if (exprArgs.length === 0) return genObj;
   if (exprArgs.length === 1) return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
   return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+}
+function negate(n) {
+  return typeof n === "number" ? -n : { $subtract: [0, n] };
 }
 function sliceString(genObj, exprArgs, ctx) {
   if (exprArgs.length === 0) return genObj;
@@ -6473,6 +6487,55 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           in: { $slice: [genObj, "$$jsmqlI", size.value] }
         }
       };
+    }
+    // ── lodash positional / slicing (array → element or sub-array) ──────────────
+    case "take":
+    case "drop":
+    case "takeRight":
+    case "dropRight": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "[n=1]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const nArg = exprArgs[0];
+      if (nArg !== void 0 && isNegativeLiteral(nArg)) {
+        const mirror = method === "take" ? ".takeRight(n)" : method === "takeRight" ? ".take(n)" : null;
+        throw new CodegenError(
+          `.${method}(n) needs a non-negative count${mirror ? ` \u2014 use ${mirror} to count from the other end` : ""}.`,
+          nArg.pos
+        );
+      }
+      const n = nArg !== void 0 ? _generate(nArg, ctx) : 1;
+      if (method === "take") return { $slice: [genObj, n] };
+      if (method === "takeRight") return { $slice: [genObj, negate(n)] };
+      const pos = method === "drop" ? n : 0;
+      const count = method === "drop" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
+      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+    }
+    case "tail":
+    case "initial": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      const pos = method === "tail" ? 1 : 0;
+      const count = method === "tail" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
+      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+    }
+    case "head":
+    case "first": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      return { $first: genObj };
+    }
+    case "last": {
+      checkArity("last", { sig: "", none: true }, exprArgsOnly(args, "last").length, callPos);
+      return { $last: genObj };
+    }
+    case "nth": {
+      const exprArgs = exprArgsOnly(args, "nth");
+      checkArity("nth", { sig: "[n=0]", allowed: [0, 1] }, exprArgs.length, callPos);
+      return { $arrayElemAt: [genObj, exprArgs[0] !== void 0 ? _generate(exprArgs[0], ctx) : 0] };
+    }
+    case "size": {
+      checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
+      if (isArrayProducing(object)) return { $size: genObj };
+      if (isObjectProducing(object)) return { $size: { $objectToArray: genObj } };
+      return cond({ $isArray: genObj }, { $size: genObj }, { $size: { $objectToArray: genObj } });
     }
     case "difference":
     case "intersection": {

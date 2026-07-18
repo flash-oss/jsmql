@@ -554,6 +554,17 @@ const METHODS: Record<string, MethodMeta> = {
   compact: { returns: "array", optional: "array" },
   flatten: { returns: "array", optional: "array" },
   chunk: { returns: "array", optional: "array" },
+  take: { returns: "array", optional: "array" },
+  drop: { returns: "array", optional: "array" },
+  takeRight: { returns: "array", optional: "array" },
+  dropRight: { returns: "array", optional: "array" },
+  tail: { returns: "array", optional: "array" },
+  initial: { returns: "array", optional: "array" },
+  head: { optional: "array" },
+  first: { optional: "array" },
+  last: { optional: "array" },
+  nth: { optional: "array" },
+  size: { optional: "array" },
   zipObject: { optional: "array" },
   keyBy: { optional: "array" },
   groupBy: { optional: "array" },
@@ -958,6 +969,11 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
   if (exprArgs.length === 0) return genObj;
   if (exprArgs.length === 1) return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
   return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+}
+
+/** Negate a count that's either a compile-time number or a runtime expression. */
+function negate(n: unknown): unknown {
+  return typeof n === "number" ? -n : { $subtract: [0, n] };
 }
 
 /** Lower `.slice` on a known-string receiver to MQL `$substrCP`. */
@@ -3440,6 +3456,61 @@ function generateMethodCall(
           in: { $slice: [genObj, "$$jsmqlI", size.value] },
         },
       };
+    }
+    // ── lodash positional / slicing (array → element or sub-array) ──────────────
+    case "take":
+    case "drop":
+    case "takeRight":
+    case "dropRight": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "[n=1]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const nArg = exprArgs[0];
+      if (nArg !== undefined && isNegativeLiteral(nArg)) {
+        const mirror = method === "take" ? ".takeRight(n)" : method === "takeRight" ? ".take(n)" : null;
+        throw new CodegenError(
+          `.${method}(n) needs a non-negative count${mirror ? ` — use ${mirror} to count from the other end` : ""}.`,
+          nArg.pos,
+        );
+      }
+      const n = nArg !== undefined ? _generate(nArg, ctx) : 1;
+      if (method === "take") return { $slice: [genObj, n] };
+      if (method === "takeRight") return { $slice: [genObj, negate(n)] };
+      // drop / dropRight need $size, so bind the receiver once.
+      const pos = method === "drop" ? n : 0;
+      const count =
+        method === "drop" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
+      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+    }
+    case "tail":
+    case "initial": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      const pos = method === "tail" ? 1 : 0;
+      const count =
+        method === "tail" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
+      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+    }
+    case "head":
+    case "first": {
+      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      return { $first: genObj };
+    }
+    case "last": {
+      checkArity("last", { sig: "", none: true }, exprArgsOnly(args, "last").length, callPos);
+      return { $last: genObj };
+    }
+    case "nth": {
+      const exprArgs = exprArgsOnly(args, "nth");
+      checkArity("nth", { sig: "[n=0]", allowed: [0, 1] }, exprArgs.length, callPos);
+      // $arrayElemAt supports negative indices, matching lodash's nth.
+      return { $arrayElemAt: [genObj, exprArgs[0] !== undefined ? _generate(exprArgs[0], ctx) : 0] };
+    }
+    case "size": {
+      checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
+      // lodash size counts array elements OR object keys. Arrays → $size; objects →
+      // key count via $objectToArray. Strings should use `.length` (see docs).
+      if (isArrayProducing(object)) return { $size: genObj };
+      if (isObjectProducing(object)) return { $size: { $objectToArray: genObj } };
+      return cond({ $isArray: genObj }, { $size: genObj }, { $size: { $objectToArray: genObj } });
     }
     case "difference":
     case "intersection": {

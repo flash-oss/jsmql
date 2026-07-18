@@ -1517,6 +1517,22 @@ $.keys.zipObject($.vals)                    // { keys[i]: vals[i] }
 
 > **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash, but it *errors* on an object/array key); group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
 
+#### lodash positional / slicing methods
+
+Element and sub-array accessors on an array field:
+
+```js
+$.xs.take(3)      / .drop(3)                 // first 3 / all but the first 3   (n defaults to 1)
+$.xs.takeRight(3) / .dropRight(3)            // last 3  / all but the last 3
+$.xs.head()  / .first()                      // first element  ($first)
+$.xs.last()                                  // last element   ($last)
+$.xs.tail()  / .initial()                    // all but the first / all but the last element
+$.xs.nth(2)  / .nth(-1)                       // element at index 2 / from the end   (n defaults to 0)
+$.xs.size()                                  // element count (array) or key count (object) — strings use .length
+```
+
+> `take`/`drop`/`takeRight`/`dropRight` reject a **negative** count (the message points at the opposite-end method). `n` past the array length is fine — you get the whole array or an empty one, matching lodash. `head`/`first`/`last` on an empty array yield `null` (MongoDB's missing-value).
+
 ### Bare type-cast callbacks
 
 `Boolean`, `Number`, and `String` can be passed bare as the callback to any of the lambda-taking array methods, just like in plain JavaScript:
