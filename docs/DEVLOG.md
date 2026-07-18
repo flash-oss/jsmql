@@ -10,6 +10,67 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — fix: stream `.map(d => …)` rejects a provably non-document body
+
+`$$ = $$.map(d => 5)` (and `d => "x"` / `d => true` / `d => [1, 2]`, or the property
+shorthand `.map("scalarField")`) lowered to `{ $replaceWith: 5 }` — MQL the server
+rejects on **every** deployment ("'replacement document' must evaluate to an object";
+verified against mongod for a number, string, ObjectId, and array). The sibling
+`$ = 5` was already rejected at compile time via `rejectNonDocumentReplaceRoot`
+(pipeline.ts), but the stream `.map` path skipped that gate — an HR3 hole and an
+asymmetry. Added `rejectNonDocumentMapBody` (stream-methods.ts), literal-gated the
+same way, on the top-level and correlated-lookup expression paths (the block-body
+paths already route through the shared `$ = <expr>` guard). It rejects only a
+**provably** non-document body; a field ref / member access / `$`-string is
+data-dependent (the field could be a sub-document) and still passes, so
+`.map("userId")` / `.map(d => d.userId)` emit `$replaceWith: "$userId"` and error at
+runtime only when the field is actually scalar — identical to `$ = $.userId`.
+
+*Why surfaced:* a unit test asserted `$$.map("userId")` → `{ $replaceWith: "$userId" }`
+as if valid, but `userId` is conventionally an ObjectId, so the emitted MQL fails at
+runtime — a `toEqual` endorsing a server-rejected shape. The test now uses a
+sub-document field (a shape mongod accepts) and documents the "body must be a
+document" rule; the provably-scalar cases became the new rejection tests. Spec:
+[`stream-methods.md`](specs/stream-methods.md) § "`.map` body must be a document".
+
+## 2026-07-18 — feat: lodash-named stream methods (Phase 2) → aggregation stages
+
+The `$$` / `$$$.<coll>` stream vocabulary gained a batch of lodash-named chain
+methods, so a stream reads like a lodash chain (no `_` token — every collection
+is treated as *already* wrapped). New `StreamMethodDef`s in
+[`src/stream-methods.ts`](../src/stream-methods.ts): `.take(n)` → `$limit`,
+`.drop(n)` → `$skip`, `.sampleSize(n)` → `$sample`, `.sample()` → `$sample: {
+size: 1 }` (lodash `_.sample`), `.toReversedBy("f")` →
+descending `$sort`, `.sortBy(key | [keys] | { f: 1|-1 })` / `.orderBy(keys,
+orders)` → `$sort`, `.groupBy(spec | "key")` → `$group`, `.countBy("f")` →
+`$sortByCount`, `.uniqBy("f")` → `$group`+`$replaceWith`. Two edge cases follow
+lodash faithfully without emitting invalid MQL: `take(0)` → always-false `$match`
+(not `$limit: 0`), `drop(0)` → no stage.
+
+`.groupBy` takes **both** a bare key (`"dept"` → `{ _id: "$dept" }`, group by that
+field with no accumulators) and a raw `$group` body (`{ _id: null, ids:
+$addToSet("$p") }`, lowered verbatim — non-`_id` slots generate in
+`accumulatorContext: "group"` so accumulator-only ops pass the codegen gate,
+matching the direct `$group(...)` stage). Value-mode `$.arr.groupBy(...)`
+(Phase 1, separate) returns an object; stream-mode returns a stream of group docs.
+
+Lodash **iteratee shorthands** were added where they fit: `.map("field")` →
+`$replaceWith: "$field"`, `.flatMap("field")` → `$unwind`, and `.filter({ f: v })`
+→ an equality `$match` query. `.filter` also now works **mid-chain**
+(`applyStreamMethods` in [`pipeline.ts`](../src/pipeline.ts) handles it at any
+position, not only the head) so `.flatMap(...).filter(...)` composes. The
+generated `@koresar/jsmql/ops` completion types
+([`generate-ops.mjs`](../scripts/generate-ops.mjs) `STREAM_METHOD_SIGNATURES`)
+cover every new member.
+
+*Why:* jsmql's audience knows lodash cold; these are the aggregation-shaped ops
+native JS has no clean spelling for. Every shape was verified on a live mongod
+(HR3) — including the flagship recommendation-engine pipeline
+`$$.filter({...}).toReversedBy(...).take(...).flatMap(...).groupBy({...})`.
+Not yet covered: the same methods *mid-chain inside a correlated `$$$.<coll>`
+`$lookup` sub-pipeline*, and cross-statement state threading — a follow-up.
+Spec: [`stream-methods.md`](specs/stream-methods.md).
+
 ## 2026-07-17 — fix: date methods reject a literal non-date receiver (parity with the operator form)
 
 The date methods (`.getFullYear()`, `.getMonth()`, …, `.toISOString()`, and the

@@ -2207,18 +2207,38 @@ declare global {
     planCacheStats(): any;
     /** Take a window of the stream → `$skip` / `$limit`. */
     slice(start: number, end?: number): JsmqlCollectionRef;
+    /** One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more). */
+    sample(): JsmqlCollectionRef;
+    /** First `n` documents → `$limit`. */
+    take(n: number): JsmqlCollectionRef;
+    /** Skip the first `n` documents → `$skip`. */
+    drop(n: number): JsmqlCollectionRef;
+    /** `n` random documents → `$sample`. */
+    sampleSize(n: number): JsmqlCollectionRef;
     /** Append documents / union collections → `$unionWith`. */
     concat(...sources: any[]): JsmqlCollectionRef;
-    /** Reshape each document → `$replaceWith`. */
-    map(transform: (doc: any) => any): JsmqlCollectionRef;
+    /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
+    map(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
     /** Sort the stream → `$sort`. */
     toSorted(compare: (a: any, b: any) => number): JsmqlCollectionRef;
     /** Reverse the preceding sort — flips the preceding `$sort`. */
     toReversed(): JsmqlCollectionRef;
-    /** Unwind an array field → `$unwind`. */
-    flatMap(transform: (doc: any) => any): JsmqlCollectionRef;
-    /** Narrow the stream → `$match`. Sugar for `$$ = $$.filter(p)`. */
-    filter(predicate: (doc: any) => any): JsmqlCollectionRef;
+    /** Descending sort by a field → `$sort: { field: -1 }`. */
+    toReversedBy(field: string): JsmqlCollectionRef;
+    /** Ascending sort by field(s), or a raw sort spec → `$sort`. */
+    sortBy(key: string | string[] | Record<string, 1 | -1>): JsmqlCollectionRef;
+    /** Sort by keys with per-key directions → `$sort`. */
+    orderBy(keys: string | string[], orders?: "asc" | "desc" | ("asc" | "desc")[]): JsmqlCollectionRef;
+    /** Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name. */
+    groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
+    /** Tally documents per distinct key → `$sortByCount`. */
+    countBy(field: string): JsmqlCollectionRef;
+    /** One document per distinct key → `$group` + `$replaceWith`. */
+    uniqBy(field: string): JsmqlCollectionRef;
+    /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
+    flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
+    /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
+    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
     /** Append documents to the stream → `$unionWith`. */
     push(...docs: any[]): JsmqlCollectionRef;
     [key: string]: any;

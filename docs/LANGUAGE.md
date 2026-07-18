@@ -2518,12 +2518,40 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 |---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
 | `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
-| `.map(d => <expr>)` | Single-param expression-body arrow; the param is the current document (write `d.x`, not `$.x`). Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
+| `.map(d => <expr>)` / `.map("field")` | Single-param expression-body arrow (the param is the current document — write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`; the shorthand → `$replaceWith: "$field"`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
 | `.toSorted((a, b) => <cmp>)` | Two-param arrow; comparator body built from `a.<field> - b.<field>` (asc), `b.<field> - a.<field>` (desc), combined with `\|\|` for compound sort | `$sort: { … }` — key order preserved from source. Zero-arg `.toSorted()` is rejected (MongoDB streams have no natural document ordering) |
+| `.sortBy(key \| [keys] \| { f: 1\|-1 })` | Lodash key-form of sort (ascending): a field name, an array of field names, or a raw `$sort` spec object | `$sort: { … }`. A computed arrow is rejected with a redirect to `.toSorted((a, b) => …)` |
+| `.orderBy(keys, orders?)` | Keys (name or array) + per-key directions (`"asc"`/`"desc"`, or an array padded with `"asc"`) | `$sort: { … }` with the given directions |
 | `.toReversed()` | Zero args; the preceding stage must be a `$sort` — a `.toSorted(...)` earlier in the chain, or (in the [bare-statement form](#bare-statement-stream-operations)) a prior statement / literal `$sort(...)` | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding sort the call is rejected with a "needs a preceding $sort" hint |
-| `.flatMap(d => d.<path>)` | Single-param arrow whose body is a bare field-path on the param (v1) | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
+| `.toReversedBy("field")` | One plain field-name string | Descending key-sort → `$sort: { field: -1 }` (the key form of a descending `.toSorted`) |
+| `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
+| `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
+| `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
+| `.flatMap(d => d.<path>)` / `.flatMap("path")` | Single-param arrow whose body is a bare field-path on the param (v1), or the property shorthand `.flatMap("path")` | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
+| `.groupBy("key")` / `.groupBy({ _id, … })` | A bare field name, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → `$group: { _id: "$key" }` (group by that field, no accumulators); body form → `$group: <body>` verbatim |
+| `.countBy("field")` | One plain field-name string | `$sortByCount: "$field"` → one `{ _id, count }` document per distinct key |
+| `.uniqBy("field")` | One plain field-name string | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sortBy`/`.toReversedBy` when it matters |
 
-Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).slice(0, 1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+`.filter(<pred>)` accepts an arrow predicate **or** the lodash matches-object shorthand (`.filter({ status: "CLOSED", tier: "gold" })` → `$match: { status: "CLOSED", tier: "gold" }`), and can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
+
+`.map(d => …)` / `.map("field")` replaces each document with the body via `$replaceWith`, so the **body must resolve to a document** (MongoDB requires an object root). A provably non-document body — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])` — is rejected at compile time; a field ref that turns out to be a scalar at runtime (e.g. `.map("userId")` where `userId` is an ObjectId) is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
+
+Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+
+A worked lodash-style chain — the newest 10 closed orders' distinct products:
+
+```js
+jsmql(`$$ = $$.filter({ status: "CLOSED" })
+  .toReversedBy("createdAt")
+  .take(10)
+  .flatMap("productIds")
+  .groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });`)
+// → [ { $match: { status: "CLOSED" } },
+//     { $sort: { createdAt: -1 } },
+//     { $limit: 10 },
+//     { $unwind: "$productIds" },
+//     { $group: { _id: null, boughtProductIds: { $addToSet: "$productIds" } } } ]
+```
 
 #### Bare-statement stream operations
 

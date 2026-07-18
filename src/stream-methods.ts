@@ -7,7 +7,7 @@
 // See docs/specs/stream-methods.md for the design and the per-method
 // shape/lowering/error table.
 
-import type { ArrayElement, CallArg, Expr, Pipeline, UpdateFilter } from "./ast.ts";
+import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
@@ -140,6 +140,118 @@ const SLICE: StreamMethodDef = {
       stages.push({ $limit: end - start });
     }
     return { stages };
+  },
+};
+
+// Shared arg-shape validators for the single-literal count/key stream methods
+// (.take / .drop / .sampleSize / .toReversedBy). Streams reject computed args —
+// the value has to be a source literal so the emitted `$limit`/`$skip`/`$sample`/
+// `$sort` count is fixed at compile time.
+function validateSingleIntArg(sig: string, args: readonly CallArg[], callPos: number, min: number): void {
+  if (args.length !== 1) {
+    throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type !== "NumberLiteral") {
+    throw new CodegenError(
+      `${sig} requires an integer literal; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams — write the literal in source.`,
+      arg.pos,
+    );
+  }
+  if (!Number.isInteger(arg.value) || arg.value < min) {
+    throw new CodegenError(`${sig} requires an integer >= ${min}; got ${arg.value}.`, arg.pos);
+  }
+}
+
+function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: number): void {
+  if (args.length !== 1) {
+    throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type !== "StringLiteral") {
+    throw new CodegenError(
+      `${sig} requires a field-name string literal, e.g. '.toReversedBy("createdAt")'. Computed or dynamic arguments aren't supported on streams.`,
+      arg.pos,
+    );
+  }
+  if (arg.value === "" || arg.value.startsWith("$")) {
+    throw new CodegenError(
+      `${sig} requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+      arg.pos,
+    );
+  }
+}
+
+// ── .take(n) → $limit ─────────────────────────────────────────────────────────
+//
+// lodash `_.take(coll, n)` — the first `n` documents. `take(0)` is an empty
+// result in lodash; since MongoDB rejects `$limit: 0`, that lowers to an
+// always-false `$match` instead.
+const TAKE: StreamMethodDef = {
+  name: "take",
+  validate(args, callPos) {
+    validateSingleIntArg(".take(n)", args, callPos, 0);
+  },
+  lower(args) {
+    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
+    return { stages: n === 0 ? [{ $match: { $expr: false } }] : [{ $limit: n }] };
+  },
+};
+
+// ── .drop(n) → $skip ──────────────────────────────────────────────────────────
+//
+// lodash `_.drop(coll, n)` — all but the first `n`. `drop(0)` is identity, so
+// it emits no stage.
+const DROP: StreamMethodDef = {
+  name: "drop",
+  validate(args, callPos) {
+    validateSingleIntArg(".drop(n)", args, callPos, 0);
+  },
+  lower(args) {
+    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
+    return { stages: n === 0 ? [] : [{ $skip: n }] };
+  },
+};
+
+// ── .sampleSize(n) → $sample ──────────────────────────────────────────────────
+//
+// lodash `_.sampleSize(coll, n)` — `n` random documents. Maps to the `$sample`
+// stage (size must be positive).
+const SAMPLE_SIZE: StreamMethodDef = {
+  name: "sampleSize",
+  validate(args, callPos) {
+    validateSingleIntArg(".sampleSize(n)", args, callPos, 1);
+  },
+  lower(args) {
+    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
+    return { stages: [{ $sample: { size: n } }] };
+  },
+};
+
+// ── .sample() → $sample: { size: 1 } ──────────────────────────────────────────
+//
+// lodash `_.sample(coll)` — a single random document. In JS that's `.sampleSize(1)`
+// unwrapped to its element, but a pipeline is a stream of documents (not a scalar),
+// so the stream analogue is just `.sampleSize(1)`: `$sample: { size: 1 }`. Zero-arg;
+// use `.sampleSize(n)` for more than one.
+const SAMPLE: StreamMethodDef = {
+  name: "sample",
+  validate(args, callPos) {
+    if (args.length !== 0) {
+      throw new CodegenError(
+        `.sample() takes no arguments, got ${args.length}. For n random documents use '.sampleSize(n)'.`,
+        callPos,
+      );
+    }
+  },
+  lower() {
+    return { stages: [{ $sample: { size: 1 } }] };
   },
 };
 
@@ -306,6 +418,39 @@ function rejectLocalDocRef(
   );
 }
 
+// A stream `.map(d => <body>)` lowers to `$replaceWith: <body>`, so the body must
+// evaluate to a document — MongoDB rejects a scalar / array new root at runtime
+// ("'replacement document' must evaluate to an object"). Literal-gated exactly like
+// the `$ = <expr>` guard (pipeline.ts `rejectNonDocumentReplaceRoot`): reject only a
+// PROVABLY non-document body (a plain literal or an array literal). A field ref /
+// member access / operator call is data-dependent — the field could be a
+// subdocument — and passes, same as `$ = $.field`; a `$`-prefixed string is a field
+// path (a runtime document) and is allowed too.
+function rejectNonDocumentMapBody(body: Expr): void {
+  const kind =
+    body.type === "NumberLiteral"
+      ? "a number"
+      : body.type === "BigIntLiteral"
+        ? "a bigint"
+        : body.type === "BooleanLiteral"
+          ? "a boolean"
+          : body.type === "NullLiteral"
+            ? "null"
+            : body.type === "RegexLiteral"
+              ? "a regex"
+              : body.type === "ArrayLiteral"
+                ? "an array"
+                : body.type === "StringLiteral" && !body.value.startsWith("$")
+                  ? "a string"
+                  : null;
+  if (kind !== null) {
+    throw new CodegenError(
+      `.map(d => …) must return a document, but this maps each document to ${kind} — MongoDB's '$replaceWith' requires an object root. To reshape into a new document write '.map(d => ({ … }))'; to keep a single value under a key, wrap it: '.map(d => ({ value: … }))'.`,
+      body.pos,
+    );
+  }
+}
+
 const MAP: StreamMethodDef = {
   name: "map",
   validate(args, callPos) {
@@ -319,9 +464,20 @@ const MAP: StreamMethodDef = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.map(...) does not accept a spread argument — pass a '(d) => <expr>' arrow.`, arg.pos);
     }
+    // lodash property shorthand: `.map("userId")` ≡ `.map(d => d.userId)` — projects
+    // each document down to that field's value ($replaceWith: "$userId").
+    if (arg.type === "StringLiteral") {
+      if (arg.value === "" || arg.value.startsWith("$")) {
+        throw new CodegenError(
+          `.map("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+          arg.pos,
+        );
+      }
+      return;
+    }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.map(d => <expr>) requires an arrow function as its argument, e.g. '.map(d => ({ id: d._id, name: d.name }))'.`,
+        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))') or a field-name string ('.map("userId")').`,
         arg.pos,
       );
     }
@@ -343,6 +499,11 @@ const MAP: StreamMethodDef = {
     rejectUsedIndexParam(arg);
   },
   lower(args, ctx, _callPos, lowerBlock, _prevStages, allocSlot, _inSubPipeline) {
+    // Property shorthand `.map("field")` → project each doc to that field's value.
+    const shorthand = args[0];
+    if (shorthand.type === "StringLiteral") {
+      return { stages: [{ $replaceWith: `$${shorthand.value}` }], clearLets: true };
+    }
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const collName = lambda.params.length === 3 ? lambda.params[2] : undefined;
@@ -364,6 +525,10 @@ const MAP: StreamMethodDef = {
     // falls through to the direct lowering below.
     if (ctx.enclosingLookup !== undefined) {
       const ret = lambda.block !== undefined ? (lambda.ret as Expr) : mapBodyExpr(lambda);
+      // An expression-body ret becomes `$ = <ret>`; a provably non-document one is
+      // rejected here (a block-body ret routes through `lowerCallbackBlock`'s own
+      // `$ = <expr>` guard, same as the top-level block path).
+      if (lambda.block === undefined) rejectNonDocumentMapBody(ret);
       if (containsUnionPush(ret)) {
         throw new CodegenError(
           `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
@@ -420,6 +585,7 @@ const MAP: StreamMethodDef = {
 
     // ── Expression body: `(d) => <expr>` ─────────────────────────────────────
     const body = mapBodyExpr(lambda);
+    rejectNonDocumentMapBody(body);
     if (containsUnionPush(body)) {
       throw new CodegenError(
         `'$$.push(...)' inside a '.map(d => …)' body isn't meaningful — '$$.push' is a statement-level form that emits '$unionWith' stages. Hoist it before the chain.`,
@@ -584,6 +750,288 @@ const TO_REVERSED: StreamMethodDef = {
   },
 };
 
+// ── .toReversedBy(field) → $sort: { field: -1 } ───────────────────────────────
+//
+// lodash-flavoured "reverse-sort by a key" — newest/largest first. The key form
+// of a descending `.toSorted((a, b) => b.<field> - a.<field>)`; takes a bare
+// field-name string. (Ascending is `.sortBy("field")`.)
+const TO_REVERSED_BY: StreamMethodDef = {
+  name: "toReversedBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".toReversedBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    return { stages: [{ $sort: { [key]: -1 } }] };
+  },
+};
+
+// ── .sortBy(key | [keys] | { field: 1|-1 }) / .orderBy(keys, orders) → $sort ───
+//
+// `.sortBy` is the lodash key-form of sort (ascending by default): a field name,
+// an array of field names, or a raw `$sort` spec object (`{ score: -1 }`) passed
+// straight through. `.orderBy` adds per-key directions ('asc' / 'desc'). Both are
+// the key/spec complement of `.toSorted((a, b) => …)`'s comparator form.
+
+// A plain field-name literal (no leading `$`); used by the sort/group key forms.
+function fieldNameLiteral(e: Expr | SpreadElement, sig: string): string {
+  if (e.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
+  }
+  if (e.type !== "StringLiteral") {
+    throw new CodegenError(`${sig} requires field-name string literals; got '${e.type}'.`, e.pos);
+  }
+  if (e.value === "" || e.value.startsWith("$")) {
+    throw new CodegenError(
+      `${sig} requires plain field names (no leading '$'), got ${JSON.stringify(e.value)}.`,
+      e.pos,
+    );
+  }
+  return e.value;
+}
+
+// 1 (ascending) or -1 (descending), from a `1` / `-1` literal. `-1` parses as a
+// UnaryExpr, so both shapes are accepted. Returns null for anything else.
+function sortDirection(e: Expr): 1 | -1 | null {
+  if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral" && e.operand.value === 1) return -1;
+  return null;
+}
+
+function buildSortBySpec(arg: Expr): Record<string, 1 | -1> {
+  if (arg.type === "StringLiteral") {
+    return { [fieldNameLiteral(arg, ".sortBy(key)")]: 1 };
+  }
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) {
+      throw new CodegenError(`.sortBy([keys]) needs at least one field name.`, arg.pos);
+    }
+    const spec: Record<string, 1 | -1> = {};
+    for (const el of arg.elements) spec[fieldNameLiteral(el as Expr | SpreadElement, ".sortBy([keys])")] = 1;
+    return spec;
+  }
+  // ObjectLiteral — a raw sort spec, `{ score: -1, name: 1 }`.
+  if (arg.type !== "ObjectLiteral") {
+    throw new CodegenError(
+      `.sortBy(...) takes a field name, an array of field names, or a sort spec ({ score: -1 }).`,
+      arg.pos,
+    );
+  }
+  if (arg.entries.length === 0) {
+    throw new CodegenError(`.sortBy({ … }) needs at least one field.`, arg.pos);
+  }
+  const spec: Record<string, 1 | -1> = {};
+  for (const entry of arg.entries) {
+    if (entry.type === "SpreadElement") {
+      throw new CodegenError(`.sortBy({ … }) does not accept spread entries.`, entry.pos);
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(
+        `.sortBy({ … }) keys must be plain field names — computed keys aren't supported.`,
+        entry.pos,
+      );
+    }
+    const dir = sortDirection(entry.value);
+    if (dir === null) {
+      throw new CodegenError(
+        `.sortBy({ ${entry.key.name}: … }) direction must be 1 (ascending) or -1 (descending).`,
+        entry.value.pos,
+      );
+    }
+    spec[entry.key.name] = dir;
+  }
+  return spec;
+}
+
+const SORT_BY: StreamMethodDef = {
+  name: "sortBy",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.sortBy(key | [keys] | { field: 1|-1 }) takes exactly 1 argument, got ${args.length}.`,
+        callPos,
+      );
+    }
+    const a = args[0];
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`.sortBy(...) does not accept a spread argument.`, a.pos);
+    }
+    if (a.type !== "StringLiteral" && a.type !== "ArrayLiteral" && a.type !== "ObjectLiteral") {
+      throw new CodegenError(
+        `.sortBy(...) takes a field name ("age"), an array of field names (["a", "b"]), or a sort spec ({ score: -1 }). For a custom comparator use '.toSorted((a, b) => …)'.`,
+        a.pos,
+      );
+    }
+    buildSortBySpec(a);
+  },
+  lower(args) {
+    return { stages: [{ $sort: buildSortBySpec(args[0] as Expr) }] };
+  },
+};
+
+function orderKeys(arg: Expr | SpreadElement): string[] {
+  if (arg.type === "StringLiteral") return [fieldNameLiteral(arg, ".orderBy(keys, orders)")];
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) {
+      throw new CodegenError(`.orderBy(keys, orders) needs at least one key.`, arg.pos);
+    }
+    return arg.elements.map((el) => fieldNameLiteral(el as Expr | SpreadElement, ".orderBy(keys, orders)"));
+  }
+  throw new CodegenError(`.orderBy(keys, orders) — 'keys' must be a field name or an array of field names.`, arg.pos);
+}
+
+function orderDirs(arg: Expr | SpreadElement | undefined, count: number): (1 | -1)[] {
+  const parse = (e: Expr | SpreadElement): 1 | -1 => {
+    if (e.type !== "StringLiteral" || (e.value !== "asc" && e.value !== "desc")) {
+      throw new CodegenError(`.orderBy(keys, orders) — 'orders' entries must be the string "asc" or "desc".`, e.pos);
+    }
+    return e.value === "desc" ? -1 : 1;
+  };
+  let dirs: (1 | -1)[];
+  if (arg === undefined) dirs = [];
+  else if (arg.type === "StringLiteral") dirs = [parse(arg)];
+  else if (arg.type === "ArrayLiteral") dirs = arg.elements.map((el) => parse(el as Expr | SpreadElement));
+  else throw new CodegenError(`.orderBy(keys, orders) — 'orders' must be "asc"/"desc" or an array of them.`, arg.pos);
+  // lodash pads missing orders with ascending.
+  return Array.from({ length: count }, (_, i) => dirs[i] ?? 1);
+}
+
+function buildOrderBySpec(args: readonly CallArg[]): Record<string, 1 | -1> {
+  const keys = orderKeys(args[0]);
+  const dirs = orderDirs(args[1], keys.length);
+  const spec: Record<string, 1 | -1> = {};
+  keys.forEach((k, i) => (spec[k] = dirs[i]));
+  return spec;
+}
+
+const ORDER_BY: StreamMethodDef = {
+  name: "orderBy",
+  validate(args, callPos) {
+    if (args.length < 1 || args.length > 2) {
+      throw new CodegenError(`.orderBy(keys[, orders]) takes 1 or 2 arguments, got ${args.length}.`, callPos);
+    }
+    buildOrderBySpec(args);
+  },
+  lower(args) {
+    return { stages: [{ $sort: buildOrderBySpec(args) }] };
+  },
+};
+
+// ── .groupBy(key | { _id, <field>: <accumulator> }) → $group ───────────────────
+//
+// Two arg shapes:
+//   • a `$group` body object — `{ _id: "$dept", n: $sum(1) }` — lowered verbatim
+//     to a `$group` stage. Field-value slots (every key but `_id`) generate in
+//     accumulator context, so `$addToSet` / `$push` / … pass the codegen gate,
+//     exactly like the direct `$group(...)` stage.
+//   • a bare field name — `.groupBy("dept")` — groups by that field with no
+//     accumulators: `{ _id: "$dept" }` (one document per distinct value). Add
+//     accumulators by passing the object form.
+//
+// (Per-key accumulator scoping mirrors `pipeline.ts`'s `$group` body generation;
+// it's reimplemented locally because pipeline.ts imports THIS module — importing
+// back would be a cycle.)
+function generateGroupBody(
+  obj: Extract<Expr, { type: "ObjectLiteral" }>,
+  ctx: GenerateCtx,
+  callPos: number,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  let hasId = false;
+  for (const entry of obj.entries) {
+    if (entry.type === "SpreadElement") {
+      throw new CodegenError(
+        `.groupBy({ … }) does not accept spread entries — write an explicit '$group' body.`,
+        entry.pos,
+      );
+    }
+    if (entry.key.kind !== "static") {
+      throw new CodegenError(
+        `.groupBy({ … }) keys must be static field names — computed keys aren't supported.`,
+        entry.pos,
+      );
+    }
+    const key = entry.key.name;
+    // `_id` is a plain grouping expression; every other slot is an accumulator.
+    const slotCtx: GenerateCtx = key === "_id" ? ctx : { ...ctx, accumulatorContext: "group" };
+    out[key] = generateWithCtx(entry.value, slotCtx);
+    if (key === "_id") hasId = true;
+  }
+  if (!hasId) {
+    throw new CodegenError(
+      `.groupBy({ … }) requires an '_id' key (the group key). Use '.groupBy("field")' to group by a single field.`,
+      callPos,
+    );
+  }
+  return out;
+}
+
+const GROUP_BY: StreamMethodDef = {
+  name: "groupBy",
+  validate(args, callPos) {
+    if (args.length !== 1) {
+      throw new CodegenError(
+        `.groupBy(key | { _id: …, <field>: <accumulator>, … }) takes exactly 1 argument, got ${args.length}.`,
+        callPos,
+      );
+    }
+    const a = args[0];
+    if (a.type === "SpreadElement") {
+      throw new CodegenError(`.groupBy(...) does not accept a spread argument.`, a.pos);
+    }
+    if (a.type !== "StringLiteral" && a.type !== "ObjectLiteral") {
+      throw new CodegenError(
+        `.groupBy(...) takes a field name ("dept") or a '$group' body ({ _id: "$dept", n: $sum(1) }).`,
+        a.pos,
+      );
+    }
+    if (a.type === "StringLiteral") fieldNameLiteral(a, ".groupBy(key)");
+  },
+  lower(args, ctx, callPos) {
+    const a = args[0] as Expr;
+    if (a.type === "StringLiteral") {
+      return { stages: [{ $group: { _id: `$${a.value}` } }], clearLets: true };
+    }
+    const body = generateGroupBody(a as Extract<Expr, { type: "ObjectLiteral" }>, ctx, callPos);
+    return { stages: [{ $group: body }], clearLets: true };
+  },
+};
+
+// ── .countBy(field) → $sortByCount ────────────────────────────────────────────
+//
+// lodash `_.countBy(coll, key)` — a tally per distinct key. Maps to `$sortByCount`,
+// which emits one `{ _id, count }` document per group, sorted by count descending.
+const COUNT_BY: StreamMethodDef = {
+  name: "countBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".countBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    return { stages: [{ $sortByCount: `$${key}` }], clearLets: true };
+  },
+};
+
+// ── .uniqBy(field) → $group + $replaceWith ────────────────────────────────────
+//
+// lodash `_.uniqBy(coll, key)` — one document per distinct key. `$group` keeps
+// the first document seen for each key (`$first`), then `$replaceWith` restores
+// it as the root. NB "first" follows the stream's current order, so precede with
+// a `.sortBy(...)` / `.toReversedBy(...)` when which-duplicate-wins matters.
+const UNIQ_BY: StreamMethodDef = {
+  name: "uniqBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".uniqBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    return {
+      stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
+      clearLets: true,
+    };
+  },
+};
+
 // ── .flatMap(d => d.<path>) → $unwind ─────────────────────────────────────────
 //
 // v1 only supports bare-field-path bodies. The lambda body must walk back
@@ -633,9 +1081,19 @@ const FLAT_MAP: StreamMethodDef = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.flatMap(...) does not accept a spread argument.`, arg.pos);
     }
+    // lodash property shorthand: `.flatMap("productIds")` ≡ `.flatMap(d => d.productIds)`.
+    if (arg.type === "StringLiteral") {
+      if (arg.value === "" || arg.value.startsWith("$")) {
+        throw new CodegenError(
+          `.flatMap("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
+          arg.pos,
+        );
+      }
+      return;
+    }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.flatMap(d => d.<path>) requires an arrow function — in v1 the body must be a bare field-path on the lambda param (e.g. 'd.items', 'd.profile.tags').`,
+        `.flatMap(...) requires an arrow whose body is a bare field-path on the param (e.g. '.flatMap(d => d.items)') or a field-name string ('.flatMap("items")').`,
         arg.pos,
       );
     }
@@ -650,6 +1108,10 @@ const FLAT_MAP: StreamMethodDef = {
     }
   },
   lower(args, _ctx, callPos, _lowerBlock, _prevStages) {
+    const shorthand = args[0];
+    if (shorthand.type === "StringLiteral") {
+      return { stages: [{ $unwind: `$${shorthand.value}` }] };
+    }
     const lambda = args[0] as LambdaNode;
     const param = lambda.params[0];
     const body = lambda.body as Expr;
@@ -1337,10 +1799,20 @@ function classifyConcatCall(expr: Expr, accParam: string, dParam: string): Array
 
 const STREAM_METHODS: Record<string, StreamMethodDef> = {
   slice: SLICE,
+  sample: SAMPLE,
+  take: TAKE,
+  drop: DROP,
+  sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
+  toReversedBy: TO_REVERSED_BY,
+  sortBy: SORT_BY,
+  orderBy: ORDER_BY,
+  groupBy: GROUP_BY,
+  countBy: COUNT_BY,
+  uniqBy: UNIQ_BY,
   flatMap: FLAT_MAP,
   // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
   // returns a scalar / object / array in JS depending on the reducer. A

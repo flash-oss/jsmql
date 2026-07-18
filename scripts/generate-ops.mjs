@@ -131,15 +131,43 @@ const COLLECTION_REF_TYPE = "JsmqlCollectionRef";
 // the chaining contract lives in one place.
 const STREAM_METHOD_SIGNATURES = {
   filter: {
-    doc: "Narrow the stream → `$match`. Sugar for `$$ = $$.filter(p)`.",
-    params: "(predicate: (doc: any) => any)",
+    doc: "Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`).",
+    params: "(predicate: ((doc: any) => any) | Record<string, any>)",
   },
-  map: { doc: "Reshape each document → `$replaceWith`.", params: "(transform: (doc: any) => any)" },
+  map: {
+    doc: 'Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`).',
+    params: "(transform: ((doc: any) => any) | string)",
+  },
   slice: { doc: "Take a window of the stream → `$skip` / `$limit`.", params: "(start: number, end?: number)" },
   concat: { doc: "Append documents / union collections → `$unionWith`.", params: "(...sources: any[])" },
   toSorted: { doc: "Sort the stream → `$sort`.", params: "(compare: (a: any, b: any) => number)" },
   toReversed: { doc: "Reverse the preceding sort — flips the preceding `$sort`.", params: "()" },
-  flatMap: { doc: "Unwind an array field → `$unwind`.", params: "(transform: (doc: any) => any)" },
+  flatMap: {
+    doc: 'Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`).',
+    params: "(transform: ((doc: any) => any) | string)",
+  },
+  sample: {
+    doc: "One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more).",
+    params: "()",
+  },
+  take: { doc: "First `n` documents → `$limit`.", params: "(n: number)" },
+  drop: { doc: "Skip the first `n` documents → `$skip`.", params: "(n: number)" },
+  sampleSize: { doc: "`n` random documents → `$sample`.", params: "(n: number)" },
+  toReversedBy: { doc: "Descending sort by a field → `$sort: { field: -1 }`.", params: "(field: string)" },
+  sortBy: {
+    doc: "Ascending sort by field(s), or a raw sort spec → `$sort`.",
+    params: "(key: string | string[] | Record<string, 1 | -1>)",
+  },
+  orderBy: {
+    doc: "Sort by keys with per-key directions → `$sort`.",
+    params: '(keys: string | string[], orders?: "asc" | "desc" | ("asc" | "desc")[])',
+  },
+  groupBy: {
+    doc: "Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name.",
+    params: "(spec: string | Record<string, any>)",
+  },
+  countBy: { doc: "Tally documents per distinct key → `$sortByCount`.", params: "(field: string)" },
+  uniqBy: { doc: "One document per distinct key → `$group` + `$replaceWith`.", params: "(field: string)" },
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
 

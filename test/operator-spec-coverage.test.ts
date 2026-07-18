@@ -196,10 +196,12 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     const block = src.slice(src.indexOf("interface JsmqlCollectionRef {"), src.indexOf("const $$$: {"));
     // Stream methods return the ref interface (chaining) — not `any` — so
     // `$$.filter(d => …).map(d => …)` keeps completion and contextual typing.
-    expect(block).toContain("filter(predicate: (doc: any) => any): JsmqlCollectionRef;");
-    expect(block).toContain("map(transform: (doc: any) => any): JsmqlCollectionRef;");
+    expect(block).toContain("filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;");
+    expect(block).toContain("map(transform: ((doc: any) => any) | string): JsmqlCollectionRef;");
     expect(block).toContain("slice(start: number, end?: number): JsmqlCollectionRef;");
     expect(block).toContain("toReversed(): JsmqlCollectionRef;");
+    expect(block).toContain("take(n: number): JsmqlCollectionRef;");
+    expect(block).toContain("groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;");
     expect(block).toContain("push(...docs: any[]): JsmqlCollectionRef;");
     // Registry is the source of truth: every STREAM_METHODS name must appear.
     for (const name of streamMethodNames()) {

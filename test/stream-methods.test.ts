@@ -109,6 +109,228 @@ describe(".slice — rejection branches", () => {
   });
 });
 
+describe(".take(n) → $limit — lodash first-n", () => {
+  it("lowers to $limit", () => {
+    expect(jsmql("$$ = $$.take(10);")).toEqual([{ $limit: 10 }]);
+  });
+
+  it("take(0) → always-false $match (lodash empty; $limit:0 is invalid MQL)", () => {
+    expect(jsmql("$$ = $$.take(0);")).toEqual([{ $match: { $expr: false } }]);
+  });
+
+  it("chains after a sort", () => {
+    expect(jsmql('$$ = $$.toReversedBy("createdAt").take(10);')).toEqual([
+      { $sort: { createdAt: -1 } },
+      { $limit: 10 },
+    ]);
+  });
+
+  it("bare-statement form is equivalent", () => {
+    expect(jsmql("$$.take(10);")).toEqual([{ $limit: 10 }]);
+  });
+
+  it("rejects a non-integer / negative / computed / extra-arg / spread", () => {
+    expect(() => jsmql("$$ = $$.take(1.5);")).toThrow(/integer >= 0/);
+    expect(() => jsmql("$$ = $$.take(-1);")).toThrow(/requires an integer literal/);
+    expect(() => jsmql('$$ = $$.take("x");')).toThrow(/requires an integer literal/);
+    expect(() => jsmql("$$ = $$.take($.n);")).toThrow(/requires an integer literal/);
+    expect(() => jsmql("$$ = $$.take(1, 2);")).toThrow(/takes exactly 1 argument/);
+    expect(() => jsmql("$$ = $$.take(...[1]);")).toThrow(/does not accept a spread argument/);
+  });
+});
+
+describe(".drop(n) → $skip — lodash all-but-first-n", () => {
+  it("lowers to $skip", () => {
+    expect(jsmql("$$ = $$.drop(5);")).toEqual([{ $skip: 5 }]);
+  });
+
+  it("drop(0) is identity — emits zero stages", () => {
+    expect(jsmql("$$ = $$.drop(0);")).toEqual([]);
+  });
+
+  it("composes with .take (skip + limit)", () => {
+    expect(jsmql("$$ = $$.drop(5).take(10);")).toEqual([{ $skip: 5 }, { $limit: 10 }]);
+  });
+});
+
+describe(".sampleSize(n) → $sample", () => {
+  it("lowers to $sample", () => {
+    expect(jsmql("$$ = $$.sampleSize(3);")).toEqual([{ $sample: { size: 3 } }]);
+  });
+
+  it("rejects size < 1", () => {
+    expect(() => jsmql("$$ = $$.sampleSize(0);")).toThrow(/integer >= 1/);
+  });
+});
+
+describe(".sample() → $sample: { size: 1 } — one random document", () => {
+  it("zero-arg → sampleSize(1)", () => {
+    expect(jsmql("$$ = $$.sample();")).toEqual([{ $sample: { size: 1 } }]);
+    expect(jsmql("$$ = $$.sample();")).toEqual(jsmql("$$ = $$.sampleSize(1);"));
+  });
+
+  it("chains after .filter", () => {
+    expect(jsmql('$$ = $$.filter({ tier: "gold" }).sample();')).toEqual([
+      { $match: { tier: "gold" } },
+      { $sample: { size: 1 } },
+    ]);
+  });
+
+  it("rejects an argument (→ .sampleSize)", () => {
+    expect(() => jsmql("$$ = $$.sample(3);")).toThrow(/takes no arguments.*\.sampleSize\(n\)/);
+  });
+});
+
+describe(".toReversedBy(field) → $sort: { field: -1 } — descending by key", () => {
+  it("lowers to a descending $sort", () => {
+    expect(jsmql('$$ = $$.toReversedBy("createdAt");')).toEqual([{ $sort: { createdAt: -1 } }]);
+  });
+
+  it("accepts a dotted path", () => {
+    expect(jsmql('$$ = $$.toReversedBy("meta.rank");')).toEqual([{ $sort: { "meta.rank": -1 } }]);
+  });
+
+  it("runs inside a $$$.<coll> source-switch sub-pipeline", () => {
+    expect(jsmql('$$ = $$$.archive.toReversedBy("createdAt").take(5);')).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { coll: "archive", pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 5 }] } },
+    ]);
+  });
+
+  it("rejects a non-string / $-prefixed / missing field", () => {
+    expect(() => jsmql("$$ = $$.toReversedBy(5);")).toThrow(/requires a field-name string literal/);
+    expect(() => jsmql('$$ = $$.toReversedBy("$x");')).toThrow(/no leading '\$'/);
+    expect(() => jsmql("$$ = $$.toReversedBy();")).toThrow(/takes exactly 1 argument/);
+  });
+});
+
+describe(".sortBy(key | [keys] | spec) → $sort — ascending key form", () => {
+  it("field-name string → ascending $sort", () => {
+    expect(jsmql('$$ = $$.sortBy("age");')).toEqual([{ $sort: { age: 1 } }]);
+  });
+
+  it("array of field names → multi-key ascending $sort", () => {
+    expect(jsmql('$$ = $$.sortBy(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
+  });
+
+  it("raw sort spec object passes through", () => {
+    expect(jsmql("$$ = $$.sortBy({ score: -1, productId: 1 });")).toEqual([{ $sort: { score: -1, productId: 1 } }]);
+  });
+
+  it("rejects a non-1/-1 direction and an arrow (→ .toSorted)", () => {
+    expect(() => jsmql("$$ = $$.sortBy({ a: 2 });")).toThrow(/must be 1 \(ascending\) or -1/);
+    expect(() => jsmql("$$ = $$.sortBy(o => o.age);")).toThrow(/For a custom comparator use '\.toSorted/);
+  });
+});
+
+describe(".orderBy(keys, orders) → $sort — per-key directions", () => {
+  it("keys + orders → directed $sort", () => {
+    expect(jsmql('$$ = $$.orderBy(["age", "name"], ["asc", "desc"]);')).toEqual([{ $sort: { age: 1, name: -1 } }]);
+  });
+
+  it("orders default to ascending; partial orders pad with asc", () => {
+    expect(jsmql('$$ = $$.orderBy("age");')).toEqual([{ $sort: { age: 1 } }]);
+    expect(jsmql('$$ = $$.orderBy(["a", "b", "c"], ["desc"]);')).toEqual([{ $sort: { a: -1, b: 1, c: 1 } }]);
+  });
+
+  it("rejects an order that isn't asc/desc", () => {
+    expect(() => jsmql('$$ = $$.orderBy("a", "up");')).toThrow(/"asc" or "desc"/);
+  });
+});
+
+describe(".groupBy(spec | key) → $group", () => {
+  it("raw $group body lowers verbatim (accumulators pass the group gate)", () => {
+    expect(jsmql('$$ = $$.groupBy({ _id: "$dept", n: $sum(1), total: $sum("$amount") });')).toEqual([
+      { $group: { _id: "$dept", n: { $sum: 1 }, total: { $sum: "$amount" } } },
+    ]);
+  });
+
+  it("accumulator-only ops ($addToSet) are allowed in a group field slot", () => {
+    expect(jsmql('$$ = $$.groupBy({ _id: null, ids: $addToSet("$productId") });')).toEqual([
+      { $group: { _id: null, ids: { $addToSet: "$productId" } } },
+    ]);
+  });
+
+  it("bare field name → group by that field, no accumulators (distinct values)", () => {
+    expect(jsmql('$$ = $$.groupBy("dept");')).toEqual([{ $group: { _id: "$dept" } }]);
+  });
+
+  it("rejects a body without _id and a non-string/non-object arg", () => {
+    expect(() => jsmql("$$ = $$.groupBy({ n: $sum(1) });")).toThrow(/requires an '_id' key/);
+    expect(() => jsmql("$$ = $$.groupBy(5);")).toThrow(/takes a field name .* or a '\$group' body/);
+  });
+});
+
+describe(".countBy(field) → $sortByCount", () => {
+  it("lowers to $sortByCount", () => {
+    expect(jsmql('$$ = $$.countBy("dept");')).toEqual([{ $sortByCount: "$dept" }]);
+  });
+});
+
+describe(".uniqBy(field) → $group + $replaceWith", () => {
+  it("keeps the first document per distinct key", () => {
+    expect(jsmql('$$ = $$.uniqBy("email");')).toEqual([
+      { $group: { _id: "$email", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
+  });
+});
+
+describe("lodash iteratee shorthands on stream methods", () => {
+  it('.map("field") promotes a subdocument field to the root → $replaceWith', () => {
+    // `.map("field")` ≡ `.map(d => d.field)` — the field becomes the new root, so it
+    // must be a DOCUMENT ($replaceWith needs an object root). Using a subdocument
+    // field here; a scalar field (e.g. an ObjectId `userId`) is accepted at compile
+    // time (its type is unknown) but errors at runtime — verified against mongod.
+    expect(jsmql('$$ = $$.map("address");')).toEqual([{ $replaceWith: "$address" }]);
+    expect(jsmql('$$ = $$.map("address");')).toEqual(jsmql("$$ = $$.map(d => d.address);"));
+  });
+
+  it("rejects a .map body that provably isn't a document ($replaceWith needs an object root)", () => {
+    // Universally-invalid MQL — mongod rejects a scalar/array `$replaceWith` root on
+    // every deployment, so jsmql rejects it at compile time (parity with `$ = 5`).
+    expect(() => jsmql("$$ = $$.map(d => 5);")).toThrow(/must return a document/);
+    expect(() => jsmql('$$ = $$.map(d => "x");')).toThrow(/must return a document/);
+    expect(() => jsmql("$$ = $$.map(d => true);")).toThrow(/must return a document/);
+    expect(() => jsmql("$$ = $$.map(d => [1, 2]);")).toThrow(/must return a document/);
+    // A field ref / `$`-string stays allowed — data-dependent, could be a subdocument.
+    expect(jsmql('$$ = $$.map(d => "$sub");')).toEqual([{ $replaceWith: "$sub" }]);
+  });
+
+  it('.flatMap("field") unwinds by field name → $unwind', () => {
+    expect(jsmql('$$ = $$.flatMap("productIds");')).toEqual([{ $unwind: "$productIds" }]);
+  });
+
+  it(".filter({ matches }) → equality $match query", () => {
+    expect(jsmql('$$ = $$.filter({ status: "CLOSED", tier: "gold" });')).toEqual([
+      { $match: { status: "CLOSED", tier: "gold" } },
+    ]);
+  });
+
+  it(".filter works mid-chain (not only as the head)", () => {
+    expect(jsmql("$$ = $$.take(5).filter(o => o.active);")).toEqual([{ $limit: 5 }, { $match: { $expr: "$active" } }]);
+  });
+});
+
+// A recommendation-engine pipeline built entirely from lodash-named stream
+// methods — the composed-vocabulary end-to-end case. Verified against a live mongod.
+describe("composed lodash stream vocabulary — full pipeline", () => {
+  it("$$.filter({...}).toReversedBy(...).take(...).flatMap(...).groupBy({...})", () => {
+    expect(
+      jsmql(
+        '$$ = $$.filter({ status: "CLOSED" }).toReversedBy("createdAt").take(10)' +
+          '.flatMap("productIds").groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });',
+      ),
+    ).toEqual([
+      { $match: { status: "CLOSED" } },
+      { $sort: { createdAt: -1 } },
+      { $limit: 10 },
+      { $unwind: "$productIds" },
+      { $group: { _id: null, boughtProductIds: { $addToSet: "$productIds" } } },
+    ]);
+  });
+});
+
 describe(".concat(...others) — JS-idiomatic alias for $$.push", () => {
   it("spread of $$$.<coll> emits short-form $unionWith", () => {
     expect(jsmql("$$ = $$.concat(...$$$.archive);")).toEqual([{ $unionWith: "archive" }]);

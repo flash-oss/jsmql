@@ -1111,18 +1111,15 @@ function applyStreamMethods(
   rhs: Expr,
 ): boolean {
   let clearLets = false;
-  let i = 0;
-  if (methods[0].method === "filter") {
-    const m = methods[0];
-    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
-      rejectInvalidReplaceStream(rhs, ctx);
-    }
-    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, ctx, lowerBlockFn);
-    target.push(...matchStages);
-    i = 1;
-  }
-  for (; i < methods.length; i++) {
+  for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    // `.filter` is handled outside the registry (its predicate translation is
+    // shared with $unionWith/$facet). It may appear anywhere in the chain — as
+    // the head, or after a reshaping method like `.flatMap`/`.groupBy`.
+    if (m.method === "filter") {
+      target.push(...lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, i === 0));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$");
@@ -1134,6 +1131,33 @@ function applyStreamMethods(
     if (result.clearLets) clearLets = true;
   }
   return clearLets;
+}
+
+/**
+ * Lower a `.filter(...)` in a `$$` stream chain to `$match` stages. Accepts an
+ * arrow predicate (`o => …`, via the shared predicate lowering) or the lodash
+ * matches-object shorthand (`{ field: value, … }` → an equality `$match` query).
+ * `isHead` gates the "RHS must be `.filter(<predicate>)`" error to the chain head
+ * (where a bad shape means the whole `$$ = …` RHS is unrecognised).
+ */
+function lowerStreamFilterArg(
+  m: MethodCallNode,
+  ctx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  rhs: Expr,
+  isHead: boolean,
+): object[] {
+  if (m.args.length === 1 && m.args[0].type === "Lambda") {
+    return lowerStreamFilterPredicate(m.args[0] as LambdaNode, ctx, lowerBlockFn);
+  }
+  if (m.args.length === 1 && m.args[0].type === "ObjectLiteral") {
+    return [{ $match: generateWithCtx(m.args[0], ctx) }];
+  }
+  if (isHead) rejectInvalidReplaceStream(rhs, ctx);
+  throw new CodegenError(
+    `.filter(<predicate> | { field: value, … }) takes a single arrow predicate ('o => …') or a matches-object.`,
+    m.pos,
+  );
 }
 
 /**
