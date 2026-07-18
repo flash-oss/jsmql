@@ -2219,16 +2219,16 @@ declare global {
     concat(...sources: any[]): JsmqlCollectionRef;
     /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
     map(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
-    /** Sort the stream → `$sort`. */
-    toSorted(compare: (a: any, b: any) => number): JsmqlCollectionRef;
+    /** Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator. */
+    sort(
+      sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
+    ): JsmqlCollectionRef;
+    /** Order the stream → `$sort` (equivalent to `.sort` on a stream). */
+    toSorted(
+      sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
+    ): JsmqlCollectionRef;
     /** Reverse the preceding sort — flips the preceding `$sort`. */
     toReversed(): JsmqlCollectionRef;
-    /** Descending sort by a field → `$sort: { field: -1 }`. */
-    toReversedBy(field: string): JsmqlCollectionRef;
-    /** Ascending sort by field(s), or a raw sort spec → `$sort`. */
-    sortBy(key: string | string[] | Record<string, 1 | -1>): JsmqlCollectionRef;
-    /** Sort by keys with per-key directions → `$sort`. */
-    orderBy(keys: string | string[], orders?: "asc" | "desc" | ("asc" | "desc")[]): JsmqlCollectionRef;
     /** Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name. */
     groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
     /** Tally documents per distinct key → `$sortByCount`. */

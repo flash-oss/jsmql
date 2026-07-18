@@ -1449,17 +1449,21 @@ Object.assign(result, { a: $.foo });
 
 `Object.assign(result, …)` works even when `result` is `const` — mutating a `const`-bound object is legal JavaScript (only *rebinding* it with `result = …` is not). It's the mutating twin of the value form `result = { ...result, ... }`. In **expression** position `Object.assign(a, b)` is unchanged — it lowers to `$mergeObjects` (see [Object Operations](#object-operations)). The first argument must be a writable target (a `$.field` or an in-scope binding); anything else — `Object.assign({}, …)`, an undeclared name — throws an actionable error.
 
-#### Sort key functions: `.toSorted(keyFn)` and `.sort(keyFn)`
+#### Array sort: `.toSorted(<sort>)` and `.sort(<sort>)`
 
-Both accept an optional 1-parameter lambda that names the field to sort by. The same shapes work everywhere — `.toSorted()` returns a new array, `.sort()` mutates at statement position:
+Both accept a field name, an array of field names, a `{ field: 1 | -1 | "asc" | "desc" }` spec, or a key-function lambda. `.toSorted()` returns a new array; `.sort()` mutates at statement position. The same shapes work everywhere:
 
 ```js
-$.events.toSorted(e => e.distance)        // { $sortArray: { input: "$events", sortBy: { distance: 1 } } }
-$.events.toSorted(e => -e.distance)       // descending, via unary -
-$.events.toSorted(e => e.user.name)       // nested paths welcome
+$.events.toSorted("distance")             // { $sortArray: { input: "$events", sortBy: { distance: 1 } } }
+$.events.toSorted({ distance: -1 })       // descending
+$.events.toSorted({ a: "asc", b: "desc" })// multi-key
+$.events.toSorted(["a", "b"])             // both ascending
+$.events.toSorted(e => e.distance)        // key-function form (nested paths welcome)
+$.events.toSorted(e => -e.user.name)      // descending, via unary -
+$.events.sort({ distance: -1 });          // statement position → $set with $sortArray
 ```
 
-Comparator-style lambdas (`(a, b) => a.x - b.x`) and anything more complex than `x => x.path` (optionally negated) are rejected at compile time — use `$op($sortArray, { input, sortBy })` to spell out a multi-key or non-trivial sort.
+Comparator-style lambdas (`(a, b) => a.x - b.x`) and key functions more complex than `x => x.path` (optionally negated) are rejected at compile time — use a `{ field: dir }` spec, or `$op($sortArray, { input, sortBy })` for a non-trivial sort.
 
 ### Bare type-cast callbacks
 
@@ -2519,18 +2523,15 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
 | `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
 | `.map(d => <expr>)` / `.map("field")` | Single-param expression-body arrow (the param is the current document — write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`; the shorthand → `$replaceWith: "$field"`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
-| `.toSorted((a, b) => <cmp>)` | Two-param arrow; comparator body built from `a.<field> - b.<field>` (asc), `b.<field> - a.<field>` (desc), combined with `\|\|` for compound sort | `$sort: { … }` — key order preserved from source. Zero-arg `.toSorted()` is rejected (MongoDB streams have no natural document ordering) |
-| `.sortBy(key \| [keys] \| { f: 1\|-1 })` | Lodash key-form of sort (ascending): a field name, an array of field names, or a raw `$sort` spec object | `$sort: { … }`. A computed arrow is rejected with a redirect to `.toSorted((a, b) => …)` |
-| `.orderBy(keys, orders?)` | Keys (name or array) + per-key directions (`"asc"`/`"desc"`, or an array padded with `"asc"`) | `$sort: { … }` with the given directions |
-| `.toReversed()` | Zero args; the preceding stage must be a `$sort` — a `.toSorted(...)` earlier in the chain, or (in the [bare-statement form](#bare-statement-stream-operations)) a prior statement / literal `$sort(...)` | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding sort the call is rejected with a "needs a preceding $sort" hint |
-| `.toReversedBy("field")` | One plain field-name string | Descending key-sort → `$sort: { field: -1 }` (the key form of a descending `.toSorted`) |
+| `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (`\|\|` for compound). `.sort` and `.toSorted` are equivalent on a stream | `$sort: { … }`. Zero-arg is rejected (streams have no natural document ordering) |
+| `.toReversed()` | Zero args; the preceding stage must be a `$sort` — a `.sort(...)` earlier in the chain, or (in the [bare-statement form](#bare-statement-stream-operations)) a prior statement / literal `$sort(...)` | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding sort the call is rejected with a "needs a preceding $sort" hint |
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
 | `.flatMap(d => d.<path>)` / `.flatMap("path")` | Single-param arrow whose body is a bare field-path on the param (v1), or the property shorthand `.flatMap("path")` | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
 | `.groupBy("key")` / `.groupBy({ _id, … })` | A bare field name, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → `$group: { _id: "$key" }` (group by that field, no accumulators); body form → `$group: <body>` verbatim |
 | `.countBy("field")` | One plain field-name string | `$sortByCount: "$field"` → one `{ _id, count }` document per distinct key |
-| `.uniqBy("field")` | One plain field-name string | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sortBy`/`.toReversedBy` when it matters |
+| `.uniqBy("field")` | One plain field-name string | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
 
 `.filter(<pred>)` accepts an arrow predicate **or** the lodash matches-object shorthand (`.filter({ status: "CLOSED", tier: "gold" })` → `$match: { status: "CLOSED", tier: "gold" }`), and can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
 
@@ -2542,7 +2543,7 @@ A worked lodash-style chain — the newest 10 closed orders' distinct products:
 
 ```js
 jsmql(`$$ = $$.filter({ status: "CLOSED" })
-  .toReversedBy("createdAt")
+  .sort({ createdAt: -1 })
   .take(10)
   .flatMap("productIds")
   .groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });`)

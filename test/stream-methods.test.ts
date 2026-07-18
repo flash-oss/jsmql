@@ -119,10 +119,7 @@ describe(".take(n) → $limit — lodash first-n", () => {
   });
 
   it("chains after a sort", () => {
-    expect(jsmql('$$ = $$.toReversedBy("createdAt").take(10);')).toEqual([
-      { $sort: { createdAt: -1 } },
-      { $limit: 10 },
-    ]);
+    expect(jsmql("$$ = $$.sort({ createdAt: -1 }).take(10);")).toEqual([{ $sort: { createdAt: -1 } }, { $limit: 10 }]);
   });
 
   it("bare-statement form is equivalent", () => {
@@ -181,60 +178,45 @@ describe(".sample() → $sample: { size: 1 } — one random document", () => {
   });
 });
 
-describe(".toReversedBy(field) → $sort: { field: -1 } — descending by key", () => {
-  it("lowers to a descending $sort", () => {
-    expect(jsmql('$$ = $$.toReversedBy("createdAt");')).toEqual([{ $sort: { createdAt: -1 } }]);
+describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", () => {
+  it("field-name string → ascending $sort", () => {
+    expect(jsmql('$$ = $$.sort("createdAt");')).toEqual([{ $sort: { createdAt: 1 } }]);
   });
 
-  it("accepts a dotted path", () => {
-    expect(jsmql('$$ = $$.toReversedBy("meta.rank");')).toEqual([{ $sort: { "meta.rank": -1 } }]);
+  it("array of field names → multi-key ascending $sort", () => {
+    expect(jsmql('$$ = $$.sort(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
+  });
+
+  it("{ field: 1 | -1 } spec", () => {
+    expect(jsmql("$$ = $$.sort({ score: -1, productId: 1 });")).toEqual([{ $sort: { score: -1, productId: 1 } }]);
+  });
+
+  it('{ field: "asc" | "desc" } spec', () => {
+    expect(jsmql('$$ = $$.sort({ createdAt: "desc" });')).toEqual([{ $sort: { createdAt: -1 } }]);
+    expect(jsmql('$$ = $$.sort({ a: "asc", b: "desc" });')).toEqual([{ $sort: { a: 1, b: -1 } }]);
+  });
+
+  it("comparator arrow still works", () => {
+    expect(jsmql("$$ = $$.sort((a, b) => a.age - b.age);")).toEqual([{ $sort: { age: 1 } }]);
+    expect(jsmql("$$ = $$.sort((a, b) => b.age - a.age);")).toEqual([{ $sort: { age: -1 } }]);
+  });
+
+  it(".toSorted is equivalent to .sort on a stream", () => {
+    expect(jsmql('$$ = $$.toSorted("createdAt");')).toEqual(jsmql('$$ = $$.sort("createdAt");'));
+    expect(jsmql("$$ = $$.toSorted({ n: -1 });")).toEqual([{ $sort: { n: -1 } }]);
   });
 
   it("runs inside a $$$.<coll> source-switch sub-pipeline", () => {
-    expect(jsmql('$$ = $$$.archive.toReversedBy("createdAt").take(5);')).toEqual([
+    expect(jsmql("$$ = $$$.archive.sort({ createdAt: -1 }).take(5);")).toEqual([
       { $match: { $expr: false } },
       { $unionWith: { coll: "archive", pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 5 }] } },
     ]);
   });
 
-  it("rejects a non-string / $-prefixed / missing field", () => {
-    expect(() => jsmql("$$ = $$.toReversedBy(5);")).toThrow(/requires a field-name string literal/);
-    expect(() => jsmql('$$ = $$.toReversedBy("$x");')).toThrow(/no leading '\$'/);
-    expect(() => jsmql("$$ = $$.toReversedBy();")).toThrow(/takes exactly 1 argument/);
-  });
-});
-
-describe(".sortBy(key | [keys] | spec) → $sort — ascending key form", () => {
-  it("field-name string → ascending $sort", () => {
-    expect(jsmql('$$ = $$.sortBy("age");')).toEqual([{ $sort: { age: 1 } }]);
-  });
-
-  it("array of field names → multi-key ascending $sort", () => {
-    expect(jsmql('$$ = $$.sortBy(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
-  });
-
-  it("raw sort spec object passes through", () => {
-    expect(jsmql("$$ = $$.sortBy({ score: -1, productId: 1 });")).toEqual([{ $sort: { score: -1, productId: 1 } }]);
-  });
-
-  it("rejects a non-1/-1 direction and an arrow (→ .toSorted)", () => {
-    expect(() => jsmql("$$ = $$.sortBy({ a: 2 });")).toThrow(/must be 1 \(ascending\) or -1/);
-    expect(() => jsmql("$$ = $$.sortBy(o => o.age);")).toThrow(/For a custom comparator use '\.toSorted/);
-  });
-});
-
-describe(".orderBy(keys, orders) → $sort — per-key directions", () => {
-  it("keys + orders → directed $sort", () => {
-    expect(jsmql('$$ = $$.orderBy(["age", "name"], ["asc", "desc"]);')).toEqual([{ $sort: { age: 1, name: -1 } }]);
-  });
-
-  it("orders default to ascending; partial orders pad with asc", () => {
-    expect(jsmql('$$ = $$.orderBy("age");')).toEqual([{ $sort: { age: 1 } }]);
-    expect(jsmql('$$ = $$.orderBy(["a", "b", "c"], ["desc"]);')).toEqual([{ $sort: { a: -1, b: 1, c: 1 } }]);
-  });
-
-  it("rejects an order that isn't asc/desc", () => {
-    expect(() => jsmql('$$ = $$.orderBy("a", "up");')).toThrow(/"asc" or "desc"/);
+  it("rejects a bad direction, a $-prefixed field, and no args", () => {
+    expect(() => jsmql("$$ = $$.sort({ a: 2 });")).toThrow(/must be 1 \/ -1 \/ "asc" \/ "desc"/);
+    expect(() => jsmql('$$ = $$.sort("$x");')).toThrow(/no leading '\$'/);
+    expect(() => jsmql("$$ = $$.sort();")).toThrow(/needs a sort key/);
   });
 });
 
@@ -315,10 +297,10 @@ describe("lodash iteratee shorthands on stream methods", () => {
 // A recommendation-engine pipeline built entirely from lodash-named stream
 // methods — the composed-vocabulary end-to-end case. Verified against a live mongod.
 describe("composed lodash stream vocabulary — full pipeline", () => {
-  it("$$.filter({...}).toReversedBy(...).take(...).flatMap(...).groupBy({...})", () => {
+  it("$$.filter({...}).sort({...}).take(...).flatMap(...).groupBy({...})", () => {
     expect(
       jsmql(
-        '$$ = $$.filter({ status: "CLOSED" }).toReversedBy("createdAt").take(10)' +
+        '$$ = $$.filter({ status: "CLOSED" }).sort({ createdAt: -1 }).take(10)' +
           '.flatMap("productIds").groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });',
       ),
     ).toEqual([

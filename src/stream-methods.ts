@@ -144,9 +144,9 @@ const SLICE: StreamMethodDef = {
 };
 
 // Shared arg-shape validators for the single-literal count/key stream methods
-// (.take / .drop / .sampleSize / .toReversedBy). Streams reject computed args —
-// the value has to be a source literal so the emitted `$limit`/`$skip`/`$sample`/
-// `$sort` count is fixed at compile time.
+// (.take / .drop / .sampleSize / .countBy / .uniqBy). Streams reject computed
+// args — the value has to be a source literal so the emitted stage is fixed at
+// compile time.
 function validateSingleIntArg(sig: string, args: readonly CallArg[], callPos: number, min: number): void {
   if (args.length !== 1) {
     throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
@@ -176,7 +176,7 @@ function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: 
   }
   if (arg.type !== "StringLiteral") {
     throw new CodegenError(
-      `${sig} requires a field-name string literal, e.g. '.toReversedBy("createdAt")'. Computed or dynamic arguments aren't supported on streams.`,
+      `${sig} requires a field-name string literal, e.g. '.countBy("status")'. Computed or dynamic arguments aren't supported on streams.`,
       arg.pos,
     );
   }
@@ -647,10 +647,16 @@ function classifyComparatorPath(expr: Expr, paramA: string, paramB: string): Com
   return { param: which, path: segments.join(".") };
 }
 
-function parseComparatorBody(body: Expr, paramA: string, paramB: string, callPos: number): Record<string, 1 | -1> {
+function parseComparatorBody(
+  body: Expr,
+  paramA: string,
+  paramB: string,
+  callPos: number,
+  method: string,
+): Record<string, 1 | -1> {
   if (body.type === "BinaryExpr" && body.op === "||") {
-    const left = parseComparatorBody(body.left, paramA, paramB, callPos);
-    const right = parseComparatorBody(body.right, paramA, paramB, callPos);
+    const left = parseComparatorBody(body.left, paramA, paramB, callPos, method);
+    const right = parseComparatorBody(body.right, paramA, paramB, callPos, method);
     return { ...left, ...right };
   }
   if (body.type === "BinaryExpr" && body.op === "-") {
@@ -662,49 +668,66 @@ function parseComparatorBody(body: Expr, paramA: string, paramB: string, callPos
     }
   }
   throw new CodegenError(
-    `.toSorted((${paramA}, ${paramB}) => …) accepts only '${paramA}.<field> - ${paramB}.<field>' (ascending) or '${paramB}.<field> - ${paramA}.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.`,
+    `.${method}((${paramA}, ${paramB}) => …) accepts only '${paramA}.<field> - ${paramB}.<field>' (ascending) or '${paramB}.<field> - ${paramA}.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.`,
     body.pos ?? callPos,
   );
+}
+
+// ── .sort(<sort>) / .toSorted(<sort>) → $sort ─────────────────────────────────
+//
+// Ordering a document stream → one `$sort` stage. Accepts a field name
+// (ascending), an array of field names (all ascending), a
+// `{ field: 1 | -1 | "asc" | "desc" }` spec, or a comparator arrow
+// `(a, b) => a.<field> - b.<field>` (`||` for compound). `.sort` and `.toSorted`
+// are equivalent on a stream — there's no array to mutate, so both just reorder
+// the flow (the mutate-vs-immutable distinction only matters for an array *value*).
+function buildStreamSortSpec(args: readonly CallArg[], callPos: number, method: string): Record<string, 1 | -1> {
+  if (args.length === 0) {
+    throw new CodegenError(
+      `.${method}(<sort>) needs a sort key — MongoDB streams have no natural document ordering. Pass a field name ('.${method}("createdAt")'), a '{ field: 1 | -1 | "asc" | "desc" }' spec, or a comparator '(a, b) => a.x - b.x'.`,
+      callPos,
+    );
+  }
+  if (args.length > 1) {
+    throw new CodegenError(`.${method}(<sort>) takes exactly one argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`.${method}(...) does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 2) {
+      throw new CodegenError(
+        `.${method}((a, b) => …) comparator requires a two-parameter arrow (got ${arg.params.length} params).`,
+        arg.pos,
+      );
+    }
+    if (arg.body === undefined) {
+      throw new CodegenError(`.${method}((a, b) => …) requires an expression body, not a block.`, arg.pos);
+    }
+    const [paramA, paramB] = arg.params;
+    return parseComparatorBody(arg.body as Expr, paramA, paramB, callPos, method);
+  }
+  return buildKeySortSpec(arg, `.${method}(...)`);
 }
 
 const TO_SORTED: StreamMethodDef = {
   name: "toSorted",
   validate(args, callPos) {
-    if (args.length === 0) {
-      throw new CodegenError(
-        `.toSorted(<comparator>) requires a comparator arrow — MongoDB streams have no natural document ordering. Write '.toSorted((a, b) => a.<field> - b.<field>)' for ascending, 'b.<field> - a.<field>' for descending.`,
-        callPos,
-      );
-    }
-    if (args.length > 1) {
-      throw new CodegenError(`.toSorted(<comparator>) takes exactly one argument, got ${args.length}.`, callPos);
-    }
-    const arg = args[0];
-    if (arg.type === "SpreadElement") {
-      throw new CodegenError(`.toSorted(...) does not accept a spread argument.`, arg.pos);
-    }
-    if (arg.type !== "Lambda") {
-      throw new CodegenError(
-        `.toSorted(<comparator>) requires an arrow function, e.g. '.toSorted((a, b) => a.age - b.age)'.`,
-        arg.pos,
-      );
-    }
-    if (arg.params.length !== 2) {
-      throw new CodegenError(
-        `.toSorted(<comparator>) requires a two-parameter arrow '(a, b) => …' (got ${arg.params.length} params).`,
-        arg.pos,
-      );
-    }
-    if (arg.body === undefined) {
-      throw new CodegenError(`.toSorted(<comparator>) requires an expression body, not a block.`, arg.pos);
-    }
+    buildStreamSortSpec(args, callPos, "toSorted");
   },
-  lower(args, _ctx, callPos, _lowerBlock) {
-    const lambda = args[0] as LambdaNode;
-    const [paramA, paramB] = lambda.params;
-    const body = lambda.body as Expr;
-    const spec = parseComparatorBody(body, paramA, paramB, callPos);
-    return { stages: [{ $sort: spec }] };
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildStreamSortSpec(args, callPos, "toSorted") }] };
+  },
+};
+
+const SORT: StreamMethodDef = {
+  name: "sort",
+  validate(args, callPos) {
+    buildStreamSortSpec(args, callPos, "sort");
+  },
+  lower(args, _ctx, callPos) {
+    return { stages: [{ $sort: buildStreamSortSpec(args, callPos, "sort") }] };
   },
 };
 
@@ -750,30 +773,8 @@ const TO_REVERSED: StreamMethodDef = {
   },
 };
 
-// ── .toReversedBy(field) → $sort: { field: -1 } ───────────────────────────────
-//
-// lodash-flavoured "reverse-sort by a key" — newest/largest first. The key form
-// of a descending `.toSorted((a, b) => b.<field> - a.<field>)`; takes a bare
-// field-name string. (Ascending is `.sortBy("field")`.)
-const TO_REVERSED_BY: StreamMethodDef = {
-  name: "toReversedBy",
-  validate(args, callPos) {
-    validateSingleFieldArg(".toReversedBy(field)", args, callPos);
-  },
-  lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
-    return { stages: [{ $sort: { [key]: -1 } }] };
-  },
-};
-
-// ── .sortBy(key | [keys] | { field: 1|-1 }) / .orderBy(keys, orders) → $sort ───
-//
-// `.sortBy` is the lodash key-form of sort (ascending by default): a field name,
-// an array of field names, or a raw `$sort` spec object (`{ score: -1 }`) passed
-// straight through. `.orderBy` adds per-key directions ('asc' / 'desc'). Both are
-// the key/spec complement of `.toSorted((a, b) => …)`'s comparator form.
-
-// A plain field-name literal (no leading `$`); used by the sort/group key forms.
+// Key-form sort helpers, shared by `.sort` / `.toSorted` above and by the `$group`
+// key form. A plain field-name literal (no leading `$`):
 function fieldNameLiteral(e: Expr | SpreadElement, sig: string): string {
   if (e.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
@@ -790,51 +791,51 @@ function fieldNameLiteral(e: Expr | SpreadElement, sig: string): string {
   return e.value;
 }
 
-// 1 (ascending) or -1 (descending), from a `1` / `-1` literal. `-1` parses as a
-// UnaryExpr, so both shapes are accepted. Returns null for anything else.
+// 1 (ascending) or -1 (descending), from a `1` / `-1` number or an `"asc"` /
+// `"desc"` string. `-1` parses as a UnaryExpr, so that shape is handled too.
+// Returns null for anything else.
 function sortDirection(e: Expr): 1 | -1 | null {
   if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
   if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral" && e.operand.value === 1) return -1;
+  if (e.type === "StringLiteral") return e.value === "asc" ? 1 : e.value === "desc" ? -1 : null;
   return null;
 }
 
-function buildSortBySpec(arg: Expr): Record<string, 1 | -1> {
+// A field name ("age"), an array of field names (all ascending), or a
+// `{ field: 1 | -1 | "asc" | "desc" }` spec → a `$sort` document.
+function buildKeySortSpec(arg: Expr, sig: string): Record<string, 1 | -1> {
   if (arg.type === "StringLiteral") {
-    return { [fieldNameLiteral(arg, ".sortBy(key)")]: 1 };
+    return { [fieldNameLiteral(arg, sig)]: 1 };
   }
   if (arg.type === "ArrayLiteral") {
     if (arg.elements.length === 0) {
-      throw new CodegenError(`.sortBy([keys]) needs at least one field name.`, arg.pos);
+      throw new CodegenError(`${sig} needs at least one field name.`, arg.pos);
     }
     const spec: Record<string, 1 | -1> = {};
-    for (const el of arg.elements) spec[fieldNameLiteral(el as Expr | SpreadElement, ".sortBy([keys])")] = 1;
+    for (const el of arg.elements) spec[fieldNameLiteral(el as Expr | SpreadElement, sig)] = 1;
     return spec;
   }
-  // ObjectLiteral — a raw sort spec, `{ score: -1, name: 1 }`.
   if (arg.type !== "ObjectLiteral") {
     throw new CodegenError(
-      `.sortBy(...) takes a field name, an array of field names, or a sort spec ({ score: -1 }).`,
+      `${sig} takes a field name ("age"), an array of field names (["a", "b"]), or a '{ field: 1 | -1 | "asc" | "desc" }' spec.`,
       arg.pos,
     );
   }
   if (arg.entries.length === 0) {
-    throw new CodegenError(`.sortBy({ … }) needs at least one field.`, arg.pos);
+    throw new CodegenError(`${sig} needs at least one field.`, arg.pos);
   }
   const spec: Record<string, 1 | -1> = {};
   for (const entry of arg.entries) {
     if (entry.type === "SpreadElement") {
-      throw new CodegenError(`.sortBy({ … }) does not accept spread entries.`, entry.pos);
+      throw new CodegenError(`${sig} does not accept spread entries.`, entry.pos);
     }
     if (entry.key.kind !== "static") {
-      throw new CodegenError(
-        `.sortBy({ … }) keys must be plain field names — computed keys aren't supported.`,
-        entry.pos,
-      );
+      throw new CodegenError(`${sig} keys must be plain field names — computed keys aren't supported.`, entry.pos);
     }
     const dir = sortDirection(entry.value);
     if (dir === null) {
       throw new CodegenError(
-        `.sortBy({ ${entry.key.name}: … }) direction must be 1 (ascending) or -1 (descending).`,
+        `${sig} direction for '${entry.key.name}' must be 1 / -1 / "asc" / "desc".`,
         entry.value.pos,
       );
     }
@@ -842,80 +843,6 @@ function buildSortBySpec(arg: Expr): Record<string, 1 | -1> {
   }
   return spec;
 }
-
-const SORT_BY: StreamMethodDef = {
-  name: "sortBy",
-  validate(args, callPos) {
-    if (args.length !== 1) {
-      throw new CodegenError(
-        `.sortBy(key | [keys] | { field: 1|-1 }) takes exactly 1 argument, got ${args.length}.`,
-        callPos,
-      );
-    }
-    const a = args[0];
-    if (a.type === "SpreadElement") {
-      throw new CodegenError(`.sortBy(...) does not accept a spread argument.`, a.pos);
-    }
-    if (a.type !== "StringLiteral" && a.type !== "ArrayLiteral" && a.type !== "ObjectLiteral") {
-      throw new CodegenError(
-        `.sortBy(...) takes a field name ("age"), an array of field names (["a", "b"]), or a sort spec ({ score: -1 }). For a custom comparator use '.toSorted((a, b) => …)'.`,
-        a.pos,
-      );
-    }
-    buildSortBySpec(a);
-  },
-  lower(args) {
-    return { stages: [{ $sort: buildSortBySpec(args[0] as Expr) }] };
-  },
-};
-
-function orderKeys(arg: Expr | SpreadElement): string[] {
-  if (arg.type === "StringLiteral") return [fieldNameLiteral(arg, ".orderBy(keys, orders)")];
-  if (arg.type === "ArrayLiteral") {
-    if (arg.elements.length === 0) {
-      throw new CodegenError(`.orderBy(keys, orders) needs at least one key.`, arg.pos);
-    }
-    return arg.elements.map((el) => fieldNameLiteral(el as Expr | SpreadElement, ".orderBy(keys, orders)"));
-  }
-  throw new CodegenError(`.orderBy(keys, orders) — 'keys' must be a field name or an array of field names.`, arg.pos);
-}
-
-function orderDirs(arg: Expr | SpreadElement | undefined, count: number): (1 | -1)[] {
-  const parse = (e: Expr | SpreadElement): 1 | -1 => {
-    if (e.type !== "StringLiteral" || (e.value !== "asc" && e.value !== "desc")) {
-      throw new CodegenError(`.orderBy(keys, orders) — 'orders' entries must be the string "asc" or "desc".`, e.pos);
-    }
-    return e.value === "desc" ? -1 : 1;
-  };
-  let dirs: (1 | -1)[];
-  if (arg === undefined) dirs = [];
-  else if (arg.type === "StringLiteral") dirs = [parse(arg)];
-  else if (arg.type === "ArrayLiteral") dirs = arg.elements.map((el) => parse(el as Expr | SpreadElement));
-  else throw new CodegenError(`.orderBy(keys, orders) — 'orders' must be "asc"/"desc" or an array of them.`, arg.pos);
-  // lodash pads missing orders with ascending.
-  return Array.from({ length: count }, (_, i) => dirs[i] ?? 1);
-}
-
-function buildOrderBySpec(args: readonly CallArg[]): Record<string, 1 | -1> {
-  const keys = orderKeys(args[0]);
-  const dirs = orderDirs(args[1], keys.length);
-  const spec: Record<string, 1 | -1> = {};
-  keys.forEach((k, i) => (spec[k] = dirs[i]));
-  return spec;
-}
-
-const ORDER_BY: StreamMethodDef = {
-  name: "orderBy",
-  validate(args, callPos) {
-    if (args.length < 1 || args.length > 2) {
-      throw new CodegenError(`.orderBy(keys[, orders]) takes 1 or 2 arguments, got ${args.length}.`, callPos);
-    }
-    buildOrderBySpec(args);
-  },
-  lower(args) {
-    return { stages: [{ $sort: buildOrderBySpec(args) }] };
-  },
-};
 
 // ── .groupBy(key | { _id, <field>: <accumulator> }) → $group ───────────────────
 //
@@ -1017,7 +944,7 @@ const COUNT_BY: StreamMethodDef = {
 // lodash `_.uniqBy(coll, key)` — one document per distinct key. `$group` keeps
 // the first document seen for each key (`$first`), then `$replaceWith` restores
 // it as the root. NB "first" follows the stream's current order, so precede with
-// a `.sortBy(...)` / `.toReversedBy(...)` when which-duplicate-wins matters.
+// a `.sort(...)` when which-duplicate-wins matters.
 const UNIQ_BY: StreamMethodDef = {
   name: "uniqBy",
   validate(args, callPos) {
@@ -1805,11 +1732,9 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,
+  sort: SORT,
   toSorted: TO_SORTED,
   toReversed: TO_REVERSED,
-  toReversedBy: TO_REVERSED_BY,
-  sortBy: SORT_BY,
-  orderBy: ORDER_BY,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
   uniqBy: UNIQ_BY,

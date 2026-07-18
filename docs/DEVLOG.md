@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat!: consolidate stream/array sort onto `.sort` / `.toSorted`; drop `.toReversedBy` / `.sortBy` / `.orderBy`
+
+`.sort(<sort>)` and `.toSorted(<sort>)` now accept a flexible sort argument on
+both the document **stream** (`$$`) and an **array value** (`$.field`): a field
+name (`"createdAt"` → ascending), an array of field names (all ascending), a
+`{ field: 1 | -1 | "asc" | "desc" }` spec, or the existing comparator / key-fn
+arrow. On a stream `.sort` and `.toSorted` are equivalent (nothing to mutate —
+both emit one `$sort`); on an array value `.sort` mutates at statement position
+and `.toSorted` returns a new array (`$sortArray`), as before.
+
+Removed three stream methods added earlier the same day: `.toReversedBy("field")`
+(a coinage that read as nonsense — a descending sort is just
+`.sort({ field: -1 })`), and the lodash `.sortBy` / `.orderBy`, which were exact
+dual spellings of the new `.sort` forms (the no-dual-spelling rule wins over
+"lodash everywhere"). The stream unknown-method error already points typos at
+`.sort`. Shared helpers: `buildStreamSortSpec` + `buildKeySortSpec` +
+`sortDirection` (stream-methods.ts), `argToSortBy` + `sortDirLiteral`
+(codegen.ts); `sortDirection`/`sortDirLiteral` accept `"asc"`/`"desc"` as well as
+`1`/`-1`. Verified on a live mongod (stream `$sort` direction, array `$sortArray`
+ordering). This is pre-1.0 churn on an uncommitted-days-old surface, hence the
+`feat!` marker without a version bump.
+
 ## 2026-07-18 — fix: stream `.map(d => …)` rejects a provably non-document body
 
 `$$ = $$.map(d => 5)` (and `d => "x"` / `d => true` / `d => [1, 2]`, or the property

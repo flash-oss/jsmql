@@ -3161,6 +3161,29 @@ describe("toSorted / sort key function", () => {
   it(".toSorted with bare param (x => x) is rejected", () => {
     expect(() => jsmql.expr("$.events.toSorted(e => e)")).toThrow(/key function body/);
   });
+
+  it('.toSorted("field") → ascending sortBy by that field', () => {
+    expect(jsmql.expr('$.events.toSorted("distance")')).toEqual({
+      $sortArray: { input: "$events", sortBy: { distance: 1 } },
+    });
+  });
+  it('.toSorted({ field: 1 | -1 | "asc" | "desc" }) → directed sortBy', () => {
+    expect(jsmql.expr("$.events.toSorted({ distance: -1 })")).toEqual({
+      $sortArray: { input: "$events", sortBy: { distance: -1 } },
+    });
+    expect(jsmql.expr('$.events.toSorted({ a: "asc", b: "desc" })')).toEqual({
+      $sortArray: { input: "$events", sortBy: { a: 1, b: -1 } },
+    });
+  });
+  it(".toSorted([fields]) → multi-key ascending sortBy", () => {
+    expect(jsmql.expr('$.events.toSorted(["a", "b"])')).toEqual({
+      $sortArray: { input: "$events", sortBy: { a: 1, b: 1 } },
+    });
+  });
+  it(".toSorted with a bad direction / $-prefixed field is rejected", () => {
+    expect(() => jsmql.expr("$.events.toSorted({ a: 3 })")).toThrow(/must be 1 \/ -1 \/ "asc" \/ "desc"/);
+    expect(() => jsmql.expr('$.events.toSorted("$x")')).toThrow(/no leading '\$'/);
+  });
 });
 
 describe("statement-position mutators", () => {
@@ -3170,6 +3193,14 @@ describe("statement-position mutators", () => {
   it(".sort(keyFn) — desugars to $set with $sortArray sortBy", () => {
     expect(jsmql("$.events.sort(e => e.distance);")).toEqual([
       { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
+    ]);
+  });
+  it('.sort("field") / .sort({ field: dir }) — flexible sort args mutate the field', () => {
+    expect(jsmql('$.events.sort("distance");')).toEqual([
+      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
+    ]);
+    expect(jsmql("$.events.sort({ distance: -1 });")).toEqual([
+      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: -1 } } } } },
     ]);
   });
   it(".reverse() — desugars to $set with $reverseArray", () => {
