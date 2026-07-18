@@ -1552,6 +1552,24 @@ Object.groupBy($.items, x => x.category)
 
 The discriminator must be a single-parameter arrow function. Non-string discriminators are wrapped in `$toString` automatically (matching JS, where the key is coerced to a string property name). `Map.groupBy()` is not supported — MQL has no Map type.
 
+### lodash object methods
+
+Value-mode methods on an object field (built over `$objectToArray` / `$arrayToObject`). The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
+
+```js
+$.scores.mapValues(v => v * 2)        // { <k>: v*2 }
+$.o.mapKeys((v, k) => k.toUpperCase())// rename keys
+$.user.pick(["name", "age"])          // keep only those keys (missing keys drop out)
+$.user.omit(["password"])             // all keys except those
+$.o.pickBy(v => v != null)            // keep entries whose value passes
+$.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
+$.o.invert()                          // swap keys/values (new keys stringified, last wins)
+$.o.toPairs()                         // [[k, v], …]
+$.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
+```
+
+> `pick` uses flat field names only (deep paths like `"a.b"` aren't supported — use `$op($getField, …)`). `mapKeys`/`invert` **stringify** the produced key (`$toString`; last wins on collision), like lodash. All verified against a live mongod.
+
 ---
 
 ## Lambda Functions

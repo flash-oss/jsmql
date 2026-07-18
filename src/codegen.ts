@@ -560,6 +560,16 @@ const METHODS: Record<string, MethodMeta> = {
   countBy: { optional: "array" },
   partition: { returns: "array", optional: "array" },
   reject: { returns: "array", optional: "array" },
+  // ── lodash object methods (Phase 1) ─────────────────────────────────────────
+  mapValues: {},
+  mapKeys: {},
+  pick: {},
+  omit: {},
+  pickBy: {},
+  omitBy: {},
+  invert: {},
+  toPairs: { returns: "array" },
+  fromPairs: { optional: "array" },
   // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
   capitalize: { returns: "string", optional: "string" },
   upperFirst: { returns: "string", optional: "string" },
@@ -2510,6 +2520,40 @@ function distinctKeysExpr(arr: unknown, it: ResolvedIteratee): unknown {
   return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
 }
 
+// A lodash (value[, key]) iteratee over `$objectToArray` entries (used by
+// `.mapValues`/`.mapKeys`/`.pickBy`/`.omitBy`). Binds the arrow's 1–2 params to
+// the entry's value (`$$jsmqlKv.v`) and key (`$$jsmqlKv.k`) via `$let`; the `$map`/
+// `$filter` element var is always `jsmqlKv`.
+function resolveObjIteratee(iteratee: Expr, method: string, ctx: GenerateCtx): unknown {
+  if (
+    iteratee.type === "Lambda" &&
+    iteratee.block === undefined &&
+    iteratee.params.length >= 1 &&
+    iteratee.params.length <= 2
+  ) {
+    const vars: Record<string, unknown> = { [safeVarName(iteratee.params[0])]: "$$jsmqlKv.v" };
+    if (iteratee.params.length === 2) vars[safeVarName(iteratee.params[1])] = "$$jsmqlKv.k";
+    return { $let: { vars, in: _generate(iteratee.body as Expr, extendCtx(ctx, iteratee.params)) } };
+  }
+  throw new CodegenError(`.${method}((value[, key]) => …) takes a one- or two-parameter arrow.`, iteratee.pos);
+}
+
+// The literal field names of a `.pick(["a", "b"])` / `.omit([...])` argument.
+function pickKeys(arg: Expr, method: string): string[] {
+  if (arg.type !== "ArrayLiteral") {
+    throw new CodegenError(
+      `.${method}([keys]) takes an array of field-name strings, e.g. '.${method}(["name", "age"])'.`,
+      arg.pos,
+    );
+  }
+  return arg.elements.map((el) => {
+    if (el.type !== "StringLiteral" || el.value === "" || el.value.startsWith("$")) {
+      throw new CodegenError(`.${method}([keys]) entries must be plain field-name strings (no leading '$').`, el.pos);
+    }
+    return el.value;
+  });
+}
+
 // The date argument the `getUTC*` getters hand to MongoDB's date-part operators.
 // The local getters pass the bare date (extraction uses the server process zone);
 // the UTC variants pass `{ date, timezone: "UTC" }` so the result is UTC-anchored,
@@ -3469,6 +3513,85 @@ function generateMethodCall(
       const yes = { $filter: { input: genObj, as: p.as, cond: p.cond } };
       const no = { $filter: { input: genObj, as: p.as, cond: { $not: [p.cond] } } };
       return method === "reject" ? no : [yes, no];
+    }
+
+    // ── lodash object methods (Phase 1 value vocabulary) ─────────────────────
+    case "mapValues":
+    case "mapKeys": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      const mapped = resolveObjIteratee(exprArgs[0], method, ctx);
+      const entry =
+        method === "mapValues" ? { k: "$$jsmqlKv.k", v: mapped } : { k: { $toString: mapped }, v: "$$jsmqlKv.v" };
+      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: entry } } };
+    }
+    case "pick": {
+      const exprArgs = exprArgsOnly(args, "pick");
+      checkArity("pick", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
+      const keys = pickKeys(exprArgs[0], "pick");
+      // Field-select into a fresh object; a missing key drops out (lodash parity).
+      const out: Record<string, unknown> = {};
+      for (const k of keys) out[k] = { $getField: { field: k, input: "$$jsmqlObj" } };
+      return { $let: { vars: { jsmqlObj: genObj }, in: out } };
+    }
+    case "omit": {
+      const exprArgs = exprArgsOnly(args, "omit");
+      checkArity("omit", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
+      const keys = pickKeys(exprArgs[0], "omit");
+      return {
+        $arrayToObject: {
+          $filter: {
+            input: { $objectToArray: genObj },
+            as: "jsmqlKv",
+            cond: { $not: [{ $in: ["$$jsmqlKv.k", keys] }] },
+          },
+        },
+      };
+    }
+    case "pickBy":
+    case "omitBy": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
+      const cond = resolveObjIteratee(exprArgs[0], method, ctx);
+      return {
+        $arrayToObject: {
+          $filter: {
+            input: { $objectToArray: genObj },
+            as: "jsmqlKv",
+            cond: method === "pickBy" ? cond : { $not: [cond] },
+          },
+        },
+      };
+    }
+    case "invert": {
+      checkArity("invert", { sig: "", none: true }, exprArgsOnly(args, "invert").length, callPos);
+      // Swap keys/values (new keys stringified; last wins — lodash parity).
+      return {
+        $arrayToObject: {
+          $map: {
+            input: { $objectToArray: genObj },
+            as: "jsmqlKv",
+            in: { k: { $toString: "$$jsmqlKv.v" }, v: "$$jsmqlKv.k" },
+          },
+        },
+      };
+    }
+    case "toPairs": {
+      checkArity("toPairs", { sig: "", none: true }, exprArgsOnly(args, "toPairs").length, callPos);
+      return { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } };
+    }
+    case "fromPairs": {
+      checkArity("fromPairs", { sig: "", none: true }, exprArgsOnly(args, "fromPairs").length, callPos);
+      // Receiver is a [[k, v], …] array; stringify keys for $arrayToObject.
+      return {
+        $arrayToObject: {
+          $map: {
+            input: genObj,
+            as: "jsmqlP",
+            in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          },
+        },
+      };
     }
 
     // ── lodash string methods (Phase 1 value vocabulary; ASCII-only) ─────────

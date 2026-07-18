@@ -3186,6 +3186,51 @@ describe("toSorted / sort key function", () => {
   });
 });
 
+describe("lodash object methods (per-doc value vocabulary)", () => {
+  it(".mapValues((v[, k]) => …) → $arrayToObject over $objectToArray", () => {
+    expect(jsmql.expr("$.o.mapValues(v => v * 2)")).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: { $objectToArray: "$o" },
+          as: "jsmqlKv",
+          in: { k: "$$jsmqlKv.k", v: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $multiply: ["$$v", 2] } } } },
+        },
+      },
+    });
+  });
+  it(".pick([keys]) → object select ($getField; missing keys drop out)", () => {
+    expect(jsmql.expr('$.o.pick(["a", "b"])')).toEqual({
+      $let: {
+        vars: { jsmqlObj: "$o" },
+        in: {
+          a: { $getField: { field: "a", input: "$$jsmqlObj" } },
+          b: { $getField: { field: "b", input: "$$jsmqlObj" } },
+        },
+      },
+    });
+    expect(() => jsmql.expr('$.o.pick("a")')).toThrow(/array of field-name strings/);
+  });
+  it(".omit([keys]) → $arrayToObject over a filtered $objectToArray", () => {
+    expect(jsmql.expr('$.o.omit(["a"])')).toEqual({
+      $arrayToObject: {
+        $filter: { input: { $objectToArray: "$o" }, as: "jsmqlKv", cond: { $not: [{ $in: ["$$jsmqlKv.k", ["a"]] }] } },
+      },
+    });
+  });
+  it(".toPairs() → [[k, v], …]; .fromPairs() inverts it", () => {
+    expect(jsmql.expr("$.o.toPairs()")).toEqual({
+      $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+    });
+    expect(jsmql.expr("$.p.fromPairs()")).toHaveProperty("$arrayToObject");
+  });
+  it(".mapKeys / .pickBy / .omitBy / .invert emit their (verified) shapes", () => {
+    expect(jsmql.expr("$.o.mapKeys((v, k) => k)")).toHaveProperty("$arrayToObject");
+    expect(jsmql.expr("$.o.pickBy(v => v)")).toHaveProperty("$arrayToObject");
+    expect(jsmql.expr("$.o.omitBy(v => v)")).toHaveProperty("$arrayToObject");
+    expect(jsmql.expr("$.o.invert()")).toHaveProperty("$arrayToObject");
+  });
+});
+
 describe("lodash array methods (per-doc value vocabulary)", () => {
   it(".sum()/.mean()/.max()/.min() → $sum/$avg/$max/$min of the array", () => {
     expect(jsmql.expr("$.a.sum()")).toEqual({ $sum: "$a" });

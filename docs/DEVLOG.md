@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash object methods (Phase 1) — `.mapValues` / `.pick` / `.omit` / `.invert` / …
+
+Per-doc object value methods, completing the Phase 1 value vocabulary:
+`.mapValues`, `.mapKeys`, `.pick`, `.omit`, `.pickBy`, `.omitBy`, `.invert`,
+`.toPairs`, `.fromPairs`. Built over `$objectToArray` → transform → `$arrayToObject`
+(`toPairs` stops at the array; `fromPairs` runs the other way on a `[[k,v]]`
+receiver). The `(value[, key])` iteratee (`resolveObjIteratee`) binds the arrow's
+1–2 params to `$$jsmqlKv.v`/`.k` via `$let`. `pick` field-selects with `$getField`
+so a missing key drops out (lodash parity, verified); `mapKeys`/`invert` stringify
+the produced key. Every shape verified on a live mongod (`pick(["a","c"])` on
+`{a:1,b:2}` → `{a:1}`, `mapValues`, `invert`, `fromPairs`, …). Spec:
+[`method-dispatch.md`](specs/method-dispatch.md).
+
 ## 2026-07-18 — feat: lodash array methods (Phase 1) — `.groupBy` / `.keyBy` / `.uniq` / `.chunk` / `.partition` / …
 
 Per-doc array value methods: `.sum`/`.mean`/`.max`/`.min` (→ `$sum`/`$avg`/`$max`/
