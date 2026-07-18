@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash random value methods — `.sample` / `.sampleSize` (`$rand`)
+
+Fifth family — the only non-deterministic value methods (agreed with the developer; only
+`shuffle` remains out):
+
+    .sample()        → { $arrayElemAt: [a, { $floor: { $multiply: [{ $rand: {} }, { $size: a }] } }] }
+    .sampleSize([n=1]) → decorate each element with a random key ({ k: $rand, v: item }),
+                         $sortArray by k, $slice the first n, undecorate → n WITHOUT replacement
+
+`.sample`/`.sampleSize` are value-mode siblings of the existing stream `.sample`/`.sampleSize`
+(→ `$sample`); context dispatch keeps them apart (a plain array field vs a `$$`/`$$$` stream).
+Deterministic to compile, random at runtime. `.sampleSize` rejects a negative literal and
+returns the whole shuffled array when `n` exceeds the length. Verified on a live mongod
+(varying single element; distinct-and-subset draws; `n > length` → full shuffle).
+
 ## 2026-07-18 — feat: lodash predicate-run value methods — `.takeWhile` / `.dropWhile` / `.takeRightWhile` / `.dropRightWhile`
 
 Fourth family. Boundary-then-slice, no stateful `$reduce`:

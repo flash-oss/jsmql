@@ -1523,9 +1523,11 @@ $.a.zipWith($.b, (x, y) => x + y)           // [x0+y0, x1+y1, …] (N-param arro
 $.tuples.unzip()                            // inverse of zip — transpose an array of equal-length tuples
 $.a.takeWhile(x => x < 3) / .dropWhile(p)   // from the START, up to / from the first falsy element
 $.a.takeRightWhile(p) / .dropRightWhile(p)  // same, scanning from the END
+$.a.sample()                                // one random element ($rand)
+$.a.sampleSize(3)                           // 3 random elements, without replacement
 ```
 
-> Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (MQL truthiness, as in `.filter`). The `*RightWhile` pair scans the reversed array and reverses the result back.
+> Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (MQL truthiness, as in `.filter`). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so they return a **different result on every run** (non-deterministic, like the stream `.sample()` → `$sample`); `sampleSize` draws **without replacement** and returns the whole (shuffled) array when `n` exceeds the length.
 
 > **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash, but it *errors* on an object/array key); group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
 

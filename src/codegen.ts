@@ -577,6 +577,8 @@ const METHODS: Record<string, MethodMeta> = {
   dropWhile: { returns: "array", optional: "array" },
   takeRightWhile: { returns: "array", optional: "array" },
   dropRightWhile: { returns: "array", optional: "array" },
+  sample: { optional: "array" },
+  sampleSize: { returns: "array", optional: "array" },
   zipObject: { optional: "array" },
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
@@ -3571,6 +3573,40 @@ function generateMethodCall(
       // From the right = do the left-side scan on the reversed array, then reverse back.
       if (!fromRight) return takeDropWhile(genObj, pred, drop);
       return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop) };
+    }
+    case "sample": {
+      // A random element: $arrayElemAt at floor($rand * size). Non-deterministic at
+      // runtime (like the stream `.sample` / `$sample`), deterministic to compile.
+      checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj },
+          in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] },
+        },
+      };
+    }
+    case "sampleSize": {
+      // n random elements without replacement: decorate each with a random key, sort
+      // by it, take the first n, undecorate. n past the length yields the whole shuffle.
+      const exprArgs = exprArgsOnly(args, "sampleSize");
+      checkArity("sampleSize", { sig: "[n=1]", allowed: [0, 1] }, exprArgs.length, callPos);
+      if (exprArgs[0] !== undefined && isNegativeLiteral(exprArgs[0])) {
+        throw new CodegenError(`.sampleSize(n) needs a non-negative count.`, exprArgs[0].pos);
+      }
+      const n = exprArgs[0] !== undefined ? _generate(exprArgs[0], ctx) : 1;
+      return {
+        $let: {
+          vars: {
+            jsmqlShuffled: {
+              $sortArray: {
+                input: { $map: { input: genObj, as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+                sortBy: { k: 1 },
+              },
+            },
+          },
+          in: { $map: { input: { $slice: ["$$jsmqlShuffled", n] }, as: "jsmqlItem", in: "$$jsmqlItem.v" } },
+        },
+      };
     }
     case "difference":
     case "intersection": {

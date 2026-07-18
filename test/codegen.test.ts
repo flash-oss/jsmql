@@ -3486,6 +3486,36 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
   });
 });
 
+describe("lodash random value methods — sample / sampleSize ($rand)", () => {
+  it(".sample() → a random element via $arrayElemAt at floor($rand * size)", () => {
+    expect(jsmql.expr("$.a.sample()")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$a" },
+        in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] },
+      },
+    });
+  });
+  it(".sampleSize([n=1]) → decorate with $rand, $sortArray, take n, undecorate", () => {
+    expect(jsmql.expr("$.a.sampleSize(3)")).toEqual({
+      $let: {
+        vars: {
+          jsmqlShuffled: {
+            $sortArray: {
+              input: { $map: { input: "$a", as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+              sortBy: { k: 1 },
+            },
+          },
+        },
+        in: { $map: { input: { $slice: ["$$jsmqlShuffled", 3] }, as: "jsmqlItem", in: "$$jsmqlItem.v" } },
+      },
+    });
+    expect(jsmql.expr("$.a.sampleSize()")).toMatchObject({
+      $let: { in: { $map: { input: { $slice: ["$$jsmqlShuffled", 1] } } } },
+    });
+    expect(() => jsmql.expr("$.a.sampleSize(-1)")).toThrow(/non-negative count/);
+  });
+});
+
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({

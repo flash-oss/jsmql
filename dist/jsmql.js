@@ -4569,6 +4569,8 @@ var METHODS = {
   dropWhile: { returns: "array", optional: "array" },
   takeRightWhile: { returns: "array", optional: "array" },
   dropRightWhile: { returns: "array", optional: "array" },
+  sample: { optional: "array" },
+  sampleSize: { returns: "array", optional: "array" },
   zipObject: { optional: "array" },
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
@@ -6582,6 +6584,36 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
       if (!fromRight) return takeDropWhile(genObj, pred, drop);
       return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop) };
+    }
+    case "sample": {
+      checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
+      return {
+        $let: {
+          vars: { jsmqlArr: genObj },
+          in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] }
+        }
+      };
+    }
+    case "sampleSize": {
+      const exprArgs = exprArgsOnly(args, "sampleSize");
+      checkArity("sampleSize", { sig: "[n=1]", allowed: [0, 1] }, exprArgs.length, callPos);
+      if (exprArgs[0] !== void 0 && isNegativeLiteral(exprArgs[0])) {
+        throw new CodegenError(`.sampleSize(n) needs a non-negative count.`, exprArgs[0].pos);
+      }
+      const n = exprArgs[0] !== void 0 ? _generate(exprArgs[0], ctx) : 1;
+      return {
+        $let: {
+          vars: {
+            jsmqlShuffled: {
+              $sortArray: {
+                input: { $map: { input: genObj, as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+                sortBy: { k: 1 }
+              }
+            }
+          },
+          in: { $map: { input: { $slice: ["$$jsmqlShuffled", n] }, as: "jsmqlItem", in: "$$jsmqlItem.v" } }
+        }
+      };
     }
     case "difference":
     case "intersection": {
