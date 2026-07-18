@@ -233,6 +233,29 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
   });
 });
 
+describe(".reject(pred) → $match (filter negated)", () => {
+  it("arrow predicate → $match with $expr $not (no query-form De Morgan)", () => {
+    expect(jsmql("$$.reject(o => o.archived === true);")).toEqual([
+      { $match: { $expr: { $not: { $eq: ["$archived", true] } } } },
+    ]);
+  });
+  it("matches-object shorthand negates each key", () => {
+    expect(jsmql("$$.reject({ archived: true });")).toEqual([
+      { $match: { $expr: { $not: { $eq: ["$archived", true] } } } },
+    ]);
+  });
+  it("chains after .filter and before other stream methods", () => {
+    expect(jsmql("$$.filter(o => o.active === true).reject(o => o.hidden === true).take(5);")).toEqual([
+      { $match: { active: true } },
+      { $match: { $expr: { $not: { $eq: ["$hidden", true] } } } },
+      { $limit: 5 },
+    ]);
+  });
+  it("rejects a spread / multi-arg", () => {
+    expect(() => jsmql("$$.reject(o => o.a, o => o.b);")).toThrow(/takes a single/);
+  });
+});
+
 describe(".groupBy(spec | key) → $group", () => {
   it("raw $group body lowers verbatim (accumulators pass the group gate)", () => {
     expect(jsmql('$$ = $$.groupBy({ _id: "$dept", n: $sum(1), total: $sum("$amount") });')).toEqual([

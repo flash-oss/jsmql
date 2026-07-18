@@ -12939,6 +12939,10 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) 
       target.push(...lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, i === 0));
       continue;
     }
+    if (m.method === "reject") {
+      target.push(...lowerStreamReject(m, ctx, lowerBlockFn));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$");
@@ -12963,6 +12967,39 @@ function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {
     `.filter(<predicate> | { field: value, \u2026 }) takes a single arrow predicate ('o => \u2026') or a matches-object.`,
     m.pos
   );
+}
+function lowerStreamReject(m, ctx, lowerBlockFn) {
+  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+    throw new CodegenError(
+      `.reject(<predicate>) takes a single arrow predicate ('o => \u2026'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
+      m.pos
+    );
+  }
+  const arg = m.args[0];
+  let params;
+  let body;
+  let pos;
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1 || arg.body === void 0) {
+      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => \u2026').`, arg.pos);
+    }
+    params = arg.params;
+    body = arg.body;
+    pos = arg.pos;
+  } else {
+    const sh = shorthandToLambda(arg, "reject", "jsmqlItem");
+    if (sh === null || sh.body === void 0) {
+      throw new CodegenError(
+        `.reject(<predicate>) takes an arrow ('o => \u2026'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
+        arg.pos
+      );
+    }
+    params = sh.params;
+    body = sh.body;
+    pos = sh.pos;
+  }
+  const negated = { type: "Lambda", params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
+  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
 }
 function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSlot, rhs) {
   if (methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda" && predicateReferencesOuterDoc(methods[0].args[0], outerCtx)) {

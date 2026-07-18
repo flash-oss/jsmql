@@ -43,6 +43,7 @@ import {
   freshSubPipelineCtx,
   internalError,
   isWritableFieldPath,
+  shorthandToLambda,
   type GenerateCtx,
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
@@ -1121,6 +1122,11 @@ function applyStreamMethods(
       target.push(...lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, i === 0));
       continue;
     }
+    // `.reject(pred)` is `.filter` negated — shares the same predicate machinery.
+    if (m.method === "reject") {
+      target.push(...lowerStreamReject(m, ctx, lowerBlockFn));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$");
@@ -1159,6 +1165,47 @@ function lowerStreamFilterArg(
     `.filter(<predicate> | { field: value, … }) takes a single arrow predicate ('o => …') or a matches-object.`,
     m.pos,
   );
+}
+
+/**
+ * Lower a `.reject(...)` stream method — `.filter` negated. Accepts the same
+ * predicate forms (an arrow, or a lodash matches-object / field string / [field,
+ * value] pair via `shorthandToLambda`), synthesizes `o => !(<predicate body>)`, and
+ * reuses `lowerStreamFilterPredicate`. The negated arrow lowers to `$match: { $expr:
+ * { $not: … } }` — no query-form De Morgan (which jsmql rejects project-wide).
+ */
+function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: SubPipelineLowerer): object[] {
+  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+    throw new CodegenError(
+      `.reject(<predicate>) takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
+      m.pos,
+    );
+  }
+  const arg = m.args[0];
+  let params: string[];
+  let body: Expr;
+  let pos: number;
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1 || arg.body === undefined) {
+      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => …').`, arg.pos);
+    }
+    params = arg.params;
+    body = arg.body;
+    pos = arg.pos;
+  } else {
+    const sh = shorthandToLambda(arg, "reject", "jsmqlItem");
+    if (sh === null || sh.body === undefined) {
+      throw new CodegenError(
+        `.reject(<predicate>) takes an arrow ('o => …'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
+        arg.pos,
+      );
+    }
+    params = sh.params;
+    body = sh.body;
+    pos = sh.pos;
+  }
+  const negated: LambdaNode = { type: "Lambda", params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
+  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
 }
 
 /**

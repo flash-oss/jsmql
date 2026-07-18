@@ -2513,7 +2513,7 @@ function escapeHtmlExpr(s: unknown): unknown {
 //   • property string   `"a.b"`       → `it => it.a.b`                    (_.property)
 //   • matches object    `{ a: 1, b }` → `it => it.a === 1 && it.b === b`  (_.matches, flat $eq per key)
 //   • matchesProperty   `["a.b", v]`  → `it => it.a.b === v`              (_.matchesProperty)
-function shorthandToLambda(arg: Expr, method: string, param: string): Lambda | null {
+export function shorthandToLambda(arg: Expr, method: string, param: string): Lambda | null {
   const pos = arg.pos;
   const paramRef: Expr = { type: "ParamRef", name: param, pos };
   const memberPath = (base: Expr, path: string): Expr => {

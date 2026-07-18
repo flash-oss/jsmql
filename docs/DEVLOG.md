@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: stream `.reject(pred)` → `$match` (filter negated) — the missing complement
+
+`.filter` was a stream method but `.reject` wasn't (value-mode had both). Added, special-cased
+in `applyStreamMethods` next to `.filter` (it shares the predicate machinery). It accepts the
+same forms — an arrow, a matches-object, a field string, or a `["field", value]` pair (via the
+now-exported `shorthandToLambda`) — synthesizes `o => !(<predicate body>)`, and reuses
+`lowerStreamFilterPredicate`:
+
+    $$.reject(o => o.archived === true);  → [{ $match: { $expr: { $not: { $eq: ["$archived", true] } } } }]
+    $$.reject({ archived: true });        → same
+
+The negated arrow lowers to `$match: { $expr: { $not: … } }` — never a query-form De Morgan
+(jsmql rejects that project-wide; DEFERRED §B). Verified on a live mongod (arrow, matches-object,
+chained after `.filter`).
+
 ## 2026-07-18 — feat: stream `.sortBy` / `.orderBy` → `$sort` (re-added; lodash sort aliases on the document stream)
 
 First family of the **document-stream** lodash coverage (mirroring the value-mode push). The
