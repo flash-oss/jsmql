@@ -2213,6 +2213,8 @@ declare global {
     take(n: number): JsmqlCollectionRef;
     /** Skip the first `n` documents → `$skip`. */
     drop(n: number): JsmqlCollectionRef;
+    /** All but the first document → `$skip: 1` (lodash `_.tail`). */
+    tail(): JsmqlCollectionRef;
     /** `n` random documents → `$sample`. */
     sampleSize(n: number): JsmqlCollectionRef;
     /** Append documents / union collections → `$unionWith`. */

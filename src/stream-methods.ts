@@ -219,6 +219,20 @@ const DROP: StreamMethodDef = {
   },
 };
 
+// ── .tail() → $skip: 1 ────────────────────────────────────────────────────────
+//
+// lodash `_.tail(coll)` — all but the first document; the stream analogue of
+// `.drop(1)`.
+const TAIL: StreamMethodDef = {
+  name: "tail",
+  validate(args, callPos) {
+    if (args.length !== 0) throw new CodegenError(`.tail() takes no arguments, got ${args.length}.`, callPos);
+  },
+  lower() {
+    return { stages: [{ $skip: 1 }] };
+  },
+};
+
 // ── .sampleSize(n) → $sample ──────────────────────────────────────────────────
 //
 // lodash `_.sampleSize(coll, n)` — `n` random documents. Maps to the `$sample`
@@ -1801,6 +1815,7 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   sample: SAMPLE,
   take: TAKE,
   drop: DROP,
+  tail: TAIL,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,

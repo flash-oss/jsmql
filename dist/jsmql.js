@@ -9214,6 +9214,15 @@ var DROP = {
     return { stages: n === 0 ? [] : [{ $skip: n }] };
   }
 };
+var TAIL = {
+  name: "tail",
+  validate(args, callPos) {
+    if (args.length !== 0) throw new CodegenError(`.tail() takes no arguments, got ${args.length}.`, callPos);
+  },
+  lower() {
+    return { stages: [{ $skip: 1 }] };
+  }
+};
 var SAMPLE_SIZE = {
   name: "sampleSize",
   validate(args, callPos) {
@@ -10183,6 +10192,7 @@ var STREAM_METHODS = {
   sample: SAMPLE,
   take: TAKE,
   drop: DROP,
+  tail: TAIL,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
   map: MAP,

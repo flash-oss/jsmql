@@ -155,6 +155,7 @@ const STREAM_METHOD_SIGNATURES = {
   },
   take: { doc: "First `n` documents → `$limit`.", params: "(n: number)" },
   drop: { doc: "Skip the first `n` documents → `$skip`.", params: "(n: number)" },
+  tail: { doc: "All but the first document → `$skip: 1` (lodash `_.tail`).", params: "()" },
   sampleSize: { doc: "`n` random documents → `$sample`.", params: "(n: number)" },
   sort: {
     doc: 'Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator.',

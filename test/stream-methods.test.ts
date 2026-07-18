@@ -150,6 +150,16 @@ describe(".drop(n) → $skip — lodash all-but-first-n", () => {
   });
 });
 
+describe(".tail() → $skip: 1 — lodash all-but-first", () => {
+  it("lowers to $skip: 1 (the stream analogue of .drop(1))", () => {
+    expect(jsmql("$$ = $$.tail();")).toEqual([{ $skip: 1 }]);
+    expect(jsmql("$$ = $$.tail();")).toEqual(jsmql("$$ = $$.drop(1);"));
+  });
+  it("rejects arguments", () => {
+    expect(() => jsmql("$$ = $$.tail(2);")).toThrow(/takes no arguments/);
+  });
+});
+
 describe(".sampleSize(n) → $sample", () => {
   it("lowers to $sample", () => {
     expect(jsmql("$$ = $$.sampleSize(3);")).toEqual([{ $sample: { size: 3 } }]);

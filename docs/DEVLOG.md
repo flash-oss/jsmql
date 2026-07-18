@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: stream `.tail()` → `$skip: 1`; note that value-returning terminals already work on lookup chains
+
+Added `.tail()` (all but the first document → `$skip: 1`, the stream analogue of `.drop(1)`)
+to `STREAM_METHODS`, so it works in every stream context.
+
+Discovery while auditing the rest of Tier 1/2: the **value-returning** stream terminals —
+`.head()` / `.first()` / `.last()` / `.nth(n)` / `.size()` / `.every(p)` / `.some(p)` /
+`.includes(x)` / `.partition(p)` / `.keyBy(k)` — **already work on a `$$$.<coll>.filter(...)`
+lookup/assignment chain** with no new code: they aren't stream methods, so the chain bails to
+the expression form, which applies the value-mode method (built earlier this session) over the
+lookup result array. This is exactly the "returns a single item, like `find()`" behaviour the
+developer asked for. Verified on a live mongod (`.head().sku` → the first order's sku, `.size()`
+→ the match count, `.every(o => o.paid)` → a bool). What remains is the **top-level `$$`**
+context for these (stage forms — `.size()` → `$count`, `.head()` → `$limit: 1`, …) and Tier 3
+(`.last`/`.takeRight`/`.dropRight`/`.initial`/`.takeWhile`/`.dropWhile`/`.shuffle` via the
+reverse-sort trick). `.uniq()` needs **no** stream form — a document stream's rows always differ
+by `_id`, so whole-doc dedupe is a no-op; `.uniqBy(field)` is the stream dedupe, and value-mode
+`.uniq()` already dedupes a lookup result array.
+
 ## 2026-07-18 — feat: stream `.reject(pred)` → `$match` (filter negated) — the missing complement
 
 `.filter` was a stream method but `.reject` wasn't (value-mode had both). Added, special-cased
