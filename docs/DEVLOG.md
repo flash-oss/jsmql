@@ -79,8 +79,8 @@ Third family. `$map`-over-`$range` transposition:
 max size across them for the `$range`. `.zipWith` validates the arrow's parameter count
 equals the number of zipped arrays. `.unzipWith` is intentionally NOT added — its iteratee
 receives a group whose arity equals the receiver's ROW count (runtime-dynamic), which a
-fixed-parameter arrow can't express; `.unzip().map(group => …)` is the idiomatic form
-(`didYouMean` points `.unzipWith` at `.unzip`). All shapes verified on a live mongod
+fixed-parameter arrow can't express; it carries a tailored error pointing at
+`.unzip().map(group => …)`, the idiomatic form. All shapes verified on a live mongod
 (2- and 3-way zip, null padding, `zipWith` sum, `unzip` round-trip).
 
 ## 2026-07-18 — feat: lodash set-ops & `By`-iteratee value methods — `.without` / `.xor` / `.differenceBy` / `.unionBy` / …

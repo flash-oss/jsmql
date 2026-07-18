@@ -585,6 +585,8 @@ const METHODS: Record<string, MethodMeta> = {
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
   zipWith: { returns: "array", optional: "array" },
+  unzipWith: {}, // shimmed with a tailored "use .unzip().map(group => …)" error
+
   keyBy: { optional: "array" },
   groupBy: { optional: "array" },
   countBy: { optional: "array" },
@@ -3414,6 +3416,13 @@ function generateMethodCall(
     case "copyWithin":
       throw new CodegenError(
         `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. Call it at statement position (top-level on a '$.<field>' receiver) to copy-within the field in place, or compose '.slice()' calls with '$concatArrays' for an inline expression.`,
+        callPos,
+      );
+    case "unzipWith":
+      // lodash's iteratee gets each group spread as separate args — its arity is the
+      // receiver's (runtime) row count, which a fixed-parameter arrow can't express.
+      throw new CodegenError(
+        `.unzipWith(fn) isn't supported — its iteratee's argument count depends on the array's length at runtime. Write '.unzip().map(group => …)' instead, where 'group' is one unzipped column.`,
         callPos,
       );
 

@@ -4577,6 +4577,8 @@ var METHODS = {
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
   zipWith: { returns: "array", optional: "array" },
+  unzipWith: {},
+  // shimmed with a tailored "use .unzip().map(group => …)" error
   keyBy: { optional: "array" },
   groupBy: { optional: "array" },
   countBy: { optional: "array" },
@@ -6433,6 +6435,11 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "copyWithin":
       throw new CodegenError(
         `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. Call it at statement position (top-level on a '$.<field>' receiver) to copy-within the field in place, or compose '.slice()' calls with '$concatArrays' for an inline expression.`,
+        callPos
+      );
+    case "unzipWith":
+      throw new CodegenError(
+        `.unzipWith(fn) isn't supported \u2014 its iteratee's argument count depends on the array's length at runtime. Write '.unzip().map(group => \u2026)' instead, where 'group' is one unzipped column.`,
         callPos
       );
     // ── DX shims: iterator / void / locale methods ──────────────────────────

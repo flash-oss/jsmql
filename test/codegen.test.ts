@@ -3433,6 +3433,9 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
     });
     expect(() => jsmql.expr("$.a.zipWith($.b, x => x)")).toThrow(/2-parameter arrow/);
   });
+  it(".unzipWith is rejected with a tailored .unzip().map(group => …) hint (variadic runtime arity)", () => {
+    expect(() => jsmql.expr("$.a.unzipWith(f)")).toThrow(/unzip\(\)\.map\(group/);
+  });
   it(".unzip() transposes an array of tuples ($ifNull guards an empty receiver)", () => {
     expect(jsmql.expr("$.t.unzip()")).toEqual({
       $let: {
