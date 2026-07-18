@@ -1501,6 +1501,8 @@ Value-mode methods on an array field. Iteratee-taking methods (`keyBy`, `sumBy`,
 $.nums.sum()  / .mean() / .max() / .min()   // $sum / $avg / $max / $min of the array
 $.items.sumBy("price")  / .meanBy(x => x.p) // $sum / $avg of the mapped values
 $.items.minBy("score")  / .maxBy("score")   // the element with the min/max key
+$.items.sortBy("age") / .sortBy(x => x.age) // ascending sort by a key (alias of .toSorted)
+$.items.orderBy(["age", "name"], ["desc", "asc"])  // multi-key sort with per-key directions
 $.tags.uniq()                               // order-preserving keep-first dedupe
 $.items.uniqBy("id")                        // dedupe by key, keep first
 $.items.keyBy("id")                         // { <id>: <last item with that id> }

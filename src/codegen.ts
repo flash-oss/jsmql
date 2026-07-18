@@ -487,6 +487,8 @@ const METHODS: Record<string, MethodMeta> = {
   reverse: { returns: "array", optional: "array" }, // throws in expression position; metadata used by the statement-position rewrite
   toReversed: { returns: "array", optional: "array" },
   toSorted: { returns: "array", optional: "array" },
+  sortBy: { returns: "array", optional: "array" },
+  orderBy: { returns: "array", optional: "array" },
   toSpliced: { returns: "array" },
   with: { returns: "array" },
   flat: { returns: "array", optional: "array" },
@@ -2931,6 +2933,34 @@ function generateMethodCall(
       const sortBy = argToSortBy(exprArgs[0], "toSorted");
       return { $sortArray: { input: genObj, sortBy } };
     }
+    case "sortBy": {
+      // lodash `sortBy` — ascending sort by an iteratee. Field name / array of field
+      // names / key function, like `.toSorted`. An OBJECT arg is rejected: in lodash a
+      // `{ age: -1 }` here is a matches-shorthand (sort by a boolean), NOT a direction —
+      // point the user at .orderBy / .toSorted so the surprise can't bite.
+      const exprArgs = exprArgsOnly(args, "sortBy");
+      checkArity("sortBy", { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] }, exprArgs.length, callPos);
+      if (exprArgs.length === 0) return { $sortArray: { input: genObj, sortBy: 1 } };
+      if (exprArgs[0].type === "ObjectLiteral") {
+        throw new CodegenError(
+          `.sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.toSorted({ field: -1 })' for directions.`,
+          exprArgs[0].pos,
+        );
+      }
+      return { $sortArray: { input: genObj, sortBy: argToSortBy(exprArgs[0], "sortBy") } };
+    }
+    case "orderBy": {
+      // lodash `orderBy(keys, orders)` — parallel arrays of sort keys + directions.
+      const exprArgs = exprArgsOnly(args, "orderBy");
+      checkArity("orderBy", { sig: "keys[, orders]", allowed: [1, 2] }, exprArgs.length, callPos);
+      const names = orderByKeyNames(exprArgs[0], "orderBy");
+      const dirs = exprArgs[1] !== undefined ? orderByDirs(exprArgs[1], "orderBy") : [];
+      const spec: Record<string, 1 | -1> = {};
+      names.forEach((nm, i) => {
+        spec[nm] = dirs[i] ?? 1; // orders shorter than keys ⇒ remaining ascending (lodash)
+      });
+      return { $sortArray: { input: genObj, sortBy: spec } };
+    }
     case "toSpliced": {
       const exprArgs = exprArgsOnly(args, "toSpliced");
       checkArity("toSpliced", { sig: "start[, deleteCount, ...items]", atLeast: 1 }, exprArgs.length, callPos);
@@ -4162,6 +4192,47 @@ function argToSortBy(arg: Expr, method: string): Record<string, 1 | -1> {
     return spec;
   }
   return lambdaToSortBy(arg, method);
+}
+
+/**
+ * The sort-key field names for `.orderBy(keys, orders)`: a single field name, a
+ * key function (`x => x.path`), or an array of either. Directions come from the
+ * separate `orders` arg (see `orderByDirs`), so a bare `x => x.path` yields just
+ * its path.
+ */
+function orderByKeyNames(arg: Expr, method: string): string[] {
+  const one = (e: ArrayElement): string => {
+    if (e.type === "StringLiteral") {
+      if (e.value === "" || e.value.startsWith("$"))
+        throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, e.pos);
+      return e.value;
+    }
+    // A key function contributes its path (direction is taken from `orders`).
+    if (e.type === "Lambda") return Object.keys(lambdaToSortBy(e, method))[0];
+    throw new CodegenError(`.${method}(keys) entries must be a field name or a key function 'x => x.path'.`, e.pos);
+  };
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) throw new CodegenError(`.${method}([keys]) needs at least one key.`, arg.pos);
+    return arg.elements.map(one);
+  }
+  return [one(arg)];
+}
+
+/**
+ * The sort directions for `.orderBy(keys, orders)`: `1` / `-1` / `"asc"` / `"desc"`,
+ * or an array of them (parallel to the keys). Fewer directions than keys ⇒ the
+ * remainder default ascending (lodash).
+ */
+function orderByDirs(arg: Expr, method: string): (1 | -1)[] {
+  const one = (e: ArrayElement): 1 | -1 => {
+    const dir =
+      e.type === "StringLiteral" || e.type === "NumberLiteral" || e.type === "UnaryExpr" ? sortDirLiteral(e) : null;
+    if (dir === null)
+      throw new CodegenError(`.${method}(keys, orders) directions must be 1 / -1 / "asc" / "desc".`, e.pos);
+    return dir;
+  };
+  if (arg.type === "ArrayLiteral") return arg.elements.map(one);
+  return [one(arg)];
 }
 
 /**

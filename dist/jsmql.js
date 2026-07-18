@@ -4477,6 +4477,8 @@ var METHODS = {
   // throws in expression position; metadata used by the statement-position rewrite
   toReversed: { returns: "array", optional: "array" },
   toSorted: { returns: "array", optional: "array" },
+  sortBy: { returns: "array", optional: "array" },
+  orderBy: { returns: "array", optional: "array" },
   toSpliced: { returns: "array" },
   with: { returns: "array" },
   flat: { returns: "array", optional: "array" },
@@ -6016,6 +6018,29 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const sortBy = argToSortBy(exprArgs[0], "toSorted");
       return { $sortArray: { input: genObj, sortBy } };
     }
+    case "sortBy": {
+      const exprArgs = exprArgsOnly(args, "sortBy");
+      checkArity("sortBy", { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] }, exprArgs.length, callPos);
+      if (exprArgs.length === 0) return { $sortArray: { input: genObj, sortBy: 1 } };
+      if (exprArgs[0].type === "ObjectLiteral") {
+        throw new CodegenError(
+          `.sortBy({ \u2026 }) isn't supported \u2014 an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.toSorted({ field: -1 })' for directions.`,
+          exprArgs[0].pos
+        );
+      }
+      return { $sortArray: { input: genObj, sortBy: argToSortBy(exprArgs[0], "sortBy") } };
+    }
+    case "orderBy": {
+      const exprArgs = exprArgsOnly(args, "orderBy");
+      checkArity("orderBy", { sig: "keys[, orders]", allowed: [1, 2] }, exprArgs.length, callPos);
+      const names = orderByKeyNames(exprArgs[0], "orderBy");
+      const dirs = exprArgs[1] !== void 0 ? orderByDirs(exprArgs[1], "orderBy") : [];
+      const spec = {};
+      names.forEach((nm, i) => {
+        spec[nm] = dirs[i] ?? 1;
+      });
+      return { $sortArray: { input: genObj, sortBy: spec } };
+    }
     case "toSpliced": {
       const exprArgs = exprArgsOnly(args, "toSpliced");
       checkArity("toSpliced", { sig: "start[, deleteCount, ...items]", atLeast: 1 }, exprArgs.length, callPos);
@@ -7084,6 +7109,32 @@ function argToSortBy(arg, method) {
     return spec;
   }
   return lambdaToSortBy(arg, method);
+}
+function orderByKeyNames(arg, method) {
+  const one = (e) => {
+    if (e.type === "StringLiteral") {
+      if (e.value === "" || e.value.startsWith("$"))
+        throw new CodegenError(`.${method}("field") requires a plain field name (no leading '$').`, e.pos);
+      return e.value;
+    }
+    if (e.type === "Lambda") return Object.keys(lambdaToSortBy(e, method))[0];
+    throw new CodegenError(`.${method}(keys) entries must be a field name or a key function 'x => x.path'.`, e.pos);
+  };
+  if (arg.type === "ArrayLiteral") {
+    if (arg.elements.length === 0) throw new CodegenError(`.${method}([keys]) needs at least one key.`, arg.pos);
+    return arg.elements.map(one);
+  }
+  return [one(arg)];
+}
+function orderByDirs(arg, method) {
+  const one = (e) => {
+    const dir = e.type === "StringLiteral" || e.type === "NumberLiteral" || e.type === "UnaryExpr" ? sortDirLiteral(e) : null;
+    if (dir === null)
+      throw new CodegenError(`.${method}(keys, orders) directions must be 1 / -1 / "asc" / "desc".`, e.pos);
+    return dir;
+  };
+  if (arg.type === "ArrayLiteral") return arg.elements.map(one);
+  return [one(arg)];
 }
 function lambdaToSortBy(arg, method) {
   if (arg.type !== "Lambda") {

@@ -3486,6 +3486,25 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
   });
 });
 
+describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
+  it(".sortBy accepts a field / array / key function (ascending); 0 args → natural sort", () => {
+    expect(jsmql.expr('$.a.sortBy("age")')).toEqual({ $sortArray: { input: "$a", sortBy: { age: 1 } } });
+    expect(jsmql.expr("$.a.sortBy()")).toEqual({ $sortArray: { input: "$a", sortBy: 1 } });
+    expect(jsmql.expr('$.a.sortBy(["x", "y"])')).toEqual({ $sortArray: { input: "$a", sortBy: { x: 1, y: 1 } } });
+    expect(jsmql.expr("$.a.sortBy(u => u.age)")).toEqual({ $sortArray: { input: "$a", sortBy: { age: 1 } } });
+  });
+  it(".sortBy rejects an object arg (lodash matches-shorthand, not a direction)", () => {
+    expect(() => jsmql.expr("$.a.sortBy({ age: -1 })")).toThrow(/matches-shorthand.*orderBy/s);
+  });
+  it(".orderBy zips parallel keys + orders; missing orders default ascending", () => {
+    expect(jsmql.expr('$.a.orderBy("age", "desc")')).toEqual({ $sortArray: { input: "$a", sortBy: { age: -1 } } });
+    expect(jsmql.expr('$.a.orderBy(["a", "b"], ["asc", "desc"])')).toEqual({
+      $sortArray: { input: "$a", sortBy: { a: 1, b: -1 } },
+    });
+    expect(jsmql.expr('$.a.orderBy(["a", "b"])')).toEqual({ $sortArray: { input: "$a", sortBy: { a: 1, b: 1 } } });
+  });
+});
+
 describe("lodash random value methods — sample / sampleSize ($rand)", () => {
   it(".sample() → a random element via $arrayElemAt at floor($rand * size)", () => {
     expect(jsmql.expr("$.a.sample()")).toEqual({

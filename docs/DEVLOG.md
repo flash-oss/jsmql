@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash `.sortBy` / `.orderBy` value aliases → `$sortArray`
+
+Final family of the lodash value-mode push. The developer chose to add these lodash-named
+aliases even though `.sort` / `.toSorted` already cover the capability (a deliberate,
+approved exception to the usual anti-dual-spelling stance — they're value-mode only; the
+stream `.sortBy`/`.orderBy` removed in efce89f stay removed):
+
+    .sortBy(["field" | keyFn | [fields]])  → $sortArray ascending (reuses argToSortBy);
+                                              0 args → natural ascending sort
+    .orderBy(keys[, orders])               → $sortArray with parallel key/direction arrays
+                                              (fewer orders than keys ⇒ the rest ascending)
+
+`.sortBy` **rejects an object arg**: in lodash `sortBy(a, { age: -1 })` is a
+matches-shorthand iteratee (sort by a boolean), NOT a direction — the error points at
+`.orderBy(["field"], ["desc"])` / `.toSorted({ field: -1 })` so that footgun can't fire
+silently. `orderByKeyNames` / `orderByDirs` normalise the two parallel-array args (each
+accepts a scalar or an array; directions are `1`/`-1`/`"asc"`/`"desc"`). Verified on a live
+mongod (single-key asc, multi-key mixed directions, defaulted directions).
+
+This completes value-mode lodash Array + Collection coverage (everything doable bar
+`shuffle`); the won't-implement decisions are recorded in DEFERRED §B.
+
 ## 2026-07-18 — feat: lodash random value methods — `.sample` / `.sampleSize` (`$rand`)
 
 Fifth family — the only non-deterministic value methods (agreed with the developer; only
