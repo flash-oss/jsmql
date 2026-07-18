@@ -91,6 +91,7 @@ import {
   lowerDictBuildWrap,
   lowerReduceWrap,
   streamMethodNames,
+  VALUE_TERMINAL_METHODS,
   type ArrayReducerWrap,
   type MethodCallNode,
 } from "./stream-methods.ts";
@@ -1434,6 +1435,21 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       m.pos,
     );
   }
+  // Value-collapsing lodash terminals (`.head`/`.size`/`.every`/`.partition`/…) —
+  // they reduce the stream to a single value, so they're only valid in a VALUE
+  // position (`const x = …` / `$.field = …`), where they pivot to value-mode over
+  // the materialised result. As a `$$ =` pivot or a bare statement, a value isn't a
+  // stream/stage.
+  if (VALUE_TERMINAL_METHODS.has(m.method)) {
+    const single = m.method === "head" || m.method === "first" || m.method === "last" || m.method === "nth";
+    const streamHint = single
+      ? ` For a one-document stream, use '${receiver}.filter(<pred>).take(1)' / '.slice(...)'.`
+      : "";
+    return new CodegenError(
+      `'.${m.method}(...)' returns a single value, not a stream — it collapses '${receiver}' to one value, so it's only valid in a VALUE position: 'const x = ${receiver}.${m.method}(...)' or '$.field = ${receiver}.${m.method}(...)', not as a '$$ = …' pivot or a bare statement.${streamHint}`,
+      m.pos,
+    );
+  }
   // `.reduce` is rejected as a chain method for the same reason — in JS,
   // `arr.reduce(...)` returns a scalar / object / array depending on the
   // reducer. Assigning a non-array result directly to `$$` would break the
@@ -1861,6 +1877,14 @@ function formatNotAStageError(el: ArrayElement, index: number): string {
         `To filter documents on a predicate, wrap it as \`$match(...)\` — ` +
         `e.g. \`$match($.age > 18)\`. ` +
         `Pipeline statements must be stage calls; available stages: ${formatStageList()}.`
+      );
+    }
+    // A value-collapsing lodash terminal (`.head()`/`.size()`/…) as a bare statement —
+    // it returns a single value, not a stage. Point at the value position.
+    if (el.type === "MethodCall" && VALUE_TERMINAL_METHODS.has(el.method)) {
+      return (
+        `Element ${index} of pipeline is '.${el.method}(...)', which returns a single value, not a pipeline stage. ` +
+        `Assign it to a field or a binding — '$.field = <expr>' or 'const x = <expr>'.`
       );
     }
   }

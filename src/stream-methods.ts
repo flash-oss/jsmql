@@ -1808,6 +1808,27 @@ function classifyConcatCall(expr: Expr, accParam: string, dParam: string): Array
   return null;
 }
 
+// lodash reductions that collapse a document stream to a single VALUE (a doc,
+// scalar, bool, or object) rather than reshaping it into another stream. They
+// "pivot to value-mode" like a terminal `.map`: valid only in a VALUE position
+// (`const x = <chain>` / `$.field = <chain>`), where they lower value-mode over
+// the materialised lookup result; rejected as a `$$ =` stream pivot or a bare
+// statement (a value isn't a pipeline). `.find`/`.findLast`/`.at`/`.reduce` are
+// the pre-existing members with their own tailored messages (see
+// `unknownStreamMethod`); this set drives the same treatment for the rest.
+export const VALUE_TERMINAL_METHODS: ReadonlySet<string> = new Set([
+  "head",
+  "first",
+  "last",
+  "nth",
+  "size",
+  "every",
+  "some",
+  "includes",
+  "partition",
+  "keyBy",
+]);
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 const STREAM_METHODS: Record<string, StreamMethodDef> = {

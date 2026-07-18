@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: value-collapsing stream terminals are value-position-only (`.head`/`.size`/`.every`/… pivot to value-mode)
+
+Formalises the rule the developer asked for: a value-collapsing lodash terminal —
+`.head` / `.first` / `.last` / `.nth` / `.size` / `.every` / `.some` / `.includes` /
+`.partition` / `.keyBy` (`VALUE_TERMINAL_METHODS`) — collapses a document stream to a single
+value, so it "pivots to value-mode" like a terminal `.map`. It is valid ONLY in a value
+position and rejected as a stream. The four canonical behaviours:
+
+    $$ = $$$.orders.head();       // THROWS — a value isn't a stream (use .take(1) for a 1-doc stream)
+    $$ = $$$.orders.take(1);      // ok      — take returns a stream
+    $$$.orders.head();            // THROWS — a value isn't a pipeline stage
+    $.field = $$$.orders.head();  // ok      — value-mode over the lookup result
+
+Two pieces: (1) `injectImplicitFilterForValueTerminal` in `extractLookupCalls` makes a
+value-terminal on a **bare** `$$$.<coll>` (no `.filter`) mean "over ALL documents" —
+`$$$.orders.head()` ≡ `$$$.orders.filter(() => true).head()` — so the existing value-mode
+peel handles it (verified on mongod: all-orders `head().sku` → the first sku, `size()` → the
+count, `every(o => o.paid)` → a bool). It fires only in value position, so the pivot / bare
+statement of the same shape still reaches its rejection. (2) `unknownStreamMethod` and the
+bare-statement stage validator now give every value terminal a targeted "returns a single
+value — use a value position" error instead of a generic one. The value terminals **with** a
+`.filter` already worked (the expression fallthrough); this closes the no-filter form and the
+wrong-position errors. Applies uniformly to all of them, not just `.head`.
+
 ## 2026-07-18 — feat: stream `.tail()` → `$skip: 1`; note that value-returning terminals already work on lookup chains
 
 Added `.tail()` (all but the first document → `$skip: 1`, the stream analogue of `.drop(1)`)

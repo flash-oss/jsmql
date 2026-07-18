@@ -10187,6 +10187,18 @@ function classifyConcatCall(expr, accParam, dParam) {
   if (path !== null) return { kind: "field", path };
   return null;
 }
+var VALUE_TERMINAL_METHODS = /* @__PURE__ */ new Set([
+  "head",
+  "first",
+  "last",
+  "nth",
+  "size",
+  "every",
+  "some",
+  "includes",
+  "partition",
+  "keyBy"
+]);
 var STREAM_METHODS = {
   slice: SLICE,
   sample: SAMPLE,
@@ -11256,7 +11268,37 @@ function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
   }
   return stages;
 }
-function extractLookupCalls(expr, outerCtx, allocSlot, lowerBlock2, enclosingArg) {
+function injectImplicitFilterForValueTerminal(expr) {
+  if (expr.type !== "MethodCall") return expr;
+  const chain = [];
+  let cur = expr;
+  while (cur.type === "MethodCall") {
+    chain.push(cur);
+    cur = cur.object;
+  }
+  const innermost = chain[chain.length - 1];
+  if (innermost.method === "find" || innermost.method === "filter") return expr;
+  if (!VALUE_TERMINAL_METHODS.has(innermost.method)) return expr;
+  if (classifyLookupReceiver(cur) === null) return expr;
+  const trueArrow = {
+    type: "Lambda",
+    params: ["jsmqlD"],
+    body: { type: "BooleanLiteral", value: true, pos: innermost.pos },
+    pos: innermost.pos
+  };
+  const filterCall = {
+    type: "MethodCall",
+    method: "filter",
+    object: cur,
+    args: [trueArrow],
+    pos: innermost.pos
+  };
+  let rebuilt = { ...innermost, object: filterCall };
+  for (let i = chain.length - 2; i >= 0; i--) rebuilt = { ...chain[i], object: rebuilt };
+  return rebuilt;
+}
+function extractLookupCalls(exprArg, outerCtx, allocSlot, lowerBlock2, enclosingArg) {
+  const expr = injectImplicitFilterForValueTerminal(exprArg);
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   validateLookupShape(expr);
   if (expr.type === "MemberAccess" && expr.member === "length") {
@@ -13119,6 +13161,14 @@ function unknownStreamMethod(m, receiver) {
       m.pos
     );
   }
+  if (VALUE_TERMINAL_METHODS.has(m.method)) {
+    const single2 = m.method === "head" || m.method === "first" || m.method === "last" || m.method === "nth";
+    const streamHint = single2 ? ` For a one-document stream, use '${receiver}.filter(<pred>).take(1)' / '.slice(...)'.` : "";
+    return new CodegenError(
+      `'.${m.method}(...)' returns a single value, not a stream \u2014 it collapses '${receiver}' to one value, so it's only valid in a VALUE position: 'const x = ${receiver}.${m.method}(...)' or '$.field = ${receiver}.${m.method}(...)', not as a '$$ = \u2026' pivot or a bare statement.${streamHint}`,
+      m.pos
+    );
+  }
   if (m.method === "reduce") {
     return new CodegenError(
       `'.reduce(...)' is not a chain method on '${receiver}' \u2014 in JS '.reduce' collapses an array to a single value, but '${receiver}' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS:
@@ -13374,6 +13424,9 @@ function formatNotAStageError(el, index) {
     }
     if (looksLikePredicate(el)) {
       return `Element ${index} of pipeline is not a stage call. To filter documents on a predicate, wrap it as \`$match(...)\` \u2014 e.g. \`$match($.age > 18)\`. Pipeline statements must be stage calls; available stages: ${formatStageList()}.`;
+    }
+    if (el.type === "MethodCall" && VALUE_TERMINAL_METHODS.has(el.method)) {
+      return `Element ${index} of pipeline is '.${el.method}(...)', which returns a single value, not a pipeline stage. Assign it to a field or a binding \u2014 '$.field = <expr>' or 'const x = <expr>'.`;
     }
   }
   return `Element ${index} of pipeline is not a recognised stage. Expected \`{ $stage: ... }\` or \`$stage(...)\` where $stage is one of: ${formatStageList()}.`;

@@ -834,6 +834,42 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     );
   });
 
+  it("a value-collapsing terminal (.head/.size/…) is value-position-only — pivot & bare-statement throw, assignment is OK", () => {
+    // `.head()` collapses the stream to a single value — like `.map(o => o.x)`, it
+    // pivots to value-mode. Valid only where a value is expected.
+    // 1. `$$ = …head()` — a value isn't a stream.
+    expect(() => jsmql("$$ = $$$.orders.head();")).toThrow(/returns a single value, not a stream/);
+    // 2. `$$ = …take(1)` — take returns a stream, so it's fine (contrast).
+    expect(jsmql("$$ = $$$.orders.take(1);")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { coll: "orders", pipeline: [{ $limit: 1 }] } },
+    ]);
+    // 3. Bare statement — a value isn't a pipeline stage.
+    expect(() => jsmql("$$$.orders.head();")).toThrow(/returns a single value, not a pipeline stage/);
+    // 4. Assignment — value-mode over ALL orders (implicit match-all $lookup + $first).
+    expect(jsmql("$.field = $$$.orders.head();")).toEqual([
+      { $lookup: { from: "orders", let: {}, pipeline: [{ $match: { $expr: true } }], as: "__jsmql.tmp.1" } },
+      { $set: { field: { $first: "$__jsmql.tmp.1" } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("the value-position rule covers every value terminal (head/last/nth/size/every/some/partition/keyBy)", () => {
+    for (const term of [
+      "head()",
+      "last()",
+      "nth(1)",
+      "size()",
+      "every(o => o.paid)",
+      "partition(o => o.vip)",
+      'keyBy("sku")',
+    ]) {
+      expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).${term};`)).toThrow(/returns a single value/);
+      // …but the same chain in a value position compiles.
+      expect(() => jsmql(`$.f = $$$.orders.filter(o => o.userId === $._id).${term};`)).not.toThrow();
+    }
+  });
+
   it("non-correlated predicate keeps using $unionWith (no regression)", () => {
     // No `$.<field>` ref — the predicate is a flat scan, so the existing
     // `$limit:0 + $unionWith` lowering is correct.

@@ -648,6 +648,15 @@ A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.f
 
 **Stream-method chains push into the `$lookup.pipeline` body.** Any sequence of registered stream methods (`.filter`, `.toSorted`, `.toReversed`, `.slice`, `.flatMap`, `.concat`) chained after `$$$.coll.filter(<pred>)` becomes the `$lookup`'s sub-pipeline. The slot then holds the transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
 
+**Value-collapsing terminals (`.head` / `.first` / `.last` / `.nth` / `.size` / `.every` / `.some` / `.includes` / `.partition` / `.keyBy`) return a *value*, so they're value-position-only.** Like a value-extracting `.map`, they pivot to value-mode over the lookup result — valid in an assignment or binding (`$.first = $$$.orders.filter(o => o.userId === $._id).head()`), and on a **bare** `$$$.<coll>` too (no `.filter` needed — `$$$.orders.head()` means "over all orders"). They are **rejected** as a `$$ = …` stream pivot or a bare statement (a value isn't a stream/stage) — the error points you at the value position, or at `.take(1)` for a one-document stream:
+
+```js
+$.firstOrder = $$$.orders.filter(o => o.userId === $._id).head();  // ok — the first matching order (a doc value)
+$.orderCount = $$$.orders.filter(o => o.userId === $._id).size();  // ok — the match count
+$$ = $$$.orders.head();   // throws — a value can't be the new stream; use `.take(1)` for a 1-doc stream
+$$$.orders.head();        // throws — a bare value isn't a pipeline stage; assign it
+```
+
 **A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`:
 
 ```js

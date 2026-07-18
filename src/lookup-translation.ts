@@ -31,7 +31,7 @@ import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
-import { lookupStreamMethod } from "./stream-methods.ts";
+import { lookupStreamMethod, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -1836,13 +1836,54 @@ export function lowerLookup(
  * `outerCtx.enclosingLookup`), landing as prologue `$lookup` stages inside
  * the outer's `$lookup.pipeline`. See docs/specs/lookup-stage.md § Nested lookups.
  */
+// A value-collapsing terminal (`.head()` / `.size()` / …) directly on a bare
+// `$$$.<coll>` — with no `.filter`/`.find` — is sugar for "over ALL documents":
+// `$$$.orders.head()` ≡ `$$$.orders.filter(() => true).head()`. Inject that implicit
+// match-all `.filter` so the existing value-mode peel (over the materialised lookup
+// result) handles it; without it the chain would hit the "needs .find/.filter"
+// gate. Returns `expr` unchanged for anything else (a `.filter` head is already
+// present, the innermost method isn't a value terminal, the receiver isn't a
+// lookup target). Only fires in VALUE position (`extractLookupCalls`), so a `$$ =`
+// pivot / bare statement of the same shape still reaches its rejection.
+function injectImplicitFilterForValueTerminal(expr: Expr): Expr {
+  if (expr.type !== "MethodCall") return expr;
+  const chain: MethodCall[] = [];
+  let cur: Expr = expr;
+  while (cur.type === "MethodCall") {
+    chain.push(cur);
+    cur = cur.object;
+  }
+  const innermost = chain[chain.length - 1]; // the method whose object is `cur`
+  if (innermost.method === "find" || innermost.method === "filter") return expr; // already has a head
+  if (!VALUE_TERMINAL_METHODS.has(innermost.method)) return expr;
+  if (classifyLookupReceiver(cur) === null) return expr; // not a `$$$.<coll>` receiver
+  const trueArrow: Expr = {
+    type: "Lambda",
+    params: ["jsmqlD"],
+    body: { type: "BooleanLiteral", value: true, pos: innermost.pos },
+    pos: innermost.pos,
+  };
+  const filterCall: MethodCall = {
+    type: "MethodCall",
+    method: "filter",
+    object: cur,
+    args: [trueArrow],
+    pos: innermost.pos,
+  };
+  // Rebuild the chain from the (now filter-headed) innermost method up to `expr`.
+  let rebuilt: Expr = { ...innermost, object: filterCall };
+  for (let i = chain.length - 2; i >= 0; i--) rebuilt = { ...chain[i], object: rebuilt };
+  return rebuilt;
+}
+
 export function extractLookupCalls(
-  expr: Expr,
+  exprArg: Expr,
   outerCtx: GenerateCtx,
   allocSlot: SlotAllocator,
   lowerBlock: SubPipelineLowerer,
   enclosingArg?: EnclosingLookupContext,
 ): { stages: object[]; rewritten: Expr } {
+  const expr = injectImplicitFilterForValueTerminal(exprArg);
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   // Malformed-shape pre-check: if expr is a MethodCall on a DatabaseRef-rooted
   // receiver, run the targeted validator so wrong-method (`fnid`), wrong-arity,
