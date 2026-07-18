@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-18 — feat: lodash transpose value methods — `.zip` / `.unzip` / `.zipWith`
+
+Third family. `$map`-over-`$range` transposition:
+
+    .zip(...arrays)          → [[a0,b0,…], …]   (groups run to the LONGEST; MongoDB pads a
+                                                 short array's out-of-range slot with null,
+                                                 matching lodash's undefined — verified)
+    .zipWith(...arrays, fn)  → [fn(a0,b0,…), …]  (fn is an N-param arrow, one param per array;
+                                                 params bound to the group's elements via $let)
+    .unzip()                 → inverse of zip; column count = size of the first tuple
+                                                 ($ifNull → [] guards an empty receiver)
+
+`.zip`/`.zipWith` bind every operand array once in a `$let` (`jsmqlZip<k>`) and take the
+max size across them for the `$range`. `.zipWith` validates the arrow's parameter count
+equals the number of zipped arrays. `.unzipWith` is intentionally NOT added — its iteratee
+receives a group whose arity equals the receiver's ROW count (runtime-dynamic), which a
+fixed-parameter arrow can't express; `.unzip().map(group => …)` is the idiomatic form
+(`didYouMean` points `.unzipWith` at `.unzip`). All shapes verified on a live mongod
+(2- and 3-way zip, null padding, `zipWith` sum, `unzip` round-trip).
+
 ## 2026-07-18 — feat: lodash set-ops & `By`-iteratee value methods — `.without` / `.xor` / `.differenceBy` / `.unionBy` / …
 
 Second family of the lodash value-mode push. Set-shaped array ops, all order-preserving

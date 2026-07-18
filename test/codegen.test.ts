@@ -3391,6 +3391,64 @@ describe("lodash set-ops & By-iteratee value methods", () => {
   });
 });
 
+describe("lodash transpose value methods — zip / unzip / zipWith", () => {
+  it(".zip(...arrays) → $map over $range building the index-tuples (groups run to the longest)", () => {
+    expect(jsmql.expr("$.a.zip($.b)")).toEqual({
+      $let: {
+        vars: { jsmqlZip0: "$a", jsmqlZip1: "$b" },
+        in: {
+          $map: {
+            input: { $range: [0, { $max: [{ $size: "$$jsmqlZip0" }, { $size: "$$jsmqlZip1" }] }] },
+            as: "jsmqlI",
+            in: [{ $arrayElemAt: ["$$jsmqlZip0", "$$jsmqlI"] }, { $arrayElemAt: ["$$jsmqlZip1", "$$jsmqlI"] }],
+          },
+        },
+      },
+    });
+    // Three-way zip binds a third array.
+    expect(jsmql.expr("$.a.zip($.b, $.c)")).toMatchObject({
+      $let: { vars: { jsmqlZip0: "$a", jsmqlZip1: "$b", jsmqlZip2: "$c" } },
+    });
+  });
+  it(".zipWith(...arrays, fn) applies an N-parameter arrow (one param per array) to each group", () => {
+    expect(jsmql.expr("$.a.zipWith($.b, (x, y) => x + y)")).toEqual({
+      $let: {
+        vars: { jsmqlZip0: "$a", jsmqlZip1: "$b" },
+        in: {
+          $map: {
+            input: { $range: [0, { $max: [{ $size: "$$jsmqlZip0" }, { $size: "$$jsmqlZip1" }] }] },
+            as: "jsmqlI",
+            in: {
+              $let: {
+                vars: {
+                  x: { $arrayElemAt: ["$$jsmqlZip0", "$$jsmqlI"] },
+                  y: { $arrayElemAt: ["$$jsmqlZip1", "$$jsmqlI"] },
+                },
+                in: { $add: ["$$x", "$$y"] },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(() => jsmql.expr("$.a.zipWith($.b, x => x)")).toThrow(/2-parameter arrow/);
+  });
+  it(".unzip() transposes an array of tuples ($ifNull guards an empty receiver)", () => {
+    expect(jsmql.expr("$.t.unzip()")).toEqual({
+      $let: {
+        vars: { jsmqlT: "$t" },
+        in: {
+          $map: {
+            input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: ["$$jsmqlT", 0] }, []] } }] },
+            as: "jsmqlJ",
+            in: { $map: { input: "$$jsmqlT", as: "jsmqlRow", in: { $arrayElemAt: ["$$jsmqlRow", "$$jsmqlJ"] } } },
+          },
+        },
+      },
+    });
+  });
+});
+
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({

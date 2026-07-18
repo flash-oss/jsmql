@@ -4566,6 +4566,9 @@ var METHODS = {
   nth: { optional: "array" },
   size: { optional: "array" },
   zipObject: { optional: "array" },
+  zip: { returns: "array", optional: "array" },
+  unzip: { returns: "array", optional: "array" },
+  zipWith: { returns: "array", optional: "array" },
   keyBy: { optional: "array" },
   groupBy: { optional: "array" },
   countBy: { optional: "array" },
@@ -6655,6 +6658,63 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
             input: { $range: [0, { $size: genObj }] },
             as: "jsmqlI",
             in: { k: { $toString: { $arrayElemAt: [genObj, "$$jsmqlI"] } }, v: { $arrayElemAt: [values, "$$jsmqlI"] } }
+          }
+        }
+      };
+    }
+    case "zip":
+    case "zipWith": {
+      const exprArgs = exprArgsOnly(args, method);
+      const isWith = method === "zipWith";
+      checkArity(
+        method,
+        isWith ? { sig: "...arrays, iteratee", atLeast: 2 } : { sig: "...arrays", atLeast: 1 },
+        exprArgs.length,
+        callPos
+      );
+      const fn = isWith ? exprArgs[exprArgs.length - 1] : null;
+      const otherArrays = isWith ? exprArgs.slice(0, -1) : exprArgs;
+      const arrays = [genObj, ...otherArrays.map((a) => _generate(a, ctx))];
+      const vars = {};
+      const refs = [];
+      arrays.forEach((arr, k) => {
+        const v = `jsmqlZip${k}`;
+        vars[v] = arr;
+        refs.push(`$$${v}`);
+      });
+      const elems = refs.map((r) => ({ $arrayElemAt: [r, "$$jsmqlI"] }));
+      let inExpr = elems;
+      if (isWith) {
+        if (fn.type !== "Lambda" || fn.block !== void 0 || fn.params.length !== arrays.length) {
+          throw new CodegenError(
+            `.zipWith(...arrays, iteratee) needs a ${arrays.length}-parameter arrow (one per zipped array).`,
+            fn.pos
+          );
+        }
+        const fnVars = {};
+        fn.params.forEach((p, k) => {
+          fnVars[safeVarName(p)] = elems[k];
+        });
+        inExpr = { $let: { vars: fnVars, in: _generate(fn.body, extendCtx(ctx, fn.params)) } };
+      }
+      return {
+        $let: {
+          vars,
+          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: "jsmqlI", in: inExpr } }
+        }
+      };
+    }
+    case "unzip": {
+      checkArity("unzip", { sig: "", none: true }, exprArgsOnly(args, "unzip").length, callPos);
+      return {
+        $let: {
+          vars: { jsmqlT: genObj },
+          in: {
+            $map: {
+              input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: ["$$jsmqlT", 0] }, []] } }] },
+              as: "jsmqlJ",
+              in: { $map: { input: "$$jsmqlT", as: "jsmqlRow", in: { $arrayElemAt: ["$$jsmqlRow", "$$jsmqlJ"] } } }
+            }
           }
         }
       };

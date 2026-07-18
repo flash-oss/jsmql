@@ -1518,6 +1518,9 @@ $.a.differenceBy($.b, "id")                 // set ops compared BY an iteratee k
 $.a.intersectionBy($.b, x => x.id) / .unionBy($.b, "id") / .xorBy($.b, "id")
 $.a.sortedUniq() / .sortedUniqBy("id")      // aliases of uniq / uniqBy (no sorted-only optimisation in MQL)
 $.keys.zipObject($.vals)                    // { keys[i]: vals[i] }
+$.a.zip($.b, $.c)                           // [[a0,b0,c0], …]   (groups run to the longest; short arrays pad with null)
+$.a.zipWith($.b, (x, y) => x + y)           // [x0+y0, x1+y1, …] (N-param arrow, one per array)
+$.tuples.unzip()                            // inverse of zip — transpose an array of equal-length tuples
 ```
 
 > **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash, but it *errors* on an object/array key); group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
