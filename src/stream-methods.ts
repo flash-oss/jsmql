@@ -901,6 +901,65 @@ const ORDER_BY: StreamMethodDef = {
   },
 };
 
+// ── .pick([fields]) / .omit([fields]) → $project ──────────────────────────────
+//
+// The lodash object methods, applied per-document on the stream. `.pick` keeps
+// ONLY the named fields (an inclusion `$project`; `_id` is dropped unless named,
+// matching lodash + the value-mode `.pick`, which keeps only named keys). `.omit`
+// drops the named fields (an exclusion `$project`; everything else — including
+// `_id` — is kept, matching lodash `_.omit`). One field-name-string array arg.
+function projectFieldNames(args: readonly CallArg[], callPos: number, method: string): string[] {
+  if (args.length !== 1) {
+    throw new CodegenError(
+      `.${method}([fields]) takes exactly one argument (an array of field names), got ${args.length}.`,
+      callPos,
+    );
+  }
+  const arg = args[0];
+  if (arg.type !== "ArrayLiteral") {
+    throw new CodegenError(
+      `.${method}([fields]) takes an array of field-name strings, e.g. '.${method}(["name", "email"])'.`,
+      arg.pos,
+    );
+  }
+  if (arg.elements.length === 0) throw new CodegenError(`.${method}([fields]) needs at least one field name.`, arg.pos);
+  return arg.elements.map((el) => {
+    if (el.type !== "StringLiteral" || el.value === "" || el.value.startsWith("$")) {
+      throw new CodegenError(`.${method}([fields]) entries must be plain field-name strings (no leading '$').`, el.pos);
+    }
+    return el.value;
+  });
+}
+
+const PICK: StreamMethodDef = {
+  name: "pick",
+  validate(args, callPos) {
+    projectFieldNames(args, callPos, "pick");
+  },
+  lower(args, _ctx, callPos) {
+    const fields = projectFieldNames(args, callPos, "pick");
+    const proj: Record<string, 0 | 1> = {};
+    for (const f of fields) proj[f] = 1;
+    if (!fields.includes("_id")) proj._id = 0; // lodash pick keeps ONLY named keys
+    return { stages: [{ $project: proj }], clearLets: true };
+  },
+};
+
+const OMIT: StreamMethodDef = {
+  name: "omit",
+  validate(args, callPos) {
+    projectFieldNames(args, callPos, "omit");
+  },
+  lower(args, _ctx, callPos) {
+    const fields = projectFieldNames(args, callPos, "omit");
+    const proj: Record<string, 0> = {};
+    for (const f of fields) proj[f] = 0;
+    // Exclusion projection keeps every other field (incl. `let` scratch), so the
+    // let scope survives — no clearLets.
+    return { stages: [{ $project: proj }] };
+  },
+};
+
 // ── .toReversed() → flips the preceding $sort spec ────────────────────────────
 //
 // Zero-arg. Only valid when the immediately preceding stage is a `$sort` —
@@ -1911,6 +1970,15 @@ export const VALUE_TERMINAL_METHODS: ReadonlySet<string> = new Set([
   "includes",
   "partition",
   "keyBy",
+  // Aggregates that collapse the stream to one scalar — same value-position rule.
+  "sum",
+  "mean",
+  "max",
+  "min",
+  "sumBy",
+  "meanBy",
+  "minBy",
+  "maxBy",
 ]);
 
 // ── Registry ──────────────────────────────────────────────────────────────────
@@ -1936,6 +2004,8 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
   uniqBy: UNIQ_BY,
+  pick: PICK,
+  omit: OMIT,
   flatMap: FLAT_MAP,
   // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
   // returns a scalar / object / array in JS depending on the reducer. A

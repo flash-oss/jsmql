@@ -9645,6 +9645,53 @@ var ORDER_BY = {
     return { stages: [{ $sort: buildOrderByStreamSpec(args, callPos) }] };
   }
 };
+function projectFieldNames(args, callPos, method) {
+  if (args.length !== 1) {
+    throw new CodegenError(
+      `.${method}([fields]) takes exactly one argument (an array of field names), got ${args.length}.`,
+      callPos
+    );
+  }
+  const arg = args[0];
+  if (arg.type !== "ArrayLiteral") {
+    throw new CodegenError(
+      `.${method}([fields]) takes an array of field-name strings, e.g. '.${method}(["name", "email"])'.`,
+      arg.pos
+    );
+  }
+  if (arg.elements.length === 0) throw new CodegenError(`.${method}([fields]) needs at least one field name.`, arg.pos);
+  return arg.elements.map((el) => {
+    if (el.type !== "StringLiteral" || el.value === "" || el.value.startsWith("$")) {
+      throw new CodegenError(`.${method}([fields]) entries must be plain field-name strings (no leading '$').`, el.pos);
+    }
+    return el.value;
+  });
+}
+var PICK = {
+  name: "pick",
+  validate(args, callPos) {
+    projectFieldNames(args, callPos, "pick");
+  },
+  lower(args, _ctx, callPos) {
+    const fields = projectFieldNames(args, callPos, "pick");
+    const proj = {};
+    for (const f of fields) proj[f] = 1;
+    if (!fields.includes("_id")) proj._id = 0;
+    return { stages: [{ $project: proj }], clearLets: true };
+  }
+};
+var OMIT = {
+  name: "omit",
+  validate(args, callPos) {
+    projectFieldNames(args, callPos, "omit");
+  },
+  lower(args, _ctx, callPos) {
+    const fields = projectFieldNames(args, callPos, "omit");
+    const proj = {};
+    for (const f of fields) proj[f] = 0;
+    return { stages: [{ $project: proj }] };
+  }
+};
 var TO_REVERSED = {
   name: "toReversed",
   validate(args, callPos) {
@@ -10257,7 +10304,16 @@ var VALUE_TERMINAL_METHODS = /* @__PURE__ */ new Set([
   "some",
   "includes",
   "partition",
-  "keyBy"
+  "keyBy",
+  // Aggregates that collapse the stream to one scalar — same value-position rule.
+  "sum",
+  "mean",
+  "max",
+  "min",
+  "sumBy",
+  "meanBy",
+  "minBy",
+  "maxBy"
 ]);
 var STREAM_METHODS = {
   slice: SLICE,
@@ -10280,6 +10336,8 @@ var STREAM_METHODS = {
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
   uniqBy: UNIQ_BY,
+  pick: PICK,
+  omit: OMIT,
   flatMap: FLAT_MAP
   // Note: `.reduce` is deliberately NOT in this registry. `arr.reduce(...)`
   // returns a scalar / object / array in JS depending on the reducer. A

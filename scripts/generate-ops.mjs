@@ -179,6 +179,14 @@ const STREAM_METHOD_SIGNATURES = {
   },
   countBy: { doc: "Tally documents per distinct key → `$sortByCount`.", params: "(field: string)" },
   uniqBy: { doc: "One document per distinct key → `$group` + `$replaceWith`.", params: "(field: string)" },
+  pick: {
+    doc: "Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named).",
+    params: "(fields: string[])",
+  },
+  omit: {
+    doc: "Drop the named fields from each document → exclusion `$project` (lodash `_.omit`).",
+    params: "(fields: string[])",
+  },
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
 

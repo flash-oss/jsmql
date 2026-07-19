@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-19 — feat: stream `.pick` / `.omit` → `$project`; aggregates are value-terminals (smoke-test gaps)
+
+A full smoke test of every lodash array/collection method in **both** modes (value: `$.arr.fn(…)`
+→ aggregation `$op`; stream: `$$.fn(…)` → pipeline stage) surfaced two gaps, both fixed:
+
+1. **`.pick` / `.omit` had no stream form** (they errored "not a chainable stream method"; in a
+   lookup chain they wrongly ran value-mode `$objectToArray` over the *array* of docs). Now stream
+   methods lowering per-document to `$project`: `.pick([f…])` → inclusion (`{f:1, …, _id:0}` — keeps
+   ONLY the named fields, `_id` dropped unless named, matching lodash `_.pick` and the value-mode
+   `.pick`); `.omit([f…])` → exclusion (`{f:0, …}`, keeps everything else incl. `_id`). In a
+   `$$$.<coll>.filter(p).pick(…)` chain they land in the `$lookup` sub-pipeline, so each foreign doc
+   is projected. Verified on a live mongod. Value-mode `.pick`/`.omit` (on a single object) are
+   unchanged — context dispatch keeps them separate.
+2. **The aggregates `.sum`/`.mean`/`.max`/`.min`/`.sumBy`/`.meanBy`/`.minBy`/`.maxBy`** gave a
+   *generic* "not a stream method" error, but they collapse a stream to one scalar — so they're now
+   in `VALUE_TERMINAL_METHODS` alongside `.size`/`.every`/…: they work in a **value position**
+   (`$.n = $$$.orders.filter(p).sumBy("total")` → `$sum` over the lookup result) and give the clean
+   "returns a single value, use a value position" error as a `$$ =` pivot or bare statement.
+
+The remaining value-array-only methods (set-ops `difference`/`xor`/… + `By`, `zip`/`unzip`,
+`compact`/`flatten`/`chunk`, the object transforms `pickBy`/`mapValues`/`invert`/`toPairs`/…) have
+no single-stage document-stream form — they operate on an **array value**, so they're reachable in a
+lookup value-position (over a materialised array) but not as bare `$$` stages, which is correct.
+
 ## 2026-07-19 — feat: stream Tier 3 — `.takeRight` / `.dropRight` / `.initial` / `.shuffle` (reverse-sort trick); `.takeWhile`/`.dropWhile` deferred [DEF-034]
 
 The "from-the-end" and random stream reshapers. A document stream has no inherent order, so

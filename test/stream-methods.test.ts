@@ -310,6 +310,37 @@ describe(".reject(pred) → $match (filter negated)", () => {
   });
 });
 
+describe(".pick([fields]) / .omit([fields]) → $project (per-document field selection)", () => {
+  it(".pick keeps ONLY the named fields — inclusion $project, drops _id unless named", () => {
+    expect(jsmql('$$.pick(["name", "email"]);')).toEqual([{ $project: { name: 1, email: 1, _id: 0 } }]);
+    expect(jsmql('$$.pick(["_id", "name"]);')).toEqual([{ $project: { _id: 1, name: 1 } }]);
+  });
+  it(".omit drops the named fields — exclusion $project, keeps everything else", () => {
+    expect(jsmql('$$.omit(["password", "ssn"]);')).toEqual([{ $project: { password: 0, ssn: 0 } }]);
+  });
+  it("run inside a $$$.<coll> lookup sub-pipeline (projects each foreign doc)", () => {
+    expect(jsmql('$.slim = $$$.orders.filter(o => o.userId === $._id).pick(["total", "placedAt"]);')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $project: { total: 1, placedAt: 1, _id: 0 } },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { slim: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+  it("reject a non-array arg / non-string entries", () => {
+    expect(() => jsmql('$$.pick("name");')).toThrow(/takes an array of field-name strings/);
+    expect(() => jsmql("$$.omit([1, 2]);")).toThrow(/plain field-name strings/);
+  });
+});
+
 describe(".groupBy(spec | key) → $group", () => {
   it("raw $group body lowers verbatim (accumulators pass the group gate)", () => {
     expect(jsmql('$$ = $$.groupBy({ _id: "$dept", n: $sum(1), total: $sum("$amount") });')).toEqual([

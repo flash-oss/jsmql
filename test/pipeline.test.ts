@@ -854,7 +854,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  it("the value-position rule covers every value terminal (head/last/nth/size/every/some/partition/keyBy)", () => {
+  it("the value-position rule covers every value terminal (head/last/nth/size/every/some/partition/keyBy + aggregates)", () => {
     for (const term of [
       "head()",
       "last()",
@@ -863,6 +863,11 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       "every(o => o.paid)",
       "partition(o => o.vip)",
       'keyBy("sku")',
+      // Aggregates collapse the stream to one scalar → same value-position rule.
+      "sum()",
+      'sumBy("total")',
+      "max()",
+      'minBy("total")',
     ]) {
       expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).${term};`)).toThrow(/returns a single value/);
       // …but the same chain in a value position compiles.

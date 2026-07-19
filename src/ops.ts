@@ -2252,6 +2252,10 @@ declare global {
     countBy(field: string): JsmqlCollectionRef;
     /** One document per distinct key → `$group` + `$replaceWith`. */
     uniqBy(field: string): JsmqlCollectionRef;
+    /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */
+    pick(fields: string[]): JsmqlCollectionRef;
+    /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
+    omit(fields: string[]): JsmqlCollectionRef;
     /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
     flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
     /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
