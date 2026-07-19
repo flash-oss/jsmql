@@ -461,12 +461,12 @@ describe("keep the user's last 10 events in chronological order", { features: ["
       // truncate to the most recent 10. Each `;`-separated statement reads
       // a field its predecessor just wrote, so the coalescer splits into
       // three $set stages — matching the dataflow the user would write by
-      // hand. Demonstrates `.push` / `.sort(keyFn)` mutating the field in
+      // hand. Demonstrates `.push` / `.sort("field")` mutating the field in
       // place, then a plain `=` reassignment for the final truncate.
       expect(
         jsmql`
 $.events.push($.newEvent);
-$.events.sort(e => e.timestamp);
+$.events.sort("timestamp");
 $.events = $.events.slice(-10);
       `,
       ).toEqual([
@@ -805,13 +805,12 @@ describe("tiered loyalty discount price", { features: ["Ternaries"] }, () => {
     () => {
       expect(
         jsmql.expr`
-$round(
+(
   $.price * (
     $.loyalty.years >= 5 && $.loyalty.totalSpend >= 10000 ? 0.85 :
     $.loyalty.years >= 2 ? 0.92 : 1
-  ),
-  2
-)
+  )
+).round(2)
       `,
       ).toEqual({
         $round: [
@@ -965,7 +964,7 @@ describe("invoice line total with compound tax", { features: ["Arithmetic and Ma
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.invoices.aggregate([{ $addFields: { lineTotal: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$round($.quantity * ($.unitPrice + $.unitPrice * $.taxRate), 2)`)).toEqual({
+      expect(jsmql.expr(`($.quantity * ($.unitPrice + $.unitPrice * $.taxRate)).round(2)`)).toEqual({
         $round: [{ $multiply: ["$quantity", { $add: ["$unitPrice", { $multiply: ["$unitPrice", "$taxRate"] }] }] }, 2],
       });
     },
@@ -1058,7 +1057,7 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
   );
 });
 
-describe("most-recent event timestamp via .flatMap.map.reduce", { features: ["Array methods"] }, () => {
+describe("most-recent event timestamp via .flatMap.map.max", { features: ["Array methods"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.sessions.aggregate([{ $addFields: { latestEvent: jsmql.expr(...) } }])" },
@@ -1066,44 +1065,36 @@ describe("most-recent event timestamp via .flatMap.map.reduce", { features: ["Ar
       expect(
         jsmql.expr`
 $.sessions
-  .flatMap(s => s.events)
+  .flatMap("events")
   .map(e => e.ts.getTime())
-  .reduce((acc, t) => Math.max(acc, t), 0)
+  .max()
       `,
       ).toEqual({
-        $reduce: {
-          input: {
-            $map: {
-              input: {
-                $reduce: {
-                  input: { $map: { input: "$sessions", as: "s", in: "$$s.events" } },
-                  initialValue: [],
-                  in: { $concatArrays: ["$$value", "$$this"] },
-                },
+        $max: {
+          $map: {
+            input: {
+              $reduce: {
+                input: { $map: { input: "$sessions", as: "jsmqlItem", in: "$$jsmqlItem.events" } },
+                initialValue: [],
+                in: { $concatArrays: ["$$value", "$$this"] },
               },
-              as: "e",
-              in: { $toLong: "$$e.ts" },
             },
+            as: "e",
+            in: { $toLong: "$$e.ts" },
           },
-          initialValue: 0,
-          in: { $max: ["$$value", "$$this"] },
         },
       });
     },
   );
 });
 
-describe("cart subtotal via .map.reduce", { features: ["Array methods"] }, () => {
+describe("cart subtotal via .sumBy", { features: ["Array methods"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.items.map(item => item.qty * item.price).reduce((acc, x) => acc + x, 0)`)).toEqual({
-        $reduce: {
-          input: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } } },
-          initialValue: 0,
-          in: { $add: ["$$value", "$$this"] },
-        },
+      expect(jsmql.expr(`$.items.sumBy(item => item.qty * item.price)`)).toEqual({
+        $sum: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } } },
       });
     },
   );
@@ -1211,11 +1202,11 @@ describe("tag aggregation via .map.flat.join", { features: ["Array methods"] }, 
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.posts.aggregate([{ $addFields: { tagsCSV: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.posts.map(p => p.tags).flat().join(", ")`)).toEqual({
+      expect(jsmql.expr(`$.posts.map("tags").flat().join(", ")`)).toEqual({
         $reduce: {
           input: {
             $reduce: {
-              input: { $map: { input: "$posts", as: "p", in: "$$p.tags" } },
+              input: { $map: { input: "$posts", as: "jsmqlItem", in: "$$jsmqlItem.tags" } },
               initialValue: [],
               in: { $concatArrays: ["$$value", "$$this"] },
             },
@@ -1439,17 +1430,8 @@ describe("shopping cart total with 10_000 cap", { features: ["Numeric separators
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Math.min(10_000, $.lines.reduce((sum, l) => sum + l.qty * l.price, 0))`)).toEqual({
-        $min: [
-          10000,
-          {
-            $reduce: {
-              input: "$lines",
-              initialValue: 0,
-              in: { $add: ["$$value", { $multiply: ["$$this.qty", "$$this.price"] }] },
-            },
-          },
-        ],
+      expect(jsmql.expr(`Math.min(10_000, $.lines.sumBy(l => l.qty * l.price))`)).toEqual({
+        $min: [10000, { $sum: { $map: { input: "$lines", as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } } } }],
       });
     },
   );
@@ -1559,7 +1541,7 @@ describe("discount breakdown — bind once, reuse across fields", { features: ["
 ((discount) => ({
   finalPrice: $.price - discount,
   savings: discount,
-  savingsPercent: Math.round((discount / $.price) * 100),
+  savingsPercent: ((discount / $.price) * 100).round(),
 }))($.price * (1 - $.loyalty.multiplier))
       `,
       ).toEqual({
@@ -2046,13 +2028,15 @@ describe("most expensive line items across shipped orders (`.flatMap` + `.map`)"
     "flatten order items, project to the item itself, then sort by price",
     { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
     () => {
-      // `.flatMap(o => o.items)` lowers to `$unwind: "$items"` — MQL-natural,
-      // surrounding fields preserved. The follow-up `.map(o => o.items)`
+      // `.flatMap("items")` lowers to `$unwind: "$items"` — MQL-natural,
+      // surrounding fields preserved. The follow-up `.map("items")`
       // replaces each doc with just the item (so the next `$sort` indexes
-      // into the item directly).
+      // into the item directly). Both use the lodash property shorthand
+      // (equivalent to `o => o.items`); `.filter({ status: … })` is the
+      // matches-object shorthand for `o => o.status === …`.
       expect(
         jsmql`
-$$ = $$.filter(o => o.status === "shipped").flatMap(o => o.items).map(o => o.items);
+$$ = $$.filter({ status: "shipped" }).flatMap("items").map("items");
 $sort({ price: -1 });
 $limit(50);
         `,
