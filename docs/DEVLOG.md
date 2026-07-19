@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-19 — test: lodash chain-permutation "chinese wall" (`test/permutations.test.ts`)
+
+A generative smoke test that CHAINS the lodash array/collection methods in every ordered
+pair — reshaper × reshaper and reshaper × terminal — across value mode (`$.nums`/`$.objs`
+→ `$op`), stream mode (`$$.<chain>` → stages), and stream value-terminals in a lookup
+value-position. ~1800 chains. Each is asserted to (1) **compile** (always — the primary
+regression net) and (2) **run on a real mongod without a server error** (gated on
+`JSMQL_PERM_MONGO` pointing at a writable mongod; self-skips otherwise, like
+`integration.test.ts`). A `checkAll` helper collects every offending chain into the failure
+message, so a regression names the exact `.a().b()` combination.
+
+It immediately earned its keep — caught the two `$slice`-count-0 bugs fixed in the entry
+below (which the hand-written per-method tests missed because they never hit the empty-array
+/ `n ≥ size` / first-element-fails boundary). Run the mongod half with
+`JSMQL_PERM_MONGO=mongodb://127.0.0.1:27017 npm test`.
+
 ## 2026-07-19 — fix: value-mode `.drop`/`.dropRight`/`.tail`/`.initial`/`.takeWhile`/`.*RightWhile` emitted a count-0 `$slice` (mongod-rejected)
 
 MongoDB rejects a 3-argument `$slice` whose count is `0` ("Third argument to $slice must be
