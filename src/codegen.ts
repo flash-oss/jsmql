@@ -2607,7 +2607,11 @@ function takeDropWhile(arrExpr: unknown, pred: { as: string; cond: unknown }, dr
   const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
   const body = drop
     ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] }
-    : { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", 0, "$$jsmqlFi"] }] };
+    : // take: the first `jsmqlFi` elements. The 2-arg `$slice` (first-n) — NOT the
+      // 3-arg `$slice: [arr, 0, jsmqlFi]` — so a boundary at index 0 (the first
+      // element already fails the predicate) is `$slice: [arr, 0]` → `[]`, instead of
+      // the 3-arg `$slice: [arr, 0, 0]` mongod rejects ("count must be positive").
+      { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] };
   return {
     $let: {
       vars: { jsmqlArr: arrExpr },
@@ -3610,19 +3614,31 @@ function generateMethodCall(
       const n = nArg !== undefined ? _generate(nArg, ctx) : 1;
       if (method === "take") return { $slice: [genObj, n] };
       if (method === "takeRight") return { $slice: [genObj, negate(n)] };
-      // drop / dropRight need $size, so bind the receiver once.
-      const pos = method === "drop" ? n : 0;
-      const count =
-        method === "drop" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
-      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+      // dropRight keeps the first max(0, size-n) — a 2-arg `$slice` (first-count), so a
+      // count of 0 (n ≥ size) is `$slice: [arr, 0]` → `[]`, NOT the 3-arg `$slice: [arr,
+      // 0, 0]` mongod rejects ("Third argument to $slice must be positive").
+      if (method === "dropRight") {
+        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
+        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+      }
+      // drop: from position n. The count (3rd arg) is max(1, size) so an EMPTY array
+      // is `$slice: [[], n, 1]` → `[]` rather than a rejected 3-arg count of 0.
+      return {
+        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", n, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
+      };
     }
     case "tail":
     case "initial": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      const pos = method === "tail" ? 1 : 0;
-      const count =
-        method === "tail" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
-      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+      // initial = dropRight(1): keep the first max(0, size-1) via 2-arg `$slice`.
+      if (method === "initial") {
+        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
+        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+      }
+      // tail = drop(1): count max(1, size) guards the empty-array → count-0 rejection.
+      return {
+        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
+      };
     }
     case "head":
     case "first": {

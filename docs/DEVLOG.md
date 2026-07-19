@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-19 — fix: value-mode `.drop`/`.dropRight`/`.tail`/`.initial`/`.takeWhile`/`.*RightWhile` emitted a count-0 `$slice` (mongod-rejected)
+
+MongoDB rejects a 3-argument `$slice` whose count is `0` ("Third argument to $slice must be
+positive"). Several value-mode methods hit exactly that at a boundary:
+
+- **`.takeWhile`** (and `.takeRightWhile`/`.dropRightWhile`, which wrap it) → `$slice: [arr, 0,
+  0]` when the FIRST element already fails the predicate (`jsmqlFi === 0`). Fixed by using the
+  2-arg first-n form `$slice: [arr, jsmqlFi]` (`0` → `[]`, valid).
+- **`.dropRight(n)` / `.initial()`** → `$slice: [arr, 0, max(0, size-n)]` = count `0` when
+  `n ≥ size`. Fixed with the 2-arg form `$slice: [arr, max(0, size-n)]`.
+- **`.drop(n)` / `.tail()`** → `$slice: [arr, n, size]` = count `0` on an EMPTY array. Fixed by
+  making the count `max(1, size)`, so an empty array is `$slice: [[], n, 1]` → `[]`.
+
+Surfaced by the chain-permutation test (entry above), which chained these after filters that
+can shrink an array to one/zero elements. Verified: all ~1800 permutations run clean on mongod.
+The stream forms (`$skip`/`$limit`/reverse-sort) never used `$slice`, so were unaffected. Five
+existing per-method assertions updated to the count-safe shapes.
+
 ## 2026-07-19 — feat: stream `.pick` / `.omit` → `$project`; aggregates are value-terminals (smoke-test gaps)
 
 A full smoke test of every lodash array/collection method in **both** modes (value: `$.arr.fn(…)`

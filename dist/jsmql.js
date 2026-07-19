@@ -5747,7 +5747,13 @@ function resolvePredicate(pred, method, ctx) {
 }
 function takeDropWhile(arrExpr, pred, drop) {
   const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
-  const body = drop ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] } : { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", 0, "$$jsmqlFi"] }] };
+  const body = drop ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] } : (
+    // take: the first `jsmqlFi` elements. The 2-arg `$slice` (first-n) — NOT the
+    // 3-arg `$slice: [arr, 0, jsmqlFi]` — so a boundary at index 0 (the first
+    // element already fails the predicate) is `$slice: [arr, 0]` → `[]`, instead of
+    // the 3-arg `$slice: [arr, 0, 0]` mongod rejects ("count must be positive").
+    { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] }
+  );
   return {
     $let: {
       vars: { jsmqlArr: arrExpr },
@@ -6602,16 +6608,24 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const n = nArg !== void 0 ? _generate(nArg, ctx) : 1;
       if (method === "take") return { $slice: [genObj, n] };
       if (method === "takeRight") return { $slice: [genObj, negate(n)] };
-      const pos = method === "drop" ? n : 0;
-      const count = method === "drop" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
-      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+      if (method === "dropRight") {
+        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
+        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+      }
+      return {
+        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", n, { $max: [1, { $size: "$$jsmqlArr" }] }] } }
+      };
     }
     case "tail":
     case "initial": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      const pos = method === "tail" ? 1 : 0;
-      const count = method === "tail" ? { $size: "$$jsmqlArr" } : { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
-      return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", pos, count] } } };
+      if (method === "initial") {
+        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
+        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+      }
+      return {
+        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } }
+      };
     }
     case "head":
     case "first": {

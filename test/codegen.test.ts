@@ -3367,13 +3367,16 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.takeRight()")).toEqual({ $slice: ["$a", -1] });
   });
   it(".drop([n=1]) / .dropRight([n=1]) → $slice (skip first / last n), receiver bound once", () => {
+    // drop: from position n; count max(1, size) so an empty array → $slice:[[],n,1] → []
+    // (mongod rejects a 3-arg $slice count of 0).
     expect(jsmql.expr("$.a.drop(2)")).toEqual({
-      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 2, { $size: "$$jsmqlArr" }] } },
+      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
     });
+    // dropRight: keep first max(0, size-n) via 2-arg $slice (n≥size → count 0 → []).
     expect(jsmql.expr("$.a.dropRight(2)")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
-        in: { $slice: ["$$jsmqlArr", 0, { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 2] }] }] },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 2] }] }] },
       },
     });
   });
@@ -3385,14 +3388,17 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.nth(-1)")).toEqual({ $arrayElemAt: ["$a", -1] });
     expect(jsmql.expr("$.a.nth()")).toEqual({ $arrayElemAt: ["$a", 0] });
   });
-  it(".tail()/.initial() → $slice (all but first / all but last)", () => {
+  it(".tail()/.initial() → $slice (all but first / all but last); count guards empty/n≥size → []", () => {
+    // tail: 3-arg $slice with count max(1, size) so an empty array → $slice:[[],1,1] → []
+    // (a 3-arg count of 0 is rejected by mongod).
     expect(jsmql.expr("$.a.tail()")).toEqual({
-      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 1, { $size: "$$jsmqlArr" }] } },
+      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
     });
+    // initial = dropRight(1): keep first max(0, size-1) via 2-arg $slice (count 0 → []).
     expect(jsmql.expr("$.a.initial()")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
-        in: { $slice: ["$$jsmqlArr", 0, { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
       },
     });
   });
@@ -3530,7 +3536,9 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
                 ],
               },
             },
-            in: { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", 0, "$$jsmqlFi"] }] },
+            // 2-arg $slice (first `jsmqlFi`) so a boundary at index 0 → $slice:[arr,0] → []
+            // (mongod rejects the 3-arg $slice:[arr,0,0]).
+            in: { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] },
           },
         },
       },
