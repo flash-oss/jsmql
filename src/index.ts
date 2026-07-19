@@ -857,7 +857,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
     containsLookupCall(ast, ctx)
   ) {
     throw new CodegenError(
-      "Lookup syntax ('$$$.<coll>.find/filter(...)') requires Pipeline mode. " +
+      "Lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') requires Pipeline mode. " +
         "Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, " +
         "and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
       ast.pos,
@@ -980,7 +980,7 @@ function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   // of the generic "rejected '$lookup'" produced by the downstream whitelist.
   if (containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter(...)'): MongoDB's aggregation-pipeline update form only accepts " +
+      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter/aggregate(...)'): MongoDB's aggregation-pipeline update form only accepts " +
         Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") +
         ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
       ast.pos,
@@ -1010,7 +1010,7 @@ function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 }
 
 /**
- * Lookup syntax (`$$$.<coll>.find/filter(...)`) requires Pipeline mode —
+ * Lookup syntax (`$$$.<coll>.find/filter/aggregate(...)`) requires Pipeline mode —
  * the lowering emits `$lookup` (+ follow-up) stages. Filter mode /
  * `jsmql.expr` would just see a stray `DatabaseRef` and surface the
  * generic bare-reference error; this pre-gate gives a precise message
@@ -1019,7 +1019,7 @@ function lowerUpdateStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 function rejectLookupOutsidePipeline(ast: Program, apiName: string, ctx: GenerateCtx): void {
   if (containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter(...)') — joins are Pipeline-only. ` +
+      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') — joins are Pipeline-only. ` +
         "Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
       ast.pos,
     );

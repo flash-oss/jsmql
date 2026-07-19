@@ -2563,12 +2563,13 @@ export class Parser {
 /**
  * Methods whose `=> { … }` callback body is parsed as a sub-pipeline block
  * (`parseCallbackBlock`) — but only when the receiver is stream-rooted (see
- * `isStreamRooted`). `.find` / `.filter` are the lookup heads; `.map` is the
- * reshaping chain method (`return <expr>` → `$replaceWith`). Other chain
- * methods (`.toSorted`, `.reduce`, `.slice`, …) take expression-shaped
+ * `isStreamRooted`). `.find` / `.filter` are the lookup heads; `.aggregate` is
+ * the full-sub-pipeline head/chain method (its block is a pipeline, no `return`);
+ * `.map` is the reshaping chain method (`return <expr>` → `$replaceWith`). Other
+ * chain methods (`.toSorted`, `.reduce`, `.slice`, …) take expression-shaped
  * callbacks, not statement blocks, so they stay out of this set.
  */
-const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "map"]);
+const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "map", "aggregate"]);
 
 /**
  * Walk a receiver chain back to its root and report whether the root is a

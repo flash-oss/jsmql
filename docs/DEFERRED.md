@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 28. Decided-against: 9. As of 2026-06-13.
+**Counts.** Open: 29. Decided-against: 9. As of 2026-07-10.
 
 ---
 
@@ -225,6 +225,18 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Rejection site(s).** `src/codegen.ts` `generateStreamLength` (the `topLevelStream`/`rootStreamLengthVar` gate — fires for `$facet`/`$unionWith`/deep nesting) and `src/pipeline.ts` `lowerFuncDecl` (reusable function body) — both tagged `[DEF-033]`.
 - **Spec.** `docs/specs/stream-length.md` § Scope & rejections.
 - **Status.** open (narrowed — top-level `$lookup` + sub-stream handle now ship)
+- **Effort.** M
+
+### DEF-034 — `.aggregate()` result as a `$$.push(...)` / `.concat(...)` union source
+
+- **What's blocked.** Unioning the result of a foreign-collection `.aggregate(...)` into the stream — `$$.push(...$$$.<coll>.aggregate((o) => { … }))` (and the `.concat(...)` chain analogue).
+- **Target lowering.** A `$unionWith` whose sub-pipeline is the aggregate body. Uncorrelated aggregates map cleanly (`{ $unionWith: { coll, pipeline: [<stages>] } }`); the correlated case has no home — `$unionWith` has no `let` slot, so a `$.<field>` correlation can't thread the outer document in.
+- **Why blocked.** The no-`let`-slot limitation means a correlated aggregate can't be expressed as a union at all, and the uncorrelated case needs a deliberate decision on how it composes with the existing inline-doc / spread-collection batching in `$$.push`. Scoped out of the first `.aggregate` cut; the field-assignment form (`$.<field> = $$$.<coll>.aggregate(...)`) covers the correlated case.
+- **Attempted approaches.** None — rejected at the union entry points with an actionable redirect to the field-assignment form.
+- **Success criteria.** `$$.push(...$$$.metrics.aggregate((o) => { $group(...) }))` lowers to a `$unionWith` with the aggregate sub-pipeline (uncorrelated); a correlated aggregate stays rejected with the field-assignment redirect.
+- **Rejection site(s).** `src/union-translation.ts` (`aggregateInUnionError`, tagged `[DEF-034]`).
+- **Spec.** `docs/specs/lookup-stage.md` § `.aggregate` (Deferred bullet).
+- **Status.** open
 - **Effort.** M
 
 ---
