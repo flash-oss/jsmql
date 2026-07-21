@@ -2260,6 +2260,8 @@ declare global {
     flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
     /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
     filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
+    /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */
+    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
     /** Append documents to the stream → `$unionWith`. */
     push(...docs: any[]): JsmqlCollectionRef;
     [key: string]: any;
@@ -2358,6 +2360,144 @@ declare global {
    * @see https://github.com/koresar/jsmql/blob/master/docs/specs/assert.md
    */
   function assert(condition: any, message?: any): void;
+
+  // ── Value-method augmentations (Array<T> / String / Number) ───────────
+  interface Array<T> {
+    /** Split into groups of `size` — `_.chunk`. */
+    chunk(size: number): T[][];
+    /** Drop falsy elements — `_.compact`. */
+    compact(): T[];
+    /** Count elements by iteratee — `_.countBy`. */
+    countBy(iteratee: string | ((value: T) => any)): Record<string, number>;
+    /** Difference by iteratee — `_.differenceBy`. */
+    differenceBy(...args: any[]): T[];
+    /** All but the first `n` elements — `_.drop`. */
+    drop(n?: number): T[];
+    /** All but the last `n` elements — `_.dropRight`. */
+    dropRight(n?: number): T[];
+    /** Drop the trailing matching run — `_.dropRightWhile`. */
+    dropRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    /** Drop the leading matching run — `_.dropWhile`. */
+    dropWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    /** First element — `_.first`. */
+    first(): T;
+    /** Flatten one level deep — `_.flatten`. */
+    flatten(): any[];
+    /** `[key, value]` pairs → object — `_.fromPairs`. */
+    fromPairs(): Record<string, any>;
+    /** Group elements by iteratee — `_.groupBy`. */
+    groupBy(iteratee: string | ((value: T) => any)): Record<string, T[]>;
+    /** First element — `_.head`. */
+    head(): T;
+    /** All but the last element — `_.initial`. */
+    initial(): T[];
+    /** Intersection by iteratee — `_.intersectionBy`. */
+    intersectionBy(...args: any[]): T[];
+    /** Index elements by iteratee — `_.keyBy`. */
+    keyBy(iteratee: string | ((value: T) => any)): Record<string, T>;
+    /** Last element — `_.last`. */
+    last(): T;
+    /** Maximum element — `_.max`. */
+    max(): T;
+    /** Element with the max iteratee value — `_.maxBy`. */
+    maxBy(iteratee: string | ((value: T) => any)): T;
+    /** Arithmetic mean — `_.mean`. */
+    mean(): number;
+    /** Mean of iteratee values — `_.meanBy`. */
+    meanBy(iteratee: string | ((value: T) => any)): number;
+    /** Minimum element — `_.min`. */
+    min(): T;
+    /** Element with the min iteratee value — `_.minBy`. */
+    minBy(iteratee: string | ((value: T) => any)): T;
+    /** Element at index `n` (negative counts from the end) — `_.nth`. */
+    nth(n?: number): T;
+    /** Multi-key sort with directions — `_.orderBy`. */
+    orderBy(iteratees?: string | string[], orders?: ("asc" | "desc") | ("asc" | "desc")[]): T[];
+    /** Split into `[matching, rest]` — `_.partition`. */
+    partition(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): [T[], T[]];
+    /** Elements the predicate rejects — `_.reject`. */
+    reject(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    /** One random element — `_.sample`. */
+    sample(): T;
+    /** `n` random elements — `_.sampleSize`. */
+    sampleSize(n?: number): T[];
+    /** Element count — `_.size`. */
+    size(): number;
+    /** Ascending sort by iteratee(s) — `_.sortBy`. */
+    sortBy(iteratee?: string | string[] | ((value: T) => any)): T[];
+    /** Duplicate-free copy of a sorted array — `_.sortedUniq`. */
+    sortedUniq(): T[];
+    /** `.sortedUniq` with an iteratee — `_.sortedUniqBy`. */
+    sortedUniqBy(iteratee: string | ((value: T) => any)): T[];
+    /** Sum of the elements — `_.sum`. */
+    sum(): number;
+    /** Sum of iteratee values — `_.sumBy`. */
+    sumBy(iteratee: string | ((value: T) => any)): number;
+    /** All but the first element — `_.tail`. */
+    tail(): T[];
+    /** First `n` elements — `_.take`. */
+    take(n?: number): T[];
+    /** Last `n` elements — `_.takeRight`. */
+    takeRight(n?: number): T[];
+    /** Trailing run matching the predicate — `_.takeRightWhile`. */
+    takeRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    /** Leading run matching the predicate — `_.takeWhile`. */
+    takeWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    /** Union by iteratee — `_.unionBy`. */
+    unionBy(...args: any[]): T[];
+    /** Duplicate-free copy — `_.uniq`. */
+    uniq(): T[];
+    /** Duplicate-free by iteratee — `_.uniqBy`. */
+    uniqBy(iteratee: string | ((value: T) => any)): T[];
+    /** Inverse of `.zip` — `_.unzip`. */
+    unzip(): any[][];
+    /** Exclude the given values — `_.without`. */
+    without(...values: T[]): T[];
+    /** Symmetric difference — `_.xor`. */
+    xor(...arrays: T[][]): T[];
+    /** Symmetric difference by iteratee — `_.xorBy`. */
+    xorBy(...args: any[]): T[];
+    /** Group by index across arrays — `_.zip`. */
+    zip(...arrays: any[][]): any[][];
+    /** Keys (receiver) → values object — `_.zipObject`. */
+    zipObject(values: any[]): Record<string, any>;
+    /** `.zip` then combine each group — `_.zipWith`. */
+    zipWith(...args: any[]): any[];
+  }
+  interface String {
+    /** `camelCase` the string — `_.camelCase`. */
+    camelCase(): string;
+    /** Upper-case the first char, lower-case the rest — `_.capitalize`. */
+    capitalize(): string;
+    /** Escape HTML entities — `_.escape`. */
+    escape(): string;
+    /** `kebab-case` the string — `_.kebabCase`. */
+    kebabCase(): string;
+    /** Lower-case the first char — `_.lowerFirst`. */
+    lowerFirst(): string;
+    /** `snake_case` the string — `_.snakeCase`. */
+    snakeCase(): string;
+    /** `Start Case` the string — `_.startCase`. */
+    startCase(): string;
+    /** Truncate to a length with an omission — `_.truncate`. */
+    truncate(options?: { length?: number; omission?: string; separator?: string | RegExp }): string;
+    /** Upper-case the first char — `_.upperFirst`. */
+    upperFirst(): string;
+    /** Split into an array of words — `_.words`. */
+    words(pattern?: string | RegExp): string[];
+  }
+  interface Number {
+    /** Round up to `precision` decimals — `_.ceil`. */
+    ceil(precision?: number): number;
+    /** Clamp within `[lower, upper]` — `_.clamp`. */
+    clamp(lower: number, upper: number): number;
+    /** Round down to `precision` decimals — `_.floor`. */
+    floor(precision?: number): number;
+    /** Whether the number is in the range — `_.inRange`. */
+    inRange(start: number, end?: number): boolean;
+    /** Round to `precision` decimals — `_.round`. */
+    round(precision?: number): number;
+  }
 }
 
 export {};

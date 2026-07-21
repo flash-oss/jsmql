@@ -3558,6 +3558,26 @@ jsmql(({ $ }) => $$$$.currentOp({ allUsers: true }));
 
 The other context-ref forms (`$$.push(...)`, `$$$.orders.find(...)`, `$$$.reports = …`, stream methods) type-check too, but as `any` for now — precise per-collection typing is future work `[DEF-015]`.
 
+#### Value-method completion on typed values
+
+The lodash-flavoured **value** methods (a JavaScript-array / string / number method jsmql recognises — e.g. `.uniq()`, `.chunk()`, `.groupBy()`, `.capitalize()`, `.clamp()`) are called on *values*, not on a `$`-prefixed global, so their completion depends on the **receiver's type**. Importing `@koresar/jsmql/ops` augments the built-in `Array<T>` / `String` / `Number` types with them, each with a concrete return type so a chain stays completable end to end:
+
+```ts
+import "@koresar/jsmql/ops";
+
+// annotate the document once → every hop completes and chains
+jsmql(({ $ }: { $: { orders: { total: number; sku: string }[] } }) =>
+  $.orders.sortBy("total").takeRight(3).map((o) => o.sku).uniq()
+);
+```
+
+Completion flows from any value that has a **concrete type** — an annotated `$` (above), a typed static (`Object.values(o)`, `Object.keys(o)`), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it doesn't autocomplete (it also doesn't error). That is a deliberate trade: `$.field` must stay `any` so the operator forms jsmql relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking; a value can't be both an operator operand and a rich method receiver in TypeScript. Type your document to light up completion.
+
+Two points on scope:
+
+- The augmentations are **global** once imported (like the operator globals): jsmql's value methods show up in completion on every array/string/number in files that see the import. They are compile-time jsmql methods — types only, no runtime — so calling one *outside* a jsmql expression would fail at run time; treat their appearance as a jsmql-authoring aid.
+- **Object-transform methods** (`.mapValues` / `.pick` / `.omit` / `.invert`, and the like) are **not** augmented. The only interface they could hang on is `Object`, the base of every type, so augmenting it would advertise them on numbers, strings, and arrays too. Write them in jsmql as usual; they simply don't autocomplete.
+
 ---
 
 ## Template-Tag Form (`` jsmql`…` ``)

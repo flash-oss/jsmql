@@ -34,6 +34,7 @@ import yaml from "js-yaml";
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
 import { streamMethodNames } from "../src/stream-methods.ts";
+import { valueMethodNames } from "../src/codegen.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -134,6 +135,10 @@ const STREAM_METHOD_SIGNATURES = {
     doc: "Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`).",
     params: "(predicate: ((doc: any) => any) | Record<string, any>)",
   },
+  reject: {
+    doc: "Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object.",
+    params: "(predicate: ((doc: any) => any) | Record<string, any>)",
+  },
   map: {
     doc: 'Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`).',
     params: "(transform: ((doc: any) => any) | string)",
@@ -212,7 +217,7 @@ function streamMethodMembers() {
         `but have no signature in STREAM_METHOD_SIGNATURES. Add one so '$$.<method>()' gets completion.`,
     );
   }
-  const order = [...registry.filter((n) => !STREAM_METHODS_FOREIGN_ONLY.has(n)), "filter", "push"];
+  const order = [...registry.filter((n) => !STREAM_METHODS_FOREIGN_ONLY.has(n)), "filter", "reject", "push"];
   const members = [];
   for (const name of order) {
     const { doc, params } = STREAM_METHOD_SIGNATURES[name];
@@ -220,6 +225,313 @@ function streamMethodMembers() {
     members.push(`${name}${params}: ${COLLECTION_REF_TYPE};`);
   }
   return members;
+}
+
+// ---------------------------------------------------------------------------
+// Value-method prototype augmentations (`@koresar/jsmql/ops`).
+//
+// jsmql's lodash-flavoured *value* methods (`.uniq()`, `.chunk()`, `.clamp()`,
+// `.capitalize()`, …) are called on array / string / number *values*, not on a
+// `$`-prefixed global — so completion needs the *receiver* to have a real type.
+// We augment the built-in `Array<T>` / `String` / `Number` interfaces with these
+// methods, each carrying a concrete return type so chains stay typed
+// (`items.uniq().chunk(2)` → `T[][]`). This "activates" only on a concretely
+// typed receiver: a bare `$.field` is `any`, and `any.uniq()` stays `any` (no
+// completion, but no error either), so operators like `$.age > 18` are untouched.
+// The win is for annotated documents, typed statics (`Object.values(o)`),
+// literals, and mid-chain results. See docs/specs/ops-generation.md.
+//
+// Object-*receiver* methods (`.mapValues` / `.pick` / `.omit` / `.invert` / …)
+// are deliberately NOT augmented: the only interface to hang them on is `Object`,
+// the base of every type, so it would advertise them (misleadingly) on numbers,
+// strings, arrays, everything. Date getters are native on `Date`; Set / RegExp
+// methods native on `Set` / `RegExp`. All such names sit in the skip sets below.
+
+// Names from the `METHODS` registry that are NOT emitted as augmentations. Native
+// methods already carry lib.d.ts types; object-receiver / set / regex / date /
+// shimmed names have no clean interface to hang on (see note above).
+const VALUE_METHOD_SKIP = {
+  // Native `Array.prototype` — already typed by TypeScript's lib.
+  nativeArray: new Set([
+    "at",
+    "slice",
+    "concat",
+    "reverse",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "with",
+    "flat",
+    "flatMap",
+    "map",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "lastIndexOf",
+    "some",
+    "every",
+    "reduce",
+    "reduceRight",
+    "join",
+    "toString",
+    "sort",
+    "splice",
+    "push",
+    "pop",
+    "shift",
+    "unshift",
+    "fill",
+    "copyWithin",
+    "forEach",
+    "entries",
+    "keys",
+    "values",
+    "toLocaleString",
+  ]),
+  // Native `String.prototype`.
+  nativeString: new Set([
+    "trim",
+    "trimStart",
+    "trimLeft",
+    "trimEnd",
+    "trimRight",
+    "toLowerCase",
+    "toUpperCase",
+    "substr",
+    "substring",
+    "charAt",
+    "split",
+    "startsWith",
+    "endsWith",
+    "replace",
+    "replaceAll",
+    "match",
+    "matchAll",
+    "search",
+    "padStart",
+    "padEnd",
+    "repeat",
+    "indexOf",
+    "includes",
+  ]),
+  // Date-receiver (native getters on `Date`; `.plus`/`.minus`/`getTime` custom but date-shaped).
+  date: new Set([
+    "getFullYear",
+    "getMonth",
+    "getDate",
+    "getDay",
+    "getHours",
+    "getMinutes",
+    "getSeconds",
+    "getMilliseconds",
+    "getUTCFullYear",
+    "getUTCMonth",
+    "getUTCDate",
+    "getUTCDay",
+    "getUTCHours",
+    "getUTCMinutes",
+    "getUTCSeconds",
+    "getUTCMilliseconds",
+    "getTime",
+    "toISOString",
+    "plus",
+    "minus",
+  ]),
+  // Object-receiver — no safe interface (Object is the base of everything).
+  object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs"]),
+  // Set-receiver (intercepted on `new Set(...)`; native/ES-proposal Set methods).
+  set: new Set(["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"]),
+  // RegExp-receiver (intercepted on regex literals).
+  regex: new Set(["test", "exec"]),
+  // Shimmed to a tailored error — not a real completable method.
+  shimmed: new Set(["unzipWith"]),
+};
+
+// Per-method augmentation signature. `recv` is the interface to augment; `sig`
+// the `(params): Return` text (Array sigs may reference the element type `T`);
+// `doc` a one-line JSDoc. Return types are chosen to keep chains typed. The
+// element-typed iteratee/predicate params below are permissive on purpose —
+// jsmql validates the real argument at compile time; the TS type only needs to
+// not *reject* valid jsmql (so optional/loose beats strict).
+const ITER = "iteratee: string | ((value: T) => any)";
+const PRED = "predicate: string | [string, any] | Record<string, any> | ((value: T) => any)";
+const VALUE_METHOD_SIGNATURES = {
+  // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────
+  uniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy — `_.uniq`." },
+  uniqBy: { recv: "Array", sig: `(${ITER}): T[]`, doc: "Duplicate-free by iteratee — `_.uniqBy`." },
+  sortedUniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy of a sorted array — `_.sortedUniq`." },
+  sortedUniqBy: { recv: "Array", sig: `(${ITER}): T[]`, doc: "`.sortedUniq` with an iteratee — `_.sortedUniqBy`." },
+  compact: { recv: "Array", sig: "(): T[]", doc: "Drop falsy elements — `_.compact`." },
+  flatten: { recv: "Array", sig: "(): any[]", doc: "Flatten one level deep — `_.flatten`." },
+  take: { recv: "Array", sig: "(n?: number): T[]", doc: "First `n` elements — `_.take`." },
+  drop: { recv: "Array", sig: "(n?: number): T[]", doc: "All but the first `n` elements — `_.drop`." },
+  takeRight: { recv: "Array", sig: "(n?: number): T[]", doc: "Last `n` elements — `_.takeRight`." },
+  dropRight: { recv: "Array", sig: "(n?: number): T[]", doc: "All but the last `n` elements — `_.dropRight`." },
+  tail: { recv: "Array", sig: "(): T[]", doc: "All but the first element — `_.tail`." },
+  initial: { recv: "Array", sig: "(): T[]", doc: "All but the last element — `_.initial`." },
+  sampleSize: { recv: "Array", sig: "(n?: number): T[]", doc: "`n` random elements — `_.sampleSize`." },
+  without: { recv: "Array", sig: "(...values: T[]): T[]", doc: "Exclude the given values — `_.without`." },
+  xor: { recv: "Array", sig: "(...arrays: T[][]): T[]", doc: "Symmetric difference — `_.xor`." },
+  xorBy: { recv: "Array", sig: "(...args: any[]): T[]", doc: "Symmetric difference by iteratee — `_.xorBy`." },
+  differenceBy: { recv: "Array", sig: "(...args: any[]): T[]", doc: "Difference by iteratee — `_.differenceBy`." },
+  intersectionBy: {
+    recv: "Array",
+    sig: "(...args: any[]): T[]",
+    doc: "Intersection by iteratee — `_.intersectionBy`.",
+  },
+  unionBy: { recv: "Array", sig: "(...args: any[]): T[]", doc: "Union by iteratee — `_.unionBy`." },
+  sortBy: {
+    recv: "Array",
+    sig: "(iteratee?: string | string[] | ((value: T) => any)): T[]",
+    doc: "Ascending sort by iteratee(s) — `_.sortBy`.",
+  },
+  orderBy: {
+    recv: "Array",
+    sig: '(iteratees?: string | string[], orders?: ("asc" | "desc") | ("asc" | "desc")[]): T[]',
+    doc: "Multi-key sort with directions — `_.orderBy`.",
+  },
+  reject: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Elements the predicate rejects — `_.reject`." },
+  takeWhile: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Leading run matching the predicate — `_.takeWhile`." },
+  dropWhile: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Drop the leading matching run — `_.dropWhile`." },
+  takeRightWhile: {
+    recv: "Array",
+    sig: `(${PRED}): T[]`,
+    doc: "Trailing run matching the predicate — `_.takeRightWhile`.",
+  },
+  dropRightWhile: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Drop the trailing matching run — `_.dropRightWhile`." },
+  // ── Array<T> — element / scalar returns ─────────────────────────────────────
+  head: { recv: "Array", sig: "(): T", doc: "First element — `_.head`." },
+  first: { recv: "Array", sig: "(): T", doc: "First element — `_.first`." },
+  last: { recv: "Array", sig: "(): T", doc: "Last element — `_.last`." },
+  nth: { recv: "Array", sig: "(n?: number): T", doc: "Element at index `n` (negative counts from the end) — `_.nth`." },
+  sample: { recv: "Array", sig: "(): T", doc: "One random element — `_.sample`." },
+  max: { recv: "Array", sig: "(): T", doc: "Maximum element — `_.max`." },
+  min: { recv: "Array", sig: "(): T", doc: "Minimum element — `_.min`." },
+  maxBy: { recv: "Array", sig: `(${ITER}): T`, doc: "Element with the max iteratee value — `_.maxBy`." },
+  minBy: { recv: "Array", sig: `(${ITER}): T`, doc: "Element with the min iteratee value — `_.minBy`." },
+  sum: { recv: "Array", sig: "(): number", doc: "Sum of the elements — `_.sum`." },
+  mean: { recv: "Array", sig: "(): number", doc: "Arithmetic mean — `_.mean`." },
+  sumBy: { recv: "Array", sig: `(${ITER}): number`, doc: "Sum of iteratee values — `_.sumBy`." },
+  meanBy: { recv: "Array", sig: `(${ITER}): number`, doc: "Mean of iteratee values — `_.meanBy`." },
+  size: { recv: "Array", sig: "(): number", doc: "Element count — `_.size`." },
+  // ── Array<T> — reshaping returns ────────────────────────────────────────────
+  chunk: { recv: "Array", sig: "(size: number): T[][]", doc: "Split into groups of `size` — `_.chunk`." },
+  partition: { recv: "Array", sig: `(${PRED}): [T[], T[]]`, doc: "Split into `[matching, rest]` — `_.partition`." },
+  zip: { recv: "Array", sig: "(...arrays: any[][]): any[][]", doc: "Group by index across arrays — `_.zip`." },
+  unzip: { recv: "Array", sig: "(): any[][]", doc: "Inverse of `.zip` — `_.unzip`." },
+  zipWith: { recv: "Array", sig: "(...args: any[]): any[]", doc: "`.zip` then combine each group — `_.zipWith`." },
+  zipObject: {
+    recv: "Array",
+    sig: "(values: any[]): Record<string, any>",
+    doc: "Keys (receiver) → values object — `_.zipObject`.",
+  },
+  fromPairs: { recv: "Array", sig: "(): Record<string, any>", doc: "`[key, value]` pairs → object — `_.fromPairs`." },
+  keyBy: { recv: "Array", sig: `(${ITER}): Record<string, T>`, doc: "Index elements by iteratee — `_.keyBy`." },
+  groupBy: { recv: "Array", sig: `(${ITER}): Record<string, T[]>`, doc: "Group elements by iteratee — `_.groupBy`." },
+  countBy: {
+    recv: "Array",
+    sig: `(${ITER}): Record<string, number>`,
+    doc: "Count elements by iteratee — `_.countBy`.",
+  },
+  // ── String → string / string[] ──────────────────────────────────────────────
+  capitalize: {
+    recv: "String",
+    sig: "(): string",
+    doc: "Upper-case the first char, lower-case the rest — `_.capitalize`.",
+  },
+  upperFirst: { recv: "String", sig: "(): string", doc: "Upper-case the first char — `_.upperFirst`." },
+  lowerFirst: { recv: "String", sig: "(): string", doc: "Lower-case the first char — `_.lowerFirst`." },
+  kebabCase: { recv: "String", sig: "(): string", doc: "`kebab-case` the string — `_.kebabCase`." },
+  snakeCase: { recv: "String", sig: "(): string", doc: "`snake_case` the string — `_.snakeCase`." },
+  startCase: { recv: "String", sig: "(): string", doc: "`Start Case` the string — `_.startCase`." },
+  camelCase: { recv: "String", sig: "(): string", doc: "`camelCase` the string — `_.camelCase`." },
+  escape: { recv: "String", sig: "(): string", doc: "Escape HTML entities — `_.escape`." },
+  truncate: {
+    recv: "String",
+    sig: "(options?: { length?: number; omission?: string; separator?: string | RegExp }): string",
+    doc: "Truncate to a length with an omission — `_.truncate`.",
+  },
+  words: {
+    recv: "String",
+    sig: "(pattern?: string | RegExp): string[]",
+    doc: "Split into an array of words — `_.words`.",
+  },
+  // ── Number → number / boolean ───────────────────────────────────────────────
+  clamp: {
+    recv: "Number",
+    sig: "(lower: number, upper: number): number",
+    doc: "Clamp within `[lower, upper]` — `_.clamp`.",
+  },
+  inRange: {
+    recv: "Number",
+    sig: "(start: number, end?: number): boolean",
+    doc: "Whether the number is in the range — `_.inRange`.",
+  },
+  round: { recv: "Number", sig: "(precision?: number): number", doc: "Round to `precision` decimals — `_.round`." },
+  ceil: { recv: "Number", sig: "(precision?: number): number", doc: "Round up to `precision` decimals — `_.ceil`." },
+  floor: {
+    recv: "Number",
+    sig: "(precision?: number): number",
+    doc: "Round down to `precision` decimals — `_.floor`.",
+  },
+};
+
+// The interface header each receiver augments. `Array` carries the element type
+// `T` so signatures like `head(): T` / `groupBy(...): Record<string, T[]>` stay
+// precise across a chain.
+const VALUE_METHOD_INTERFACES = { Array: "interface Array<T>", String: "interface String", Number: "interface Number" };
+
+// Emit the `interface Array<T> { … } interface String { … } interface Number { … }`
+// augmentation blocks. Drift-protected against the `METHODS` registry: every
+// non-skipped registry method must have a signature, and every signature must be
+// a real, non-skipped registry method — so adding a value method to jsmql without
+// a signature (or a skip-set entry) fails the build here, exactly like
+// `streamMethodMembers()` does for the stream vocabulary.
+function valueMethodAugmentationBlock() {
+  const skip = new Set([
+    ...VALUE_METHOD_SKIP.nativeArray,
+    ...VALUE_METHOD_SKIP.nativeString,
+    ...VALUE_METHOD_SKIP.date,
+    ...VALUE_METHOD_SKIP.object,
+    ...VALUE_METHOD_SKIP.set,
+    ...VALUE_METHOD_SKIP.regex,
+    ...VALUE_METHOD_SKIP.shimmed,
+  ]);
+  const registry = new Set(valueMethodNames());
+
+  // A skip-set name that isn't a real registry method is a typo — catch it.
+  const straySkip = [...skip].filter((n) => !registry.has(n));
+  if (straySkip.length > 0) {
+    throw new Error(
+      `generate-ops: VALUE_METHOD_SKIP names not in the METHODS registry: ${straySkip.sort().join(", ")}`,
+    );
+  }
+  const augmentable = [...registry].filter((n) => !skip.has(n));
+  const missing = augmentable.filter((n) => VALUE_METHOD_SIGNATURES[n] === undefined);
+  if (missing.length > 0) {
+    throw new Error(
+      `generate-ops: value method(s) ${missing.sort().join(", ")} are in the METHODS registry but have no ` +
+        `VALUE_METHOD_SIGNATURES entry. Add a signature so completion works, or a VALUE_METHOD_SKIP entry ` +
+        `(native / object-receiver / set / regex / date / shimmed) if it shouldn't be augmented.`,
+    );
+  }
+  const stray = Object.keys(VALUE_METHOD_SIGNATURES).filter((n) => !registry.has(n) || skip.has(n));
+  if (stray.length > 0) {
+    throw new Error(
+      `generate-ops: VALUE_METHOD_SIGNATURES has entries that are unknown or skipped: ${stray.sort().join(", ")}`,
+    );
+  }
+
+  const byRecv = { Array: [], String: [], Number: [] };
+  for (const name of augmentable.sort()) {
+    const { recv, sig, doc } = VALUE_METHOD_SIGNATURES[name];
+    byRecv[recv].push(`/** ${doc} */`, `${name}${sig};`);
+  }
+  return ["Array", "String", "Number"]
+    .map((recv) => `${VALUE_METHOD_INTERFACES[recv]} {\n${byRecv[recv].join("\n")}\n}`)
+    .join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +801,10 @@ function contextRefBlock(spec) {
       members.push(...streamMethodMembers());
     }
     // The permissive tail — keeps every non-diagnostic ref form type-checking.
+    // (Typing `$$$.<coll>` as a chainable ref to complete foreign-collection
+    // chains was prototyped and reverted — it regresses either `.find(pred)`
+    // callbacks (noImplicitAny) or the `$out` write assignment. It needs the
+    // schema/collection-name threading tracked by DEF-013/DEF-015.)
     members.push("[key: string]: any;");
     const refJsdoc = `/**\n * ${ref.doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
     // The collection ref is emitted as a named interface so its stream methods
@@ -646,6 +962,9 @@ export function generateOpsSource() {
     "",
     "  // ── Statement-form built-ins (assert) ─────────────────────────────────",
     indent(statementFormsBlock()),
+    "",
+    "  // ── Value-method augmentations (Array<T> / String / Number) ───────────",
+    indent(valueMethodAugmentationBlock()),
   ];
 
   const footer = ["}", "", "export {};", ""];

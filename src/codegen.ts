@@ -635,6 +635,14 @@ function methodsWhere(pred: (m: MethodMeta) => boolean): ReadonlySet<string> {
   return new Set(Object.keys(METHODS).filter((name) => pred(METHODS[name])));
 }
 
+// Every JS-method alias jsmql recognises (the `METHODS` registry keys). Consumed by
+// `scripts/generate-ops.mjs` to drift-check the `@koresar/jsmql/ops` value-method
+// prototype augmentations against the registry — the same single-source-of-truth
+// contract `streamMethodNames()` gives the stream-method members.
+export function valueMethodNames(): readonly string[] {
+  return Object.keys(METHODS);
+}
+
 // Method names that always return a string / array / boolean — derived from METHODS.
 const STRING_RETURNING_METHODS = methodsWhere((m) => m.returns === "string");
 

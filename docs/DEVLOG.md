@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-21 — feat: `@koresar/jsmql/ops` completion for the lodash value methods (+ `$$.reject`)
+
+`import "@koresar/jsmql/ops"` now completes the lodash-flavoured **value** methods
+(`.uniq`, `.chunk`, `.groupBy`, `.capitalize`, `.clamp`, …), not just the `$`-prefixed
+globals and `$$` stream methods. These are methods on *values*, so completion needs the
+receiver to have a real type: `valueMethodAugmentationBlock()` in `scripts/generate-ops.mjs`
+augments the built-in `Array<T>` / `String` / `Number` interfaces with them, each carrying a
+concrete return type so a chain stays completable end to end
+(`items.sortBy("total").takeRight(3).map(o => o.sku).uniq()`). Signatures live in a hardcoded
+`VALUE_METHOD_SIGNATURES` map (same rationale as `STREAM_METHOD_SIGNATURES`); a completeness
+check against `valueMethodNames()` (newly exported from `src/codegen.ts`) + a `VALUE_METHOD_SKIP`
+classification (native / date / object / set / regex / shimmed) fails the build if a registry
+value method gains neither a signature nor a skip entry — the same drift guard the stream
+members have.
+
+Two boundaries are inherent and documented rather than worked around. (1) A bare, un-annotated
+`$.field` is `any`, and `any.uniq()` stays `any`, so completion only "activates" on a concretely
+typed value (an annotated `$`, a typed static like `Object.values(o)`, a literal, or a
+known-return method result mid-chain) — `$.field` *must* stay `any` so `$.age > 18` /
+`$.price * 1.1` keep type-checking, and TypeScript can't make one type both an operator operand
+and a rich method receiver (three `tsc` probes confirmed the wall). (2) Object-receiver methods
+(`.mapValues`/`.pick`/`.omit`/`.invert`/…) are excluded: the only interface to hang them on is
+`Object`, the base of every type. Also folded in: `$$.reject(...)` — special-cased like
+`$$.filter` and previously missing from the `$$` member list — now completes.
+
+Prototyped and reverted: typing `$$$.<coll>` as a chainable ref for foreign-collection-chain
+completion. It regresses either `.find(pred)` callbacks (`noImplicitAny`) or the `$out` write
+(`$$$.coll = $$…`); `$$$.<coll>` is both a read head and a write target and one index type
+can't serve both. Left under `[DEF-015]` (notes updated), gated on `[DEF-013]` schema threading.
+Locked in by the type-level regression test `test/types/ops-completion.ts` (its own
+`tsconfig.ops.json`, run through `tsc` by `test/smoke.test.ts`): positive chains plus
+`@ts-expect-error` typos proving the surface isn't silently `any`.
+
 ## 2026-07-19 — test: lodash chain-permutation "chinese wall" (`test/permutations.test.ts`)
 
 A generative smoke test that CHAINS the lodash array/collection methods in every ordered
