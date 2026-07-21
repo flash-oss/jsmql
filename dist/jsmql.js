@@ -5761,8 +5761,11 @@ function takeDropWhile(arrExpr, pred, drop) {
     }
   };
 }
+function stringKeyExpr(value) {
+  return { $ifNull: [{ $toString: value }, "null"] };
+}
 function distinctKeysExpr(arr, it) {
-  return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
+  return { $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.value) } }, []] };
 }
 function iterateeKeys(arr, it) {
   return { $map: { input: arr, as: it.as, in: it.value } };
@@ -6855,7 +6858,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "keyBy");
       checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
-      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: { $toString: it.value }, v: it.elem } } } };
+      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: stringKeyExpr(it.value), v: it.elem } } } };
     }
     case "groupBy":
     case "countBy": {
@@ -6863,7 +6866,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
       const filtered = {
-        $filter: { input: genObj, as: it.as, cond: { $eq: [{ $toString: it.value }, "$$jsmqlKey"] } }
+        $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } }
       };
       return {
         $arrayToObject: {
@@ -9899,7 +9902,14 @@ var GROUP_BY = {
   lower(args, ctx, callPos) {
     const a = args[0];
     if (a.type === "StringLiteral") {
-      return { stages: [{ $group: { _id: `$${a.value}` } }], clearLets: true };
+      return {
+        stages: [
+          { $group: { _id: `$${a.value}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+          { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
+        ],
+        clearLets: true
+      };
     }
     const body = generateGroupBody(a, ctx, callPos);
     return { stages: [{ $group: body }], clearLets: true };
@@ -9912,7 +9922,31 @@ var COUNT_BY = {
   },
   lower(args) {
     const key = args[0].value;
-    return { stages: [{ $sortByCount: `$${key}` }], clearLets: true };
+    return {
+      stages: [
+        { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
+        { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+        { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
+      ],
+      clearLets: true
+    };
+  }
+};
+var KEY_BY = {
+  name: "keyBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".keyBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = args[0].value;
+    return {
+      stages: [
+        { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
+        { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+        { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
+      ],
+      clearLets: true
+    };
   }
 };
 var UNIQ_BY = {
@@ -10367,7 +10401,6 @@ var VALUE_TERMINAL_METHODS = /* @__PURE__ */ new Set([
   "some",
   "includes",
   "partition",
-  "keyBy",
   // Aggregates that collapse the stream to one scalar — same value-position rule.
   "sum",
   "mean",
@@ -10399,6 +10432,7 @@ var STREAM_METHODS = {
   toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
+  keyBy: KEY_BY,
   uniqBy: UNIQ_BY,
   pick: PICK,
   omit: OMIT,

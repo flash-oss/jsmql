@@ -178,10 +178,14 @@ const STREAM_METHOD_SIGNATURES = {
     params: '(keys: string | string[], orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[])',
   },
   groupBy: {
-    doc: "Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name.",
+    doc: "Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage.",
     params: "(spec: string | Record<string, any>)",
   },
-  countBy: { doc: "Tally documents per distinct key → `$sortByCount`.", params: "(field: string)" },
+  countBy: {
+    doc: "Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage).",
+    params: "(field: string)",
+  },
+  keyBy: { doc: "Key documents by a field → the lodash object `{ <key>: <last doc> }`.", params: "(field: string)" },
   uniqBy: { doc: "One document per distinct key → `$group` + `$replaceWith`.", params: "(field: string)" },
   pick: {
     doc: "Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named).",

@@ -91,8 +91,9 @@ export type StreamMethodResult = {
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `take` → `$limit` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid MQL); `drop` → `$skip` (`drop(0)` emits nothing — identity) | One `{ $limit: n }` / `{ $skip: n }` |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample` | One `{ $sample: { size: n } }` |
 | `.sample()` | Zero args | `$sample` with size 1 (lodash `_.sample`; a pipeline stays a stream, so this is `.sampleSize(1)`) | One `{ $sample: { size: 1 } }` |
-| `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot generates in `accumulatorContext: "group"` so `$addToSet`/`$push`/… pass the codegen gate — same as the direct `$group(...)` stage) **or** a bare field name | Body form lowers the object verbatim (`generateGroupBody`, per-key scoping mirrors `pipeline.ts`'s `$group` body generation); key form → `{ _id: "$<key>" }` (group by that field, no accumulators — add them via the object form) | One `{ $group: … }`. Clears the let scope (reshape). *Value-mode `$.arr.groupBy(...)` returns an object; stream-mode returns a stream of group docs* |
-| `.countBy("<field>")` | One plain field-name string literal | `$sortByCount` | One `{ $sortByCount: "$<field>" }` → `{ _id, count }` per key (count-descending). Clears the let scope |
+| `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot generates in `accumulatorContext: "group"` so `$addToSet`/`$push`/… pass the codegen gate — same as the direct `$group(...)` stage) **or** a bare field name | **Bare-key form** collapses the stream to the lodash object `{ <keyValue>: [docs] }` (`$group` with `$push: "$$ROOT"` → second `$group` gathering `{k, v}` pairs into `GROUP_TMP` → `$replaceWith: { $arrayToObject }`); **body form** lowers the object verbatim to one `$group` stage (`generateGroupBody`, per-key scoping mirrors `pipeline.ts`'s `$group` body generation) | Bare key: the three-stage collapse (one output doc). Body: one `{ $group: … }` (a stream of group docs — no lodash analogue for the accumulator form). Both clear the let scope (reshape). *This mirrors value-mode `$.arr.groupBy(...)`, which also returns the object* |
+| `.countBy("<field>")` | One plain field-name string literal | Collapses the stream to the lodash object `{ <keyValue>: <count> }` (mirroring value-mode `$.arr.countBy(...)`) — `$group` with `$sum: 1` → second `$group` gathering `{k, v}` pairs into `GROUP_TMP` → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). Clears the let scope. For MongoDB's count-descending `{ _id, count }` stream, write the `$sortByCount("$<field>")` stage directly |
+| `.keyBy("<field>")` | One plain field-name string literal | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into `GROUP_TMP` → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
 | `.uniqBy("<field>")` | One plain field-name string literal | `$group` keeping `$first` per key into the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Clears the let scope |
 | `.pick([fields])` | One array of field-name strings | The lodash object method, per document. Keeps ONLY the named fields — `_id` is dropped unless named (matching lodash `_.pick` + the value-mode `.pick`) | `{ $project: { <f>: 1, …, _id: 0 } }` (inclusion). Clears the let scope (the `__jsmql` scratch is dropped too) |
 | `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else including `_id` (matching lodash `_.omit`) | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope |
@@ -100,6 +101,13 @@ export type StreamMethodResult = {
 Note: the `.map(d => <expr>)` row above also accepts the lodash property
 shorthand `.map("<field>")` (≡ `.map(d => d.<field>)`), lowering to
 `{ $replaceWith: "$<field>" }`.
+
+Note: `.keyBy` / `.groupBy` / `.countBy` build their object keys through the shared
+`stringKeyExpr` helper (`src/codegen.ts`) — `{ $ifNull: [{ $toString: <key> }, "null"] }`
+— so a missing/null grouping field coerces to the string `"null"` (matching
+`String(null)`) instead of feeding `$arrayToObject` a null key, which the server
+rejects. The identical helper is used by the value-mode forms, so both modes agree.
+`$toString` still errors on an object/array key — a separate, documented footgun.
 
 **`.map` body must be a document.** `.map` lowers to `$replaceWith: <body>`, which
 MongoDB requires to be an object root. `rejectNonDocumentMapBody` literal-gates the

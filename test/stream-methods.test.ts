@@ -341,7 +341,7 @@ describe(".pick([fields]) / .omit([fields]) → $project (per-document field sel
   });
 });
 
-describe(".groupBy(spec | key) → $group", () => {
+describe(".groupBy(spec | key) → object collapse / $group", () => {
   it("raw $group body lowers verbatim (accumulators pass the group gate)", () => {
     expect(jsmql('$$ = $$.groupBy({ _id: "$dept", n: $sum(1), total: $sum("$amount") });')).toEqual([
       { $group: { _id: "$dept", n: { $sum: 1 }, total: { $sum: "$amount" } } },
@@ -354,8 +354,20 @@ describe(".groupBy(spec | key) → $group", () => {
     ]);
   });
 
-  it("bare field name → group by that field, no accumulators (distinct values)", () => {
-    expect(jsmql('$$ = $$.groupBy("dept");')).toEqual([{ $group: { _id: "$dept" } }]);
+  // lodash `_.groupBy(coll, "dept")` → the OBJECT `{ <dept>: [docs] }`; the stream
+  // form collapses to that single object (mirroring value-mode `$.arr.groupBy(...)`),
+  // NOT a stream of group docs. Verified on mongod.
+  it("bare field name → collapse to the lodash object { <key>: [docs] }", () => {
+    expect(jsmql('$$ = $$.groupBy("dept");')).toEqual([
+      { $group: { _id: "$dept", __jsmqlTmp: { $push: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
   });
 
   it("rejects a body without _id and a non-string/non-object arg", () => {
@@ -364,9 +376,40 @@ describe(".groupBy(spec | key) → $group", () => {
   });
 });
 
-describe(".countBy(field) → $sortByCount", () => {
-  it("lowers to $sortByCount", () => {
-    expect(jsmql('$$ = $$.countBy("dept");')).toEqual([{ $sortByCount: "$dept" }]);
+describe(".countBy(field) → object collapse", () => {
+  // lodash `_.countBy(coll, "dept")` → the OBJECT `{ <dept>: <count> }`; the stream
+  // form collapses to that single object (mirroring value-mode `$.arr.countBy(...)`),
+  // NOT MongoDB's `$sortByCount` stream of `{ _id, count }` docs. Verified on mongod.
+  it("collapses to the lodash object { <key>: <count> }", () => {
+    expect(jsmql('$$ = $$.countBy("dept");')).toEqual([
+      { $group: { _id: "$dept", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+  });
+});
+
+describe(".keyBy(field) → object collapse", () => {
+  // lodash `_.keyBy(coll, "email")` → the OBJECT `{ <email>: <last doc> }`; the stream
+  // form collapses to that single object (mirroring value-mode `$.arr.keyBy(...)`),
+  // last-wins via `$last`. Works over the whole `$$` stream, unlike before (it used to
+  // be value-position-only). Verified on mongod.
+  it("collapses to the lodash object { <key>: <last doc> } (last wins)", () => {
+    expect(jsmql('$$ = $$.keyBy("email");')).toEqual([
+      { $group: { _id: "$email", __jsmqlTmp: { $last: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
   });
 });
 

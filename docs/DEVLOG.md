@@ -10,6 +10,69 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-19 — fix: null/missing group key coerces to `"null"`; stream `.keyBy` now collapses like `.countBy`/`.groupBy`
+
+Two follow-ups to the stream-collapse change below.
+
+**1 — null/missing keys no longer crash `keyBy`/`groupBy`/`countBy`.** All three build
+their object keys with `$toString`, which yields *null* for a missing/null grouping
+field; `$arrayToObject` then rejects it ("the value of 'k' must be of type string") —
+a server error that hit **both** value-mode and stream-mode (a green `toEqual` hid it;
+only a live run surfaced it). Introduced `stringKeyExpr` (`src/codegen.ts`):
+`{ $ifNull: [{ $toString: <key> }, "null"] }`, so a missing/null key lands under one
+`"null"` bucket (matching JS `String(null)`) instead of erroring. Applied at every
+object-key site of the trio in both modes (value-mode `keyBy` / `groupBy` / `countBy`
++ `distinctKeysExpr` + the group-filter `$eq`; the stream collapses import the same
+helper), so the two paths stay identical. `$toString` still errors on an object/array
+key — a narrower, pre-existing footgun left as-is (documented in LANGUAGE.md).
+
+**2 — stream `.keyBy("field")` now works as a `$$ =` pivot.** It was in
+`VALUE_TERMINAL_METHODS` (value-position only: `$$ = $$.keyBy(...)` was rejected),
+inconsistent with its siblings `.countBy`/`.groupBy`, which the change below made
+collapse over the whole `$$` stream. Added a `KEY_BY` stream lowering (`$group` with
+`$last: "$$ROOT"` — last wins, matching value-mode + lodash — then the same
+`$arrayToObject` collapse) and removed `keyBy` from `VALUE_TERMINAL_METHODS`. Now all
+three collapse to the lodash object in every position: `$$ =` pivot, bare statement,
+and value-position lookup chains (`.find(...)` materialises clean; `.filter(...)`
+correlates). `partition` and the scalar aggregates stay value-terminals (no object to
+collapse to). Verified on a live mongod (`{ <key>: <last doc> }`, last-wins) and via
+the chain-permutation mongod half. Files: [src/codegen.ts](../src/codegen.ts),
+[src/stream-methods.ts](../src/stream-methods.ts), [scripts/generate-ops.mjs](../scripts/generate-ops.mjs),
+[docs/specs/stream-methods.md](specs/stream-methods.md), [docs/LANGUAGE.md](LANGUAGE.md).
+
+## 2026-07-19 — fix: stream `.countBy` / `.groupBy("key")` collapse to the lodash object (were `$sortByCount` / `$group` streams)
+
+lodash `_.countBy(coll, key)` and `_.groupBy(coll, key)` return **objects** —
+`{ <keyValue>: <count> }` and `{ <keyValue>: [elements] }`. Value-mode
+`$.arr.countBy(...)` / `.groupBy(...)` already did (via `$arrayToObject`), but the
+**stream** forms (`$$ = $$.countBy("type")`) lowered to MongoDB's `$sortByCount` (a
+stream of `{ _id, count }` docs) and `$group: { _id: "$key" }` (a stream of group
+docs) — the MongoDB idiom, not the lodash shape. Same method name, two different
+result shapes depending on the receiver: a DX wart against the "lodash you already
+know" pitch, and inconsistent with `.keyBy`, which was already a value-collapsing
+terminal returning `{ <key>: elem }` in both modes.
+
+Now both stream forms collapse the stream to the single lodash object (mirroring
+value-mode): `$group` (tally / `$push: "$$ROOT"`) → a second `$group` gathering
+`{k, v}` pairs into the flat `GROUP_TMP` slot → `$replaceWith: { $arrayToObject }`
+(the same pattern the reduce/dict-build wrap already uses). `.groupBy({ _id, … })` —
+the accumulator-body form, which has **no** lodash analogue — is unchanged and still
+lowers to one `$group` stage. No capability is lost: the count-descending stream is
+still reachable by writing the `$sortByCount("$key")` stage directly, and the grouped
+stream by `$group(...)` / `.groupBy({ _id, … })`. Value-position lookup chains
+(`.find(...).countBy(...)`) were already object-shaped and are untouched.
+
+Verified on a live mongod (`{ <val>: <count> }`, `{ <val>: [docs] }`, and the
+correlated-sub-pipeline case) and via the chain-permutation suite's mongod half.
+`.countBy`/`.groupBy("key")` are value-collapsing now, so `.countBy` moved out of
+`STREAM_RESHAPERS` in `test/permutations.test.ts` (pairing a collapse with a
+field-stripping reshaper would feed `$arrayToObject` a null key — mongod-rejected).
+Known shared limitation, unchanged from value-mode: the key is `$toString`'d, so a
+missing/null/object key errors on the server — a pre-existing footgun that now
+applies identically to both paths (a robustness fix, if wanted, belongs on both at
+once). Files: [src/stream-methods.ts](../src/stream-methods.ts),
+[docs/specs/stream-methods.md](specs/stream-methods.md), [docs/LANGUAGE.md](LANGUAGE.md).
+
 ## 2026-07-19 — test: lodash chain-permutation "chinese wall" (`test/permutations.test.ts`)
 
 A generative smoke test that CHAINS the lodash array/collection methods in every ordered

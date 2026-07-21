@@ -1588,7 +1588,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (MQL truthiness, as in `.filter`). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so they return a **different result on every run** (non-deterministic, like the stream `.sample()` → `$sample`); `sampleSize` draws **without replacement** and returns the whole (shuffled) array when `n` exceeds the length.
 
-> **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash, but it *errors* on an object/array key); group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
+> **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash); a missing/null key coerces to the string `"null"`, but an object/array key still *errors*. Group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
 
 #### lodash positional / slicing methods
 
@@ -2711,8 +2711,9 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
 | `.flatMap(d => d.<path>)` / `.flatMap("path")` | Single-param arrow whose body is a bare field-path on the param (v1), or the property shorthand `.flatMap("path")` | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
-| `.groupBy("key")` / `.groupBy({ _id, … })` | A bare field name, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → `$group: { _id: "$key" }` (group by that field, no accumulators); body form → `$group: <body>` verbatim |
-| `.countBy("field")` | One plain field-name string | `$sortByCount: "$field"` → one `{ _id, count }` document per distinct key |
+| `.groupBy("key")` / `.groupBy({ _id, … })` | A bare field name, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
+| `.countBy("field")` | One plain field-name string | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
+| `.keyBy("field")` | One plain field-name string | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
 | `.uniqBy("field")` | One plain field-name string | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
 
 `.filter(<pred>)` accepts an arrow predicate **or** the lodash matches-object shorthand (`.filter({ status: "CLOSED", tier: "gold" })` → `$match: { status: "CLOSED", tier: "gold" }`), and can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.

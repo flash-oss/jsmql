@@ -166,6 +166,26 @@ $project({
   });
 });
 
+describe("tally shipped orders by payment method (lodash `.countBy`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // Whole-collection count-by-field, lodash-style: `.filter` narrows the stream,
+    // then `.countBy` collapses it to a single `{ <paymentMethod>: <count> }` object —
+    // the SAME shape as value-mode `$.items.countBy(...)`, not a `{ _id, count }`
+    // stream. (For the count-descending stream instead, write `$sortByCount(...)`.)
+    expect(jsmql`$$ = $$.filter(o => o.status === "shipped").countBy("paymentMethod");`).toEqual([
+      { $match: { status: "shipped" } },
+      { $group: { _id: "$paymentMethod", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+  });
+});
+
 describe("alternative bracketed array form", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline" }, () => {
     expect(
