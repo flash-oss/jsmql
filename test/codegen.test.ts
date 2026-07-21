@@ -3312,6 +3312,57 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
   });
 });
 
+describe("chain type-check — reject a method on a provably-incompatible receiver", () => {
+  // 100%-certain mismatches throw (they'd otherwise emit MQL mongod rejects — e.g.
+  // $map over a boolean/number/string, $slice over an object). Verified on mongod.
+  it("rejects a method chained on a provably boolean receiver (only .toString/.getTime survive)", () => {
+    expect(() => jsmql.expr("$.items.every(x => x.ok).map(y => y)")).toThrow(/can't run on a boolean/);
+    expect(() => jsmql.expr("$.items.some(x => x.ok).filter(y => y)")).toThrow(/can't run on a boolean/);
+    expect(() => jsmql.expr('$.name.startsWith("A").trim()')).toThrow(/can't run on a boolean/);
+    // …but the two universal methods still compile on a boolean.
+    expect(() => jsmql.expr("$.items.every(x => x.ok).toString()")).not.toThrow();
+  });
+  it("rejects an array-receiver + string/number/date/object method", () => {
+    expect(() => jsmql.expr("$.name.split(',').toUpperCase()")).toThrow(/expects a string receiver.*returns an array/);
+    expect(() => jsmql.expr("$.items.map(x => x).round(2)")).toThrow(/expects a number receiver.*returns an array/);
+    expect(() => jsmql.expr("$.items.map(x => x).mapValues(v => v)")).toThrow(
+      /expects an object.*receiver.*returns an array/,
+    );
+  });
+  it("rejects a string/number/object-map receiver + array method", () => {
+    expect(() => jsmql.expr("$.name.toUpperCase().map(x => x)")).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr("$.items.size().map(x => x)")).toThrow(/expects an array receiver.*returns a number/);
+    expect(() => jsmql.expr('$.items.countBy("t").take(3)')).toThrow(/expects an array receiver.*returns an object/);
+    expect(() => jsmql.expr('$.items.countBy("t").map(v => v)')).toThrow(
+      /expects an array receiver.*returns an object/,
+    );
+  });
+  it("still EMITS for uncertain receivers (element / dual / field / operator) — no false rejection", () => {
+    // .find()/.at() on an ordinary array return an element of UNKNOWN type (could be
+    // an array) — must not throw.
+    expect(() => jsmql.expr("$.matrix.find(r => r.length > 0).map(x => x)")).not.toThrow();
+    expect(() => jsmql.expr("$.items.at(0).toLowerCase()")).not.toThrow();
+    // Compatible same-family chains compile.
+    expect(() => jsmql.expr("$.name.toUpperCase().trim()")).not.toThrow();
+    expect(() => jsmql.expr("$.items.map(x => x).filter(y => y)")).not.toThrow();
+    expect(() => jsmql.expr('$.items.countBy("t").mapValues(v => v)')).not.toThrow();
+    // Dual methods (.slice/.includes) are never gated.
+    expect(() => jsmql.expr('$.name.toUpperCase().includes("A")')).not.toThrow();
+    // The adversarially-found refuted case: clamp's result type follows its args
+    // (number OR date), so it's uncertain — `.clamp(...).getFullYear()` must compile.
+    expect(() => jsmql.expr("$.d.clamp($.a, $.b).getFullYear()")).not.toThrow();
+  });
+  it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
+    // Offset the chain so the receiver isn't at column 0 — the error's .pos must
+    // point at the boolean-producing receiver ('$.items.every(...)'), not be a 0
+    // placeholder. (A top-level chain legitimately reports pos 0, the input start.)
+    const src = "$.n + $.items.every(x => x.ok).map(y => y)";
+    const r = jsmql.validate(src);
+    expect(r.valid).toBe(false);
+    expect(r.errors[0].pos).toBe(src.indexOf("$.items"));
+  });
+});
+
 describe("lodash iteratee / predicate shorthands (uniform across higher-order methods)", () => {
   // Every higher-order method — native `.map`/`.filter`/`.find`/… and the lodash
   // `.sumBy`/`.uniqBy`/`.reject`/… — accepts the same shorthand vocabulary, each

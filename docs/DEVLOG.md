@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-19 — feat: reject method chains that can't type-check; unwrap `.filter(p).countBy(...)` with `$first`
+
+Two related "chaining must make sense" changes, both closing HR3 holes where jsmql
+silently emitted server-rejected MQL.
+
+**1 — chain type-check (`certainReceiverType` / `requiredReceiverFamily`, codegen.ts).**
+A method chained on a receiver whose type is **100%-certain** to be incompatible now
+throws at compile time. Previously `.every(p).map(f)` emitted `$map` over a boolean,
+`s.toUpperCase().map(f)` `$map` over a string, `a.size().map(f)` `$map` over a number,
+`a.countBy("t").take(3)` `$slice` over an object — all mongod-rejected (verified). The
+check reuses the verified-sound `isProvablyBool`/`isArrayProducing` for bool/array
+receivers and the method registry's invariant `returns` (widened to add `number`/
+`object`) for string/number/object receivers. It is deliberately **not** built on
+`isStringProducing` (its `STRING_OUTPUT_OPS` wrongly holds the int-returning
+`$strcasecmp`) nor on object literals (a `{$op}` escape hatch can return any type) —
+those were the false-positive sources an adversarial design pass surfaced. Literal-
+gated like the date-receiver gate: an uncertain receiver (a `.find()`/`.at()` element
+of unknown type, a `.clamp(...)` number-or-date result, a dual `.slice`/`.includes`,
+a field ref) never throws and still emits. Over a lookup, `$$$.coll.find(p).take(5)`
+is caught in `lookup-translation.ts` (a `.find` result is one document; array/string/
+number/date methods rejected, object methods + field reads still valid) — the value-
+mode arm can't see it (the receiver is a materialised `FieldRef`). Rule set was
+adversarially verified (each candidate skeptic-checked for a valid counterexample)
+and every enforced rule confirmed a genuine server-rejection on a live mongod.
+
+**2 — `.filter(p).countBy(...)` value-position now unwraps with `$first`.** A collapsing
+terminal (`.countBy`/`.keyBy`/`.groupBy("k")`) in a correlated-lookup chain emits its
+one object doc into the `$lookup.as` array, so `$.byStatus = …filter(p).countBy("k")`
+set `byStatus = [obj]` instead of `obj`. `tryExtractChainedLookup` now appends
+`$set { <slot>: { $ifNull: [{ $first: "$<slot>" }, {}] } }` (mirroring `lowerLookup`'s
+`.find` `$first`); `$ifNull → {}` makes an empty foreign match yield `{}`, matching
+value-mode `_.countBy([]) === {}`. Verified on mongod (`{shipped:2,pending:1}`; `{}`
+for a user with no matches). The `.find(...)` materialised path was already single-doc
+and is unchanged.
+
+The chain-permutation suite's mongod half (every ordered method pair) passes — the
+strongest guard that no *valid* chain is wrongly rejected. Files:
+[src/codegen.ts](../src/codegen.ts), [src/lookup-translation.ts](../src/lookup-translation.ts),
+[docs/specs/method-dispatch.md](specs/method-dispatch.md), [docs/specs/lookup-stage.md](specs/lookup-stage.md),
+[docs/LANGUAGE.md](LANGUAGE.md).
+
 ## 2026-07-19 — fix: null/missing group key coerces to `"null"`; stream `.keyBy` now collapses like `.countBy`/`.groupBy`
 
 Two follow-ups to the stream-collapse change below.

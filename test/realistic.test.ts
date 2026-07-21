@@ -319,6 +319,42 @@ $ = { ...$, computedScore: $.points * 1.1 };
   });
 });
 
+describe(
+  "attach each user's order-status breakdown (lookup `.filter().countBy()`)",
+  { features: ["Pipelines"] },
+  () => {
+    it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+      // Per user, join their orders and roll them up into a `{ <status>: <count> }`
+      // sub-object — lodash `.countBy` over a correlated `$lookup`. The sub-pipeline
+      // collapses to a single object doc, and jsmql unwraps the one-element $lookup
+      // array with $first ($ifNull → {} when the user has no orders). Verified on mongod.
+      expect(jsmql`$.statusBreakdown = $$$.orders.filter(o => o.userId === $._id).countBy("status");`).toEqual([
+        {
+          $lookup: {
+            from: "orders",
+            let: { jsmql_f0__id: "$_id" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+              { $group: { _id: "$status", __jsmqlTmp: { $sum: 1 } } },
+              {
+                $group: {
+                  _id: null,
+                  __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+                },
+              },
+              { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+            ],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        { $set: { "__jsmql.tmp.1": { $ifNull: [{ $first: "$__jsmql.tmp.1" }, {}] } } },
+        { $set: { statusBreakdown: "$__jsmql.tmp.1" } },
+        { $unset: "__jsmql" },
+      ]);
+    });
+  },
+);
+
 describe("derive subscription grace + reminder dates (`.plus` / `.minus`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.subscriptions.aggregate(jsmql(...))" }, () => {
     // For each active subscription, project a 30-day grace-period end and a

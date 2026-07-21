@@ -441,13 +441,18 @@ const STRING_OUTPUT_OPS = new Set([
 // three separate Sets scattered across the file.
 //
 //   returns:  the method's result type, when invariant — feeds isStringProducing
-//             / isArrayProducing / isProvablyBool. Omitted when the result type
-//             depends on the receiver/args (e.g. `.slice`, `.concat`, `.at`).
+//             / isArrayProducing / isProvablyBool AND the chain type-check
+//             (`certainReceiverType`, which rejects a method chained on a receiver
+//             of a provably-incompatible type). Omitted when the result type
+//             depends on the receiver/args (e.g. `.slice`, `.concat`, `.at`,
+//             `.max`/`.min` → element, `.plus`/`.minus` → same-as-receiver date).
 //   optional: the receiver's type, picking the `$ifNull` neutral when a `?.`
 //             chain feeds the receiver — "string" → "", "array" → [], "either" →
 //             runtime/branch-aware (see neutralForMethod). Omitted for methods
 //             whose underlying operator handles null cleanly (date/set/regex).
-type MethodReturn = "string" | "array" | "bool";
+//             Also doubles as the required-receiver family for the chain
+//             type-check (see requiredReceiverFamily).
+type MethodReturn = "string" | "array" | "bool" | "number" | "object";
 type MethodOptional = "string" | "array" | "either";
 //   receiver: the receiver's required type, literal-gated at dispatch — a literal
 //             receiver of the wrong type is rejected at compile time (same as the
@@ -474,11 +479,11 @@ const METHODS: Record<string, MethodMeta> = {
   replaceAll: { returns: "string", optional: "string" },
   match: { optional: "string" },
   matchAll: { optional: "string" },
-  search: { optional: "string" },
+  search: { returns: "number", optional: "string" },
   padStart: { returns: "string", optional: "string" },
   padEnd: { returns: "string", optional: "string" },
   repeat: { returns: "string", optional: "string" },
-  indexOf: { optional: "either" },
+  indexOf: { returns: "number", optional: "either" },
   includes: { returns: "bool", optional: "either" },
   // ── Array ─────────────────────────────────────────────────────────────────
   at: { optional: "array" },
@@ -496,15 +501,18 @@ const METHODS: Record<string, MethodMeta> = {
   map: { returns: "array", optional: "array" },
   filter: { returns: "array", optional: "array" },
   find: { optional: "array" },
-  findIndex: {},
+  findIndex: { returns: "number" },
   findLast: { optional: "array" },
-  findLastIndex: { optional: "array" },
-  lastIndexOf: {},
+  findLastIndex: { returns: "number", optional: "array" },
+  lastIndexOf: { returns: "number" },
   some: { returns: "bool", optional: "array" },
   every: { returns: "bool", optional: "array" },
   reduce: { optional: "array" },
   reduceRight: {},
   join: { returns: "string", optional: "array" }, // returns a string, but the receiver is an array
+  // NB `toString` is intentionally left without a `returns` — the key collides with
+  // Object.prototype.toString and confuses tsc's contextual typing of the literal;
+  // it's also universal (never gated), so its return type doesn't matter here.
   toString: {},
   // ── Mutators (shimmed with tailored errors that point at immutable variants) ─
   sort: {},
@@ -522,35 +530,37 @@ const METHODS: Record<string, MethodMeta> = {
   values: {},
   toLocaleString: {},
   // ── Date ────────────────────────────────────────────────────────────────────
-  getFullYear: { receiver: "date" },
-  getMonth: { receiver: "date" },
-  getDate: { receiver: "date" },
-  getDay: { receiver: "date" },
-  getHours: { receiver: "date" },
-  getMinutes: { receiver: "date" },
-  getSeconds: { receiver: "date" },
-  getMilliseconds: { receiver: "date" },
-  getUTCFullYear: { receiver: "date" },
-  getUTCMonth: { receiver: "date" },
-  getUTCDate: { receiver: "date" },
-  getUTCDay: { receiver: "date" },
-  getUTCHours: { receiver: "date" },
-  getUTCMinutes: { receiver: "date" },
-  getUTCSeconds: { receiver: "date" },
-  getUTCMilliseconds: { receiver: "date" },
-  getTime: {}, // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
+  // The accessors all return a number ($year/$month/…); toISOString → string;
+  // plus/minus → a date (same-as-receiver, so returns is omitted).
+  getFullYear: { returns: "number", receiver: "date" },
+  getMonth: { returns: "number", receiver: "date" },
+  getDate: { returns: "number", receiver: "date" },
+  getDay: { returns: "number", receiver: "date" },
+  getHours: { returns: "number", receiver: "date" },
+  getMinutes: { returns: "number", receiver: "date" },
+  getSeconds: { returns: "number", receiver: "date" },
+  getMilliseconds: { returns: "number", receiver: "date" },
+  getUTCFullYear: { returns: "number", receiver: "date" },
+  getUTCMonth: { returns: "number", receiver: "date" },
+  getUTCDate: { returns: "number", receiver: "date" },
+  getUTCDay: { returns: "number", receiver: "date" },
+  getUTCHours: { returns: "number", receiver: "date" },
+  getUTCMinutes: { returns: "number", receiver: "date" },
+  getUTCSeconds: { returns: "number", receiver: "date" },
+  getUTCMilliseconds: { returns: "number", receiver: "date" },
+  getTime: { returns: "number" }, // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
-  sum: { optional: "array" },
-  mean: { optional: "array" },
-  max: { optional: "array" },
-  min: { optional: "array" },
-  sumBy: { optional: "array" },
-  meanBy: { optional: "array" },
-  minBy: { optional: "array" },
-  maxBy: { optional: "array" },
+  sum: { returns: "number", optional: "array" },
+  mean: { returns: "number", optional: "array" },
+  max: { optional: "array" }, // returns the max ELEMENT (unknown type), not a number
+  min: { optional: "array" }, // returns the min ELEMENT (unknown type), not a number
+  sumBy: { returns: "number", optional: "array" },
+  meanBy: { returns: "number", optional: "array" },
+  minBy: { optional: "array" }, // returns the ELEMENT with the min key
+  maxBy: { optional: "array" }, // returns the ELEMENT with the max key
   uniq: { returns: "array", optional: "array" },
   uniqBy: { returns: "array", optional: "array" },
   sortedUniq: { returns: "array", optional: "array" },
@@ -574,34 +584,34 @@ const METHODS: Record<string, MethodMeta> = {
   first: { optional: "array" },
   last: { optional: "array" },
   nth: { optional: "array" },
-  size: { optional: "array" },
+  size: { returns: "number", optional: "array" },
   takeWhile: { returns: "array", optional: "array" },
   dropWhile: { returns: "array", optional: "array" },
   takeRightWhile: { returns: "array", optional: "array" },
   dropRightWhile: { returns: "array", optional: "array" },
   sample: { optional: "array" },
   sampleSize: { returns: "array", optional: "array" },
-  zipObject: { optional: "array" },
+  zipObject: { returns: "object", optional: "array" },
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
   zipWith: { returns: "array", optional: "array" },
   unzipWith: {}, // shimmed with a tailored "use .unzip().map(group => …)" error
 
-  keyBy: { optional: "array" },
-  groupBy: { optional: "array" },
-  countBy: { optional: "array" },
+  keyBy: { returns: "object", optional: "array" },
+  groupBy: { optional: "array" }, // context-dependent result (value → object, stream → doc-stream); no invariant return
+  countBy: { returns: "object", optional: "array" },
   partition: { returns: "array", optional: "array" },
   reject: { returns: "array", optional: "array" },
   // ── lodash object methods (Phase 1) ─────────────────────────────────────────
-  mapValues: {},
-  mapKeys: {},
-  pick: {},
-  omit: {},
-  pickBy: {},
-  omitBy: {},
-  invert: {},
+  mapValues: { returns: "object" },
+  mapKeys: { returns: "object" },
+  pick: {}, // context-dependent (value → object, stream → $project doc-stream)
+  omit: {}, // context-dependent (value → object, stream → $project doc-stream)
+  pickBy: { returns: "object" },
+  omitBy: { returns: "object" },
+  invert: { returns: "object" },
   toPairs: { returns: "array" },
-  fromPairs: { optional: "array" },
+  fromPairs: { returns: "object", optional: "array" },
   // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
   capitalize: { returns: "string", optional: "string" },
   upperFirst: { returns: "string", optional: "string" },
@@ -614,11 +624,11 @@ const METHODS: Record<string, MethodMeta> = {
   escape: { returns: "string", optional: "string" },
   truncate: { returns: "string", optional: "string" },
   // ── lodash number methods (Phase 1) ─────────────────────────────────────────
-  clamp: {},
+  clamp: {}, // result type follows the receiver/args (number OR date) — no invariant return
   inRange: { returns: "bool" },
-  round: {},
-  ceil: {},
-  floor: {},
+  round: { returns: "number" },
+  ceil: { returns: "number" },
+  floor: { returns: "number" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -839,6 +849,122 @@ function isProvablyBool(expr: Expr): boolean {
     default:
       return false;
   }
+}
+
+// ── Chain type-check ──────────────────────────────────────────────────────────
+//
+// Reject a method chained on a receiver whose type is 100%-CERTAIN to be
+// incompatible — the "lodash-style chaining must make sense" rule. Examples that
+// now throw at compile time instead of emitting server-rejected MQL:
+//   `.every(p).map(f)`      — a boolean has no methods (only .toString/.getTime)
+//   `s.toUpperCase().map(f)`— a string is not an array
+//   `a.size().map(f)`       — a number is not an array
+//   `a.countBy("t").take(3)`— an object map is not an array
+// Literal-gated exactly like the date-receiver gate: `certainReceiverType`
+// returns non-null ONLY when the receiver type is provable, so an unknown receiver
+// (a field ref, a `.find()`/`.at()`/`.max()` element of unknown type, a `.concat`/
+// operator/`{$op}`-literal result) never throws and still emits — mongod decides.
+// Deliberately NOT derived from isStringProducing (STRING_OUTPUT_OPS holds the
+// int-returning $strcasecmp) nor object literals (a `{$op}` escape hatch can return
+// any type): only method `returns` and the verified-sound array/bool producers
+// seed a rejection. See docs/specs/method-dispatch.md § chain type-check.
+
+// Methods whose receiver must be a number / a document. Their `optional` field is
+// absent or "either", so it can't stand in for the required-receiver type — these
+// two sets fill that gap for `requiredReceiverFamily`. `clamp` is excluded (its
+// receiver may be a number OR a date), matching its omitted `returns`.
+const NUMBER_RECEIVER_METHODS = new Set(["round", "ceil", "floor", "inRange"]);
+const OBJECT_RECEIVER_METHODS = new Set([
+  "mapValues",
+  "mapKeys",
+  "invert",
+  "pickBy",
+  "omitBy",
+  "pick",
+  "omit",
+  "toPairs",
+]);
+
+type ReceiverFamily = "string" | "array" | "number" | "date" | "object";
+
+/** The receiver type a method REQUIRES, or null when it's dual / universal
+ *  (`.slice`/`.concat`/`.indexOf`/`.includes` accept string OR array; `.size`
+ *  accepts array OR object; `.toString`/`.getTime` accept any) or simply unknown.
+ *  Null-family methods are never gated, so their legitimate multi-type uses always
+ *  compile — that's the deliberate false-positive-avoiding gap. */
+export function requiredReceiverFamily(method: string): ReceiverFamily | null {
+  const meta = METHODS[method];
+  if (meta === undefined) return null;
+  if (method === "size" || method === "toString" || method === "getTime") return null;
+  if (meta.receiver === "date") return "date";
+  if (NUMBER_RECEIVER_METHODS.has(method)) return "number";
+  if (OBJECT_RECEIVER_METHODS.has(method)) return "object";
+  if (meta.optional === "string") return "string";
+  if (meta.optional === "array") return "array";
+  return null;
+}
+
+/** The provable, invariant type of a receiver expression, or null when uncertain.
+ *  `bool`/`array` reuse the verified-sound isProvablyBool/isArrayProducing (which
+ *  recurse through `.slice`/MethodCall and subsume literals + array-typed ops);
+ *  `string`/`number`/`object` come from the receiver method's invariant `returns`.
+ *  Returns null for every unknown receiver — the literal-gating guarantee. */
+function certainReceiverType(o: Expr): "bool" | "array" | "string" | "number" | "object" | null {
+  if (isProvablyBool(o)) return "bool";
+  if (isArrayProducing(o)) return "array";
+  if (o.type === "MethodCall") {
+    if (o.method === "slice") return certainReceiverType(o.object); // .slice preserves receiver type
+    const r = METHODS[o.method]?.returns;
+    if (r === "string" || r === "number" || r === "object") return r;
+  }
+  return null;
+}
+
+export const RECEIVER_NOUN: Record<string, string> = {
+  bool: "a boolean",
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  date: "a date",
+  object: "an object (a document)",
+};
+
+function receiverPhrase(o: Expr): string {
+  return o.type === "MethodCall" ? `'.${o.method}(...)'` : "the value before it";
+}
+
+/** Throw when `method` cannot run on a receiver of the provable type `recv`.
+ *  `object` supplies the error position and a human phrase. */
+function rejectIncompatibleChain(
+  recv: "bool" | "array" | "string" | "number" | "object",
+  method: string,
+  object: Expr,
+): void {
+  // A boolean is a scalar with NO methods except `.toString()` / `.getTime()`, so
+  // reject regardless of the called method's required family (unlike the other
+  // types, which each have their own valid method families).
+  if (recv === "bool") {
+    if (method === "toString" || method === "getTime") return;
+    throw new CodegenError(
+      `'.${method}(...)' can't run on a boolean — ${receiverPhrase(object)} evaluates to true/false, which has no methods (only .toString() / .getTime()). ` +
+        `Move '.${method}(...)' ahead of the step that collapses the value to a boolean.`,
+      object.pos,
+    );
+  }
+  const need = requiredReceiverFamily(method);
+  if (need === null || need === recv) return; // dual/universal method, or a matching family
+  const hint =
+    recv === "array" && need === "object"
+      ? `Use it on a single document, or '.map(x => x.${method}(...))' to apply it per element.`
+      : recv === "array"
+        ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.`
+        : recv === "object" && need === "array"
+          ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.`
+          : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
+  throw new CodegenError(
+    `'.${method}(...)' expects ${RECEIVER_NOUN[need]} receiver, but ${receiverPhrase(object)} returns ${RECEIVER_NOUN[recv]}. ${hint}`,
+    object.pos,
+  );
 }
 
 /** Wrap an already-generated MQL expression in a JS-truthy check.
@@ -2750,6 +2876,16 @@ function generateMethodCall(
   // a certain-wrong literal like "2020-01-01".getFullYear() throws.
   const receiverType = METHODS[method]?.receiver;
   if (receiverType !== undefined) checkArgType(`.${method}`, "", object, receiverType);
+
+  // Chain type-check: reject a method chained on a receiver of a provably
+  // incompatible type (`.every(...).map(...)`, `s.toUpperCase().map(...)`,
+  // `a.countBy("t").take(3)`). Literal-gated — an unknown receiver never throws.
+  // Guarded by `method in METHODS` so an unknown method falls through to the
+  // "did you mean?" path below rather than this receiver-shape error.
+  if (method in METHODS) {
+    const recv = certainReceiverType(object);
+    if (recv !== null) rejectIncompatibleChain(recv, method, object);
+  }
 
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────

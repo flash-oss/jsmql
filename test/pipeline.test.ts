@@ -886,6 +886,35 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     }
   });
 
+  it("value-position .filter(pred).countBy(...) unwraps the collapsed one-doc result with $first", () => {
+    // The sub-pipeline collapses to one object doc, but $lookup.as is always an
+    // array → the slot holds [obj]. The trailing $set unwraps it to the object
+    // ($ifNull → {} on an empty foreign match, lodash-faithful). Verified on mongod.
+    const stages = jsmql(`$.byStatus = $$$.orders.filter(o => o.userId === $._id).countBy("status");`) as Record<
+      string,
+      unknown
+    >[];
+    expect(stages).toContainEqual({ $set: { "__jsmql.tmp.1": { $ifNull: [{ $first: "$__jsmql.tmp.1" }, {}] } } });
+    // keyBy and the bare-key groupBy collapse the same way.
+    for (const term of ['keyBy("status")', 'groupBy("status")']) {
+      const s = jsmql(`$.g = $$$.orders.filter(o => o.userId === $._id).${term};`) as Record<string, unknown>[];
+      expect(s).toContainEqual({ $set: { "__jsmql.tmp.1": { $ifNull: [{ $first: "$__jsmql.tmp.1" }, {}] } } });
+    }
+  });
+
+  it("rejects an array/string/number method chained on a `.find()` lookup (a single document)", () => {
+    // `.find` yields ONE document; an array/string/number method on it is impossible.
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).take(5);`)).toThrow(
+      /returns a single matched document.*needs an array/,
+    );
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).map(o => o.total);`)).toThrow(
+      /returns a single matched document.*needs an array/,
+    );
+    // …but object methods and field reads ARE valid on the matched document.
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).pick(["total"]);`)).not.toThrow();
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).total;`)).not.toThrow();
+  });
+
   it("non-correlated predicate keeps using $unionWith (no regression)", () => {
     // No `$.<field>` ref — the predicate is a flat scan, so the existing
     // `$limit:0 + $unionWith` lowering is correct.
