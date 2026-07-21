@@ -2620,10 +2620,22 @@ function takeDropWhile(arrExpr: unknown, pred: { as: string; cond: unknown }, dr
   };
 }
 
+// A null-safe stringified object key for `$arrayToObject` / `$group`-`_id` entries.
+// lodash coerces a group key to a string; MongoDB's `$toString` yields *null* for a
+// missing/null value, and `$arrayToObject` then rejects it ("the value of 'k' must be
+// of type string"). Coerce that null to the literal "null" (matching `String(null)`)
+// so a missing/null grouping field lands under one "null" key instead of erroring on
+// the server. NB `$toString` still errors on an object/array value — a separate,
+// documented footgun. Shared by value-mode `keyBy`/`groupBy`/`countBy` and their
+// stream-collapse forms (imported by src/stream-methods.ts) so both stay consistent.
+export function stringKeyExpr(value: unknown): unknown {
+  return { $ifNull: [{ $toString: value }, "null"] };
+}
+
 // group/count key set of an array: distinct STRINGIFIED iteratee values (lodash
 // coerces group keys to strings). `$setUnion` needs a 2-arg form to be valid.
 function distinctKeysExpr(arr: unknown, it: ResolvedIteratee): unknown {
-  return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
+  return { $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.value) } }, []] };
 }
 
 // The iteratee-keyed values of an array: `[it(x) for x in arr]` (NOT stringified —
@@ -3894,7 +3906,7 @@ function generateMethodCall(
       checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
       // { <key>: <last element with that key> } — $arrayToObject keeps the last.
-      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: { $toString: it.value }, v: it.elem } } } };
+      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: stringKeyExpr(it.value), v: it.elem } } } };
     }
     case "groupBy":
     case "countBy": {
@@ -3902,7 +3914,7 @@ function generateMethodCall(
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
       const filtered = {
-        $filter: { input: genObj, as: it.as, cond: { $eq: [{ $toString: it.value }, "$$jsmqlKey"] } },
+        $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } },
       };
       return {
         $arrayToObject: {

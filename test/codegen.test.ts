@@ -3273,7 +3273,11 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
   it(".keyBy(iteratee) → $arrayToObject (last wins, key stringified)", () => {
     expect(jsmql.expr('$.a.keyBy("id")')).toEqual({
       $arrayToObject: {
-        $map: { input: "$a", as: "jsmqlItem", in: { k: { $toString: "$$jsmqlItem.id" }, v: "$$jsmqlItem" } },
+        $map: {
+          input: "$a",
+          as: "jsmqlItem",
+          in: { k: { $ifNull: [{ $toString: "$$jsmqlItem.id" }, "null"] }, v: "$$jsmqlItem" },
+        },
       },
     });
   });
@@ -3295,6 +3299,16 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr('$.a.maxBy("x")')).toHaveProperty("$let");
     expect(jsmql.expr("$.a.union($.b)")).toHaveProperty("$reduce");
     expect(jsmql.expr("$.a.zipObject($.b)")).toHaveProperty("$arrayToObject");
+  });
+  it('keyBy/groupBy/countBy keys are null-safe ($ifNull → "null", so a missing/null key doesn\'t crash $arrayToObject)', () => {
+    // `$toString(missing)` is null and `$arrayToObject` rejects a null key; the
+    // `$ifNull` wrap coerces it to "null" (matching String(null)). Verified on mongod.
+    const wrap = { $ifNull: [{ $toString: "$$jsmqlItem.t" }, "null"] };
+    // keyBy: key built directly on each element.
+    expect(JSON.stringify(jsmql.expr('$.a.keyBy("t")'))).toContain(JSON.stringify(wrap));
+    // groupBy/countBy: the distinct-key set uses the same wrap.
+    expect(JSON.stringify(jsmql.expr('$.a.groupBy("t")'))).toContain(JSON.stringify(wrap));
+    expect(JSON.stringify(jsmql.expr('$.a.countBy("t")'))).toContain(JSON.stringify(wrap));
   });
 });
 
