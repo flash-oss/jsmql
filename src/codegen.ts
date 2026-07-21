@@ -653,6 +653,17 @@ export function valueMethodNames(): readonly string[] {
   return Object.keys(METHODS);
 }
 
+// The invariant result category of each method (`METHODS[name].returns`), or
+// `undefined` when the result type depends on the receiver/args. Consumed by the
+// same generator drift-check to assert each value-method augmentation's TS return
+// type stays in the category the registry declares — so a registry `returns`
+// change that isn't mirrored in the ambient signature fails the build.
+export function valueMethodReturns(): Record<string, MethodReturn | undefined> {
+  const out: Record<string, MethodReturn | undefined> = {};
+  for (const name of Object.keys(METHODS)) out[name] = METHODS[name].returns;
+  return out;
+}
+
 // Method names that always return a string / array / boolean — derived from METHODS.
 const STRING_RETURNING_METHODS = methodsWhere((m) => m.returns === "string");
 

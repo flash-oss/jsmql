@@ -34,7 +34,7 @@ import yaml from "js-yaml";
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
 import { streamMethodNames } from "../src/stream-methods.ts";
-import { valueMethodNames } from "../src/codegen.ts";
+import { valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -525,6 +525,39 @@ function valueMethodAugmentationBlock() {
   if (stray.length > 0) {
     throw new Error(
       `generate-ops: VALUE_METHOD_SIGNATURES has entries that are unknown or skipped: ${stray.sort().join(", ")}`,
+    );
+  }
+
+  // Return-category drift guard. Where the METHODS registry declares an invariant
+  // result category (`returns`), the augmentation's TS return type must stay in
+  // that category — so a registry change (e.g. a method's result becomes an
+  // object) that isn't mirrored in the ambient signature fails the build instead
+  // of silently drifting. Methods with no registry `returns` (result depends on
+  // the receiver/args — `.head` → element `T`, `.groupBy` value-vs-stream, …) are
+  // skipped: there's no invariant to enforce.
+  const registryReturns = valueMethodReturns();
+  const inCategory = {
+    string: (r) => r === "string",
+    number: (r) => r === "number",
+    bool: (r) => r === "boolean",
+    object: (r) => r.startsWith("Record<"),
+    // T[] / any[] / any[][] / string[] — and the `.partition` tuple `[T[], T[]]`.
+    array: (r) => r.endsWith("[]") || (r.startsWith("[") && r.endsWith("]")),
+  };
+  const drift = [];
+  for (const name of augmentable) {
+    const category = registryReturns[name];
+    if (category === undefined) continue;
+    const { sig } = VALUE_METHOD_SIGNATURES[name];
+    const ret = sig.slice(sig.lastIndexOf("): ") + 3).trim();
+    if (!inCategory[category] || !inCategory[category](ret)) {
+      drift.push(`.${name}(): registry returns "${category}" but the ambient signature returns "${ret}"`);
+    }
+  }
+  if (drift.length > 0) {
+    throw new Error(
+      `generate-ops: value-method augmentation return types drifted from the METHODS registry:\n  ${drift.sort().join("\n  ")}\n` +
+        `Reconcile the VALUE_METHOD_SIGNATURES entry with the registry 'returns' (or vice versa) so completion stays truthful.`,
     );
   }
 

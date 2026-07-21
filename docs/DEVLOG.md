@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-21 — chore: drift guard tying value-method ambient return types to the `METHODS` registry
+
+After merging master's method-chain type-checking, the `METHODS` registry now carries an invariant
+result category (`returns` — now incl. `number`/`object`) for most methods. The value-method ambient
+signatures in `scripts/generate-ops.mjs` (`VALUE_METHOD_SIGNATURES`) were hand-authored and only
+manually verified to agree. Added a generator drift guard (via a new `valueMethodReturns()` export
+from `src/codegen.ts`) that extracts each augmentation's TS return type and asserts it stays in the
+registry's declared category — so a future `returns` change that isn't mirrored in the ambient
+signature fails the build instead of silently making completion lie. Methods whose result depends on
+the receiver/args (`.head` → element `T`, `.groupBy` value-vs-stream, `.max`/`.min`, `.clamp`) declare
+no invariant `returns` and are skipped. Complements the existing membership check (every registry
+value method needs a signature or a `VALUE_METHOD_SKIP` entry).
+
 ## 2026-07-21 — feat: `@koresar/jsmql/ops` completion for the lodash value methods (+ `$$.reject`)
 
 `import "@koresar/jsmql/ops"` now completes the lodash-flavoured **value** methods
