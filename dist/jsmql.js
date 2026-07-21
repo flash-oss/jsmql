@@ -4463,11 +4463,11 @@ var METHODS = {
   replaceAll: { returns: "string", optional: "string" },
   match: { optional: "string" },
   matchAll: { optional: "string" },
-  search: { optional: "string" },
+  search: { returns: "number", optional: "string" },
   padStart: { returns: "string", optional: "string" },
   padEnd: { returns: "string", optional: "string" },
   repeat: { returns: "string", optional: "string" },
-  indexOf: { optional: "either" },
+  indexOf: { returns: "number", optional: "either" },
   includes: { returns: "bool", optional: "either" },
   // ── Array ─────────────────────────────────────────────────────────────────
   at: { optional: "array" },
@@ -4486,16 +4486,19 @@ var METHODS = {
   map: { returns: "array", optional: "array" },
   filter: { returns: "array", optional: "array" },
   find: { optional: "array" },
-  findIndex: {},
+  findIndex: { returns: "number" },
   findLast: { optional: "array" },
-  findLastIndex: { optional: "array" },
-  lastIndexOf: {},
+  findLastIndex: { returns: "number", optional: "array" },
+  lastIndexOf: { returns: "number" },
   some: { returns: "bool", optional: "array" },
   every: { returns: "bool", optional: "array" },
   reduce: { optional: "array" },
   reduceRight: {},
   join: { returns: "string", optional: "array" },
   // returns a string, but the receiver is an array
+  // NB `toString` is intentionally left without a `returns` — the key collides with
+  // Object.prototype.toString and confuses tsc's contextual typing of the literal;
+  // it's also universal (never gated), so its return type doesn't matter here.
   toString: {},
   // ── Mutators (shimmed with tailored errors that point at immutable variants) ─
   sort: {},
@@ -4513,36 +4516,42 @@ var METHODS = {
   values: {},
   toLocaleString: {},
   // ── Date ────────────────────────────────────────────────────────────────────
-  getFullYear: { receiver: "date" },
-  getMonth: { receiver: "date" },
-  getDate: { receiver: "date" },
-  getDay: { receiver: "date" },
-  getHours: { receiver: "date" },
-  getMinutes: { receiver: "date" },
-  getSeconds: { receiver: "date" },
-  getMilliseconds: { receiver: "date" },
-  getUTCFullYear: { receiver: "date" },
-  getUTCMonth: { receiver: "date" },
-  getUTCDate: { receiver: "date" },
-  getUTCDay: { receiver: "date" },
-  getUTCHours: { receiver: "date" },
-  getUTCMinutes: { receiver: "date" },
-  getUTCSeconds: { receiver: "date" },
-  getUTCMilliseconds: { receiver: "date" },
-  getTime: {},
+  // The accessors all return a number ($year/$month/…); toISOString → string;
+  // plus/minus → a date (same-as-receiver, so returns is omitted).
+  getFullYear: { returns: "number", receiver: "date" },
+  getMonth: { returns: "number", receiver: "date" },
+  getDate: { returns: "number", receiver: "date" },
+  getDay: { returns: "number", receiver: "date" },
+  getHours: { returns: "number", receiver: "date" },
+  getMinutes: { returns: "number", receiver: "date" },
+  getSeconds: { returns: "number", receiver: "date" },
+  getMilliseconds: { returns: "number", receiver: "date" },
+  getUTCFullYear: { returns: "number", receiver: "date" },
+  getUTCMonth: { returns: "number", receiver: "date" },
+  getUTCDate: { returns: "number", receiver: "date" },
+  getUTCDay: { returns: "number", receiver: "date" },
+  getUTCHours: { returns: "number", receiver: "date" },
+  getUTCMinutes: { returns: "number", receiver: "date" },
+  getUTCSeconds: { returns: "number", receiver: "date" },
+  getUTCMilliseconds: { returns: "number", receiver: "date" },
+  getTime: { returns: "number" },
   // → $toLong, which converts strings/numbers, so the receiver is NOT required to be a date
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
-  sum: { optional: "array" },
-  mean: { optional: "array" },
+  sum: { returns: "number", optional: "array" },
+  mean: { returns: "number", optional: "array" },
   max: { optional: "array" },
+  // returns the max ELEMENT (unknown type), not a number
   min: { optional: "array" },
-  sumBy: { optional: "array" },
-  meanBy: { optional: "array" },
+  // returns the min ELEMENT (unknown type), not a number
+  sumBy: { returns: "number", optional: "array" },
+  meanBy: { returns: "number", optional: "array" },
   minBy: { optional: "array" },
+  // returns the ELEMENT with the min key
   maxBy: { optional: "array" },
+  // returns the ELEMENT with the max key
   uniq: { returns: "array", optional: "array" },
   uniqBy: { returns: "array", optional: "array" },
   sortedUniq: { returns: "array", optional: "array" },
@@ -4566,34 +4575,37 @@ var METHODS = {
   first: { optional: "array" },
   last: { optional: "array" },
   nth: { optional: "array" },
-  size: { optional: "array" },
+  size: { returns: "number", optional: "array" },
   takeWhile: { returns: "array", optional: "array" },
   dropWhile: { returns: "array", optional: "array" },
   takeRightWhile: { returns: "array", optional: "array" },
   dropRightWhile: { returns: "array", optional: "array" },
   sample: { optional: "array" },
   sampleSize: { returns: "array", optional: "array" },
-  zipObject: { optional: "array" },
+  zipObject: { returns: "object", optional: "array" },
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
   zipWith: { returns: "array", optional: "array" },
   unzipWith: {},
   // shimmed with a tailored "use .unzip().map(group => …)" error
-  keyBy: { optional: "array" },
+  keyBy: { returns: "object", optional: "array" },
   groupBy: { optional: "array" },
-  countBy: { optional: "array" },
+  // context-dependent result (value → object, stream → doc-stream); no invariant return
+  countBy: { returns: "object", optional: "array" },
   partition: { returns: "array", optional: "array" },
   reject: { returns: "array", optional: "array" },
   // ── lodash object methods (Phase 1) ─────────────────────────────────────────
-  mapValues: {},
-  mapKeys: {},
+  mapValues: { returns: "object" },
+  mapKeys: { returns: "object" },
   pick: {},
+  // context-dependent (value → object, stream → $project doc-stream)
   omit: {},
-  pickBy: {},
-  omitBy: {},
-  invert: {},
+  // context-dependent (value → object, stream → $project doc-stream)
+  pickBy: { returns: "object" },
+  omitBy: { returns: "object" },
+  invert: { returns: "object" },
   toPairs: { returns: "array" },
-  fromPairs: { optional: "array" },
+  fromPairs: { returns: "object", optional: "array" },
   // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
   capitalize: { returns: "string", optional: "string" },
   upperFirst: { returns: "string", optional: "string" },
@@ -4607,10 +4619,11 @@ var METHODS = {
   truncate: { returns: "string", optional: "string" },
   // ── lodash number methods (Phase 1) ─────────────────────────────────────────
   clamp: {},
+  // result type follows the receiver/args (number OR date) — no invariant return
   inRange: { returns: "bool" },
-  round: {},
-  ceil: {},
-  floor: {},
+  round: { returns: "number" },
+  ceil: { returns: "number" },
+  floor: { returns: "number" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
   intersection: {},
@@ -4767,6 +4780,65 @@ function isProvablyBool(expr) {
     default:
       return false;
   }
+}
+var NUMBER_RECEIVER_METHODS = /* @__PURE__ */ new Set(["round", "ceil", "floor", "inRange"]);
+var OBJECT_RECEIVER_METHODS = /* @__PURE__ */ new Set([
+  "mapValues",
+  "mapKeys",
+  "invert",
+  "pickBy",
+  "omitBy",
+  "pick",
+  "omit",
+  "toPairs"
+]);
+function requiredReceiverFamily(method) {
+  const meta = METHODS[method];
+  if (meta === void 0) return null;
+  if (method === "size" || method === "toString" || method === "getTime") return null;
+  if (meta.receiver === "date") return "date";
+  if (NUMBER_RECEIVER_METHODS.has(method)) return "number";
+  if (OBJECT_RECEIVER_METHODS.has(method)) return "object";
+  if (meta.optional === "string") return "string";
+  if (meta.optional === "array") return "array";
+  return null;
+}
+function certainReceiverType(o) {
+  if (isProvablyBool(o)) return "bool";
+  if (isArrayProducing(o)) return "array";
+  if (o.type === "MethodCall") {
+    if (o.method === "slice") return certainReceiverType(o.object);
+    const r = METHODS[o.method]?.returns;
+    if (r === "string" || r === "number" || r === "object") return r;
+  }
+  return null;
+}
+var RECEIVER_NOUN = {
+  bool: "a boolean",
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  date: "a date",
+  object: "an object (a document)"
+};
+function receiverPhrase(o) {
+  return o.type === "MethodCall" ? `'.${o.method}(...)'` : "the value before it";
+}
+function rejectIncompatibleChain(recv, method, object) {
+  if (recv === "bool") {
+    if (method === "toString" || method === "getTime") return;
+    throw new CodegenError(
+      `'.${method}(...)' can't run on a boolean \u2014 ${receiverPhrase(object)} evaluates to true/false, which has no methods (only .toString() / .getTime()). Move '.${method}(...)' ahead of the step that collapses the value to a boolean.`,
+      object.pos
+    );
+  }
+  const need = requiredReceiverFamily(method);
+  if (need === null || need === recv) return;
+  const hint = recv === "array" && need === "object" ? `Use it on a single document, or '.map(x => x.${method}(...))' to apply it per element.` : recv === "array" ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.` : recv === "object" && need === "array" ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.` : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
+  throw new CodegenError(
+    `'.${method}(...)' expects ${RECEIVER_NOUN[need]} receiver, but ${receiverPhrase(object)} returns ${RECEIVER_NOUN[recv]}. ${hint}`,
+    object.pos
+  );
 }
 function jsBool(value) {
   return {
@@ -5761,8 +5833,11 @@ function takeDropWhile(arrExpr, pred, drop) {
     }
   };
 }
+function stringKeyExpr(value) {
+  return { $ifNull: [{ $toString: value }, "null"] };
+}
 function distinctKeysExpr(arr, it) {
-  return { $setUnion: [{ $map: { input: arr, as: it.as, in: { $toString: it.value } } }, []] };
+  return { $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.value) } }, []] };
 }
 function iterateeKeys(arr, it) {
   return { $map: { input: arr, as: it.as, in: it.value } };
@@ -5833,6 +5908,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
   const genObj = neutral !== void 0 ? wrapIfNull(rawObj, neutral) : rawObj;
   const receiverType = METHODS[method]?.receiver;
   if (receiverType !== void 0) checkArgType(`.${method}`, "", object, receiverType);
+  if (method in METHODS) {
+    const recv = certainReceiverType(object);
+    if (recv !== null) rejectIncompatibleChain(recv, method, object);
+  }
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
     case "trim":
@@ -6855,7 +6934,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "keyBy");
       checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
-      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: { $toString: it.value }, v: it.elem } } } };
+      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: stringKeyExpr(it.value), v: it.elem } } } };
     }
     case "groupBy":
     case "countBy": {
@@ -6863,7 +6942,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
       const filtered = {
-        $filter: { input: genObj, as: it.as, cond: { $eq: [{ $toString: it.value }, "$$jsmqlKey"] } }
+        $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } }
       };
       return {
         $arrayToObject: {
@@ -9899,7 +9978,14 @@ var GROUP_BY = {
   lower(args, ctx, callPos) {
     const a = args[0];
     if (a.type === "StringLiteral") {
-      return { stages: [{ $group: { _id: `$${a.value}` } }], clearLets: true };
+      return {
+        stages: [
+          { $group: { _id: `$${a.value}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+          { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
+        ],
+        clearLets: true
+      };
     }
     const body = generateGroupBody(a, ctx, callPos);
     return { stages: [{ $group: body }], clearLets: true };
@@ -9912,7 +9998,31 @@ var COUNT_BY = {
   },
   lower(args) {
     const key = args[0].value;
-    return { stages: [{ $sortByCount: `$${key}` }], clearLets: true };
+    return {
+      stages: [
+        { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
+        { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+        { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
+      ],
+      clearLets: true
+    };
+  }
+};
+var KEY_BY = {
+  name: "keyBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".keyBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = args[0].value;
+    return {
+      stages: [
+        { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
+        { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+        { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
+      ],
+      clearLets: true
+    };
   }
 };
 var UNIQ_BY = {
@@ -10367,7 +10477,6 @@ var VALUE_TERMINAL_METHODS = /* @__PURE__ */ new Set([
   "some",
   "includes",
   "partition",
-  "keyBy",
   // Aggregates that collapse the stream to one scalar — same value-position rule.
   "sum",
   "mean",
@@ -10399,6 +10508,7 @@ var STREAM_METHODS = {
   toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
+  keyBy: KEY_BY,
   uniqBy: UNIQ_BY,
   pick: PICK,
   omit: OMIT,
@@ -11678,6 +11788,11 @@ function isValueCollapsingMap(m) {
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
   return arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0 && arg.body.type !== "ObjectLiteral";
 }
+function isCollapsingTerminal(m) {
+  if (m.method === "countBy" || m.method === "keyBy") return true;
+  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
+  return false;
+}
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
   const methods = [];
@@ -11691,7 +11806,19 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   const head = methods[0];
   const direct = detectLookupCall(head, outerCtx);
   if (direct === null) return null;
-  if (direct.method !== "filter") return null;
+  if (direct.method !== "filter") {
+    if (direct.method === "find" && methods.length > 1) {
+      const next = methods[1];
+      const fam = requiredReceiverFamily(next.method);
+      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+        throw new CodegenError(
+          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+          next.pos
+        );
+      }
+    }
+    return null;
+  }
   for (let i = 1; i < methods.length; i++) {
     if (lookupStreamMethod(methods[i].method) === null) return null;
   }
@@ -11721,7 +11848,11 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
   const slotRef = { type: "FieldRef", path: slot, pos: expr.pos };
   const rewritten = terminalMap !== null ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos } : slotRef;
-  return { stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }], rewritten };
+  const stages = [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }];
+  if (isCollapsingTerminal(methods[methods.length - 1])) {
+    stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
+  }
+  return { stages, rewritten };
 }
 function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   const stages = [];

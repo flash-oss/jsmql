@@ -2246,10 +2246,12 @@ declare global {
     ): JsmqlCollectionRef;
     /** Reverse the preceding sort — flips the preceding `$sort`. */
     toReversed(): JsmqlCollectionRef;
-    /** Group the stream → `$group`. Pass a `$group` body (`{ _id, … }`) or a field name. */
+    /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
     groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
-    /** Tally documents per distinct key → `$sortByCount`. */
+    /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */
     countBy(field: string): JsmqlCollectionRef;
+    /** Key documents by a field → the lodash object `{ <key>: <last doc> }`. */
+    keyBy(field: string): JsmqlCollectionRef;
     /** One document per distinct key → `$group` + `$replaceWith`. */
     uniqBy(field: string): JsmqlCollectionRef;
     /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */

@@ -133,13 +133,16 @@ const STREAM_RESHAPERS = [
   "sampleSize(2)",
   "shuffle()",
   "flatMap('items')",
-  "countBy('type')",
 ];
+// NB `countBy`/`groupBy` are NOT stream reshapers: like lodash they COLLAPSE the
+// stream to a single object (`{ <key>: <count> }` / `{ <key>: [docs] }`), so they
+// live with the value-collapsing terminals below, not here — pairing them with a
+// field-stripping reshaper would feed `$arrayToObject` a null key (mongod-rejected).
 // stream-mode reshapers over the `orders` lookup (doc-PRESERVING, on real order
 // fields) — so the value-terminals below still see `total`/`userId`. (The doc-
-// reshaping ones — map/pick/omit/flatMap/countBy — are covered by the reshaper×
-// reshaper matrix; pairing them with a field-referencing terminal is a nonsensical
-// chain, not a lowering to test.)
+// reshaping ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper
+// matrix; pairing them with a field-referencing terminal is a nonsensical chain,
+// not a lowering to test.)
 const STREAM_LOOKUP_RESHAPERS = [
   "filter(o => o.total > 5)",
   "sort('total')",

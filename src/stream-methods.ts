@@ -9,7 +9,7 @@
 
 import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
-import { CodegenError, generateWithCtx, type GenerateCtx } from "./codegen.ts";
+import { CodegenError, generateWithCtx, type GenerateCtx, stringKeyExpr } from "./codegen.ts";
 import {
   aggregateArgToLambda,
   EMPTY_ENCLOSING,
@@ -1144,16 +1144,19 @@ function buildKeySortSpec(arg: Expr, sig: string): Record<string, 1 | -1> {
   return spec;
 }
 
-// ── .groupBy(key | { _id, <field>: <accumulator> }) → $group ───────────────────
+// ── .groupBy(key | { _id, <field>: <accumulator> }) → object collapse / $group ──
 //
-// Two arg shapes:
-//   • a `$group` body object — `{ _id: "$dept", n: $sum(1) }` — lowered verbatim
-//     to a `$group` stage. Field-value slots (every key but `_id`) generate in
-//     accumulator context, so `$addToSet` / `$push` / … pass the codegen gate,
-//     exactly like the direct `$group(...)` stage.
-//   • a bare field name — `.groupBy("dept")` — groups by that field with no
-//     accumulators: `{ _id: "$dept" }` (one document per distinct value). Add
-//     accumulators by passing the object form.
+// Two arg shapes, deliberately different outputs:
+//   • a bare field name — `.groupBy("dept")` — is lodash `_.groupBy(coll, key)`,
+//     so it collapses the stream to the OBJECT `{ <keyValue>: [elements] }` (see
+//     the string branch in `lower` below and COUNT_BY for the pattern). This
+//     mirrors value-mode `$.arr.groupBy(...)`.
+//   • a `$group` body object — `{ _id: "$dept", n: $sum(1) }` — is jsmql's
+//     `$group`-builder: lowered verbatim to a `$group` stage (a stream of group
+//     docs). Field-value slots (every key but `_id`) generate in accumulator
+//     context, so `$addToSet` / `$push` / … pass the codegen gate, exactly like
+//     the direct `$group(...)` stage. There is no lodash analogue for the
+//     accumulator form, which is why it keeps the stream shape.
 //
 // (Per-key accumulator scoping mirrors `pipeline.ts`'s `$group` body generation;
 // it's reimplemented locally because pipeline.ts imports THIS module — importing
@@ -1217,17 +1220,37 @@ const GROUP_BY: StreamMethodDef = {
   lower(args, ctx, callPos) {
     const a = args[0] as Expr;
     if (a.type === "StringLiteral") {
-      return { stages: [{ $group: { _id: `$${a.value}` } }], clearLets: true };
+      // Bare-key form is lodash `_.groupBy(coll, key)` → the OBJECT
+      // `{ <keyValue>: [elements] }`. Collapse the stream to that single object
+      // (mirroring value-mode `$.arr.groupBy(...)`): `$push: "$$ROOT"` gathers each
+      // group's docs, then the second `$group` + `$arrayToObject` build the object.
+      // `GROUP_TMP` is consumed by the very next stage each time (see COUNT_BY /
+      // namespace.ts). The object-body form below stays a real `$group` stage —
+      // it carries accumulators with no lodash analogue.
+      return {
+        stages: [
+          { $group: { _id: `$${a.value}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+          { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
+        ],
+        clearLets: true,
+      };
     }
     const body = generateGroupBody(a as Extract<Expr, { type: "ObjectLiteral" }>, ctx, callPos);
     return { stages: [{ $group: body }], clearLets: true };
   },
 };
 
-// ── .countBy(field) → $sortByCount ────────────────────────────────────────────
+// ── .countBy(field) → object collapse ─────────────────────────────────────────
 //
-// lodash `_.countBy(coll, key)` — a tally per distinct key. Maps to `$sortByCount`,
-// which emits one `{ _id, count }` document per group, sorted by count descending.
+// lodash `_.countBy(coll, key)` returns an OBJECT `{ <keyValue>: <count> }`, so the
+// stream form collapses the whole stream to that single object (mirroring value-mode
+// `$.arr.countBy(...)`, not MongoDB's `$sortByCount` stream of `{ _id, count }` docs).
+// Two `$group`s then `$arrayToObject`: tally per key → gather the `{k, v}` pairs into
+// the flat `GROUP_TMP` slot (a group accumulator key can't be dotted) → build the
+// object. `$replaceWith` consumes `GROUP_TMP` on the very next stage, so it never
+// reaches output. For the count-descending stream instead, write the `$sortByCount`
+// stage directly. See docs/specs/stream-methods.md.
 const COUNT_BY: StreamMethodDef = {
   name: "countBy",
   validate(args, callPos) {
@@ -1235,7 +1258,40 @@ const COUNT_BY: StreamMethodDef = {
   },
   lower(args) {
     const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
-    return { stages: [{ $sortByCount: `$${key}` }], clearLets: true };
+    return {
+      stages: [
+        { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
+        { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+        { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
+      ],
+      clearLets: true,
+    };
+  },
+};
+
+// ── .keyBy(field) → object collapse ───────────────────────────────────────────
+//
+// lodash `_.keyBy(coll, key)` returns the OBJECT `{ <keyValue>: <last doc> }` (last
+// wins on a collision). The stream form collapses to that single object (mirroring
+// value-mode `$.arr.keyBy(...)`): `$group` with `$last: "$$ROOT"` keeps the last doc
+// per key, then the second `$group` + `$arrayToObject` build the object. "Last"
+// follows the stream's current order, so precede with a `.sort(...)` when which-
+// duplicate-wins matters (same caveat as `.uniqBy`, which keeps the first).
+const KEY_BY: StreamMethodDef = {
+  name: "keyBy",
+  validate(args, callPos) {
+    validateSingleFieldArg(".keyBy(field)", args, callPos);
+  },
+  lower(args) {
+    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    return {
+      stages: [
+        { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
+        { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
+        { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
+      ],
+      clearLets: true,
+    };
   },
 };
 
@@ -2023,13 +2079,15 @@ function classifyConcatCall(expr: Expr, accParam: string, dParam: string): Array
 }
 
 // lodash reductions that collapse a document stream to a single VALUE (a doc,
-// scalar, bool, or object) rather than reshaping it into another stream. They
-// "pivot to value-mode" like a terminal `.map`: valid only in a VALUE position
-// (`const x = <chain>` / `$.field = <chain>`), where they lower value-mode over
-// the materialised lookup result; rejected as a `$$ =` stream pivot or a bare
-// statement (a value isn't a pipeline). `.find`/`.findLast`/`.at`/`.reduce` are
-// the pre-existing members with their own tailored messages (see
+// scalar, bool, or array) and have **no** stream lowering, so they're valid only in
+// a VALUE position (`const x = <chain>` / `$.field = <chain>`), where they lower
+// value-mode over the materialised lookup result; rejected as a `$$ =` stream pivot
+// or a bare statement (a value isn't a pipeline). `.find`/`.findLast`/`.at`/`.reduce`
+// are the pre-existing members with their own tailored messages (see
 // `unknownStreamMethod`); this set drives the same treatment for the rest.
+// NB `.keyBy`/`.countBy`/`.groupBy` are NOT here: they also collapse to an object,
+// but DO have a stream lowering (a one-doc `$arrayToObject` stream), so they work in
+// BOTH positions — see COUNT_BY / GROUP_BY / KEY_BY.
 export const VALUE_TERMINAL_METHODS: ReadonlySet<string> = new Set([
   "head",
   "first",
@@ -2040,7 +2098,6 @@ export const VALUE_TERMINAL_METHODS: ReadonlySet<string> = new Set([
   "some",
   "includes",
   "partition",
-  "keyBy",
   // Aggregates that collapse the stream to one scalar — same value-position rule.
   "sum",
   "mean",
@@ -2075,6 +2132,7 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
+  keyBy: KEY_BY,
   uniqBy: UNIQ_BY,
   pick: PICK,
   omit: OMIT,

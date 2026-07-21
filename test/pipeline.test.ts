@@ -854,7 +854,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  it("the value-position rule covers every value terminal (head/last/nth/size/every/some/partition/keyBy + aggregates)", () => {
+  it("the value-position rule covers every value terminal (head/last/nth/size/every/some/partition + aggregates)", () => {
+    // NB `keyBy`/`countBy`/`groupBy` are NOT here: they collapse to an object but DO
+    // have a stream lowering, so they're valid as a `$$ =` pivot too (asserted below).
     for (const term of [
       "head()",
       "last()",
@@ -862,7 +864,6 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       "size()",
       "every(o => o.paid)",
       "partition(o => o.vip)",
-      'keyBy("sku")',
       // Aggregates collapse the stream to one scalar → same value-position rule.
       "sum()",
       'sumBy("total")',
@@ -873,6 +874,45 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       // …but the same chain in a value position compiles.
       expect(() => jsmql(`$.f = $$$.orders.filter(o => o.userId === $._id).${term};`)).not.toThrow();
     }
+  });
+
+  it("keyBy/countBy/groupBy collapse to a lodash object and are valid as a `$$ =` pivot", () => {
+    // These three used to be value-position-only (keyBy) or emit a `$sortByCount` /
+    // `$group` stream (countBy/groupBy); now all collapse to the lodash object and
+    // work as a stream pivot too. Each ends in `$replaceWith: { $arrayToObject }`.
+    for (const term of ['keyBy("sku")', 'countBy("sku")', 'groupBy("sku")']) {
+      const stages = jsmql(`$$ = $$.${term};`) as Record<string, unknown>[];
+      expect(stages.at(-1)).toHaveProperty("$replaceWith");
+    }
+  });
+
+  it("value-position .filter(pred).countBy(...) unwraps the collapsed one-doc result with $first", () => {
+    // The sub-pipeline collapses to one object doc, but $lookup.as is always an
+    // array → the slot holds [obj]. The trailing $set unwraps it to the object
+    // ($ifNull → {} on an empty foreign match, lodash-faithful). Verified on mongod.
+    const stages = jsmql(`$.byStatus = $$$.orders.filter(o => o.userId === $._id).countBy("status");`) as Record<
+      string,
+      unknown
+    >[];
+    expect(stages).toContainEqual({ $set: { "__jsmql.tmp.1": { $ifNull: [{ $first: "$__jsmql.tmp.1" }, {}] } } });
+    // keyBy and the bare-key groupBy collapse the same way.
+    for (const term of ['keyBy("status")', 'groupBy("status")']) {
+      const s = jsmql(`$.g = $$$.orders.filter(o => o.userId === $._id).${term};`) as Record<string, unknown>[];
+      expect(s).toContainEqual({ $set: { "__jsmql.tmp.1": { $ifNull: [{ $first: "$__jsmql.tmp.1" }, {}] } } });
+    }
+  });
+
+  it("rejects an array/string/number method chained on a `.find()` lookup (a single document)", () => {
+    // `.find` yields ONE document; an array/string/number method on it is impossible.
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).take(5);`)).toThrow(
+      /returns a single matched document.*needs an array/,
+    );
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).map(o => o.total);`)).toThrow(
+      /returns a single matched document.*needs an array/,
+    );
+    // …but object methods and field reads ARE valid on the matched document.
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).pick(["total"]);`)).not.toThrow();
+    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).total;`)).not.toThrow();
   });
 
   it("non-correlated predicate keeps using $unionWith (no regression)", () => {

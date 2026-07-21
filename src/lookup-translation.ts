@@ -24,7 +24,15 @@ import type {
   FuncDecl,
 } from "./ast.ts";
 import { someArg, someExpr, someStmt } from "./ast-walk.ts";
-import { CodegenError, EMPTY_CTX, generateWithCtx, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
+import {
+  CodegenError,
+  EMPTY_CTX,
+  generateWithCtx,
+  freshSubPipelineCtx,
+  type GenerateCtx,
+  RECEIVER_NOUN,
+  requiredReceiverFamily,
+} from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
 import { LENGTH_SLOT, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "./namespace.ts";
 import { didYouMean } from "./levenshtein.ts";
@@ -2228,6 +2236,17 @@ export function isValueCollapsingMap(m: MethodCall): boolean {
   );
 }
 
+// A chain terminal that COLLAPSES the sub-pipeline to a single object document
+// (`$group` … + `$replaceWith: { $arrayToObject }`) — lodash `.countBy`/`.keyBy`,
+// and `.groupBy("<key>")` (the bare-string form only; the `$group`-body form stays
+// a document stream). `$lookup.as` is always an array, so the one collapsed doc
+// lands as `[obj]`; the caller unwraps it with `$first` (see the return below).
+function isCollapsingTerminal(m: MethodCall): boolean {
+  if (m.method === "countBy" || m.method === "keyBy") return true;
+  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
+  return false;
+}
+
 function tryExtractChainedLookup(
   expr: Expr,
   outerCtx: GenerateCtx,
@@ -2249,7 +2268,26 @@ function tryExtractChainedLookup(
   const head = methods[0];
   const direct = detectLookupCall(head, outerCtx);
   if (direct === null) return null;
-  if (direct.method !== "filter") return null;
+  if (direct.method !== "filter") {
+    // `.find(<pred>)` yields a single matched DOCUMENT. Chaining an array/string/
+    // number/date method on it can never make sense — reject with a message that
+    // points at `.filter(...)` (run over all matches) or a field read. Object
+    // methods (`.pick`/`.omit`/…) and field access ARE valid on a document, so they
+    // fall through to the existing materialise-then-value-mode path (`return null`).
+    if (direct.method === "find" && methods.length > 1) {
+      const next = methods[1];
+      const fam = requiredReceiverFamily(next.method);
+      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+        throw new CodegenError(
+          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. ` +
+            `Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, ` +
+            `or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+          next.pos,
+        );
+      }
+    }
+    return null;
+  }
   // Every subsequent method must come from the stream-methods registry —
   // otherwise the chain falls through to the existing expression-form path,
   // which can still handle e.g. string methods on lookup results.
@@ -2314,7 +2352,16 @@ function tryExtractChainedLookup(
     terminalMap !== null
       ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos }
       : slotRef;
-  return { stages: [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }], rewritten };
+  const stages: object[] = [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }];
+  // A collapsing terminal (`.countBy`/`.keyBy`/`.groupBy("k")`) makes the sub-
+  // pipeline emit exactly one object doc, but `$lookup.as` is always an array — so
+  // the slot holds `[obj]`. Unwrap it to the single object (mirrors lowerLookup's
+  // `.find` $first); `$ifNull(…, {})` makes an empty foreign match yield `{}`
+  // (lodash `_.countBy([]) === {}`) rather than a missing field.
+  if (isCollapsingTerminal(methods[methods.length - 1])) {
+    stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
+  }
+  return { stages, rewritten };
 }
 
 function descendAndExtract(
