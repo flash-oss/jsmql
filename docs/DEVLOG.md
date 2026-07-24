@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-24 — feat: value-mode `.countBy()` / `.groupBy()` / `.keyBy()` accept no iteratee (identity default)
+
+lodash defaults the iteratee of its `*By` collectors to `_.identity` — `_.countBy([1,2,3,4,5,2,3])`
+→ `{ "1": 1, "2": 2, "3": 2, "4": 1, "5": 1 }` (count by the element itself). jsmql's value-mode
+`resolveIteratee(undefined, …)` already produced that identity iteratee (`$$jsmqlItem`), but the three
+object-collapse methods gated on `checkArity(…, { exact: 1 })`, so the no-arg call was rejected. Relaxed
+`.countBy` / `.groupBy` / `.keyBy` to `{ sig: "[iteratee]", allowed: [0, 1] }` in
+[src/codegen.ts](../src/codegen.ts) — the only change; the lowering is untouched. All three no-arg shapes
+were run on a live mongod: `[1,2,3,4,5,2,3].countBy()` → `{1:1,2:2,3:2,4:1,5:1}`, `[1,2,2].groupBy()` →
+`{1:[1],2:[2,2]}`, `[1,2,3].keyBy()` → `{1:1,2:2,3:3}`, `[].countBy()` → `{}`.
+
+Scope is deliberately those three only. `.sumBy`/`.meanBy`/`.minBy`/`.maxBy`/`.uniqBy` stay `exact: 1`:
+their lodash no-arg forms are exactly the already-shipped `.sum`/`.mean`/`.min`/`.max`/`.uniq`, and a
+second spelling for the same capability is the output drift jsmql rejects (see
+`feedback_no_silent_output_drift`). The **stream** forms (`$$.countBy("field")`, …) also stay
+field-required: a `$$`/`$$$.<coll>` stream is always a stream of *documents*, which has no scalar identity
+to collapse by — a no-arg lowering would group whole documents and emit `$toString`-on-object MQL the
+server rejects (HR3). Ambient types (`scripts/generate-ops.mjs` → `src/ops.ts`) mark the value-mode
+iteratee optional via a new `OPT_ITER` for the three; the stream signatures are unchanged.
+
 ## 2026-07-21 — chore: drift guard tying value-method ambient return types to the `METHODS` registry
 
 After merging master's method-chain type-checking, the `METHODS` registry now carries an invariant

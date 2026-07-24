@@ -2369,8 +2369,8 @@ declare global {
     chunk(size: number): T[][];
     /** Drop falsy elements — `_.compact`. */
     compact(): T[];
-    /** Count elements by iteratee — `_.countBy`. */
-    countBy(iteratee: string | ((value: T) => any)): Record<string, number>;
+    /** Count elements by iteratee (omit for identity) — `_.countBy`. */
+    countBy(iteratee?: string | ((value: T) => any)): Record<string, number>;
     /** Difference by iteratee — `_.differenceBy`. */
     differenceBy(...args: any[]): T[];
     /** All but the first `n` elements — `_.drop`. */
@@ -2387,16 +2387,16 @@ declare global {
     flatten(): any[];
     /** `[key, value]` pairs → object — `_.fromPairs`. */
     fromPairs(): Record<string, any>;
-    /** Group elements by iteratee — `_.groupBy`. */
-    groupBy(iteratee: string | ((value: T) => any)): Record<string, T[]>;
+    /** Group elements by iteratee (omit for identity) — `_.groupBy`. */
+    groupBy(iteratee?: string | ((value: T) => any)): Record<string, T[]>;
     /** First element — `_.head`. */
     head(): T;
     /** All but the last element — `_.initial`. */
     initial(): T[];
     /** Intersection by iteratee — `_.intersectionBy`. */
     intersectionBy(...args: any[]): T[];
-    /** Index elements by iteratee — `_.keyBy`. */
-    keyBy(iteratee: string | ((value: T) => any)): Record<string, T>;
+    /** Index elements by iteratee (omit for identity) — `_.keyBy`. */
+    keyBy(iteratee?: string | ((value: T) => any)): Record<string, T>;
     /** Last element — `_.last`. */
     last(): T;
     /** Maximum element — `_.max`. */

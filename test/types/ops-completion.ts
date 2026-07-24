@@ -44,7 +44,11 @@ const _chunks: number[][] = nums.chunk(2);
 const _first: number = nums.head(); // element type preserved
 const _byParity: Record<string, number[]> = nums.groupBy((x) => x % 2);
 const _topNums: number[] = nums.uniq().sortBy().takeRight(3);
-void [_sum, _chunks, _first, _byParity, _topNums];
+// No-iteratee (identity) forms of the object-collapse family type-check too.
+const _histogram: Record<string, number> = nums.countBy();
+const _byValue: Record<string, number[]> = nums.groupBy();
+const _keyed: Record<string, number> = nums.keyBy();
+void [_sum, _chunks, _first, _byParity, _topNums, _histogram, _byValue, _keyed];
 
 interface Order {
   total: number;

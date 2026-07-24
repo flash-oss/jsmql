@@ -6932,14 +6932,14 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "keyBy": {
       const exprArgs = exprArgsOnly(args, "keyBy");
-      checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      checkArity("keyBy", { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
       return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: stringKeyExpr(it.value), v: it.elem } } } };
     }
     case "groupBy":
     case "countBy": {
       const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      checkArity(method, { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
       const filtered = {
         $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } }

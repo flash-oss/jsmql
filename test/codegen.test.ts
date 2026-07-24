@@ -3310,6 +3310,34 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(JSON.stringify(jsmql.expr('$.a.groupBy("t")'))).toContain(JSON.stringify(wrap));
     expect(JSON.stringify(jsmql.expr('$.a.countBy("t")'))).toContain(JSON.stringify(wrap));
   });
+  it("countBy/groupBy/keyBy with no iteratee default to identity (lodash `_.countBy([1,2,2])`)", () => {
+    // The omitted iteratee counts/groups/keys by the element itself. Shapes below
+    // were run on mongod: `[1,2,3,4,5,2,3].countBy()` → {1:1,2:2,3:2,4:1,5:1},
+    // `[1,2,2].groupBy()` → {1:[1],2:[2,2]}, `[1,2,3].keyBy()` → {1:1,2:2,3:3}.
+    // The identity iteratee keys straight off the element ($$jsmqlItem), not a field.
+    const idKey = { $ifNull: [{ $toString: "$$jsmqlItem" }, "null"] };
+    expect(jsmql.expr("$.a.keyBy()")).toEqual({
+      $arrayToObject: { $map: { input: "$a", as: "jsmqlItem", in: { k: idKey, v: "$$jsmqlItem" } } },
+    });
+    // countBy/groupBy dedupe the identity keys, then size / bucket per key.
+    const distinctIds = { $setUnion: [{ $map: { input: "$a", as: "jsmqlItem", in: idKey } }, []] };
+    const idFilter = { $filter: { input: "$a", as: "jsmqlItem", cond: { $eq: [idKey, "$$jsmqlKey"] } } };
+    expect(jsmql.expr("$.a.countBy()")).toEqual({
+      $arrayToObject: { $map: { input: distinctIds, as: "jsmqlKey", in: { k: "$$jsmqlKey", v: { $size: idFilter } } } },
+    });
+    expect(jsmql.expr("$.a.groupBy()")).toEqual({
+      $arrayToObject: { $map: { input: distinctIds, as: "jsmqlKey", in: { k: "$$jsmqlKey", v: idFilter } } },
+    });
+  });
+  it("countBy/groupBy/keyBy reject more than one argument (arity names the optional iteratee)", () => {
+    expect(() => jsmql.expr('$.a.countBy("x", "y")')).toThrow(
+      /\.countBy\(\[iteratee\]\) requires 0 or 1 arguments, got 2/,
+    );
+    expect(() => jsmql.expr('$.a.groupBy("x", "y")')).toThrow(
+      /\.groupBy\(\[iteratee\]\) requires 0 or 1 arguments, got 2/,
+    );
+    expect(() => jsmql.expr('$.a.keyBy("x", "y")')).toThrow(/\.keyBy\(\[iteratee\]\) requires 0 or 1 arguments, got 2/);
+  });
 });
 
 describe("chain type-check — reject a method on a provably-incompatible receiver", () => {

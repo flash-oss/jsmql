@@ -186,6 +186,37 @@ describe("tally shipped orders by payment method (lodash `.countBy`)", { feature
   });
 });
 
+describe(
+  "star-rating histogram from a scalar array (lodash `.countBy()` — no iteratee)",
+  { features: ["Array methods"] },
+  () => {
+    it(
+      "compiles to the expected MQL",
+      { kind: "expression", usage: "db.feedback.aggregate([{ $addFields: { histogram: jsmql.expr(...) } }])" },
+      () => {
+        // Each feedback doc carries a scalar array of star ratings, e.g.
+        // `ratings: [5, 4, 5, 3, 5]`. Omitting the iteratee makes `.countBy()`
+        // tally by the element itself — lodash `_.countBy([5,4,5,3,5])` →
+        // `{ "5": 3, "4": 1, "3": 1 }` — a one-liner histogram over the array.
+        // Verified on a live mongod.
+        const idKey = { $ifNull: [{ $toString: "$$jsmqlItem" }, "null"] };
+        expect(jsmql.expr(`$.ratings.countBy()`)).toEqual({
+          $arrayToObject: {
+            $map: {
+              input: { $setUnion: [{ $map: { input: "$ratings", as: "jsmqlItem", in: idKey } }, []] },
+              as: "jsmqlKey",
+              in: {
+                k: "$$jsmqlKey",
+                v: { $size: { $filter: { input: "$ratings", as: "jsmqlItem", cond: { $eq: [idKey, "$$jsmqlKey"] } } } },
+              },
+            },
+          },
+        });
+      },
+    );
+  },
+);
+
 describe("alternative bracketed array form", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline" }, () => {
     expect(

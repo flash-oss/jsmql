@@ -360,6 +360,9 @@ const VALUE_METHOD_SKIP = {
 // jsmql validates the real argument at compile time; the TS type only needs to
 // not *reject* valid jsmql (so optional/loose beats strict).
 const ITER = "iteratee: string | ((value: T) => any)";
+// Optional-iteratee form for the identity-defaulting collapse methods
+// (`keyBy`/`groupBy`/`countBy` — omitting the iteratee counts/groups by identity).
+const OPT_ITER = "iteratee?: string | ((value: T) => any)";
 const PRED = "predicate: string | [string, any] | Record<string, any> | ((value: T) => any)";
 const VALUE_METHOD_SIGNATURES = {
   // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────
@@ -432,12 +435,20 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Keys (receiver) → values object — `_.zipObject`.",
   },
   fromPairs: { recv: "Array", sig: "(): Record<string, any>", doc: "`[key, value]` pairs → object — `_.fromPairs`." },
-  keyBy: { recv: "Array", sig: `(${ITER}): Record<string, T>`, doc: "Index elements by iteratee — `_.keyBy`." },
-  groupBy: { recv: "Array", sig: `(${ITER}): Record<string, T[]>`, doc: "Group elements by iteratee — `_.groupBy`." },
+  keyBy: {
+    recv: "Array",
+    sig: `(${OPT_ITER}): Record<string, T>`,
+    doc: "Index elements by iteratee (omit for identity) — `_.keyBy`.",
+  },
+  groupBy: {
+    recv: "Array",
+    sig: `(${OPT_ITER}): Record<string, T[]>`,
+    doc: "Group elements by iteratee (omit for identity) — `_.groupBy`.",
+  },
   countBy: {
     recv: "Array",
-    sig: `(${ITER}): Record<string, number>`,
-    doc: "Count elements by iteratee — `_.countBy`.",
+    sig: `(${OPT_ITER}): Record<string, number>`,
+    doc: "Count elements by iteratee (omit for identity) — `_.countBy`.",
   },
   // ── String → string / string[] ──────────────────────────────────────────────
   capitalize: {

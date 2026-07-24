@@ -4058,7 +4058,8 @@ function generateMethodCall(
     }
     case "keyBy": {
       const exprArgs = exprArgsOnly(args, "keyBy");
-      checkArity("keyBy", { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      // Iteratee is optional — omitted means identity (lodash `_.keyBy([...])`).
+      checkArity("keyBy", { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
       // { <key>: <last element with that key> } — $arrayToObject keeps the last.
       return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: stringKeyExpr(it.value), v: it.elem } } } };
@@ -4066,7 +4067,9 @@ function generateMethodCall(
     case "groupBy":
     case "countBy": {
       const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
+      // Iteratee is optional — omitted means identity (lodash `_.countBy([1,2,2])`
+      // → `{ "1": 1, "2": 2 }`, `_.groupBy([1,2,2])` → `{ "1": [1], "2": [2,2] }`).
+      checkArity(method, { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
       const filtered = {
         $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } },

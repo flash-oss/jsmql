@@ -1565,6 +1565,7 @@ $.items.uniqBy("id")                        // dedupe by key, keep first
 $.items.keyBy("id")                         // { <id>: <last item with that id> }
 $.items.groupBy("type")                     // { <type>: [items…] }
 $.items.countBy("type")                     // { <type>: <count> }
+$.nums.countBy()                            // omit the iteratee → count by the element itself: [1,2,2] → { "1": 1, "2": 2 } (also .groupBy() / .keyBy())
 $.items.partition(x => x.ok)                // [ [matches…], [non-matches…] ]
 $.items.reject({ active: false })           // items NOT matching
 $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size: positive int literal)
