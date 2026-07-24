@@ -3670,6 +3670,17 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
     });
     expect(jsmql.expr('$.a.orderBy(["a", "b"])')).toEqual({ $sortArray: { input: "$a", sortBy: { a: 1, b: 1 } } });
   });
+  it(".orderBy also accepts a { field: dir } object (directions inline, like .toSorted)", () => {
+    expect(jsmql.expr("$.a.orderBy({ score: -1 })")).toEqual({ $sortArray: { input: "$a", sortBy: { score: -1 } } });
+    expect(jsmql.expr('$.a.orderBy({ score: -1, name: "asc" })')).toEqual({
+      $sortArray: { input: "$a", sortBy: { score: -1, name: 1 } },
+    });
+  });
+  it(".orderBy({ … }) rejects a second orders arg (directions are already in the object)", () => {
+    expect(() => jsmql.expr('$.a.orderBy({ score: -1 }, ["asc"])')).toThrow(
+      /already carries a direction per field.*drop the second 'orders'/s,
+    );
+  });
 });
 
 describe("lodash random value methods — sample / sampleSize ($rand)", () => {

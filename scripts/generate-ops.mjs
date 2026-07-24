@@ -179,8 +179,9 @@ const STREAM_METHOD_SIGNATURES = {
   },
   sortBy: { doc: "Ascending sort by a key → `$sort` (lodash `_.sortBy`).", params: "(key: string | string[])" },
   orderBy: {
-    doc: "Multi-key sort with per-key directions → `$sort` (lodash `_.orderBy`).",
-    params: '(keys: string | string[], orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[])',
+    doc: "Multi-key sort → `$sort` (lodash `_.orderBy`). Parallel `keys` + `orders`, or a `{ field: dir }` object (directions inline).",
+    params:
+      '(keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">, orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[])',
   },
   groupBy: {
     doc: "Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage.",
@@ -396,8 +397,8 @@ const VALUE_METHOD_SIGNATURES = {
   },
   orderBy: {
     recv: "Array",
-    sig: '(iteratees?: string | string[], orders?: ("asc" | "desc") | ("asc" | "desc")[]): T[]',
-    doc: "Multi-key sort with directions — `_.orderBy`.",
+    sig: '(iteratees?: string | string[] | Record<string, 1 | -1 | "asc" | "desc">, orders?: ("asc" | "desc") | ("asc" | "desc")[]): T[]',
+    doc: "Multi-key sort — `_.orderBy`. Parallel iteratees + orders, or a `{ field: dir }` object (directions inline).",
   },
   reject: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Elements the predicate rejects — `_.reject`." },
   takeWhile: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Leading run matching the predicate — `_.takeWhile`." },

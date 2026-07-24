@@ -910,7 +910,7 @@ function buildSortByStreamSpec(args: readonly CallArg[], callPos: number): Recor
   const arg = args[0];
   if (arg.type === "ObjectLiteral") {
     throw new CodegenError(
-      `.sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.sort({ field: -1 })' for directions.`,
+      `.sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy({ field: -1 })' or '.sort({ field: -1 })' for directions.`,
       arg.pos,
     );
   }
@@ -931,10 +931,25 @@ function orderByStreamDir(e: Expr | SpreadElement): 1 | -1 {
 
 function buildOrderByStreamSpec(args: readonly CallArg[], callPos: number): Record<string, 1 | -1> {
   if (args.length < 1 || args.length > 2) {
-    throw new CodegenError(`.orderBy(keys[, orders]) takes one or two arguments, got ${args.length}.`, callPos);
+    throw new CodegenError(
+      `.orderBy(keys[, orders] | { field: dir }) takes one or two arguments, got ${args.length}.`,
+      callPos,
+    );
   }
   const keysArg = args[0];
   const ordersArg = args[1];
+  // Object form `.orderBy({ field: dir })` mirrors `.sort({ … })`: the directions live
+  // inside the object, so there is no separate `orders` argument (shares the value-mode
+  // `.orderBy` object branch's shape via `buildKeySortSpec`).
+  if (keysArg.type === "ObjectLiteral") {
+    if (ordersArg !== undefined) {
+      throw new CodegenError(
+        `.orderBy({ … }) already carries a direction per field — drop the second 'orders' argument.`,
+        ordersArg.pos,
+      );
+    }
+    return buildKeySortSpec(keysArg, ".orderBy({ … })");
+  }
   const names =
     keysArg.type === "ArrayLiteral"
       ? keysArg.elements.map((el) => fieldNameLiteral(el as Expr | SpreadElement, ".orderBy(keys)"))

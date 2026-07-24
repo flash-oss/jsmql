@@ -6139,7 +6139,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       if (exprArgs.length === 0) return { $sortArray: { input: genObj, sortBy: 1 } };
       if (exprArgs[0].type === "ObjectLiteral") {
         throw new CodegenError(
-          `.sortBy({ \u2026 }) isn't supported \u2014 an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.toSorted({ field: -1 })' for directions.`,
+          `.sortBy({ \u2026 }) isn't supported \u2014 an object here is a lodash matches-shorthand, not a direction. Use '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })' for directions.`,
           exprArgs[0].pos
         );
       }
@@ -6147,7 +6147,16 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "orderBy": {
       const exprArgs = exprArgsOnly(args, "orderBy");
-      checkArity("orderBy", { sig: "keys[, orders]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkArity("orderBy", { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] }, exprArgs.length, callPos);
+      if (exprArgs[0].type === "ObjectLiteral") {
+        if (exprArgs.length > 1) {
+          throw new CodegenError(
+            `.orderBy({ \u2026 }) already carries a direction per field \u2014 drop the second 'orders' argument.`,
+            exprArgs[1].pos
+          );
+        }
+        return { $sortArray: { input: genObj, sortBy: argToSortBy(exprArgs[0], "orderBy") } };
+      }
       const names = orderByKeyNames(exprArgs[0], "orderBy");
       const dirs = exprArgs[1] !== void 0 ? orderByDirs(exprArgs[1], "orderBy") : [];
       const spec = {};
@@ -9739,7 +9748,7 @@ function buildSortByStreamSpec(args, callPos) {
   const arg = args[0];
   if (arg.type === "ObjectLiteral") {
     throw new CodegenError(
-      `.sortBy({ \u2026 }) isn't supported \u2014 an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.sort({ field: -1 })' for directions.`,
+      `.sortBy({ \u2026 }) isn't supported \u2014 an object here is a lodash matches-shorthand, not a direction. Use '.orderBy({ field: -1 })' or '.sort({ field: -1 })' for directions.`,
       arg.pos
     );
   }
@@ -9757,10 +9766,22 @@ function orderByStreamDir(e) {
 }
 function buildOrderByStreamSpec(args, callPos) {
   if (args.length < 1 || args.length > 2) {
-    throw new CodegenError(`.orderBy(keys[, orders]) takes one or two arguments, got ${args.length}.`, callPos);
+    throw new CodegenError(
+      `.orderBy(keys[, orders] | { field: dir }) takes one or two arguments, got ${args.length}.`,
+      callPos
+    );
   }
   const keysArg = args[0];
   const ordersArg = args[1];
+  if (keysArg.type === "ObjectLiteral") {
+    if (ordersArg !== void 0) {
+      throw new CodegenError(
+        `.orderBy({ \u2026 }) already carries a direction per field \u2014 drop the second 'orders' argument.`,
+        ordersArg.pos
+      );
+    }
+    return buildKeySortSpec(keysArg, ".orderBy({ \u2026 })");
+  }
   const names = keysArg.type === "ArrayLiteral" ? keysArg.elements.map((el) => fieldNameLiteral(el, ".orderBy(keys)")) : [fieldNameLiteral(keysArg, ".orderBy(keys)")];
   const dirs = ordersArg === void 0 ? [] : ordersArg.type === "ArrayLiteral" ? ordersArg.elements.map((el) => orderByStreamDir(el)) : [orderByStreamDir(ordersArg)];
   const spec = {};
