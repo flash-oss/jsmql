@@ -273,6 +273,16 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
     expect(() => jsmql('$$ = $$.orderBy("age", "up");')).toThrow(/directions must be 1 \/ -1/);
   });
 
+  it(".orderBy({ field: dir }) → $sort with inline directions (like .sort); no orders arg", () => {
+    expect(jsmql("$$ = $$.orderBy({ score: -1 });")).toEqual([{ $sort: { score: -1 } }]);
+    expect(jsmql('$$ = $$.orderBy({ score: -1, name: "asc" });')).toEqual([{ $sort: { score: -1, name: 1 } }]);
+    expect(() => jsmql('$$ = $$.orderBy({ score: -1 }, ["asc"]);')).toThrow(
+      /already carries a direction per field.*drop the second 'orders'/s,
+    );
+    // arity error advertises the object form too (parity with value-mode .orderBy)
+    expect(() => jsmql("$$ = $$.orderBy();")).toThrow(/\{ field: dir \}/);
+  });
+
   it("runs inside a $$$.<coll> source-switch sub-pipeline", () => {
     expect(jsmql("$$ = $$$.archive.sort({ createdAt: -1 }).take(5);")).toEqual([
       { $match: { $expr: false } },

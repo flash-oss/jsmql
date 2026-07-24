@@ -2239,9 +2239,9 @@ declare global {
     ): JsmqlCollectionRef;
     /** Ascending sort by a key → `$sort` (lodash `_.sortBy`). */
     sortBy(key: string | string[]): JsmqlCollectionRef;
-    /** Multi-key sort with per-key directions → `$sort` (lodash `_.orderBy`). */
+    /** Multi-key sort → `$sort` (lodash `_.orderBy`). Parallel `keys` + `orders`, or a `{ field: dir }` object (directions inline). */
     orderBy(
-      keys: string | string[],
+      keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
     ): JsmqlCollectionRef;
     /** Reverse the preceding sort — flips the preceding `$sort`. */
@@ -2413,8 +2413,11 @@ declare global {
     minBy(iteratee: string | ((value: T) => any)): T;
     /** Element at index `n` (negative counts from the end) — `_.nth`. */
     nth(n?: number): T;
-    /** Multi-key sort with directions — `_.orderBy`. */
-    orderBy(iteratees?: string | string[], orders?: ("asc" | "desc") | ("asc" | "desc")[]): T[];
+    /** Multi-key sort — `_.orderBy`. Parallel iteratees + orders, or a `{ field: dir }` object (directions inline). */
+    orderBy(
+      iteratees?: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
+      orders?: ("asc" | "desc") | ("asc" | "desc")[],
+    ): T[];
     /** Split into `[matching, rest]` — `_.partition`. */
     partition(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): [T[], T[]];
     /** Elements the predicate rejects — `_.reject`. */

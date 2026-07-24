@@ -1559,7 +1559,8 @@ $.nums.sum()  / .mean() / .max() / .min()   // $sum / $avg / $max / $min of the 
 $.items.sumBy("price")  / .meanBy(x => x.p) // $sum / $avg of the mapped values
 $.items.minBy("score")  / .maxBy("score")   // the element with the min/max key
 $.items.sortBy("age") / .sortBy(x => x.age) // ascending sort by a key (alias of .toSorted)
-$.items.orderBy(["age", "name"], ["desc", "asc"])  // multi-key sort with per-key directions
+$.items.orderBy(["age", "name"], ["desc", "asc"])  // multi-key sort (parallel keys + directions)
+$.items.orderBy({ age: -1, name: 1 })              // …or a { field: dir } object (directions inline)
 $.tags.uniq()                               // order-preserving keep-first dedupe
 $.items.uniqBy("id")                        // dedupe by key, keep first
 $.items.keyBy("id")                         // { <id>: <last item with that id> }
@@ -2702,7 +2703,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
 | `.map(d => <expr>)` / `.map("field")` | Single-param expression-body arrow (the param is the current document — write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`; the shorthand → `$replaceWith: "$field"`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
 | `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (`\|\|` for compound). `.sort` and `.toSorted` are equivalent on a stream | `$sort: { … }`. Zero-arg is rejected (streams have no natural document ordering) |
-| `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` is ascending by one/more keys; `.orderBy` takes parallel keys + directions (`1`/`-1`/`"asc"`/`"desc"`) | `$sort: { … }`. `.sortBy({…})` is rejected (an object is a lodash matches-shorthand, not a direction) |
+| `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` is ascending by one/more keys; `.orderBy` takes parallel keys + directions (`1`/`-1`/`"asc"`/`"desc"`), **or** a `{ field: dir }` object with the directions inline (like `.sort({…})`) | `$sort: { … }`. `.sortBy({…})` is rejected (an object is a lodash matches-shorthand, not a direction — it points at `.orderBy({…})`) |
 | `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
 | `.pick([fields])` / `.omit([fields])` | The lodash object methods, per document. `.pick` keeps only the named fields (`_id` dropped unless named); `.omit` drops the named fields | `$project` (inclusion / exclusion) |
 | `.tail()` | Zero args — all but the first document | `$skip: 1` |

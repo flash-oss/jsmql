@@ -3163,7 +3163,7 @@ function generateMethodCall(
       if (exprArgs.length === 0) return { $sortArray: { input: genObj, sortBy: 1 } };
       if (exprArgs[0].type === "ObjectLiteral") {
         throw new CodegenError(
-          `.sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy(["field"], ["desc"])' or '.toSorted({ field: -1 })' for directions.`,
+          `.sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })' for directions.`,
           exprArgs[0].pos,
         );
       }
@@ -3171,8 +3171,19 @@ function generateMethodCall(
     }
     case "orderBy": {
       // lodash `orderBy(keys, orders)` — parallel arrays of sort keys + directions.
+      // Object form `.orderBy({ field: dir })` mirrors `.toSorted({ … })`: the
+      // directions live inside the object, so there is no separate `orders` argument.
       const exprArgs = exprArgsOnly(args, "orderBy");
-      checkArity("orderBy", { sig: "keys[, orders]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkArity("orderBy", { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] }, exprArgs.length, callPos);
+      if (exprArgs[0].type === "ObjectLiteral") {
+        if (exprArgs.length > 1) {
+          throw new CodegenError(
+            `.orderBy({ … }) already carries a direction per field — drop the second 'orders' argument.`,
+            exprArgs[1].pos,
+          );
+        }
+        return { $sortArray: { input: genObj, sortBy: argToSortBy(exprArgs[0], "orderBy") } };
+      }
       const names = orderByKeyNames(exprArgs[0], "orderBy");
       const dirs = exprArgs[1] !== undefined ? orderByDirs(exprArgs[1], "orderBy") : [];
       const spec: Record<string, 1 | -1> = {};

@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-24 — feat: `.orderBy({ field: dir })` object form (value + stream)
+
+The lodash `.orderBy` sort alias now accepts a `{ field: 1 | -1 | "asc" | "desc" }` object in
+addition to the existing parallel `keys` + `orders` form, in both value mode
+(`$.items.orderBy({ score: -1 })` → `{ $sortArray: { input: "$items", sortBy: { score: -1 } } }`)
+and stream mode (`$$.orderBy({ score: -1, name: 1 })` → `[{ $sort: { score: -1, name: 1 } }]`). The
+object carries the directions inline, so passing a second `orders` argument alongside it is rejected
+with a "drop the second 'orders' argument" hint. The object branch reuses the same helpers the
+`.sort`/`.toSorted` object forms already use (`argToSortBy` in [src/codegen.ts](src/codegen.ts),
+`buildKeySortSpec` in [src/stream-methods.ts](src/stream-methods.ts)), so the emitted shape is
+identical to those already-verified forms.
+
+*Why:* `{ field: dir }` is the shape MongoDB's own `$sort` takes and the one `.sort`/`.toSorted`
+already accept, so making `.orderBy` accept it too removes a papercut — a developer who reaches for
+`.orderBy` no longer has to rewrite a natural `{ score: -1 }` into two parallel arrays. The one
+consistency wrinkle: in lodash an object first-arg to `_.orderBy` would be a *matches-shorthand*, the
+same footgun that keeps `.sortBy({…})` rejected. We keep `.sortBy({…})` rejected (its iteratee has no
+direction slot, so an object there is genuinely ambiguous) but treat `.orderBy({…})` as a direction
+spec — `.orderBy` is explicitly the "with directions" alias, so a `{ field: dir }` reads unambiguously.
+The `.sortBy({…})` rejection messages (both modes) now point at `.orderBy({ field: -1 })` as the
+object-form path. See [docs/LANGUAGE.md](docs/LANGUAGE.md), [docs/specs/stream-methods.md](docs/specs/stream-methods.md),
+and [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md).
+
+---
+
 ## 2026-07-21 — chore: drift guard tying value-method ambient return types to the `METHODS` registry
 
 After merging master's method-chain type-checking, the `METHODS` registry now carries an invariant
