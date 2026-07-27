@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat(playground): label each editor with its language (Variables = run-time JS, Query = JSMQL)
+
+The input panel stacks two editors that render *identically* — both are
+JS-highlighted CodeMirror — but they are two different languages: the **Variables**
+box is plain JavaScript, evaluated in the user's own run-time (`new Function`) to
+build the params object bound via `jsmql.compile()`, while the main editor is the
+**JSMQL** language, compiled to MQL and never executed as JS. Nothing on screen said
+so, and the panel was even titled "JSMQL input" — which implied the JS Variables box
+nested under it was also JSMQL. The result: people (the project owner included)
+constantly mixed up which box was which language.
+
+Fix — name each editor's language right where the eye lands
+([playground_skeleton.html](../playground_skeleton.html)): the panel title
+"JSMQL input" → neutral **"Input"** (the panel holds one JS box + one JSMQL box, so a
+language-specific title mislabels half of it); the Variables header gains a `run-time JS`
+language chip; and the main editor gains its own header **"QUERY · `JSMQL syntax`"**
+mirroring the Variables header (previously it had no adjacent label at all — its only
+label was the far-away panel title). Each chip carries a `title` tooltip spelling out
+the full distinction. Rejected a one-off info banner (dismissed-and-forgotten, no
+persistent contrast) in favour of always-visible per-editor labels. Chip colours stay
+off the five semantic *kind* colours (filter/pipeline/expr/update/err) so they read as
+language metadata, not a mode indicator — the JSMQL chip reuses the app's primary
+`--accent` (which the brand already uses broadly), the JS chip is neutral grey.
+
+Naming convention this reinforces: **JSMQL** (upper-case) is the language / project;
+lower-case `jsmql` names the npm module API only (`jsmql.compile()`, the `jsmql`
+callable). The UI copy follows that split — hence `run-time JS` / `JSMQL syntax` on the
+chips, not `jsmql → MQL`.
+
+Playground-only; no library code touched. The dynamic Variables hint
+(`bound via jsmql.compile() — N vars` / error text) is unchanged — the chip is a
+sibling of `#vars-hint`, verified still updating. [playground.html](../playground.html)
+regenerated via `scripts/sync-playground.mjs`; rendering confirmed in a browser (empty,
+populated-Variables, and dynamic-hint states).
+
+---
+
 ## 2026-07-24 — feat: value-mode `.countBy()` / `.groupBy()` / `.keyBy()` accept no iteratee (identity default)
 
 lodash defaults the iteratee of its `*By` collectors to `_.identity` — `_.countBy([1,2,3,4,5,2,3])`
