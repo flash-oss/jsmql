@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — fix: sanitize `$lookup.let` correlation-var names derived from outer field segments
+
+A correlated `$$$.<coll>.filter/find(...)` names its `$lookup.let` variable after the outer field's
+last path segment. When that segment held a character legal in a MongoDB *field* name but illegal in a
+*variable* name — a hyphen being the common case — jsmql emitted server-invalid MQL. Repro:
+`$.x = $$$.orders.filter(o => o.ref === $.meta["sub-id"] && o.qty > 0)` emitted
+`let: { "jsmql_f0_sub-id": "$meta.sub-id" }`, and mongod rejects it with
+`FailedToParse: 'jsmql_f0_sub-id' contains an invalid character for a variable name: '-'` — an HR3
+violation (jsmql knowingly-invalid output). The basic single-`===` form dodged it (it emits
+`localField`/`foreignField`, no `let`); only the correlated pipeline form was affected. A pre-existing
+bug, surfaced by an adversarial review of the lodash-stream-head work — independent of that feature.
+
+Fix: a `sanitizeVarSegment(name)` helper in [src/namespace.ts](../src/namespace.ts) folds every
+non-`[A-Za-z0-9_]` char to `_`, applied inside `letFieldVar` / `letBindingVar` / `letSysVar` (the sibling
+`letBindingVar` had the same latent bug for a bracket-keyed outer-`let` member, so it's fixed in lock-step).
+Only the emitted var **name** is sanitized; the `let` **value** keeps the raw field path (`$meta.sub-id`,
+where hyphens are legal). Sanitizing is intentionally non-injective (`sub-id` and `sub_id` both → `sub_id`),
+but the `LetAllocator` interns on the **raw** dotted path and appends `_2`/`_3` on same-base collisions, so
+two distinct fields stay distinct (`jsmql_f0_sub_id` + `jsmql_f0_sub_id_2`) and the same field always maps
+to the same var. Verified end-to-end on a live mongod: the fixed pipeline is accepted and returns the single
+correct match, while the old hyphenated var name is rejected (`FailedToParse`) — confirming the hyphen was
+the sole defect. Guarded by two unit cases in [test/lookup.test.ts](../test/lookup.test.ts) (hyphenated
+field → safe var; the two-distinct-fields collision) and a live-fixture case in
+[test/integration.test.ts](../test/integration.test.ts) (the fixture's orders gained a nested hyphenated
+`meta["ext-id"]` field to correlate on). The var-name trap in [test/CLAUDE.md](../test/CLAUDE.md) was
+broadened from "starts with an invalid char" to "contains an invalid char anywhere".
+
 ## 2026-07-24 — feat: value-mode `.countBy()` / `.groupBy()` / `.keyBy()` accept no iteratee (identity default)
 
 lodash defaults the iteratee of its `*By` collectors to `_.identity` — `_.countBy([1,2,3,4,5,2,3])`

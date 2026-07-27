@@ -253,6 +253,24 @@ $project({ name: 1, recentOrders: 1 });`,
     ]);
   });
 
+  // Correlated $lookup whose outer field has a HYPHENATED path segment
+  // (`$.meta["ext-id"]`). The hyphen is legal in a field name but illegal in a
+  // MongoDB `$$` variable name, so the emitted `$lookup.let` var is derived from
+  // the sanitized segment (`jsmql_f0_ext_id`) — feeding the raw `ext-id` through
+  // makes mongod reject the whole pipeline with FailedToParse. Running it proves
+  // the server accepts the sanitized name AND the correlation still filters
+  // correctly. Only order 1 carries ext-id "X-1", so only its row gets its
+  // shipment; every other order's `tracked` is empty.
+  it("pipeline: correlated $lookup on a hyphenated outer field (identifier-safe let var)", async () => {
+    const rows = (await aggregate(
+      "orders",
+      `$.tracked = $$$.shipments.filter(s => s.orderId === $._id && $.meta["ext-id"] === "X-1");`,
+    )) as { _id: unknown; tracked: { _id: unknown }[] }[];
+    const withTracked = rows.filter((r) => r.tracked.length > 0);
+    expect(withTracked.map((r) => String(r._id))).toEqual([ID.order(1).toHexString()]);
+    expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
+  });
+
   // assert(cond, msg) that HOLDS for every document: the aggregate runs to
   // completion and the following stage computes normally. (realistic.test.ts
   // "guard against corrupt data before aggregating".)
