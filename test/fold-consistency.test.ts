@@ -85,6 +85,26 @@ for (const v of STRING_SAMPLES) {
   }
 }
 
+const NUMBER_SAMPLES = [0, 1, 5, 42, -3, 2.5, 3.5, 0.125, 7.25, 100];
+const numberCases: Case[] = [];
+for (const v of NUMBER_SAMPLES) {
+  for (const call of [
+    ".clamp(0, 10)",
+    ".clamp(2, 8)",
+    ".inRange(10)",
+    ".inRange(2, 8)",
+    ".round()",
+    ".round(1)",
+    ".ceil()",
+    ".ceil(1)",
+    ".floor()",
+    ".floor(1)",
+  ]) {
+    // parenthesise so a negative literal binds before `.method()` (JS precedence)
+    numberCases.push({ lit: `(${v})`, val: v, call });
+  }
+}
+
 const ARRAY_SAMPLES: unknown[][] = [[], [1, 2, 3, 4, 5], [3, 1, 2], ["a", "b", "c"], [1, 2, 2, 3]];
 const arrayCases: Case[] = [];
 for (const v of ARRAY_SAMPLES) {
@@ -109,9 +129,46 @@ for (const v of ARRAY_SAMPLES) {
     ".every(x => x > 0)",
     ".flatMap(x => [x, x])",
     ".reduce((a, b) => a + b, 0)",
+    // lodash array family (non-iteratee)
+    ".sum()",
+    ".mean()",
+    ".min()",
+    ".max()",
+    ".uniq()",
+    ".compact()",
+    ".flatten()",
+    ".chunk(2)",
+    ".take()",
+    ".take(2)",
+    ".drop()",
+    ".drop(2)",
+    ".takeRight(2)",
+    ".dropRight(2)",
+    ".tail()",
+    ".initial()",
+    ".head()",
+    ".last()",
+    ".nth(1)",
+    ".nth(-1)",
+    ".size()",
+    ".without(2)",
   ]) {
     arrayCases.push({ lit, val: v, call });
   }
+}
+// arrays-of-arrays for flatten
+for (const v of [
+  [[1, 2], [3], [4, 5]],
+  [[1], [2, 3]],
+]) {
+  arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".flatten()" });
+}
+// arrays with falsy for compact
+for (const v of [
+  [0, 1, false, 2, null, 3],
+  ["", "a", 0],
+]) {
+  arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".compact()" });
 }
 
 // Distinguishes "folded to a value" from "wasn't folded" (stayed a runtime
@@ -154,7 +211,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     }
   }
 
-  for (const { lit, val, call } of [...stringCases, ...arrayCases]) {
+  for (const { lit, val, call } of [...stringCases, ...numberCases, ...arrayCases]) {
     it(`${lit}${call}`, async () => {
       const folded = foldedValue(lit, call);
       if (folded === NOT_FOLDED) return; // withheld fold → runtime; nothing to compare

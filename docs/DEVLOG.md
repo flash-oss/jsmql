@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: fold lodash number + non-iteratee array methods in `const`/`let`
+
+Extends constant folding to the lodash number methods (`clamp`, `inRange`,
+`round`, `ceil`, `floor`) and the non-iteratee array family (`sum`, `mean`,
+`min`, `max`, `uniq`/`sortedUniq`, `compact`, `flatten`, `chunk`, `take`/`drop`/
+`takeRight`/`dropRight`, `tail`/`initial`, `head`/`first`/`last`, `nth`, `size`,
+`without`). New JS impls in [src/lodash-fold.ts](../src/lodash-fold.ts) mirror
+each method's MQL lowering exactly, not real lodash — `round` is half-to-even
+(banker's, matching `$round`); `compact` uses MQL truthiness (drops
+`false`/`null`/`0`, keeps `""`/`NaN`); `sum`/`mean` operate on numeric elements
+with `$avg`'s empty→null; `uniq`/`without` use BSON deep equality (`bsonEqual`,
+matching `$in`). `const`/`let` receivers of number and object type now dispatch
+to new `foldNumberMethod`/`foldObjectMethod` in const-eval.ts (object folding so
+far: `size`, `toPairs`, `invert`, `pick`, `omit`, `mapValues`). Edge cases that
+would disagree withhold the fold → runtime: `min`/`max` over mixed-type arrays
+(BSON ordering), `head`/`last`/`nth` out of range (server MISSING). The
+fold-consistency suite gained number + array-lodash batteries (573 cases) — all
+agree with the server. Iteratee-heavy collection methods land next.
+
 ## 2026-07-27 — feat: fold constant declarations inside lambda expr-blocks
 
 Constant folding now applies inside a lambda expression-block too

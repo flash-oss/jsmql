@@ -26,9 +26,11 @@
 
 import type { ArrayElement, CallArg, Expr, Lambda, ObjectEntry } from "./ast.ts";
 import type { GenerateCtx } from "./codegen.ts";
-import { CodegenError, foldConstantDate } from "./codegen.ts";
+import { CodegenError, foldConstantDate, isOpaqueBsonValue } from "./codegen.ts";
 import * as lodash from "./lodash-fold.ts";
 import { ObjectId } from "./objectid.ts";
+
+const isOpaqueBson = isOpaqueBsonValue;
 
 export type ConstEnv = ReadonlyMap<string, unknown>;
 export type EvalResult = { ok: true; value: unknown } | { ok: false };
@@ -405,7 +407,11 @@ function evalMethodCall(
   if (optional && (recv === null || recv === undefined)) return ok(null);
   try {
     if (typeof recv === "string") return foldStringMethod(recv, method, args, env, ctx);
+    if (typeof recv === "number") return foldNumberMethod(recv, method, args, env, ctx);
     if (Array.isArray(recv)) return foldArrayMethod(recv, method, args, env, ctx);
+    if (recv !== null && typeof recv === "object" && !isOpaqueBson(recv)) {
+      return foldObjectMethod(recv as Record<string, unknown>, method, args, env, ctx);
+    }
     return NO;
   } catch (e) {
     if (e === NON_FOLDABLE) return NO;
@@ -539,7 +545,153 @@ function foldArrayMethod(arr: unknown[], method: string, args: CallArg[], env: C
       const fn = (arr as unknown as Record<string, (...x: unknown[]) => unknown>)[method];
       return ok(fn.apply(arr, a));
     }
+    // ── lodash array methods (non-iteratee) ─────────────────────────────────
+    case "sum":
+      return ok(lodash.sum(arr));
+    case "mean":
+      return ok(lodash.mean(arr));
+    case "min":
+    case "max": {
+      if (arr.length === 0) return ok(null); // $min/$max of [] → null
+      if (!arr.every((x) => typeof x === "number")) throw NON_FOLDABLE; // BSON order for mixed types → runtime
+      return ok(method === "min" ? Math.min(...(arr as number[])) : Math.max(...(arr as number[])));
+    }
+    case "uniq":
+    case "sortedUniq":
+      return ok(lodash.uniq(arr));
+    case "compact":
+      return ok(lodash.compact(arr));
+    case "flatten":
+      return ok(lodash.flatten(arr));
+    case "chunk": {
+      const [size] = evalArgValues(args, env, ctx);
+      if (typeof size !== "number" || !Number.isInteger(size) || size < 1) throw NON_FOLDABLE;
+      return ok(lodash.chunk(arr, size));
+    }
+    case "take":
+    case "drop":
+    case "takeRight":
+    case "dropRight": {
+      const a = evalArgValues(args, env, ctx);
+      const n = a.length > 0 ? a[0] : 1;
+      if (typeof n !== "number" || n < 0) throw NON_FOLDABLE; // negative → runtime error/mirror hint
+      return ok(
+        method === "take"
+          ? lodash.take(arr, n)
+          : method === "drop"
+            ? lodash.drop(arr, n)
+            : method === "takeRight"
+              ? lodash.takeRight(arr, n)
+              : lodash.dropRight(arr, n),
+      );
+    }
+    case "tail":
+      return ok(lodash.drop(arr, 1));
+    case "initial":
+      return ok(lodash.dropRight(arr, 1));
+    case "head":
+    case "first":
+      if (arr.length === 0) throw NON_FOLDABLE; // $first of [] → missing, not null
+      return ok(arr[0]);
+    case "last":
+      if (arr.length === 0) throw NON_FOLDABLE;
+      return ok(arr[arr.length - 1]);
+    case "nth": {
+      const a = evalArgValues(args, env, ctx);
+      const nRaw = a.length > 0 ? a[0] : 0;
+      if (typeof nRaw !== "number" || !Number.isInteger(nRaw)) throw NON_FOLDABLE;
+      const idx = nRaw < 0 ? arr.length + nRaw : nRaw;
+      if (idx < 0 || idx >= arr.length) throw NON_FOLDABLE; // out of range → missing on server
+      return ok(arr[idx]);
+    }
+    case "size":
+      return ok(arr.length);
+    case "without": {
+      const values = evalArgValues(args, env, ctx);
+      return ok(lodash.without(arr, values));
+    }
     default:
       throw NON_FOLDABLE;
   }
+}
+
+function foldNumberMethod(n: number, method: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {
+  const a = evalArgValues(args, env, ctx);
+  switch (method) {
+    case "clamp":
+      if (a.length !== 2 || typeof a[0] !== "number" || typeof a[1] !== "number") throw NON_FOLDABLE;
+      return ok(lodash.clamp(n, a[0], a[1]));
+    case "inRange":
+      if (a.length < 1 || a.length > 2 || !a.every((x) => typeof x === "number")) throw NON_FOLDABLE;
+      return ok(lodash.inRange(n, a[0] as number, a[1] as number | undefined));
+    case "round":
+    case "ceil":
+    case "floor": {
+      if (a.length > 1) throw NON_FOLDABLE;
+      const p = a.length === 1 ? a[0] : 0;
+      if (typeof p !== "number" || !Number.isInteger(p)) throw NON_FOLDABLE;
+      const r = method === "round" ? lodash.round(n, p) : method === "ceil" ? lodash.ceilN(n, p) : lodash.floorN(n, p);
+      return Number.isFinite(r) ? ok(r) : NO;
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+
+function foldObjectMethod(
+  obj: Record<string, unknown>,
+  method: string,
+  args: CallArg[],
+  env: ConstEnv,
+  ctx: GenerateCtx,
+): EvalResult {
+  switch (method) {
+    case "size":
+      return ok(Object.keys(obj).length);
+    case "toPairs":
+      return ok(Object.entries(obj).map(([k, v]) => [k, v]));
+    case "invert": {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        const nk = lodash.mqlKeyString(v);
+        if (nk === undefined) throw NON_FOLDABLE;
+        out[nk] = k;
+      }
+      return ok(out);
+    }
+    case "pick":
+    case "omit": {
+      const keys = pickKeyList(args);
+      if (method === "pick") {
+        const out: Record<string, unknown> = {};
+        for (const k of keys) if (Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+        return ok(out);
+      }
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) if (!keys.includes(k)) out[k] = v;
+      return ok(out);
+    }
+    case "mapValues": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const out: Record<string, unknown> = {};
+      // lodash mapValues iteratee is (value, key); jsmql's resolveObjIteratee maps
+      // the same. Only the arrow form is folded here.
+      for (const [k, v] of Object.entries(obj)) out[k] = fn(v, k);
+      return ok(out);
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+
+/** The literal key list for `.pick([...])` / `.omit([...])` (array-of-strings arg). */
+function pickKeyList(args: CallArg[]): string[] {
+  const first = args[0];
+  if (!first || first.type !== "ArrayLiteral") throw NON_FOLDABLE;
+  const keys: string[] = [];
+  for (const el of first.elements) {
+    if (el.type !== "StringLiteral") throw NON_FOLDABLE;
+    keys.push(el.value);
+  }
+  return keys;
 }
