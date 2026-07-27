@@ -2863,3 +2863,29 @@ $.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 },
     });
   },
 );
+
+describe("config-driven filter with compile-time constants", { features: ["Let bindings"] }, () => {
+  it(
+    "const/let whose RHS is constant folds and inlines — the preamble collapses to a clean, indexable Filter",
+    { kind: "filter", usage: "db.subscriptions.find(jsmql(...))" },
+    () => {
+      // Named constants read like config, but each folds at compile time and
+      // inlines — no `$set`, no `__jsmql` scratch. The array `.map(...).snakeCase`
+      // etc. run once during compilation, the arithmetic collapses to a number,
+      // and `new Date("…")` becomes a real BSON date, so the whole thing lowers to
+      // the index-friendly query document you'd have hand-written.
+      expect(
+        jsmql(`
+          const CLOSED = ["cancelled", "rejected", "refunded"].map(s => s.toUpperCase());
+          const CUTOFF = new Date("2024-01-01");
+          const MAX_RETRIES = 2 ** 4;
+          $.status in CLOSED && $.createdAt >= CUTOFF && $.retries <= MAX_RETRIES
+        `),
+      ).toEqual({
+        createdAt: { $gte: new Date("2024-01-01T00:00:00.000Z") },
+        retries: { $lte: 16 },
+        $expr: { $in: ["$status", ["CANCELLED", "REJECTED", "REFUNDED"]] },
+      });
+    },
+  );
+});
