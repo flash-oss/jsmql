@@ -4573,7 +4573,7 @@ function paramKeyPath(expr: Expr, param: string): string | null {
 // receivers fall through to the dedicated throws in `generateMethodCall` —
 // each one names the immutable variant the user should reach for instead.
 
-const MUTATING_ARRAY_METHODS: ReadonlySet<string> = new Set([
+export const MUTATING_ARRAY_METHODS: ReadonlySet<string> = new Set([
   "sort",
   "reverse",
   "push",

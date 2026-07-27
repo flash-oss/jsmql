@@ -26,6 +26,7 @@ import { containsLookupCall } from "./lookup-translation.ts";
 import { containsUnionPush, detectUnionPush } from "./union-translation.ts";
 import { containsOutAssign } from "./out-translation.ts";
 import { isSystemStageCall } from "./system-stage-translation.ts";
+import { foldProgram } from "./const-fold.ts";
 import type { Program, Expr, Pipeline } from "./ast.ts";
 
 // Re-exported so users can `import { FunctionInputError } from "@koresar/jsmql"`
@@ -748,6 +749,10 @@ function lowerProgram(ast: Program, ctx: GenerateCtx, lowerExpr: ExprLowering): 
 
 /** Filter-mode lowering: `jsmql()` and `jsmql.compile()` both go through this. */
 function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  // Compile-time constant folding: fold `const`/`let` whose RHS is constant,
+  // inline the values, and (when only one expression survives) collapse to a
+  // bare Expr so the heuristics below re-dispatch it as a Filter. See const-fold.ts.
+  ({ ast, ctx } = foldProgram(ast, ctx));
   // Top-level bare stage call (`$match(...)`, `$project(...)`, …) or single-key
   // stage-object literal (`{ $match: ... }` — the shape MongoDB Compass produces
   // when you copy/paste) is almost always Pipeline intent — the user wrote a
@@ -885,6 +890,7 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
 
 /** Expression-mode lowering: `jsmql.expr()` goes through this. */
 function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  ({ ast, ctx } = foldProgram(ast, ctx));
   rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
   rejectOutOutsidePipeline(ast, "jsmql.expr");
@@ -910,6 +916,9 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
  * `$expr` fallback for the untranslatable residual).
  */
 function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
+  // Fold first: `const x = <const>; <predicate>` collapses to a bare predicate,
+  // which IS a valid Filter, so it passes the Pipeline-rejection guards below.
+  ({ ast, ctx } = foldProgram(ast, ctx));
   rejectLookupOutsidePipeline(ast, "jsmql.filter", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.filter");
   rejectOutOutsidePipeline(ast, "jsmql.filter");
@@ -1068,6 +1077,7 @@ function rejectOutOutsidePipeline(ast: Program, apiName: string): void {
  * names the actual entry point the user called.
  */
 function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string): object[] {
+  ({ ast, ctx } = foldProgram(ast, ctx));
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx) as object[];
   if (ast.type === "UpdateFilter") {
     // `$out` sugar (`$$$.<coll> = …`) and the bare `$ = <expr>` root-replace

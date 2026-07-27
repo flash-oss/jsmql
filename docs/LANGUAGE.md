@@ -3090,6 +3090,22 @@ jsmql("[let big = $.score > 100, $match(big), $sort({ score: -1 })]");
 
 **Not the same as `$let`.** MongoDB's `$let` operator is *expression-scoped* — the binding lives inside one `in:` clause. jsmql's `let` is *pipeline-scoped*. They are different constructs that happen to share a name.
 
+### Compile-time constants (folding)
+
+When a `const`/`let` right-hand side is a **compile-time constant** — a value that doesn't depend on the document or the environment — jsmql evaluates it once at compile time and **inlines the value** everywhere the name is used. No `$set` stage, no `__jsmql` namespace, no `$unset`. And because the declaration emits no stage, a preamble of constants no longer forces Pipeline mode — so a constant plus a predicate compiles to a clean, indexable **Filter**:
+
+```js
+jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId");
+// → { userId: ObjectId("507f1f77bcf86cd799439011") }
+
+jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
+// → { elapsedMs: { $gt: 86400000 } }
+```
+
+A "compile-time constant" is any pure, deterministic expression over literals and earlier constants — arithmetic, `new Date("2020-01-01")`, ObjectId literals, array/object literals, and (see the method sections) string/array transforms. A binding whose RHS reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. This means a constant folds the same way in every entry point, including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile) (a constant built from a parameter folds against each call's arguments).
+
+> A constant expression that can't be represented as a MongoDB literal — e.g. one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error rather than silently-broken MQL.
+
 ### Sub-pipelines
 
 `$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. jsmql recognises these positions and recurses, so the `$match` translation rule and the strict typo check apply uniformly:

@@ -1452,12 +1452,13 @@ describe("bracket access", () => {
       $getField: { field: { $toLower: "$key" }, input: "$map" },
     });
   });
-  it("const-string-bound key → $getField directly (binding tracked as string)", () => {
-    // `const k = "host"` makes `obj[k]` a property getter; the IndexAccess
-    // codegen reads the binding's static type from bindingTypes.
+  it("const-string-bound key → $getField directly (folds; binding type still string)", () => {
+    // `const k = "host"` folds to the literal "host". The folded value's static
+    // type ("string") is tracked on the binding, so `$.config[k]` still lowers
+    // to a direct `$getField` property getter — never the `$isArray` guard whose
+    // dead `$arrayElemAt[array, "host"]` branch some engines reject.
     expect(jsmql.pipeline('const k = "host";\n$ = { v: $.config[k] };')).toEqual([
-      { $set: { "__jsmql.var.k": "host" } },
-      { $replaceWith: { v: { $getField: { field: "$__jsmql.var.k", input: "$config" } } } },
+      { $replaceWith: { v: { $getField: { field: "host", input: "$config" } } } },
     ]);
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
@@ -1478,12 +1479,12 @@ describe("bracket access", () => {
     // value, but is string") on engines that don't prune unreachable branches.
     expect(jsmql.expr("$[$.fieldName]")).toEqual({ $getField: { field: "$fieldName", input: "$$ROOT" } });
     // The reported case: indexing the root by a value read from a const map
-    // (`$[SSTM_PROP[party]]`). Both getters resolve to a string field name.
+    // (`$[SSTM_PROP[party]]`). The const map folds and inlines; both getters
+    // still resolve to a string field name.
     expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toEqual([
-      { $set: { "__jsmql.var.M": { a: "x" } } },
       {
         $replaceWith: {
-          v: { $getField: { field: { $getField: { field: "k", input: "$__jsmql.var.M" } }, input: "$$ROOT" } },
+          v: { $getField: { field: { $getField: { field: "k", input: { a: "x" } } }, input: "$$ROOT" } },
         },
       },
     ]);

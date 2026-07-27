@@ -616,9 +616,10 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   it("`$$ = $$.filter(...)` preserves the outer let scope", () => {
     // The narrow form is just a $match — outer lets stay visible inside its
-    // predicate AND in subsequent stages.
-    expect(jsmql(`let cutoff = 10; $$ = $$.filter(t => t.score > cutoff); $.flagged = true;`)).toEqual([
-      { $set: { "__jsmql.var.cutoff": 10 } },
+    // predicate AND in subsequent stages. (Runtime RHS `$.min` keeps it a `$set`
+    // binding; a constant `cutoff` would fold and inline instead.)
+    expect(jsmql(`let cutoff = $.min; $$ = $$.filter(t => t.score > cutoff); $.flagged = true;`)).toEqual([
+      { $set: { "__jsmql.var.cutoff": "$min" } },
       { $match: { $expr: { $gt: ["$score", "$__jsmql.var.cutoff"] } } },
       { $set: { flagged: true } },
       { $unset: "__jsmql" },
@@ -628,7 +629,9 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   it("source switch (`$$ = $$$.<coll>.filter(...)`) clears the let scope", () => {
     // The outer collection's docs are gone after `$limit: 0`, so any prior
     // `let` binding is unreadable. Subsequent references must error precisely.
-    expect(() => jsmql(`let cutoff = 10; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`)).toThrow(
+    // (Runtime RHS `$.min`; a compile-time constant would inline everywhere and
+    // legitimately survive the source switch.)
+    expect(() => jsmql(`let cutoff = $.min; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`)).toThrow(
       /can't be read after.*\$unionWith/,
     );
   });

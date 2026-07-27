@@ -8,6 +8,13 @@ are rewritten to the materialised field paths.
 
 User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 
+> **Constant folding.** This `$set`/`__jsmql.var.<name>` lowering is the
+> **runtime** path, taken when the RHS reads document/environment state. When
+> the RHS is a **compile-time constant**, the declaration instead folds to a
+> value that is inlined at every reference (no stage, and the preamble no longer
+> forces Pipeline mode) — owned by [const-folding.md](const-folding.md). Folding
+> is a post-parse pre-pass; everything below applies to the runtime fallback.
+
 > **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let).
 
 ## Why it exists

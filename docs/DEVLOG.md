@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: compile-time constant folding of `const` / `let` (core)
+
+`const`/`let` already parsed to `LetDecl` nodes that lowered to a **runtime**
+`$set` into `__jsmql.var.<name>` ([let-bindings.md](specs/let-bindings.md)). That
+meant `const userId = 0x…; $.userId === userId` couldn't compile to a Filter at
+all — the `;` forced Pipeline mode and a bare predicate isn't a stage, so it
+errored. This adds a compile-time **fold**: when a declaration's RHS is a
+compile-time constant, jsmql evaluates it and inlines the value at every
+reference, emitting no stage — so the same input now collapses to the clean,
+indexable Filter `{ userId: ObjectId("…") }`.
+
+The fold reuses the exact inline-literal path a `jsmql.compile` parameter uses:
+folded values go into `ctx.bindings`, and a `ParamRef` resolves them through
+`safeBoundValue` (HR1-safe). Two new modules: [src/const-eval.ts](../src/const-eval.ts)
+(`evalConst` — a recursive constant interpreter) and
+[src/const-fold.ts](../src/const-fold.ts) (`foldProgram` — the pre-pass that
+drops folded declarations, threads their values/types into ctx, and re-collapses
+the survivors so an all-constants-plus-one-expression program re-dispatches as a
+Filter). `foldProgram` runs first in every lowering entry in
+[src/index.ts](../src/index.ts), so folding is uniform across `jsmql` / `.expr` /
+`.filter` / `.pipeline` / `.update` and runs **per call** for `jsmql.compile`
+(a constant built from a parameter folds against each call's arguments).
+
+Design guarantees: a fold is added only when the JS result is provably identical
+to the equivalent MQL lowering (HR3) — this core commit covers literals,
+arithmetic, `new Date(const)`, ObjectId, arrays/objects/spread, string
+templates, index/`.length`, and const-chains; fidelity-sensitive folds (methods,
+Math/Number/Object statics, logical/bitwise ops) land in follow-up commits under
+a mongod consistency test. A non-constant RHS (reads `$`, `new Date()`,
+`Math.random()`), a reassigned/mutated/redeclared/param-shadowing name, or a
+BigInt keeps the runtime `$set` binding unchanged — folding is purely additive,
+and a pipeline with no foldable declaration is byte-identical to before. A
+declaration with nothing reading it, and a non-finite result (`1/0`), are
+compile-time errors. Folded values also populate `ctx.bindingTypes`, so a folded
+string key `$.x[k]` keeps its direct `$getField` shape instead of the
+`$isArray`-guarded form some servers reject. New suite:
+[test/const-folding.test.ts](../test/const-folding.test.ts); the runtime
+`let`-binding tests were retargeted to runtime RHS (a constant RHS now folds).
+Spec: [specs/const-folding.md](specs/const-folding.md).
+
 ## 2026-07-24 — feat: value-mode `.countBy()` / `.groupBy()` / `.keyBy()` accept no iteratee (identity default)
 
 lodash defaults the iteratee of its `*By` collectors to `_.identity` — `_.countBy([1,2,3,4,5,2,3])`
