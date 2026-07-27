@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: fold constant declarations inside lambda expr-blocks
+
+Constant folding now applies inside a lambda expression-block too
+(`x => { const a = …; return … }`), not just at the top level — so a constant
+`const` vanishes wherever it appears. Previously `generateExprBlock`
+([src/codegen.ts](../src/codegen.ts)) lowered every block declaration to a
+nested `$let`; now a declaration whose initialiser is a compile-time constant
+folds (inlined via `ctx.bindings`, no `$let`), while a declaration that reads the
+lambda parameter keeps its `$let`. Example: `$.items.map(x => { const factor = 2;
+return x * factor })` → `{ $map: { …, in: { $multiply: ["$$x", 2] } } }` (no
+`$let`). Guard: a declaration whose name shadows an in-scope lambda parameter is
+never folded — `ParamRef` resolves lambda params before bindings, so folding
+would mis-resolve the shadow; the `$let` shadows the parameter correctly instead.
+This introduces a (runtime-safe) import cycle codegen.ts ⇄ const-eval.ts, used
+only inside functions. Removes the top-level-vs-block inconsistency the earlier
+core commit left open.
+
 ## 2026-07-27 — feat: fold lodash string methods in `const`/`let`
 
 Extends constant folding to the lodash string family (`snakeCase`, `kebabCase`,

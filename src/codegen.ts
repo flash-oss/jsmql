@@ -6,6 +6,7 @@ import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import { ASCII_WORDS_RE, HTML_ESCAPE_PAIRS } from "./lodash-shared.ts";
+import { type ConstEnv, evalConst } from "./const-eval.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
@@ -4907,15 +4908,17 @@ function genLambdaBody(lambda: LambdaLike, ctx: GenerateCtx): unknown {
 }
 
 /**
- * Lower an expr-block body to nested `$let`. Right-fold so each declaration's
- * initialiser — and the final `return` — sees every PRIOR declaration as a
- * `$$name` variable (MongoDB's `$let.vars` are mutually invisible, hence one
- * `$let` per decl rather than a single shared `vars` block). This is a faithful
- * 1:1 lowering of the user's `const`/`let` bindings, not an optimisation. See
- * docs/specs/method-dispatch.md.
+ * Lower an expr-block body. A declaration whose initialiser is a compile-time
+ * constant folds — its value is inlined at every reference (via `ctx.bindings`)
+ * and NO `$let` is emitted — matching the top-level constant-folding behaviour
+ * (const-fold.ts) so a constant `const` vanishes wherever it appears. Any
+ * non-constant declaration keeps the faithful nested-`$let` lowering, right-
+ * folded so each initialiser and the `return` see every PRIOR declaration as a
+ * `$$name` variable. See docs/specs/const-folding.md and method-dispatch.md.
  */
 function generateExprBlock(block: ExprBlock, ctx: GenerateCtx): unknown {
   const seen = new Set<string>();
+  const emptyEnv: ConstEnv = new Map();
   const fold = (i: number, c: GenerateCtx): unknown => {
     if (i === block.decls.length) return _generate(block.ret, c);
     const decl = block.decls[i];
@@ -4926,11 +4929,34 @@ function generateExprBlock(block: ExprBlock, ctx: GenerateCtx): unknown {
       );
     }
     seen.add(decl.name);
+    // Try to fold to a compile-time constant (prior folded decls / compile
+    // params live in `c.bindings`). A name shadowing an in-scope lambda param is
+    // NOT folded: `ParamRef` resolves lambda params before bindings, so folding
+    // it would mis-resolve; the `$let` below shadows the param correctly instead.
+    if (!c.lambdaParams.has(decl.name)) {
+      const r = evalConst(decl.value, emptyEnv, c);
+      if (r.ok) {
+        const merged = new Map(c.bindings ?? []);
+        merged.set(decl.name, r.value);
+        let c2 = withBindings(c, merged);
+        const t = foldedCompoundType(r.value);
+        if (t) c2 = { ...c2, bindingTypes: new Map([...(c.bindingTypes ?? []), [decl.name, t]]) };
+        return fold(i + 1, c2);
+      }
+    }
     const value = _generate(decl.value, c); // initialiser sees only prior decls
     const inner = extendCtx(c, [decl.name]); // decl.name now resolves to $$name
     return { $let: { vars: { [safeVarName(decl.name)]: value }, in: fold(i + 1, inner) } };
   };
   return fold(0, ctx);
+}
+
+/** The static compound type of a folded value, for `bindingTypes` (see const-fold.ts). */
+function foldedCompoundType(v: unknown): "object" | "array" | "string" | undefined {
+  if (typeof v === "string") return "string";
+  if (Array.isArray(v)) return "array";
+  if (v !== null && typeof v === "object" && !isOpaqueBsonValue(v)) return "object";
+  return undefined;
 }
 
 function requireLambda(

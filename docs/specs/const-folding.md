@@ -87,6 +87,18 @@ not-found (server MISSING ≠ null), empty-separator `.split`, multi-arg string
    Pipeline). Otherwise → a `Pipeline` of the survivors, which now contains only
    runtime declarations, so `generateImplicitPipeline` is unchanged.
 
+## Inside lambda expr-blocks
+
+Folding also applies inside a lambda expression-block (`x => { const a = …; return … }`,
+lowered by `generateExprBlock` in codegen.ts). A declaration whose initialiser
+is a compile-time constant is inlined (via `ctx.bindings`) and emits no `$let`;
+a declaration that reads the lambda parameter (or is otherwise non-constant)
+keeps the nested-`$let` lowering. One guard: a declaration whose name shadows an
+in-scope **lambda parameter** is never folded — `ParamRef` resolves lambda
+params before bindings, so folding would mis-resolve the shadow; the `$let`
+shadows the parameter correctly instead. This makes a constant `const` vanish
+wherever it appears, top-level or nested.
+
 ## Foldable surface
 
 `evalConst` folds any pure, deterministic subtree over literals and earlier

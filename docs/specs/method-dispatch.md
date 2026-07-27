@@ -161,7 +161,7 @@ Per-method shape under the paired form:
 
 A lambda body may be an **expression block** — `(x) => { const a = …; const b = f(a); return g(a, b); }` — anywhere a lambda is accepted as a value: the array methods above, `$let(vars, fn)`, the IIFE `(…)=>…)(…)` form, `Object.groupBy`, and `Array.from`'s map function. The parser represents it as an `ExprBlock` AST node (`{ decls: LetDecl[]; ret: Expr }`) on the `Lambda` — distinct from the lookup-callback `block: Pipeline` (whose statements are stages/update ops, lowered to a `$lookup` sub-pipeline).
 
-`generateExprBlock` (`codegen.ts`) lowers it to a **right-folded nest of `$let`** — one binding per declaration, in source order:
+`generateExprBlock` (`codegen.ts`) lowers a **non-constant** declaration to a `$let` binding; a declaration whose initialiser is a **compile-time constant** folds instead (its value inlined, no `$let` — see [const-folding.md](const-folding.md)). The runtime bindings form a **right-folded nest of `$let`** — one binding per non-folded declaration, in source order:
 
 ```
 { const a = A; const b = B; return R; }

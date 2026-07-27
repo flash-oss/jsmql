@@ -227,6 +227,36 @@ describe("const folding — lodash string methods", () => {
   });
 });
 
+describe("const folding — inside lambda expr-blocks", () => {
+  it("a constant const inside a lambda block folds (no $let)", () => {
+    expect(jsmql.expr("$.items.map(x => { const factor = 2; return x * factor })")).toEqual({
+      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
+    });
+  });
+
+  it("a const that reads the lambda param stays a runtime $let", () => {
+    expect(jsmql.expr("$.items.map(x => { const dbl = x * 2; return dbl + 1 })")).toEqual({
+      $map: {
+        input: "$items",
+        as: "x",
+        in: { $let: { vars: { dbl: { $multiply: ["$$x", 2] } }, in: { $add: ["$$dbl", 1] } } },
+      },
+    });
+  });
+
+  it("a const shadowing the lambda param keeps its $let (correct shadow)", () => {
+    expect(jsmql.expr("$.items.map(x => { const x = 99; return x })")).toEqual({
+      $map: { input: "$items", as: "x", in: { $let: { vars: { x: 99 }, in: "$$x" } } },
+    });
+  });
+
+  it("mixed: the constant inlines into the runtime binding's initialiser", () => {
+    expect(jsmql.expr("$.items.map(x => { const bump = 10; const y = x + bump; return y })")).toEqual({
+      $map: { input: "$items", as: "x", in: { $let: { vars: { y: { $add: ["$$x", 10] } }, in: "$$y" } } },
+    });
+  });
+});
+
 describe("const folding — output stability", () => {
   it("a pipeline with no foldable consts is byte-identical to before", () => {
     expect(jsmql("$match($.x > 0); $sort({ x: 1 })")).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);
