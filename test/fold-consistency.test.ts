@@ -152,9 +152,50 @@ for (const v of ARRAY_SAMPLES) {
     ".nth(-1)",
     ".size()",
     ".without(2)",
+    // lodash array family (iteratee/predicate) — arrow forms on scalar arrays
+    ".sumBy(x => x)",
+    ".meanBy(x => x)",
+    ".minBy(x => x)",
+    ".maxBy(x => x)",
+    ".uniqBy(x => x)",
+    ".groupBy(x => x)",
+    ".countBy(x => x)",
+    ".keyBy(x => x)",
+    ".partition(x => x === 2)",
+    ".reject(x => x === 2)",
+    ".takeWhile(x => x !== 2)",
+    ".dropWhile(x => x !== 2)",
+    ".takeRightWhile(x => x !== 2)",
+    ".dropRightWhile(x => x !== 2)",
+    ".sortBy()",
+    ".groupBy()",
+    ".countBy()",
+    ".keyBy()",
   ]) {
     arrayCases.push({ lit, val: v, call });
   }
+}
+// arrays of objects for iteratee shorthands + by-field sorting
+const OBJ_ARRAY = [
+  { id: 3, dept: "a", age: 30 },
+  { id: 1, dept: "b", age: 20 },
+  { id: 2, dept: "a", age: 30 },
+];
+for (const call of [
+  '.keyBy("id")',
+  '.groupBy("dept")',
+  '.countBy("dept")',
+  '.uniqBy("dept")',
+  ".minBy(x => x.age)",
+  ".maxBy(x => x.age)",
+  ".sumBy(x => x.age)",
+  '.sortBy("age")',
+  '.sortBy("id")',
+  '.orderBy(["age"], ["desc"])',
+  ".orderBy({ age: -1 })",
+  '.partition(x => x.dept === "a")',
+]) {
+  arrayCases.push({ lit: JSON.stringify(OBJ_ARRAY), val: OBJ_ARRAY, call });
 }
 // arrays-of-arrays for flatten
 for (const v of [

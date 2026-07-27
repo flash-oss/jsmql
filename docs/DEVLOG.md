@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: fold lodash iteratee/collection array methods in `const`/`let`
+
+Extends constant folding to the iteratee-taking lodash array methods:
+`sumBy`/`meanBy`/`minBy`/`maxBy`, `uniqBy`/`sortedUniqBy`, `keyBy`, `groupBy`/
+`countBy`, `partition`/`reject`, `takeWhile`/`dropWhile`/`takeRightWhile`/
+`dropRightWhile`, and `sortBy`/`orderBy`. The iteratee/predicate arg is resolved
+to a JS function by `resolveIterateeFn` in const-eval.ts, which interprets an
+arrow directly and desugars a lodash **shorthand** (`"a.b"` / `{ k: v }` /
+`["a.b", v]`) via jsmql's own `shorthandToLambda` before interpreting — so a fold
+lowers the shorthand exactly as the runtime would. `keyBy`/`groupBy`/`countBy`
+stringify keys with `$toString` semantics (`mqlKeyString`); `minBy`/`maxBy`
+mirror the stable-sort-then-take-first/last lowering; `sortBy`/`orderBy` use a
+scalar BSON-order comparator (`foldSort`) and withhold non-scalar/mixed/null sort
+keys (BSON type ordering isn't replicated) → runtime. Validated by the
+fold-consistency suite across scalar and object-array batteries (675 cases,
+arrows and shorthands) — all agree with mongod.
+
 ## 2026-07-27 — feat: fold lodash number + non-iteratee array methods in `const`/`let`
 
 Extends constant folding to the lodash number methods (`clamp`, `inRange`,

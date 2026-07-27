@@ -26,7 +26,7 @@
 
 import type { ArrayElement, CallArg, Expr, Lambda, ObjectEntry } from "./ast.ts";
 import type { GenerateCtx } from "./codegen.ts";
-import { CodegenError, foldConstantDate, isOpaqueBsonValue } from "./codegen.ts";
+import { CodegenError, foldConstantDate, isOpaqueBsonValue, shorthandToLambda } from "./codegen.ts";
 import * as lodash from "./lodash-fold.ts";
 import { ObjectId } from "./objectid.ts";
 
@@ -393,6 +393,38 @@ function requireLambdaArg(args: CallArg[], env: ConstEnv, ctx: GenerateCtx): (..
   return interpretLambda(first, env, ctx);
 }
 
+/**
+ * Resolve a lodash iteratee/predicate ARG (optional — omitted → identity) to a
+ * JS function. An arrow is interpreted directly; a shorthand (`"a.b"` /
+ * `{ k: v }` / `["a.b", v]`) is desugared via jsmql's own `shorthandToLambda`
+ * (so it lowers the same way the runtime does) and then interpreted. Anything
+ * else (a bare cast/math ref) → NON_FOLDABLE.
+ */
+function resolveIterateeFn(
+  arg: CallArg | undefined,
+  method: string,
+  env: ConstEnv,
+  ctx: GenerateCtx,
+): (el: unknown, i: number) => unknown {
+  if (arg === undefined) return (el) => el; // identity default
+  if (arg.type === "SpreadElement") throw NON_FOLDABLE;
+  if (arg.type === "Lambda") {
+    const fn = interpretLambda(arg, env, ctx);
+    return (el, i) => fn(el, i);
+  }
+  const lam = shorthandToLambda(arg, method, "__jsmqlIt");
+  if (lam === null) throw NON_FOLDABLE;
+  const fn = interpretLambda(lam, env, ctx);
+  return (el) => fn(el);
+}
+
+/** `$toString` of a scalar key (keyBy/groupBy/countBy); withhold for non-scalar keys. */
+function keyStr(v: unknown): string {
+  const s = lodash.mqlKeyString(v);
+  if (s === undefined) throw NON_FOLDABLE;
+  return s;
+}
+
 function evalMethodCall(
   object: Expr,
   method: string,
@@ -610,9 +642,166 @@ function foldArrayMethod(arr: unknown[], method: string, args: CallArg[], env: C
       const values = evalArgValues(args, env, ctx);
       return ok(lodash.without(arr, values));
     }
+    // ── lodash array methods (iteratee / predicate) ─────────────────────────
+    case "sumBy":
+      return ok(lodash.sum(arr.map(resolveIterateeFn(args[0], method, env, ctx))));
+    case "meanBy":
+      return ok(lodash.mean(arr.map(resolveIterateeFn(args[0], method, env, ctx))));
+    case "minBy":
+    case "maxBy": {
+      if (arr.length === 0) throw NON_FOLDABLE; // $arrayElemAt of [] → missing
+      const it = resolveIterateeFn(args[0], method, env, ctx);
+      const keyed = arr.map((el, i) => ({ el, k: it(el, i) }));
+      if (!keyed.every((x) => typeof x.k === "number")) throw NON_FOLDABLE; // BSON key order → runtime
+      // Stable ascending sort by key; min = first, max = last (mirrors the lowering).
+      const sorted = keyed.map((x, i) => ({ ...x, i })).sort((a, b) => (a.k as number) - (b.k as number) || a.i - b.i);
+      return ok(sorted[method === "maxBy" ? sorted.length - 1 : 0].el);
+    }
+    case "uniqBy":
+    case "sortedUniqBy": {
+      const it = resolveIterateeFn(args[0], method, env, ctx);
+      const seen: unknown[] = [];
+      const out: unknown[] = [];
+      arr.forEach((el, i) => {
+        const k = it(el, i);
+        if (!seen.some((s) => lodash.bsonEqual(s, k))) {
+          seen.push(k);
+          out.push(el);
+        }
+      });
+      return ok(out);
+    }
+    case "keyBy": {
+      const it = resolveIterateeFn(args[0], "keyBy", env, ctx);
+      const out: Record<string, unknown> = {};
+      arr.forEach((el, i) => (out[keyStr(it(el, i))] = el)); // last wins ($arrayToObject)
+      return ok(out);
+    }
+    case "groupBy":
+    case "countBy": {
+      const it = resolveIterateeFn(args[0], method, env, ctx);
+      const groups = new Map<string, unknown[]>();
+      arr.forEach((el, i) => {
+        const k = keyStr(it(el, i));
+        (groups.get(k) ?? groups.set(k, []).get(k)!).push(el);
+      });
+      const out: Record<string, unknown> = {};
+      for (const [k, els] of groups) out[k] = method === "countBy" ? els.length : els;
+      return ok(out);
+    }
+    case "partition":
+    case "reject": {
+      const p = resolveIterateeFn(args[0], method, env, ctx);
+      const yes: unknown[] = [];
+      const no: unknown[] = [];
+      arr.forEach((el, i) => (p(el, i) ? yes : no).push(el));
+      return ok(method === "reject" ? no : [yes, no]);
+    }
+    case "takeWhile":
+    case "dropWhile":
+    case "takeRightWhile":
+    case "dropRightWhile": {
+      const p = resolveIterateeFn(args[0], method, env, ctx);
+      const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
+      const drop = method === "dropWhile" || method === "dropRightWhile";
+      const seq = fromRight ? [...arr].reverse() : arr;
+      let cut = 0;
+      while (cut < seq.length && p(seq[cut], cut)) cut++;
+      const kept = drop ? seq.slice(cut) : seq.slice(0, cut);
+      return ok(fromRight ? kept.reverse() : kept);
+    }
+    case "sortBy":
+    case "orderBy":
+      return foldSort(arr, method, args, env, ctx);
     default:
       throw NON_FOLDABLE;
   }
+}
+
+type SortSpec = { get: (el: unknown) => unknown; dir: 1 | -1 };
+
+/** Resolve a dotted field path on a folded value (`"a.b"` → v.a.b); missing → undefined. */
+function fieldGetter(path: string): (v: unknown) => unknown {
+  const segs = path.split(".");
+  return (v: unknown) => {
+    let cur = v;
+    for (const s of segs) {
+      if (cur === null || cur === undefined || typeof cur !== "object") return undefined;
+      cur = (cur as Record<string, unknown>)[s];
+    }
+    return cur;
+  };
+}
+
+/** BSON-order compare for scalar sort keys; throws NON_FOLDABLE for null/mixed/non-scalar. */
+function scalarCompare(a: unknown, b: unknown): number {
+  if (a === null || a === undefined || b === null || b === undefined) throw NON_FOLDABLE;
+  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+  throw NON_FOLDABLE; // mixed types / objects → BSON type ordering, not replicated
+}
+
+function orderDir(v: unknown): 1 | -1 {
+  if (v === 1 || v === "asc") return 1;
+  if (v === -1 || v === "desc") return -1;
+  throw NON_FOLDABLE;
+}
+
+function foldSort(arr: unknown[], method: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {
+  const specs: SortSpec[] = [];
+  if (method === "sortBy") {
+    const arg = args[0];
+    if (arg === undefined) specs.push({ get: (el) => el, dir: 1 });
+    else if (arg.type === "StringLiteral") specs.push({ get: fieldGetter(arg.value), dir: 1 });
+    else if (arg.type === "Lambda") {
+      const fn = interpretLambda(arg, env, ctx);
+      specs.push({ get: (el) => fn(el), dir: 1 });
+    } else if (arg.type === "ArrayLiteral") {
+      for (const e of arg.elements) {
+        if (e.type !== "StringLiteral") throw NON_FOLDABLE;
+        specs.push({ get: fieldGetter(e.value), dir: 1 });
+      }
+    } else throw NON_FOLDABLE;
+  } else {
+    // orderBy
+    const arg = args[0];
+    if (arg !== undefined && arg.type === "ObjectLiteral") {
+      if (args.length > 1) throw NON_FOLDABLE;
+      for (const entry of arg.entries) {
+        if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") throw NON_FOLDABLE;
+        const dv = evalConst(entry.value, env, ctx);
+        if (!dv.ok) throw NON_FOLDABLE;
+        specs.push({ get: fieldGetter(entry.key.name), dir: orderDir(dv.value) });
+      }
+    } else {
+      // keys[, orders]: keys = "field" | [fields]; orders = dir | [dirs]
+      const keys =
+        args[0] === undefined
+          ? undefined
+          : evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+      if (!keys || !keys.ok) throw NON_FOLDABLE;
+      const keyList = Array.isArray(keys.value) ? keys.value : [keys.value];
+      const ordersArg = args[1];
+      const orders =
+        ordersArg === undefined
+          ? undefined
+          : evalConst(ordersArg.type === "SpreadElement" ? ordersArg.argument : ordersArg, env, ctx);
+      const orderList = orders && orders.ok ? (Array.isArray(orders.value) ? orders.value : [orders.value]) : [];
+      keyList.forEach((k, i) => {
+        if (typeof k !== "string") throw NON_FOLDABLE;
+        specs.push({ get: fieldGetter(k), dir: orderList[i] === undefined ? 1 : orderDir(orderList[i]) });
+      });
+    }
+  }
+  const decorated = arr.map((el, i) => ({ el, i }));
+  decorated.sort((A, B) => {
+    for (const { get, dir } of specs) {
+      const c = scalarCompare(get(A.el), get(B.el));
+      if (c !== 0) return dir * c;
+    }
+    return A.i - B.i; // stable
+  });
+  return ok(decorated.map((d) => d.el));
 }
 
 function foldNumberMethod(n: number, method: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {
