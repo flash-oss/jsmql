@@ -87,6 +87,46 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
       },
     ]);
   });
+
+  it("an outer field with a char illegal in a MongoDB var name yields an identifier-safe let var", () => {
+    // `meta.sub-id` — the hyphen is legal in a field NAME but illegal in a `$$`
+    // VARIABLE name, so the raw segment can't become the let-var name verbatim
+    // (mongod: "contains an invalid character for a variable name: '-'"). The
+    // last path segment is sanitized to `[A-Za-z0-9_]` for the name only; the
+    // value keeps the raw field path. Verified against a live mongod (HR3).
+    expect(jsmql('$.x = $$$.orders.filter(o => o.ref === $.meta["sub-id"] && o.qty > 0);')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_sub_id: "$meta.sub-id" },
+          pipeline: [{ $match: { qty: { $gt: 0 }, $expr: { $eq: ["$ref", "$$jsmql_f0_sub_id"] } } }],
+          as: "x",
+        },
+      },
+    ]);
+  });
+
+  it("two distinct fields that sanitize to the same var base stay distinct (`_2` suffix)", () => {
+    // `sub-id` and `sub_id` are different fields but both sanitize to the base
+    // `jsmql_f0_sub_id`. The allocator interns on the RAW path and disambiguates
+    // with `_2`, so each field keeps its own correlation var.
+    expect(jsmql('$.x = $$$.orders.filter(o => o.a === $.meta["sub-id"] && o.b === $.meta["sub_id"]);')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_sub_id: "$meta.sub-id", jsmql_f0_sub_id_2: "$meta.sub_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $and: [{ $eq: ["$a", "$$jsmql_f0_sub_id"] }, { $eq: ["$b", "$$jsmql_f0_sub_id_2"] }] },
+              },
+            },
+          ],
+          as: "x",
+        },
+      },
+    ]);
+  });
 });
 
 describe("$$$.coll.find/filter — block-body sub-pipeline", () => {

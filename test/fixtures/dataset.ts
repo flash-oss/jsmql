@@ -572,6 +572,12 @@ function buildOrders() {
       shippedAt: o.shippedAt === null ? null : D(o.shippedAt),
       items,
       total,
+      // Nested field with a HYPHENATED key — an external-system reference id.
+      // Correlating on `$.meta["ext-id"]` inside a `$$$.<coll>.filter(...)` forces
+      // the `$lookup.let` var name to be derived from the segment `ext-id`, whose
+      // hyphen is illegal in a MongoDB variable name — the regression this exercises
+      // end-to-end on a real server. See integration test "hyphenated correlated let".
+      meta: { "ext-id": `X-${o.n}` },
     };
   });
 }

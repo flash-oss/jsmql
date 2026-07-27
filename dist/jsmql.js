@@ -4246,14 +4246,17 @@ function streamLengthStage() {
   return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
 }
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
+function sanitizeVarSegment(name) {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
 function letFieldVar(field, depth) {
-  return `${JSMQL_NS_VAR}f${depth}_${field}`;
+  return `${JSMQL_NS_VAR}f${depth}_${sanitizeVarSegment(field)}`;
 }
 function letBindingVar(name, depth) {
-  return `${JSMQL_NS_VAR}v${depth}_${name}`;
+  return `${JSMQL_NS_VAR}v${depth}_${sanitizeVarSegment(name)}`;
 }
 function letSysVar(name, depth) {
-  return `${JSMQL_NS_VAR}s${depth}_${name}`;
+  return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name)}`;
 }
 var JSMQL_NS_VAR = "jsmql_";
 var CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;
