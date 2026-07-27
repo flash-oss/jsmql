@@ -25,6 +25,16 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
     ]);
   });
 
+  it("top-level bracket-accessed local field yields a clean localField (no leading dot)", () => {
+    // `$["ext-code"]` is bracket access on the bare root `$`. The root is an
+    // empty-path FieldRef and must contribute NO path segment — otherwise the
+    // localField comes out as `.ext-code` (leading dot), which mongod rejects
+    // (Location15998). Verified against a live mongod.
+    expect(jsmql(`$.x = $$$.orders.filter(o => o.ref === $["ext-code"]);`)).toEqual([
+      { $lookup: { from: "orders", localField: "ext-code", foreignField: "ref", as: "x" } },
+    ]);
+  });
+
   it("dotted assignment LHS becomes a dotted `as` (MongoDB accepts that)", () => {
     expect(jsmql("$.user.profile = $$$.profiles.find(p => p.userId === $._id);")).toEqual([
       { $lookup: { from: "profiles", localField: "_id", foreignField: "userId", as: "user.profile" } },
@@ -119,6 +129,28 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
             {
               $match: {
                 $expr: { $and: [{ $eq: ["$a", "$$jsmql_f0_sub_id"] }, { $eq: ["$b", "$$jsmql_f0_sub_id_2"] }] },
+              },
+            },
+          ],
+          as: "x",
+        },
+      },
+    ]);
+  });
+
+  it("top-level bracket-accessed local field hoists into `let` cleanly (no leading dot in value or var)", () => {
+    // The pipeline-form counterpart of the basic-form leading-dot case: `$["ext-code"]`
+    // must hoist to the `let` VALUE `$ext-code` (not `$.ext-code`) and the var name
+    // `jsmql_f0_ext_code`. Verified against a live mongod.
+    expect(jsmql('$.x = $$$.orders.filter(o => o.userId === $._id && $["ext-code"] === "K1");')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id", jsmql_f0_ext_code: "$ext-code" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $eq: ["$$jsmql_f0_ext_code", "K1"] }] },
               },
             },
           ],
@@ -405,6 +437,15 @@ describe("$$$.coll.find/filter — error cases", () => {
     // `o` alone would need $$ROOT semantics — out of scope for v1.
     expect(() => jsmql("$.users = $$$.users.filter(o => o);")).toThrow(
       /Bare lambda parameter 'o' in a \$lookup predicate is not yet supported/,
+    );
+  });
+
+  it("bare `$` (whole outer document) as a correlation value is rejected with guidance", () => {
+    // The local-side mirror of the bare-foreign-param rejection: `$` alone is the
+    // whole outer doc, not a field path. Previously it emitted an invalid empty
+    // field path (`localField: ""` / a `let` value of `"$"`) that mongod rejects.
+    expect(() => jsmql("$.x = $$$.orders.filter(o => o.ref === $);")).toThrow(
+      /Bare '\$' \(the whole outer document\) can't be used as a value in a \$lookup predicate/,
     );
   });
 
