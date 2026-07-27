@@ -315,7 +315,7 @@ describe("$$$.coll.find/filter — error cases", () => {
 
   it("wrong method on $$$.<coll> suggests .find / .filter / .aggregate via closestNameTo", () => {
     expect(() => jsmql("$.x = $$$.users.fnid(u => u._id === $._id);")).toThrow(
-      /'\$\$\$\.<coll>' supports \.find\(pred\), \.filter\(pred\), and \.aggregate\(pipeline\), not \.fnid\(\)\. Did you mean '\.find'\?/,
+      /'\$\$\$\.<coll>' supports \.find\(pred\), \.filter\(pred\), \.aggregate\(pipeline\), and the lodash stream methods .* not \.fnid\(\)\. Did you mean '\.find'\?/,
     );
   });
 
@@ -817,6 +817,161 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       { $set: { firstName: "$__jsmql.tmp.1.name" } },
       { $unset: "__jsmql" },
     ]);
+  });
+});
+
+describe("$$$.coll.<streamMethod>… — any lodash stream method may start the chain", () => {
+  // Verified end-to-end on a live mongod (chain-order + correlation) in tmp/verify-lookup.ts.
+  it("single stream-method head → lean $lookup (no let, no vacuous $match)", () => {
+    expect(jsmql("$.recent = $$$.orders.toSorted({ createdAt: -1 });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $sort: { createdAt: -1 } }], as: "__jsmql.tmp.1" } },
+      { $set: { recent: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("stream head + chain ending in .filter — chain ORDER preserved ([$sort,$limit,$match], not filter-first)", () => {
+    expect(jsmql("$.recent = $$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o => o.qty > 1);")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 200 }, { $match: { qty: { $gt: 1 } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { recent: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("stream head + a CORRELATED trailing .filter hoists $.<field> into $lookup.let", () => {
+    expect(
+      jsmql(
+        "$.recent = $$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o => o.userId === $._id && o.qty > 1);",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $sort: { createdAt: -1 } },
+            { $limit: 200 },
+            { $match: { qty: { $gt: 1 }, $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { recent: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a .filter anywhere in the chain (not just head) becomes a $match — double filter collapses to two $match", () => {
+    expect(jsmql('$.paid = $$$.orders.filter(o => o.qty > 1).filter(o => o.status === "paid");')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: {},
+          pipeline: [{ $match: { qty: { $gt: 1 } } }, { $match: { status: "paid" } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { paid: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".reject head negates the predicate into a sub-pipeline $match", () => {
+    expect(jsmql("$.kept = $$$.orders.reject(o => o.cancelled).take(5);")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $not: {
+                    $and: [
+                      { $ne: [{ $ifNull: ["$cancelled", null] }, null] },
+                      { $ne: ["$cancelled", false] },
+                      { $ne: ["$cancelled", ""] },
+                      { $ne: ["$cancelled", 0] },
+                    ],
+                  },
+                },
+              },
+            },
+            { $limit: 5 },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { kept: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a single stream-method head still rejects an unknown method with a didYouMean suggestion", () => {
+    expect(() => jsmql("$.x = $$$.orders.toSrted({ createdAt: -1 });")).toThrow(
+      /not \.toSrted\(\)\. Did you mean '\.toSorted'\?/,
+    );
+  });
+
+  it("a cross-database stream-method head is still rejected at requireSameDbColl", () => {
+    expect(() => jsmql("$.x = $$$$.other.orders.toSorted({ x: -1 });")).toThrow(
+      /Cross-database reads aren't supported/,
+    );
+  });
+});
+
+describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial review)", () => {
+  // Each of these emitted invalid or wrong MQL before the generic-head change fixed them;
+  // verified against a live mongod. See docs/DEVLOG.md.
+  it("a lone shorthand .filter({obj}) head is accepted (consistent with the chained form)", () => {
+    expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "__jsmql.tmp.1" } },
+      { $set: { x: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it(".slice(a, a) (empty window) emits $match:{$expr:false}, never the server-rejected $limit:0", () => {
+    expect(jsmql("$.top = $$$.orders.slice(0, 0);")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { $expr: false } }], as: "__jsmql.tmp.1" } },
+      { $set: { top: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a no-statement / const-only block-body .map value-extracts identically to the expression form", () => {
+    // `o => { return o.total }` is valid JS, identical to `o => o.total` (and to the same
+    // block on an in-document array). On a stream it's PARSED as a stage-less sub-pipeline
+    // block, but must lower to the SAME value-mode $map — never a scalar $replaceWith.
+    // Verified on a live mongod.
+    const asExpr = jsmql("$.x = $$$.orders.map(o => o.total);");
+    expect(jsmql("$.x = $$$.orders.map(o => { return o.total; });")).toEqual(asExpr);
+    expect(jsmql("$.x = $$$.orders.map(o => { const y = o.total; return y; });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [], as: "__jsmql.tmp.1" } },
+      {
+        $set: {
+          x: { $map: { input: "$__jsmql.tmp.1", as: "o", in: { $let: { vars: { y: "$$o.total" }, in: "$$y" } } } },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a block-body .map with REAL stages + a scalar return is still rejected (can't value-extract through stages)", () => {
+    expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
+      /statement-block body/,
+    );
+  });
+
+  it("a .map after an object-collapsing terminal (.countBy) is rejected, not mis-assembled", () => {
+    expect(() => jsmql('$.x = $$$.orders.filter(o => o.uid === $._id).countBy("uid").map(v => v);')).toThrow(
+      /'\.map\(\.\.\.\)' can't follow '\.countBy\(\.\.\.\)'/,
+    );
   });
 });
 

@@ -9262,6 +9262,10 @@ var SLICE = {
   },
   lower(args, _ctx, _callPos) {
     const start = args[0].value;
+    if (args.length === 2) {
+      const end = args[1].value;
+      if (end === start) return { stages: [{ $match: { $expr: false } }] };
+    }
     const stages = [];
     if (start > 0) stages.push({ $skip: start });
     if (args.length === 2) {
@@ -10861,9 +10865,10 @@ function validateLookupShape(expr) {
     return;
   }
   if (expr.method !== "find" && expr.method !== "filter") {
-    const hint = didYouMean(expr.method, ["find", "filter", "aggregate"], (s) => `.${s}`);
+    if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
+    const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
     throw new CodegenError(
-      `'${spell}' supports .find(pred), .filter(pred), and .aggregate(pipeline), not .${expr.method}().${hint} For a full sub-pipeline (grouping, sort + limit, reshaping), use \`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
+      `'${spell}' supports .find(pred), .filter(pred), .aggregate(pipeline), and the lodash stream methods (e.g. .toSorted, .take, .map \u2014 see docs/specs/stream-methods.md), not .${expr.method}().${hint} For a full sub-pipeline (grouping, reshaping), use \`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
       expr.pos
     );
   }
@@ -10875,6 +10880,9 @@ function validateLookupShape(expr) {
   }
   const arg = expr.args[0];
   if (arg.type !== "Lambda") {
+    if (expr.method === "filter" && arg.type !== "SpreadElement" && shorthandToLambda(arg, "filter", "jsmqlItem") !== null) {
+      return;
+    }
     throw new CodegenError(
       `.${expr.method}(predicate) requires an arrow predicate, e.g. \`.${expr.method}(o => o._id === $.userId)\`.`,
       "pos" in arg ? arg.pos : expr.pos
@@ -11798,6 +11806,21 @@ function peelableTerminalMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return null;
   const arg = m.args[0];
   if (arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0) return arg;
+  if (arg.type === "Lambda" && arg.block !== void 0 && arg.ret !== void 0 && arg.ret.type !== "ObjectLiteral") {
+    const stmts = arg.block.stmts;
+    if (stmts.length === 0) {
+      return { type: "Lambda", params: arg.params, body: arg.ret, pos: arg.pos };
+    }
+    if (stmts.every((s) => s.type === "LetDecl")) {
+      return {
+        type: "Lambda",
+        params: arg.params,
+        exprBlock: { type: "ExprBlock", decls: stmts, ret: arg.ret, pos: arg.block.pos },
+        pos: arg.pos
+      };
+    }
+    return arg;
+  }
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
     return fieldPathLambda(arg.value, arg.pos);
   }
@@ -11807,12 +11830,67 @@ function isValueCollapsingMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return false;
   const arg = m.args[0];
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
-  return arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0 && arg.body.type !== "ObjectLiteral";
+  if (arg.type !== "Lambda") return false;
+  if (arg.block === void 0 && arg.body !== void 0) return arg.body.type !== "ObjectLiteral";
+  if (arg.block !== void 0 && arg.ret !== void 0) return arg.ret.type !== "ObjectLiteral";
+  return false;
 }
 function isCollapsingTerminal(m) {
   if (m.method === "countBy" || m.method === "keyBy") return true;
   if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
   return false;
+}
+function chainFilterLambda(m) {
+  const rejectHint = m.method === "reject" ? `, a matches-object ('{ active: true }'), a field name, or a ["field", value] pair` : "";
+  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+    throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => \u2026')${rejectHint}.`, m.pos);
+  }
+  const arg = m.args[0];
+  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+  if (base === null || base.params.length !== 1) {
+    throw new CodegenError(
+      `.${m.method}(<predicate>) takes a single-parameter arrow ('o => \u2026')${rejectHint}.`,
+      arg.pos
+    );
+  }
+  if (m.method === "reject") {
+    if (base.body === void 0) {
+      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => \u2026').`, base.pos);
+    }
+    return {
+      type: "Lambda",
+      params: base.params,
+      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
+      pos: base.pos
+    };
+  }
+  return base;
+}
+function lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing) {
+  const lambda = chainFilterLambda(m);
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing);
+  return { letVars, stages: pipelineBody };
+}
+function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, allocSlot, enclosing, innerCtx, pipelineBody, letVars) {
+  for (let i = start; i < chainEnd; i++) {
+    const m = methods[i];
+    if (m.method === "filter" || m.method === "reject") {
+      const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing);
+      Object.assign(letVars, fLets);
+      pipelineBody.push(...stages);
+      continue;
+    }
+    const def = lookupStreamMethod(m.method);
+    if (def === null) continue;
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
+    if (result.replacesPreviousStage) pipelineBody.pop();
+    pipelineBody.push(...result.stages);
+    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
+  }
+}
+function isPeelableChainMethod(name) {
+  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
 }
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
@@ -11823,53 +11901,81 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     cur = cur.object;
   }
   methods.reverse();
-  if (methods.length < 2) return null;
+  if (methods.length === 0) return null;
   const head = methods[0];
   const direct = detectLookupCall(head, outerCtx);
-  if (direct === null) return null;
-  if (direct.method !== "filter") {
-    if (direct.method === "find" && methods.length > 1) {
-      const next = methods[1];
-      const fam = requiredReceiverFamily(next.method);
-      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
-        throw new CodegenError(
-          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
-          next.pos
-        );
+  let target;
+  let start;
+  const seedLetVars = {};
+  const seedPipeline = [];
+  if (direct !== null) {
+    if (direct.method !== "filter") {
+      if (direct.method === "find" && methods.length > 1) {
+        const next = methods[1];
+        const fam = requiredReceiverFamily(next.method);
+        if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+          throw new CodegenError(
+            `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+            next.pos
+          );
+        }
       }
+      return null;
     }
-    return null;
-  }
-  for (let i = 1; i < methods.length; i++) {
-    if (lookupStreamMethod(methods[i].method) === null) return null;
+    if (methods.length < 2) return null;
+    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
+    Object.assign(seedLetVars, seed.letVars);
+    seedPipeline.push(...seed.pipelineBody);
+    target = { db: direct.db, collection: direct.collection, pos: direct.pos };
+    start = 1;
+  } else {
+    const t = extractLookupTarget(cur, outerCtx);
+    if (t === null) return null;
+    if (!isPeelableChainMethod(head.method)) return null;
+    target = t;
+    start = 0;
   }
   const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
   const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
-  for (let i = 1; i < chainEnd; i++) {
+  if (terminalMap !== null && chainEnd >= 1 && isCollapsingTerminal(methods[chainEnd - 1])) {
+    const collapser = methods[chainEnd - 1].method;
+    throw new CodegenError(
+      `'.map(...)' can't follow '.${collapser}(...)' on '$$$.${target.collection}' \u2014 '.${collapser}' returns a single object, not an array. Drop the '.map', or map over the object's values with a value-mode expression on the assigned field.`,
+      methods[methods.length - 1].pos
+    );
+  }
+  for (let i = start; i < chainEnd; i++) {
+    if (!isPeelableChainMethod(methods[i].method)) return null;
+  }
+  for (let i = start; i < chainEnd; i++) {
     if (isValueCollapsingMap(methods[i])) return null;
   }
-  const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
-  const usesRootLen = methods.slice(1, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const letVars = { ...seedLetVars };
+  const pipelineBody = [...seedPipeline];
+  const usesRootLen = methods.slice(start, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   const innerCtx = {
     ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
     enclosingLookup: enclosing,
     pipelineLets: outerCtx.pipelineLets
   };
-  for (let i = 1; i < chainEnd; i++) {
-    const m = methods[i];
-    const def = lookupStreamMethod(m.method);
-    if (def === null) return null;
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
-    if (result.replacesPreviousStage) pipelineBody.pop();
-    pipelineBody.push(...result.stages);
-    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
-  }
+  peelForeignChain(
+    methods,
+    start,
+    chainEnd,
+    outerCtx,
+    lowerBlock2,
+    allocSlot,
+    enclosing,
+    innerCtx,
+    pipelineBody,
+    letVars
+  );
   const slot = allocSlot();
-  const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   const slotRef = { type: "FieldRef", path: slot, pos: expr.pos };
   const rewritten = terminalMap !== null ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos } : slotRef;
-  const stages = [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }];
+  const lookupBody = direct === null && Object.keys(letVars).length === 0 ? { from, pipeline: pipelineBody, as: slot } : { from, let: letVars, pipeline: pipelineBody, as: slot };
+  const stages = [{ $lookup: lookupBody }];
   if (isCollapsingTerminal(methods[methods.length - 1])) {
     stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
   }
@@ -13519,8 +13625,25 @@ function lowerStreamReject(m, ctx, lowerBlockFn) {
   const negated = { type: "Lambda", params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
   return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
 }
+function chainHasCorrelatingFilter(methods, outerCtx) {
+  for (const m of methods) {
+    if (m.method !== "filter" && m.method !== "reject") continue;
+    if (m.args.length !== 1 || m.args[0].type === "SpreadElement") continue;
+    const arg = m.args[0];
+    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+    if (lambda !== null && predicateReferencesOuterDoc(lambda, outerCtx)) return true;
+  }
+  return false;
+}
 function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSlot, rhs) {
-  if (methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda" && predicateReferencesOuterDoc(methods[0].args[0], outerCtx)) {
+  const collapsingMap = methods.find(isValueCollapsingMap);
+  if (collapsingMap !== void 0) {
+    throw new CodegenError(
+      `'.map(...)' in a '$$ = $$$.<coll>.\u2026' stream must return a DOCUMENT \u2014 the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ \u2026 }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.\u2026map(...)'.`,
+      collapsingMap.pos
+    );
+  }
+  if (chainHasCorrelatingFilter(methods, outerCtx)) {
     return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
   }
   const switchDesc = target.db !== void 0 ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
@@ -13529,18 +13652,16 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) }
   };
   const inner = [];
-  let i = 0;
-  if (methods[0].method === "filter") {
-    const m = methods[0];
-    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
-      rejectInvalidReplaceStream(rhs, outerCtx);
-    }
-    const matchStages = lowerStreamFilterPredicate(m.args[0], innerCtx, lowerBlockFn);
-    inner.push(...matchStages);
-    i = 1;
-  }
-  for (; i < methods.length; i++) {
+  for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (m.method === "filter") {
+      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
+      continue;
+    }
+    if (m.method === "reject") {
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
@@ -13564,27 +13685,21 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
   return { stages, clearLets: true };
 }
 function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
-  const filterMethod = methods[0];
-  const restMethods = methods.slice(1);
-  const collapsing = restMethods.find(isValueCollapsingMap);
-  if (collapsing !== void 0) {
-    throw new CodegenError(
-      `'.map(...)' in a '$$ = $$$.<coll>.filter(...)' pivot must return a DOCUMENT \u2014 the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ \u2026 }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.filter(...).map(...)'.`,
-      collapsing.pos
-    );
+  for (const m of methods) {
+    if (m.method === "filter" || m.method === "reject") continue;
+    if (lookupStreamMethod(m.method) === null) throw unknownStreamMethod(m, "$$$.<coll>");
   }
-  const lambda = filterMethod.args[0];
   const slot = allocSlot();
   const from = requireSameDbColl(target.db, target.collection, target.pos);
   let lookupStage2;
-  if (restMethods.length === 0) {
+  if (methods.length === 1 && methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda") {
     const fakeCall = {
-      pos: filterMethod.pos,
-      callPos: filterMethod.pos,
+      pos: methods[0].pos,
+      callPos: methods[0].pos,
       db: target.db,
       collection: target.collection,
       method: "filter",
-      lambda
+      lambda: methods[0].args[0]
     };
     const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
     if (pred.kind === "basic") {
@@ -13593,27 +13708,28 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
       lookupStage2 = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
     }
   } else {
-    const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
-    const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
+    const letVars = {};
+    const pipelineBody = [];
+    const usesRootLen = methods.some((m) => argsReadRootStreamLength(m.args));
     const innerCtx = {
       ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
       pipelineLets: outerCtx.pipelineLets,
-      // Signal "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes
-      // through `lowerCallbackBlock` and captures cross-level reads into THIS
-      // lookup's `let` — unlike a flat `$unionWith`, which leaves it unset.
+      // "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes through
+      // `lowerCallbackBlock` and captures cross-level reads into THIS lookup's `let`.
       enclosingLookup: EMPTY_ENCLOSING
     };
-    for (const m of restMethods) {
-      const def = lookupStreamMethod(m.method);
-      if (def === null) {
-        throw unknownStreamMethod(m, "$$$.<coll>");
-      }
-      def.validate(m.args, m.pos);
-      const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
-      if (result.replacesPreviousStage) pipelineBody.pop();
-      pipelineBody.push(...result.stages);
-      if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
-    }
+    peelForeignChain(
+      methods,
+      0,
+      methods.length,
+      outerCtx,
+      lowerBlockFn,
+      allocSlot,
+      EMPTY_ENCLOSING,
+      innerCtx,
+      pipelineBody,
+      letVars
+    );
     lookupStage2 = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
   }
   return { stages: [lookupStage2, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
@@ -13657,7 +13773,7 @@ Pick the wrap shape that matches what your reducer would return in plain JS.`,
   const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
   const pushNote = isStream ? ` ('.push(...)' appends documents as a statement \u2192 $unionWith.)` : "";
   return new CodegenError(
-    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.${pushNote}`,
+    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', ${list}.${pushNote}`,
     m.pos
   );
 }
@@ -13726,12 +13842,12 @@ function rejectInvalidReplaceStream(value, ctx) {
   }
   if (value.type === "CollectionRef" || value.type === "DatabaseRef") {
     throw new CodegenError(
-      `'$$ = \u2026' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => \u2026)' to narrow the current stream or '$$$.<coll>.filter(o => \u2026)' to switch source.`,
+      `'$$ = \u2026' RHS must call a stream method. Write '$$.filter(o => \u2026)' to narrow the current stream or '$$$.<coll>.filter(o => \u2026)' to switch source. Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.`,
       value.pos
     );
   }
   throw new CodegenError(
-    `'$$ = \u2026' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+    `'$$ = \u2026' RHS must be '$$.<streamMethod>\u2026' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>\u2026' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSorted', '.take'); a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.`,
     value.pos
   );
 }

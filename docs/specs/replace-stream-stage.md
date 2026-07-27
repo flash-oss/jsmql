@@ -75,6 +75,13 @@ correctness; placing stream-replace first keeps the structure readable.
 Form B preserves the let scope; form A clears it via
 `clearCtxLets(ctx, "$unionWith")`.
 
+**`$$ = $$$.<coll>.<chain>` accepts any stream-method head.** `lowerChainOnCollection`
+picks between the flat `$unionWith` source-switch and the correlated `$lookup`-pivot on
+`chainHasCorrelatingFilter` — a `.filter`/`.reject` **anywhere** in the chain (not just the
+head) that references `$.<field>`. Both families peel `.filter`/`.reject` at any position;
+the pivot shares `peelForeignChain` with the value-position assembler. Full head/peeler/dispatch
+detail lives in [lookup-stage.md](./lookup-stage.md) § "Any lodash stream method may head the chain".
+
 ## Predicate translation
 
 `lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlock)` produces
@@ -133,8 +140,8 @@ user's intent is recoverable:
 | `ArrayLiteral` RHS of docs mid-pipeline (e.g. `$match(...); $$ = [{...}]`) | `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, …)' instead, which lowers to '$unionWith'.` (Note: `$$ = []` is supported — it empties the stream; `$$ = [<docs>]` at stage 0 lowers to `$documents`.) |
 | `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not a supported form — a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
 | `MethodCall` on `$$` / `$$$.<coll>` with method other than `filter` | `'$$ = …' RHS supports only '<recv>.filter(<predicate>)' — '.<method>(...)' is not allowed here.[ Did you mean '.filter'?] Use '<recv>.filter(<predicate>)' to <intent>, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.` |
-| Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source.` |
-| Anything else | `'$$ = …' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
+| Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call a stream method. … Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.` |
+| Anything else | `'$$ = …' RHS must be '$$.<streamMethod>…' … or '$$$.<coll>.<streamMethod>…' …; a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.` |
 
 Compound assignment (`$$ += 5`, `$$++`) is rejected at parse time by the
 `parseContextRef` sanity guard (the next token after `$$` would be `+=` /

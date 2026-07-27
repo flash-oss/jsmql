@@ -135,6 +135,13 @@ const SLICE: StreamMethodDef = {
   },
   lower(args, _ctx, _callPos) {
     const start = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
+    if (args.length === 2) {
+      const end = (args[1] as Extract<Expr, { type: "NumberLiteral" }>).value;
+      // An empty window (`slice(a, a)`) would emit `$limit: 0`, which the server
+      // rejects ("the limit must be positive"). Drop the whole stream instead —
+      // mirrors TAKE(0). The `$skip` is moot on an empty result, so omit it.
+      if (end === start) return { stages: [{ $match: { $expr: false } }] };
+    }
     const stages: object[] = [];
     if (start > 0) stages.push({ $skip: start });
     if (args.length === 2) {

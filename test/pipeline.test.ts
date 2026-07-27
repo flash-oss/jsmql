@@ -697,11 +697,11 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     expect(() => jsmql(`$$ = $$.filter(t => $.x > 5);`)).toThrow(/\$\.<field>.*use the lambda parameter.*\bt\.x\b/);
   });
 
-  it("rejects bare `$$$.<coll>` on the RHS (no `.filter`)", () => {
-    // The user named a collection but didn't call `.filter` — the catch-all
-    // path names both supported forms.
+  it("rejects bare `$$$.<coll>` on the RHS (no stream method)", () => {
+    // The user named a collection but didn't call a stream method — the catch-all
+    // path names both supported forms and notes any stream method may head the chain.
     expect(() => jsmql(`$$ = $$$.transactions;`)).toThrow(
-      /'\$\$ = …' RHS must be.*\$\$\.filter.*or.*\$\$\$\.<coll>\.filter/,
+      /'\$\$ = …' RHS must be '\$\$\.<streamMethod>….*'\$\$\$\.<coll>\.<streamMethod>….*Any lodash stream method may head the chain/,
     );
   });
 
@@ -814,14 +814,14 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // to (unlike the `$.field = …` assignment form) this must be rejected, not emit the
     // runtime-invalid scalar `$replaceWith` (mongod Location40228).
     expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map("productId");`)).toThrow(
-      /pivot must return a DOCUMENT.*collect the values into a field/s,
+      /stream must return a DOCUMENT.*collect the values into a field/s,
     );
     expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => o.productId);`)).toThrow(
-      /pivot must return a DOCUMENT/,
+      /stream must return a DOCUMENT/,
     );
     // Non-terminal collapsing map (followed by a stream method) is rejected too.
     expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map("productId").take(5);`)).toThrow(
-      /pivot must return a DOCUMENT/,
+      /stream must return a DOCUMENT/,
     );
   });
 
@@ -1019,6 +1019,72 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       { $unwind: "$__jsmql.tmp.1" },
       { $replaceWith: "$__jsmql.tmp.1" },
     ]);
+  });
+});
+
+describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the chain (source-switch / pivot parity)", () => {
+  // Verified end-to-end on a live mongod (chain-order + correlation) in tmp/verify-lookup.ts.
+  it("uncorrelated stream head + trailing .filter → $unionWith source-switch (order preserved)", () => {
+    expect(jsmql("$$ = $$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o => o.qty > 1);")).toEqual([
+      { $match: { $expr: false } },
+      {
+        $unionWith: {
+          coll: "orders",
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 200 }, { $match: { qty: { $gt: 1 } } }],
+        },
+      },
+    ]);
+  });
+
+  it("stream head + a CORRELATED trailing .filter → $lookup-pivot (sort BEFORE the correlated $match)", () => {
+    expect(jsmql("$$ = $$$.orders.toSorted({ createdAt: -1 }).filter(o => o.userId === $._id);")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $sort: { createdAt: -1 } }, { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+
+  it("a non-filter stream head still throws for a value-terminal (single value isn't a stream) in a pivot", () => {
+    // Correlating filter routes to the pivot; a trailing value-terminal can't lower
+    // into a stream — rejected (not silently dropped).
+    expect(() => jsmql("$$ = $$$.orders.toSorted({ createdAt: -1 }).filter(o => o.userId === $._id).size();")).toThrow(
+      /returns a single value, not a stream/,
+    );
+  });
+
+  it("correlation via a non-filter method only (no correlating .filter) stays a footgun-guarded rejection", () => {
+    // A `.map` reading the outer doc with no filter to bound the foreign set is a
+    // cross-join footgun — kept rejected with the 'correlate with a .filter' guidance.
+    expect(() => jsmql("$$ = $$$.orders.map(o => ({ v: $.length }));")).toThrow(/`\$\.length`/);
+  });
+
+  it("a CORRELATED matches-object filter routes to the pivot (not a query-literal $unionWith)", () => {
+    // `.filter({ userId: $._id })` — the shorthand's `$.` correlation must be detected
+    // and correlated via `let`, never emitted as `$match: { userId: "$_id" }` (which in a
+    // query document matches the literal string "$_id"). Verified on a live mongod.
+    expect(jsmql("$$ = $$$.orders.filter({ userId: $._id });")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+
+  it("a value-collapsing .map in the uncorrelated source-switch is rejected (not an invalid $replaceWith)", () => {
+    expect(() => jsmql("$$ = $$$.orders.map(o => o.total);")).toThrow(/stream must return a DOCUMENT/);
   });
 });
 

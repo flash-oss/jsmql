@@ -10,6 +10,58 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat(lookup): any lodash stream method may start a `$$$.<coll>` chain
+
+A cross-collection chain no longer has to begin with `.find` / `.filter` / `.aggregate`. Any registered
+stream method may head a `$$$.<coll>` chain (`$$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o => …)`),
+and `.filter` / `.reject` may now appear at **any** position, each lowering to a sub-pipeline `$match`. The whole
+chain lowers, in source order, into one `$lookup.pipeline`, so `.toSorted(k).take(n).filter(p)` emits
+`[$sort, $limit, $match]` — sort/limit *before* the filter, a result the old filter-first surface simply
+couldn't express. This is a **parity fix**: the `$$` current-stream chain already allowed any method (and a
+`.filter` anywhere); the foreign-collection paths just hadn't caught up.
+
+**Why this shape.** The value-position assembler ([tryExtractChainedLookup](../src/lookup-translation.ts)) and
+the `$$ =` correlated pivot ([lowerLookupPivot](../src/pipeline.ts)) now share one exported peeler,
+`peelForeignChain`: `.filter`/`.reject` route through `buildPipelineFormPredicate` (hoisting `$.<field>` into
+`$lookup.let`, exactly as a head `.filter` does — so a correlating filter anywhere works), and every other
+method dispatches through the existing stream-method registry. A stream-method head with no `$.` correlation
+emits the lean `{ from, pipeline, as }` (no empty `let`), matching the `.aggregate` shape; `validateLookupShape`
+was relaxed to accept stream-method heads and only reject a genuinely unknown method (`.fnid`). For `$$ =`,
+`lowerChainOnCollection` now dispatches source-switch-vs-pivot on `chainHasCorrelatingFilter` — a correlating
+`.filter`/`.reject` *anywhere* in the chain — generalising the old head-only `predicateReferencesOuterDoc` check.
+
+**Two footgun guards kept, one behaviour change.** Correlation arriving *only* through a non-filter method (a
+`.map`/`.aggregate` reading `$.` with no correlating filter) stays rejected in the `$$ =` source-switch — without
+a filter to bound the foreign set it is a cross-join, and the "correlate with a `.filter`" guidance is better DX
+than silently emitting a Cartesian product. The pivot pre-validates every method so a value-terminal (`.head`/`.size`)
+is rejected, never dropped. The one deliberate output change (developer-approved): a previously-accepted
+`$.x = $$$.coll.filter(p1).filter(p2)` moves from `$lookup` + value-mode `$filter` to a single `$lookup` with
+`[$match, $match]` — leaner and consistent. All four forms (value binding, field assignment, source-switch,
+correlated pivot) were verified end-to-end on a live `mongod` (chain-order + correlation), including the exact
+`sort→take→filter ≠ filter-first` distinction. See [docs/specs/lookup-stage.md](specs/lookup-stage.md) §
+"Any lodash stream method may head the chain" and [docs/LANGUAGE.md](LANGUAGE.md#cross-collection-lookups-coll-find--filter).
+
+An adversarial review of this change (find inputs → verify each against `mongod`) surfaced eight bugs it fixed in
+the same commit — most pre-existing HR3 holes the wider surface now exercises: a correlated matches-object filter
+(`$$ = $$$.orders.filter({ userId: $._id })`) silently miscompiled to a query-literal `$unionWith` (the
+correlation dispatch now normalises shorthands via `shorthandToLambda`); a block-body value-extracting `.map`
+(`o => { return o.total }`) and a value-collapsing `.map` in the source-switch emitted a scalar `$replaceWith`.
+The structural "non-`ObjectLiteral` result ⇒ value-collapsing" rule was extended to block bodies in
+`isValueCollapsingMap`/`peelableTerminalMap`, and a single `$$ =` value-collapsing guard now covers both
+source-switch and pivot. Rather than merely reject the block form, `peelableTerminalMap` **normalises** a
+stage-less stream `.map` block back to its value form — `{ return <expr> }` → an expression arrow, a `const`/`let`
+-only block → an `ExprBlock` (`$let`) — so `.map(o => { return o.total })` is now byte-identical to
+`.map(o => o.total)` and to the same block on an in-document array (closing a JS-subset inconsistency: identical
+JS was accepted on `$.items` but rejected on `$$$.orders`). Only a block with real *stages* returning a
+non-document stays rejected (a scalar reshape after stages is genuinely invalid). `.slice(a, a)` emitted the
+server-rejected `$limit: 0` (now `$match: { $expr: false }`, mirroring `.take(0)`); a `.map` after an
+object-collapsing `.countBy`/`.keyBy` mis-assembled (now rejected like value-mode); and a lone shorthand
+`.filter({ x: 1 })` head was rejected while the chained form was accepted (now consistent). One further,
+orthogonal pre-existing bug — a `$lookup.let` var named after a hyphenated field (`jsmql_f0_sub-id`) is
+server-invalid — was left for a separate `fix:` commit (it predates this feature and lives in `namespace.ts`).
+
+---
+
 ## 2026-07-24 — feat: value-mode `.countBy()` / `.groupBy()` / `.keyBy()` accept no iteratee (identity default)
 
 lodash defaults the iteratee of its `*By` collectors to `_.identity` — `_.countBy([1,2,3,4,5,2,3])`

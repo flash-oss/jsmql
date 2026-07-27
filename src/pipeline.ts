@@ -53,7 +53,6 @@ import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenI
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
   argsReadRootStreamLength,
-  buildPipelineFormPredicate,
   captureRootStreamLength,
   EMPTY_ENCLOSING,
   detectLookupCall,
@@ -67,6 +66,7 @@ import {
   requireSameDbColl,
   lowerLambdaPredicate,
   isValueCollapsingMap,
+  peelForeignChain,
   type LookupCall,
   type LookupTarget,
   type SlotAllocator,
@@ -1250,6 +1250,34 @@ function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: Su
  * no chain methods) the inner pipeline is empty and the short-form
  * `$unionWith` shape is emitted — same as before this chain walker existed.
  */
+/**
+ * Does the chain contain a `.filter`/`.reject` whose predicate correlates against
+ * the outer document (a `$.<field>` path or an in-scope outer `let`)? A correlating
+ * filter is the per-outer-doc *join anchor* — the signal to route a `$$ =`
+ * source-switch to the `$lookup`-pivot (which has a `let` slot) rather than the flat
+ * `$unionWith`. The `.filter` may sit ANYWHERE in the chain, not just the head, so a
+ * `$$ = $$$.coll.toSorted(k).filter(o => o.x === $.y)` correctly pivots. Correlation
+ * arriving ONLY through a non-filter method (a `.map`/`.aggregate` reading `$.` with
+ * no correlating filter) is deliberately NOT a pivot: without a filter to bound the
+ * foreign set it's a cross-join footgun, which stays rejected in the source-switch
+ * with the "correlate with a `.filter`" guidance.
+ */
+function chainHasCorrelatingFilter(methods: MethodCallNode[], outerCtx: GenerateCtx): boolean {
+  for (const m of methods) {
+    if (m.method !== "filter" && m.method !== "reject") continue;
+    if (m.args.length !== 1 || m.args[0].type === "SpreadElement") continue;
+    // Normalise a matches-object / field / ["field", value] shorthand to its arrow so a
+    // correlated shorthand (`.filter({ userId: $._id })`) is detected — the sub-pipeline
+    // lowers it via `chainFilterLambda`'s identical `shorthandToLambda`. Missing this
+    // routes a correlated shorthand to the uncorrelated `$unionWith`, which emits a
+    // query-literal `$match: { userId: "$_id" }` (wrong: matches the string "$_id").
+    const arg = m.args[0];
+    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+    if (lambda !== null && predicateReferencesOuterDoc(lambda, outerCtx)) return true;
+  }
+  return false;
+}
+
 function lowerChainOnCollection(
   methods: MethodCallNode[],
   target: LookupTarget,
@@ -1258,14 +1286,23 @@ function lowerChainOnCollection(
   allocSlot: SlotAllocator,
   rhs: Expr,
 ): { stages: object[]; clearLets: boolean } {
-  // $lookup-pivot dispatch: when the head's `.filter(<pred>)` references
-  // outer-doc fields, switch lowering families.
-  if (
-    methods[0].method === "filter" &&
-    methods[0].args.length === 1 &&
-    methods[0].args[0].type === "Lambda" &&
-    predicateReferencesOuterDoc(methods[0].args[0] as LambdaNode, outerCtx)
-  ) {
+  // A value-collapsing `.map` (a scalar / field-string / non-object result) ANYWHERE
+  // in a `$$ =` chain would make the new stream hold non-documents — invalid in BOTH
+  // the `$unionWith` source-switch and the `$lookup` pivot (mongod Location40228:
+  // "'replacement document' must evaluate to an object"). Reject up front, covering
+  // both families, with the two valid alternatives.
+  const collapsingMap = methods.find(isValueCollapsingMap);
+  if (collapsingMap !== undefined) {
+    throw new CodegenError(
+      `'.map(...)' in a '$$ = $$$.<coll>.…' stream must return a DOCUMENT — the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ … }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.…map(...)'.`,
+      collapsingMap.pos,
+    );
+  }
+  // $lookup-pivot dispatch: when a `.filter`/`.reject` ANYWHERE in the chain
+  // correlates against the outer doc (head OR a later filter), switch to the pivot
+  // family (it has a `let` slot). A flat `$unionWith` can't thread per-outer-doc
+  // correlation.
+  if (chainHasCorrelatingFilter(methods, outerCtx)) {
     return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
   }
   // Non-correlated source-switch: the stream is REPLACED by `target` (a
@@ -1273,8 +1310,9 @@ function lowerChainOnCollection(
   // and outer `let`s — doesn't cross. Record the switch on the sub-pipeline ctx
   // so a chain-body reference to any of it produces a precise "correlate with a
   // `.filter`" error rather than a bare "unknown identifier" / "use the param"
-  // (the head here was already classified as non-correlated, so the outer values
-  // genuinely can't be threaded).
+  // (the chain here was already classified as non-correlated, so the outer values
+  // genuinely can't be threaded). `.filter`/`.reject` may appear at ANY position
+  // (as in a `$$` chain); every other method dispatches through the registry.
   const switchDesc =
     target.db !== undefined ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
   const innerCtx: GenerateCtx = {
@@ -1282,18 +1320,16 @@ function lowerChainOnCollection(
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) },
   };
   const inner: object[] = [];
-  let i = 0;
-  if (methods[0].method === "filter") {
-    const m = methods[0];
-    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
-      rejectInvalidReplaceStream(rhs, outerCtx);
-    }
-    const matchStages = lowerStreamFilterPredicate(m.args[0] as LambdaNode, innerCtx, lowerBlockFn);
-    inner.push(...matchStages);
-    i = 1;
-  }
-  for (; i < methods.length; i++) {
+  for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (m.method === "filter") {
+      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
+      continue;
+    }
+    if (m.method === "reject") {
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
@@ -1351,36 +1387,35 @@ function lowerLookupPivot(
   lowerBlockFn: SubPipelineLowerer,
   allocSlot: SlotAllocator,
 ): { stages: object[]; clearLets: boolean } {
-  const filterMethod = methods[0];
-  const restMethods = methods.slice(1);
-  // A value-collapsing `.map` (a `"field"` string or a non-object arrow) would make the
-  // new stream a stream of scalars/arrays — but a `$$ =` pivot's result IS the document
-  // stream, and MongoDB streams hold documents. (Its `$replaceWith` root would be a
-  // non-document; mongod rejects it — Location40228.) Unlike the `$.field = …`
-  // assignment form there's no value-mode target to peel to, so reject with the two
-  // valid alternatives rather than emit runtime-invalid MQL.
-  const collapsing = restMethods.find(isValueCollapsingMap);
-  if (collapsing !== undefined) {
-    throw new CodegenError(
-      `'.map(...)' in a '$$ = $$$.<coll>.filter(...)' pivot must return a DOCUMENT — the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ … }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.filter(...).map(...)'.`,
-      collapsing.pos,
-    );
+  // (Value-collapsing `.map` is rejected up front by `lowerChainOnCollection`, the
+  // only caller, so both the pivot and the source-switch are covered by one guard.)
+  // Every method must be a registered stream method or `.filter`/`.reject`. A
+  // value-terminal (`.head`/`.size`/…) or unknown method can't lower into a stream
+  // pivot — reject with the tailored message (which points value-terminals at a
+  // VALUE position). `peelForeignChain` would otherwise silently drop it.
+  for (const m of methods) {
+    if (m.method === "filter" || m.method === "reject") continue;
+    if (lookupStreamMethod(m.method) === null) throw unknownStreamMethod(m, "$$$.<coll>");
   }
-  const lambda = filterMethod.args[0] as LambdaNode;
   const slot = allocSlot();
   const from = requireSameDbColl(target.db, target.collection, target.pos);
   let lookupStage: object;
-  if (restMethods.length === 0) {
-    // No chain methods after `.filter` — basic form is fine when the
-    // predicate qualifies. `translatePredicate` handles both basic and
-    // pipeline forms; we just write whichever it returns.
+  if (
+    methods.length === 1 &&
+    methods[0].method === "filter" &&
+    methods[0].args.length === 1 &&
+    methods[0].args[0].type === "Lambda"
+  ) {
+    // A single correlated `.filter(<pred>)` with no chain methods — basic form is fine
+    // when the predicate qualifies. `translatePredicate` picks basic (`{ localField,
+    // foreignField }`) for one `===`, else pipeline form; we write whichever it returns.
     const fakeCall: LookupCall = {
-      pos: filterMethod.pos,
-      callPos: filterMethod.pos,
+      pos: methods[0].pos,
+      callPos: methods[0].pos,
       db: target.db,
       collection: target.collection,
       method: "filter",
-      lambda,
+      lambda: methods[0].args[0] as LambdaNode,
     };
     const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
     if (pred.kind === "basic") {
@@ -1389,41 +1424,34 @@ function lowerLookupPivot(
       lookupStage = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
     }
   } else {
-    // Chain methods need a pipeline-form lookup so their stages can extend
-    // the sub-pipeline body.
-    const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
-    // `$$.length` (the ROOT stream count) used in any chain method body →
-    // capture the top-materialised `$__jsmql.length` into this lookup's
-    // `$lookup.let` (a top-level pivot is depth 0 → `v0_length`) so the sub-pipeline
-    // reads it as `$$v0_length`. `$$` is always the ROOT stream; inner sub-stream
-    // counts use the 3rd-arg handle.
-    const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
-    // Carry the outer pipeline's `let`s on the chain ctx so a chain `.map` can
-    // capture an outer-`let` reference into the lookup's `$lookup.let` (the
-    // `.filter` head already does via its own `outerCtx`). The sub-pipeline
-    // lowerer rewrites every such ref to its `$$`-var, so codegen never reads a
-    // raw outer-`let` as a sub-pipeline field.
+    // General pipeline form: peel EVERY method (arbitrary stream head + `.filter`/
+    // `.reject` in ANY position) into the `$lookup.pipeline`, hoisting `$.<field>`
+    // correlations into `let`. Shared with the value-position assembler via
+    // `peelForeignChain`, so a chain lowers to the same sub-pipeline in either
+    // destination. `usesRootLen` captures the top-materialised `$__jsmql.length`
+    // (a top-level pivot is depth 0 → `v0_length`).
+    const letVars: Record<string, string> = {};
+    const pipelineBody: object[] = [];
+    const usesRootLen = methods.some((m) => argsReadRootStreamLength(m.args));
     const innerCtx: GenerateCtx = {
       ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
       pipelineLets: outerCtx.pipelineLets,
-      // Signal "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes
-      // through `lowerCallbackBlock` and captures cross-level reads into THIS
-      // lookup's `let` — unlike a flat `$unionWith`, which leaves it unset.
+      // "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes through
+      // `lowerCallbackBlock` and captures cross-level reads into THIS lookup's `let`.
       enclosingLookup: EMPTY_ENCLOSING,
     };
-    for (const m of restMethods) {
-      const def = lookupStreamMethod(m.method);
-      if (def === null) {
-        throw unknownStreamMethod(m, "$$$.<coll>");
-      }
-      def.validate(m.args, m.pos);
-      const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
-      if (result.replacesPreviousStage) pipelineBody.pop();
-      pipelineBody.push(...result.stages);
-      // A block-body `.map` chain method may capture cross-level reads
-      // (`$.<field>`, …) into this lookup's `$lookup.let`.
-      if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
-    }
+    peelForeignChain(
+      methods,
+      0,
+      methods.length,
+      outerCtx,
+      lowerBlockFn,
+      allocSlot,
+      EMPTY_ENCLOSING,
+      innerCtx,
+      pipelineBody,
+      letVars,
+    );
     lookupStage = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
   }
   return { stages: [lookupStage, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
@@ -1493,7 +1521,7 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
   const pushNote = isStream ? ` ('.push(...)' appends documents as a statement → $unionWith.)` : "";
   return new CodegenError(
     `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} ` +
-      `The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.${pushNote}`,
+      `Chainable methods — any may head OR extend the chain: '.filter', '.reject', ${list}.${pushNote}`,
     m.pos,
   );
 }
@@ -1604,12 +1632,12 @@ function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
   }
   if (value.type === "CollectionRef" || value.type === "DatabaseRef") {
     throw new CodegenError(
-      `'$$ = …' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source.`,
+      `'$$ = …' RHS must call a stream method. Write '$$.filter(o => …)' to narrow the current stream or '$$$.<coll>.filter(o => …)' to switch source. Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.`,
       value.pos,
     );
   }
   throw new CodegenError(
-    `'$$ = …' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+    `'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSorted', '.take'); a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.`,
     value.pos,
   );
 }

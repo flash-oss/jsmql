@@ -30,9 +30,11 @@ the third through `lowerStatementTail`:
 
 | Context | Chain head | Lowering site |
 |---|---|---|
-| **`$$ = $$.<chain>;`** | Bare `$$` (or `$$.filter(<pred>)` as the first method) | Each registry method appends one or more stages to the outer pipeline. |
-| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>` (or with `.filter(<pred>)` as the first method) | Each registry method appends stages inside the `$unionWith.pipeline` body of the emitted `$match` + `$unionWith` pair. |
+| **`$$ = $$.<chain>;`** | Bare `$$`; any method — `.filter`/`.reject` may appear at any position | Each registry method appends one or more stages to the outer pipeline. |
+| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>`; any stream method (or `.filter`/`.reject`) may be the head | **Uncorrelated** → `$match:{$expr:false}` + `$unionWith.pipeline` (this loop). **Correlated** (a `.filter`/`.reject` anywhere references `$.`) → `$lookup`-pivot via `peelForeignChain` ([lookup-stage.md](./lookup-stage.md)). |
 | **`$$.<chain>;`** (bare statement, no `$$ =` head) | Bare `$$` | Statement sugar for `$$ = $$.<chain>;` — see [§ Bare-statement stream chains](#bare-statement-stream-chains) below. |
+
+The **value-position** `$$$.<coll>` chain (`const x = …` / `$.f = …`) and the **correlated pivot** don't run through `applyStreamMethods` — they share `peelForeignChain` (owned by [lookup-stage.md](./lookup-stage.md) § "Any lodash stream method may head the chain"), which lowers `.filter`/`.reject` to a correlating `$match` and dispatches the rest through this registry. Same registry, so a chain lowers to the same sub-pipeline in every destination.
 
 The first method of a chain may be `.filter(<lambda>)` — handled by the
 pre-existing `lowerStreamFilterPredicate` (translates the predicate through
@@ -390,11 +392,10 @@ errors are not) and consistent with the existing `$$.push(...)` statement sugar.
 
 ## Out of scope (v1)
 
-- **Lookup-body chain extension after `.find/.filter` on `$$$.<coll>` as
-  an expression (not a `$$ = …` RHS).** The existing chained-terminal
-  walker in [src/lookup-translation.ts](../../src/lookup-translation.ts) handles
-  `.length` and `.reduce` as terminals on a materialised slot; integrating
-  the stream-methods registry into that walker (so `$$$.coll.filter(p).slice(0, 5)`
-  works in expression position) is a follow-up.
 - **`$$.length` terminal.** Intentionally deferred — see
   [DEVLOG.md](../DEVLOG.md) for the rationale.
+
+(The former "lookup-body chain extension in expression position" item shipped: the
+stream-methods registry is integrated into the `$$$.<coll>` expression-position walker
+via `peelForeignChain`, and any stream method may now head the chain — see
+[lookup-stage.md](./lookup-stage.md).)
