@@ -5,6 +5,7 @@ import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
+import { ASCII_WORDS_RE, HTML_ESCAPE_PAIRS } from "./lodash-shared.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
   BinaryOp,
@@ -2616,10 +2617,9 @@ function firstCharExpr(s: unknown, op: "$toUpper" | "$toLower"): unknown {
 }
 // The ASCII words of a string, splitting on non-alphanumerics AND camelCase
 // boundaries — e.g. "foo-barBaz 9" → ["foo", "bar", "Baz", "9"], "FOOBar" →
-// ["FOO", "Bar"]. This is lodash's ASCII word pattern (`[A-Z]?[a-z]+ |
-// [A-Z]+(?![a-z]) | [A-Z] | [0-9]+`, negative lookahead and all). `$regexFindAll`
-// needs 4.4+.
-const ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
+// ["FOO", "Bar"]. Pattern (`ASCII_WORDS_RE`) is shared with the compile-time
+// fold (lodash-fold.ts) via lodash-shared.ts so the two can't drift.
+// `$regexFindAll` needs 4.4+.
 function wordsExpr(s: unknown): unknown {
   return {
     $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: "jsmqlWord", in: "$$jsmqlWord.match" },
@@ -2637,15 +2637,8 @@ function joinWords(words: unknown, sep: string, transform?: (w: unknown) => unkn
   };
 }
 function escapeHtmlExpr(s: unknown): unknown {
-  const pairs: [string, string][] = [
-    ["&", "&amp;"], // must run first
-    ["<", "&lt;"],
-    [">", "&gt;"],
-    ['"', "&quot;"],
-    ["'", "&#39;"],
-  ];
   let e: unknown = s;
-  for (const [find, replacement] of pairs) e = { $replaceAll: { input: e, find, replacement } };
+  for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = { $replaceAll: { input: e, find, replacement } };
   return e;
 }
 

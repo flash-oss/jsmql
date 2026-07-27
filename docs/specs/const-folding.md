@@ -44,6 +44,24 @@ byte-identical to before.
   [../../src/index.ts](../../src/index.ts)), so folding is uniform across every
   entry point (`jsmql`, `.expr`, `.filter`, `.pipeline`, `.update`) and runs
   **per call** for `jsmql.compile` (with that call's params in `ctx.bindings`).
+- **[../../src/lodash-fold.ts](../../src/lodash-fold.ts)** — MQL-faithful JS
+  implementations of the lodash string methods (`snakeCase`, `camelCase`, …),
+  which have no native JS equivalent. The word regex and HTML-entity table are
+  imported from **[../../src/lodash-shared.ts](../../src/lodash-shared.ts)**,
+  which codegen.ts imports too, so the fold and the MQL lowering can't drift.
+
+### The fidelity gate
+
+Native and lodash methods each have two implementations — the compile-time JS
+fold and the server-side MQL lowering. [../../test/fold-consistency.test.ts](../../test/fold-consistency.test.ts)
+proves they agree: for every foldable method × an input battery it compares the
+fold to the lowering evaluated on a real mongod (via `$documents`), skipping
+inputs where the lowering itself errors. It self-skips when no local mongod is
+reachable. A method/shape it can't prove equal is removed from the evaluator
+(→ runtime), never shipped. Divergences it has already forced out: array
+`.slice`/`.flat` (`$slice` semantics, no faithful `.flat` lowering), `.find`
+not-found (server MISSING ≠ null), empty-separator `.split`, multi-arg string
+`.concat`.
 
 ## The fold pass
 

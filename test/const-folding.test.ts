@@ -197,6 +197,36 @@ describe("const folding — native method calls", () => {
   });
 });
 
+describe("const folding — lodash string methods", () => {
+  it("a .snakeCase() const-chain folds (example 7)", () => {
+    expect(
+      jsmql(
+        'let webhookMessage = "time elapsed"; let webhookType = webhookMessage.snakeCase(); $.type === webhookType',
+      ),
+    ).toEqual({ type: "time_elapsed" });
+  });
+
+  it("camelCase / kebabCase / startCase / capitalize fold", () => {
+    expect(jsmql('const k = "order_total".camelCase(); $.f === k')).toEqual({ f: "orderTotal" });
+    expect(jsmql('const k = "orderTotal".kebabCase(); $.f === k')).toEqual({ f: "order-total" });
+    expect(jsmql('const k = "hello world".startCase(); $.f === k')).toEqual({ f: "Hello World" });
+    expect(jsmql('const k = "hELLO".capitalize(); $.f === k')).toEqual({ f: "Hello" });
+  });
+
+  it(".escape() and .truncate() fold", () => {
+    expect(jsmql("const k = '<a href=\"x\">'.escape(); $.f === k")).toEqual({ f: "&lt;a href=&quot;x&quot;&gt;" });
+    expect(jsmql('const k = "the quick brown fox".truncate({ length: 12 }); $.f === k')).toEqual({ f: "the quick..." });
+  });
+
+  it(".words() folds to an array", () => {
+    expect(jsmql('const w = "fooBar-baz 9".words(); $.tags === w')).toEqual({
+      $expr: { $eq: ["$tags", ["foo", "Bar", "baz", "9"]] },
+    });
+    // the index is part of the const RHS, so it folds too
+    expect(jsmql('const first = "fooBar-baz 9".words()[0]; $.f === first')).toEqual({ f: "foo" });
+  });
+});
+
 describe("const folding — output stability", () => {
   it("a pipeline with no foldable consts is byte-identical to before", () => {
     expect(jsmql("$match($.x > 0); $sort({ x: 1 })")).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);

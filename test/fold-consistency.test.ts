@@ -67,6 +67,19 @@ for (const v of STRING_SAMPLES) {
     '.padStart(10, "*")',
     ".padEnd(10)",
     '.concat("!", "?")',
+    // lodash string family
+    ".capitalize()",
+    ".upperFirst()",
+    ".lowerFirst()",
+    ".words()",
+    ".kebabCase()",
+    ".snakeCase()",
+    ".startCase()",
+    ".camelCase()",
+    ".escape()",
+    ".truncate()",
+    ".truncate({ length: 5 })",
+    '.truncate({ length: 8, omission: ".." })',
   ]) {
     stringCases.push({ lit, val: v, call });
   }

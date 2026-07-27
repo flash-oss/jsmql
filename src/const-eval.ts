@@ -27,6 +27,7 @@
 import type { ArrayElement, CallArg, Expr, Lambda, ObjectEntry } from "./ast.ts";
 import type { GenerateCtx } from "./codegen.ts";
 import { CodegenError, foldConstantDate } from "./codegen.ts";
+import * as lodash from "./lodash-fold.ts";
 import { ObjectId } from "./objectid.ts";
 
 export type ConstEnv = ReadonlyMap<string, unknown>;
@@ -448,9 +449,54 @@ function foldStringMethod(s: string, method: string, args: CallArg[], env: Const
       if (a.length === 0 || typeof a[0] !== "string" || a[0] === "") throw NON_FOLDABLE;
       return ok(s.split(...(a as [string, number?])));
     }
+    // lodash string methods — MQL-faithful JS impls in lodash-fold.ts.
+    case "capitalize":
+      return ok(lodash.capitalize(s));
+    case "upperFirst":
+      return ok(lodash.upperFirst(s));
+    case "lowerFirst":
+      return ok(lodash.lowerFirst(s));
+    case "words":
+      return ok(lodash.words(s));
+    case "kebabCase":
+      return ok(lodash.kebabCase(s));
+    case "snakeCase":
+      return ok(lodash.snakeCase(s));
+    case "startCase":
+      return ok(lodash.startCase(s));
+    case "camelCase":
+      return ok(lodash.camelCase(s));
+    case "escape":
+      return ok(lodash.escape(s));
+    case "truncate":
+      return foldTruncate(s, args, env, ctx);
     default:
       throw NON_FOLDABLE;
   }
+}
+
+/** `.truncate([{ length, omission }])` — mirror the codegen options handling. */
+function foldTruncate(s: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {
+  let length = 30;
+  let omission = "...";
+  if (args.length > 0) {
+    const optsR = evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+    if (!optsR.ok) throw NON_FOLDABLE;
+    const opts = optsR.value;
+    if (opts === null || typeof opts !== "object" || Array.isArray(opts)) throw NON_FOLDABLE;
+    const o = opts as Record<string, unknown>;
+    // `separator` (word-boundary) is unsupported in the lowering → let runtime throw.
+    if ("separator" in o) throw NON_FOLDABLE;
+    if ("length" in o) {
+      if (typeof o.length !== "number") throw NON_FOLDABLE;
+      length = o.length;
+    }
+    if ("omission" in o) {
+      if (typeof o.omission !== "string") throw NON_FOLDABLE;
+      omission = o.omission;
+    }
+  }
+  return ok(lodash.truncate(s, length, omission));
 }
 
 function foldArrayMethod(arr: unknown[], method: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {

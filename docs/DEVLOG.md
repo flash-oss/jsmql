@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: fold lodash string methods in `const`/`let`
+
+Extends constant folding to the lodash string family (`snakeCase`, `kebabCase`,
+`camelCase`, `startCase`, `capitalize`, `upperFirst`, `lowerFirst`, `words`,
+`escape`, `truncate`), completing all seven target examples — e.g.
+`let m = "time elapsed"; let t = m.snakeCase(); $.type === t` folds to
+`{ type: "time_elapsed" }`. These have no native JS equivalent (the project has
+zero runtime dependencies; they exist only as MQL lowerings), so
+[src/lodash-fold.ts](../src/lodash-fold.ts) hand-rolls each to mirror jsmql's own
+lowering (ASCII-only, lodash's word pattern), NOT real lodash. To make the two
+implementations physically undriftable, the shared constants (the word regex,
+the HTML-entity table) moved to [src/lodash-shared.ts](../src/lodash-shared.ts),
+imported by both codegen.ts and lodash-fold.ts. The consistency suite
+(fold-consistency.test.ts) validates every one against its `$regexFindAll`/
+`$reduce`/`$replaceAll` lowering on mongod across a battery including "café" and
+mixed-case inputs — all agree.
+
+## 2026-07-27 — feat: fold native string/array methods in `const`/`let` (arrow interpreter)
+
+Extends constant folding to native String/Array methods, including the
+higher-order ones (`.map`/`.filter`/`.reduce`/`.find`/`.some`/`.every`/`.flatMap`)
+whose arrow callback is interpreted at compile time (a private `NON_FOLDABLE`
+sentinel unwinds the call to a runtime binding when a callback body reads `$`).
+Example 5 now folds: `["cancelled","rejected"].map(s => s.toUpperCase())` →
+`["CANCELLED","REJECTED"]`, so `$.status in bad` → `{ $expr: { $in: [...] } }`.
+
+New HR3 gate: [test/fold-consistency.test.ts](../test/fold-consistency.test.ts)
+compiles each foldable method × an input battery both ways — the compile-time
+fold and the MQL lowering run on a real mongod (via `$documents`, no write) —
+and asserts they agree wherever the lowering yields a value (skipping inputs the
+lowering itself rejects). It self-skips without a local mongod. That gate caught
+real divergences, now handled: array `.slice`/`.flat` are NOT folded (jsmql
+lowers `.slice` to `$slice` = take-n/skip-take, not JS start/end); `.find`
+withholds when not found (server yields MISSING, not null); string case folds
+ASCII-only to match `$toUpper`/`$toLower`; empty-separator `.split` and multi-arg
+string `.concat` aren't folded (their lowerings reject those shapes).
+
 ## 2026-07-27 — feat: compile-time constant folding of `const` / `let` (core)
 
 `const`/`let` already parsed to `LetDecl` nodes that lowered to a **runtime**
