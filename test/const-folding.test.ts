@@ -154,6 +154,49 @@ describe("const folding — parameterised (jsmql.compile) per-call folding", () 
   });
 });
 
+describe("const folding — native method calls", () => {
+  it("array .map with an arrow callback folds (example 5)", () => {
+    expect(
+      jsmql('const bad = ["cancelled", "rejected", "returned"].map(s => s.toUpperCase()); $.status in bad'),
+    ).toEqual({ $expr: { $in: ["$status", ["CANCELLED", "REJECTED", "RETURNED"]] } });
+  });
+
+  it("array .filter with an arrow callback folds", () => {
+    expect(jsmql("const evens = [1, 2, 3, 4, 5, 6].filter(n => n % 2 === 0); $.k in evens")).toEqual({
+      $expr: { $in: ["$k", [2, 4, 6]] },
+    });
+  });
+
+  it("array .reduce folds to a scalar", () => {
+    expect(jsmql("const total = [1, 2, 3, 4].reduce((a, b) => a + b, 0); $.n === total")).toEqual({ n: 10 });
+  });
+
+  it("nested method chain folds (map → filter)", () => {
+    expect(jsmql("const xs = [1, 2, 3, 4].map(x => x * 10).filter(x => x > 15); $.v in xs")).toEqual({
+      $expr: { $in: ["$v", [20, 30, 40]] },
+    });
+  });
+
+  it("string methods fold (ASCII case, split)", () => {
+    expect(jsmql('const up = "active".toUpperCase(); $.s === up')).toEqual({ s: "ACTIVE" });
+    expect(jsmql('const parts = "a,b,c".split(","); $.x in parts')).toEqual({
+      $expr: { $in: ["$x", ["a", "b", "c"]] },
+    });
+  });
+
+  it("a callback that reads $ makes the whole call non-constant → runtime binding", () => {
+    expect(jsmql("const m = [1, 2, 3].map(x => x + $.offset); $match($.v in m)")).toEqual([
+      { $set: { "__jsmql.var.m": { $map: { input: [1, 2, 3], as: "x", in: { $add: ["$$x", "$offset"] } } } } },
+      { $match: { $expr: { $in: ["$v", "$__jsmql.var.m"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a non-finite result inside a folded callback is a hard error", () => {
+    expect(() => jsmql("const xs = [1, 2, 0].map(n => 10 / n); $.v in xs")).toThrow(/Infinity.*no MongoDB literal/);
+  });
+});
+
 describe("const folding — output stability", () => {
   it("a pipeline with no foldable consts is byte-identical to before", () => {
     expect(jsmql("$match($.x > 0); $sort({ x: 1 })")).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);

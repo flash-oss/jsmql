@@ -24,7 +24,7 @@
 // (`{ ok: false }` → runtime) until a mongod consistency test proves it equal.
 // See `test/fold-consistency.test.ts`.
 
-import type { ArrayElement, Expr, ObjectEntry } from "./ast.ts";
+import type { ArrayElement, CallArg, Expr, Lambda, ObjectEntry } from "./ast.ts";
 import type { GenerateCtx } from "./codegen.ts";
 import { CodegenError, foldConstantDate } from "./codegen.ts";
 import { ObjectId } from "./objectid.ts";
@@ -128,8 +128,10 @@ export function evalConst(node: Expr, env: ConstEnv, ctx: GenerateCtx): EvalResu
       }
       return NO;
     }
+    case "MethodCall":
+      return evalMethodCall(node.object, node.method, node.args, !!node.optional, env, ctx);
     // Added incrementally under the consistency test (fidelity-sensitive):
-    // method calls, Math/Number/Object statics, type casts, bitwise & logical ops.
+    // Math/Number/Object statics, type casts, bitwise & logical ops.
     default:
       return NO;
   }
@@ -308,4 +310,190 @@ function evalIndex(node: Extract<Expr, { type: "IndexAccess" }>, env: ConstEnv, 
     return Object.prototype.hasOwnProperty.call(obj, idx) ? ok((obj as Record<string, unknown>)[idx]) : ok(null);
   }
   return NO;
+}
+
+// ── Method folding ──────────────────────────────────────────────────────────
+//
+// Native string/array methods are evaluated by calling MQL-faithful JS (ASCII
+// case, JS-identical structural transforms); higher-order methods interpret
+// their arrow callback. Every method here is validated against its MQL lowering
+// on a real mongod by test/fold-consistency.test.ts (HR3) — a method/arg-shape
+// the test can't prove equal is removed so the declaration stays a runtime
+// binding rather than emit a value that disagrees with the server.
+
+// Thrown when a callback body or argument isn't a compile-time constant; caught
+// at the method boundary and turned into `{ ok: false }` (runtime fallback).
+const NON_FOLDABLE = Symbol("non-foldable");
+
+/** ASCII-only upper/lower, matching MongoDB `$toUpper`/`$toLower` (non-ASCII unchanged). */
+function asciiUpper(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 97 && c <= 122 ? String.fromCharCode(c - 32) : s[i];
+  }
+  return out;
+}
+function asciiLower(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 65 && c <= 90 ? String.fromCharCode(c + 32) : s[i];
+  }
+  return out;
+}
+
+/** Turn a Lambda AST into a JS function; throws NON_FOLDABLE if its body/args aren't constant. */
+function interpretLambda(lambda: Lambda, env: ConstEnv, ctx: GenerateCtx): (...args: unknown[]) => unknown {
+  return (...args: unknown[]): unknown => {
+    const child = new Map(env);
+    lambda.params.forEach((p, i) => child.set(p, args[i]));
+    let bodyExpr: Expr;
+    if (lambda.exprBlock) {
+      for (const decl of lambda.exprBlock.decls) {
+        const r = evalConst(decl.value, child, ctx);
+        if (!r.ok) throw NON_FOLDABLE;
+        child.set(decl.name, r.value);
+      }
+      bodyExpr = lambda.exprBlock.ret;
+    } else if (lambda.body) {
+      bodyExpr = lambda.body;
+    } else {
+      throw NON_FOLDABLE; // statement-block callback — not a value-producing lambda
+    }
+    const r = evalConst(bodyExpr, child, ctx);
+    if (!r.ok) throw NON_FOLDABLE;
+    return r.value;
+  };
+}
+
+/** Evaluate positional (non-callback) args to values, splatting spreads. Throws NON_FOLDABLE. */
+function evalArgValues(args: CallArg[], env: ConstEnv, ctx: GenerateCtx): unknown[] {
+  const out: unknown[] = [];
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      const r = evalConst(a.argument, env, ctx);
+      if (!r.ok || !Array.isArray(r.value)) throw NON_FOLDABLE;
+      for (const v of r.value) out.push(v);
+    } else {
+      const r = evalConst(a, env, ctx);
+      if (!r.ok) throw NON_FOLDABLE;
+      out.push(r.value);
+    }
+  }
+  return out;
+}
+
+function requireLambdaArg(args: CallArg[], env: ConstEnv, ctx: GenerateCtx): (...a: unknown[]) => unknown {
+  const first = args[0];
+  if (!first || first.type !== "Lambda") throw NON_FOLDABLE; // bare-callback forms not folded
+  return interpretLambda(first, env, ctx);
+}
+
+function evalMethodCall(
+  object: Expr,
+  method: string,
+  args: CallArg[],
+  optional: boolean,
+  env: ConstEnv,
+  ctx: GenerateCtx,
+): EvalResult {
+  const recvR = evalConst(object, env, ctx);
+  if (!recvR.ok) return NO;
+  const recv = recvR.value;
+  if (optional && (recv === null || recv === undefined)) return ok(null);
+  try {
+    if (typeof recv === "string") return foldStringMethod(recv, method, args, env, ctx);
+    if (Array.isArray(recv)) return foldArrayMethod(recv, method, args, env, ctx);
+    return NO;
+  } catch (e) {
+    if (e === NON_FOLDABLE) return NO;
+    throw e; // real CodegenError (e.g. non-finite inside a callback) propagates
+  }
+}
+
+function foldStringMethod(s: string, method: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {
+  switch (method) {
+    case "toUpperCase":
+      return ok(asciiUpper(s));
+    case "toLowerCase":
+      return ok(asciiLower(s));
+    case "trim":
+      return ok(s.trim());
+    case "trimStart":
+    case "trimLeft":
+      return ok(s.trimStart());
+    case "trimEnd":
+    case "trimRight":
+      return ok(s.trimEnd());
+    case "startsWith":
+    case "endsWith":
+    case "includes":
+    case "indexOf":
+    case "lastIndexOf":
+    case "charAt":
+    case "slice":
+    case "substring":
+    case "repeat":
+    case "padStart":
+    case "padEnd": {
+      const a = evalArgValues(args, env, ctx);
+      // Regex/non-string args to these are non-constant here; call as JS.
+      const fn = (s as unknown as Record<string, (...x: unknown[]) => unknown>)[method];
+      return ok(fn.apply(s, a));
+    }
+    case "split": {
+      const a = evalArgValues(args, env, ctx);
+      // Regex separator, or the empty separator ($split rejects "" on the server) → runtime.
+      if (a.length === 0 || typeof a[0] !== "string" || a[0] === "") throw NON_FOLDABLE;
+      return ok(s.split(...(a as [string, number?])));
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+
+function foldArrayMethod(arr: unknown[], method: string, args: CallArg[], env: ConstEnv, ctx: GenerateCtx): EvalResult {
+  switch (method) {
+    case "map":
+      return ok(arr.map((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "filter":
+      return ok(arr.filter((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "some":
+      return ok(arr.some((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "every":
+      return ok(arr.every((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "find": {
+      const found = arr.find((el, i) => requireLambdaArg(args, env, ctx)(el, i));
+      // Not-found lowers to a MISSING value on the server (not null); withhold so
+      // that case takes the runtime path instead of folding to a disagreeing null.
+      if (found === undefined) throw NON_FOLDABLE;
+      return ok(found);
+    }
+    case "flatMap":
+      return ok(arr.flatMap((el, i) => requireLambdaArg(args, env, ctx)(el, i) as unknown));
+    case "reduce": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const init = evalArgValues(args.slice(1), env, ctx);
+      if (init.length === 0) throw NON_FOLDABLE; // jsmql requires an initial value
+      return ok(arr.reduce((acc, el, i) => fn(acc, el, i), init[0]));
+    }
+    // NOTE: `.slice` and `.flat` are deliberately NOT folded — jsmql lowers array
+    // `.slice` to `$slice` (take-n / skip-take, not JS start/end semantics), so a
+    // JS fold would disagree with the runtime; `.flat` has no faithful lowering
+    // for a non-nested array. Both stay runtime. (Verified by fold-consistency.)
+    case "concat":
+    case "includes":
+    case "indexOf":
+    case "lastIndexOf":
+    case "join":
+    case "at":
+    case "toReversed": {
+      const a = evalArgValues(args, env, ctx);
+      const fn = (arr as unknown as Record<string, (...x: unknown[]) => unknown>)[method];
+      return ok(fn.apply(arr, a));
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
 }
