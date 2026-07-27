@@ -186,3 +186,21 @@ export function dropRight(arr: unknown[], n: number): unknown[] {
 export function without(arr: unknown[], values: unknown[]): unknown[] {
   return arr.filter((x) => !values.some((v) => bsonEqual(x, v)));
 }
+export function xor(a: unknown[], b: unknown[]): unknown[] {
+  const aNotB = a.filter((x) => !b.some((y) => bsonEqual(x, y)));
+  const bNotA = b.filter((x) => !a.some((y) => bsonEqual(x, y)));
+  return uniq(aNotB.concat(bNotA));
+}
+/** Zip to the LONGEST array, padding short arrays with null (matching the lowering). */
+export function zip(arrays: unknown[][]): unknown[][] {
+  const len = arrays.reduce((m, a) => Math.max(m, a.length), 0);
+  const out: unknown[][] = [];
+  for (let i = 0; i < len; i++) out.push(arrays.map((a) => (i < a.length ? a[i] : null)));
+  return out;
+}
+export function unzip(rows: unknown[][]): unknown[][] {
+  const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+  const out: unknown[][] = [];
+  for (let j = 0; j < cols; j++) out.push(rows.map((r) => (r as unknown[])[j]));
+  return out;
+}

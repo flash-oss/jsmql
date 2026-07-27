@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: fold lodash set-ops, zip family, and object methods in `const`/`let`
+
+Completes the lodash array/object/number folding surface. Set operations
+(`xor`/`xorBy`, `differenceBy`/`intersectionBy`, `unionBy`) use BSON deep
+equality on the (iteratee) keys; the zip family (`zip`/`zipWith`/`unzip`/
+`zipObject`, plus `fromPairs`) mirrors the "run to the longest, pad short with
+null" and `$toString`-key lowerings; the object family (`mapKeys`/`pickBy`/
+`omitBy`, joining the earlier `mapValues`/`pick`/`omit`/`invert`/`toPairs`/`size`)
+iterates entries with a `(value, key)` iteratee. Object receivers dispatch
+through `foldObjectMethod`. With this, the full lodash value vocabulary that has
+a clean MQL lowering folds at compile time; anything the mongod consistency gate
+can't prove equal stays a runtime binding. The suite now spans 744 cases across
+string/number/array/object batteries — all agree with the server.
+
 ## 2026-07-27 — feat: fold lodash iteratee/collection array methods in `const`/`let`
 
 Extends constant folding to the iteratee-taking lodash array methods:

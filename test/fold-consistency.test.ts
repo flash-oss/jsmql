@@ -171,8 +171,55 @@ for (const v of ARRAY_SAMPLES) {
     ".groupBy()",
     ".countBy()",
     ".keyBy()",
+    // lodash set-ops + zip family (scalar arrays)
+    ".xor([2, 3, 4])",
+    ".differenceBy([2, 4], x => x)",
+    ".intersectionBy([2, 4], x => x)",
+    ".unionBy([3, 4, 5], x => x)",
+    ".xorBy([2, 3, 4], x => x)",
+    ".zip([10, 20, 30])",
+    ".zipWith([10, 20, 30], (a, b) => a + b)",
+    ".zipObject([10, 20, 30, 40])",
   ]) {
     arrayCases.push({ lit, val: v, call });
+  }
+}
+// pairs arrays for unzip / fromPairs
+arrayCases.push({
+  lit: "[[1, 10], [2, 20], [3, 30]]",
+  val: [
+    [1, 10],
+    [2, 20],
+    [3, 30],
+  ],
+  call: ".unzip()",
+});
+arrayCases.push({
+  lit: '[["a", 1], ["b", 2]]',
+  val: [
+    ["a", 1],
+    ["b", 2],
+  ],
+  call: ".fromPairs()",
+});
+
+// object receivers for the lodash object family
+const objCases: Case[] = [];
+const OBJ_SAMPLES: Record<string, unknown>[] = [{}, { a: 1, b: 2, c: 3 }, { x: 0, y: 5, z: 10 }];
+for (const v of OBJ_SAMPLES) {
+  const lit = JSON.stringify(v);
+  for (const call of [
+    ".size()",
+    ".toPairs()",
+    ".invert()",
+    '.pick(["a", "x"])',
+    '.omit(["a", "x"])',
+    ".mapValues(v => v * 2)",
+    ".mapKeys(v => v)",
+    ".pickBy(v => v > 1)",
+    ".omitBy(v => v > 1)",
+  ]) {
+    objCases.push({ lit, val: v, call });
   }
 }
 // arrays of objects for iteratee shorthands + by-field sorting
@@ -252,7 +299,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     }
   }
 
-  for (const { lit, val, call } of [...stringCases, ...numberCases, ...arrayCases]) {
+  for (const { lit, val, call } of [...stringCases, ...numberCases, ...arrayCases, ...objCases]) {
     it(`${lit}${call}`, async () => {
       const folded = foldedValue(lit, call);
       if (folded === NOT_FOLDED) return; // withheld fold → runtime; nothing to compare

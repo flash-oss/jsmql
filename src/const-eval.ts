@@ -713,6 +713,82 @@ function foldArrayMethod(arr: unknown[], method: string, args: CallArg[], env: C
     case "sortBy":
     case "orderBy":
       return foldSort(arr, method, args, env, ctx);
+    // ── lodash set operations ───────────────────────────────────────────────
+    case "xor": {
+      const [other] = evalArgValues(args, env, ctx);
+      if (!Array.isArray(other)) throw NON_FOLDABLE;
+      return ok(lodash.xor(arr, other));
+    }
+    case "differenceBy":
+    case "intersectionBy": {
+      if (args.length !== 2) throw NON_FOLDABLE;
+      const other = evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+      if (!other.ok || !Array.isArray(other.value)) throw NON_FOLDABLE;
+      const it = resolveIterateeFn(args[1], method, env, ctx);
+      const otherKeys = other.value.map((el, i) => it(el, i));
+      const inOther = (el: unknown, i: number) => otherKeys.some((k) => lodash.bsonEqual(k, it(el, i)));
+      return ok(arr.filter((el, i) => (method === "intersectionBy" ? inOther(el, i) : !inOther(el, i))));
+    }
+    case "unionBy":
+    case "xorBy": {
+      if (args.length !== 2) throw NON_FOLDABLE;
+      const other = evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+      if (!other.ok || !Array.isArray(other.value)) throw NON_FOLDABLE;
+      const it = resolveIterateeFn(args[1], method, env, ctx);
+      const uniqByKey = (xs: unknown[]): unknown[] => {
+        const seen: unknown[] = [];
+        const out: unknown[] = [];
+        xs.forEach((el, i) => {
+          const k = it(el, i);
+          if (!seen.some((s) => lodash.bsonEqual(s, k))) {
+            seen.push(k);
+            out.push(el);
+          }
+        });
+        return out;
+      };
+      if (method === "unionBy") return ok(uniqByKey(arr.concat(other.value)));
+      const aKeys = arr.map((el, i) => it(el, i));
+      const bKeys = other.value.map((el, i) => it(el, i));
+      const aNotB = arr.filter((el, i) => !bKeys.some((k) => lodash.bsonEqual(k, it(el, i))));
+      const bNotA = other.value.filter((el, i) => !aKeys.some((k) => lodash.bsonEqual(k, it(el, i))));
+      return ok(uniqByKey(aNotB.concat(bNotA)));
+    }
+    // ── lodash zip family ───────────────────────────────────────────────────
+    case "zip": {
+      const others = evalArgValues(args, env, ctx);
+      if (!others.every(Array.isArray)) throw NON_FOLDABLE;
+      return ok(lodash.zip([arr, ...(others as unknown[][])]));
+    }
+    case "zipWith": {
+      if (args.length < 2) throw NON_FOLDABLE;
+      const fn = requireLambdaArg([args[args.length - 1]], env, ctx);
+      const others = evalArgValues(args.slice(0, -1), env, ctx);
+      if (!others.every(Array.isArray)) throw NON_FOLDABLE;
+      const arrays = [arr, ...(others as unknown[][])];
+      const len = arrays.reduce((m, a) => Math.max(m, a.length), 0);
+      const out: unknown[] = [];
+      for (let i = 0; i < len; i++) out.push(fn(...arrays.map((a) => (i < a.length ? a[i] : null))));
+      return ok(out);
+    }
+    case "unzip":
+      if (!arr.every(Array.isArray)) throw NON_FOLDABLE;
+      return ok(lodash.unzip(arr as unknown[][]));
+    case "zipObject": {
+      const [values] = evalArgValues(args, env, ctx);
+      if (!Array.isArray(values)) throw NON_FOLDABLE;
+      const out: Record<string, unknown> = {};
+      arr.forEach((k, i) => (out[keyStr(k)] = values[i] === undefined ? null : values[i]));
+      return ok(out);
+    }
+    case "fromPairs": {
+      const out: Record<string, unknown> = {};
+      for (const pair of arr) {
+        if (!Array.isArray(pair)) throw NON_FOLDABLE;
+        out[keyStr(pair[0])] = pair[1] === undefined ? null : pair[1];
+      }
+      return ok(out);
+    }
     default:
       throw NON_FOLDABLE;
   }
@@ -863,9 +939,28 @@ function foldObjectMethod(
     case "mapValues": {
       const fn = requireLambdaArg(args, env, ctx);
       const out: Record<string, unknown> = {};
-      // lodash mapValues iteratee is (value, key); jsmql's resolveObjIteratee maps
-      // the same. Only the arrow form is folded here.
+      // lodash mapValues iteratee is (value, key). Only the arrow form is folded.
       for (const [k, v] of Object.entries(obj)) out[k] = fn(v, k);
+      return ok(out);
+    }
+    case "mapKeys": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        const nk = lodash.mqlKeyString(fn(v, k));
+        if (nk === undefined) throw NON_FOLDABLE;
+        out[nk] = v;
+      }
+      return ok(out);
+    }
+    case "pickBy":
+    case "omitBy": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        const keep = !!fn(v, k);
+        if (method === "pickBy" ? keep : !keep) out[k] = v;
+      }
       return ok(out);
     }
     default:
