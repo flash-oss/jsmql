@@ -4745,20 +4745,25 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
     }
     case "pop": {
       checkArity("pop", { sig: "", none: true }, args.length, pos);
-      // `arr.slice(0, max(0, size - 1))` — everything-but-last with a clamp so
-      // an empty input yields an empty output instead of `$slice([], 0, -1)`.
+      // `arr.slice(0, -1)` — everything-but-last, via the 2-arg `$slice`
+      // (first-`n`) whose count IS allowed to be 0. `max(0, size - 1)` is 0 for
+      // an empty or single-element receiver → `$slice: [arr, 0]` → []. The 3-arg
+      // `$slice: [arr, 0, 0]` mongod would reject ("Third argument to $slice must
+      // be positive"), even at runtime. Mirrors the `.initial()` lowering.
       const sizeExpr: Expr = mkOpCall("$size", [object], pos);
       const minus1: Expr = { type: "BinaryExpr", op: "-", left: sizeExpr, right: mkNumber(1, pos), pos };
       const clamped: Expr = mkOpCall("$max", [mkNumber(0, pos), minus1], pos);
-      return mkOpCall("$slice", [object, mkNumber(0, pos), clamped], pos);
+      return mkOpCall("$slice", [object, clamped], pos);
     }
     case "shift": {
       checkArity("shift", { sig: "", none: true }, args.length, pos);
-      // `$slice: [arr, 1, $size(arr)]` — start at index 1 and take everything
-      // remaining. MongoDB clamps `len` to what's actually available, so an
-      // empty input yields an empty output.
+      // `$slice: [arr, 1, max(1, $size(arr))]` — everything from index 1. The
+      // count is `max(1, size)`, never 0, so an empty receiver is
+      // `$slice: [[], 1, 1]` → [] (position past the end) rather than the 3-arg
+      // count of 0 mongod rejects. Mirrors the `.tail()` / `.drop(1)` lowering.
       const sizeExpr: Expr = mkOpCall("$size", [object], pos);
-      return mkOpCall("$slice", [object, mkNumber(1, pos), sizeExpr], pos);
+      const count: Expr = mkOpCall("$max", [mkNumber(1, pos), sizeExpr], pos);
+      return mkOpCall("$slice", [object, mkNumber(1, pos), count], pos);
     }
     case "fill":
       return buildFillRhs(object, args, pos);

@@ -138,6 +138,26 @@ $ = {
     });
   });
 
+  // Statement-position `.pop()` / `.shift()` lower to a `$slice` whose count can
+  // be 0 for an empty or single-element array — which mongod rejects in the
+  // 3-arg form even at runtime. Run the lowering over every user's `tags` (the
+  // dataset mixes empty `[]`, single `["vip"]`, and two-element arrays): it must
+  // neither error nor drop the wrong element. Expected values from a live run (HR3).
+  it("expr: .pop() / .shift() run on empty & single-element arrays (no count-0 $slice rejection)", async () => {
+    const tagsById = (rows: { _id: unknown; tags: string[] }[]) =>
+      Object.fromEntries(rows.map((r) => [String(r._id), r.tags]));
+
+    const popped = tagsById((await aggregate("users", "$.tags.pop();")) as { _id: unknown; tags: string[] }[]);
+    expect(popped[ID.user(1).toHexString()]).toEqual(["vip"]); // ["vip","beta"] → drop last
+    expect(popped[ID.user(3).toHexString()]).toEqual([]); //     single ["vip"]  → []
+    expect(popped[ID.user(4).toHexString()]).toEqual([]); //     empty []        → [] (no rejection)
+
+    const shifted = tagsById((await aggregate("users", "$.tags.shift();")) as { _id: unknown; tags: string[] }[]);
+    expect(shifted[ID.user(1).toHexString()]).toEqual(["beta"]); // ["vip","beta"] → drop first
+    expect(shifted[ID.user(3).toHexString()]).toEqual([]); //       single ["vip"]  → []
+    expect(shifted[ID.user(7).toHexString()]).toEqual([]); //       empty []        → [] (no rejection)
+  });
+
   // Join orders→users, group revenue by the buyer's department. Exercises
   // $lookup + $unwind + $group + derived field, like realistic.test.ts
   // "top-orders report by department".

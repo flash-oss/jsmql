@@ -3865,14 +3865,18 @@ describe("statement-position mutators", () => {
       { $set: { events: { $concatArrays: [["$x", "$y"], "$events"] } } },
     ]);
   });
-  it(".pop() — drops last element with $slice and a clamp", () => {
+  it(".pop() — drops last element via the count-tolerant 2-arg $slice (valid on empty/single)", () => {
+    // 2-arg (first-n) $slice, NOT 3-arg `[arr, 0, count]`: `max(0, size-1)` is 0
+    // for an empty/single-element array, and only the 2-arg form allows a 0 count.
     expect(jsmql("$.events.pop();")).toEqual([
-      { $set: { events: { $slice: ["$events", 0, { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } },
+      { $set: { events: { $slice: ["$events", { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } },
     ]);
   });
-  it(".shift() — drops first element with $slice", () => {
+  it(".shift() — drops first element; count max(1, size) stays valid on empty/single", () => {
+    // count is max(1, size), never 0 — an empty receiver is `$slice: [[], 1, 1]`
+    // → [] (position past the end), not a rejected 3-arg count of 0.
     expect(jsmql("$.events.shift();")).toEqual([
-      { $set: { events: { $slice: ["$events", 1, { $size: "$events" }] } } },
+      { $set: { events: { $slice: ["$events", 1, { $max: [1, { $size: "$events" }] }] } } },
     ]);
   });
   it(".splice(s, dc, ...items) — delegates to the .toSpliced shape inside $set", () => {

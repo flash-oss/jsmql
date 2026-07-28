@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — fix: statement-position `.pop()` / `.shift()` emit a valid `$slice` on empty/short arrays
+
+`$.field.pop()` and `$.field.shift()` (the statement-position array mutators, lowered by `tryRewriteMutatorCall` in [src/codegen.ts](src/codegen.ts)) emitted a 3-arg `$slice` whose count could be 0: `.pop()` → `$slice:[arr, 0, max(0, size-1)]` and `.shift()` → `$slice:[arr, 1, $size(arr)]`. MongoDB rejects a 3-arg `$slice` count of 0 **at runtime**, not only during constant-folding ("Third argument to $slice must be positive: 0") — so both threw on an empty array, and `.pop()` also threw on a single-element array. A comment even claimed the `$max` clamp made `.pop()` safe; it did the opposite (it produced the 0). Pre-existing HR3 violation, found while fixing the value-mode `.slice` lowering (same count-0 class).
+
+The fix reuses shapes already proven correct elsewhere in the file: `.pop()` (= `.slice(0, -1)`) now lowers like `.initial()` — the **2-arg** `$slice:[arr, max(0, size-1)]`, whose count IS allowed to be 0 (→ `[]`) — and `.shift()` (= `.slice(1)`) lowers like `.tail()`/`.drop(1)` with count `max(1, $size(arr))`, never 0 (an empty receiver is `$slice:[[], 1, 1]` → `[]`, position past the end). Verified against a live `mongod` across empty, single-element, and multi-element arrays, and locked in with a new [test/integration.test.ts](test/integration.test.ts) case that runs both over the fixture users' `tags` (which include `[]`, `["vip"]`, and two-element arrays). Docs in [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md) and [docs/LANGUAGE.md](docs/LANGUAGE.md) updated to the corrected shapes.
+
+---
+
 ## 2026-07-27 — fix: value-mode array `.slice(start, end?)` now matches `Array.prototype.slice`
 
 The value/expression-mode lowering of array `.slice` in [src/codegen.ts](src/codegen.ts) (`sliceArray`) had been passing the JS args straight into MQL `$slice` — but the two operators disagree. JS `.slice(start, end)` takes **indices** with an **exclusive end**; MQL `$slice` is position + **count**. So `[1,2,3,4,5].slice(1)` returned `[1]` on the server (MQL's "first 1") instead of JS's `[2,3,4,5]`, and `.slice(1, 3)` returned three elements from index 1 instead of the two at indices 1–2. `.slice(0)` even lowered to `$slice:[arr,0]` → `[]` (MQL "first 0") rather than a whole-array copy. Only single-arg negative literals (`.slice(-2)`) happened to agree, because MQL's 2-arg negative form *is* "last n". This was a pre-existing bug, surfaced by the const-folding branch's mongod-consistency gate.

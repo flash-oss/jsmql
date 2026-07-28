@@ -1470,7 +1470,7 @@ $.events.push($.newEvent);
 // → { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } }
 
 $.events.pop();
-// → { $set: { events: { $slice: ["$events", 0, { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } }
+// → { $set: { events: { $slice: ["$events", { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } }
 
 $.events.reverse();
 // → { $set: { events: { $reverseArray: "$events" } } }

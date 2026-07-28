@@ -188,8 +188,8 @@ The mechanism is a pre-pass on the statement list:
   - `.splice(args)` → `MethodCall(object, "toSpliced", args)`.
   - `.push(...items)` → `OperatorCall($concatArrays, [object, ArrayLiteral(items)])`. Items are wrapped in an `ArrayLiteral` because `$concatArrays`-with-`.concat`-semantics would flatten one level, but JS `.push` does not.
   - `.unshift(...items)` → `OperatorCall($concatArrays, [ArrayLiteral(items), object])`.
-  - `.pop()` → `OperatorCall($slice, [object, 0, $max(0, $subtract($size(object), 1))])`. The `$max` clamp keeps an empty receiver yielding `[]` instead of an invalid `$slice` length.
-  - `.shift()` → `OperatorCall($slice, [object, 1, $size(object)])`.
+  - `.pop()` → `OperatorCall($slice, [object, $max(0, $subtract($size(object), 1))])` — the **2-arg** (first-`n`) `$slice`, which allows a 0 count. `max(0, size - 1)` is 0 for an empty or single-element receiver, so it yields `[]`; the 3-arg `$slice: [object, 0, 0]` would be rejected ("Third argument to $slice must be positive"), even at runtime. Mirrors `.initial()`.
+  - `.shift()` → `OperatorCall($slice, [object, 1, $max(1, $size(object))])` — count is `max(1, size)`, never 0, so an empty receiver is `$slice: [[], 1, 1]` → `[]` (position past the end) rather than a rejected 3-arg count of 0. Mirrors `.tail()` / `.drop(1)`.
   - `.fill(v[, s[, e]])` → IIFE binding the normalised start/end once, then `object.map((x, i) => i >= s0 && i < e0 ? v : x)` (built directly in `buildFillRhs()`). Normalisation matches JS semantics (`< 0` ⇒ `max(0, size + n)`, undefined ⇒ default), with a compile-time fast path that inlines non-negative numeric literals.
 
 Hook sites (the pre-pass runs in each):
