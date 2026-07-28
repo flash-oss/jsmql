@@ -458,7 +458,7 @@ $.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" },
 
 The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `String.split(",")` and `Object.keys(o)` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
 
-If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
+If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.toReversed()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
 **Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.length` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — jsmql only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.length` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`.
 
@@ -1347,7 +1347,8 @@ Call methods on any expression that produces an array.
 ```js
 $.items.at(0)              // { $arrayElemAt: ["$items", 0] }
 $.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
-[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 0, 2] }      (known array → $slice)
+[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 2] }          (indices, end-exclusive — like JS)
+[1, 2, 3, 4].slice(1, 3)   // { $slice: [[1, 2, 3, 4], 1, 2] }    (index 1 up to 3 → 2 elements)
 $.items.slice(1, 3)        // runtime $cond on $isArray — array → $slice, string → $substrCP
                            // (type-aware, like .indexOf / .includes / .concat)
 $.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, immutable)

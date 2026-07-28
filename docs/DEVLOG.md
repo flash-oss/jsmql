@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — fix: value-mode array `.slice(start, end?)` now matches `Array.prototype.slice`
+
+The value/expression-mode lowering of array `.slice` in [src/codegen.ts](src/codegen.ts) (`sliceArray`) had been passing the JS args straight into MQL `$slice` — but the two operators disagree. JS `.slice(start, end)` takes **indices** with an **exclusive end**; MQL `$slice` is position + **count**. So `[1,2,3,4,5].slice(1)` returned `[1]` on the server (MQL's "first 1") instead of JS's `[2,3,4,5]`, and `.slice(1, 3)` returned three elements from index 1 instead of the two at indices 1–2. `.slice(0)` even lowered to `$slice:[arr,0]` → `[]` (MQL "first 0") rather than a whole-array copy. Only single-arg negative literals (`.slice(-2)`) happened to agree, because MQL's 2-arg negative form *is* "last n". This was a pre-existing bug, surfaced by the const-folding branch's mongod-consistency gate.
+
+The fix resolves both indices the way the ECMAScript algorithm does — negatives count from the end, positives clamp to the length, `end` is exclusive — and translates to `$slice` with a computed count. Common shapes stay lean: `.slice(-n)` → 2-arg `$slice`; `.slice(0)` → the receiver unchanged; `.slice(0, end)` → the count-tolerant 2-arg "first end"; `.slice(a, b)` for non-negative literals → `$slice:[arr, a, b-a]` (or `[]` when `b <= a`). A negative-`end` or runtime index falls to a general `$let` form that resolves both indices against `$size` and guards the empty range with `$cond` (→ `[]`). Two MongoDB constraints shaped the output, both confirmed against a live `mongod`: the 3-arg `$slice` count must be **> 0** even at runtime (so the guard returns a bare `[]`, and the general form's own count is emitted as `max(count, 1)` so a *constant-array* receiver stays foldable by the optimizer instead of hitting a rejected 0-count `$slice`), while the 2-arg form tolerates a 0 count. The **stream-mode** `.slice` (`$$ = $$.slice(a, b)` → `$skip`/`$limit`) was already index-based and is untouched; string `.slice` (`$substrCP`) was already correct. Verified end-to-end with a new [test/integration.test.ts](test/integration.test.ts) case and an exhaustive `Array.prototype.slice`-vs-`mongod` diff over positive/negative/zero/out-of-range/runtime indices across empty and short arrays. Also corrected two now-wrong doc examples: `.slice(0)` and `.reverse()` were listed as type-pinning idioms in [docs/LANGUAGE.md](docs/LANGUAGE.md) but the former is now a no-op (never pinned) and the latter is rejected at expression position — both replaced with `.toReversed()`.
+
+---
+
 ## 2026-07-27 — feat(playground): label each editor with its language (Variables = run-time JS, Query = JSMQL)
 
 The input panel stacks two editors that render *identically* — both are

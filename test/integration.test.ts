@@ -108,6 +108,36 @@ $$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 3);`,
     ]);
   });
 
+  // Value-mode array `.slice` is JS-faithful: start/end are INDICES (end
+  // exclusive) and negatives count from the end — NOT MQL `$slice`'s
+  // position+count semantics. Slices a 3-element array projected from an order's
+  // items. The old count-based lowering got `.slice(1)` / `.slice(1, -1)` wrong
+  // (and emitted a negative count mongod rejects); this asserts the fix runs on
+  // a real server. Expected values derived from a live run (HR3).
+  it("expr: array .slice matches Array.prototype.slice (indices, end-exclusive)", async () => {
+    const id = ID.order(15).toHexString();
+    const [row] = await aggregate(
+      "orders",
+      `$match($._id === 0x${id});
+$ = {
+  tail: $.items.map(i => i.name).slice(1),
+  middle: $.items.map(i => i.name).slice(1, -1),
+  butLast: $.items.map(i => i.name).slice(0, -1),
+  lastTwo: $.items.map(i => i.name).slice(-2),
+  firstTwo: $.items.map(i => i.name).slice(0, 2),
+  emptyRange: $.items.map(i => i.name).slice(2, 1),
+};`,
+    );
+    expect(row).toEqual({
+      tail: ["4K Monitor", "Noise-cancelling Headphones"],
+      middle: ["4K Monitor"],
+      butLast: ["Mechanical Keyboard", "4K Monitor"],
+      lastTwo: ["4K Monitor", "Noise-cancelling Headphones"],
+      firstTwo: ["Mechanical Keyboard", "4K Monitor"],
+      emptyRange: [],
+    });
+  });
+
   // Join orders→users, group revenue by the buyer's department. Exercises
   // $lookup + $unwind + $group + derived field, like realistic.test.ts
   // "top-orders report by department".

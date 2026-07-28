@@ -711,9 +711,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
         },
       },
       {
-        $set: {
-          r: { $slice: [{ $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } }, 0, 3] },
-        },
+        $set: { r: { $slice: [{ $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } }, 3] } },
       },
       { $unset: "__jsmql" },
     ]);

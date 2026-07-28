@@ -82,8 +82,7 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | Method | MQL output |
 |---|---|
 | `.at(n)` | `{ $arrayElemAt: [expr, n] }` |
-| `.slice(start)` | `{ $slice: [expr, start] }` |
-| `.slice(start, count)` | `{ $slice: [expr, start, count] }` |
+| `.slice(start[, end])` | JS `Array.prototype.slice`: `start`/`end` are **indices** (`end` **exclusive**), negatives count from the end. Lowered by `sliceArray()` in `codegen.ts` — MQL `$slice` is position+**count** based, so this translates rather than passing `start`/`end` straight through (a `[expr, start, end]` passthrough would wrongly read `end` as a count). Representative forms: `.slice(-n)` → `{ $slice: [expr, -n] }` (last n); `.slice(0)` → `expr`; `.slice(0, b)` → `{ $slice: [expr, b] }` (first b); `.slice(a, b)` for non-negative literals with `b > a` → `{ $slice: [expr, a, b - a] }` (and `b <= a` → `[]`); a negative-`end` or runtime index resolves both indices against `$size` inside `$let` and guards the empty range with `$cond` (→ `[]`). The 3-arg count is always emitted as `max(count, 1)` (never 0) so a constant-array receiver stays foldable by MongoDB's optimizer. |
 | `.toReversed()` | `{ $reverseArray: expr }` (ES2023). `.reverse()` is rejected at expression position — see *Mutators at statement position* below. |
 | `.toSorted()` | `{ $sortArray: { input: expr, sortBy: 1 } }` (ES2023, ascending). `.sort()` is rejected at expression position — see *Mutators at statement position* below. |
 | `.toSorted(x => x.path)` | `{ $sortArray: { input: expr, sortBy: { "path": 1 } } }` — key-function form, ascending. Lowered via `lambdaToSortBy()` in `codegen.ts`. |

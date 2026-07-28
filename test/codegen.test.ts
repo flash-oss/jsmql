@@ -1895,21 +1895,74 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
   });
   it("slice(start) on bare $.field → runtime $cond on $isArray", () => {
+    // Array branch: JS `slice(start)` = drop the first `start` — position + a
+    // `max(1, size)` count (NOT the 2-arg "first `start`" that MQL `$slice`
+    // would give). count 1 (not 0) keeps an empty array valid.
     expect(jsmql.expr("$.items.slice(2)")).toEqual({
       $cond: {
         if: { $isArray: "$items" },
-        then: { $slice: ["$items", 2] },
+        then: {
+          $let: {
+            vars: { jsmqlArr: "$items" },
+            in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+          },
+        },
         else: { $substrCP: ["$items", 2, { $subtract: [{ $strLenCP: "$items" }, 2] }] },
       },
     });
   });
-  it("slice(start, end) on bare $.field → runtime $cond on $isArray", () => {
+  it("slice(0, end) on bare $.field → 2-arg 'first end' $slice (end exclusive)", () => {
     expect(jsmql.expr("$.items.slice(0, 3)")).toEqual({
-      $cond: { if: { $isArray: "$items" }, then: { $slice: ["$items", 0, 3] }, else: { $substrCP: ["$items", 0, 3] } },
+      $cond: { if: { $isArray: "$items" }, then: { $slice: ["$items", 3] }, else: { $substrCP: ["$items", 0, 3] } },
     });
   });
-  it("slice(start, end) on known array → $slice", () => {
-    expect(jsmql.expr("[1,2,3,4,5].slice(1, 3)")).toEqual({ $slice: [[1, 2, 3, 4, 5], 1, 3] });
+  it("slice(start, end) on known array → count is end - start (JS end-exclusive)", () => {
+    // NOT `$slice: [arr, 1, 3]` (which MQL reads as "3 elements from index 1").
+    expect(jsmql.expr("[1,2,3,4,5].slice(1, 3)")).toEqual({ $slice: [[1, 2, 3, 4, 5], 1, 2] });
+  });
+  it("slice(start, end) with end <= start (both non-neg literals) → []", () => {
+    expect(jsmql.expr("[1,2,3,4,5].slice(3, 2)")).toEqual([]);
+    expect(jsmql.expr("[1,2,3,4,5].slice(2, 2)")).toEqual([]);
+  });
+  it("slice(-n) → last n elements (the 2-arg $slice primitive)", () => {
+    expect(jsmql.expr("[1,2,3,4,5].slice(-2)")).toEqual({ $slice: [[1, 2, 3, 4, 5], -2] });
+  });
+  it("slice(0) → whole-array copy (receiver unchanged)", () => {
+    expect(jsmql.expr("[1,2,3].slice(0)")).toEqual([1, 2, 3]);
+  });
+  it("slice(0, -n) on known array → all-but-last-n, guarding empty input", () => {
+    // start 0 + negative end resolves to "first max(size - n, 0)" via 2-arg $slice.
+    expect(jsmql.expr("[1,2,3,4,5].slice(0, -1)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: [1, 2, 3, 4, 5] },
+        in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
+      },
+    });
+  });
+  it("slice(start, negative-end) → resolve both indices, guard the empty range", () => {
+    // The general form: k/f are the JS-resolved indices, count = f - k, and the
+    // $cond returns [] for an empty range. The slice's own count is max(count, 1)
+    // so a constant-array input stays foldable (never a rejected 0-count $slice).
+    expect(jsmql.expr("[1,2,3,4,5].slice(1, -1)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: [1, 2, 3, 4, 5] },
+        in: {
+          $let: {
+            vars: {
+              jsmqlK: { $min: [1, { $size: "$$jsmqlArr" }] },
+              jsmqlF: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
+            },
+            in: {
+              $cond: [
+                { $gt: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 0] },
+                { $slice: ["$$jsmqlArr", "$$jsmqlK", { $max: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 1] }] },
+                [],
+              ],
+            },
+          },
+        },
+      },
+    });
   });
   it("toReversed()", () => {
     expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
@@ -4545,10 +4598,11 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$user.posts", []] } });
   });
   it(".slice on optional receiver wraps with [] then runtime-dispatches", () => {
+    // start 0 → the array branch is a 2-arg "first 5" $slice (JS end-exclusive).
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
       $cond: {
         if: { $isArray: { $ifNull: ["$user.posts", []] } },
-        then: { $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
+        then: { $slice: [{ $ifNull: ["$user.posts", []] }, 5] },
         else: { $substrCP: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
       },
     });
