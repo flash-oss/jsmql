@@ -27,6 +27,289 @@ const truthy = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
 });
 
+// "Recommended products" for one user — the classic collaborative-filtering
+// query, in a handful of lines of JavaScript. It's the playground's default
+// example because it composes almost the whole language at once:
+//   1) narrow `users` to the logged-in user ($match) and assert exactly one
+//      matched — `$$.length` is the stream count ($setWindowFields), guarded by
+//      a $convert-error $match.
+//   2) that user's distinct, recently-bought product ids (correlated $lookup,
+//      then value-mode .map/.flatten/.uniq).
+//   3) products co-purchased by everyone who bought those, minus what the user
+//      already owns, tallied into a { productId: count } map with .countBy().
+//   4) join the product docs (indexed `pr._id in [...]` lookup) and emit the
+//      top-10 scored recommendations as a *stream of documents* (`$ = <array>`
+//      fans the array out via $unwind + $replaceWith).
+// Every scan of the massive `orders` / `products` collections is recency-sorted
+// (.toSorted) and capped (.take) so the work stays bounded at scale.
+describe("recommended products (collaborative filtering)", { features: ["Pipelines"] }, () => {
+  it(
+    "co-purchase recommendations — correlated lookups, countBy, orderBy, capped recency-sorted scans",
+    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      expect(
+        jsmql`
+$match($._id === "u1");
+assert($$.length === 1, "More than one user with such ID found");
+
+const myProductIds = $$$.orders
+  .filter(o => o.userId === "u1")
+  .toSorted({ createdAt: -1 }).take(10)
+  .map("productIds").flatten().uniq();
+
+const candidateProductIdCounts = $$$.orders
+  .filter(o => o.productIds.some(p => myProductIds.includes(p)))
+  .toSorted({ createdAt: -1 }).take(100) // co-purchase orders, recent, capped
+  .map("productIds").flatten()
+  .filter(p => !myProductIds.includes(p))
+  .countBy(); // { ID: count } map
+const candidateProductIds = Object.keys(candidateProductIdCounts);
+
+const candidateProducts = $$$.products
+  .filter(pr => pr._id in candidateProductIds).take(500);
+
+$ = candidateProductIds
+  .map(id => ({
+    productId: id,
+    score: candidateProductIdCounts[id],
+    name:  candidateProducts.find({ _id: id }).name,
+  }))
+  .orderBy({ score: -1 })
+  .take(10);
+      `,
+      ).toEqual([
+        { $match: { _id: "u1" } },
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        {
+          $match: {
+            $expr: {
+              $convert: {
+                input: true,
+                to: {
+                  $cond: [
+                    { $eq: ["$__jsmql.length", 1] },
+                    "bool",
+                    "jsmql assertion failed: More than one user with such ID found",
+                  ],
+                },
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "orders",
+            let: {},
+            pipeline: [{ $match: { userId: "u1" } }, { $sort: { createdAt: -1 } }, { $limit: 10 }],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        {
+          $set: {
+            "__jsmql.var.myProductIds": {
+              $reduce: {
+                input: {
+                  $reduce: {
+                    input: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } },
+                    initialValue: [],
+                    in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+                  },
+                },
+                initialValue: [],
+                in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "orders",
+            let: { jsmql_v0_myProductIds: "$__jsmql.var.myProductIds" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $anyElementTrue: {
+                      $map: {
+                        input: "$productIds",
+                        as: "p",
+                        in: {
+                          $cond: {
+                            if: { $isArray: "$$jsmql_v0_myProductIds" },
+                            then: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
+                            else: { $gte: [{ $indexOfCP: ["$$jsmql_v0_myProductIds", "$$p"] }, 0] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              { $sort: { createdAt: -1 } },
+              { $limit: 100 },
+            ],
+            as: "__jsmql.tmp.2",
+          },
+        },
+        {
+          $set: {
+            "__jsmql.var.candidateProductIdCounts": {
+              $arrayToObject: {
+                $map: {
+                  input: {
+                    $setUnion: [
+                      {
+                        $map: {
+                          input: {
+                            $filter: {
+                              input: {
+                                $reduce: {
+                                  input: {
+                                    $map: { input: "$__jsmql.tmp.2", as: "jsmqlEl", in: "$$jsmqlEl.productIds" },
+                                  },
+                                  initialValue: [],
+                                  in: {
+                                    $concatArrays: [
+                                      "$$value",
+                                      { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] },
+                                    ],
+                                  },
+                                },
+                              },
+                              as: "p",
+                              cond: {
+                                $not: {
+                                  $cond: {
+                                    if: { $isArray: "$__jsmql.var.myProductIds" },
+                                    then: { $in: ["$$p", "$__jsmql.var.myProductIds"] },
+                                    else: { $gte: [{ $indexOfCP: ["$__jsmql.var.myProductIds", "$$p"] }, 0] },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                          as: "jsmqlItem",
+                          in: { $ifNull: [{ $toString: "$$jsmqlItem" }, "null"] },
+                        },
+                      },
+                      [],
+                    ],
+                  },
+                  as: "jsmqlKey",
+                  in: {
+                    k: "$$jsmqlKey",
+                    v: {
+                      $size: {
+                        $filter: {
+                          input: {
+                            $filter: {
+                              input: {
+                                $reduce: {
+                                  input: {
+                                    $map: { input: "$__jsmql.tmp.2", as: "jsmqlEl", in: "$$jsmqlEl.productIds" },
+                                  },
+                                  initialValue: [],
+                                  in: {
+                                    $concatArrays: [
+                                      "$$value",
+                                      { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] },
+                                    ],
+                                  },
+                                },
+                              },
+                              as: "p",
+                              cond: {
+                                $not: {
+                                  $cond: {
+                                    if: { $isArray: "$__jsmql.var.myProductIds" },
+                                    then: { $in: ["$$p", "$__jsmql.var.myProductIds"] },
+                                    else: { $gte: [{ $indexOfCP: ["$__jsmql.var.myProductIds", "$$p"] }, 0] },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                          as: "jsmqlItem",
+                          cond: { $eq: [{ $ifNull: [{ $toString: "$$jsmqlItem" }, "null"] }, "$$jsmqlKey"] },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          $set: {
+            "__jsmql.var.candidateProductIds": {
+              $map: { input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" }, as: "kv", in: "$$kv.k" },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "products",
+            let: { jsmql_v0_candidateProductIds: "$__jsmql.var.candidateProductIds" },
+            pipeline: [{ $match: { $expr: { $in: ["$_id", "$$jsmql_v0_candidateProductIds"] } } }, { $limit: 500 }],
+            as: "__jsmql.tmp.3",
+          },
+        },
+        { $set: { "__jsmql.var.candidateProducts": "$__jsmql.tmp.3" } },
+        {
+          $set: {
+            "__jsmql.tmp.4": {
+              $slice: [
+                {
+                  $sortArray: {
+                    input: {
+                      $map: {
+                        input: "$__jsmql.var.candidateProductIds",
+                        as: "id",
+                        in: {
+                          productId: "$$id",
+                          score: {
+                            $cond: {
+                              if: { $isArray: "$__jsmql.var.candidateProductIdCounts" },
+                              then: { $arrayElemAt: ["$__jsmql.var.candidateProductIdCounts", "$$id"] },
+                              else: { $getField: { field: "$$id", input: "$__jsmql.var.candidateProductIdCounts" } },
+                            },
+                          },
+                          name: {
+                            $getField: {
+                              field: "name",
+                              input: {
+                                $arrayElemAt: [
+                                  {
+                                    $filter: {
+                                      input: "$__jsmql.var.candidateProducts",
+                                      as: "jsmqlItem",
+                                      cond: { $eq: ["$$jsmqlItem._id", "$$id"] },
+                                    },
+                                  },
+                                  0,
+                                ],
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                    sortBy: { score: -1 },
+                  },
+                },
+                10,
+              ],
+            },
+          },
+        },
+        { $unwind: "$__jsmql.tmp.4" },
+        { $replaceWith: "$__jsmql.tmp.4" },
+      ]);
+    },
+  );
+});
+
 describe(
   "look up one user (assert unique), then pivot to their 5 most-recent orders",
   { features: ["Pipelines"] },
