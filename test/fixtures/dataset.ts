@@ -578,6 +578,12 @@ function buildOrders() {
       // hyphen is illegal in a MongoDB variable name — the regression this exercises
       // end-to-end on a real server. See integration test "hyphenated correlated let".
       meta: { "ext-id": `X-${o.n}` },
+      // TOP-LEVEL bracket-accessed field. `$["ext-code"]` in a correlated filter
+      // exercises a DIFFERENT code path than the nested `meta["ext-id"]`: the bare
+      // root `$` must contribute no path segment, else the field path comes out as
+      // `.ext-code` (leading dot) which mongod rejects. See integration test
+      // "top-level bracket-accessed correlated field".
+      "ext-code": `EC-${o.n}`,
     };
   });
 }

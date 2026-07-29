@@ -11020,7 +11020,7 @@ function createSlotAllocator() {
   };
 }
 function classifyPath(expr, foreignParam, outerLets, enclosingParams = []) {
-  if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
+  if (expr.type === "FieldRef") return { kind: "local", segments: expr.path === "" ? [] : [expr.path] };
   if (expr.type === "ParamRef") {
     if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
     const level = enclosingParams.indexOf(expr.name);
@@ -11407,7 +11407,10 @@ function transformStmt(stmt, foreignParam, allocator, outerLets) {
 }
 function transformTarget(target, foreignParam, allocator, outerLets) {
   const classified = classifyPath(target, foreignParam, outerLets, allocator.enclosingParams);
-  if (classified !== null && (classified.kind === "local" || classified.kind === "foreign") && classified.segments.length > 0) {
+  if (classified !== null && classified.kind === "local") {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  if (classified !== null && classified.kind === "foreign" && classified.segments.length > 0) {
     return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
   }
   return transformExpr(target, foreignParam, allocator, outerLets);
@@ -11420,6 +11423,12 @@ function transformExpr(expr, foreignParam, allocator, outerLets) {
   const classified = classifyPath(expr, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null) {
     if (classified.kind === "local") {
+      if (classified.segments.length === 0) {
+        throw new CodegenError(
+          `Bare '$' (the whole outer document) can't be used as a value in a $lookup predicate \u2014 reference a specific field with '$.<field>' (e.g. '$.userId').`,
+          expr.pos
+        );
+      }
       const letVar = allocator.enclosingParams.length > 0 ? allocator.allocateRootField(classified.segments) : allocator.allocateForLocalPath(classified.segments);
       return { type: "ParamRef", name: letVar, pos: expr.pos };
     }

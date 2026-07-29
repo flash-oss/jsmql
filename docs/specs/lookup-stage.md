@@ -56,7 +56,7 @@ The `SubPipelineLowerer` callback is wired by `src/pipeline.ts` (which provides 
 
 The walker `transformExpr` in `src/lookup-translation.ts` runs over the lambda body (expression-form) or over each statement of the block (block-form). At every visited AST node, `classifyPath` reports whether the sub-tree is a `MemberAccess`/`IndexAccess` chain rooted at:
 
-- a `FieldRef` (`$.userId`, `$.user.profile`) → **local**, segments captured.
+- a `FieldRef` (`$.userId`, `$.user.profile`) → **local**, segments captured. The bare root `$` is an empty-path `FieldRef` and contributes **no** segment, so a top-level bracket access (`$["ext-code"]`) folds to the single segment `["ext-code"]`, not `["", "ext-code"]` — the latter would join to the leading-dot path `.ext-code`, which MongoDB rejects (`Location15998`) as a `localField`/`let` value. This mirrors general codegen, where `$["x"]` is `$x` and a lone `$` is `$$ROOT` (both keyed on `path === ""`).
 - the foreign-doc lambda param (`o`, `o.userId`, `o.user.profile`) → **foreign**, segments captured.
 - anything else → unclassified; the walker recurses into children.
 
@@ -64,7 +64,7 @@ For local-rooted sub-trees, the let allocator interns the dotted path under a co
 
 For foreign-rooted sub-trees, the sub-tree is replaced with a bare `FieldRef` whose path is the segment chain (e.g. `o.user.profile` → `FieldRef("user.profile")`). Inside the sub-pipeline, the foreign doc is `$$ROOT`, so a bare `"$user.profile"` resolves correctly.
 
-A bare reference to the foreign param itself (`o` alone, no member access) is **rejected** with a targeted "use `o.<field>`" error — no `$$ROOT` lowering yet.
+A bare reference to the foreign param itself (`o` alone, no member access) is **rejected** with a targeted "use `o.<field>`" error — no `$$ROOT` lowering yet. Its local-side mirror, a bare `$` used as a correlation **value** (`o.ref === $`), is likewise rejected ("reference a specific field with `$.<field>`") — the whole outer document isn't a field path, and previously it emitted an invalid empty field path (`localField: ""` / a `let` value of `"$"`). A bare `$` as a write **target** stays valid, though: it's the root-replace destination (`$ = { … }` from an object-body `.map`), resolved by `transformTarget` to the empty-path root `FieldRef` before the value-side guard applies.
 
 The MongoDB-native `$lookup.let` is wholly distinct from jsmql's pipeline-scoped `let` (`__jsmql.var.x`): lookup-pipeline lets live only inside one `$lookup.pipeline` and are read as `$$letVar`, while pipeline-scoped lets are materialised as document fields under `__jsmql.var.<name>` and read as `"$__jsmql.var.x"`. See [`let-bindings.md`](./let-bindings.md).
 

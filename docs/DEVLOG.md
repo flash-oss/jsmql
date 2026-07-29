@@ -99,6 +99,37 @@ populated-Variables, and dynamic-hint states).
 
 ---
 
+## 2026-07-27 — fix: top-level bracket-accessed outer field in a correlated `$lookup` no longer emits a leading-dot field path
+
+Sibling of the same-day `$lookup.let` var-name sanitization fix, found while verifying it. A correlated
+`$$$.<coll>.find/filter(pred)` referencing a **top-level bracket-accessed** outer field —
+`$["ext-code"]` — emitted a field path with a spurious leading dot: `localField: ".ext-code"` (basic
+single-`===` form) and a `$lookup.let` value of `"$.ext-code"` (pipeline form). MongoDB rejects both
+(`Location15998`) — another HR3 violation. Root cause: the bare root `$` parses to a `FieldRef` with an
+empty path, and `classifyPath` in [src/lookup-translation.ts](../src/lookup-translation.ts) captured that
+as the segment `[""]`, so a bracket access folded to `["", "ext-code"]` → `.ext-code`. The nested form
+(`$.meta["sub-id"]`) was unaffected because its base segment is the non-empty `"meta"`.
+
+Fix: `classifyPath`'s `FieldRef` case now maps the empty-path root to **no** segment (`[]`), mirroring
+general codegen where `$["x"]` is `$x` and a lone `$` is `$$ROOT` (both keyed on `path === ""`). A bracket
+access onto the root then folds cleanly to `["ext-code"]` → `localField: "ext-code"` / value `"$ext-code"`.
+The change also surfaced that a bare `$` as a correlation **value** (`o.ref === $`) had been emitting an
+invalid empty field path (`localField: ""` / `let` value `"$"`); `transformExpr` now rejects it with an
+actionable "reference a specific field with `$.<field>`" error — the local-side mirror of the existing
+bare-foreign-param rejection. A bare `$` as a write **target** stays valid (the root-replace destination
+`$ = { … }` from an object-body `.map`): `transformTarget` resolves it to the empty-path root `FieldRef`
+before the value-side guard applies.
+
+Verified end-to-end on a live mongod: the fixed basic form is accepted and correlates selectively (driver
+whose `ext-code` matches an order's `ref` gets that order; a non-matching driver gets none), while the old
+`.ext-code` `localField` is rejected (`Location15998`). Guarded by three unit cases in
+[test/lookup.test.ts](../test/lookup.test.ts) (basic-form clean `localField`; pipeline-form clean `let`
+value + var; bare-`$` rejection) and a live-fixture case in [test/integration.test.ts](../test/integration.test.ts)
+(the fixture's orders gained a top-level hyphenated `ext-code` field to correlate on, distinct code path
+from the nested `meta["ext-id"]` field added for the var-name fix).
+
+---
+
 ## 2026-07-27 — fix: sanitize `$lookup.let` correlation-var names derived from outer field segments
 
 A correlated `$$$.<coll>.filter/find(...)` names its `$lookup.let` variable after the outer field's

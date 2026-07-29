@@ -903,7 +903,14 @@ function classifyPath(
   outerLets?: ReadonlyMap<string, string>,
   enclosingParams: readonly string[] = [],
 ): ClassifiedPath | null {
-  if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
+  // The bare root `$` is a `FieldRef` with an empty path; it contributes NO path
+  // segment, so a bracket access onto it (`$["sub-id"]`) folds to `["sub-id"]`,
+  // not `["", "sub-id"]` (which would join to the leading-dot path `.sub-id` that
+  // MongoDB rejects). Mirrors general codegen, where `$["x"]` is `$x` and a bare
+  // `$` is `$$ROOT` (both keyed on `path === ""`). A standalone bare `$` yields
+  // `segments: []`, caught downstream (`transformExpr` rejects it, `tryBasicForm`
+  // declines it) — the whole outer document isn't a correlation field path.
+  if (expr.type === "FieldRef") return { kind: "local", segments: expr.path === "" ? [] : [expr.path] };
   if (expr.type === "ParamRef") {
     if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
     const level = enclosingParams.indexOf(expr.name);
@@ -1622,11 +1629,16 @@ function transformTarget(
   outerLets: ReadonlyMap<string, string> | undefined,
 ): Expr {
   const classified = classifyPath(target, foreignParam, outerLets, allocator.enclosingParams);
-  if (
-    classified !== null &&
-    (classified.kind === "local" || classified.kind === "foreign") &&
-    classified.segments.length > 0
-  ) {
+  // A local target lowers to the current-doc field path — INCLUDING the bare root
+  // `$` (empty segments → `FieldRef("")`, the document root), which is a valid
+  // root-replace destination (`$ = { … }` from an object-body `.map`). A foreign
+  // target needs a real field (`o.foo`); bare `o` falls through to transformExpr's
+  // bare-param rejection. (transformExpr would reject a bare-root VALUE read; a
+  // bare-root WRITE target is fine, so targets are resolved here first.)
+  if (classified !== null && classified.kind === "local") {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  if (classified !== null && classified.kind === "foreign" && classified.segments.length > 0) {
     return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
   }
   return transformExpr(target, foreignParam, allocator, outerLets);
@@ -1673,6 +1685,16 @@ function transformExpr(
   const classified = classifyPath(expr, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null) {
     if (classified.kind === "local") {
+      // A bare root `$` (empty segments — the whole outer document) can't be a
+      // correlation field path; reject with guidance instead of emitting an
+      // invalid empty field path (`localField: ""` / a `let` value of `"$"`).
+      if (classified.segments.length === 0) {
+        throw new CodegenError(
+          `Bare '$' (the whole outer document) can't be used as a value in a $lookup predicate — ` +
+            `reference a specific field with '$.<field>' (e.g. '$.userId').`,
+          expr.pos,
+        );
+      }
       // `$.x` is a ROOT-document read. In the block-body path inside a nested
       // lookup (enclosingParams non-empty), capture it at the outermost lookup
       // (`allocateRootField` → `jsmql_f0_x`) so it resolves to the root doc, not
