@@ -112,9 +112,19 @@ for (const v of ARRAY_SAMPLES) {
   for (const call of [
     ".map(x => x)",
     ".filter(x => x !== 2)",
+    // array `.slice` — full matrix: 1-arg pos/neg/0/out-of-range, 2-arg
+    // both-non-negative / end<=start (→ []) / negative-end / both-negative.
     ".slice(1)",
     ".slice(1, 3)",
     ".slice(-2)",
+    ".slice(0)",
+    ".slice(9)",
+    ".slice(-10)",
+    ".slice(2, 1)",
+    ".slice(0, -1)",
+    ".slice(1, -1)",
+    ".slice(-3, -1)",
+    ".slice(1, 100)",
     ".concat([9, 8])",
     ".includes(2)",
     ".indexOf(2)",

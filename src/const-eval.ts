@@ -562,10 +562,11 @@ function foldArrayMethod(arr: unknown[], method: string, args: CallArg[], env: C
       if (init.length === 0) throw NON_FOLDABLE; // jsmql requires an initial value
       return ok(arr.reduce((acc, el, i) => fn(acc, el, i), init[0]));
     }
-    // NOTE: `.slice` and `.flat` are deliberately NOT folded — jsmql lowers array
-    // `.slice` to `$slice` (take-n / skip-take, not JS start/end semantics), so a
-    // JS fold would disagree with the runtime; `.flat` has no faithful lowering
-    // for a non-nested array. Both stay runtime. (Verified by fold-consistency.)
+    // `.slice` folds via the real `Array.prototype.slice`: its value-mode lowering
+    // now matches ECMAScript slice (start/exclusive-end, negatives from the end),
+    // so the fold agrees with the runtime. (`.flat` is still NOT folded — it has
+    // no faithful lowering for a non-nested array; it stays runtime.)
+    case "slice":
     case "concat":
     case "includes":
     case "indexOf":

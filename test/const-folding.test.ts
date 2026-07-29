@@ -184,6 +184,23 @@ describe("const folding — native method calls", () => {
     });
   });
 
+  it("array .slice folds (const receiver + const args) with JS start/end semantics", () => {
+    expect(jsmql("const recent = [1, 2, 3, 4, 5].slice(-3); $.k in recent")).toEqual({
+      $expr: { $in: ["$k", [3, 4, 5]] },
+    });
+    expect(jsmql("const page = [1, 2, 3, 4, 5, 6].slice(1, 3); $.k in page")).toEqual({
+      $expr: { $in: ["$k", [2, 3]] },
+    });
+    expect(jsmql("const empty = [1, 2, 3].slice(2, 1); $.k in empty")).toEqual({ $expr: { $in: ["$k", []] } });
+  });
+
+  it("array .slice with a runtime index does NOT fold — falls through to the $slice lowering", () => {
+    const out = jsmql("const arr = [1, 2, 3]; $.out = arr.slice($.start)");
+    // `arr` inlines (it's constant), but the runtime `$.start` index keeps the
+    // `.slice` itself un-folded → the general $slice lowering, not a literal.
+    expect(JSON.stringify(out)).toContain("$slice");
+  });
+
   it("a callback that reads $ makes the whole call non-constant → runtime binding", () => {
     expect(jsmql("const m = [1, 2, 3].map(x => x + $.offset); $match($.v in m)")).toEqual([
       { $set: { "__jsmql.var.m": { $map: { input: [1, 2, 3], as: "x", in: { $add: ["$$x", "$offset"] } } } } },

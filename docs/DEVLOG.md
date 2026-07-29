@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-07-27 — feat: fold array `.slice` in `const`/`let` (lowering is now JS-faithful)
+
+Re-adds array `.slice` to compile-time constant folding. It was deliberately
+skipped when folding shipped because the value-mode `.slice` **lowering**
+disagreed with `Array.prototype.slice` — it passed the JS args straight into
+`$slice` (position+count), so `.slice(1)` meant "first 1" and `.slice(1,3)` meant
+"3 from index 1". That lowering is now fixed (the `sliceArray` rewrite merged
+from `claude/inspiring-shaw-ac8dcc`: ECMAScript start/exclusive-end, negatives
+from the end, and a fold-friendly `max(count,1)` so a constant receiver never
+hits a rejected 0-count `$slice`), so the reason to skip is gone. `.slice` now
+folds via the real `Array.prototype.slice` in `foldArrayMethod`
+([src/const-eval.ts](../src/const-eval.ts)) — exactly like the other native
+array methods — but ONLY when the receiver AND every arg are compile-time
+constants; a runtime index (`arr.slice($.n)`) still falls through to the
+lowering. The fold-consistency battery gained the full `.slice` matrix (1-arg
+pos/neg/0/out-of-range, 2-arg both-non-negative/end≤start/negative-end/
+both-negative, over empty/short/normal arrays) — the folded literal, the
+un-folded lowering, and real JS all agree on mongod (HR3).
+
 ## 2026-07-27 — feat: fold lodash set-ops, zip family, and object methods in `const`/`let`
 
 Completes the lodash array/object/number folding surface. Set operations
