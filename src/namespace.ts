@@ -83,19 +83,43 @@ export const GROUP_TMP = `${JSMQL_NS}Tmp`;
 // The connector after the depth is always a single `_`, so a field that itself
 // starts with `_` (like `_id`) reads as `jsmql_f0__id` (doubled), by design.
 
+/**
+ * Fold a correlation-var name segment down to MongoDB's `$$`-variable grammar.
+ *
+ * A MongoDB **variable** name may contain only `[A-Za-z0-9_]` (and — enforced by
+ * the `jsmql_` prefix — must start with a lowercase letter). A MongoDB **field**
+ * name is far more permissive: `sub-id`, `2fa`, unicode, etc. are all legal. When
+ * a correlation var is named after an outer field's last path segment
+ * (`letFieldVar`), any char outside `[A-Za-z0-9_]` — a hyphen is the common one —
+ * would make the emitted var name server-invalid (`FailedToParse: '…' contains
+ * an invalid character for a variable name`), an HR3 violation. So map every such
+ * char to `_`.
+ *
+ * This is deliberately NOT injective — `sub-id` and `sub_id` both fold to
+ * `sub_id`. Collision-safety is the `LetAllocator`'s job, not ours: it interns on
+ * the RAW field path and appends `_2`/`_3` when two distinct paths yield the same
+ * base name, so two distinct fields still get two distinct vars and the same
+ * field always gets the same var. We only sanitize the emitted NAME; the value
+ * side of the `$lookup.let` entry keeps the raw field path (hyphens are legal in
+ * a field-path string). See docs/specs/lookup-stage.md § Auto-`let` extraction.
+ */
+function sanitizeVarSegment(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
 /** `$lookup.let` var for an outer document field — `jsmql_f<depth>_<field>`. */
 export function letFieldVar(field: string, depth: number): string {
-  return `${JSMQL_NS_VAR}f${depth}_${field}`;
+  return `${JSMQL_NS_VAR}f${depth}_${sanitizeVarSegment(field)}`;
 }
 
 /** `$lookup.let` var for an outer `let`/`const` binding — `jsmql_v<depth>_<name>`. */
 export function letBindingVar(name: string, depth: number): string {
-  return `${JSMQL_NS_VAR}v${depth}_${name}`;
+  return `${JSMQL_NS_VAR}v${depth}_${sanitizeVarSegment(name)}`;
 }
 
 /** `$lookup.let` var for a system value (e.g. a stream length) — `jsmql_s<depth>_<name>`. */
 export function letSysVar(name: string, depth: number): string {
-  return `${JSMQL_NS_VAR}s${depth}_${name}`;
+  return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name)}`;
 }
 
 /** Prefix for `$lookup.let` correlation vars — must start with a letter (no `__`). */

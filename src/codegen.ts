@@ -1132,11 +1132,116 @@ function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unk
   return cond({ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen);
 }
 
-/** Lower `.slice` on a known-array (or fallback) receiver to MQL `$slice`. */
+/** Signed integer value of a slice-index literal (`5` or `-5`), else null
+ *  (runtime expression, or a non-integer literal we don't fold). */
+function literalIndexValue(node: Expr): number | null {
+  if (node.type === "NumberLiteral" && Number.isInteger(node.value)) return node.value;
+  if (
+    node.type === "UnaryExpr" &&
+    node.op === "-" &&
+    node.operand.type === "NumberLiteral" &&
+    Number.isInteger(node.operand.value)
+  ) {
+    return -node.operand.value;
+  }
+  return null;
+}
+
+/**
+ * JS-resolve a `.slice` index against the array length `size`, mirroring the
+ * `k`/`final` clamping in the ECMAScript `Array.prototype.slice` algorithm:
+ * a negative index counts from the end (`size + i`, floored at 0); a positive
+ * one clamps up to `size`. Literals fold to plain `$min`/`$max`; a runtime
+ * index expands to a `$cond` that picks the branch at runtime.
+ */
+function resolveSliceIndex(node: Expr, ctx: GenerateCtx, size: unknown): unknown {
+  const lit = literalIndexValue(node);
+  if (lit !== null) {
+    if (lit === 0) return 0;
+    if (lit > 0) return { $min: [lit, size] };
+    return { $max: [{ $subtract: [size, -lit] }, 0] };
+  }
+  const gen = _generate(node, ctx);
+  return { $cond: [{ $lt: [gen, 0] }, { $max: [{ $add: [gen, size] }, 0] }, { $min: [gen, size] }] };
+}
+
+/**
+ * Lower array `.slice(start, end?)` to MQL `$slice`, faithful to
+ * `Array.prototype.slice`: `start`/`end` are indices (end **exclusive**) and
+ * negatives count from the end. MongoDB's `$slice` is position+**count** based
+ * (and its 3-arg count must be > 0), so we translate rather than pass the JS
+ * args straight through. See docs/specs/method-dispatch.md.
+ */
 function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
   if (exprArgs.length === 0) return genObj;
-  if (exprArgs.length === 1) return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
-  return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+
+  const startNode = exprArgs[0];
+  const startLit = literalIndexValue(startNode);
+
+  // --- slice(start): every element from `start` to the end ---
+  if (exprArgs.length === 1) {
+    // Negative literal → last |start| elements: the 2-arg `$slice` primitive.
+    if (startLit !== null && startLit < 0) return { $slice: [genObj, startLit] };
+    // slice(0) is a whole-array copy.
+    if (startLit === 0) return genObj;
+    // Positive literal or runtime start → drop the first `start` (a runtime
+    // negative start is resolved from the end by `$slice`'s position arg).
+    // count = max(1, size) so an empty array is `$slice: [[], start, 1]` → []
+    // rather than a rejected count of 0 (same guard as `.drop(n)`).
+    return {
+      $let: {
+        vars: { jsmqlArr: genObj },
+        in: { $slice: ["$$jsmqlArr", _generate(startNode, ctx), { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
+    };
+  }
+
+  // --- slice(start, end): elements at indices [start, end) ---
+  const endNode = exprArgs[1];
+  const endLit = literalIndexValue(endNode);
+
+  // Both indices are non-negative literals → pure arithmetic, no `$size` needed.
+  if (startLit !== null && startLit >= 0 && endLit !== null && endLit >= 0) {
+    // start 0 → "first `end`". The 2-arg `$slice` tolerates a 0 count (→ []),
+    // so no guard is needed and a 0-length slice needs no special case.
+    if (startLit === 0) return { $slice: [genObj, endLit] };
+    if (endLit <= startLit) return []; // empty range
+    return { $slice: [genObj, startLit, endLit - startLit] };
+  }
+
+  // start 0 (literal), non-literal-or-negative end → "first `end`": resolve the
+  // end index and lean on the 2-arg (count-tolerant) `$slice`.
+  if (startLit === 0) {
+    return {
+      $let: {
+        vars: { jsmqlArr: genObj },
+        in: { $slice: ["$$jsmqlArr", resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" })] },
+      },
+    };
+  }
+
+  // General case (negative start, or a runtime index): resolve both indices
+  // against the length, take `end - start` elements from the resolved start,
+  // and guard the empty range (the 3-arg `$slice` count must be > 0). The
+  // slice's own count is `max(count, 1)` — never 0 — so that when the array is
+  // a compile-time literal, MongoDB's optimizer can fold the (unselected) slice
+  // branch instead of rejecting a constant 0-count `$slice`; the outer `$cond`
+  // still returns `[]` for the empty range.
+  const count = { $subtract: ["$$jsmqlF", "$$jsmqlK"] };
+  return {
+    $let: {
+      vars: { jsmqlArr: genObj },
+      in: {
+        $let: {
+          vars: {
+            jsmqlK: resolveSliceIndex(startNode, ctx, { $size: "$$jsmqlArr" }),
+            jsmqlF: resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" }),
+          },
+          in: { $cond: [{ $gt: [count, 0] }, { $slice: ["$$jsmqlArr", "$$jsmqlK", { $max: [count, 1] }] }, []] },
+        },
+      },
+    },
+  };
 }
 
 /** Negate a count that's either a compile-time number or a runtime expression. */
@@ -4634,20 +4739,25 @@ function buildMutatorRhs(method: string, object: Expr, args: CallArg[], pos: num
     }
     case "pop": {
       checkArity("pop", { sig: "", none: true }, args.length, pos);
-      // `arr.slice(0, max(0, size - 1))` — everything-but-last with a clamp so
-      // an empty input yields an empty output instead of `$slice([], 0, -1)`.
+      // `arr.slice(0, -1)` — everything-but-last, via the 2-arg `$slice`
+      // (first-`n`) whose count IS allowed to be 0. `max(0, size - 1)` is 0 for
+      // an empty or single-element receiver → `$slice: [arr, 0]` → []. The 3-arg
+      // `$slice: [arr, 0, 0]` mongod would reject ("Third argument to $slice must
+      // be positive"), even at runtime. Mirrors the `.initial()` lowering.
       const sizeExpr: Expr = mkOpCall("$size", [object], pos);
       const minus1: Expr = { type: "BinaryExpr", op: "-", left: sizeExpr, right: mkNumber(1, pos), pos };
       const clamped: Expr = mkOpCall("$max", [mkNumber(0, pos), minus1], pos);
-      return mkOpCall("$slice", [object, mkNumber(0, pos), clamped], pos);
+      return mkOpCall("$slice", [object, clamped], pos);
     }
     case "shift": {
       checkArity("shift", { sig: "", none: true }, args.length, pos);
-      // `$slice: [arr, 1, $size(arr)]` — start at index 1 and take everything
-      // remaining. MongoDB clamps `len` to what's actually available, so an
-      // empty input yields an empty output.
+      // `$slice: [arr, 1, max(1, $size(arr))]` — everything from index 1. The
+      // count is `max(1, size)`, never 0, so an empty receiver is
+      // `$slice: [[], 1, 1]` → [] (position past the end) rather than the 3-arg
+      // count of 0 mongod rejects. Mirrors the `.tail()` / `.drop(1)` lowering.
       const sizeExpr: Expr = mkOpCall("$size", [object], pos);
-      return mkOpCall("$slice", [object, mkNumber(1, pos), sizeExpr], pos);
+      const count: Expr = mkOpCall("$max", [mkNumber(1, pos), sizeExpr], pos);
+      return mkOpCall("$slice", [object, mkNumber(1, pos), count], pos);
     }
     case "fill":
       return buildFillRhs(object, args, pos);

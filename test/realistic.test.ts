@@ -2700,6 +2700,49 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
   });
 });
 
+describe("Recent co-purchase window: a lodash stream chain starts the lookup", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.products.aggregate(jsmql(...))" }, () => {
+    // For each product, take the 200 most-recent orders (a recency window over the
+    // whole `orders` collection), THEN keep the ones that include this product —
+    // the sort/limit run BEFORE the filter, which a `.filter`-first chain can't
+    // express. Any lodash stream method (`.toSorted`, `.take`, …) may start the
+    // `$$$.<coll>` chain, not only `.find`/`.filter`. Verified on a live mongod.
+    expect(
+      jsmql(`
+$.recentCoPurchaseOrders = $$$.orders
+  .toSorted({ createdAt: -1 })
+  .take(200)
+  .filter(o => o.productIds.includes($._id));
+      `),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $sort: { createdAt: -1 } },
+            { $limit: 200 },
+            {
+              $match: {
+                $expr: {
+                  $cond: {
+                    if: { $isArray: "$productIds" },
+                    then: { $in: ["$$jsmql_f0__id", "$productIds"] },
+                    else: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
+                  },
+                },
+              },
+            },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { recentCoPurchaseOrders: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 describe("Cross-level references across three nested lookup levels", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // The hardest cross-level case: a statement-block `.map` nested inside another

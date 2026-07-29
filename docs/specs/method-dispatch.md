@@ -82,8 +82,7 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | Method | MQL output |
 |---|---|
 | `.at(n)` | `{ $arrayElemAt: [expr, n] }` |
-| `.slice(start)` | `{ $slice: [expr, start] }` |
-| `.slice(start, count)` | `{ $slice: [expr, start, count] }` |
+| `.slice(start[, end])` | JS `Array.prototype.slice`: `start`/`end` are **indices** (`end` **exclusive**), negatives count from the end. Lowered by `sliceArray()` in `codegen.ts` — MQL `$slice` is position+**count** based, so this translates rather than passing `start`/`end` straight through (a `[expr, start, end]` passthrough would wrongly read `end` as a count). Representative forms: `.slice(-n)` → `{ $slice: [expr, -n] }` (last n); `.slice(0)` → `expr`; `.slice(0, b)` → `{ $slice: [expr, b] }` (first b); `.slice(a, b)` for non-negative literals with `b > a` → `{ $slice: [expr, a, b - a] }` (and `b <= a` → `[]`); a negative-`end` or runtime index resolves both indices against `$size` inside `$let` and guards the empty range with `$cond` (→ `[]`). The 3-arg count is always emitted as `max(count, 1)` (never 0) so a constant-array receiver stays foldable by MongoDB's optimizer. |
 | `.toReversed()` | `{ $reverseArray: expr }` (ES2023). `.reverse()` is rejected at expression position — see *Mutators at statement position* below. |
 | `.toSorted()` | `{ $sortArray: { input: expr, sortBy: 1 } }` (ES2023, ascending). `.sort()` is rejected at expression position — see *Mutators at statement position* below. |
 | `.toSorted(x => x.path)` | `{ $sortArray: { input: expr, sortBy: { "path": 1 } } }` — key-function form, ascending. Lowered via `lambdaToSortBy()` in `codegen.ts`. |
@@ -189,8 +188,8 @@ The mechanism is a pre-pass on the statement list:
   - `.splice(args)` → `MethodCall(object, "toSpliced", args)`.
   - `.push(...items)` → `OperatorCall($concatArrays, [object, ArrayLiteral(items)])`. Items are wrapped in an `ArrayLiteral` because `$concatArrays`-with-`.concat`-semantics would flatten one level, but JS `.push` does not.
   - `.unshift(...items)` → `OperatorCall($concatArrays, [ArrayLiteral(items), object])`.
-  - `.pop()` → `OperatorCall($slice, [object, 0, $max(0, $subtract($size(object), 1))])`. The `$max` clamp keeps an empty receiver yielding `[]` instead of an invalid `$slice` length.
-  - `.shift()` → `OperatorCall($slice, [object, 1, $size(object)])`.
+  - `.pop()` → `OperatorCall($slice, [object, $max(0, $subtract($size(object), 1))])` — the **2-arg** (first-`n`) `$slice`, which allows a 0 count. `max(0, size - 1)` is 0 for an empty or single-element receiver, so it yields `[]`; the 3-arg `$slice: [object, 0, 0]` would be rejected ("Third argument to $slice must be positive"), even at runtime. Mirrors `.initial()`.
+  - `.shift()` → `OperatorCall($slice, [object, 1, $max(1, $size(object))])` — count is `max(1, size)`, never 0, so an empty receiver is `$slice: [[], 1, 1]` → `[]` (position past the end) rather than a rejected 3-arg count of 0. Mirrors `.tail()` / `.drop(1)`.
   - `.fill(v[, s[, e]])` → IIFE binding the normalised start/end once, then `object.map((x, i) => i >= s0 && i < e0 ? v : x)` (built directly in `buildFillRhs()`). Normalisation matches JS semantics (`< 0` ⇒ `max(0, size + n)`, undefined ⇒ default), with a compile-time fast path that inlines non-negative numeric literals.
 
 Hook sites (the pre-pass runs in each):

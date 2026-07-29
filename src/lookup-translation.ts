@@ -32,6 +32,7 @@ import {
   type GenerateCtx,
   RECEIVER_NOUN,
   requiredReceiverFamily,
+  shorthandToLambda,
 } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
 import { LENGTH_SLOT, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "./namespace.ts";
@@ -39,7 +40,7 @@ import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
-import { lookupStreamMethod, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
+import { lookupStreamMethod, streamMethodNames, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -611,10 +612,16 @@ export function validateLookupShape(expr: Expr): void {
     return;
   }
   if (expr.method !== "find" && expr.method !== "filter") {
-    const hint = didYouMean(expr.method, ["find", "filter", "aggregate"], (s) => `.${s}`);
+    // A lodash stream-method / `.reject` head (`$$$.coll.toSorted(k)…`) or a
+    // value-collapsing terminal (`$$$.coll.head()`) is a valid chain head — leave it
+    // to the chain assembler (`tryExtractChainedLookup`) / implicit-filter injector.
+    // Only a genuinely unknown method is malformed here.
+    if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
+    const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
     throw new CodegenError(
-      `'${spell}' supports .find(pred), .filter(pred), and .aggregate(pipeline), not .${expr.method}().${hint} ` +
-        `For a full sub-pipeline (grouping, sort + limit, reshaping), use ` +
+      `'${spell}' supports .find(pred), .filter(pred), .aggregate(pipeline), and the lodash stream methods ` +
+        `(e.g. .toSorted, .take, .map — see docs/specs/stream-methods.md), not .${expr.method}().${hint} ` +
+        `For a full sub-pipeline (grouping, reshaping), use ` +
         `\`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
       expr.pos,
     );
@@ -627,6 +634,18 @@ export function validateLookupShape(expr: Expr): void {
   }
   const arg = expr.args[0];
   if (arg.type !== "Lambda") {
+    // `.filter` also accepts a lodash matches-object / field / `["field", value]`
+    // shorthand — the same forms the chained `.filter(...)` position accepts (via
+    // `chainFilterLambda`). Let a valid shorthand flow to the chain assembler; only
+    // `.find` (a direct scalar lookup) strictly needs the arrow. This keeps the lone
+    // `$$$.coll.filter({ x: 1 })` head consistent with `$$$.coll.filter({ x: 1 }).take(2)`.
+    if (
+      expr.method === "filter" &&
+      arg.type !== "SpreadElement" &&
+      shorthandToLambda(arg, "filter", "jsmqlItem") !== null
+    ) {
+      return;
+    }
     throw new CodegenError(
       `.${expr.method}(predicate) requires an arrow predicate, e.g. \`.${expr.method}(o => o._id === $.userId)\`.`,
       "pos" in arg ? arg.pos : expr.pos,
@@ -884,7 +903,14 @@ function classifyPath(
   outerLets?: ReadonlyMap<string, string>,
   enclosingParams: readonly string[] = [],
 ): ClassifiedPath | null {
-  if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
+  // The bare root `$` is a `FieldRef` with an empty path; it contributes NO path
+  // segment, so a bracket access onto it (`$["sub-id"]`) folds to `["sub-id"]`,
+  // not `["", "sub-id"]` (which would join to the leading-dot path `.sub-id` that
+  // MongoDB rejects). Mirrors general codegen, where `$["x"]` is `$x` and a bare
+  // `$` is `$$ROOT` (both keyed on `path === ""`). A standalone bare `$` yields
+  // `segments: []`, caught downstream (`transformExpr` rejects it, `tryBasicForm`
+  // declines it) — the whole outer document isn't a correlation field path.
+  if (expr.type === "FieldRef") return { kind: "local", segments: expr.path === "" ? [] : [expr.path] };
   if (expr.type === "ParamRef") {
     if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
     const level = enclosingParams.indexOf(expr.name);
@@ -1603,11 +1629,16 @@ function transformTarget(
   outerLets: ReadonlyMap<string, string> | undefined,
 ): Expr {
   const classified = classifyPath(target, foreignParam, outerLets, allocator.enclosingParams);
-  if (
-    classified !== null &&
-    (classified.kind === "local" || classified.kind === "foreign") &&
-    classified.segments.length > 0
-  ) {
+  // A local target lowers to the current-doc field path — INCLUDING the bare root
+  // `$` (empty segments → `FieldRef("")`, the document root), which is a valid
+  // root-replace destination (`$ = { … }` from an object-body `.map`). A foreign
+  // target needs a real field (`o.foo`); bare `o` falls through to transformExpr's
+  // bare-param rejection. (transformExpr would reject a bare-root VALUE read; a
+  // bare-root WRITE target is fine, so targets are resolved here first.)
+  if (classified !== null && classified.kind === "local") {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  if (classified !== null && classified.kind === "foreign" && classified.segments.length > 0) {
     return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
   }
   return transformExpr(target, foreignParam, allocator, outerLets);
@@ -1654,6 +1685,16 @@ function transformExpr(
   const classified = classifyPath(expr, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null) {
     if (classified.kind === "local") {
+      // A bare root `$` (empty segments — the whole outer document) can't be a
+      // correlation field path; reject with guidance instead of emitting an
+      // invalid empty field path (`localField: ""` / a `let` value of `"$"`).
+      if (classified.segments.length === 0) {
+        throw new CodegenError(
+          `Bare '$' (the whole outer document) can't be used as a value in a $lookup predicate — ` +
+            `reference a specific field with '$.<field>' (e.g. '$.userId').`,
+          expr.pos,
+        );
+      }
       // `$.x` is a ROOT-document read. In the block-body path inside a nested
       // lookup (enclosingParams non-empty), capture it at the outermost lookup
       // (`allocateRootField` → `jsmql_f0_x`) so it resolves to the root doc, not
@@ -2210,6 +2251,32 @@ function peelableTerminalMap(m: MethodCall): Lambda | null {
   if (m.method !== "map" || m.args.length !== 1) return null;
   const arg = m.args[0];
   if (arg.type === "Lambda" && arg.block === undefined && arg.body !== undefined) return arg;
+  // A block-body arrow with a NON-document return (`o => { …; return o.total }`) is
+  // value-extracting exactly like the expression form `o => o.total` — normalise it so
+  // it peels to a value-mode `$map` over the result array, never a scalar `$replaceWith`
+  // inside the sub-pipeline (which mongod rejects). A stream `.map` block is PARSED as a
+  // sub-pipeline; when it holds no real stages it's the expression form in disguise —
+  // identical to the same block on an in-document array (`$.items.map(o => { return … })`):
+  //   - no statements               → an expression body   (`$map: { in: <ret> }`)
+  //   - only `const`/`let` bindings → an `$let` expr-block  (`$map: { in: { $let: … } }`)
+  //   - real stages ($match/$sort/…) → NOT value-extractable; return the block as-is so
+  //     value-mode codegen rejects it (a scalar reshape after stages is genuinely invalid).
+  // A document-returning block (`ret` is an `ObjectLiteral`) stays in the sub-pipeline.
+  if (arg.type === "Lambda" && arg.block !== undefined && arg.ret !== undefined && arg.ret.type !== "ObjectLiteral") {
+    const stmts = arg.block.stmts;
+    if (stmts.length === 0) {
+      return { type: "Lambda", params: arg.params, body: arg.ret, pos: arg.pos };
+    }
+    if (stmts.every((s) => s.type === "LetDecl")) {
+      return {
+        type: "Lambda",
+        params: arg.params,
+        exprBlock: { type: "ExprBlock", decls: stmts as LetDecl[], ret: arg.ret, pos: arg.block.pos },
+        pos: arg.pos,
+      };
+    }
+    return arg;
+  }
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
     return fieldPathLambda(arg.value, arg.pos);
   }
@@ -2231,9 +2298,13 @@ export function isValueCollapsingMap(m: MethodCall): boolean {
   if (m.method !== "map" || m.args.length !== 1) return false;
   const arg = m.args[0];
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
-  return (
-    arg.type === "Lambda" && arg.block === undefined && arg.body !== undefined && arg.body.type !== "ObjectLiteral"
-  );
+  if (arg.type !== "Lambda") return false;
+  // Expression body OR block-body return that isn't an object literal → the map
+  // produces a (possibly) non-document, so it collapses a document stream to a value
+  // stream. Same structural rule for both arrow shapes.
+  if (arg.block === undefined && arg.body !== undefined) return arg.body.type !== "ObjectLiteral";
+  if (arg.block !== undefined && arg.ret !== undefined) return arg.ret.type !== "ObjectLiteral";
+  return false;
 }
 
 // A chain terminal that COLLAPSES the sub-pipeline to a single object document
@@ -2245,6 +2316,105 @@ function isCollapsingTerminal(m: MethodCall): boolean {
   if (m.method === "countBy" || m.method === "keyBy") return true;
   if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
   return false;
+}
+
+/**
+ * Normalise a chained foreign `.filter(...)` / `.reject(...)` to a single-parameter
+ * arrow predicate over the foreign document. Accepts an arrow, or a lodash
+ * shorthand (matches-object / field name / `["field", value]`) via
+ * `shorthandToLambda`; `.reject` wraps the body in `!(…)`. The result feeds
+ * `buildPipelineFormPredicate`, which lowers it to a `$lookup.pipeline` `$match`
+ * and hoists any `$.<field>` correlation into the `$lookup.let`.
+ */
+function chainFilterLambda(m: MethodCall): Lambda {
+  const rejectHint =
+    m.method === "reject" ? `, a matches-object ('{ active: true }'), a field name, or a ["field", value] pair` : "";
+  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+    throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => …')${rejectHint}.`, m.pos);
+  }
+  const arg = m.args[0];
+  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+  if (base === null || base.params.length !== 1) {
+    throw new CodegenError(
+      `.${m.method}(<predicate>) takes a single-parameter arrow ('o => …')${rejectHint}.`,
+      arg.pos,
+    );
+  }
+  if (m.method === "reject") {
+    if (base.body === undefined) {
+      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => …').`, base.pos);
+    }
+    return {
+      type: "Lambda",
+      params: base.params,
+      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
+      pos: base.pos,
+    };
+  }
+  return base;
+}
+
+/**
+ * Lower a chained foreign `.filter(...)` / `.reject(...)` to its `$lookup.pipeline`
+ * `$match` stage(s) plus any hoisted correlation `let` vars — the same translation
+ * the lookup's `.filter` head uses, so a `.filter` anywhere in the chain (not just
+ * the head) correlates against the outer document identically.
+ */
+function lowerForeignChainFilter(
+  m: MethodCall,
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+  enclosing: EnclosingLookupContext,
+): { letVars: Record<string, string>; stages: object[] } {
+  const lambda = chainFilterLambda(m);
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock, enclosing);
+  return { letVars, stages: pipelineBody };
+}
+
+/**
+ * Peel chain methods `methods[start..chainEnd)` into a foreign `$lookup.pipeline`
+ * body (mutating `pipelineBody`) plus its correlation `let` vars (mutating
+ * `letVars`). `.filter`/`.reject` lower via the shared predicate translator
+ * (`lowerForeignChainFilter`, against `outerCtx`); every other method dispatches
+ * through the stream-method registry (against the sub-pipeline `innerCtx`). Shared
+ * by the value-position chain assembler (`tryExtractChainedLookup`) and the `$$ =`
+ * correlated pivot (`lowerLookupPivot`), so a chain lowers to the same sub-pipeline
+ * in either destination.
+ */
+export function peelForeignChain(
+  methods: readonly MethodCall[],
+  start: number,
+  chainEnd: number,
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+  allocSlot: SlotAllocator,
+  enclosing: EnclosingLookupContext,
+  innerCtx: GenerateCtx,
+  pipelineBody: object[],
+  letVars: Record<string, string>,
+): void {
+  for (let i = start; i < chainEnd; i++) {
+    const m = methods[i];
+    if (m.method === "filter" || m.method === "reject") {
+      const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock, enclosing);
+      Object.assign(letVars, fLets);
+      pipelineBody.push(...stages);
+      continue;
+    }
+    const def = lookupStreamMethod(m.method);
+    if (def === null) continue; // caller pre-validated the chain; defensive no-op
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
+    if (result.replacesPreviousStage) pipelineBody.pop();
+    pipelineBody.push(...result.stages);
+    // A block-body `.map` may capture cross-level reads into THIS lookup's let.
+    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
+  }
+}
+
+/** Is `name` a chain method that can head/extend a foreign stream chain? */
+function isPeelableChainMethod(name: string): boolean {
+  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
 }
 
 function tryExtractChainedLookup(
@@ -2263,59 +2433,103 @@ function tryExtractChainedLookup(
     cur = cur.object;
   }
   methods.reverse(); // innermost first
-  if (methods.length < 2) return null;
-  // Innermost must be a `.filter` lookup head (a `$$$.<coll>.filter(<lambda>)` call).
+  if (methods.length === 0) return null;
+
   const head = methods[0];
   const direct = detectLookupCall(head, outerCtx);
-  if (direct === null) return null;
-  if (direct.method !== "filter") {
-    // `.find(<pred>)` yields a single matched DOCUMENT. Chaining an array/string/
-    // number/date method on it can never make sense — reject with a message that
-    // points at `.filter(...)` (run over all matches) or a field read. Object
-    // methods (`.pick`/`.omit`/…) and field access ARE valid on a document, so they
-    // fall through to the existing materialise-then-value-mode path (`return null`).
-    if (direct.method === "find" && methods.length > 1) {
-      const next = methods[1];
-      const fam = requiredReceiverFamily(next.method);
-      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
-        throw new CodegenError(
-          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. ` +
-            `Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, ` +
-            `or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
-          next.pos,
-        );
+  // Resolve the foreign target and the first method index to peel:
+  //   - `.filter(<pred>)` head → seed the sub-pipeline from the predicate (the head
+  //     becomes the leading `$match`); peel from methods[1].
+  //   - a stream-method / `.reject` head (no `.find`/`.filter`/`.aggregate`) → seed
+  //     EMPTY and peel from methods[0]. This is the "any lodash method may start the
+  //     chain" surface (`$$$.coll.toSorted(k).take(n)…`), lowering to the lean
+  //     `.aggregate`-style `$lookup` (no `let` when uncorrelated).
+  // `.find` / `.aggregate` heads keep their existing dedicated handling.
+  let target: { db?: string; collection: string; pos: number };
+  let start: number;
+  const seedLetVars: Record<string, string> = {};
+  const seedPipeline: object[] = [];
+  if (direct !== null) {
+    if (direct.method !== "filter") {
+      // `.find(<pred>)` yields a single matched DOCUMENT. Chaining an array/string/
+      // number/date method on it can never make sense — reject with a message that
+      // points at `.filter(...)` (run over all matches) or a field read. Object
+      // methods (`.pick`/`.omit`/…) and field access ARE valid on a document, so they
+      // fall through to the existing materialise-then-value-mode path (`return null`).
+      if (direct.method === "find" && methods.length > 1) {
+        const next = methods[1];
+        const fam = requiredReceiverFamily(next.method);
+        if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+          throw new CodegenError(
+            `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. ` +
+              `Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, ` +
+              `or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+            next.pos,
+          );
+        }
       }
+      // `.aggregate` head + chain → value-mode / AGGREGATE-registry path.
+      return null;
     }
-    return null;
+    // `.filter` head — a lone `.filter` is a DIRECT lookup handled before this walker,
+    // so require at least one chained method.
+    if (methods.length < 2) return null;
+    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock, enclosing);
+    Object.assign(seedLetVars, seed.letVars);
+    seedPipeline.push(...seed.pipelineBody);
+    target = { db: direct.db, collection: direct.collection, pos: direct.pos };
+    start = 1;
+  } else {
+    // Stream-method / `.reject` head (`.toSorted`/`.take`/`.map`/`.reject`/…).
+    const t = extractLookupTarget(cur, outerCtx);
+    if (t === null) return null;
+    if (!isPeelableChainMethod(head.method)) return null;
+    target = t;
+    start = 0;
   }
-  // Every subsequent method must come from the stream-methods registry —
-  // otherwise the chain falls through to the existing expression-form path,
-  // which can still handle e.g. string methods on lookup results.
-  for (let i = 1; i < methods.length; i++) {
-    if (lookupStreamMethod(methods[i].method) === null) return null;
-  }
+
   // A value-extracting terminal `.map` is peeled off the sub-pipeline and applied
   // to the RESULT array instead (see `peelableTerminalMap`). `chainEnd` bounds the
   // sub-pipeline chain loop below to exclude it.
   const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
   const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
+  // A peeled terminal `.map` whose immediate predecessor is an object-collapsing
+  // terminal (`.countBy`/`.keyBy`/`.groupBy("k")`) is `.map` over a single object —
+  // value-mode rejects that ("map expects an array, countBy returns an object"), and
+  // silently applying the map over the `[obj]` slot wrapper would return the wrong
+  // shape. Reject it here to match value-mode rather than mis-assemble.
+  if (terminalMap !== null && chainEnd >= 1 && isCollapsingTerminal(methods[chainEnd - 1])) {
+    const collapser = methods[chainEnd - 1].method;
+    throw new CodegenError(
+      `'.map(...)' can't follow '.${collapser}(...)' on '$$$.${target.collection}' — '.${collapser}' returns a single object, not an array. ` +
+        `Drop the '.map', or map over the object's values with a value-mode expression on the assigned field.`,
+      methods[methods.length - 1].pos,
+    );
+  }
+  // Every peeled method must be a registered stream method or `.filter`/`.reject`;
+  // otherwise the chain falls back to the expression-form path (`descendAndExtract`),
+  // which still handles value-terminals / string methods on the lookup result.
+  for (let i = start; i < chainEnd; i++) {
+    if (!isPeelableChainMethod(methods[i].method)) return null;
+  }
   // A value-collapsing `.map` anywhere in the SUB-PIPELINE portion (before the
   // peeled terminal) can't lower here — its in-pipeline `$replaceWith` would take a
   // non-document root. Bail to the expression form, which lowers the whole chain
   // value-mode over the result array (see `isValueCollapsingMap`).
-  for (let i = 1; i < chainEnd; i++) {
+  for (let i = start; i < chainEnd; i++) {
     if (isValueCollapsingMap(methods[i])) return null;
   }
-  // Force pipeline form for the lookup so the chain stages can extend it.
-  // The enclosing context flows through so nested lookups inside the
-  // predicate materialise correctly with their own let-bindings.
-  const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock, enclosing);
-  // `$$.length` (the ROOT stream count) used in any chain method body: capture
+
+  const letVars: Record<string, string> = { ...seedLetVars };
+  const pipelineBody: object[] = [...seedPipeline];
+  // `$$.length` (the ROOT stream count) used in any peeled method body: capture
   // the top-materialised `$__jsmql.length` into THIS lookup's `$lookup.let`
   // (depth-stamped `v<d>_len`) so the sub-pipeline reads it as `$$v<d>_len`
   // (via `rootStreamLengthVar`). `$$` is always the ROOT stream regardless of
   // depth; inner sub-stream counts use the 3rd-arg handle instead.
-  const usesRootLen = methods.slice(1, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const usesRootLen = methods
+    .slice(start, chainEnd)
+    .some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   // Carry `enclosing` on the chain ctx so a statement-block `.map` chain method
   // (`lowerCallbackBlock`) can capture its cross-level reads into the right
   // ancestor `$lookup.let`. Carry the outer pipeline's `let`s too, so a chain
@@ -2326,25 +2540,25 @@ function tryExtractChainedLookup(
     enclosingLookup: enclosing,
     pipelineLets: outerCtx.pipelineLets,
   };
-  // Apply each chain method through the stream-methods registry. `inSubPipeline`
-  // is true so methods know they're emitting inside a sub-pipeline body.
-  for (let i = 1; i < chainEnd; i++) {
-    const m = methods[i];
-    const def = lookupStreamMethod(m.method);
-    if (def === null) return null; // (defensive — already filtered above)
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
-    if (result.replacesPreviousStage) pipelineBody.pop();
-    pipelineBody.push(...result.stages);
-    // A block-body `.map` may capture cross-level reads into THIS lookup's let.
-    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
-  }
+  peelForeignChain(
+    methods,
+    start,
+    chainEnd,
+    outerCtx,
+    lowerBlock,
+    allocSlot,
+    enclosing,
+    innerCtx,
+    pipelineBody,
+    letVars,
+  );
+
   // Build the $lookup stage. `as` is an internal slot; the surrounding
   // expression's codegen reads it. (Future optimisation: detect when the
   // chain is the entire RHS of a `$.<field> = <chain>` and use the field
   // path as `as` directly, dropping the trailing `$set` + `$unset`.)
   const slot = allocSlot();
-  const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   const slotRef: Expr = { type: "FieldRef", path: slot, pos: expr.pos };
   // A peeled terminal `.map` becomes `<slot>.map(iteratee)` — codegen lowers it to
   // a value-mode `$map` over the lookup result array in the surrounding assignment.
@@ -2352,7 +2566,14 @@ function tryExtractChainedLookup(
     terminalMap !== null
       ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos }
       : slotRef;
-  const stages: object[] = [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }];
+  // A filter-headed chain keeps the `let: {}` shape (matching the existing lookup
+  // output); a stream-method-headed chain with no correlation omits the empty `let`
+  // entirely — the lean `.aggregate`-style `{ from, pipeline, as }`.
+  const lookupBody =
+    direct === null && Object.keys(letVars).length === 0
+      ? { from, pipeline: pipelineBody, as: slot }
+      : { from, let: letVars, pipeline: pipelineBody, as: slot };
+  const stages: object[] = [{ $lookup: lookupBody }];
   // A collapsing terminal (`.countBy`/`.keyBy`/`.groupBy("k")`) makes the sub-
   // pipeline emit exactly one object doc, but `$lookup.as` is always an array — so
   // the slot holds `[obj]`. Unwrap it to the single object (mirrors lowerLookup's

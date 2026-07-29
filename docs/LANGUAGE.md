@@ -458,7 +458,7 @@ $.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" },
 
 The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `String.split(",")` and `Object.keys(o)` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
 
-If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.slice(0)`, `.reverse()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
+If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.toReversed()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
 
 **Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.length` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — jsmql only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.length` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`.
 
@@ -680,7 +680,16 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 
 A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
-**Stream-method chains push into the `$lookup.pipeline` body.** Any sequence of registered stream methods (`.map`, `.filter`, `.aggregate`, `.toSorted`, `.slice`, … — the stream-method vocabulary) chained after `$$$.coll.filter(<pred>)` becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
+**Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/stream-methods.ts](../src/stream-methods.ts) — e.g. `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
+
+**Any lodash stream method may *start* the chain — not only `.find` / `.filter` / `.aggregate`.** The whole chain lowers, in source order, into one `$lookup.pipeline`, and a `.filter` / `.reject` may sit at any position (each becomes a `$match`, correlating `$.<field>` into `let` when present). Because stages run in chain order, `.toSorted(k).take(n).filter(p)` sorts and caps *before* filtering — a different result from filter-first, and one no prior spelling could express. A chain with no `$.` correlation emits the lean uncorrelated `$lookup` (no `let`, matching the `.aggregate` shape):
+
+```js
+// The 200 most-recent orders (a recency window), then this product's co-purchases.
+$.recentCoPurchase = $$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o => o.productIds.includes($._id));
+// → { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+//       pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 200 }, { $match: { $expr: /* includes */ } }], as: … } }
+```
 
 **Value-collapsing terminals (`.head` / `.first` / `.last` / `.nth` / `.size` / `.every` / `.some` / `.includes` / `.partition`, and the aggregates `.sum` / `.mean` / `.max` / `.min` / `.sumBy` / `.meanBy` / `.minBy` / `.maxBy`) return a *value*, so they're value-position-only.** Like a value-extracting `.map`, they pivot to value-mode over the lookup result — valid in an assignment or binding (`$.first = $$$.orders.filter(o => o.userId === $._id).head()`), and on a **bare** `$$$.<coll>` too (no `.filter` needed — `$$$.orders.head()` means "over all orders"). They are **rejected** as a `$$ = …` stream pivot or a bare statement (a value isn't a stream/stage) — the error points you at the value position, or at `.take(1)` for a one-document stream. (`.keyBy` / `.countBy` / `.groupBy` are **not** in this list: they collapse to a lodash object but *do* have a stream lowering, so they work in both positions — see [Stream methods](#stream-methods-chained-after-the-rhs).)
 
@@ -691,7 +700,7 @@ $$ = $$$.orders.head();   // throws — a value can't be the new stream; use `.t
 $$$.orders.head();        // throws — a bare value isn't a pipeline stage; assign it
 ```
 
-**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`:
+**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`. A **block-body** value-extractor (`.map(x => { return <expr>; })`, or with `const`/`let` bindings) behaves identically to the expression form — a stage-less block is just the arrow in disguise (`x => { const y = …; return y; }` → a `$let`). Only a block that contains real sub-pipeline **stages** and returns a non-document is rejected (you can't value-extract through a `$match`/`$sort` reshape):
 
 ```js
 $.recentOrders = $$$.orders
@@ -1347,7 +1356,8 @@ Call methods on any expression that produces an array.
 ```js
 $.items.at(0)              // { $arrayElemAt: ["$items", 0] }
 $.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
-[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 0, 2] }      (known array → $slice)
+[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 2] }          (indices, end-exclusive — like JS)
+[1, 2, 3, 4].slice(1, 3)   // { $slice: [[1, 2, 3, 4], 1, 2] }    (index 1 up to 3 → 2 elements)
 $.items.slice(1, 3)        // runtime $cond on $isArray — array → $slice, string → $substrCP
                            // (type-aware, like .indexOf / .includes / .concat)
 $.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, immutable)
@@ -1469,7 +1479,7 @@ $.events.push($.newEvent);
 // → { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } }
 
 $.events.pop();
-// → { $set: { events: { $slice: ["$events", 0, { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } }
+// → { $set: { events: { $slice: ["$events", { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } }
 
 $.events.reverse();
 // → { $set: { events: { $reverseArray: "$events" } } }

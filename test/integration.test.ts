@@ -108,6 +108,56 @@ $$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 3);`,
     ]);
   });
 
+  // Value-mode array `.slice` is JS-faithful: start/end are INDICES (end
+  // exclusive) and negatives count from the end — NOT MQL `$slice`'s
+  // position+count semantics. Slices a 3-element array projected from an order's
+  // items. The old count-based lowering got `.slice(1)` / `.slice(1, -1)` wrong
+  // (and emitted a negative count mongod rejects); this asserts the fix runs on
+  // a real server. Expected values derived from a live run (HR3).
+  it("expr: array .slice matches Array.prototype.slice (indices, end-exclusive)", async () => {
+    const id = ID.order(15).toHexString();
+    const [row] = await aggregate(
+      "orders",
+      `$match($._id === 0x${id});
+$ = {
+  tail: $.items.map(i => i.name).slice(1),
+  middle: $.items.map(i => i.name).slice(1, -1),
+  butLast: $.items.map(i => i.name).slice(0, -1),
+  lastTwo: $.items.map(i => i.name).slice(-2),
+  firstTwo: $.items.map(i => i.name).slice(0, 2),
+  emptyRange: $.items.map(i => i.name).slice(2, 1),
+};`,
+    );
+    expect(row).toEqual({
+      tail: ["4K Monitor", "Noise-cancelling Headphones"],
+      middle: ["4K Monitor"],
+      butLast: ["Mechanical Keyboard", "4K Monitor"],
+      lastTwo: ["4K Monitor", "Noise-cancelling Headphones"],
+      firstTwo: ["Mechanical Keyboard", "4K Monitor"],
+      emptyRange: [],
+    });
+  });
+
+  // Statement-position `.pop()` / `.shift()` lower to a `$slice` whose count can
+  // be 0 for an empty or single-element array — which mongod rejects in the
+  // 3-arg form even at runtime. Run the lowering over every user's `tags` (the
+  // dataset mixes empty `[]`, single `["vip"]`, and two-element arrays): it must
+  // neither error nor drop the wrong element. Expected values from a live run (HR3).
+  it("expr: .pop() / .shift() run on empty & single-element arrays (no count-0 $slice rejection)", async () => {
+    const tagsById = (rows: { _id: unknown; tags: string[] }[]) =>
+      Object.fromEntries(rows.map((r) => [String(r._id), r.tags]));
+
+    const popped = tagsById((await aggregate("users", "$.tags.pop();")) as { _id: unknown; tags: string[] }[]);
+    expect(popped[ID.user(1).toHexString()]).toEqual(["vip"]); // ["vip","beta"] → drop last
+    expect(popped[ID.user(3).toHexString()]).toEqual([]); //     single ["vip"]  → []
+    expect(popped[ID.user(4).toHexString()]).toEqual([]); //     empty []        → [] (no rejection)
+
+    const shifted = tagsById((await aggregate("users", "$.tags.shift();")) as { _id: unknown; tags: string[] }[]);
+    expect(shifted[ID.user(1).toHexString()]).toEqual(["beta"]); // ["vip","beta"] → drop first
+    expect(shifted[ID.user(3).toHexString()]).toEqual([]); //       single ["vip"]  → []
+    expect(shifted[ID.user(7).toHexString()]).toEqual([]); //       empty []        → [] (no rejection)
+  });
+
   // Join orders→users, group revenue by the buyer's department. Exercises
   // $lookup + $unwind + $group + derived field, like realistic.test.ts
   // "top-orders report by department".
@@ -251,6 +301,40 @@ $project({ name: 1, recentOrders: 1 });`,
       { order: ID.order(6).toHexString(), shipments: [ID.shipment(5).toHexString()] },
       { order: ID.order(5).toHexString(), shipments: [ID.shipment(4).toHexString()] },
     ]);
+  });
+
+  // Correlated $lookup whose outer field has a HYPHENATED path segment
+  // (`$.meta["ext-id"]`). The hyphen is legal in a field name but illegal in a
+  // MongoDB `$$` variable name, so the emitted `$lookup.let` var is derived from
+  // the sanitized segment (`jsmql_f0_ext_id`) — feeding the raw `ext-id` through
+  // makes mongod reject the whole pipeline with FailedToParse. Running it proves
+  // the server accepts the sanitized name AND the correlation still filters
+  // correctly. Only order 1 carries ext-id "X-1", so only its row gets its
+  // shipment; every other order's `tracked` is empty.
+  it("pipeline: correlated $lookup on a hyphenated outer field (identifier-safe let var)", async () => {
+    const rows = (await aggregate(
+      "orders",
+      `$.tracked = $$$.shipments.filter(s => s.orderId === $._id && $.meta["ext-id"] === "X-1");`,
+    )) as { _id: unknown; tracked: { _id: unknown }[] }[];
+    const withTracked = rows.filter((r) => r.tracked.length > 0);
+    expect(withTracked.map((r) => String(r._id))).toEqual([ID.order(1).toHexString()]);
+    expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
+  });
+
+  // Correlated $lookup gating on a TOP-LEVEL bracket-accessed outer field
+  // (`$["ext-code"]`). The bare root `$` must contribute no path segment, or the
+  // emitted field path is `.ext-code` (leading dot) and mongod rejects the whole
+  // pipeline (Location15998). Distinct code path from the nested `meta["ext-id"]`
+  // case above. Only order 1 has ext-code "EC-1", so only its row keeps its
+  // shipment; every other order's `tracked` is empty.
+  it("pipeline: correlated $lookup on a top-level bracket-accessed field (no leading-dot field path)", async () => {
+    const rows = (await aggregate(
+      "orders",
+      `$.tracked = $$$.shipments.filter(s => s.orderId === $._id && $["ext-code"] === "EC-1");`,
+    )) as { _id: unknown; tracked: { _id: unknown }[] }[];
+    const withTracked = rows.filter((r) => r.tracked.length > 0);
+    expect(withTracked.map((r) => String(r._id))).toEqual([ID.order(1).toHexString()]);
+    expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
   });
 
   // assert(cond, msg) that HOLDS for every document: the aggregate runs to
