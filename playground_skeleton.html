@@ -684,6 +684,58 @@
         font-size: 12px;
       }
 
+      /* The input panel stacks two editors that look identical (both are
+         JS-highlighted CodeMirror). They are two *different languages*: the
+         Variables box is plain JavaScript, evaluated in the user's runtime to
+         build the params object, while the main editor is the JSMQL language
+         compiled to MQL. A language tag on each — plus the query header below —
+         names which is which right where the eye lands, so the two are never
+         confused (the whole reason this exists: everyone mixes them up). */
+      .lang-tag {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        line-height: 1.7;
+        padding: 0 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border-strong);
+        background: var(--panel);
+        color: var(--muted);
+        white-space: nowrap;
+        flex-shrink: 0;
+        cursor: help;
+      }
+
+      .lang-tag.jsmql {
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-color: var(--accent-soft-strong);
+      }
+
+      /* The main JSMQL editor's own header — mirrors .vars-header above it so
+         each editor carries the name of the language it holds. */
+      .query-lang {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        flex-shrink: 0;
+        padding: 7px 12px 5px;
+        font-size: 11px;
+        min-width: 0;
+        background: var(--sidebar-bg);
+        border-bottom: 1px solid var(--border);
+        border-left: 3px solid var(--accent);
+      }
+
+      .query-lang .query-lang-title {
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+        color: var(--accent);
+        flex-shrink: 0;
+      }
+
       .label {
         padding: 8px 12px;
         font-size: 11px;
@@ -1064,7 +1116,7 @@
               Show examples
               <span class="kbd">⌘E</span>
             </button>
-            <span class="label-tag">JSMQL input</span>
+            <span class="label-tag" title="This panel holds two different languages: the Variables box is plain JavaScript, the Query editor is JSMQL (compiled to MQL).">Input</span>
             <span class="label-stats" id="input-stats"></span>
             <span class="current-title" id="current-title"></span>
           </span>
@@ -1112,6 +1164,7 @@
         <div class="vars-section" id="vars-section">
           <div class="vars-header">
             <span class="vars-title">Variables</span>
+            <span class="lang-tag js" title="Plain JavaScript — evaluated in your run-time to build the params object, then bound to the query via jsmql.compile(). This box is not JSMQL.">run-time JS</span>
             <span class="vars-hint" id="vars-hint">optional — bound via jsmql.compile()</span>
           </div>
           <div class="vars-editor">
@@ -1123,6 +1176,10 @@
               autocorrect="off"
             ></textarea>
           </div>
+        </div>
+        <div class="query-lang">
+          <span class="query-lang-title">Query</span>
+          <span class="lang-tag jsmql" title="The JSMQL language — JavaScript-looking syntax compiled to a MongoDB query (MQL). It is never executed as JavaScript.">JSMQL syntax</span>
         </div>
         <textarea
           id="input"
@@ -1900,7 +1957,7 @@
       // "<N> LOC, <size>" for a panel header — lines + byte size (B under 1 KB,
       // else KB to one decimal). The side-by-side input/output figures show how
       // much terser the JSMQL source is than the MQL it expands to. Empty text
-      // (or none) yields "" so the header reads just "JSMQL input" / "MQL output".
+      // (or none) yields "" so the header reads just "Input" / "MQL output".
       function statsOf(text) {
         if (!text) return "";
         const loc = text.split("\n").length;

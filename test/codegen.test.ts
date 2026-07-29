@@ -1452,12 +1452,13 @@ describe("bracket access", () => {
       $getField: { field: { $toLower: "$key" }, input: "$map" },
     });
   });
-  it("const-string-bound key → $getField directly (binding tracked as string)", () => {
-    // `const k = "host"` makes `obj[k]` a property getter; the IndexAccess
-    // codegen reads the binding's static type from bindingTypes.
+  it("const-string-bound key → $getField directly (folds; binding type still string)", () => {
+    // `const k = "host"` folds to the literal "host". The folded value's static
+    // type ("string") is tracked on the binding, so `$.config[k]` still lowers
+    // to a direct `$getField` property getter — never the `$isArray` guard whose
+    // dead `$arrayElemAt[array, "host"]` branch some engines reject.
     expect(jsmql.pipeline('const k = "host";\n$ = { v: $.config[k] };')).toEqual([
-      { $set: { "__jsmql.var.k": "host" } },
-      { $replaceWith: { v: { $getField: { field: "$__jsmql.var.k", input: "$config" } } } },
+      { $replaceWith: { v: { $getField: { field: "host", input: "$config" } } } },
     ]);
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
@@ -1478,12 +1479,12 @@ describe("bracket access", () => {
     // value, but is string") on engines that don't prune unreachable branches.
     expect(jsmql.expr("$[$.fieldName]")).toEqual({ $getField: { field: "$fieldName", input: "$$ROOT" } });
     // The reported case: indexing the root by a value read from a const map
-    // (`$[SSTM_PROP[party]]`). Both getters resolve to a string field name.
+    // (`$[SSTM_PROP[party]]`). The const map folds and inlines; both getters
+    // still resolve to a string field name.
     expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toEqual([
-      { $set: { "__jsmql.var.M": { a: "x" } } },
       {
         $replaceWith: {
-          v: { $getField: { field: { $getField: { field: "k", input: "$__jsmql.var.M" } }, input: "$$ROOT" } },
+          v: { $getField: { field: { $getField: { field: "k", input: { a: "x" } } }, input: "$$ROOT" } },
         },
       },
     ]);
@@ -1895,21 +1896,74 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
   });
   it("slice(start) on bare $.field → runtime $cond on $isArray", () => {
+    // Array branch: JS `slice(start)` = drop the first `start` — position + a
+    // `max(1, size)` count (NOT the 2-arg "first `start`" that MQL `$slice`
+    // would give). count 1 (not 0) keeps an empty array valid.
     expect(jsmql.expr("$.items.slice(2)")).toEqual({
       $cond: {
         if: { $isArray: "$items" },
-        then: { $slice: ["$items", 2] },
+        then: {
+          $let: {
+            vars: { jsmqlArr: "$items" },
+            in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+          },
+        },
         else: { $substrCP: ["$items", 2, { $subtract: [{ $strLenCP: "$items" }, 2] }] },
       },
     });
   });
-  it("slice(start, end) on bare $.field → runtime $cond on $isArray", () => {
+  it("slice(0, end) on bare $.field → 2-arg 'first end' $slice (end exclusive)", () => {
     expect(jsmql.expr("$.items.slice(0, 3)")).toEqual({
-      $cond: { if: { $isArray: "$items" }, then: { $slice: ["$items", 0, 3] }, else: { $substrCP: ["$items", 0, 3] } },
+      $cond: { if: { $isArray: "$items" }, then: { $slice: ["$items", 3] }, else: { $substrCP: ["$items", 0, 3] } },
     });
   });
-  it("slice(start, end) on known array → $slice", () => {
-    expect(jsmql.expr("[1,2,3,4,5].slice(1, 3)")).toEqual({ $slice: [[1, 2, 3, 4, 5], 1, 3] });
+  it("slice(start, end) on known array → count is end - start (JS end-exclusive)", () => {
+    // NOT `$slice: [arr, 1, 3]` (which MQL reads as "3 elements from index 1").
+    expect(jsmql.expr("[1,2,3,4,5].slice(1, 3)")).toEqual({ $slice: [[1, 2, 3, 4, 5], 1, 2] });
+  });
+  it("slice(start, end) with end <= start (both non-neg literals) → []", () => {
+    expect(jsmql.expr("[1,2,3,4,5].slice(3, 2)")).toEqual([]);
+    expect(jsmql.expr("[1,2,3,4,5].slice(2, 2)")).toEqual([]);
+  });
+  it("slice(-n) → last n elements (the 2-arg $slice primitive)", () => {
+    expect(jsmql.expr("[1,2,3,4,5].slice(-2)")).toEqual({ $slice: [[1, 2, 3, 4, 5], -2] });
+  });
+  it("slice(0) → whole-array copy (receiver unchanged)", () => {
+    expect(jsmql.expr("[1,2,3].slice(0)")).toEqual([1, 2, 3]);
+  });
+  it("slice(0, -n) on known array → all-but-last-n, guarding empty input", () => {
+    // start 0 + negative end resolves to "first max(size - n, 0)" via 2-arg $slice.
+    expect(jsmql.expr("[1,2,3,4,5].slice(0, -1)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: [1, 2, 3, 4, 5] },
+        in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
+      },
+    });
+  });
+  it("slice(start, negative-end) → resolve both indices, guard the empty range", () => {
+    // The general form: k/f are the JS-resolved indices, count = f - k, and the
+    // $cond returns [] for an empty range. The slice's own count is max(count, 1)
+    // so a constant-array input stays foldable (never a rejected 0-count $slice).
+    expect(jsmql.expr("[1,2,3,4,5].slice(1, -1)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: [1, 2, 3, 4, 5] },
+        in: {
+          $let: {
+            vars: {
+              jsmqlK: { $min: [1, { $size: "$$jsmqlArr" }] },
+              jsmqlF: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
+            },
+            in: {
+              $cond: [
+                { $gt: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 0] },
+                { $slice: ["$$jsmqlArr", "$$jsmqlK", { $max: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 1] }] },
+                [],
+              ],
+            },
+          },
+        },
+      },
+    });
   });
   it("toReversed()", () => {
     expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
@@ -3812,14 +3866,18 @@ describe("statement-position mutators", () => {
       { $set: { events: { $concatArrays: [["$x", "$y"], "$events"] } } },
     ]);
   });
-  it(".pop() — drops last element with $slice and a clamp", () => {
+  it(".pop() — drops last element via the count-tolerant 2-arg $slice (valid on empty/single)", () => {
+    // 2-arg (first-n) $slice, NOT 3-arg `[arr, 0, count]`: `max(0, size-1)` is 0
+    // for an empty/single-element array, and only the 2-arg form allows a 0 count.
     expect(jsmql("$.events.pop();")).toEqual([
-      { $set: { events: { $slice: ["$events", 0, { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } },
+      { $set: { events: { $slice: ["$events", { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } },
     ]);
   });
-  it(".shift() — drops first element with $slice", () => {
+  it(".shift() — drops first element; count max(1, size) stays valid on empty/single", () => {
+    // count is max(1, size), never 0 — an empty receiver is `$slice: [[], 1, 1]`
+    // → [] (position past the end), not a rejected 3-arg count of 0.
     expect(jsmql("$.events.shift();")).toEqual([
-      { $set: { events: { $slice: ["$events", 1, { $size: "$events" }] } } },
+      { $set: { events: { $slice: ["$events", 1, { $max: [1, { $size: "$events" }] }] } } },
     ]);
   });
   it(".splice(s, dc, ...items) — delegates to the .toSpliced shape inside $set", () => {
@@ -4545,10 +4603,11 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$user.posts", []] } });
   });
   it(".slice on optional receiver wraps with [] then runtime-dispatches", () => {
+    // start 0 → the array branch is a 2-arg "first 5" $slice (JS end-exclusive).
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
       $cond: {
         if: { $isArray: { $ifNull: ["$user.posts", []] } },
-        then: { $slice: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
+        then: { $slice: [{ $ifNull: ["$user.posts", []] }, 5] },
         else: { $substrCP: [{ $ifNull: ["$user.posts", []] }, 0, 5] },
       },
     });

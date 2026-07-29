@@ -2852,8 +2852,8 @@ var Parser = class {
     const quasis = [];
     const expressions = [];
     for (; ; ) {
-      const chunk = this.lexer.expect(TokenType.TemplateChars);
-      quasis.push(chunk.value);
+      const chunk2 = this.lexer.expect(TokenType.TemplateChars);
+      quasis.push(chunk2.value);
       const next = this.lexer.peek();
       if (next.type === TokenType.TemplateEnd) {
         this.lexer.next();
@@ -4246,14 +4246,17 @@ function streamLengthStage() {
   return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
 }
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
+function sanitizeVarSegment(name) {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
 function letFieldVar(field, depth) {
-  return `${JSMQL_NS_VAR}f${depth}_${field}`;
+  return `${JSMQL_NS_VAR}f${depth}_${sanitizeVarSegment(field)}`;
 }
 function letBindingVar(name, depth) {
-  return `${JSMQL_NS_VAR}v${depth}_${name}`;
+  return `${JSMQL_NS_VAR}v${depth}_${sanitizeVarSegment(name)}`;
 }
 function letSysVar(name, depth) {
-  return `${JSMQL_NS_VAR}s${depth}_${name}`;
+  return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name)}`;
 }
 var JSMQL_NS_VAR = "jsmql_";
 var CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;
@@ -4316,6 +4319,1007 @@ var ObjectId = class {
     return 12;
   }
 };
+
+// src/lodash-shared.ts
+var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
+var HTML_ESCAPE_PAIRS = [
+  ["&", "&amp;"],
+  ["<", "&lt;"],
+  [">", "&gt;"],
+  ['"', "&quot;"],
+  ["'", "&#39;"]
+];
+
+// src/lodash-fold.ts
+function asciiUpper(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 97 && c <= 122 ? String.fromCharCode(c - 32) : s[i];
+  }
+  return out;
+}
+function asciiLower(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 65 && c <= 90 ? String.fromCharCode(c + 32) : s[i];
+  }
+  return out;
+}
+function words(s) {
+  return s.match(new RegExp(ASCII_WORDS_RE, "g")) ?? [];
+}
+function capitalizeWord(s) {
+  return asciiUpper(s.slice(0, 1)) + asciiLower(s.slice(1));
+}
+function capitalize(s) {
+  return capitalizeWord(s);
+}
+function upperFirst(s) {
+  return asciiUpper(s.slice(0, 1)) + s.slice(1);
+}
+function lowerFirst(s) {
+  return asciiLower(s.slice(0, 1)) + s.slice(1);
+}
+function kebabCase(s) {
+  return asciiLower(words(s).join("-"));
+}
+function snakeCase(s) {
+  return asciiLower(words(s).join("_"));
+}
+function startCase(s) {
+  return words(s).map(capitalizeWord).join(" ");
+}
+function camelCase(s) {
+  const pascal = words(s).map(capitalizeWord).join("");
+  return asciiLower(pascal.slice(0, 1)) + pascal.slice(1);
+}
+function escape(s) {
+  let e = s;
+  for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = e.split(find).join(replacement);
+  return e;
+}
+function truncate(s, length, omission) {
+  if (s.length <= length) return s;
+  const keep = Math.max(0, length - omission.length);
+  return s.slice(0, keep) + omission;
+}
+function bsonEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((x, i) => bsonEqual(x, b[i]));
+  }
+  if (typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    return ka.every(
+      (k) => Object.prototype.hasOwnProperty.call(b, k) && bsonEqual(a[k], b[k])
+    );
+  }
+  return false;
+}
+function mqlTruthy(v) {
+  return !(v === false || v === null || v === void 0 || v === 0);
+}
+function mqlKeyString(v) {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return void 0;
+}
+function clamp(n, lower, upper) {
+  return Math.min(Math.max(n, lower), upper);
+}
+function inRange(n, a, b) {
+  const lo = b === void 0 ? 0 : a;
+  const hi = b === void 0 ? a : b;
+  return n >= Math.min(lo, hi) && n < Math.max(lo, hi);
+}
+function round(n, p) {
+  const f = 10 ** p;
+  const x = n * f;
+  const floor = Math.floor(x);
+  const diff = x - floor;
+  let r;
+  if (diff < 0.5) r = floor;
+  else if (diff > 0.5) r = floor + 1;
+  else r = floor % 2 === 0 ? floor : floor + 1;
+  return r / f;
+}
+function ceilN(n, p) {
+  if (p === 0) return Math.ceil(n);
+  const f = 10 ** p;
+  return Math.ceil(n * f) / f;
+}
+function floorN(n, p) {
+  if (p === 0) return Math.floor(n);
+  const f = 10 ** p;
+  return Math.floor(n * f) / f;
+}
+var isNum = (x) => typeof x === "number";
+function sum(arr) {
+  return arr.filter(isNum).reduce((a, b) => a + b, 0);
+}
+function mean(arr) {
+  const ns = arr.filter(isNum);
+  return ns.length === 0 ? null : ns.reduce((a, b) => a + b, 0) / ns.length;
+}
+function uniq(arr) {
+  const out = [];
+  for (const x of arr) if (!out.some((y) => bsonEqual(x, y))) out.push(x);
+  return out;
+}
+function compact(arr) {
+  return arr.filter(mqlTruthy);
+}
+function flatten(arr) {
+  return arr.reduce((acc2, x) => acc2.concat(Array.isArray(x) ? x : [x]), []);
+}
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+function take(arr, n) {
+  return arr.slice(0, Math.max(0, n));
+}
+function drop(arr, n) {
+  return arr.slice(Math.max(0, n));
+}
+function takeRight(arr, n) {
+  return n <= 0 ? [] : arr.slice(-n);
+}
+function dropRight(arr, n) {
+  return arr.slice(0, Math.max(0, arr.length - n));
+}
+function without(arr, values) {
+  return arr.filter((x) => !values.some((v) => bsonEqual(x, v)));
+}
+function xor(a, b) {
+  const aNotB = a.filter((x) => !b.some((y) => bsonEqual(x, y)));
+  const bNotA = b.filter((x) => !a.some((y) => bsonEqual(x, y)));
+  return uniq(aNotB.concat(bNotA));
+}
+function zip(arrays) {
+  const len = arrays.reduce((m, a) => Math.max(m, a.length), 0);
+  const out = [];
+  for (let i = 0; i < len; i++) out.push(arrays.map((a) => i < a.length ? a[i] : null));
+  return out;
+}
+function unzip(rows) {
+  const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+  const out = [];
+  for (let j = 0; j < cols; j++) out.push(rows.map((r) => r[j]));
+  return out;
+}
+
+// src/const-eval.ts
+var isOpaqueBson = isOpaqueBsonValue;
+var NO = { ok: false };
+function ok(value) {
+  return { ok: true, value };
+}
+function isPrimitive(v) {
+  return v === null || typeof v === "number" || typeof v === "string" || typeof v === "boolean";
+}
+function finiteResult(n, node) {
+  if (Number.isFinite(n)) return ok(n);
+  throw new CodegenError(
+    `This constant expression evaluates to ${Number.isNaN(n) ? "NaN" : n > 0 ? "Infinity" : "-Infinity"}, which has no MongoDB literal. Check the arithmetic (e.g. division by zero, or an out-of-range exponent).`,
+    node.pos
+  );
+}
+function evalConst(node, env, ctx) {
+  switch (node.type) {
+    case "NumberLiteral":
+      return ok(node.value);
+    case "StringLiteral":
+      return ok(node.value);
+    case "BooleanLiteral":
+      return ok(node.value);
+    case "NullLiteral":
+      return ok(null);
+    case "ObjectIdLiteral":
+      return ok(new ObjectId(node.hex));
+    case "ArrayLiteral":
+      return evalArray(node.elements, env, ctx);
+    case "ObjectLiteral":
+      return evalObject(node.entries, env, ctx);
+    case "TemplateLiteral":
+      return evalTemplate(node.quasis, node.expressions, env, ctx);
+    case "UnaryExpr":
+      return evalUnary(node, env, ctx);
+    case "BinaryExpr":
+      return evalBinary(node, env, ctx);
+    case "TernaryExpr": {
+      const c = evalConst(node.condition, env, ctx);
+      if (!c.ok) return NO;
+      if (typeof c.value !== "boolean") return NO;
+      return evalConst(c.value ? node.consequent : node.alternate, env, ctx);
+    }
+    case "ParamRef": {
+      if (env.has(node.name)) return ok(env.get(node.name));
+      if (ctx.bindings?.has(node.name)) return ok(ctx.bindings.get(node.name));
+      return NO;
+    }
+    case "NewDate": {
+      const d = foldConstantDate(node.args);
+      return d !== null ? ok(d) : NO;
+    }
+    case "DateUTC": {
+      const asDate = foldConstantDate([node]);
+      return asDate !== null ? ok(asDate.getTime()) : NO;
+    }
+    case "NewSet":
+      return node.arg === null ? ok([]) : evalConst(node.arg, env, ctx);
+    case "IndexAccess":
+      return evalIndex(node, env, ctx);
+    case "MemberAccess": {
+      if (node.member === "length") {
+        const recv2 = evalConst(node.object, env, ctx);
+        if (!recv2.ok) return NO;
+        const v = recv2.value;
+        if (typeof v === "string" || Array.isArray(v)) return ok(v.length);
+        return NO;
+      }
+      const recv = evalConst(node.object, env, ctx);
+      if (!recv.ok) return NO;
+      const obj2 = recv.value;
+      if (node.optional && (obj2 === null || obj2 === void 0)) return ok(null);
+      if (obj2 !== null && typeof obj2 === "object" && Object.prototype.hasOwnProperty.call(obj2, node.member)) {
+        return ok(obj2[node.member]);
+      }
+      return NO;
+    }
+    case "MethodCall":
+      return evalMethodCall(node.object, node.method, node.args, !!node.optional, env, ctx);
+    // Added incrementally under the consistency test (fidelity-sensitive):
+    // Math/Number/Object statics, type casts, bitwise & logical ops.
+    default:
+      return NO;
+  }
+}
+function evalArray(elements, env, ctx) {
+  const out = [];
+  for (const el of elements) {
+    if (el.type === "SpreadElement") {
+      const r2 = evalConst(el.argument, env, ctx);
+      if (!r2.ok) return NO;
+      if (!Array.isArray(r2.value)) return NO;
+      for (const v of r2.value) out.push(v);
+      continue;
+    }
+    if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
+      return NO;
+    }
+    const r = evalConst(el, env, ctx);
+    if (!r.ok) return NO;
+    out.push(r.value);
+  }
+  return ok(out);
+}
+function evalObject(entries, env, ctx) {
+  const out = {};
+  for (const entry of entries) {
+    if (entry.type === "SpreadElement") {
+      const r = evalConst(entry.argument, env, ctx);
+      if (!r.ok) return NO;
+      const v = r.value;
+      if (v === null || typeof v !== "object" || Array.isArray(v)) return NO;
+      for (const [k, val2] of Object.entries(v)) out[k] = val2;
+      continue;
+    }
+    let key;
+    if (entry.key.kind === "static") {
+      key = entry.key.name;
+    } else {
+      const k = evalConst(entry.key.expr, env, ctx);
+      if (!k.ok) return NO;
+      if (typeof k.value !== "string" && typeof k.value !== "number") return NO;
+      key = String(k.value);
+    }
+    const val = evalConst(entry.value, env, ctx);
+    if (!val.ok) return NO;
+    out[key] = val.value;
+  }
+  return ok(out);
+}
+function evalTemplate(quasis, expressions, env, ctx) {
+  let out = quasis[0] ?? "";
+  for (let i = 0; i < expressions.length; i++) {
+    const r = evalConst(expressions[i], env, ctx);
+    if (!r.ok) return NO;
+    if (typeof r.value !== "string") return NO;
+    out += r.value + (quasis[i + 1] ?? "");
+  }
+  return ok(out);
+}
+function evalUnary(node, env, ctx) {
+  const r = evalConst(node.operand, env, ctx);
+  if (!r.ok) return NO;
+  const v = r.value;
+  switch (node.op) {
+    case "-":
+      if (typeof v === "number") return finiteResult(-v, node);
+      return NO;
+    case "!":
+      if (typeof v === "boolean") return ok(!v);
+      return NO;
+    // "~" (bitwise not) is fidelity-sensitive (int vs long); added under test.
+    default:
+      return NO;
+  }
+}
+function evalBinary(node, env, ctx) {
+  const op = node.op;
+  const L = evalConst(node.left, env, ctx);
+  if (!L.ok) return NO;
+  if (op === "??") {
+    return L.value === null || L.value === void 0 ? evalConst(node.right, env, ctx) : ok(L.value);
+  }
+  const R = evalConst(node.right, env, ctx);
+  if (!R.ok) return NO;
+  const a = L.value;
+  const b = R.value;
+  switch (op) {
+    case "+":
+      if (typeof a === "number" && typeof b === "number") return finiteResult(a + b, node);
+      if (typeof a === "string" && typeof b === "string") return ok(a + b);
+      return NO;
+    case "-":
+      if (typeof a === "number" && typeof b === "number") return finiteResult(a - b, node);
+      return NO;
+    case "*":
+      if (typeof a === "number" && typeof b === "number") return finiteResult(a * b, node);
+      return NO;
+    case "/":
+      if (typeof a === "number" && typeof b === "number") return finiteResult(a / b, node);
+      return NO;
+    case "%":
+      if (typeof a === "number" && typeof b === "number") return finiteResult(a % b, node);
+      return NO;
+    case "**":
+      if (typeof a === "number" && typeof b === "number") return finiteResult(a ** b, node);
+      return NO;
+    case "===":
+      if (isPrimitive(a) && isPrimitive(b)) return ok(a === b);
+      return NO;
+    case "!==":
+      if (isPrimitive(a) && isPrimitive(b)) return ok(a !== b);
+      return NO;
+    case "==":
+      if (isPrimitive(a) && isPrimitive(b)) return ok(a === null || b === null ? a === b : a === b);
+      return NO;
+    case "!=":
+      if (isPrimitive(a) && isPrimitive(b)) return ok(a !== b);
+      return NO;
+    case "<":
+      if (typeof a === "number" && typeof b === "number") return ok(a < b);
+      return NO;
+    case ">":
+      if (typeof a === "number" && typeof b === "number") return ok(a > b);
+      return NO;
+    case "<=":
+      if (typeof a === "number" && typeof b === "number") return ok(a <= b);
+      return NO;
+    case ">=":
+      if (typeof a === "number" && typeof b === "number") return ok(a >= b);
+      return NO;
+    case "in":
+      if (Array.isArray(b)) return ok(b.includes(a));
+      return NO;
+    // "&&" / "||" (operand-return vs MQL boolean) and "&" / "|" / "^" (int vs
+    // long typing) are fidelity-sensitive; added under test.
+    default:
+      return NO;
+  }
+}
+function evalIndex(node, env, ctx) {
+  const objR = evalConst(node.object, env, ctx);
+  if (!objR.ok) return NO;
+  const idxR = evalConst(node.index, env, ctx);
+  if (!idxR.ok) return NO;
+  const obj2 = objR.value;
+  const idx = idxR.value;
+  if (node.optional && (obj2 === null || obj2 === void 0)) return ok(null);
+  if (Array.isArray(obj2) && typeof idx === "number") {
+    if (idx >= 0 && Number.isInteger(idx)) return ok(idx < obj2.length ? obj2[idx] : null);
+    return NO;
+  }
+  if (typeof obj2 === "string" && typeof idx === "number") {
+    if (idx >= 0 && Number.isInteger(idx)) return ok(idx < obj2.length ? obj2[idx] : null);
+    return NO;
+  }
+  if (obj2 !== null && typeof obj2 === "object" && typeof idx === "string") {
+    return Object.prototype.hasOwnProperty.call(obj2, idx) ? ok(obj2[idx]) : ok(null);
+  }
+  return NO;
+}
+var NON_FOLDABLE = /* @__PURE__ */ Symbol("non-foldable");
+function asciiUpper2(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 97 && c <= 122 ? String.fromCharCode(c - 32) : s[i];
+  }
+  return out;
+}
+function asciiLower2(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 65 && c <= 90 ? String.fromCharCode(c + 32) : s[i];
+  }
+  return out;
+}
+function interpretLambda(lambda, env, ctx) {
+  return (...args) => {
+    const child = new Map(env);
+    lambda.params.forEach((p, i) => child.set(p, args[i]));
+    let bodyExpr;
+    if (lambda.exprBlock) {
+      for (const decl of lambda.exprBlock.decls) {
+        const r2 = evalConst(decl.value, child, ctx);
+        if (!r2.ok) throw NON_FOLDABLE;
+        child.set(decl.name, r2.value);
+      }
+      bodyExpr = lambda.exprBlock.ret;
+    } else if (lambda.body) {
+      bodyExpr = lambda.body;
+    } else {
+      throw NON_FOLDABLE;
+    }
+    const r = evalConst(bodyExpr, child, ctx);
+    if (!r.ok) throw NON_FOLDABLE;
+    return r.value;
+  };
+}
+function evalArgValues(args, env, ctx) {
+  const out = [];
+  for (const a of args) {
+    if (a.type === "SpreadElement") {
+      const r = evalConst(a.argument, env, ctx);
+      if (!r.ok || !Array.isArray(r.value)) throw NON_FOLDABLE;
+      for (const v of r.value) out.push(v);
+    } else {
+      const r = evalConst(a, env, ctx);
+      if (!r.ok) throw NON_FOLDABLE;
+      out.push(r.value);
+    }
+  }
+  return out;
+}
+function requireLambdaArg(args, env, ctx) {
+  const first = args[0];
+  if (!first || first.type !== "Lambda") throw NON_FOLDABLE;
+  return interpretLambda(first, env, ctx);
+}
+function resolveIterateeFn(arg, method, env, ctx) {
+  if (arg === void 0) return (el) => el;
+  if (arg.type === "SpreadElement") throw NON_FOLDABLE;
+  if (arg.type === "Lambda") {
+    const fn2 = interpretLambda(arg, env, ctx);
+    return (el, i) => fn2(el, i);
+  }
+  const lam = shorthandToLambda(arg, method, "__jsmqlIt");
+  if (lam === null) throw NON_FOLDABLE;
+  const fn = interpretLambda(lam, env, ctx);
+  return (el) => fn(el);
+}
+function keyStr(v) {
+  const s = mqlKeyString(v);
+  if (s === void 0) throw NON_FOLDABLE;
+  return s;
+}
+function evalMethodCall(object, method, args, optional, env, ctx) {
+  const recvR = evalConst(object, env, ctx);
+  if (!recvR.ok) return NO;
+  const recv = recvR.value;
+  if (optional && (recv === null || recv === void 0)) return ok(null);
+  try {
+    if (typeof recv === "string") return foldStringMethod(recv, method, args, env, ctx);
+    if (typeof recv === "number") return foldNumberMethod(recv, method, args, env, ctx);
+    if (Array.isArray(recv)) return foldArrayMethod(recv, method, args, env, ctx);
+    if (recv !== null && typeof recv === "object" && !isOpaqueBson(recv)) {
+      return foldObjectMethod(recv, method, args, env, ctx);
+    }
+    return NO;
+  } catch (e) {
+    if (e === NON_FOLDABLE) return NO;
+    throw e;
+  }
+}
+function foldStringMethod(s, method, args, env, ctx) {
+  switch (method) {
+    case "toUpperCase":
+      return ok(asciiUpper2(s));
+    case "toLowerCase":
+      return ok(asciiLower2(s));
+    case "trim":
+      return ok(s.trim());
+    case "trimStart":
+    case "trimLeft":
+      return ok(s.trimStart());
+    case "trimEnd":
+    case "trimRight":
+      return ok(s.trimEnd());
+    case "startsWith":
+    case "endsWith":
+    case "includes":
+    case "indexOf":
+    case "lastIndexOf":
+    case "charAt":
+    case "slice":
+    case "substring":
+    case "repeat":
+    case "padStart":
+    case "padEnd": {
+      const a = evalArgValues(args, env, ctx);
+      const fn = s[method];
+      return ok(fn.apply(s, a));
+    }
+    case "split": {
+      const a = evalArgValues(args, env, ctx);
+      if (a.length === 0 || typeof a[0] !== "string" || a[0] === "") throw NON_FOLDABLE;
+      return ok(s.split(...a));
+    }
+    // lodash string methods — MQL-faithful JS impls in lodash-fold.ts.
+    case "capitalize":
+      return ok(capitalize(s));
+    case "upperFirst":
+      return ok(upperFirst(s));
+    case "lowerFirst":
+      return ok(lowerFirst(s));
+    case "words":
+      return ok(words(s));
+    case "kebabCase":
+      return ok(kebabCase(s));
+    case "snakeCase":
+      return ok(snakeCase(s));
+    case "startCase":
+      return ok(startCase(s));
+    case "camelCase":
+      return ok(camelCase(s));
+    case "escape":
+      return ok(escape(s));
+    case "truncate":
+      return foldTruncate(s, args, env, ctx);
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+function foldTruncate(s, args, env, ctx) {
+  let length = 30;
+  let omission = "...";
+  if (args.length > 0) {
+    const optsR = evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+    if (!optsR.ok) throw NON_FOLDABLE;
+    const opts = optsR.value;
+    if (opts === null || typeof opts !== "object" || Array.isArray(opts)) throw NON_FOLDABLE;
+    const o = opts;
+    if ("separator" in o) throw NON_FOLDABLE;
+    if ("length" in o) {
+      if (typeof o.length !== "number") throw NON_FOLDABLE;
+      length = o.length;
+    }
+    if ("omission" in o) {
+      if (typeof o.omission !== "string") throw NON_FOLDABLE;
+      omission = o.omission;
+    }
+  }
+  return ok(truncate(s, length, omission));
+}
+function foldArrayMethod(arr, method, args, env, ctx) {
+  switch (method) {
+    case "map":
+      return ok(arr.map((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "filter":
+      return ok(arr.filter((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "some":
+      return ok(arr.some((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "every":
+      return ok(arr.every((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "find": {
+      const found = arr.find((el, i) => requireLambdaArg(args, env, ctx)(el, i));
+      if (found === void 0) throw NON_FOLDABLE;
+      return ok(found);
+    }
+    case "flatMap":
+      return ok(arr.flatMap((el, i) => requireLambdaArg(args, env, ctx)(el, i)));
+    case "reduce": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const init = evalArgValues(args.slice(1), env, ctx);
+      if (init.length === 0) throw NON_FOLDABLE;
+      return ok(arr.reduce((acc2, el, i) => fn(acc2, el, i), init[0]));
+    }
+    // `.slice` folds via the real `Array.prototype.slice`: its value-mode lowering
+    // now matches ECMAScript slice (start/exclusive-end, negatives from the end),
+    // so the fold agrees with the runtime. (`.flat` is still NOT folded — it has
+    // no faithful lowering for a non-nested array; it stays runtime.)
+    case "slice":
+    case "concat":
+    case "includes":
+    case "indexOf":
+    case "lastIndexOf":
+    case "join":
+    case "at":
+    case "toReversed": {
+      const a = evalArgValues(args, env, ctx);
+      const fn = arr[method];
+      return ok(fn.apply(arr, a));
+    }
+    // ── lodash array methods (non-iteratee) ─────────────────────────────────
+    case "sum":
+      return ok(sum(arr));
+    case "mean":
+      return ok(mean(arr));
+    case "min":
+    case "max": {
+      if (arr.length === 0) return ok(null);
+      if (!arr.every((x) => typeof x === "number")) throw NON_FOLDABLE;
+      return ok(method === "min" ? Math.min(...arr) : Math.max(...arr));
+    }
+    case "uniq":
+    case "sortedUniq":
+      return ok(uniq(arr));
+    case "compact":
+      return ok(compact(arr));
+    case "flatten":
+      return ok(flatten(arr));
+    case "chunk": {
+      const [size] = evalArgValues(args, env, ctx);
+      if (typeof size !== "number" || !Number.isInteger(size) || size < 1) throw NON_FOLDABLE;
+      return ok(chunk(arr, size));
+    }
+    case "take":
+    case "drop":
+    case "takeRight":
+    case "dropRight": {
+      const a = evalArgValues(args, env, ctx);
+      const n = a.length > 0 ? a[0] : 1;
+      if (typeof n !== "number" || n < 0) throw NON_FOLDABLE;
+      return ok(
+        method === "take" ? take(arr, n) : method === "drop" ? drop(arr, n) : method === "takeRight" ? takeRight(arr, n) : dropRight(arr, n)
+      );
+    }
+    case "tail":
+      return ok(drop(arr, 1));
+    case "initial":
+      return ok(dropRight(arr, 1));
+    case "head":
+    case "first":
+      if (arr.length === 0) throw NON_FOLDABLE;
+      return ok(arr[0]);
+    case "last":
+      if (arr.length === 0) throw NON_FOLDABLE;
+      return ok(arr[arr.length - 1]);
+    case "nth": {
+      const a = evalArgValues(args, env, ctx);
+      const nRaw = a.length > 0 ? a[0] : 0;
+      if (typeof nRaw !== "number" || !Number.isInteger(nRaw)) throw NON_FOLDABLE;
+      const idx = nRaw < 0 ? arr.length + nRaw : nRaw;
+      if (idx < 0 || idx >= arr.length) throw NON_FOLDABLE;
+      return ok(arr[idx]);
+    }
+    case "size":
+      return ok(arr.length);
+    case "without": {
+      const values = evalArgValues(args, env, ctx);
+      return ok(without(arr, values));
+    }
+    // ── lodash array methods (iteratee / predicate) ─────────────────────────
+    case "sumBy":
+      return ok(sum(arr.map(resolveIterateeFn(args[0], method, env, ctx))));
+    case "meanBy":
+      return ok(mean(arr.map(resolveIterateeFn(args[0], method, env, ctx))));
+    case "minBy":
+    case "maxBy": {
+      if (arr.length === 0) throw NON_FOLDABLE;
+      const it = resolveIterateeFn(args[0], method, env, ctx);
+      const keyed = arr.map((el, i) => ({ el, k: it(el, i) }));
+      if (!keyed.every((x) => typeof x.k === "number")) throw NON_FOLDABLE;
+      const sorted = keyed.map((x, i) => ({ ...x, i })).sort((a, b) => a.k - b.k || a.i - b.i);
+      return ok(sorted[method === "maxBy" ? sorted.length - 1 : 0].el);
+    }
+    case "uniqBy":
+    case "sortedUniqBy": {
+      const it = resolveIterateeFn(args[0], method, env, ctx);
+      const seen = [];
+      const out = [];
+      arr.forEach((el, i) => {
+        const k = it(el, i);
+        if (!seen.some((s) => bsonEqual(s, k))) {
+          seen.push(k);
+          out.push(el);
+        }
+      });
+      return ok(out);
+    }
+    case "keyBy": {
+      const it = resolveIterateeFn(args[0], "keyBy", env, ctx);
+      const out = {};
+      arr.forEach((el, i) => out[keyStr(it(el, i))] = el);
+      return ok(out);
+    }
+    case "groupBy":
+    case "countBy": {
+      const it = resolveIterateeFn(args[0], method, env, ctx);
+      const groups = /* @__PURE__ */ new Map();
+      arr.forEach((el, i) => {
+        const k = keyStr(it(el, i));
+        (groups.get(k) ?? groups.set(k, []).get(k)).push(el);
+      });
+      const out = {};
+      for (const [k, els] of groups) out[k] = method === "countBy" ? els.length : els;
+      return ok(out);
+    }
+    case "partition":
+    case "reject": {
+      const p = resolveIterateeFn(args[0], method, env, ctx);
+      const yes = [];
+      const no = [];
+      arr.forEach((el, i) => (p(el, i) ? yes : no).push(el));
+      return ok(method === "reject" ? no : [yes, no]);
+    }
+    case "takeWhile":
+    case "dropWhile":
+    case "takeRightWhile":
+    case "dropRightWhile": {
+      const p = resolveIterateeFn(args[0], method, env, ctx);
+      const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
+      const drop2 = method === "dropWhile" || method === "dropRightWhile";
+      const seq = fromRight ? [...arr].reverse() : arr;
+      let cut = 0;
+      while (cut < seq.length && p(seq[cut], cut)) cut++;
+      const kept = drop2 ? seq.slice(cut) : seq.slice(0, cut);
+      return ok(fromRight ? kept.reverse() : kept);
+    }
+    case "sortBy":
+    case "orderBy":
+      return foldSort(arr, method, args, env, ctx);
+    // ── lodash set operations ───────────────────────────────────────────────
+    case "xor": {
+      const [other] = evalArgValues(args, env, ctx);
+      if (!Array.isArray(other)) throw NON_FOLDABLE;
+      return ok(xor(arr, other));
+    }
+    case "differenceBy":
+    case "intersectionBy": {
+      if (args.length !== 2) throw NON_FOLDABLE;
+      const other = evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+      if (!other.ok || !Array.isArray(other.value)) throw NON_FOLDABLE;
+      const it = resolveIterateeFn(args[1], method, env, ctx);
+      const otherKeys = other.value.map((el, i) => it(el, i));
+      const inOther = (el, i) => otherKeys.some((k) => bsonEqual(k, it(el, i)));
+      return ok(arr.filter((el, i) => method === "intersectionBy" ? inOther(el, i) : !inOther(el, i)));
+    }
+    case "unionBy":
+    case "xorBy": {
+      if (args.length !== 2) throw NON_FOLDABLE;
+      const other = evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+      if (!other.ok || !Array.isArray(other.value)) throw NON_FOLDABLE;
+      const it = resolveIterateeFn(args[1], method, env, ctx);
+      const uniqByKey = (xs) => {
+        const seen = [];
+        const out = [];
+        xs.forEach((el, i) => {
+          const k = it(el, i);
+          if (!seen.some((s) => bsonEqual(s, k))) {
+            seen.push(k);
+            out.push(el);
+          }
+        });
+        return out;
+      };
+      if (method === "unionBy") return ok(uniqByKey(arr.concat(other.value)));
+      const aKeys = arr.map((el, i) => it(el, i));
+      const bKeys = other.value.map((el, i) => it(el, i));
+      const aNotB = arr.filter((el, i) => !bKeys.some((k) => bsonEqual(k, it(el, i))));
+      const bNotA = other.value.filter((el, i) => !aKeys.some((k) => bsonEqual(k, it(el, i))));
+      return ok(uniqByKey(aNotB.concat(bNotA)));
+    }
+    // ── lodash zip family ───────────────────────────────────────────────────
+    case "zip": {
+      const others = evalArgValues(args, env, ctx);
+      if (!others.every(Array.isArray)) throw NON_FOLDABLE;
+      return ok(zip([arr, ...others]));
+    }
+    case "zipWith": {
+      if (args.length < 2) throw NON_FOLDABLE;
+      const fn = requireLambdaArg([args[args.length - 1]], env, ctx);
+      const others = evalArgValues(args.slice(0, -1), env, ctx);
+      if (!others.every(Array.isArray)) throw NON_FOLDABLE;
+      const arrays = [arr, ...others];
+      const len = arrays.reduce((m, a) => Math.max(m, a.length), 0);
+      const out = [];
+      for (let i = 0; i < len; i++) out.push(fn(...arrays.map((a) => i < a.length ? a[i] : null)));
+      return ok(out);
+    }
+    case "unzip":
+      if (!arr.every(Array.isArray)) throw NON_FOLDABLE;
+      return ok(unzip(arr));
+    case "zipObject": {
+      const [values] = evalArgValues(args, env, ctx);
+      if (!Array.isArray(values)) throw NON_FOLDABLE;
+      const out = {};
+      arr.forEach((k, i) => out[keyStr(k)] = values[i] === void 0 ? null : values[i]);
+      return ok(out);
+    }
+    case "fromPairs": {
+      const out = {};
+      for (const pair of arr) {
+        if (!Array.isArray(pair)) throw NON_FOLDABLE;
+        out[keyStr(pair[0])] = pair[1] === void 0 ? null : pair[1];
+      }
+      return ok(out);
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+function fieldGetter(path) {
+  const segs = path.split(".");
+  return (v) => {
+    let cur = v;
+    for (const s of segs) {
+      if (cur === null || cur === void 0 || typeof cur !== "object") return void 0;
+      cur = cur[s];
+    }
+    return cur;
+  };
+}
+function scalarCompare(a, b) {
+  if (a === null || a === void 0 || b === null || b === void 0) throw NON_FOLDABLE;
+  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+  throw NON_FOLDABLE;
+}
+function orderDir(v) {
+  if (v === 1 || v === "asc") return 1;
+  if (v === -1 || v === "desc") return -1;
+  throw NON_FOLDABLE;
+}
+function foldSort(arr, method, args, env, ctx) {
+  const specs = [];
+  if (method === "sortBy") {
+    const arg = args[0];
+    if (arg === void 0) specs.push({ get: (el) => el, dir: 1 });
+    else if (arg.type === "StringLiteral") specs.push({ get: fieldGetter(arg.value), dir: 1 });
+    else if (arg.type === "Lambda") {
+      const fn = interpretLambda(arg, env, ctx);
+      specs.push({ get: (el) => fn(el), dir: 1 });
+    } else if (arg.type === "ArrayLiteral") {
+      for (const e of arg.elements) {
+        if (e.type !== "StringLiteral") throw NON_FOLDABLE;
+        specs.push({ get: fieldGetter(e.value), dir: 1 });
+      }
+    } else throw NON_FOLDABLE;
+  } else {
+    const arg = args[0];
+    if (arg !== void 0 && arg.type === "ObjectLiteral") {
+      if (args.length > 1) throw NON_FOLDABLE;
+      for (const entry of arg.entries) {
+        if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") throw NON_FOLDABLE;
+        const dv = evalConst(entry.value, env, ctx);
+        if (!dv.ok) throw NON_FOLDABLE;
+        specs.push({ get: fieldGetter(entry.key.name), dir: orderDir(dv.value) });
+      }
+    } else {
+      const keys = args[0] === void 0 ? void 0 : evalConst(args[0].type === "SpreadElement" ? args[0].argument : args[0], env, ctx);
+      if (!keys || !keys.ok) throw NON_FOLDABLE;
+      const keyList = Array.isArray(keys.value) ? keys.value : [keys.value];
+      const ordersArg = args[1];
+      const orders = ordersArg === void 0 ? void 0 : evalConst(ordersArg.type === "SpreadElement" ? ordersArg.argument : ordersArg, env, ctx);
+      const orderList = orders && orders.ok ? Array.isArray(orders.value) ? orders.value : [orders.value] : [];
+      keyList.forEach((k, i) => {
+        if (typeof k !== "string") throw NON_FOLDABLE;
+        specs.push({ get: fieldGetter(k), dir: orderList[i] === void 0 ? 1 : orderDir(orderList[i]) });
+      });
+    }
+  }
+  const decorated = arr.map((el, i) => ({ el, i }));
+  decorated.sort((A, B) => {
+    for (const { get, dir } of specs) {
+      const c = scalarCompare(get(A.el), get(B.el));
+      if (c !== 0) return dir * c;
+    }
+    return A.i - B.i;
+  });
+  return ok(decorated.map((d) => d.el));
+}
+function foldNumberMethod(n, method, args, env, ctx) {
+  const a = evalArgValues(args, env, ctx);
+  switch (method) {
+    case "clamp":
+      if (a.length !== 2 || typeof a[0] !== "number" || typeof a[1] !== "number") throw NON_FOLDABLE;
+      return ok(clamp(n, a[0], a[1]));
+    case "inRange":
+      if (a.length < 1 || a.length > 2 || !a.every((x) => typeof x === "number")) throw NON_FOLDABLE;
+      return ok(inRange(n, a[0], a[1]));
+    case "round":
+    case "ceil":
+    case "floor": {
+      if (a.length > 1) throw NON_FOLDABLE;
+      const p = a.length === 1 ? a[0] : 0;
+      if (typeof p !== "number" || !Number.isInteger(p)) throw NON_FOLDABLE;
+      const r = method === "round" ? round(n, p) : method === "ceil" ? ceilN(n, p) : floorN(n, p);
+      return Number.isFinite(r) ? ok(r) : NO;
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+function foldObjectMethod(obj2, method, args, env, ctx) {
+  switch (method) {
+    case "size":
+      return ok(Object.keys(obj2).length);
+    case "toPairs":
+      return ok(Object.entries(obj2).map(([k, v]) => [k, v]));
+    case "invert": {
+      const out = {};
+      for (const [k, v] of Object.entries(obj2)) {
+        const nk = mqlKeyString(v);
+        if (nk === void 0) throw NON_FOLDABLE;
+        out[nk] = k;
+      }
+      return ok(out);
+    }
+    case "pick":
+    case "omit": {
+      const keys = pickKeyList(args);
+      if (method === "pick") {
+        const out2 = {};
+        for (const k of keys) if (Object.prototype.hasOwnProperty.call(obj2, k)) out2[k] = obj2[k];
+        return ok(out2);
+      }
+      const out = {};
+      for (const [k, v] of Object.entries(obj2)) if (!keys.includes(k)) out[k] = v;
+      return ok(out);
+    }
+    case "mapValues": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const out = {};
+      for (const [k, v] of Object.entries(obj2)) out[k] = fn(v, k);
+      return ok(out);
+    }
+    case "mapKeys": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const out = {};
+      for (const [k, v] of Object.entries(obj2)) {
+        const nk = mqlKeyString(fn(v, k));
+        if (nk === void 0) throw NON_FOLDABLE;
+        out[nk] = v;
+      }
+      return ok(out);
+    }
+    case "pickBy":
+    case "omitBy": {
+      const fn = requireLambdaArg(args, env, ctx);
+      const out = {};
+      for (const [k, v] of Object.entries(obj2)) {
+        const keep = !!fn(v, k);
+        if (method === "pickBy" ? keep : !keep) out[k] = v;
+      }
+      return ok(out);
+    }
+    default:
+      throw NON_FOLDABLE;
+  }
+}
+function pickKeyList(args) {
+  const first = args[0];
+  if (!first || first.type !== "ArrayLiteral") throw NON_FOLDABLE;
+  const keys = [];
+  for (const el of first.elements) {
+    if (el.type !== "StringLiteral") throw NON_FOLDABLE;
+    keys.push(el.value);
+  }
+  return keys;
+}
 
 // src/codegen.ts
 var CodegenError = class extends Error {
@@ -4906,10 +5910,67 @@ function normaliseSliceIndex(node, ctx, genObj) {
   const gen = _generate(node, ctx);
   return cond({ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen);
 }
+function literalIndexValue(node) {
+  if (node.type === "NumberLiteral" && Number.isInteger(node.value)) return node.value;
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral" && Number.isInteger(node.operand.value)) {
+    return -node.operand.value;
+  }
+  return null;
+}
+function resolveSliceIndex(node, ctx, size) {
+  const lit = literalIndexValue(node);
+  if (lit !== null) {
+    if (lit === 0) return 0;
+    if (lit > 0) return { $min: [lit, size] };
+    return { $max: [{ $subtract: [size, -lit] }, 0] };
+  }
+  const gen = _generate(node, ctx);
+  return { $cond: [{ $lt: [gen, 0] }, { $max: [{ $add: [gen, size] }, 0] }, { $min: [gen, size] }] };
+}
 function sliceArray(genObj, exprArgs, ctx) {
   if (exprArgs.length === 0) return genObj;
-  if (exprArgs.length === 1) return { $slice: [genObj, _generate(exprArgs[0], ctx)] };
-  return { $slice: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+  const startNode = exprArgs[0];
+  const startLit = literalIndexValue(startNode);
+  if (exprArgs.length === 1) {
+    if (startLit !== null && startLit < 0) return { $slice: [genObj, startLit] };
+    if (startLit === 0) return genObj;
+    return {
+      $let: {
+        vars: { jsmqlArr: genObj },
+        in: { $slice: ["$$jsmqlArr", _generate(startNode, ctx), { $max: [1, { $size: "$$jsmqlArr" }] }] }
+      }
+    };
+  }
+  const endNode = exprArgs[1];
+  const endLit = literalIndexValue(endNode);
+  if (startLit !== null && startLit >= 0 && endLit !== null && endLit >= 0) {
+    if (startLit === 0) return { $slice: [genObj, endLit] };
+    if (endLit <= startLit) return [];
+    return { $slice: [genObj, startLit, endLit - startLit] };
+  }
+  if (startLit === 0) {
+    return {
+      $let: {
+        vars: { jsmqlArr: genObj },
+        in: { $slice: ["$$jsmqlArr", resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" })] }
+      }
+    };
+  }
+  const count = { $subtract: ["$$jsmqlF", "$$jsmqlK"] };
+  return {
+    $let: {
+      vars: { jsmqlArr: genObj },
+      in: {
+        $let: {
+          vars: {
+            jsmqlK: resolveSliceIndex(startNode, ctx, { $size: "$$jsmqlArr" }),
+            jsmqlF: resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" })
+          },
+          in: { $cond: [{ $gt: [count, 0] }, { $slice: ["$$jsmqlArr", "$$jsmqlK", { $max: [count, 1] }] }, []] }
+        }
+      }
+    }
+  };
 }
 function negate(n) {
   return typeof n === "number" ? -n : { $subtract: [0, n] };
@@ -5722,14 +6783,13 @@ function capitalizeExpr(s) {
 function firstCharExpr(s, op) {
   return { $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)] };
 }
-var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
 function wordsExpr(s) {
   return {
     $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: "jsmqlWord", in: "$$jsmqlWord.match" }
   };
 }
-function joinWords(words, sep, transform) {
-  const items = transform === void 0 ? words : { $map: { input: words, as: "jsmqlW", in: transform("$$jsmqlW") } };
+function joinWords(words2, sep, transform) {
+  const items = transform === void 0 ? words2 : { $map: { input: words2, as: "jsmqlW", in: transform("$$jsmqlW") } };
   return {
     $reduce: {
       input: items,
@@ -5739,16 +6799,8 @@ function joinWords(words, sep, transform) {
   };
 }
 function escapeHtmlExpr(s) {
-  const pairs = [
-    ["&", "&amp;"],
-    // must run first
-    ["<", "&lt;"],
-    [">", "&gt;"],
-    ['"', "&quot;"],
-    ["'", "&#39;"]
-  ];
   let e = s;
-  for (const [find, replacement] of pairs) e = { $replaceAll: { input: e, find, replacement } };
+  for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = { $replaceAll: { input: e, find, replacement } };
   return e;
 }
 function shorthandToLambda(arg, method, param) {
@@ -5817,9 +6869,9 @@ function resolvePredicate(pred, method, ctx) {
   const it = resolveIteratee(pred, method, ctx);
   return { as: it.as, cond: it.value };
 }
-function takeDropWhile(arrExpr, pred, drop) {
+function takeDropWhile(arrExpr, pred, drop2) {
   const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
-  const body = drop ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] } : (
+  const body = drop2 ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] } : (
     // take: the first `jsmqlFi` elements. The 2-arg `$slice` (first-n) — NOT the
     // 3-arg `$slice: [arr, 0, jsmqlFi]` — so a boundary at index 0 (the first
     // element already fails the predicate) is `$slice: [arr, 0]` → `[]`, instead of
@@ -6742,10 +7794,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
       const pred = resolvePredicate(exprArgs[0], method, ctx);
-      const drop = method === "dropWhile" || method === "dropRightWhile";
+      const drop2 = method === "dropWhile" || method === "dropRightWhile";
       const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
-      if (!fromRight) return takeDropWhile(genObj, pred, drop);
-      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop) };
+      if (!fromRight) return takeDropWhile(genObj, pred, drop2);
+      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop2) };
     }
     case "sample": {
       checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
@@ -7368,12 +8420,13 @@ function buildMutatorRhs(method, object, args, pos) {
       const sizeExpr = mkOpCall("$size", [object], pos);
       const minus1 = { type: "BinaryExpr", op: "-", left: sizeExpr, right: mkNumber(1, pos), pos };
       const clamped = mkOpCall("$max", [mkNumber(0, pos), minus1], pos);
-      return mkOpCall("$slice", [object, mkNumber(0, pos), clamped], pos);
+      return mkOpCall("$slice", [object, clamped], pos);
     }
     case "shift": {
       checkArity("shift", { sig: "", none: true }, args.length, pos);
       const sizeExpr = mkOpCall("$size", [object], pos);
-      return mkOpCall("$slice", [object, mkNumber(1, pos), sizeExpr], pos);
+      const count = mkOpCall("$max", [mkNumber(1, pos), sizeExpr], pos);
+      return mkOpCall("$slice", [object, mkNumber(1, pos), count], pos);
     }
     case "fill":
       return buildFillRhs(object, args, pos);
@@ -7484,8 +8537,8 @@ function rejectPredicateOnValueSearch(arg, method, sibling) {
   );
 }
 function checkArity(method, spec, count, callPos, prefix = ".") {
-  const ok = spec.none !== void 0 ? count === 0 : spec.exact !== void 0 ? count === spec.exact : spec.allowed !== void 0 ? spec.allowed.includes(count) : count >= spec.atLeast;
-  if (ok) return;
+  const ok2 = spec.none !== void 0 ? count === 0 : spec.exact !== void 0 ? count === spec.exact : spec.allowed !== void 0 ? spec.allowed.includes(count) : count >= spec.atLeast;
+  if (ok2) return;
   let quantity;
   if (spec.none !== void 0) {
     quantity = "takes no arguments";
@@ -7510,6 +8563,7 @@ function genLambdaBody(lambda, ctx) {
 }
 function generateExprBlock(block, ctx) {
   const seen = /* @__PURE__ */ new Set();
+  const emptyEnv = /* @__PURE__ */ new Map();
   const fold = (i, c) => {
     if (i === block.decls.length) return _generate(block.ret, c);
     const decl = block.decls[i];
@@ -7520,11 +8574,28 @@ function generateExprBlock(block, ctx) {
       );
     }
     seen.add(decl.name);
+    if (!c.lambdaParams.has(decl.name)) {
+      const r = evalConst(decl.value, emptyEnv, c);
+      if (r.ok) {
+        const merged = new Map(c.bindings ?? []);
+        merged.set(decl.name, r.value);
+        let c2 = withBindings(c, merged);
+        const t = foldedCompoundType(r.value);
+        if (t) c2 = { ...c2, bindingTypes: new Map([...c.bindingTypes ?? [], [decl.name, t]]) };
+        return fold(i + 1, c2);
+      }
+    }
     const value = _generate(decl.value, c);
     const inner = extendCtx(c, [decl.name]);
     return { $let: { vars: { [safeVarName(decl.name)]: value }, in: fold(i + 1, inner) } };
   };
   return fold(0, ctx);
+}
+function foldedCompoundType(v) {
+  if (typeof v === "string") return "string";
+  if (Array.isArray(v)) return "array";
+  if (v !== null && typeof v === "object" && !isOpaqueBsonValue(v)) return "object";
+  return void 0;
 }
 function requireLambda(args, method, callerPos, ctx) {
   const first = args[0];
@@ -9262,6 +10333,10 @@ var SLICE = {
   },
   lower(args, _ctx, _callPos) {
     const start = args[0].value;
+    if (args.length === 2) {
+      const end = args[1].value;
+      if (end === start) return { stages: [{ $match: { $expr: false } }] };
+    }
     const stages = [];
     if (start > 0) stages.push({ $skip: start });
     if (args.length === 2) {
@@ -10861,9 +11936,10 @@ function validateLookupShape(expr) {
     return;
   }
   if (expr.method !== "find" && expr.method !== "filter") {
-    const hint = didYouMean(expr.method, ["find", "filter", "aggregate"], (s) => `.${s}`);
+    if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
+    const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
     throw new CodegenError(
-      `'${spell}' supports .find(pred), .filter(pred), and .aggregate(pipeline), not .${expr.method}().${hint} For a full sub-pipeline (grouping, sort + limit, reshaping), use \`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
+      `'${spell}' supports .find(pred), .filter(pred), .aggregate(pipeline), and the lodash stream methods (e.g. .toSorted, .take, .map \u2014 see docs/specs/stream-methods.md), not .${expr.method}().${hint} For a full sub-pipeline (grouping, reshaping), use \`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
       expr.pos
     );
   }
@@ -10875,6 +11951,9 @@ function validateLookupShape(expr) {
   }
   const arg = expr.args[0];
   if (arg.type !== "Lambda") {
+    if (expr.method === "filter" && arg.type !== "SpreadElement" && shorthandToLambda(arg, "filter", "jsmqlItem") !== null) {
+      return;
+    }
     throw new CodegenError(
       `.${expr.method}(predicate) requires an arrow predicate, e.g. \`.${expr.method}(o => o._id === $.userId)\`.`,
       "pos" in arg ? arg.pos : expr.pos
@@ -11009,7 +12088,7 @@ function createSlotAllocator() {
   };
 }
 function classifyPath(expr, foreignParam, outerLets, enclosingParams = []) {
-  if (expr.type === "FieldRef") return { kind: "local", segments: [expr.path] };
+  if (expr.type === "FieldRef") return { kind: "local", segments: expr.path === "" ? [] : [expr.path] };
   if (expr.type === "ParamRef") {
     if (expr.name === foreignParam) return { kind: "foreign", segments: [] };
     const level = enclosingParams.indexOf(expr.name);
@@ -11396,7 +12475,10 @@ function transformStmt(stmt, foreignParam, allocator, outerLets) {
 }
 function transformTarget(target, foreignParam, allocator, outerLets) {
   const classified = classifyPath(target, foreignParam, outerLets, allocator.enclosingParams);
-  if (classified !== null && (classified.kind === "local" || classified.kind === "foreign") && classified.segments.length > 0) {
+  if (classified !== null && classified.kind === "local") {
+    return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
+  }
+  if (classified !== null && classified.kind === "foreign" && classified.segments.length > 0) {
     return { type: "FieldRef", path: classified.segments.join("."), pos: target.pos };
   }
   return transformExpr(target, foreignParam, allocator, outerLets);
@@ -11409,6 +12491,12 @@ function transformExpr(expr, foreignParam, allocator, outerLets) {
   const classified = classifyPath(expr, foreignParam, outerLets, allocator.enclosingParams);
   if (classified !== null) {
     if (classified.kind === "local") {
+      if (classified.segments.length === 0) {
+        throw new CodegenError(
+          `Bare '$' (the whole outer document) can't be used as a value in a $lookup predicate \u2014 reference a specific field with '$.<field>' (e.g. '$.userId').`,
+          expr.pos
+        );
+      }
       const letVar = allocator.enclosingParams.length > 0 ? allocator.allocateRootField(classified.segments) : allocator.allocateForLocalPath(classified.segments);
       return { type: "ParamRef", name: letVar, pos: expr.pos };
     }
@@ -11798,6 +12886,21 @@ function peelableTerminalMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return null;
   const arg = m.args[0];
   if (arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0) return arg;
+  if (arg.type === "Lambda" && arg.block !== void 0 && arg.ret !== void 0 && arg.ret.type !== "ObjectLiteral") {
+    const stmts = arg.block.stmts;
+    if (stmts.length === 0) {
+      return { type: "Lambda", params: arg.params, body: arg.ret, pos: arg.pos };
+    }
+    if (stmts.every((s) => s.type === "LetDecl")) {
+      return {
+        type: "Lambda",
+        params: arg.params,
+        exprBlock: { type: "ExprBlock", decls: stmts, ret: arg.ret, pos: arg.block.pos },
+        pos: arg.pos
+      };
+    }
+    return arg;
+  }
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
     return fieldPathLambda(arg.value, arg.pos);
   }
@@ -11807,12 +12910,67 @@ function isValueCollapsingMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return false;
   const arg = m.args[0];
   if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
-  return arg.type === "Lambda" && arg.block === void 0 && arg.body !== void 0 && arg.body.type !== "ObjectLiteral";
+  if (arg.type !== "Lambda") return false;
+  if (arg.block === void 0 && arg.body !== void 0) return arg.body.type !== "ObjectLiteral";
+  if (arg.block !== void 0 && arg.ret !== void 0) return arg.ret.type !== "ObjectLiteral";
+  return false;
 }
 function isCollapsingTerminal(m) {
   if (m.method === "countBy" || m.method === "keyBy") return true;
   if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
   return false;
+}
+function chainFilterLambda(m) {
+  const rejectHint = m.method === "reject" ? `, a matches-object ('{ active: true }'), a field name, or a ["field", value] pair` : "";
+  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+    throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => \u2026')${rejectHint}.`, m.pos);
+  }
+  const arg = m.args[0];
+  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+  if (base === null || base.params.length !== 1) {
+    throw new CodegenError(
+      `.${m.method}(<predicate>) takes a single-parameter arrow ('o => \u2026')${rejectHint}.`,
+      arg.pos
+    );
+  }
+  if (m.method === "reject") {
+    if (base.body === void 0) {
+      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => \u2026').`, base.pos);
+    }
+    return {
+      type: "Lambda",
+      params: base.params,
+      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
+      pos: base.pos
+    };
+  }
+  return base;
+}
+function lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing) {
+  const lambda = chainFilterLambda(m);
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing);
+  return { letVars, stages: pipelineBody };
+}
+function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, allocSlot, enclosing, innerCtx, pipelineBody, letVars) {
+  for (let i = start; i < chainEnd; i++) {
+    const m = methods[i];
+    if (m.method === "filter" || m.method === "reject") {
+      const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing);
+      Object.assign(letVars, fLets);
+      pipelineBody.push(...stages);
+      continue;
+    }
+    const def = lookupStreamMethod(m.method);
+    if (def === null) continue;
+    def.validate(m.args, m.pos);
+    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
+    if (result.replacesPreviousStage) pipelineBody.pop();
+    pipelineBody.push(...result.stages);
+    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
+  }
+}
+function isPeelableChainMethod(name) {
+  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
 }
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
@@ -11823,53 +12981,81 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     cur = cur.object;
   }
   methods.reverse();
-  if (methods.length < 2) return null;
+  if (methods.length === 0) return null;
   const head = methods[0];
   const direct = detectLookupCall(head, outerCtx);
-  if (direct === null) return null;
-  if (direct.method !== "filter") {
-    if (direct.method === "find" && methods.length > 1) {
-      const next = methods[1];
-      const fam = requiredReceiverFamily(next.method);
-      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
-        throw new CodegenError(
-          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
-          next.pos
-        );
+  let target;
+  let start;
+  const seedLetVars = {};
+  const seedPipeline = [];
+  if (direct !== null) {
+    if (direct.method !== "filter") {
+      if (direct.method === "find" && methods.length > 1) {
+        const next = methods[1];
+        const fam = requiredReceiverFamily(next.method);
+        if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+          throw new CodegenError(
+            `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+            next.pos
+          );
+        }
       }
+      return null;
     }
-    return null;
-  }
-  for (let i = 1; i < methods.length; i++) {
-    if (lookupStreamMethod(methods[i].method) === null) return null;
+    if (methods.length < 2) return null;
+    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
+    Object.assign(seedLetVars, seed.letVars);
+    seedPipeline.push(...seed.pipelineBody);
+    target = { db: direct.db, collection: direct.collection, pos: direct.pos };
+    start = 1;
+  } else {
+    const t = extractLookupTarget(cur, outerCtx);
+    if (t === null) return null;
+    if (!isPeelableChainMethod(head.method)) return null;
+    target = t;
+    start = 0;
   }
   const terminalMap = peelableTerminalMap(methods[methods.length - 1]);
   const chainEnd = terminalMap !== null ? methods.length - 1 : methods.length;
-  for (let i = 1; i < chainEnd; i++) {
+  if (terminalMap !== null && chainEnd >= 1 && isCollapsingTerminal(methods[chainEnd - 1])) {
+    const collapser = methods[chainEnd - 1].method;
+    throw new CodegenError(
+      `'.map(...)' can't follow '.${collapser}(...)' on '$$$.${target.collection}' \u2014 '.${collapser}' returns a single object, not an array. Drop the '.map', or map over the object's values with a value-mode expression on the assigned field.`,
+      methods[methods.length - 1].pos
+    );
+  }
+  for (let i = start; i < chainEnd; i++) {
+    if (!isPeelableChainMethod(methods[i].method)) return null;
+  }
+  for (let i = start; i < chainEnd; i++) {
     if (isValueCollapsingMap(methods[i])) return null;
   }
-  const { letVars, pipelineBody } = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
-  const usesRootLen = methods.slice(1, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
+  const letVars = { ...seedLetVars };
+  const pipelineBody = [...seedPipeline];
+  const usesRootLen = methods.slice(start, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   const innerCtx = {
     ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
     enclosingLookup: enclosing,
     pipelineLets: outerCtx.pipelineLets
   };
-  for (let i = 1; i < chainEnd; i++) {
-    const m = methods[i];
-    const def = lookupStreamMethod(m.method);
-    if (def === null) return null;
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
-    if (result.replacesPreviousStage) pipelineBody.pop();
-    pipelineBody.push(...result.stages);
-    if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
-  }
+  peelForeignChain(
+    methods,
+    start,
+    chainEnd,
+    outerCtx,
+    lowerBlock2,
+    allocSlot,
+    enclosing,
+    innerCtx,
+    pipelineBody,
+    letVars
+  );
   const slot = allocSlot();
-  const from = requireSameDbColl(direct.db, direct.collection, direct.pos);
+  const from = requireSameDbColl(target.db, target.collection, target.pos);
   const slotRef = { type: "FieldRef", path: slot, pos: expr.pos };
   const rewritten = terminalMap !== null ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos } : slotRef;
-  const stages = [{ $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } }];
+  const lookupBody = direct === null && Object.keys(letVars).length === 0 ? { from, pipeline: pipelineBody, as: slot } : { from, let: letVars, pipeline: pipelineBody, as: slot };
+  const stages = [{ $lookup: lookupBody }];
   if (isCollapsingTerminal(methods[methods.length - 1])) {
     stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
   }
@@ -13519,8 +14705,25 @@ function lowerStreamReject(m, ctx, lowerBlockFn) {
   const negated = { type: "Lambda", params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
   return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
 }
+function chainHasCorrelatingFilter(methods, outerCtx) {
+  for (const m of methods) {
+    if (m.method !== "filter" && m.method !== "reject") continue;
+    if (m.args.length !== 1 || m.args[0].type === "SpreadElement") continue;
+    const arg = m.args[0];
+    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+    if (lambda !== null && predicateReferencesOuterDoc(lambda, outerCtx)) return true;
+  }
+  return false;
+}
 function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSlot, rhs) {
-  if (methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda" && predicateReferencesOuterDoc(methods[0].args[0], outerCtx)) {
+  const collapsingMap = methods.find(isValueCollapsingMap);
+  if (collapsingMap !== void 0) {
+    throw new CodegenError(
+      `'.map(...)' in a '$$ = $$$.<coll>.\u2026' stream must return a DOCUMENT \u2014 the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ \u2026 }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.\u2026map(...)'.`,
+      collapsingMap.pos
+    );
+  }
+  if (chainHasCorrelatingFilter(methods, outerCtx)) {
     return lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot);
   }
   const switchDesc = target.db !== void 0 ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
@@ -13529,18 +14732,16 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) }
   };
   const inner = [];
-  let i = 0;
-  if (methods[0].method === "filter") {
-    const m = methods[0];
-    if (m.args.length !== 1 || m.args[0].type !== "Lambda") {
-      rejectInvalidReplaceStream(rhs, outerCtx);
-    }
-    const matchStages = lowerStreamFilterPredicate(m.args[0], innerCtx, lowerBlockFn);
-    inner.push(...matchStages);
-    i = 1;
-  }
-  for (; i < methods.length; i++) {
+  for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (m.method === "filter") {
+      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
+      continue;
+    }
+    if (m.method === "reject") {
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn));
+      continue;
+    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
@@ -13564,27 +14765,21 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
   return { stages, clearLets: true };
 }
 function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
-  const filterMethod = methods[0];
-  const restMethods = methods.slice(1);
-  const collapsing = restMethods.find(isValueCollapsingMap);
-  if (collapsing !== void 0) {
-    throw new CodegenError(
-      `'.map(...)' in a '$$ = $$$.<coll>.filter(...)' pivot must return a DOCUMENT \u2014 the mapped result becomes the new document stream, which can't hold bare scalars/arrays. Reshape into a document with '.map(o => ({ \u2026 }))', or collect the values into a field via assignment: '$.<field> = $$$.<coll>.filter(...).map(...)'.`,
-      collapsing.pos
-    );
+  for (const m of methods) {
+    if (m.method === "filter" || m.method === "reject") continue;
+    if (lookupStreamMethod(m.method) === null) throw unknownStreamMethod(m, "$$$.<coll>");
   }
-  const lambda = filterMethod.args[0];
   const slot = allocSlot();
   const from = requireSameDbColl(target.db, target.collection, target.pos);
   let lookupStage2;
-  if (restMethods.length === 0) {
+  if (methods.length === 1 && methods[0].method === "filter" && methods[0].args.length === 1 && methods[0].args[0].type === "Lambda") {
     const fakeCall = {
-      pos: filterMethod.pos,
-      callPos: filterMethod.pos,
+      pos: methods[0].pos,
+      callPos: methods[0].pos,
       db: target.db,
       collection: target.collection,
       method: "filter",
-      lambda
+      lambda: methods[0].args[0]
     };
     const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
     if (pred.kind === "basic") {
@@ -13593,27 +14788,28 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
       lookupStage2 = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
     }
   } else {
-    const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlockFn);
-    const usesRootLen = restMethods.some((m) => argsReadRootStreamLength(m.args));
+    const letVars = {};
+    const pipelineBody = [];
+    const usesRootLen = methods.some((m) => argsReadRootStreamLength(m.args));
     const innerCtx = {
       ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
       pipelineLets: outerCtx.pipelineLets,
-      // Signal "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes
-      // through `lowerCallbackBlock` and captures cross-level reads into THIS
-      // lookup's `let` — unlike a flat `$unionWith`, which leaves it unset.
+      // "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes through
+      // `lowerCallbackBlock` and captures cross-level reads into THIS lookup's `let`.
       enclosingLookup: EMPTY_ENCLOSING
     };
-    for (const m of restMethods) {
-      const def = lookupStreamMethod(m.method);
-      if (def === null) {
-        throw unknownStreamMethod(m, "$$$.<coll>");
-      }
-      def.validate(m.args, m.pos);
-      const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, pipelineBody, allocSlot, true);
-      if (result.replacesPreviousStage) pipelineBody.pop();
-      pipelineBody.push(...result.stages);
-      if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
-    }
+    peelForeignChain(
+      methods,
+      0,
+      methods.length,
+      outerCtx,
+      lowerBlockFn,
+      allocSlot,
+      EMPTY_ENCLOSING,
+      innerCtx,
+      pipelineBody,
+      letVars
+    );
     lookupStage2 = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
   }
   return { stages: [lookupStage2, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
@@ -13657,7 +14853,7 @@ Pick the wrap shape that matches what your reducer would return in plain JS.`,
   const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
   const pushNote = isStream ? ` ('.push(...)' appends documents as a statement \u2192 $unionWith.)` : "";
   return new CodegenError(
-    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} The chain head may be '.filter(<predicate>)'; subsequent methods must come from the stream-method registry: ${list}.${pushNote}`,
+    `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', ${list}.${pushNote}`,
     m.pos
   );
 }
@@ -13726,12 +14922,12 @@ function rejectInvalidReplaceStream(value, ctx) {
   }
   if (value.type === "CollectionRef" || value.type === "DatabaseRef") {
     throw new CodegenError(
-      `'$$ = \u2026' RHS must call '.filter(<predicate>)'. Write '$$.filter(o => \u2026)' to narrow the current stream or '$$$.<coll>.filter(o => \u2026)' to switch source.`,
+      `'$$ = \u2026' RHS must call a stream method. Write '$$.filter(o => \u2026)' to narrow the current stream or '$$$.<coll>.filter(o => \u2026)' to switch source. Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.`,
       value.pos
     );
   }
   throw new CodegenError(
-    `'$$ = \u2026' RHS must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).`,
+    `'$$ = \u2026' RHS must be '$$.<streamMethod>\u2026' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>\u2026' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSorted', '.take'); a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.`,
     value.pos
   );
 }
@@ -14126,6 +15322,79 @@ function stagePreservesStreamLength(stage) {
   return keys.length === 1 && STREAM_LENGTH_PRESERVING.has(keys[0]);
 }
 
+// src/const-fold.ts
+function foldedValueType(v) {
+  if (typeof v === "string") return "string";
+  if (Array.isArray(v)) return "array";
+  if (v !== null && typeof v === "object" && !isOpaqueBsonValue(v)) return "object";
+  return void 0;
+}
+function isExprStmt(stmt) {
+  return stmt.type !== "UpdateFilter" && stmt.type !== "LetDecl" && stmt.type !== "FuncDecl";
+}
+function collectExcluded(stmts, ctx) {
+  const declCounts = /* @__PURE__ */ new Map();
+  const excluded = /* @__PURE__ */ new Set();
+  for (const stmt of stmts) {
+    if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
+      declCounts.set(stmt.name, (declCounts.get(stmt.name) ?? 0) + 1);
+    } else if (stmt.type === "UpdateFilter") {
+      for (const op of stmt.ops) {
+        if (op.type === "AssignExpr" && op.target.type === "ParamRef") excluded.add(op.target.name);
+      }
+    } else if (stmt.type === "ObjectCall" && stmt.method === "assign") {
+      const target = stmt.args[0];
+      if (target && target.type === "ParamRef") excluded.add(target.name);
+    } else if (stmt.type === "MethodCall" && MUTATING_ARRAY_METHODS.has(stmt.method) && stmt.object.type === "ParamRef") {
+      excluded.add(stmt.object.name);
+    }
+  }
+  for (const [name, count] of declCounts) {
+    if (count > 1) excluded.add(name);
+  }
+  if (ctx.bindings) {
+    for (const name of ctx.bindings.keys()) excluded.add(name);
+  }
+  return excluded;
+}
+function foldProgram(ast, ctx) {
+  if (ast.type !== "Pipeline") return { ast, ctx };
+  const excluded = collectExcluded(ast.stmts, ctx);
+  const folded = /* @__PURE__ */ new Map();
+  const survivors = [];
+  for (const stmt of ast.stmts) {
+    if (stmt.type === "LetDecl" && !excluded.has(stmt.name)) {
+      const r = evalConst(stmt.value, folded, ctx);
+      if (r.ok) {
+        folded.set(stmt.name, r.value);
+        continue;
+      }
+    }
+    survivors.push(stmt);
+  }
+  if (folded.size === 0) return { ast, ctx };
+  const merged = new Map(ctx.bindings ?? []);
+  const mergedTypes = new Map(ctx.bindingTypes ?? []);
+  for (const [name, value] of folded) {
+    merged.set(name, value);
+    const t = foldedValueType(value);
+    if (t) mergedTypes.set(name, t);
+  }
+  let ctx2 = withBindings(ctx, merged);
+  if (mergedTypes.size > 0) ctx2 = { ...ctx2, bindingTypes: mergedTypes };
+  if (survivors.length === 0) {
+    const last = ast.stmts[ast.stmts.length - 1];
+    throw new CodegenError(
+      "A `const`/`let` declaration on its own produces no query \u2014 nothing reads the constant. Add a statement that uses it (a predicate, or a stage like `$match(...)`), or remove the declaration.",
+      last.pos
+    );
+  }
+  if (survivors.length === 1 && isExprStmt(survivors[0])) {
+    return { ast: survivors[0], ctx: ctx2 };
+  }
+  return { ast: { type: "Pipeline", stmts: survivors, pos: ast.pos }, ctx: ctx2 };
+}
+
 // src/index.ts
 var JsmqlInterpolationError = class extends Error {
   constructor(message, slot, key) {
@@ -14381,6 +15650,7 @@ function lowerProgram(ast, ctx, lowerExpr) {
   return lowerExpr(ast, ctx);
 }
 function lowerWithCtx(ast, ctx) {
+  ({ ast, ctx } = foldProgram(ast, ctx));
   if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && (detectStageIntent(ast) !== null || isAssertCall(ast))) {
     const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
@@ -14421,12 +15691,14 @@ function lowerWithCtx(ast, ctx) {
   return result;
 }
 function lowerExprWithCtx(ast, ctx) {
+  ({ ast, ctx } = foldProgram(ast, ctx));
   rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
   rejectOutOutsidePipeline(ast, "jsmql.expr");
   return lowerProgram(ast, ctx, (e, c) => generateWithCtx(e, { ...c, aggExpr: true }));
 }
 function lowerFilterStrict(ast, ctx) {
+  ({ ast, ctx } = foldProgram(ast, ctx));
   rejectLookupOutsidePipeline(ast, "jsmql.filter", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.filter");
   rejectOutOutsidePipeline(ast, "jsmql.filter");
@@ -14518,6 +15790,7 @@ function rejectOutOutsidePipeline(ast, apiName) {
   }
 }
 function lowerToPipelineStages(ast, ctx, apiName) {
+  ({ ast, ctx } = foldProgram(ast, ctx));
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
   if (ast.type === "UpdateFilter") {
     if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast) || containsStreamLength(ast)) {

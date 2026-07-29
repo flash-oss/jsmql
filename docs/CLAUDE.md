@@ -35,7 +35,8 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/filter-mode.md` | No-semicolon top-level dispatch: a bare expression → a Filter document |
 | `specs/match-query-translation.md` | The `$match`/Filter expression-body → query-language translator |
 | `specs/update-filter.md` | Assignment + `delete` statements → `$set` / `$unset` stages |
-| `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`) |
+| `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`) → runtime `$set` binding |
+| `specs/const-folding.md` | Compile-time-constant `const`/`let` folded to inlined values (the compile-time counterpart to let-bindings) |
 | `specs/reusable-functions.md` | Reusable named functions (`const f = (a) => …`) → inline IIFE/`$let` per call |
 | `specs/function-form-params.md` | `jsmql.compile(fn)` parameter bindings: the two-slot `(params, { $, … })` arrow signature |
 | `specs/ops-generation.md` | How `src/ops.ts` (`@koresar/jsmql/ops`) is generated + its drift test |

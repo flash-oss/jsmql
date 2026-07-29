@@ -55,8 +55,10 @@ describe("let bindings — basic shape", () => {
 
   it("a let used inside a method-call lambda body resolves correctly", () => {
     // The lambda parameter shadows nothing in this case — `tax` is the let.
-    expect(jsmql("let tax = 0.2; $project({ totals: $.items.map(x => x.price * (1 + tax)) })")).toEqual([
-      { $set: { "__jsmql.var.tax": 0.2 } },
+    // (Runtime RHS `$.rate` so it stays a `$set` binding; a constant RHS would
+    // fold — see the const-folding suite.)
+    expect(jsmql("let tax = $.rate; $project({ totals: $.items.map(x => x.price * (1 + tax)) })")).toEqual([
+      { $set: { "__jsmql.var.tax": "$rate" } },
       {
         $project: {
           totals: {
@@ -171,9 +173,11 @@ describe("let bindings — context rules", () => {
     expect(() => jsmql("let x = 5")).toThrow(/only valid inside a pipeline/);
   });
 
-  it("a single let with trailing `;` is valid (pipeline of one binding + auto-unset)", () => {
-    // Useless but legal — the parser flips to pipeline mode at the `;`.
-    expect(jsmql("let x = 5;")).toEqual([{ $set: { "__jsmql.var.x": 5 } }, { $unset: "__jsmql" }]);
+  it("a single runtime let with trailing `;` is valid (pipeline of one binding + auto-unset)", () => {
+    // Useless but legal — the parser flips to pipeline mode at the `;`. Runtime
+    // RHS (`$.a`) so it stays a `$set`; a constant `const x = 5;` on its own
+    // instead errors (nothing reads it — see the const-folding suite).
+    expect(jsmql("let x = $.a;")).toEqual([{ $set: { "__jsmql.var.x": "$a" } }, { $unset: "__jsmql" }]);
   });
 
   it("`let` is rejected as a value-array element", () => {
@@ -215,10 +219,12 @@ describe("let bindings — sub-pipeline boundaries", () => {
   });
 
   it("outer lets are NOT visible inside a sub-pipeline", () => {
-    // The outer `cutoff` doesn't reach into the $lookup pipeline.
+    // The outer `cutoff` doesn't reach into the $lookup pipeline. (Runtime RHS
+    // `$.start`, so it's a per-document `$set` binding — those don't cross a
+    // sub-pipeline boundary; a compile-time constant would inline everywhere.)
     expect(() =>
       jsmql(`
-        let cutoff = "2026-01-01";
+        let cutoff = $.start;
         $lookup({
           from: "orders",
           pipeline: [ $match($.createdAt > cutoff) ],
@@ -290,36 +296,23 @@ describe("let bindings — parser errors", () => {
 // ── Various RHS expression types ──────────────────────────────────────────────
 
 describe("let bindings — RHS expression coverage", () => {
-  it("number literal RHS", () => {
-    expect(jsmql("let n = 42; $project({ n })")).toEqual([
-      { $set: { "__jsmql.var.n": 42 } },
-      { $project: { n: "$__jsmql.var.n" } },
-      { $unset: "__jsmql" },
-    ]);
+  // A pure-literal RHS is a compile-time constant, so it folds and inlines
+  // (no `$set`/`$unset`) instead of materialising a runtime binding. See the
+  // const-folding suite for the full surface.
+  it("number literal RHS folds and inlines", () => {
+    expect(jsmql("let n = 42; $project({ n })")).toEqual([{ $project: { n: 42 } }]);
   });
 
-  it("string literal RHS", () => {
-    expect(jsmql('let s = "active"; $project({ s })')).toEqual([
-      { $set: { "__jsmql.var.s": "active" } },
-      { $project: { s: "$__jsmql.var.s" } },
-      { $unset: "__jsmql" },
-    ]);
+  it("string literal RHS folds and inlines", () => {
+    expect(jsmql('let s = "active"; $project({ s })')).toEqual([{ $project: { s: "active" } }]);
   });
 
-  it("boolean literal RHS", () => {
-    expect(jsmql("let flag = true; $project({ flag })")).toEqual([
-      { $set: { "__jsmql.var.flag": true } },
-      { $project: { flag: "$__jsmql.var.flag" } },
-      { $unset: "__jsmql" },
-    ]);
+  it("boolean literal RHS folds and inlines", () => {
+    expect(jsmql("let flag = true; $project({ flag })")).toEqual([{ $project: { flag: true } }]);
   });
 
-  it("null literal RHS", () => {
-    expect(jsmql("let nothing = null; $project({ nothing })")).toEqual([
-      { $set: { "__jsmql.var.nothing": null } },
-      { $project: { nothing: "$__jsmql.var.nothing" } },
-      { $unset: "__jsmql" },
-    ]);
+  it("null literal RHS folds and inlines", () => {
+    expect(jsmql("let nothing = null; $project({ nothing })")).toEqual([{ $project: { nothing: null } }]);
   });
 
   it("BigInt literal RHS — coerced through $toLong like elsewhere", () => {
@@ -502,11 +495,12 @@ describe("let bindings — multi-stage visibility", () => {
   });
 
   it("ten independent lets produce ten $set stages and one trailing $unset", () => {
-    const src = Array.from({ length: 10 }, (_, i) => `let v${i} = ${i};`).join(" ") + " $match($.a > 0)";
+    // Runtime RHS (`$.f<i>`) so each stays a `$set`; constant RHS would fold.
+    const src = Array.from({ length: 10 }, (_, i) => `let v${i} = $.f${i};`).join(" ") + " $match($.a > 0)";
     const result = jsmql(src) as object[];
     expect(result).toHaveLength(12); // 10 $set + 1 $match + 1 $unset
-    expect(result[0]).toEqual({ $set: { "__jsmql.var.v0": 0 } });
-    expect(result[9]).toEqual({ $set: { "__jsmql.var.v9": 9 } });
+    expect(result[0]).toEqual({ $set: { "__jsmql.var.v0": "$f0" } });
+    expect(result[9]).toEqual({ $set: { "__jsmql.var.v9": "$f9" } });
     expect(result[10]).toEqual({ $match: { a: { $gt: 0 } } });
     expect(result[11]).toEqual({ $unset: "__jsmql" });
   });
@@ -526,8 +520,9 @@ describe("let bindings — multi-stage visibility", () => {
 
 describe("let bindings — lambda interaction", () => {
   it("a let is visible inside a .map() lambda body and resolves to a field path", () => {
-    expect(jsmql("let mult = 1.5; $project({ adj: $.items.map(x => x * mult) })")).toEqual([
-      { $set: { "__jsmql.var.mult": 1.5 } },
+    // Runtime RHS keeps it a `$set` binding (a constant would fold).
+    expect(jsmql("let mult = $.rate; $project({ adj: $.items.map(x => x * mult) })")).toEqual([
+      { $set: { "__jsmql.var.mult": "$rate" } },
       { $project: { adj: { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$__jsmql.var.mult"] } } } } },
       { $unset: "__jsmql" },
     ]);
@@ -535,9 +530,9 @@ describe("let bindings — lambda interaction", () => {
 
   it("a let is visible inside .filter() and .reduce() lambdas", () => {
     expect(
-      jsmql("let cutoff = 50; $project({ big: $.scores.filter(s => s > cutoff).reduce((acc, s) => acc + s, 0) })"),
+      jsmql("let cutoff = $.min; $project({ big: $.scores.filter(s => s > cutoff).reduce((acc, s) => acc + s, 0) })"),
     ).toEqual([
-      { $set: { "__jsmql.var.cutoff": 50 } },
+      { $set: { "__jsmql.var.cutoff": "$min" } },
       {
         $project: {
           big: {
@@ -554,8 +549,9 @@ describe("let bindings — lambda interaction", () => {
   });
 
   it("a lambda param of the same name shadows the let inside the lambda body only", () => {
-    expect(jsmql("let i = 10; $project({ a: $.xs.map(i => i + 1), b: i })")).toEqual([
-      { $set: { "__jsmql.var.i": 10 } },
+    // Runtime RHS keeps it a `$set` binding (a constant would fold).
+    expect(jsmql("let i = $.start; $project({ a: $.xs.map(i => i + 1), b: i })")).toEqual([
+      { $set: { "__jsmql.var.i": "$start" } },
       { $project: { a: { $map: { input: "$xs", as: "i", in: { $add: ["$$i", 1] } } }, b: "$__jsmql.var.i" } },
       { $unset: "__jsmql" },
     ]);
@@ -646,9 +642,10 @@ describe("let bindings — `let` is still usable as a field name and operator na
 
   it("the pipeline-level `let` and a deeper $let-operator with same var name coexist", () => {
     // Pipeline let `x` materialises as `__jsmql.var.x`; the MongoDB $let var `x`
-    // is a user-variable `$$x` — different namespaces, no collision.
-    expect(jsmql("let x = 5; $project({ y: $let({ x: 10 }, x => x * 2), z: x })")).toEqual([
-      { $set: { "__jsmql.var.x": 5 } },
+    // is a user-variable `$$x` — different namespaces, no collision. (Runtime
+    // RHS so the pipeline `let` stays a `$set` binding; a constant would fold.)
+    expect(jsmql("let x = $.n; $project({ y: $let({ x: 10 }, x => x * 2), z: x })")).toEqual([
+      { $set: { "__jsmql.var.x": "$n" } },
       { $project: { y: { $let: { vars: { x: 10 }, in: { $multiply: ["$$x", 2] } } }, z: "$__jsmql.var.x" } },
       { $unset: "__jsmql" },
     ]);
