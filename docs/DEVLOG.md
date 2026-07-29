@@ -10,19 +10,55 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-07-27 — fix: statement-position `.pop()` / `.shift()` emit a valid `$slice` on empty/short arrays
+## 2026-07-27 — feat(lookup): any lodash stream method may start a `$$$.<coll>` chain
 
-`$.field.pop()` and `$.field.shift()` (the statement-position array mutators, lowered by `tryRewriteMutatorCall` in [src/codegen.ts](src/codegen.ts)) emitted a 3-arg `$slice` whose count could be 0: `.pop()` → `$slice:[arr, 0, max(0, size-1)]` and `.shift()` → `$slice:[arr, 1, $size(arr)]`. MongoDB rejects a 3-arg `$slice` count of 0 **at runtime**, not only during constant-folding ("Third argument to $slice must be positive: 0") — so both threw on an empty array, and `.pop()` also threw on a single-element array. A comment even claimed the `$max` clamp made `.pop()` safe; it did the opposite (it produced the 0). Pre-existing HR3 violation, found while fixing the value-mode `.slice` lowering (same count-0 class).
+A cross-collection chain no longer has to begin with `.find` / `.filter` / `.aggregate`. Any registered
+stream method may head a `$$$.<coll>` chain (`$$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o => …)`),
+and `.filter` / `.reject` may now appear at **any** position, each lowering to a sub-pipeline `$match`. The whole
+chain lowers, in source order, into one `$lookup.pipeline`, so `.toSorted(k).take(n).filter(p)` emits
+`[$sort, $limit, $match]` — sort/limit *before* the filter, a result the old filter-first surface simply
+couldn't express. This is a **parity fix**: the `$$` current-stream chain already allowed any method (and a
+`.filter` anywhere); the foreign-collection paths just hadn't caught up.
 
-The fix reuses shapes already proven correct elsewhere in the file: `.pop()` (= `.slice(0, -1)`) now lowers like `.initial()` — the **2-arg** `$slice:[arr, max(0, size-1)]`, whose count IS allowed to be 0 (→ `[]`) — and `.shift()` (= `.slice(1)`) lowers like `.tail()`/`.drop(1)` with count `max(1, $size(arr))`, never 0 (an empty receiver is `$slice:[[], 1, 1]` → `[]`, position past the end). Verified against a live `mongod` across empty, single-element, and multi-element arrays, and locked in with a new [test/integration.test.ts](test/integration.test.ts) case that runs both over the fixture users' `tags` (which include `[]`, `["vip"]`, and two-element arrays). Docs in [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md) and [docs/LANGUAGE.md](docs/LANGUAGE.md) updated to the corrected shapes.
+**Why this shape.** The value-position assembler ([tryExtractChainedLookup](../src/lookup-translation.ts)) and
+the `$$ =` correlated pivot ([lowerLookupPivot](../src/pipeline.ts)) now share one exported peeler,
+`peelForeignChain`: `.filter`/`.reject` route through `buildPipelineFormPredicate` (hoisting `$.<field>` into
+`$lookup.let`, exactly as a head `.filter` does — so a correlating filter anywhere works), and every other
+method dispatches through the existing stream-method registry. A stream-method head with no `$.` correlation
+emits the lean `{ from, pipeline, as }` (no empty `let`), matching the `.aggregate` shape; `validateLookupShape`
+was relaxed to accept stream-method heads and only reject a genuinely unknown method (`.fnid`). For `$$ =`,
+`lowerChainOnCollection` now dispatches source-switch-vs-pivot on `chainHasCorrelatingFilter` — a correlating
+`.filter`/`.reject` *anywhere* in the chain — generalising the old head-only `predicateReferencesOuterDoc` check.
 
----
+**Two footgun guards kept, one behaviour change.** Correlation arriving *only* through a non-filter method (a
+`.map`/`.aggregate` reading `$.` with no correlating filter) stays rejected in the `$$ =` source-switch — without
+a filter to bound the foreign set it is a cross-join, and the "correlate with a `.filter`" guidance is better DX
+than silently emitting a Cartesian product. The pivot pre-validates every method so a value-terminal (`.head`/`.size`)
+is rejected, never dropped. The one deliberate output change (developer-approved): a previously-accepted
+`$.x = $$$.coll.filter(p1).filter(p2)` moves from `$lookup` + value-mode `$filter` to a single `$lookup` with
+`[$match, $match]` — leaner and consistent. All four forms (value binding, field assignment, source-switch,
+correlated pivot) were verified end-to-end on a live `mongod` (chain-order + correlation), including the exact
+`sort→take→filter ≠ filter-first` distinction. See [docs/specs/lookup-stage.md](specs/lookup-stage.md) §
+"Any lodash stream method may head the chain" and [docs/LANGUAGE.md](LANGUAGE.md#cross-collection-lookups-coll-find--filter).
 
-## 2026-07-27 — fix: value-mode array `.slice(start, end?)` now matches `Array.prototype.slice`
-
-The value/expression-mode lowering of array `.slice` in [src/codegen.ts](src/codegen.ts) (`sliceArray`) had been passing the JS args straight into MQL `$slice` — but the two operators disagree. JS `.slice(start, end)` takes **indices** with an **exclusive end**; MQL `$slice` is position + **count**. So `[1,2,3,4,5].slice(1)` returned `[1]` on the server (MQL's "first 1") instead of JS's `[2,3,4,5]`, and `.slice(1, 3)` returned three elements from index 1 instead of the two at indices 1–2. `.slice(0)` even lowered to `$slice:[arr,0]` → `[]` (MQL "first 0") rather than a whole-array copy. Only single-arg negative literals (`.slice(-2)`) happened to agree, because MQL's 2-arg negative form *is* "last n". This was a pre-existing bug, surfaced by the const-folding branch's mongod-consistency gate.
-
-The fix resolves both indices the way the ECMAScript algorithm does — negatives count from the end, positives clamp to the length, `end` is exclusive — and translates to `$slice` with a computed count. Common shapes stay lean: `.slice(-n)` → 2-arg `$slice`; `.slice(0)` → the receiver unchanged; `.slice(0, end)` → the count-tolerant 2-arg "first end"; `.slice(a, b)` for non-negative literals → `$slice:[arr, a, b-a]` (or `[]` when `b <= a`). A negative-`end` or runtime index falls to a general `$let` form that resolves both indices against `$size` and guards the empty range with `$cond` (→ `[]`). Two MongoDB constraints shaped the output, both confirmed against a live `mongod`: the 3-arg `$slice` count must be **> 0** even at runtime (so the guard returns a bare `[]`, and the general form's own count is emitted as `max(count, 1)` so a *constant-array* receiver stays foldable by the optimizer instead of hitting a rejected 0-count `$slice`), while the 2-arg form tolerates a 0 count. The **stream-mode** `.slice` (`$$ = $$.slice(a, b)` → `$skip`/`$limit`) was already index-based and is untouched; string `.slice` (`$substrCP`) was already correct. Verified end-to-end with a new [test/integration.test.ts](test/integration.test.ts) case and an exhaustive `Array.prototype.slice`-vs-`mongod` diff over positive/negative/zero/out-of-range/runtime indices across empty and short arrays. Also corrected two now-wrong doc examples: `.slice(0)` and `.reverse()` were listed as type-pinning idioms in [docs/LANGUAGE.md](docs/LANGUAGE.md) but the former is now a no-op (never pinned) and the latter is rejected at expression position — both replaced with `.toReversed()`.
+An adversarial review of this change (find inputs → verify each against `mongod`) surfaced eight bugs it fixed in
+the same commit — most pre-existing HR3 holes the wider surface now exercises: a correlated matches-object filter
+(`$$ = $$$.orders.filter({ userId: $._id })`) silently miscompiled to a query-literal `$unionWith` (the
+correlation dispatch now normalises shorthands via `shorthandToLambda`); a block-body value-extracting `.map`
+(`o => { return o.total }`) and a value-collapsing `.map` in the source-switch emitted a scalar `$replaceWith`.
+The structural "non-`ObjectLiteral` result ⇒ value-collapsing" rule was extended to block bodies in
+`isValueCollapsingMap`/`peelableTerminalMap`, and a single `$$ =` value-collapsing guard now covers both
+source-switch and pivot. Rather than merely reject the block form, `peelableTerminalMap` **normalises** a
+stage-less stream `.map` block back to its value form — `{ return <expr> }` → an expression arrow, a `const`/`let`
+-only block → an `ExprBlock` (`$let`) — so `.map(o => { return o.total })` is now byte-identical to
+`.map(o => o.total)` and to the same block on an in-document array (closing a JS-subset inconsistency: identical
+JS was accepted on `$.items` but rejected on `$$$.orders`). Only a block with real *stages* returning a
+non-document stays rejected (a scalar reshape after stages is genuinely invalid). `.slice(a, a)` emitted the
+server-rejected `$limit: 0` (now `$match: { $expr: false }`, mirroring `.take(0)`); a `.map` after an
+object-collapsing `.countBy`/`.keyBy` mis-assembled (now rejected like value-mode); and a lone shorthand
+`.filter({ x: 1 })` head was rejected while the chained form was accepted (now consistent). One further,
+orthogonal pre-existing bug — a `$lookup.let` var named after a hyphenated field (`jsmql_f0_sub-id`) is
+server-invalid — was left for a separate `fix:` commit (it predates this feature and lives in `namespace.ts`).
 
 ---
 
@@ -61,6 +97,8 @@ sibling of `#vars-hint`, verified still updating. [playground.html](../playgroun
 regenerated via `scripts/sync-playground.mjs`; rendering confirmed in a browser (empty,
 populated-Variables, and dynamic-hint states).
 
+---
+
 ## 2026-07-27 — fix: sanitize `$lookup.let` correlation-var names derived from outer field segments
 
 A correlated `$$$.<coll>.filter/find(...)` names its `$lookup.let` variable after the outer field's
@@ -87,6 +125,55 @@ field → safe var; the two-distinct-fields collision) and a live-fixture case i
 [test/integration.test.ts](../test/integration.test.ts) (the fixture's orders gained a nested hyphenated
 `meta["ext-id"]` field to correlate on). The var-name trap in [test/CLAUDE.md](../test/CLAUDE.md) was
 broadened from "starts with an invalid char" to "contains an invalid char anywhere".
+
+---
+
+## 2026-07-27 — fix: statement-position `.pop()` / `.shift()` emit a valid `$slice` on empty/short arrays
+
+`$.field.pop()` and `$.field.shift()` (the statement-position array mutators, lowered by `tryRewriteMutatorCall` in [src/codegen.ts](src/codegen.ts)) emitted a 3-arg `$slice` whose count could be 0: `.pop()` → `$slice:[arr, 0, max(0, size-1)]` and `.shift()` → `$slice:[arr, 1, $size(arr)]`. MongoDB rejects a 3-arg `$slice` count of 0 **at runtime**, not only during constant-folding ("Third argument to $slice must be positive: 0") — so both threw on an empty array, and `.pop()` also threw on a single-element array. A comment even claimed the `$max` clamp made `.pop()` safe; it did the opposite (it produced the 0). Pre-existing HR3 violation, found while fixing the value-mode `.slice` lowering (same count-0 class).
+
+The fix reuses shapes already proven correct elsewhere in the file: `.pop()` (= `.slice(0, -1)`) now lowers like `.initial()` — the **2-arg** `$slice:[arr, max(0, size-1)]`, whose count IS allowed to be 0 (→ `[]`) — and `.shift()` (= `.slice(1)`) lowers like `.tail()`/`.drop(1)` with count `max(1, $size(arr))`, never 0 (an empty receiver is `$slice:[[], 1, 1]` → `[]`, position past the end). Verified against a live `mongod` across empty, single-element, and multi-element arrays, and locked in with a new [test/integration.test.ts](test/integration.test.ts) case that runs both over the fixture users' `tags` (which include `[]`, `["vip"]`, and two-element arrays). Docs in [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md) and [docs/LANGUAGE.md](docs/LANGUAGE.md) updated to the corrected shapes.
+
+---
+
+## 2026-07-27 — fix: top-level bracket-accessed outer field in a correlated `$lookup` no longer emits a leading-dot field path
+
+Sibling of the same-day `$lookup.let` var-name sanitization fix, found while verifying it. A correlated
+`$$$.<coll>.find/filter(pred)` referencing a **top-level bracket-accessed** outer field —
+`$["ext-code"]` — emitted a field path with a spurious leading dot: `localField: ".ext-code"` (basic
+single-`===` form) and a `$lookup.let` value of `"$.ext-code"` (pipeline form). MongoDB rejects both
+(`Location15998`) — another HR3 violation. Root cause: the bare root `$` parses to a `FieldRef` with an
+empty path, and `classifyPath` in [src/lookup-translation.ts](../src/lookup-translation.ts) captured that
+as the segment `[""]`, so a bracket access folded to `["", "ext-code"]` → `.ext-code`. The nested form
+(`$.meta["sub-id"]`) was unaffected because its base segment is the non-empty `"meta"`.
+
+Fix: `classifyPath`'s `FieldRef` case now maps the empty-path root to **no** segment (`[]`), mirroring
+general codegen where `$["x"]` is `$x` and a lone `$` is `$$ROOT` (both keyed on `path === ""`). A bracket
+access onto the root then folds cleanly to `["ext-code"]` → `localField: "ext-code"` / value `"$ext-code"`.
+The change also surfaced that a bare `$` as a correlation **value** (`o.ref === $`) had been emitting an
+invalid empty field path (`localField: ""` / `let` value `"$"`); `transformExpr` now rejects it with an
+actionable "reference a specific field with `$.<field>`" error — the local-side mirror of the existing
+bare-foreign-param rejection. A bare `$` as a write **target** stays valid (the root-replace destination
+`$ = { … }` from an object-body `.map`): `transformTarget` resolves it to the empty-path root `FieldRef`
+before the value-side guard applies.
+
+Verified end-to-end on a live mongod: the fixed basic form is accepted and correlates selectively (driver
+whose `ext-code` matches an order's `ref` gets that order; a non-matching driver gets none), while the old
+`.ext-code` `localField` is rejected (`Location15998`). Guarded by three unit cases in
+[test/lookup.test.ts](../test/lookup.test.ts) (basic-form clean `localField`; pipeline-form clean `let`
+value + var; bare-`$` rejection) and a live-fixture case in [test/integration.test.ts](../test/integration.test.ts)
+(the fixture's orders gained a top-level hyphenated `ext-code` field to correlate on, distinct code path
+from the nested `meta["ext-id"]` field added for the var-name fix).
+
+---
+
+## 2026-07-27 — fix: value-mode array `.slice(start, end?)` now matches `Array.prototype.slice`
+
+The value/expression-mode lowering of array `.slice` in [src/codegen.ts](src/codegen.ts) (`sliceArray`) had been passing the JS args straight into MQL `$slice` — but the two operators disagree. JS `.slice(start, end)` takes **indices** with an **exclusive end**; MQL `$slice` is position + **count**. So `[1,2,3,4,5].slice(1)` returned `[1]` on the server (MQL's "first 1") instead of JS's `[2,3,4,5]`, and `.slice(1, 3)` returned three elements from index 1 instead of the two at indices 1–2. `.slice(0)` even lowered to `$slice:[arr,0]` → `[]` (MQL "first 0") rather than a whole-array copy. Only single-arg negative literals (`.slice(-2)`) happened to agree, because MQL's 2-arg negative form *is* "last n". This was a pre-existing bug, surfaced by the const-folding branch's mongod-consistency gate.
+
+The fix resolves both indices the way the ECMAScript algorithm does — negatives count from the end, positives clamp to the length, `end` is exclusive — and translates to `$slice` with a computed count. Common shapes stay lean: `.slice(-n)` → 2-arg `$slice`; `.slice(0)` → the receiver unchanged; `.slice(0, end)` → the count-tolerant 2-arg "first end"; `.slice(a, b)` for non-negative literals → `$slice:[arr, a, b-a]` (or `[]` when `b <= a`). A negative-`end` or runtime index falls to a general `$let` form that resolves both indices against `$size` and guards the empty range with `$cond` (→ `[]`). Two MongoDB constraints shaped the output, both confirmed against a live `mongod`: the 3-arg `$slice` count must be **> 0** even at runtime (so the guard returns a bare `[]`, and the general form's own count is emitted as `max(count, 1)` so a *constant-array* receiver stays foldable by the optimizer instead of hitting a rejected 0-count `$slice`), while the 2-arg form tolerates a 0 count. The **stream-mode** `.slice` (`$$ = $$.slice(a, b)` → `$skip`/`$limit`) was already index-based and is untouched; string `.slice` (`$substrCP`) was already correct. Verified end-to-end with a new [test/integration.test.ts](test/integration.test.ts) case and an exhaustive `Array.prototype.slice`-vs-`mongod` diff over positive/negative/zero/out-of-range/runtime indices across empty and short arrays. Also corrected two now-wrong doc examples: `.slice(0)` and `.reverse()` were listed as type-pinning idioms in [docs/LANGUAGE.md](docs/LANGUAGE.md) but the former is now a no-op (never pinned) and the latter is rejected at expression position — both replaced with `.toReversed()`.
+
+---
 
 ## 2026-07-24 — feat: value-mode `.countBy()` / `.groupBy()` / `.keyBy()` accept no iteratee (identity default)
 

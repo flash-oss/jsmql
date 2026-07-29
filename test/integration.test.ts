@@ -321,6 +321,22 @@ $project({ name: 1, recentOrders: 1 });`,
     expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
   });
 
+  // Correlated $lookup gating on a TOP-LEVEL bracket-accessed outer field
+  // (`$["ext-code"]`). The bare root `$` must contribute no path segment, or the
+  // emitted field path is `.ext-code` (leading dot) and mongod rejects the whole
+  // pipeline (Location15998). Distinct code path from the nested `meta["ext-id"]`
+  // case above. Only order 1 has ext-code "EC-1", so only its row keeps its
+  // shipment; every other order's `tracked` is empty.
+  it("pipeline: correlated $lookup on a top-level bracket-accessed field (no leading-dot field path)", async () => {
+    const rows = (await aggregate(
+      "orders",
+      `$.tracked = $$$.shipments.filter(s => s.orderId === $._id && $["ext-code"] === "EC-1");`,
+    )) as { _id: unknown; tracked: { _id: unknown }[] }[];
+    const withTracked = rows.filter((r) => r.tracked.length > 0);
+    expect(withTracked.map((r) => String(r._id))).toEqual([ID.order(1).toHexString()]);
+    expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
+  });
+
   // assert(cond, msg) that HOLDS for every document: the aggregate runs to
   // completion and the following stage computes normally. (realistic.test.ts
   // "guard against corrupt data before aggregating".)
