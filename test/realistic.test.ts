@@ -53,7 +53,7 @@ $match($._id === "u1");
 assert($$.length === 1, "More than one user with such ID found");
 
 const myProductIds = $$$.orders
-  .filter(o => o.userId === "u1")
+  .filter({ userId: "u1" })
   .toSorted({ createdAt: -1 }).take(10)
   .map("productIds").flatten().uniq();
 
@@ -99,7 +99,8 @@ $ = candidateProductIds
         {
           $lookup: {
             from: "orders",
-            let: {},
+            // No `$.`-correlation in the matches-object predicate → the lean
+            // uncorrelated form, no `let` slot at all.
             pipeline: [{ $match: { userId: "u1" } }, { $sort: { createdAt: -1 } }, { $limit: 10 }],
             as: "__jsmql.tmp.1",
           },
@@ -324,20 +325,19 @@ describe(
         //   2) assert exactly one matched — `$$.length` is the stream count
         //      ($setWindowFields), guarded by a $convert-error $match
         //   3) pivot the stream onto that user's orders, newest-first, top 5
-        // The correlated `o.userId === $._id` makes the root user's `_id` a
+        // The correlated `{ userId: $._id }` makes the root user's `_id` a
         // $lookup.let var ($$jsmql_f0__id) on the next stage — the only MQL shape
         // that can carry outer-doc context across a source switch ($unionWith has
         // no `let:` slot). Every line is JavaScript a Node developer already
         // knows; the lowering does the MQL bookkeeping.
         expect(
           jsmql`
-$$ = $$.filter(u => u.email === "me@example.com");
+$$ = $$.filter({ email: "me@example.com" });
 assert($$.length === 1, "More than one user with such email found");
 $$ = $$$.orders
-  .filter(o => o.userId === $._id)
-  .toSorted((a, b) => a.placedAt - b.placedAt)
-  .toReversed()
-  .slice(0, 5);
+  .filter({ userId: $._id })
+  .toSorted({ placedAt: -1 })
+  .take(5);
           `,
         ).toEqual([
           { $match: { email: "me@example.com" } },
@@ -451,11 +451,12 @@ $project({
 
 describe("tally shipped orders by payment method (lodash `.countBy`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
-    // Whole-collection count-by-field, lodash-style: `.filter` narrows the stream,
-    // then `.countBy` collapses it to a single `{ <paymentMethod>: <count> }` object —
-    // the SAME shape as value-mode `$.items.countBy(...)`, not a `{ _id, count }`
-    // stream. (For the count-descending stream instead, write `$sortByCount(...)`.)
-    expect(jsmql`$$ = $$.filter(o => o.status === "shipped").countBy("paymentMethod");`).toEqual([
+    // Whole-collection count-by-field, lodash-style: `.filter` narrows the stream
+    // (here with the lodash matches-object shorthand), then `.countBy` collapses it
+    // to a single `{ <paymentMethod>: <count> }` object — the SAME shape as
+    // value-mode `$.items.countBy(...)`, not a `{ _id, count }` stream. (For the
+    // count-descending stream instead, write `$sortByCount(...)`.)
+    expect(jsmql`$$ = $$.filter({ status: "shipped" }).countBy("paymentMethod");`).toEqual([
       { $match: { status: "shipped" } },
       { $group: { _id: "$paymentMethod", __jsmqlTmp: { $sum: 1 } } },
       {
@@ -642,7 +643,7 @@ describe(
       // sub-object — lodash `.countBy` over a correlated `$lookup`. The sub-pipeline
       // collapses to a single object doc, and jsmql unwraps the one-element $lookup
       // array with $first ($ifNull → {} when the user has no orders). Verified on mongod.
-      expect(jsmql`$.statusBreakdown = $$$.orders.filter(o => o.userId === $._id).countBy("status");`).toEqual([
+      expect(jsmql`$.statusBreakdown = $$$.orders.filter({ userId: $._id }).countBy("status");`).toEqual([
         {
           $lookup: {
             from: "orders",
@@ -837,25 +838,16 @@ describe("keep the user's last 10 events in chronological order", { features: ["
         jsmql`
 $.events.push($.newEvent);
 $.events.sort("timestamp");
-$.events = $.events.slice(-10);
+$.events = $.events.takeRight(10);
       `,
       ).toEqual([
         { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
         { $set: { events: { $sortArray: { input: "$events", sortBy: { timestamp: 1 } } } } },
-        // `.slice(-10)` on an unknown-type receiver dispatches at runtime —
-        // the array branch produces the last 10 elements, the string branch
-        // produces the last 10 codepoints. Both are correct for their type.
-        {
-          $set: {
-            events: {
-              $cond: {
-                if: { $isArray: "$events" },
-                then: { $slice: ["$events", -10] },
-                else: { $substrCP: ["$events", { $subtract: [{ $strLenCP: "$events" }, 10] }, 10] },
-              },
-            },
-          },
-        },
+        // lodash `.takeRight(10)` is array-only, so it lowers to a bare
+        // `$slice` — no runtime type dispatch. (The JS-native `.slice(-10)`
+        // would work too, but on an unknown-type receiver it has to emit an
+        // `$isArray` $cond to cover the string case as well.)
+        { $set: { events: { $slice: ["$events", -10] } } },
       ]);
     },
   );
@@ -2246,6 +2238,10 @@ describe("paginate shipped orders newest-first (`.toSorted` + `.slice`)", { feat
       // After narrowing to shipped orders, page-25 (offsets 25..50) sorted
       // newest-first. The descending sort comes from `b.placedAt - a.placedAt`;
       // `.slice(25, 50)` lowers to `$skip: 25` + `$limit: 25` (end - start).
+      // This is the deliberate home of the comparator-arrow sort and the
+      // two-arg `.slice` — the other chains in this file use the shorter
+      // lodash spellings (`.toSorted({ k: -1 })` / `.take(n)`), which can't
+      // express a mid-stream offset.
       expect(
         jsmql`
 $match($.status === "shipped");
@@ -2376,14 +2372,15 @@ $$ = $$.map(o => ({
   );
 });
 
-describe("top-10 revenue leaderboard (`.toSorted` + `.slice`)", { features: ["Pipelines"] }, () => {
-  it("groups, sorts, and slices into one chain", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+describe("top-10 revenue leaderboard (`.toSorted` + `.take`)", { features: ["Pipelines"] }, () => {
+  it("groups, sorts, and caps in one chain", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Classic top-N over an aggregated stream. The leaderboard is the
-    // canonical `.toSorted(desc).slice(0, N)` shape.
+    // canonical `.toSorted({ key: -1 }).take(N)` shape — the lodash sort
+    // spec says "descending by revenue" without a comparator to read.
     expect(
       jsmql`
 $group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
-$$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 10);
+$$ = $$.toSorted({ revenue: -1 }).take(10);
         `,
     ).toEqual([
       { $group: { _id: "$userId", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
@@ -2619,7 +2616,7 @@ describe(
         // multiple downstream collections.
         expect(
           jsmql`
-$$ = $$$.users.filter(u => u.active === true).map(u => ({
+$$ = $$$.users.filter({ active: true }).map(u => ({
   user:      u._id,
   name:      u.name,
   email:     u.contactDetails.email,
@@ -2685,18 +2682,17 @@ describe(
       { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
       () => {
         // `$.<field> = $$$.<coll>.filter(p).<chain>` is a single-statement way
-        // to embed a *filtered, sorted, sliced* slice of a foreign collection
-        // into each input doc. `.filter`/`.toSorted`/`.slice` push into the
+        // to embed a *filtered, sorted, capped* slice of a foreign collection
+        // into each input doc. `.filter`/`.toSorted`/`.take` push into the
         // `$lookup.pipeline` body; the **terminal `.map`** is peeled off and runs
         // as a value-mode `$map` over the result array in the `$set` (a
         // `$replaceWith` inside the pipeline would be invalid MQL for a scalar map).
         expect(
           jsmql`
 $.recentOrders = $$$.orders
-  .filter(o => o.userId === $._id)
-  .toSorted((a, b) => a.placedAt - b.placedAt)
-  .toReversed()
-  .slice(0, 5)
+  .filter({ userId: $._id })
+  .toSorted({ placedAt: -1 })
+  .take(5)
   .map(o => ({ id: o._id, total: o.total, placedAt: o.placedAt }));
           `,
         ).toEqual([
@@ -2751,19 +2747,18 @@ describe(
       { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
       () => {
         // Read this as plain JS: "set the stream to each user's orders,
-        // sorted newest-first, take the top 5". The `$.userId` ref inside
+        // sorted newest-first, take the top 5". The `$._id` ref inside
         // the filter is what flips the lowering from $unionWith to $lookup
         // — every output row is correlated to the user it came from. The
-        // trailing `.toSorted` and `.slice` extend the lookup's pipeline
+        // trailing `.toSorted` and `.take` extend the lookup's pipeline
         // body, so the top-5-most-recent shaping runs *inside* the lookup
         // (no need to sort the unwound flat stream afterward).
         expect(
           jsmql`
 $$ = $$$.orders
-  .filter(o => o.userId === $._id)
-  .toSorted((a, b) => a.placedAt - b.placedAt)
-  .toReversed()
-  .slice(0, 5);
+  .filter({ userId: $._id })
+  .toSorted({ placedAt: -1 })
+  .take(5);
           `,
         ).toEqual([
           {
@@ -2805,8 +2800,8 @@ describe(
 let minSpend = $.tier === "gold" ? 500 : 100;
 $$ = $$$.orders
   .filter(o => o.userId === $._id && o.total > minSpend)
-  .toSorted((a, b) => b.placedAt - a.placedAt)
-  .slice(0, 10);
+  .toSorted({ placedAt: -1 })
+  .take(10);
           `,
         ).toEqual([
           { $set: { "__jsmql.var.minSpend": { $cond: { if: { $eq: ["$tier", "gold"] }, then: 500, else: 100 } } } },
@@ -2939,7 +2934,7 @@ describe("Per-user order report with counts at three nesting levels", { features
     expect(
       jsmql(`
 $match($.createdAt >= new Date(2026, 1, 1));
-$$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
+$$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
   return {
     totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,
     totalOrders: ordersColl.length,
@@ -2955,7 +2950,7 @@ $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
           from: "orders",
           let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$$jsmql_f0__id", "$userId"] } } },
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $lookup: {
@@ -3040,8 +3035,8 @@ describe("Cross-level references across three nested lookup levels", { features:
     // data correct; `userId: $._id` resolves to the root user at every order).
     expect(
       jsmql(`
-$$ = $$$.orders.filter(o => o.userId === $._id).map((o, i, ordersColl) => {
-  const shipments = $$$.shipments.filter((s, j, shpmntsColl0) => s.orderId === o._id).map((s, k, shpmntsColl) => {
+$$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
+  const shipments = $$$.shipments.filter({ orderId: o._id }).map((s, k, shpmntsColl) => {
     assert(shpmntsColl.length > 2, \`order \${o._id} for user \${$._id} has too few shipments\`);
     assert(shpmntsColl.length < ordersColl.length, "fewer shipments than orders");
     return { id: s._id, weight: s.weight };

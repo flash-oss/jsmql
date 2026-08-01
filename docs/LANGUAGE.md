@@ -704,10 +704,9 @@ $$$.orders.head();        // throws — a bare value isn't a pipeline stage; ass
 
 ```js
 $.recentOrders = $$$.orders
-  .filter(o => o.userId === $._id)
-  .toSorted((a, b) => a.placedAt - b.placedAt)
-  .toReversed()
-  .slice(0, 5)
+  .filter({ userId: $._id })
+  .toSorted({ placedAt: -1 })
+  .take(5)
   .map(o => ({ id: o._id, total: o.total }));
 // → [{
 //     $lookup: {
@@ -715,8 +714,8 @@ $.recentOrders = $$$.orders
 //       let: { jsmql_f0__id: "$_id" },
 //       pipeline: [
 //         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-//         { $sort: { placedAt: -1 } },     // toSorted + toReversed
-//         { $limit: 5 },                    // slice(0, 5)
+//         { $sort: { placedAt: -1 } },      // toSorted({ placedAt: -1 })
+//         { $limit: 5 },                    // take(5)
 //       ],
 //       as: "__jsmql.tmp.1",
 //     },
@@ -2599,10 +2598,9 @@ Because a flat source-switch *replaces* the stream (a `$unionWith` with no `let:
 ```js
 // "For each user, pivot the stream onto their orders, top-5 most-recent."
 jsmql`$$ = $$$.orders
-  .filter(o => o.userId === $._id)
-  .toSorted((a, b) => a.placedAt - b.placedAt)
-  .toReversed()
-  .slice(0, 5);`
+  .filter({ userId: $._id })
+  .toSorted({ placedAt: -1 })
+  .take(5);`
 // → [
 //   { $lookup: {
 //       from: "orders",
@@ -2644,13 +2642,12 @@ Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist togeth
 
 ```js
 jsmql(`
-  $$ = $$.filter(u => u.email === "me@example.com");
+  $$ = $$.filter({ email: "me@example.com" });
   assert($$.length === 1, "More than one user with such email found");
   $$ = $$$.orders
-    .filter(o => o.userId === $._id)
-    .toSorted((a, b) => a.placedAt - b.placedAt)
-    .toReversed()
-    .slice(0, 5);
+    .filter({ userId: $._id })
+    .toSorted({ placedAt: -1 })
+    .take(5);
 `);
 // → [
 //   { $match: { email: "me@example.com" } },

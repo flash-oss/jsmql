@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — test: showcase chains rewritten in the shorter lodash spellings
+
+[test/realistic.test.ts](../test/realistic.test.ts) (and the README / LANGUAGE
+copies of the same examples) now use the lodash-flavoured spellings wherever they
+say the same thing in fewer characters — `.filter({ userId: $._id })` for the
+single-`===` matches shorthand, `.toSorted({ placedAt: -1 })` for a comparator
+arrow, `.take(n)` for `.slice(0, n)`, and `.takeRight(n)` for the array-only
+`.slice(-n)`. The showcase file is what new users read first (README points at
+it, and the playground extracts its examples), so the canonical spelling shown
+there should be the shortest one that reads clearly — the four-line
+`.filter(o => o.userId === $._id).toSorted((a, b) => a.placedAt - b.placedAt)
+.toReversed().slice(0, 5)` chain became a two-line one that says exactly the same
+thing to the compiler.
+
+Every rewrite was checked against `node src/cli.ts` first: ten of them are
+**byte-identical** to the MQL already asserted, and only two moved — `.takeRight(10)`
+drops the `$isArray` string-or-array `$cond` that `.slice(-10)` needs on an
+unknown-type receiver (lodash `takeRight` is array-only, so it emits a bare
+`$slice`), and the matches-object head of the flagship example omits the dead
+`let: {}` the arrow form emits on an uncorrelated `$lookup` (that empty-`let`
+emission is an arrow-path wart against what
+[docs/LANGUAGE.md](LANGUAGE.md#stream-methods) already documents, tracked
+separately). All the changed shapes were run against a live mongod, not just
+`toEqual`-diffed (HR3).
+
+Three sites deliberately keep the longer form. The comparator arrow + two-arg
+`.slice(25, 50)` pagination case stays as the single home of both features (with
+a comment saying so, since a mid-stream offset has no lodash spelling), the
+`$.recentOrders = $$$.orders.filter(o => { … })` block body stays because the
+chain form is *worse* there (it materialises into `__jsmql.tmp.1` + `$set`
+instead of writing straight into `as: "recentOrders"`), and every `.length`
+after a correlated filter keeps its arrow — the matches-object form loses the
+basic-form indexable `$lookup` and the known-array `$size`. Those last two are
+DX gaps in the compiler, not in the tests.
+
+---
+
 ## 2026-07-27 — feat: fold array `.slice` in `const`/`let` (lowering is now JS-faithful)
 
 Re-adds array `.slice` to compile-time constant folding. It was deliberately
