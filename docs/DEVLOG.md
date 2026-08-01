@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — feat: `.sortBy`/`.orderBy` accept a computed key; chain cleanup is held to the end
+
+`$$.sortBy(d => d.category.toLowerCase())` now lowers. `$sort` needs a literal field
+path, so unlike a `$group._id` key the expression can't go inline: `SortKeySink`
+allocates a `__jsmql.tmp` slot, one `$addFields` computes it ahead of the `$sort`, and
+the slot is cleared once the chain ends. A plain `"cat"` key is untouched — still the
+single `$sort` it always was.
+
+The blocker recorded in the entry below turned out to be **both worse and easier than
+described**. Worse: it was never specific to `.toReversed()`. `.takeRight`/`.dropRight`/
+`.initial` read `prevStages[last]` for the live `$sort` too, and `reverseSortTrick`
+*silently* falls back to ordering by `_id` when it doesn't find one instead of
+erroring. So the bug already existed on master without any computed keys —
+`$$.shuffle().takeRight(3)` returned the last 3 by `_id` and threw the shuffle away.
+Easier: it needed no change to `replacesPreviousStage` at all. The scratch `$unset`
+simply moves to the END of the chain (`StreamMethodResult.cleanupStages`, appended
+once by both `applyStreamMethods` and `peelForeignChain`), so the `$sort` stays the
+last stage and every downstream method still sees it. `.shuffle` moves onto the same
+mechanism, which fixes that pre-existing bug.
+
+Cleanup is emitted only inside a `$lookup.pipeline` — there the sub-pipeline's
+documents land in an array field the outer `{ $unset: "__jsmql" }` can't reach, while
+at the top level and inside a `$unionWith.pipeline` that sweep already covers them, so
+a second `$unset` was pure noise (top-level `.shuffle()` drops from four stages to
+three). And when it is emitted it now unsets the **namespace root**: `$unset` of a
+dotted path removes only the leaf, so `$unset: "__jsmql.tmp.1"` had been leaving
+`__jsmql: { tmp: {} }` on every foreign document. That was live on master too — the
+mongod probe caught it; no `toEqual` would have.
+
+`.flatMap` deliberately still takes a path only, and that is semantic rather than
+mechanical: `$unwind` returns each element to a **named** field, so the field name is
+part of what the user means and jsmql can't invent one. Its message now says so
+instead of the old "v1 only supports…" wording (which also violated the project's
+no-version-markers rule; the two other `v1` markers in the docs went with it).
+
+This supersedes the "not done here" note in
+[feat: `$group`-keyed stream methods accept a computed key](#2026-08-01--feat-group-keyed-stream-methods-accept-a-computed-key).
+`.toReversed()` did **not** need to be dropped to get here — it composes with a
+computed sort key and is verified doing so against a live mongod, along with
+`.takeRight` reversing the computed ordering rather than `_id`.
+
+---
+
 ## 2026-08-01 — feat: `$group`-keyed stream methods accept a computed key
 
 `.countBy(d => d.cat.toLowerCase())`, `.groupBy(d => d.email.split("@")[1])`,

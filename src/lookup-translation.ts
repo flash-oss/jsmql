@@ -2468,6 +2468,8 @@ export function peelForeignChain(
   pipelineBody: object[],
   letVars: Record<string, string>,
 ): void {
+  // Temp-field cleanup runs once after the whole chain — see StreamMethodResult.
+  const cleanup: object[] = [];
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
     if (m.method === "filter" || m.method === "reject") {
@@ -2482,9 +2484,11 @@ export function peelForeignChain(
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
     if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
+    if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     // A block-body `.map` may capture cross-level reads into THIS lookup's let.
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
+  pipelineBody.push(...cleanup);
 }
 
 /** Is `name` a chain method that can head/extend a foreign stream chain? */

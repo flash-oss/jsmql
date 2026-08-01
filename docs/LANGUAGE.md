@@ -1009,7 +1009,7 @@ jsmql("$.tier = 'gold'; $$$.gold_users = $$;")
 
 Bracket and dotted segments mix freely (`$$$$.dw["archive"]` is equivalent to `$$$$["dw"].archive`). Bracket is **required** for non-identifier names (hyphens, dots, leading digits, reserved words). Computed brackets (`$$$[someVar]`) are rejected — the destination must be a literal so it's readable from the source; for parameterised destinations, use `jsmql.compile` and pass the name in as a binding.
 
-**RHS chain (v1):**
+**RHS chain:**
 
 | Method | Stage | Notes |
 |---|---|---|
@@ -2735,8 +2735,9 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 | Slot | Write any of these | They all mean |
 |---|---|---|
-| **Field path** — `.sortBy` `.orderBy` `.flatMap` | `"cat"` · `d => d.cat` | the `cat` field |
-| **Group key** — `.groupBy` `.countBy` `.keyBy` `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()` · `{ cat: "a" }` · `["cat", "a"]` | group on that value |
+| **Sort key** — `.sortBy` `.orderBy` | `"cat"` · `d => d.cat` · `d => d.cat.toLowerCase()` | order by that value |
+| **Group key** — `.groupBy` `.countBy` `.keyBy` `.uniqBy` | the above, **plus** `{ cat: "a" }` · `["cat", "a"]` | group on that value |
+| **Unwind path** — `.flatMap` | `"items"` · `d => d.items` | the `items` array field |
 | **Predicate** — `.find` `.filter` `.reject` (and `.map`'s iteratee) | `o => o.cat === "a"` · `{ cat: "a" }` · `["cat", "a"]` · `"active"` (truthy test) | match on `cat` |
 
 ```js
@@ -2755,15 +2756,23 @@ $$ = $$.groupBy(d => d.email.split("@")[1]);   // group by email domain
 $$ = $$.countBy({ active: true });             // count matching vs not (lodash _.matches)
 ```
 
-**Sort and flatten keys may not** — a `$sort` key and an `$unwind` path have to be a literal field path. Put the value in a field first, then name it:
+**Sort keys may be computed too**, but a `$sort` key has to be a literal field path, so jsmql puts the value in a scratch field first and clears it once the chain is done:
 
 ```js
-$.sortKey = $.category.toLowerCase();
-$$ = $$.sortBy("sortKey");
-// → [{ $set: { sortKey: { $toLower: "$category" } } }, { $sort: { sortKey: 1 } }]
+$$ = $$.sortBy(d => d.category.toLowerCase());
+// → [{ $addFields: { "__jsmql.tmp.1": { $toLower: "$category" } } },
+//    { $sort: { "__jsmql.tmp.1": 1 } },
+//    { $unset: "__jsmql" }]
 ```
 
-For `.flatMap` that field is not just a workaround — `$unwind` puts each element back into a named field, so you have to say which one.
+That scratch field stays visible to `.takeRight(n)` and `.toReversed()`, so they reverse *your* ordering rather than falling back to `_id`.
+
+**`.flatMap` is the exception** — it takes a field path only. `$unwind` puts each element back into a *named* field, so which field it is is part of what you mean; jsmql can't pick one for you:
+
+```js
+$.allTags = $.tags.concat($.extraTags);
+$$ = $$.flatMap("allTags");
+```
 
 On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 

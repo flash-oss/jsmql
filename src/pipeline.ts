@@ -1115,6 +1115,8 @@ function applyStreamMethods(
   rhs: Expr,
 ): boolean {
   let clearLets = false;
+  // Temp-field cleanup runs once after the whole chain — see StreamMethodResult.
+  const cleanup: object[] = [];
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
     // `.filter` is handled outside the registry (its predicate translation is
@@ -1147,8 +1149,10 @@ function applyStreamMethods(
     const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     if (result.replacesPreviousStage) target.pop();
     target.push(...result.stages);
+    if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
   }
+  target.push(...cleanup);
   return clearLets;
 }
 

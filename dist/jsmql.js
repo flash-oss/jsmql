@@ -10373,6 +10373,10 @@ function fieldKeyArg(arg) {
   }
   return null;
 }
+function tempCleanup(slots, inSubPipeline) {
+  if (!inSubPipeline || slots.length === 0) return void 0;
+  return [{ $unset: JSMQL_NS }];
+}
 function keyExpr(arg, ctx, sig) {
   const name = fieldKeyArg(arg);
   if (name !== null) return `$${name}`;
@@ -10387,7 +10391,7 @@ function keyExpr(arg, ctx, sig) {
 function computedKeyError(sig, pos, alsoTakes = "") {
   const name = sig.slice(1, sig.indexOf("("));
   return new CodegenError(
-    `${sig} names a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent bare-path arrow ('.${name}(d => d.status)'). It lowers to a slot the server needs as a literal field path (a '$sort' key / '$unwind' path), so a computed arrow, a matches-object, or a dynamic value has nothing to name \u2014 unlike the '$group'-keyed methods ('.groupBy'/'.countBy'/'.keyBy'/'.uniqBy'), whose key IS an expression slot and so does accept them. Materialise the value into a field first, then name it: '$.key = <expr>; $$ = $$.${name}("key");' \u2014 or, inside a foreign chain, '.map(d => ({ key: <expr>, \u2026 })).${name}("key")'.`,
+    `${sig} keys on a field, so it takes a field name ('.${name}("status")')${alsoTakes}, the equivalent bare-path arrow ('.${name}(d => d.status)'), or a computed key iteratee ('.${name}(d => d.status.toLowerCase())').`,
     pos
   );
 }
@@ -10507,9 +10511,12 @@ var SHUFFLE = {
   validate(args, callPos) {
     if (args.length !== 0) throw new CodegenError(`.shuffle() takes no arguments, got ${args.length}.`, callPos);
   },
-  lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot) {
+  lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
     const slot = allocSlot();
-    return { stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }, { $unset: slot }] };
+    return {
+      stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }],
+      cleanupStages: tempCleanup([slot], inSubPipeline)
+    };
   }
 };
 var SAMPLE_SIZE = {
@@ -10846,7 +10853,7 @@ var SORT = {
     return { stages: [{ $sort: buildStreamSortSpec(args, callPos, "sort") }] };
   }
 };
-function buildSortByStreamSpec(args, callPos) {
+function buildSortByStreamSpec(args, callPos, sink) {
   if (args.length !== 1) {
     throw new CodegenError(`.sortBy(<field> | [fields]) takes exactly one argument, got ${args.length}.`, callPos);
   }
@@ -10857,7 +10864,7 @@ function buildSortByStreamSpec(args, callPos) {
       arg.pos
     );
   }
-  return buildKeySortSpec(arg, ".sortBy(...)");
+  return buildKeySortSpec(arg, ".sortBy(...)", sink);
 }
 function orderByStreamDir(e) {
   if (e.type !== "StringLiteral" && e.type !== "NumberLiteral" && e.type !== "UnaryExpr") {
@@ -10869,7 +10876,7 @@ function orderByStreamDir(e) {
   }
   return dir;
 }
-function buildOrderByStreamSpec(args, callPos) {
+function buildOrderByStreamSpec(args, callPos, sink) {
   if (args.length < 1 || args.length > 2) {
     throw new CodegenError(
       `.orderBy(keys[, orders] | { field: dir }) takes one or two arguments, got ${args.length}.`,
@@ -10885,9 +10892,9 @@ function buildOrderByStreamSpec(args, callPos) {
         ordersArg.pos
       );
     }
-    return buildKeySortSpec(keysArg, ".orderBy({ \u2026 })");
+    return buildKeySortSpec(keysArg, ".orderBy({ \u2026 })", sink);
   }
-  const names = keysArg.type === "ArrayLiteral" ? keysArg.elements.map((el) => fieldNameLiteral(el, ".orderBy(keys)")) : [fieldNameLiteral(keysArg, ".orderBy(keys)")];
+  const names = keysArg.type === "ArrayLiteral" ? keysArg.elements.map((el) => fieldNameLiteral(el, ".orderBy(keys)", "", sink)) : [fieldNameLiteral(keysArg, ".orderBy(keys)", "", sink)];
   const dirs = ordersArg === void 0 ? [] : ordersArg.type === "ArrayLiteral" ? ordersArg.elements.map((el) => orderByStreamDir(el)) : [orderByStreamDir(ordersArg)];
   const spec = {};
   names.forEach((nm, i) => {
@@ -10898,19 +10905,23 @@ function buildOrderByStreamSpec(args, callPos) {
 var SORT_BY = {
   name: "sortBy",
   validate(args, callPos) {
-    buildSortByStreamSpec(args, callPos);
+    buildSortByStreamSpec(args, callPos, validatingSortKeys());
   },
-  lower(args, _ctx, callPos) {
-    return { stages: [{ $sort: buildSortByStreamSpec(args, callPos) }] };
+  lower(args, ctx, callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
+    const { sink, computed } = materialisingSortKeys(ctx, allocSlot);
+    const spec = buildSortByStreamSpec(args, callPos, sink);
+    return sortStages(spec, computed, inSubPipeline);
   }
 };
 var ORDER_BY = {
   name: "orderBy",
   validate(args, callPos) {
-    buildOrderByStreamSpec(args, callPos);
+    buildOrderByStreamSpec(args, callPos, validatingSortKeys());
   },
-  lower(args, _ctx, callPos) {
-    return { stages: [{ $sort: buildOrderByStreamSpec(args, callPos) }] };
+  lower(args, ctx, callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
+    const { sink, computed } = materialisingSortKeys(ctx, allocSlot);
+    const spec = buildOrderByStreamSpec(args, callPos, sink);
+    return sortStages(spec, computed, inSubPipeline);
   }
 };
 function projectFieldNames(args, callPos, method) {
@@ -10990,7 +11001,7 @@ var TO_REVERSED = {
     return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
   }
 };
-function fieldNameLiteral(e, sig, alsoTakes = "") {
+function fieldNameLiteral(e, sig, alsoTakes = "", sink) {
   if (e.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
   }
@@ -11001,8 +11012,39 @@ function fieldNameLiteral(e, sig, alsoTakes = "") {
     );
   }
   const name = fieldKeyArg(e);
-  if (name === null) throw computedKeyError(sig, e.pos, alsoTakes);
-  return name;
+  if (name !== null) return name;
+  if (sink !== void 0 && e.type === "Lambda") return sink(e, sig);
+  throw computedKeyError(sig, e.pos, alsoTakes);
+}
+function materialisingSortKeys(ctx, allocSlot) {
+  const computed = {};
+  return {
+    computed,
+    sink: (e, sig) => {
+      const slot = allocSlot();
+      computed[slot] = keyExpr(e, ctx, sig);
+      return slot;
+    }
+  };
+}
+function sortStages(spec, computed, inSubPipeline) {
+  const slots = Object.keys(computed);
+  if (slots.length === 0) return { stages: [{ $sort: spec }] };
+  return { stages: [{ $addFields: computed }, { $sort: spec }], cleanupStages: tempCleanup(slots, inSubPipeline) };
+}
+function validatingSortKeys() {
+  let n = 0;
+  return (e, sig) => {
+    const method = sig.slice(1, sig.indexOf("("));
+    if (e.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter key iteratee '(d) => <key expr>', got ${e.params.length} parameters.`,
+        e.pos
+      );
+    }
+    mapBodyExpr(e, method);
+    return `__jsmqlSortKeyProbe${n++}`;
+  };
 }
 function sortDirection(e) {
   if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
@@ -11010,16 +11052,16 @@ function sortDirection(e) {
   if (e.type === "StringLiteral") return e.value === "asc" ? 1 : e.value === "desc" ? -1 : null;
   return null;
 }
-function buildKeySortSpec(arg, sig) {
+function buildKeySortSpec(arg, sig, sink) {
   if (arg.type === "StringLiteral" || arg.type === "Lambda") {
-    return { [fieldNameLiteral(arg, sig)]: 1 };
+    return { [fieldNameLiteral(arg, sig, "", sink)]: 1 };
   }
   if (arg.type === "ArrayLiteral") {
     if (arg.elements.length === 0) {
       throw new CodegenError(`${sig} needs at least one field name.`, arg.pos);
     }
     const spec2 = {};
-    for (const el of arg.elements) spec2[fieldNameLiteral(el, sig)] = 1;
+    for (const el of arg.elements) spec2[fieldNameLiteral(el, sig, "", sink)] = 1;
     return spec2;
   }
   if (arg.type !== "ObjectLiteral") {
@@ -11229,7 +11271,7 @@ var FLAT_MAP = {
     const path = paramFieldPath(body, param);
     if (path === null) {
       throw new CodegenError(
-        `.flatMap(d => \u2026) v1 only supports a bare field-path body on the lambda param (e.g. '.flatMap(d => d.items)'). Complex bodies (e.g. '.flatMap(d => d.items.map(...))') aren't supported yet \u2014 hoist the transformation to a separate stage above the chain.`,
+        `.flatMap(d => \u2026) needs a field path \u2014 it lowers to '$unwind', which returns each element to a NAMED field, so a computed body (e.g. '.flatMap(d => d.items.map(...))') has nothing to unwind into. Build the array into a field first, then flatten it by name: '$.items = <expr>; $$ = $$.flatMap("items");'.`,
         body.pos ?? callPos
       );
     }
@@ -12982,6 +13024,7 @@ function lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing) {
   return { letVars, stages: pipelineBody };
 }
 function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, allocSlot, enclosing, innerCtx, pipelineBody, letVars) {
+  const cleanup = [];
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
     if (m.method === "filter" || m.method === "reject") {
@@ -12996,8 +13039,10 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
     if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
+    if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
+  pipelineBody.push(...cleanup);
 }
 function isPeelableChainMethod(name) {
   return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
@@ -14660,6 +14705,7 @@ function lowerChainOnStream(methods, outerCtx, lowerBlockFn, allocSlot, rhs) {
 }
 function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) {
   let clearLets = false;
+  const cleanup = [];
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
     if (m.method === "filter") {
@@ -14684,8 +14730,10 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) 
     const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     if (result.replacesPreviousStage) target.pop();
     target.push(...result.stages);
+    if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
   }
+  target.push(...cleanup);
   return clearLets;
 }
 function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {

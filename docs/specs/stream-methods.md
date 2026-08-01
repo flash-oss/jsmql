@@ -80,15 +80,20 @@ export type StreamMethodResult = {
 
 | Slot | Spellings that mean the same thing | Resolver |
 |---|---|---|
-| **Field path** — `.sortBy` / `.orderBy` / `.flatMap` | the property string `"cat"`, or the equivalent bare-path arrow `d => d.cat` | `fieldKeyArg` (`src/stream-methods.ts`) |
+| **Sort key** — `.sortBy` / `.orderBy` | the property string `"cat"`, the equivalent bare-path arrow `d => d.cat`, or a **computed** arrow `d => d.cat.toLowerCase()` (materialised — see below) | `fieldKeyArg` + `SortKeySink` |
+| **Unwind path** — `.flatMap` | the property string `"items"`, or the equivalent bare-path arrow `d => d.items`. No computed form | `fieldKeyArg` |
 | **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) | `keyExpr` (`src/stream-methods.ts`) |
 | **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair | `shorthandToLambda` (`src/codegen.ts`), reached at the lookup head via `detectLookupCall` — see [lookup-stage.md](lookup-stage.md) § Module layout |
 
 Everything downstream must ask the resolver what an argument **means**, never what type it is. Keying on `StringLiteral` is the recurring bug: it is how `.groupBy(d => d.cat)` came to skip the collapsing `$first` unwrap that `.groupBy("cat")` gets (`isCollapsingTerminal`), and how `.find({ … })` came to be rejected outright while `.filter({ … })` was fine.
 
-**The split is the SLOT, not the method.** `$group._id` is an expression the server evaluates per document, so the group-key methods take an arbitrary computed iteratee and it lowers straight into `_id` with **no extra stages** — `keyExpr` keeps a `fieldKeyArg` fast path first, so a plain key still emits the byte-identical `"$cat"` it always did. A `$sort` key and an `$unwind` path are *literal field paths*, so those slots reject a computed value via the shared `computedKeyError`, which names the method it was called on, says the group-keyed methods DO accept one, and points at the way out (`$.key = <expr>;` then `.<method>("key")`, or a field-building `.map` inside a foreign chain).
+**The split is the SLOT, not the method.** `$group._id` is an expression the server evaluates per document, so a computed group key lowers straight into `_id` with **no extra stages** — `keyExpr` keeps a `fieldKeyArg` fast path first, so a plain key still emits the byte-identical `"$cat"` it always did. A `$sort` key is a *literal field path*, so a computed sort key is **materialised**: `SortKeySink` allocates a `__jsmql.tmp` slot, one `$addFields` computes it ahead of the `$sort`, and the slot is cleared at the end of the chain (`sortStages`). `.flatMap` is the one key slot with no computed form at all.
 
-Auto-materialising a computed value into a temp field is deliberately **not** done for those two. For `.flatMap` it would be wrong outright: `$unwind`'s elements have to land in a field the reader can name, so the field name is part of the meaning, not an implementation detail. For `.sortBy`/`.orderBy` it is merely blocked — the temp needs an explicit `$unset` (a `$lookup.pipeline` has no trailing `{ $unset: "__jsmql" }` to sweep it), which lands *after* the `$sort` and so hides it from `reverseSortTrick`; `.takeRight`/`.toReversed` inspect only the immediately preceding stage, and `StreamMethodResult.replacesPreviousStage` pops exactly one. Lifting it means extending that contract to pop N.
+**Cleanup is held to the end of the chain (`StreamMethodResult.cleanupStages`), never emitted next to the `$sort`.** `.toReversed()` rewrites the preceding `$sort` and `.takeRight`/`.dropRight`/`.initial` reverse it, and all four read only `prevStages[last]` — an `$unset` sitting in between hides it. That failure is *silent*, not loud: `reverseSortTrick` falls back to ordering by `_id` rather than erroring, which is how `.shuffle().takeRight(3)` came to return the last 3 by `_id` and discard the shuffle entirely.
+
+Cleanup is emitted **only inside a `$lookup.pipeline`** (the `inSubPipeline` argument to `lower`): there the sub-pipeline's documents land in an array field the outer `{ $unset: "__jsmql" }` cannot reach. At the top level and inside a `$unionWith.pipeline` that trailing sweep runs over these documents, so a second `$unset` would be noise. When it is emitted it drops the **namespace root** (`__jsmql`), not the individual slot: `$unset` of a dotted path removes only the leaf, so unsetting `__jsmql.tmp.1` left every foreign document carrying `__jsmql: { tmp: {} }`.
+
+`.flatMap` cannot be materialised the same way, and that is a *semantic* limit rather than a mechanical one: `$unwind` returns each element to a **named** field, so the field name is part of what the user means. Auto-naming it into a scratch slot and clearing it would throw the elements away.
 
 Where the object spelling is already claimed it keeps its richer meaning: `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })` are direction specs, `.groupBy({ _id, … })` is the `$group` body (so `.groupBy` is the one group-keyed method without the matcher spelling). `.sortBy({ … })` keeps a dedicated message pointing at those.
 
@@ -413,7 +418,7 @@ its result. The bare form gives it "transform the running stream" meaning —
 syntactically valid JS (different runtime meaning is allowed; only syntax
 errors are not) and consistent with the existing `$$.push(...)` statement sugar.
 
-## Out of scope (v1)
+## Out of scope
 
 - **`$$.length` terminal.** Intentionally deferred — see
   [DEVLOG.md](../DEVLOG.md) for the rationale.
