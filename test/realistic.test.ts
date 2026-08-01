@@ -49,11 +49,12 @@ describe("recommended products (collaborative filtering)", { features: ["Pipelin
     () => {
       expect(
         jsmql`
-$match($._id === "u1");
+const userId = 0x507f1f77bcf86cd799439011;
+$match($._id === userId);
 assert($$.length === 1, "More than one user with such ID found");
 
 const myProductIds = $$$.orders
-  .filter(o => o.userId === "u1")
+  .filter(o => o.userId === userId)
   .toSorted({ createdAt: -1 }).take(10)
   .map("productIds").flatten().uniq();
 
@@ -78,7 +79,7 @@ $ = candidateProductIds
   .take(10);
       `,
       ).toEqual([
-        { $match: { _id: "u1" } },
+        { $match: { _id: new ObjectId("507f1f77bcf86cd799439011") } },
         { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
         {
           $match: {
@@ -100,7 +101,11 @@ $ = candidateProductIds
           $lookup: {
             from: "orders",
             let: {},
-            pipeline: [{ $match: { userId: "u1" } }, { $sort: { createdAt: -1 } }, { $limit: 10 }],
+            pipeline: [
+              { $match: { userId: new ObjectId("507f1f77bcf86cd799439011") } },
+              { $sort: { createdAt: -1 } },
+              { $limit: 10 },
+            ],
             as: "__jsmql.tmp.1",
           },
         },
