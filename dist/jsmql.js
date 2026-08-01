@@ -10373,6 +10373,22 @@ function fieldKeyArg(arg) {
   }
   return null;
 }
+var FROM_THE_END_METHODS = {
+  takeRight: `.toSorted({ <field>: -1 }).take(n)`,
+  dropRight: `.toSorted({ <field>: -1 }).drop(n)`,
+  initial: `.toSorted({ <field>: -1 }).drop(1)`,
+  toReversed: `.toSorted({ <field>: -1 })`
+};
+function fromTheEndRejection(name, receiver, pos) {
+  const rewrite = FROM_THE_END_METHODS[name];
+  if (rewrite === void 0) return null;
+  const why = name === "toReversed" ? `it reverses the stream, and a MongoDB stream has no order to reverse` : `it counts from the END of the stream, and a MongoDB stream has no end to count back from`;
+  const arg = name === "takeRight" || name === "dropRight" ? "n" : "";
+  return new CodegenError(
+    `'.${name}(...)' isn't available on a stream \u2014 ${why} (there is no stage that reverses one; '$reverseArray' is an expression, for an array inside a document). Say the order you want and take from the FRONT instead: '${receiver}${rewrite}'. On a real array value it still works exactly as in JS \u2014 '$.items.${name}(${arg})'.`,
+    pos
+  );
+}
 function tempCleanup(slots, inSubPipeline) {
   if (!inSubPipeline || slots.length === 0) return void 0;
   return [{ $unset: JSMQL_NS }];
@@ -10454,56 +10470,6 @@ var TAIL = {
   },
   lower() {
     return { stages: [{ $skip: 1 }] };
-  }
-};
-function reverseSortTrick(prevStages, op, n, method, callPos) {
-  const last = prevStages[prevStages.length - 1];
-  const sortSpec = last !== void 0 ? last["$sort"] : void 0;
-  if (sortSpec !== void 0) {
-    const flipped = {};
-    for (const key of Object.keys(sortSpec)) {
-      const dir = sortSpec[key];
-      if (dir !== 1 && dir !== -1) {
-        throw new CodegenError(
-          `.${method}() counts 'from the end' by reversing the preceding sort, but that $sort on '${key}' isn't a directional 1/-1 sort. Precede '.${method}()' with a '.sort(...)' on 1/-1 fields (or remove the non-directional sort).`,
-          callPos
-        );
-      }
-      flipped[key] = dir === 1 ? -1 : 1;
-    }
-    return { stages: [{ $sort: flipped }, { [op]: n }, { $sort: sortSpec }], replacesPreviousStage: true };
-  }
-  return { stages: [{ $sort: { _id: -1 } }, { [op]: n }, { $sort: { _id: 1 } }] };
-}
-var TAKE_RIGHT = {
-  name: "takeRight",
-  validate(args, callPos) {
-    validateSingleIntArg(".takeRight(n)", args, callPos, 0);
-  },
-  lower(args, _ctx, callPos, _lb, prevStages) {
-    const n = args[0].value;
-    if (n === 0) return { stages: [{ $match: { $expr: false } }] };
-    return reverseSortTrick(prevStages, "$limit", n, "takeRight", callPos);
-  }
-};
-var DROP_RIGHT = {
-  name: "dropRight",
-  validate(args, callPos) {
-    validateSingleIntArg(".dropRight(n)", args, callPos, 0);
-  },
-  lower(args, _ctx, callPos, _lb, prevStages) {
-    const n = args[0].value;
-    if (n === 0) return { stages: [] };
-    return reverseSortTrick(prevStages, "$skip", n, "dropRight", callPos);
-  }
-};
-var INITIAL = {
-  name: "initial",
-  validate(args, callPos) {
-    if (args.length !== 0) throw new CodegenError(`.initial() takes no arguments, got ${args.length}.`, callPos);
-  },
-  lower(_args, _ctx, callPos, _lb, prevStages) {
-    return reverseSortTrick(prevStages, "$skip", 1, "initial", callPos);
   }
 };
 var SHUFFLE = {
@@ -10969,36 +10935,6 @@ var OMIT = {
     const proj = {};
     for (const f of fields) proj[f] = 0;
     return { stages: [{ $project: proj }] };
-  }
-};
-var TO_REVERSED = {
-  name: "toReversed",
-  validate(args, callPos) {
-    if (args.length !== 0) {
-      throw new CodegenError(`.toReversed() takes no arguments, got ${args.length}.`, callPos);
-    }
-  },
-  lower(_args, _ctx, callPos, _lowerBlock, prevStages) {
-    const last = prevStages[prevStages.length - 1];
-    const sortSpec = last !== void 0 ? last["$sort"] : void 0;
-    if (sortSpec === void 0) {
-      throw new CodegenError(
-        `.toReversed() needs a preceding $sort (from a '.toSorted(...)' call or a '$sort' stage) to invert \u2014 MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or place '.toReversed()' after a sort.`,
-        callPos
-      );
-    }
-    const flipped = {};
-    for (const key of Object.keys(sortSpec)) {
-      const dir = sortSpec[key];
-      if (dir !== 1 && dir !== -1) {
-        throw new CodegenError(
-          `.toReversed() can only invert a '$sort' with numeric 1/-1 directions (preceding stage has '${key}: ${String(dir)}'). Inverting non-direction sort specs (text-meta, custom expressions) isn't supported.`,
-          callPos
-        );
-      }
-      flipped[key] = dir === 1 ? -1 : 1;
-    }
-    return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
   }
 };
 function fieldNameLiteral(e, sig, alsoTakes = "", sink) {
@@ -11656,9 +11592,6 @@ var STREAM_METHODS = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
-  takeRight: TAKE_RIGHT,
-  dropRight: DROP_RIGHT,
-  initial: INITIAL,
   shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
@@ -11668,7 +11601,6 @@ var STREAM_METHODS = {
   toSorted: TO_SORTED,
   sortBy: SORT_BY,
   orderBy: ORDER_BY,
-  toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
   keyBy: KEY_BY,
@@ -12017,6 +11949,8 @@ function validateLookupShape(expr) {
   }
   if (expr.method !== "find" && expr.method !== "filter") {
     if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
+    const fromTheEnd = fromTheEndRejection(expr.method, spell, expr.pos);
+    if (fromTheEnd !== null) throw fromTheEnd;
     const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
     throw new CodegenError(
       `'${spell}' supports .find(pred), .filter(pred), .aggregate(pipeline), and the lodash stream methods (e.g. .toSorted, .take, .map \u2014 see docs/specs/stream-methods.md), not .${expr.method}().${hint} For a full sub-pipeline (grouping, reshaping), use \`${spell}.aggregate((o) => { $group(...); $sort(...); ... })\`.`,
@@ -13100,6 +13034,8 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     );
   }
   for (let i = start; i < chainEnd; i++) {
+    const fromTheEnd = fromTheEndRejection(methods[i].method, `$$$.${target.collection}`, methods[i].pos);
+    if (fromTheEnd !== null) throw fromTheEnd;
     if (!isPeelableChainMethod(methods[i].method)) return null;
   }
   for (let i = start; i < chainEnd; i++) {
@@ -14892,6 +14828,8 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
   return { stages: [lookupStage2, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }
 function unknownStreamMethod(m, receiver) {
+  const fromTheEnd = fromTheEndRejection(m.method, receiver, m.pos);
+  if (fromTheEnd !== null) return fromTheEnd;
   if (m.method === "find" || m.method === "findLast" || m.method === "at") {
     const alt = m.method === "at" ? `'${receiver}.slice(n, n + 1)'` : `'${receiver}.filter(<pred>).slice(0, 1)'`;
     const findHint = receiver === "$$$.<coll>" ? ` (For replacing the current document with a single matched foreign doc, write '$ = $$$.<coll>.find(<pred>)' instead \u2014 that's a separate lookup form.)` : "";

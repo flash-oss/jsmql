@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — feat!: the "from the end" array methods are removed from the stream surface
+
+`.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` no longer exist as
+stream methods, and `reverseSortTrick` is gone with them. **Developer decision**, on
+the grounds that MongoDB has no stage that reverses a stream — `$reverseArray` is an
+*expression*, for an array inside a document — and a stream has no order except the
+one a `$sort` gives it, so "the last n" has nothing to count back from.
+
+The implementation was the argument against it. These four worked by reaching back and
+rewriting the *preceding* `$sort`, which made them position-dependent in a way the JS
+methods they are named after never are, and — with no `$sort` in front — silently
+ordered by `_id` rather than erroring. `.toSorted(c).toReversed()` was also a longer
+spelling of writing the comparator descending, i.e. a second spelling for a capability
+that already had one. All four remain in **value position** on a real array
+(`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where
+the array carries its own order and they mean exactly what JS means.
+
+`fromTheEndRejection` (`src/stream-methods.ts`) owns the message and is wired into all
+three places a stream chain is assembled: `unknownStreamMethod` (bare `$$` / `$$ =`),
+`validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop in
+`tryExtractChainedLookup`. That third site is the one worth calling out — without it a
+foreign chain would quietly fall through to value-mode and slice the tail of the
+materialised array, whose order is whatever the foreign scan produced. Same
+unanswerable question, answered silently; the rejection is the point. The message names
+the rewrite: `.toSorted({ <field>: -1 }).take(n)`.
+
+Two things survive the removal. The chain-cleanup ordering rule from the entry below
+stays (a method's stages should end with the stage that describes the stream, not its
+own housekeeping) — it is general, and the bug that motivated it happened to involve
+`.takeRight`. And `prevStages` / `replacesPreviousStage` stay on the
+`StreamMethodResult` contract but now have **no users**, deliberately: reaching back at
+the preceding stage is the coupling that made these four fragile, so a future method
+should reach for it only when nothing else expresses the operation, and error rather
+than guess when the expected stage isn't there.
+
+`DEF-034` (stream `.takeWhile`/`.dropWhile`) is unaffected in principle — those run
+from the FRONT of an order a preceding `.sort(...)` establishes — but its
+"or default to `_id`" success criterion is now explicitly disallowed for the same
+reason, and the row says so.
+
+---
+
 ## 2026-08-01 — feat: `.sortBy`/`.orderBy` accept a computed key; chain cleanup is held to the end
 
 `$$.sortBy(d => d.category.toLowerCase())` now lowers. `$sort` needs a literal field

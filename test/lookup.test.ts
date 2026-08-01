@@ -826,10 +826,12 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
-  it(".toReversed() after .toSorted() flips the preceding $sort spec inside the body", () => {
+  it("a descending sub-pipeline sort is written directly (no reverse-the-previous-sort form)", () => {
+    // `.toReversed()` was removed from streams — the descending comparator is the
+    // spelling, and it always produced the same single `$sort` anyway.
     expect(
       jsmql(
-        "$.recent = $$$.events.filter(e => e.userId === $._id).toSorted((a, b) => a.createdAt - b.createdAt).toReversed().slice(0, 10);",
+        "$.recent = $$$.events.filter(e => e.userId === $._id).toSorted((a, b) => b.createdAt - a.createdAt).slice(0, 10);",
       ),
     ).toEqual([
       {

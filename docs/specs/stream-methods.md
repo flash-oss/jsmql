@@ -89,7 +89,7 @@ Everything downstream must ask the resolver what an argument **means**, never wh
 
 **The split is the SLOT, not the method.** `$group._id` is an expression the server evaluates per document, so a computed group key lowers straight into `_id` with **no extra stages** — `keyExpr` keeps a `fieldKeyArg` fast path first, so a plain key still emits the byte-identical `"$cat"` it always did. A `$sort` key is a *literal field path*, so a computed sort key is **materialised**: `SortKeySink` allocates a `__jsmql.tmp` slot, one `$addFields` computes it ahead of the `$sort`, and the slot is cleared at the end of the chain (`sortStages`). `.flatMap` is the one key slot with no computed form at all.
 
-**Cleanup is held to the end of the chain (`StreamMethodResult.cleanupStages`), never emitted next to the `$sort`.** `.toReversed()` rewrites the preceding `$sort` and `.takeRight`/`.dropRight`/`.initial` reverse it, and all four read only `prevStages[last]` — an `$unset` sitting in between hides it. That failure is *silent*, not loud: `reverseSortTrick` falls back to ordering by `_id` rather than erroring, which is how `.shuffle().takeRight(3)` came to return the last 3 by `_id` and discard the shuffle entirely.
+**Cleanup is held to the end of the chain (`StreamMethodResult.cleanupStages`), never emitted next to the `$sort`.** A scratch `$unset` wedged between a `$sort` and the stage after it is a hazard for anything that inspects the stage it follows, and jsmql has shipped exactly that bug before: while the "from the end" methods existed (see below), `$$.shuffle().takeRight(3)` *silently* returned the last 3 by `_id` and discarded the shuffle, because the `$unset` hid the shuffle's `$sort` and the fallback was silent rather than an error. Those methods are gone, but the ordering rule stays — a method's stages should end with the stage that describes the stream, not with its own housekeeping.
 
 Cleanup is emitted **only inside a `$lookup.pipeline`** (the `inSubPipeline` argument to `lower`): there the sub-pipeline's documents land in an array field the outer `{ $unset: "__jsmql" }` cannot reach. At the top level and inside a `$unionWith.pipeline` that trailing sweep runs over these documents, so a second `$unset` would be noise. When it is emitted it drops the **namespace root** (`__jsmql`), not the individual slot: `$unset` of a dotted path removes only the leaf, so unsetting `__jsmql.tmp.1` left every foreign document carrying `__jsmql: { tmp: {} }`.
 
@@ -113,7 +113,6 @@ Per-method rows below describe *lowering*; for which callback spellings a slot a
 | `.orderBy(keys[, orders])` / `.orderBy({ field: dir })` | The lodash multi-key sort. Parallel form: `keys` is a field name or `[fields]`, `orders` a `1 \| -1 \| "asc" \| "desc"` (or an array of them, parallel to the keys; fewer orders than keys ⇒ the rest ascending). Object form: a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec with the directions inline (mirrors `.sort({…})`) — a second `orders` arg is then rejected | `buildOrderByStreamSpec`: an object `keys` → `buildKeySortSpec` (shared with `.sort`/`.toSorted`); otherwise it zips the two parallel args (`fieldNameLiteral` + `sortDirection`) | One `{ $sort: { … } }` stage |
 | `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair. Special-cased in `applyStreamMethods` (like `.filter`), not the registry | `lowerStreamReject` builds the predicate lambda (arrow as-is, or `shorthandToLambda` for the shorthands), synthesizes `o => !(<body>)`, and reuses `lowerStreamFilterPredicate` | One `$match` stage — `{ $expr: { $not: … } }` (the negated `$expr` form; jsmql never emits a query-form De Morgan) |
 | `.tail()` | Zero args | — | `$skip: 1` (the stream `.drop(1)`) |
-| `.takeRight(n)` / `.dropRight(n)` / `.initial()` | Count from the END. `reverseSortTrick` reads `prevStages`: a preceding directional `$sort` S is reversed (`replacesPreviousStage`), else it orders by `_id`. `n = 0` → `takeRight` empty (`$match:{$expr:false}`), `dropRight` identity. `.initial()` = `.dropRight(1)` | `[{ $sort: <reversed S> }, { $limit\|$skip: n }, { $sort: <S> }]`. A non-directional preceding `$sort` (text-meta, custom) is rejected — sort by 1/-1 fields first |
 | `.shuffle()` | Zero args | `allocSlot()` for a `__jsmql.tmp.<N>` key; the trailing `$unset: "__jsmql"` clears the residue | `[{ $addFields: { <slot>: { $rand: {} } } }, { $sort: { <slot>: 1 } }, { $unset: <slot> }]` — non-deterministic |
 | `.aggregate((o[, i[, coll]]) => { … })` / `.aggregate([{ … }])` | A **block-body arrow** (`(o) => { $stage(...); ... }`, its statements are pipeline stages, NO `return`) or a **stage-array literal** (`[{ $sort: … }, …]`, normalised to a zero-param block lambda by `aggregateArgToLambda`). Params mirror `.map`/`.filter`: 1–3 `(element, index, collection)`; the index is positional-only, the 3rd exposes only `<coll>.length` (shape + param checks shared with the head form via `validateAggregateArg` / `validateAggregateParams`). Foreign fields via `o.<field>` (or raw `"$field"`); `$.<field>` = the outer doc. On the CURRENT stream (`$$.aggregate(...)`) it is **rejected** (redundant with writing the stages directly) — it only earns its keep against a foreign collection. `$$.push`/`.concat` union of the result is deferred `[DEF-034]` | Same `lowerCallbackBlock` engine `.filter`/`.map` use, minus the terminal `return` (no `$replaceWith`). Inside a correlated `$lookup` (`ctx.enclosingLookup`), cross-level `$.field` reads capture into the enclosing `$lookup.let` and return as `StreamMethodResult.extraLetVars`; on a flat `$$ =` source-switch (`$unionWith`, no `let` slot) a `$.field` ref is rejected (correlate with a `.filter`) | The block's stages, appended to the surrounding `$lookup.pipeline` (correlated chain) or `$unionWith.pipeline` (source-switch). Clears the let scope || `.toReversed()` | Zero args; the immediately preceding stage must be a `$sort` with 1/-1 directions. In the `$$ = …` forms that means a `.toSorted(...)` earlier in the same chain; in the bare-statement form the preceding `$sort` may also come from a prior statement or a literal `$sort(...)` stage (the chain lowers against the live pipeline) | Reads `prevStages` (the chain's working buffer — the live pipeline for the bare form), flips every direction (1 ↔ -1), returns `replacesPreviousStage: true` so the caller drops the old `$sort` | One `{ $sort: { … } }` stage replacing the previous one — net stage count unchanged vs. writing `.toSorted` descending directly |
 | `.flatMap(<key>)` | One field key — the array field to flatten | `fieldKeyArg` resolves either spelling to the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
@@ -364,11 +363,15 @@ To add a new method:
 5. Document the method in [docs/LANGUAGE.md#stream-methods](../LANGUAGE.md#stream-methods).
 6. Add a [DEVLOG.md](../DEVLOG.md) entry.
 
-Methods that need state from earlier in the chain (e.g. `.toReversed()` peeking
-at the preceding `$sort` to flip its spec) receive `prevStages: readonly object[]`
-— the read-only view of stages emitted so far in the same context. They can
-return `replacesPreviousStage: true` to have the caller drop the previous stage
-before appending their own.
+Methods that need state from earlier in the chain receive `prevStages: readonly
+object[]` — the read-only view of stages emitted so far in the same context — and
+may return `replacesPreviousStage: true` to have the caller drop the previous stage
+before appending their own. **No registered method uses either today**, and that is
+deliberate: the methods that did (the "from the end" family, § below) were removed
+precisely because depending on the preceding stage made them position-sensitive in a
+way the JS methods they were named after never are. Reach for `prevStages` only when
+a method genuinely cannot be expressed without it, and prefer erroring over guessing
+when the expected stage isn't there.
 
 ## Bare-statement stream chains
 
@@ -399,19 +402,39 @@ $$.filter(p); $$.map(f);    // ≡
 $$ = $$.filter(p).map(f);
 ```
 
-This holds for *every* method — including the one stage-coupled method,
-`.toReversed()` — because the bare form passes the **live pipeline `out`** as
-`applyStreamMethods`' working buffer, not a throwaway local array. So
-`$$.toSorted(c); $$.toReversed();` finds the `$sort` emitted by the previous
-statement and flips it, exactly as `$$.toSorted(c).toReversed();` does. (A bare
-`$$.toReversed();` will likewise invert a preceding literal `$sort(...)` stage.)
+This holds for *every* method. The bare form passes the **live pipeline `out`** as
+`applyStreamMethods`' working buffer rather than a throwaway local array, so a method
+that reads `prevStages` sees the stages a previous *statement* emitted — while a
+`$$ = …` chain lowers against its own local buffer, which starts empty. That
+difference used to be an observable asymmetry, because `.toReversed()` reached across
+statements in the bare form and errored in the assignment form. With that family
+removed no registered method reads `prevStages`, so the two forms are now
+indistinguishable — and a future method that reads it would reintroduce the
+asymmetry, which is one more reason not to add one.
 
-**One documented asymmetry.** The cross-statement `.toReversed()` capability is
-unique to the bare form. The assignment equivalent
-`$$ = $$.toSorted(c); $$ = $$.toReversed();` still errors, because each `$$ = …`
-chain lowers against its own local buffer (which is empty for the second
-statement). When both forms succeed they emit identical MQL; only the bare form
-reaches across statements. The bare form is the recommended concise spelling.
+## Removed: the "from the end" methods
+
+`.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` are **not** stream
+methods. MongoDB has no stage that reverses a stream (`$reverseArray` is an
+expression, for an array inside a document) and a stream has no order but the one a
+`$sort` gives it, so "the last n" has nothing to count back from. jsmql used to fake
+them by rewriting the preceding `$sort` — which made them position-dependent in a way
+the JS methods are not, and, with no `$sort` in front, silently ordered by `_id`
+instead of erroring. `.toSorted(c).toReversed()` was also just a longer spelling of
+writing the comparator descending.
+
+`fromTheEndRejection` (`src/stream-methods.ts`) owns the rejection and is called from
+all three places a stream chain is assembled — `unknownStreamMethod` (bare `$$` and
+`$$ =` contexts), `validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop
+in `tryExtractChainedLookup`. The last one matters: without it a foreign chain would
+quietly fall back to value-mode and slice the tail of the materialised array, whose
+order is whatever the foreign scan produced — the same unanswerable question, answered
+silently. The message names the take-from-the-front rewrite
+(`.toSorted({ <field>: -1 }).take(n)`).
+
+All four remain in **value position** on a real array (`$.items.takeRight(3)` →
+`$slice`, `$.items.toReversed()` → `$reverseArray`): an array carries its own order,
+so there they mean exactly what JS means.
 
 **JS-faithfulness note.** In plain JS `arr.filter(...)` as a statement discards
 its result. The bare form gives it "transform the running stream" meaning —

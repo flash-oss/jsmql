@@ -88,6 +88,7 @@ import {
   detectArrayReducerWrap,
   detectDictBuildWrap,
   detectReduceWrap,
+  fromTheEndRejection,
   lookupStreamMethod,
   lowerDictBuildWrap,
   lowerReduceWrap,
@@ -1463,6 +1464,8 @@ function lowerLookupPivot(
 }
 
 function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError {
+  const fromTheEnd = fromTheEndRejection(m.method, receiver, m.pos);
+  if (fromTheEnd !== null) return fromTheEnd;
   // Methods that return a single element in JS — deliberately rejected because
   // pipelines are arrays. The error names the explicit alternative so the user
   // doesn't have to dig for it.

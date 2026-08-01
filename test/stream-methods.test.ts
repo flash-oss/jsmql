@@ -160,29 +160,40 @@ describe(".tail() → $skip: 1 — lodash all-but-first", () => {
   });
 });
 
-describe(".takeRight / .dropRight / .initial — the reverse-sort trick", () => {
-  it("no preceding sort → reverses by _id", () => {
-    expect(jsmql("$$ = $$.takeRight(3);")).toEqual([{ $sort: { _id: -1 } }, { $limit: 3 }, { $sort: { _id: 1 } }]);
-    expect(jsmql("$$ = $$.dropRight(2);")).toEqual([{ $sort: { _id: -1 } }, { $skip: 2 }, { $sort: { _id: 1 } }]);
+describe("'from the end' array methods are NOT on the stream surface", () => {
+  // MongoDB has no stage that reverses a stream (`$reverseArray` is an EXPRESSION,
+  // for an array inside a document), and a stream has no order except the one a
+  // `$sort` gives it. These four used to be faked by rewriting the preceding
+  // `$sort`, which made them position-dependent in a way the JS methods never are —
+  // and with no `$sort` in front they silently ordered by `_id` instead of erroring.
+  const REMOVED = ["takeRight(3)", "dropRight(2)", "initial()", "toReversed()"];
+  const CONTEXTS = [
+    ["$$ = pivot", (c: string) => `$$ = $$.${c};`],
+    ["bare statement", (c: string) => `$$.${c};`],
+    ["after a sort", (c: string) => `$$ = $$.toSorted({ age: 1 }).${c};`],
+    ["foreign pivot", (c: string) => `$$ = $$$.orders.${c};`],
+    ["foreign value position", (c: string) => `$.x = $$$.orders.${c};`],
+    ["foreign after filter", (c: string) => `$.x = $$$.orders.filter({ a: 1 }).${c};`],
+  ] as const;
+  for (const call of REMOVED) {
+    for (const [label, build] of CONTEXTS) {
+      it(`.${call} is rejected in the ${label} context`, () => {
+        expect(() => jsmql(build(call)), build(call)).toThrow(/isn't available on a stream/);
+      });
+    }
+  }
+
+  it("the rejection names the take-from-the-front rewrite", () => {
+    expect(() => jsmql("$$ = $$.takeRight(3);")).toThrow(/\.toSorted\({ <field>: -1 }\)\.take\(n\)/);
+    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/\.toSorted\({ <field>: -1 }\)/);
   });
-  it("a preceding directional $sort is reversed, applied, then restored", () => {
-    expect(jsmql('$$ = $$.sort("createdAt").takeRight(3);')).toEqual([
-      { $sort: { createdAt: -1 } },
-      { $limit: 3 },
-      { $sort: { createdAt: 1 } },
-    ]);
-    expect(jsmql("$$ = $$.sort({ score: -1 }).dropRight(2);")).toEqual([
-      { $sort: { score: 1 } },
-      { $skip: 2 },
-      { $sort: { score: -1 } },
-    ]);
-  });
-  it(".initial() is .dropRight(1)", () => {
-    expect(jsmql('$$ = $$.sort("v").initial();')).toEqual([{ $sort: { v: -1 } }, { $skip: 1 }, { $sort: { v: 1 } }]);
-  });
-  it(".takeRight(0) is empty; .dropRight(0) is identity", () => {
-    expect(jsmql("$$ = $$.takeRight(0);")).toEqual([{ $match: { $expr: false } }]);
-    expect(jsmql("$$ = $$.dropRight(0);")).toEqual([]);
+
+  it("all four still work in VALUE position on a real array", () => {
+    // A stored array carries its own order, so there they mean what JS means.
+    expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([{ $set: { x: { $slice: ["$items", -3] } } }]);
+    expect(jsmql("$.x = $.items.toReversed();")).toEqual([{ $set: { x: { $reverseArray: "$items" } } }]);
+    expect(jsmql("$.x = $.items.initial();")).toBeDefined();
+    expect(jsmql("$.x = $.items.dropRight(2);")).toBeDefined();
   });
 });
 
@@ -212,16 +223,14 @@ describe(".shuffle() → $rand sort", () => {
     ]);
   });
 
-  it("a following .takeRight reverses the shuffle's own $sort, not $_id", () => {
-    // Regression: the slot `$unset` used to sit between the `$sort` and the next
-    // method, hiding it — and `reverseSortTrick` SILENTLY falls back to `_id`
-    // rather than erroring, so this returned the last 3 by `_id` and threw the
-    // shuffle away. Cleanup is now held to the end of the chain.
-    expect(jsmql("$$ = $$.shuffle().takeRight(3);")).toEqual([
+  it("the scratch $unset is held to the end, never wedged between the $sort and the next stage", () => {
+    // The `$sort` must stay adjacent to whatever follows it. When the slot `$unset`
+    // sat in between, `.takeRight` (since removed) silently reversed by `_id`
+    // instead of by the shuffle. The ordering rule outlives that method.
+    expect(jsmql("$$ = $$.shuffle().take(3);")).toEqual([
       { $addFields: { "__jsmql.tmp.1": { $rand: {} } } },
-      { $sort: { "__jsmql.tmp.1": -1 } },
-      { $limit: 3 },
       { $sort: { "__jsmql.tmp.1": 1 } },
+      { $limit: 3 },
       { $unset: "__jsmql" },
     ]);
   });
@@ -928,50 +937,6 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
   });
 });
 
-describe(".toReversed() — flips the preceding $sort", () => {
-  it("after ascending .toSorted → descending $sort", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => a.age - b.age).toReversed();")).toEqual([{ $sort: { age: -1 } }]);
-  });
-
-  it("after descending .toSorted → ascending $sort", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => b.score - a.score).toReversed();")).toEqual([{ $sort: { score: 1 } }]);
-  });
-
-  it("compound sort: every key flips", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => a.x - b.x || b.y - a.y).toReversed();")).toEqual([
-      { $sort: { x: -1, y: 1 } },
-    ]);
-  });
-
-  it("composes with .slice — $sort + $limit (top-N bottom-first)", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => a.score - b.score).toReversed().slice(0, 3);")).toEqual([
-      { $sort: { score: -1 } },
-      { $limit: 3 },
-    ]);
-  });
-
-  it("works inside the $$$.<coll> lookup body", () => {
-    expect(
-      jsmql("$$ = $$$.archive.filter(o => o.active === true).toSorted((a, b) => a.x - b.x).toReversed();"),
-    ).toEqual([
-      { $match: { $expr: false } },
-      { $unionWith: { coll: "archive", pipeline: [{ $match: { active: true } }, { $sort: { x: -1 } }] } },
-    ]);
-  });
-
-  it("without a preceding .toSorted is rejected", () => {
-    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/needs a preceding \$sort/);
-  });
-
-  it("after a non-$sort stage (e.g. .slice) is rejected", () => {
-    expect(() => jsmql("$$ = $$.slice(0, 10).toReversed();")).toThrow(/needs a preceding \$sort/);
-  });
-
-  it("rejects positional args", () => {
-    expect(() => jsmql("$$ = $$.toSorted((a, b) => a.x - b.x).toReversed(1);")).toThrow(/takes no arguments/);
-  });
-});
-
 describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   it("bare field path lowers to $unwind", () => {
     expect(jsmql("$$ = $$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }]);
@@ -1454,24 +1419,13 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
     expect(assigned).toEqual(expected);
   });
 
-  // The crux: .toReversed() composes against the live pipeline, so splitting
-  // it from its .toSorted() into a separate statement still flips the $sort.
-  it("toSorted().toReversed(): chained ≡ split (cross-statement) ≡ assignment", () => {
-    const chained = jsmql("$$.toSorted((a, b) => a.age - b.age).toReversed();");
-    const split = jsmql("$$.toSorted((a, b) => a.age - b.age); $$.toReversed();");
-    const assigned = jsmql("$$ = $$.toSorted((a, b) => a.age - b.age).toReversed();");
+  it("a descending sort is written directly, not as sort-then-reverse", () => {
+    // `.toReversed()` is gone from streams, so the descending comparator IS the
+    // spelling — and it was always the shorter one for the same single `$sort`.
     const expected = [{ $sort: { age: -1 } }];
-    expect(chained).toEqual(expected);
-    expect(split).toEqual(expected);
-    expect(assigned).toEqual(expected);
-  });
-
-  it("bare .toReversed() inverts a preceding literal $sort stage", () => {
-    expect(jsmql("$sort({ age: 1 }); $$.toReversed();")).toEqual([{ $sort: { age: -1 } }]);
-  });
-
-  it("bare .toReversed() with no preceding sort is rejected with the new wording", () => {
-    expect(() => jsmql("$$.toReversed();")).toThrow(/needs a preceding \$sort/);
+    expect(jsmql("$$.toSorted((a, b) => b.age - a.age);")).toEqual(expected);
+    expect(jsmql("$$ = $$.toSorted({ age: -1 });")).toEqual(expected);
+    expect(jsmql('$$.orderBy("age", -1);')).toEqual(expected);
   });
 
   it("unknown bare chain method surfaces the registry hint", () => {
@@ -1589,18 +1543,17 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     expect(jsmql(`$$ = $$.sortBy("cat");`)).toEqual([{ $sort: { cat: 1 } }]);
   });
 
-  it("a computed sort key stays visible to .takeRight / .toReversed", () => {
-    // Both read `prevStages[last]` for the live `$sort`, so the scratch `$unset` is
-    // held to the end of the chain. Get this wrong and `reverseSortTrick` SILENTLY
-    // reverses by `_id` instead — wrong results, no error.
-    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).takeRight(3);`)).toEqual([
+  it("a computed sort key's scratch $unset stays out of the way of later stages", () => {
+    // The `$sort` must remain adjacent to whatever follows, so the cleanup is held to
+    // the end of the chain rather than emitted right after the `$sort`.
+    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);`)).toEqual([
       { $addFields: { "__jsmql.tmp.1": { $toLower: "$cat" } } },
-      { $sort: { "__jsmql.tmp.1": -1 } },
-      { $limit: 3 },
       { $sort: { "__jsmql.tmp.1": 1 } },
+      { $limit: 3 },
       { $unset: "__jsmql" },
     ]);
-    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).toReversed();`)).toEqual([
+    // Descending is written directly — there is no reverse-a-previous-sort form.
+    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
       { $addFields: { "__jsmql.tmp.1": { $toLower: "$cat" } } },
       { $sort: { "__jsmql.tmp.1": -1 } },
       { $unset: "__jsmql" },

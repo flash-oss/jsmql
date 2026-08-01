@@ -2715,9 +2715,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
 | `.pick([fields])` / `.omit([fields])` | The lodash object methods, per document. `.pick` keeps only the named fields (`_id` dropped unless named); `.omit` drops the named fields | `$project` (inclusion / exclusion) |
 | `.tail()` | Zero args — all but the first document | `$skip: 1` |
-| `.takeRight(n)` / `.dropRight(n)` / `.initial()` | Count from the END. Reverses a preceding directional `.sort(...)` (else orders by `_id`), applies `$limit`/`$skip`, then restores the order. `.initial()` = `.dropRight(1)` | `$sort <reversed>` · `$limit`/`$skip` · `$sort <original>` |
 | `.shuffle()` | Zero args — random document order (non-deterministic, like `.sample`) | `$addFields` a `$rand` key · `$sort` by it · `$unset` it |
-| `.toReversed()` | Zero args; the preceding stage must be a `$sort` — a `.sort(...)` earlier in the chain, or (in the [bare-statement form](#bare-statement-stream-operations)) a prior statement / literal `$sort(...)` | Rewrites the preceding `$sort` with every direction flipped (1 ↔ -1) — total stage count unchanged. Without a preceding sort the call is rejected with a "needs a preceding $sort" hint |
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
@@ -2765,7 +2763,7 @@ $$ = $$.sortBy(d => d.category.toLowerCase());
 //    { $unset: "__jsmql" }]
 ```
 
-That scratch field stays visible to `.takeRight(n)` and `.toReversed()`, so they reverse *your* ordering rather than falling back to `_id`.
+The scratch field is cleared once the chain finishes, so it never reaches your output.
 
 **`.flatMap` is the exception** — it takes a field path only. `$unwind` puts each element back into a *named* field, so which field it is is part of what you mean; jsmql can't pick one for you:
 
@@ -2777,6 +2775,14 @@ $$ = $$.flatMap("allTags");
 On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 
 `.map(d => …)` / `.map("field")` replaces each document with the body via `$replaceWith`, so the **body must resolve to a document** (MongoDB requires an object root). A provably non-document body — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])` — is rejected at compile time; a field ref that turns out to be a scalar at runtime (e.g. `.map("userId")` where `userId` is an ObjectId) is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
+
+Methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are deliberately not on this list either. A MongoDB stream has no order except the one a `$sort` gives it, and there is no stage that reverses one (`$reverseArray` is an *expression*, for an array inside a document) — so "the last 3" has nothing to count back from. Say the order you want and take from the **front**:
+
+```js
+$$ = $$.toSorted({ createdAt: -1 }).take(3);   // the 3 most recent
+```
+
+All four still work in value position on a real array (`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where the array carries its own order and they mean exactly what they mean in JS.
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 

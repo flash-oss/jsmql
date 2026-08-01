@@ -40,7 +40,12 @@ import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
-import { lookupStreamMethod, streamMethodNames, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
+import {
+  fromTheEndRejection,
+  lookupStreamMethod,
+  streamMethodNames,
+  VALUE_TERMINAL_METHODS,
+} from "./stream-methods.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -671,6 +676,11 @@ export function validateLookupShape(expr: Expr): void {
     // to the chain assembler (`tryExtractChainedLookup`) / implicit-filter injector.
     // Only a genuinely unknown method is malformed here.
     if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
+    // A "from the end" method (`.takeRight`/`.toReversed`/…) is not merely unknown —
+    // it was removed on purpose, so say why and name the rewrite rather than offering
+    // a spelling suggestion for a method that no longer exists.
+    const fromTheEnd = fromTheEndRejection(expr.method, spell, expr.pos);
+    if (fromTheEnd !== null) throw fromTheEnd;
     const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
     throw new CodegenError(
       `'${spell}' supports .find(pred), .filter(pred), .aggregate(pipeline), and the lodash stream methods ` +
@@ -2589,6 +2599,13 @@ function tryExtractChainedLookup(
   // otherwise the chain falls back to the expression-form path (`descendAndExtract`),
   // which still handles value-terminals / string methods on the lookup result.
   for (let i = start; i < chainEnd; i++) {
+    // …except a "from the end" method, which must REJECT rather than fall back.
+    // Falling back would materialise the sub-pipeline into an array and slice its
+    // tail — but that array's order is whatever the foreign scan produced, so "the
+    // last 3" is exactly as meaningless as it is on the stream itself. Silently
+    // answering a question with no answer is the failure mode being removed here.
+    const fromTheEnd = fromTheEndRejection(methods[i].method, `$$$.${target.collection}`, methods[i].pos);
+    if (fromTheEnd !== null) throw fromTheEnd;
     if (!isPeelableChainMethod(methods[i].method)) return null;
   }
   // A value-collapsing `.map` anywhere in the SUB-PIPELINE portion (before the

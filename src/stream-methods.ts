@@ -217,6 +217,46 @@ function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null {
 }
 
 /**
+ * The JS array methods that count "from the end" — deliberately NOT on the stream
+ * surface. Value maps each to the equivalent the user should write instead.
+ *
+ * MongoDB has no stage that reverses a stream (`$reverseArray` is an *expression*,
+ * for an array inside a document), and a stream has no ordering except the one a
+ * `$sort` gives it. jsmql used to fake these by rewriting the preceding `$sort`,
+ * which made them position-dependent in a way the JS methods never are and — with
+ * no `$sort` in front — *silently* ordered by `_id` instead of erroring. Reversing
+ * a sort you already wrote is also just a longer spelling of writing it descending.
+ *
+ * They remain available in VALUE position on a real array (`$.items.takeRight(3)`
+ * → `$slice`, `$.items.toReversed()` → `$reverseArray`), where the array carries
+ * its own order and the method means exactly what it means in JS.
+ */
+const FROM_THE_END_METHODS: Record<string, string> = {
+  takeRight: `.toSorted({ <field>: -1 }).take(n)`,
+  dropRight: `.toSorted({ <field>: -1 }).drop(n)`,
+  initial: `.toSorted({ <field>: -1 }).drop(1)`,
+  toReversed: `.toSorted({ <field>: -1 })`,
+};
+
+/** The rejection for a "from the end" method on a stream, or null if `name` isn't one. */
+export function fromTheEndRejection(name: string, receiver: string, pos: number): CodegenError | null {
+  const rewrite = FROM_THE_END_METHODS[name];
+  if (rewrite === undefined) return null;
+  const why =
+    name === "toReversed"
+      ? `it reverses the stream, and a MongoDB stream has no order to reverse`
+      : `it counts from the END of the stream, and a MongoDB stream has no end to count back from`;
+  const arg = name === "takeRight" || name === "dropRight" ? "n" : "";
+  return new CodegenError(
+    `'.${name}(...)' isn't available on a stream — ${why} (there is no stage that reverses one; ` +
+      `'$reverseArray' is an expression, for an array inside a document). Say the order you want and take ` +
+      `from the FRONT instead: '${receiver}${rewrite}'. On a real array value it still works exactly as in ` +
+      `JS — '$.items.${name}(${arg})'.`,
+    pos,
+  );
+}
+
+/**
  * `$unset` stages for scratch slots a method materialised — but only inside a
  * `$lookup.pipeline`, where the sub-pipeline's documents land in an array field
  * that the outer `{ $unset: "__jsmql" }` cannot reach. At the top level and inside
@@ -368,74 +408,6 @@ const TAIL: StreamMethodDef = {
   },
   lower() {
     return { stages: [{ $skip: 1 }] };
-  },
-};
-
-// ── .takeRight(n) / .dropRight(n) / .initial() → the reverse-sort trick ────────
-//
-// "From the end" of a stream needs an ordering. If the immediately-preceding
-// stage is a directional `$sort` S, reverse it (S'), apply `$limit`/`$skip`, then
-// restore S — so `takeRight(n)` is the last n IN S ORDER. With no preceding sort,
-// order by `_id` (`$sort:{_id:-1}` … `$sort:{_id:1}`) — the n largest-`_id`
-// documents, roughly insertion order.
-function reverseSortTrick(
-  prevStages: readonly object[],
-  op: "$limit" | "$skip",
-  n: number,
-  method: string,
-  callPos: number,
-): StreamMethodResult {
-  const last = prevStages[prevStages.length - 1] as Record<string, unknown> | undefined;
-  const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
-  if (sortSpec !== undefined) {
-    const flipped: Record<string, 1 | -1> = {};
-    for (const key of Object.keys(sortSpec)) {
-      const dir = sortSpec[key];
-      if (dir !== 1 && dir !== -1) {
-        throw new CodegenError(
-          `.${method}() counts 'from the end' by reversing the preceding sort, but that $sort on '${key}' isn't a directional 1/-1 sort. Precede '.${method}()' with a '.sort(...)' on 1/-1 fields (or remove the non-directional sort).`,
-          callPos,
-        );
-      }
-      flipped[key] = dir === 1 ? -1 : 1;
-    }
-    // Reverse the prior sort, apply the op, then restore the original order.
-    return { stages: [{ $sort: flipped }, { [op]: n }, { $sort: sortSpec }], replacesPreviousStage: true };
-  }
-  return { stages: [{ $sort: { _id: -1 } }, { [op]: n }, { $sort: { _id: 1 } }] };
-}
-
-const TAKE_RIGHT: StreamMethodDef = {
-  name: "takeRight",
-  validate(args, callPos) {
-    validateSingleIntArg(".takeRight(n)", args, callPos, 0);
-  },
-  lower(args, _ctx, callPos, _lb, prevStages) {
-    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
-    if (n === 0) return { stages: [{ $match: { $expr: false } }] }; // last 0 → empty
-    return reverseSortTrick(prevStages, "$limit", n, "takeRight", callPos);
-  },
-};
-
-const DROP_RIGHT: StreamMethodDef = {
-  name: "dropRight",
-  validate(args, callPos) {
-    validateSingleIntArg(".dropRight(n)", args, callPos, 0);
-  },
-  lower(args, _ctx, callPos, _lb, prevStages) {
-    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
-    if (n === 0) return { stages: [] }; // drop last 0 → identity
-    return reverseSortTrick(prevStages, "$skip", n, "dropRight", callPos);
-  },
-};
-
-const INITIAL: StreamMethodDef = {
-  name: "initial",
-  validate(args, callPos) {
-    if (args.length !== 0) throw new CodegenError(`.initial() takes no arguments, got ${args.length}.`, callPos);
-  },
-  lower(_args, _ctx, callPos, _lb, prevStages) {
-    return reverseSortTrick(prevStages, "$skip", 1, "initial", callPos); // dropRight(1)
   },
 };
 
@@ -1188,48 +1160,6 @@ const OMIT: StreamMethodDef = {
     // Exclusion projection keeps every other field (incl. `let` scratch), so the
     // let scope survives — no clearLets.
     return { stages: [{ $project: proj }] };
-  },
-};
-
-// ── .toReversed() → flips the preceding $sort spec ────────────────────────────
-//
-// Zero-arg. Only valid when the immediately preceding stage is a `$sort` —
-// MongoDB streams of documents have no natural ordering, so reversing requires
-// a sort key. In the `$$ = $$.<chain>` form that preceding `$sort` comes from a
-// `.toSorted(...)` earlier in the same chain; in the bare-statement form
-// (`$$.toReversed();`) it can also come from a prior statement or a literal
-// `$sort(...)` stage, since the chain is lowered against the live pipeline.
-// Lowering doesn't emit a new $sort stage: it rewrites the preceding one with
-// all directions flipped (1 → -1, -1 → 1), so the total stage count stays equal
-// to a hand-written descending `.toSorted`.
-const TO_REVERSED: StreamMethodDef = {
-  name: "toReversed",
-  validate(args, callPos) {
-    if (args.length !== 0) {
-      throw new CodegenError(`.toReversed() takes no arguments, got ${args.length}.`, callPos);
-    }
-  },
-  lower(_args, _ctx, callPos, _lowerBlock, prevStages) {
-    const last = prevStages[prevStages.length - 1] as Record<string, unknown> | undefined;
-    const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
-    if (sortSpec === undefined) {
-      throw new CodegenError(
-        `.toReversed() needs a preceding $sort (from a '.toSorted(...)' call or a '$sort' stage) to invert — MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or place '.toReversed()' after a sort.`,
-        callPos,
-      );
-    }
-    const flipped: Record<string, 1 | -1> = {};
-    for (const key of Object.keys(sortSpec)) {
-      const dir = sortSpec[key];
-      if (dir !== 1 && dir !== -1) {
-        throw new CodegenError(
-          `.toReversed() can only invert a '$sort' with numeric 1/-1 directions (preceding stage has '${key}: ${String(dir)}'). Inverting non-direction sort specs (text-meta, custom expressions) isn't supported.`,
-          callPos,
-        );
-      }
-      flipped[key] = dir === 1 ? -1 : 1;
-    }
-    return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
   },
 };
 
@@ -2354,9 +2284,6 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
-  takeRight: TAKE_RIGHT,
-  dropRight: DROP_RIGHT,
-  initial: INITIAL,
   shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
@@ -2366,7 +2293,6 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toSorted: TO_SORTED,
   sortBy: SORT_BY,
   orderBy: ORDER_BY,
-  toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
   keyBy: KEY_BY,
