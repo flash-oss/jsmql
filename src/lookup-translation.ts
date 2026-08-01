@@ -421,12 +421,20 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
   // `.aggregate(<pipeline>)` accepts a block-body arrow OR a stage-array literal;
-  // both normalise to a block-body `Lambda` so the rest of the lookup machinery
-  // (translatePredicate → buildBlockBodyPredicate, chained-terminal
-  // materialisation, cross-DB gate) treats it exactly like a block-body join.
-  // A malformed argument (expression-body arrow, spread-bearing array) returns
-  // null here; `validateLookupShape` surfaces the actionable error.
-  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : null;
+  // `.filter(<pred>)` accepts an arrow OR a lodash predicate shorthand. Each
+  // normalises to a `Lambda` HERE, so the rest of the lookup machinery
+  // (translatePredicate → tryBasicForm / buildBlockBodyPredicate, chained-terminal
+  // materialisation, cross-DB gate) treats every spelling identically.
+  // A malformed argument (expression-body arrow, spread-bearing array, empty
+  // matcher) returns null here; `validateLookupShape` surfaces the actionable error.
+  const lambda =
+    expr.method === "aggregate"
+      ? aggregateArgToLambda(arg)
+      : arg.type === "Lambda"
+        ? arg
+        : expr.method === "filter"
+          ? filterArgToLambda(arg)
+          : null;
   if (lambda === null) return null;
   return {
     pos: target.pos,
@@ -437,6 +445,36 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
     lambda,
   };
 }
+
+/**
+ * Normalise a `.filter(<pred>)` argument that is a lodash predicate SHORTHAND
+ * (matches-object / field name / `["field", value]`) into the equivalent
+ * single-parameter arrow, so `$$$.<coll>.filter({ userId: $._id })` IS
+ * `$$$.<coll>.filter(o => o.userId === $._id)` from detection onward — same
+ * `$lookup` form (basic when the predicate qualifies), same `.length` lowering,
+ * same mode-gate error. Spelling must never change the emitted MQL.
+ *
+ * Returns null for a non-shorthand argument, and — per `detectLookupCall`'s
+ * normalise-or-null contract, the same one `aggregateArgToLambda` follows — for a
+ * MALFORMED shorthand: detection stays side-effect-free, and `validateLookupShape`
+ * (which runs the throwing `shorthandToLambda`) owns the actionable message.
+ */
+function filterArgToLambda(arg: CallArg): Lambda | null {
+  if (arg.type === "SpreadElement") return null;
+  try {
+    return shorthandToLambda(arg, "filter", FOREIGN_SHORTHAND_PARAM);
+  } catch (e) {
+    if (e instanceof CodegenError) return null;
+    throw e;
+  }
+}
+
+/**
+ * Synthetic foreign-document parameter for a shorthand-spelled `.filter(...)`
+ * predicate. Shared with the chained-`.filter` normaliser (`chainFilterLambda`)
+ * so head and chain positions desugar to a byte-identical lambda.
+ */
+const FOREIGN_SHORTHAND_PARAM = "jsmqlItem";
 
 /**
  * Normalise a `.aggregate(...)` argument into the block-body `Lambda` the lookup
@@ -642,7 +680,7 @@ export function validateLookupShape(expr: Expr): void {
     if (
       expr.method === "filter" &&
       arg.type !== "SpreadElement" &&
-      shorthandToLambda(arg, "filter", "jsmqlItem") !== null
+      shorthandToLambda(arg, "filter", FOREIGN_SHORTHAND_PARAM) !== null
     ) {
       return;
     }
@@ -2333,7 +2371,7 @@ function chainFilterLambda(m: MethodCall): Lambda {
     throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => …')${rejectHint}.`, m.pos);
   }
   const arg = m.args[0];
-  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
   if (base === null || base.params.length !== 1) {
     throw new CodegenError(
       `.${m.method}(<predicate>) takes a single-parameter arrow ('o => …')${rejectHint}.`,

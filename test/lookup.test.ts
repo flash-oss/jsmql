@@ -1007,12 +1007,54 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
 describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial review)", () => {
   // Each of these emitted invalid or wrong MQL before the generic-head change fixed them;
   // verified against a live mongod. See docs/DEVLOG.md.
-  it("a lone shorthand .filter({obj}) head is accepted (consistent with the chained form)", () => {
+  it("a lone shorthand .filter({obj}) head lowers exactly like the equivalent arrow", () => {
+    // The shorthand is desugared to its arrow at DETECTION (`filterArgToLambda` in
+    // detectLookupCall), so it takes the same direct-lookup path — including the
+    // `as: "x"` write straight to the destination field (no tmp slot, no trailing
+    // `$set`/`$unset`) that the arrow form has always had.
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
-      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "__jsmql.tmp.1" } },
-      { $set: { x: "$__jsmql.tmp.1" } },
-      { $unset: "__jsmql" },
+      { $lookup: { from: "orders", let: {}, pipeline: [{ $match: { uid: 1 } }], as: "x" } },
     ]);
+    expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual(jsmql("$.x = $$$.orders.filter(o => o.uid === 1);"));
+  });
+
+  // Spelling must never change the emitted MQL. Before the detection-time
+  // normalisation, a shorthand predicate skipped `detectLookupCall` entirely and
+  // fell through to the chain assembler, which ALWAYS builds the correlated
+  // pipeline form — so `.filter({ userId: $._id })` silently lost the indexed
+  // `localField`/`foreignField` `$lookup` its arrow twin got, and `.length` on it
+  // lost the `$size` materialisation for an `$isArray`-guarded `$strLenCP`
+  // fallback. Same meaning, strictly worse plan. Verified against a live mongod.
+  const SPELLINGS: ReadonlyArray<readonly [string, string]> = [
+    ["matches-object", `{ userId: $._id }`],
+    ["matchesProperty", `["userId", $._id]`],
+  ];
+  for (const [label, shorthand] of SPELLINGS) {
+    it(`a ${label} predicate lowers identically to its arrow — indexed basic form, $size .length`, () => {
+      const arrow = (pred: string) => `let n = $$$.orders.filter(${pred}).length; $project({ n });`;
+      expect(jsmql(arrow(shorthand))).toEqual([
+        { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+        { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+        { $set: { "__jsmql.var.n": "$__jsmql.tmp.1" } },
+        { $project: { n: "$__jsmql.var.n" } },
+        { $unset: "__jsmql" },
+      ]);
+      expect(jsmql(arrow(shorthand))).toEqual(jsmql(arrow("o => o.userId === $._id")));
+    });
+
+    it(`a ${label} predicate hits the same Filter-mode gate as its arrow`, () => {
+      // Detection drives the mode gate too: an undetected shorthand used to fall
+      // through to the generic "bare '$$$' reference" error instead of the
+      // actionable "requires Pipeline mode" one.
+      expect(() => jsmql(`$$$.orders.filter(${shorthand}).length > 0`)).toThrow(/requires Pipeline mode/);
+    });
+  }
+
+  it("a malformed shorthand still reports its own targeted error, not a lookup-shape one", () => {
+    // `filterArgToLambda` returns null rather than throwing, so `validateLookupShape`
+    // (which runs the throwing `shorthandToLambda`) stays the owner of the message.
+    expect(() => jsmql("$.x = $$$.orders.filter({});")).toThrow(/needs at least one field to match/);
+    expect(() => jsmql("$.x = $$$.orders.filter([1, 2]);")).toThrow(/matchesProperty shorthand/);
   });
 
   it(".slice(a, a) (empty window) emits $match:{$expr:false}, never the server-rejected $limit:0", () => {

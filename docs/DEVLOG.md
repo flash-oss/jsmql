@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — fix: a shorthand `.filter(...)` lookup predicate lowers identically to its arrow
+
+`$$$.orders.filter({ userId: $._id })` and `$$$.orders.filter(o => o.userId === $._id)`
+mean the same thing, but until now they compiled to different — and unequally
+performant — MQL. The arrow got the **basic-form** `$lookup`
+(`localField`/`foreignField`, which the server can serve from an index); the
+shorthand got the correlated **pipeline form**. Chain `.length` onto each and the
+gap widened: the arrow materialised a clean `{ $set: { slot: { $size: … } } }`,
+while the shorthand fell all the way through to the generic value-mode
+`.length`, emitting an `$isArray`-guarded `$strLenCP` fallback for a value that is
+always an array. Even the Filter-mode gate diverged — the shorthand missed the
+actionable "requires Pipeline mode" error and got the generic "bare `$$$`
+reference" one. Same meaning, three different outputs, strictly worse plan.
+
+All three traced to one line in `detectLookupCall`
+([src/lookup-translation.ts](../src/lookup-translation.ts)), which accepted only
+`arg.type === "Lambda"` and returned `null` for everything else. A shorthand
+therefore wasn't a *detected lookup* at all: it fell through to the chain
+assembler, whose `.filter` handling always builds the pipeline form, and the
+`.length` / mode-gate paths (which both ask `detectLookupCall`) simply never saw
+it. The fix normalises the shorthand to its equivalent arrow **at detection**, via
+a new `filterArgToLambda` that mirrors the `aggregateArgToLambda` already sitting
+beside it — so `.filter(<shorthand>)` *is* `.filter(<arrow>)` from the first
+moment the compiler names it, and every downstream consumer inherits the identical
+treatment for free rather than each needing its own shorthand branch. Detection
+stays side-effect-free: a malformed shorthand returns `null` (not a throw), leaving
+`validateLookupShape` the owner of the targeted message.
+
+Normalising at *detection* rather than teaching the chain assembler about basic
+form was the deliberate choice — the alternative would have left a second place
+that decides basic-vs-pipeline, i.e. the same divergence class one refactor later.
+Two spot-effects worth noting: a lone `$$$.coll.filter({…})` now writes straight to
+its destination `as` (no tmp slot, no trailing `$set`/`$unset`), and an
+uncorrelated shorthand chain now carries the arrow's `let: {}` — see the follow-up
+entry on dropping the empty `let`. Guards live in
+[test/lookup.test.ts](../test/lookup.test.ts) (both shorthand spellings asserted
+equal to the arrow's MQL, plus the mode-gate and malformed-shorthand cases); all
+eight shapes were run against a live mongod and the paired forms return identical
+documents.
+
+---
+
 ## 2026-08-01 — test: showcase chains rewritten in the shorter lodash spellings
 
 [test/realistic.test.ts](../test/realistic.test.ts) (and the README / LANGUAGE

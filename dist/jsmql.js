@@ -11806,7 +11806,7 @@ function detectLookupCall(expr, ctx) {
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
-  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : null;
+  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : expr.method === "filter" ? filterArgToLambda(arg) : null;
   if (lambda === null) return null;
   return {
     pos: target.pos,
@@ -11817,6 +11817,16 @@ function detectLookupCall(expr, ctx) {
     lambda
   };
 }
+function filterArgToLambda(arg) {
+  if (arg.type === "SpreadElement") return null;
+  try {
+    return shorthandToLambda(arg, "filter", FOREIGN_SHORTHAND_PARAM);
+  } catch (e) {
+    if (e instanceof CodegenError) return null;
+    throw e;
+  }
+}
+var FOREIGN_SHORTHAND_PARAM = "jsmqlItem";
 function aggregateArgToLambda(arg) {
   if (arg.type === "Lambda") return arg.block !== void 0 ? arg : null;
   if (arg.type === "ArrayLiteral") {
@@ -11951,7 +11961,7 @@ function validateLookupShape(expr) {
   }
   const arg = expr.args[0];
   if (arg.type !== "Lambda") {
-    if (expr.method === "filter" && arg.type !== "SpreadElement" && shorthandToLambda(arg, "filter", "jsmqlItem") !== null) {
+    if (expr.method === "filter" && arg.type !== "SpreadElement" && shorthandToLambda(arg, "filter", FOREIGN_SHORTHAND_PARAM) !== null) {
       return;
     }
     throw new CodegenError(
@@ -12926,7 +12936,7 @@ function chainFilterLambda(m) {
     throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => \u2026')${rejectHint}.`, m.pos);
   }
   const arg = m.args[0];
-  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
   if (base === null || base.params.length !== 1) {
     throw new CodegenError(
       `.${m.method}(<predicate>) takes a single-parameter arrow ('o => \u2026')${rejectHint}.`,

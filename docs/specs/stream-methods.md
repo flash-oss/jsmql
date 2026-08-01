@@ -126,10 +126,14 @@ pre-existing gap as `$ = <expr>` and are not caught (would need type inference j
 doesn't do for `$replaceWith`).
 
 `.filter` is handled outside this registry (its predicate translation is shared
-with `$unionWith`/`$facet`). It accepts an **arrow predicate** (`o => …`) or the
-lodash **matches-object** shorthand (`{ field: value, … }` → an equality
-`$match` query), and may appear **anywhere** in the chain — as the head or after
-a reshaping method (`.flatMap(...).filter(...)`), not only first.
+with `$unionWith`/`$facet`). It accepts an **arrow predicate** (`o => …`) or any
+lodash predicate shorthand, and may appear **anywhere** in the chain — as the head
+or after a reshaping method (`.flatMap(...).filter(...)`), not only first. Every
+shorthand is desugared to its equivalent arrow before translation (`shorthandToLambda`;
+at the head that happens in `detectLookupCall` — see
+[lookup-stage.md](lookup-stage.md) § Module layout), so **spelling never changes
+the emitted MQL**: `.filter({ userId: $._id })` lowers to exactly what
+`.filter(o => o.userId === $._id)` does, indexed basic-form `$lookup` included.
 
 Future methods (per the planning notes) extend this table — see
 [docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.
