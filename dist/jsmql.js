@@ -2946,11 +2946,11 @@ var Parser = class {
     const tok = this.lexer.peek();
     if (tok.type === TokenType.LBracket) {
       this.lexer.next();
-      const keyExpr = this.parseExpression();
+      const keyExpr2 = this.parseExpression();
       this.lexer.expect(TokenType.RBracket);
       this.lexer.expect(TokenType.Colon);
       const value2 = this.parseExpression();
-      const key2 = { kind: "computed", expr: keyExpr };
+      const key2 = { kind: "computed", expr: keyExpr2 };
       return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
     }
     if (tok.type === TokenType.Dollar) {
@@ -8891,14 +8891,14 @@ function generateObjectCall(method, args, ctx, pos) {
         expandingFns: ctx.expandingFns
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
-      const keyExpr = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
+      const keyExpr2 = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
       return {
         $reduce: {
           input: _generate(input, ctx),
           initialValue: {},
           in: {
             $let: {
-              vars: { key: keyExpr },
+              vars: { key: keyExpr2 },
               in: {
                 $mergeObjects: [
                   "$$value",
@@ -10373,14 +10373,25 @@ function fieldKeyArg(arg) {
   }
   return null;
 }
+function keyExpr(arg, ctx, sig) {
+  const name = fieldKeyArg(arg);
+  if (name !== null) return `$${name}`;
+  const method = sig.slice(1, sig.indexOf("("));
+  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, method, "jsmqlEl");
+  if (lambda === null) throw computedKeyError(sig, "pos" in arg ? arg.pos : 0);
+  const param = lambda.params[0];
+  const { rewritten, letVars } = extractLetsFromExpr(mapBodyExpr(lambda, method), param);
+  rejectLocalDocRef(letVars, param, lambda.pos, ctx.sourceSwitch?.desc, method);
+  return generateWithCtx(rewritten, ctx);
+}
 function computedKeyError(sig, pos, alsoTakes = "") {
   const name = sig.slice(1, sig.indexOf("("));
   return new CodegenError(
-    `${sig} keys on a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent bare-path arrow ('.${name}(d => d.status)'). On a stream the key becomes part of the emitted stage \u2014 a '$sort' key or a '$group._id' \u2014 which the server fixes at plan time, so a computed arrow, a matches-object, or a dynamic value has nothing to key on. Materialise the key into a field first, then key on its name: '$.key = <expr>; $$ = $$.${name}("key");' \u2014 or, inside a foreign chain, '.map(d => ({ key: <expr>, \u2026 })).${name}("key")'.`,
+    `${sig} names a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent bare-path arrow ('.${name}(d => d.status)'). It lowers to a slot the server needs as a literal field path (a '$sort' key / '$unwind' path), so a computed arrow, a matches-object, or a dynamic value has nothing to name \u2014 unlike the '$group'-keyed methods ('.groupBy'/'.countBy'/'.keyBy'/'.uniqBy'), whose key IS an expression slot and so does accept them. Materialise the value into a field first, then name it: '$.key = <expr>; $$ = $$.${name}("key");' \u2014 or, inside a foreign chain, '.map(d => ({ key: <expr>, \u2026 })).${name}("key")'.`,
     pos
   );
 }
-function validateSingleFieldArg(sig, args, callPos) {
+function validateKeyArg(sig, args, callPos, alsoTakes = "") {
   if (args.length !== 1) {
     throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
   }
@@ -10394,7 +10405,23 @@ function validateSingleFieldArg(sig, args, callPos) {
       arg.pos
     );
   }
-  if (fieldKeyArg(arg) === null) throw computedKeyError(sig, arg.pos);
+  if (fieldKeyArg(arg) !== null) return;
+  const name = sig.slice(1, sig.indexOf("("));
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter iteratee '(d) => <key expr>', got ${arg.params.length} parameters.`,
+        arg.pos
+      );
+    }
+    mapBodyExpr(arg, name);
+    return;
+  }
+  if (shorthandToLambda(arg, name, "jsmqlEl") !== null) return;
+  throw new CodegenError(
+    `${sig} takes a field name ('.${name}("status")'), a bare-path arrow ('.${name}(d => d.status)'), a computed iteratee ('.${name}(d => d.status.toLowerCase())')${alsoTakes}, or a lodash matches shorthand ('{ active: true }' / '["status", "open"]').`,
+    arg.pos
+  );
 }
 var TAKE = {
   name: "take",
@@ -10524,20 +10551,20 @@ var CONCAT = {
     return { stages };
   }
 };
-function mapBodyExpr(lambda) {
+function mapBodyExpr(lambda, method = "map") {
   if (lambda.body !== void 0) return lambda.body;
   const eb = lambda.exprBlock;
   if (eb !== void 0) {
     if (eb.decls.length > 0) {
       throw new CodegenError(
-        `.map(d => { \u2026 }) with 'let'/'const' bindings isn't supported \u2014 use a single 'return <expr>' (e.g. '.map(d => ({ \u2026 }))'), or hoist the bindings to a top-level 'let' before the chain.`,
+        `.${method}(d => { \u2026 }) with 'let'/'const' bindings isn't supported \u2014 use a single 'return <expr>' (e.g. '.${method}(d => d.field)'), or hoist the bindings to a top-level 'let' before the chain.`,
         lambda.pos
       );
     }
     return eb.ret;
   }
   throw new CodegenError(
-    `.map(d => <expr>) requires an expression or single-'return' body \u2014 a multi-statement block isn't supported here; split into separate stages ($set, $project, \u2026) instead.`,
+    `.${method}(d => <expr>) requires an expression or single-'return' body \u2014 a multi-statement block isn't supported here; split into separate stages ($set, $project, \u2026) instead.`,
     lambda.pos
   );
 }
@@ -10571,7 +10598,7 @@ function classifyCollParam(lambda) {
   }
   return lengthUses > 0;
 }
-function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc) {
+function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc, method = "map") {
   if (Object.keys(letVars).length === 0) return;
   const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
   if (sourceSwitchDesc !== void 0) {
@@ -10581,7 +10608,7 @@ function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc) {
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.map(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos
   );
 }
@@ -11066,15 +11093,15 @@ var GROUP_BY = {
       throw new CodegenError(`.groupBy(...) does not accept a spread argument.`, a.pos);
     }
     if (a.type === "ObjectLiteral") return;
-    fieldNameLiteral(a, ".groupBy(key)", ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
+    validateKeyArg(".groupBy(key)", args, callPos, ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
   },
   lower(args, ctx, callPos) {
     const a = args[0];
     if (a.type !== "ObjectLiteral") {
-      const key = fieldKeyArg(a);
+      const key = keyExpr(a, ctx, ".groupBy(key)");
       return {
         stages: [
-          { $group: { _id: `$${key}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: key, [GROUP_TMP]: { $push: "$$ROOT" } } },
           { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
           { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
         ],
@@ -11088,13 +11115,13 @@ var GROUP_BY = {
 var COUNT_BY = {
   name: "countBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".countBy(field)", args, callPos);
+    validateKeyArg(".countBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = fieldKeyArg(args[0]);
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".countBy(key)");
     return {
       stages: [
-        { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
+        { $group: { _id: key, [GROUP_TMP]: { $sum: 1 } } },
         { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
         { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
       ],
@@ -11105,13 +11132,13 @@ var COUNT_BY = {
 var KEY_BY = {
   name: "keyBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".keyBy(field)", args, callPos);
+    validateKeyArg(".keyBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = fieldKeyArg(args[0]);
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".keyBy(key)");
     return {
       stages: [
-        { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
+        { $group: { _id: key, [GROUP_TMP]: { $last: "$$ROOT" } } },
         { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
         { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
       ],
@@ -11122,12 +11149,12 @@ var KEY_BY = {
 var UNIQ_BY = {
   name: "uniqBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".uniqBy(field)", args, callPos);
+    validateKeyArg(".uniqBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = fieldKeyArg(args[0]);
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".uniqBy(key)");
     return {
-      stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
+      stages: [{ $group: { _id: key, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
       clearLets: true
     };
   }
@@ -12920,7 +12947,7 @@ function isValueCollapsingMap(m) {
 }
 function isCollapsingTerminal(m) {
   if (m.method === "countBy" || m.method === "keyBy") return true;
-  if (m.method === "groupBy") return m.args.length === 1 && fieldKeyArg(m.args[0]) !== null;
+  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type !== "ObjectLiteral";
   return false;
 }
 function chainFilterLambda(m) {

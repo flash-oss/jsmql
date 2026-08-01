@@ -40,7 +40,7 @@ import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
-import { fieldKeyArg, lookupStreamMethod, streamMethodNames, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
+import { lookupStreamMethod, streamMethodNames, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -2382,12 +2382,14 @@ export function isValueCollapsingMap(m: MethodCall): boolean {
 // lands as `[obj]`; the caller unwraps it with `$first` (see the return below).
 function isCollapsingTerminal(m: MethodCall): boolean {
   if (m.method === "countBy" || m.method === "keyBy") return true;
-  // `.groupBy(<key>)` collapses; `.groupBy({ _id, … })` — the `$group`-body form —
-  // stays a document stream. Ask what the argument MEANS (`fieldKeyArg`: a field
-  // name or its bare-path arrow), not how it is spelled: keying on `StringLiteral`
-  // alone silently skipped the `$first` unwrap for `.groupBy(d => d.cat)`, leaving
-  // the caller with the raw `[obj]` slot instead of the object.
-  if (m.method === "groupBy") return m.args.length === 1 && fieldKeyArg(m.args[0]) !== null;
+  // `.groupBy(<key>)` collapses to one object; `.groupBy({ _id, … })` — the
+  // `$group`-body form — stays a document stream. The test is therefore "is it the
+  // KEY form", i.e. anything but an object literal. Narrowing it to a *recognised*
+  // key (`StringLiteral`, later `fieldKeyArg`) is the recurring trap: each time the
+  // key surface grew, the unwrap silently stopped firing for the new spelling and
+  // the caller got the raw `[obj]` slot. An unrecognised key can't reach here at
+  // all — `validate` rejected it long before.
+  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type !== "ObjectLiteral";
   return false;
 }
 

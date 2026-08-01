@@ -1498,29 +1498,78 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     });
   }
 
-  // A key slot genuinely cannot take a computed value — a `$sort` key / `$group._id`
-  // is fixed at plan time. That limit is real, so the error has to name the way out.
-  it("a computed key is rejected with the materialise-first alternative", () => {
-    for (const m of ["sortBy", "orderBy", "groupBy", "countBy", "keyBy", "uniqBy"]) {
+  // Whether a computed key works is decided by the SLOT it lands in, not by the
+  // method's spelling rules: `$group._id` is an expression the server evaluates per
+  // document, so it takes one; a `$sort` key / `$unwind` path must be a literal field
+  // path, so it can't. The split below is that line, and nothing else.
+  it("a computed key lowers straight into $group._id — no extra stages", () => {
+    expect(jsmql(`$$ = $$.countBy(d => d.cat.toLowerCase());`)).toEqual([
+      { $group: { _id: { $toLower: "$cat" }, __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql(`$$ = $$.uniqBy(d => d.a + d.b);`)).toEqual([
+      { $group: { _id: { $add: ["$a", "$b"] }, __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
+    // A lodash matches shorthand keys on the match BOOLEAN, same as `_.matches`.
+    expect(jsmql(`$$ = $$.keyBy({ active: true });`)).toEqual(jsmql(`$$ = $$.keyBy(d => d.active === true);`));
+    expect(jsmql(`$$ = $$.countBy(["status", "open"]);`)).toEqual(jsmql(`$$ = $$.countBy(d => d.status === "open");`));
+  });
+
+  it("a plain field key still emits byte-identically after the computed-key change", () => {
+    // The `fieldKeyArg` fast path in `keyExpr` exists so adding expression support
+    // couldn't perturb the overwhelmingly common spelling.
+    for (const m of ["groupBy", "countBy", "keyBy", "uniqBy"]) {
+      expect(JSON.stringify(jsmql(`$$ = $$.${m}("cat");`)), m).toContain(`"_id":"$cat"`);
+    }
+  });
+
+  it(".groupBy(<computed>) still collapses — the unwrap follows the key FORM, not its spelling", () => {
+    // Each time the key surface grew, `isCollapsingTerminal` stopped recognising the
+    // new spelling and silently returned the raw `[obj]` slot. It now tests "not the
+    // $group-body form", so it can't fall behind again.
+    for (const key of [`"cat"`, `d => d.cat`, `d => d.cat.toLowerCase()`]) {
+      expect(JSON.stringify(jsmql(`$.o = $$$.orders.groupBy(${key});`)), key).toContain("$first");
+    }
+    expect(jsmql(`$$ = $$.groupBy({ _id: "$cat" });`)).toEqual([{ $group: { _id: "$cat" } }]);
+  });
+
+  it("a $sort key / $unwind path still rejects a computed value, and says why", () => {
+    for (const m of ["sortBy", "orderBy"]) {
       expect(() => jsmql(`$.o = $$$.orders.${m}(d => d.cat.toLowerCase());`), m).toThrow(
-        /Materialise the key into a field first/,
+        /Materialise the value into a field first/,
       );
     }
-    // The matches-object is rejected only where that spelling is free. On the sort /
-    // group methods an object is already claimed by a MORE useful surface, which is
-    // why the lodash matcher isn't available there — a principled clash, not a gap:
-    for (const m of ["countBy", "keyBy", "uniqBy"]) {
-      expect(() => jsmql(`$.o = $$$.orders.${m}({ cat: 1 });`), m).toThrow(/Materialise the key into a field first/);
-    }
-    expect(jsmql(`$.o = $$$.orders.orderBy({ cat: -1 });`)).toEqual(jsmql(`$.o = $$$.orders.orderBy(["cat"], [-1]);`));
-    expect(jsmql(`$$ = $$.groupBy({ _id: "$cat" });`)).toEqual([{ $group: { _id: "$cat" } }]);
-    expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(/Use '\.orderBy\({ field: -1 }\)'/);
     expect(() => jsmql(`$.o = $$$.orders.flatMap({ cat: 1 });`)).toThrow(/Materialise the array into a field first/);
+    // …and the message says the group-keyed methods DO accept one, so the reader
+    // isn't left thinking jsmql rejects computed keys everywhere.
+    expect(() => jsmql(`$.o = $$$.orders.orderBy(d => d.a.toLowerCase());`)).toThrow(/'\$group'-keyed methods/);
+    // An object on these two means something richer, so it keeps its own message.
+    expect(jsmql(`$.o = $$$.orders.orderBy({ cat: -1 });`)).toEqual(jsmql(`$.o = $$$.orders.orderBy(["cat"], [-1]);`));
+    expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(/Use '\.orderBy\({ field: -1 }\)'/);
+  });
+
+  it("a computed-key iteratee's own errors name the calling method, not `.map`", () => {
+    // The `$group`-keyed methods reuse `.map`'s body/param helpers to lower a computed
+    // key, so their errors have to be re-pointed — otherwise `.countBy(d => …)` fails
+    // talking about `.map`, the same wrong-method trap as `.keyBy` citing `.countBy`.
+    expect(() => jsmql(`$$ = $$.countBy(d => $.other);`)).toThrow(/inside '\.countBy\(d => …\)'/);
+    expect(() => jsmql(`$$ = $$.uniqBy(function (d) { const y = d.x; return y; });`)).toThrow(
+      /^\.uniqBy\(d => \{ … \}\) with 'let'\/'const' bindings/,
+    );
+    expect(() => jsmql(`$$ = $$.countBy((d, i) => d.x);`)).toThrow(/single-parameter iteratee/);
   });
 
   it("each key-slot error names the method it was called on, not a sibling", () => {
     // `.keyBy`/`.uniqBy` used to demonstrate `.countBy("status")` in their own errors.
-    expect(() => jsmql(`$.o = $$$.orders.keyBy(d => d.a.b());`)).toThrow(/'\.keyBy\("status"\)'/);
-    expect(() => jsmql(`$.o = $$$.orders.uniqBy(d => d.a.b());`)).toThrow(/'\.uniqBy\("status"\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(/'\.keyBy\("status"\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.uniqBy(5);`)).toThrow(/'\.uniqBy\("status"\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.sortBy(d => d.a.toLowerCase());`)).toThrow(/'\.sortBy\("status"\)'/);
   });
 });

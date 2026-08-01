@@ -2735,7 +2735,8 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 | Slot | Write any of these | They all mean |
 |---|---|---|
-| **Field key** — `.sortBy` `.orderBy` `.groupBy` `.countBy` `.keyBy` `.uniqBy` `.flatMap` | `"cat"` · `d => d.cat` | key on the `cat` field |
+| **Field path** — `.sortBy` `.orderBy` `.flatMap` | `"cat"` · `d => d.cat` | the `cat` field |
+| **Group key** — `.groupBy` `.countBy` `.keyBy` `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()` · `{ cat: "a" }` · `["cat", "a"]` | group on that value |
 | **Predicate** — `.find` `.filter` `.reject` (and `.map`'s iteratee) | `o => o.cat === "a"` · `{ cat: "a" }` · `["cat", "a"]` · `"active"` (truthy test) | match on `cat` |
 
 ```js
@@ -2744,14 +2745,25 @@ $.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userI
 //    { $set: { "…": { $size: "$…" } } }, …]  — same indexed $lookup either way
 ```
 
-A field key must be a **plain field path**, because it becomes a `$sort` key or a `$group._id` and MongoDB fixes those when it builds the plan. A *computed* key (`d => d.cat.toLowerCase()`) can't lower — put it in a field first, then key on that field's name:
+**Group keys may be computed.** MongoDB evaluates `$group._id` per document, so the four grouping methods take any expression — it lowers straight into the key, with no extra stages:
 
 ```js
-$.cat = $.category.toLowerCase();
-$$ = $$.countBy("cat");
-// → [{ $set: { cat: { $toLower: "$category" } } },
-//    { $group: { _id: "$cat", __jsmqlTmp: { $sum: 1 } } }, … ]
+$$ = $$.countBy(d => d.category.toLowerCase());
+// → [{ $group: { _id: { $toLower: "$category" }, … } }, … ]
+
+$$ = $$.groupBy(d => d.email.split("@")[1]);   // group by email domain
+$$ = $$.countBy({ active: true });             // count matching vs not (lodash _.matches)
 ```
+
+**Sort and flatten keys may not** — a `$sort` key and an `$unwind` path have to be a literal field path. Put the value in a field first, then name it:
+
+```js
+$.sortKey = $.category.toLowerCase();
+$$ = $$.sortBy("sortKey");
+// → [{ $set: { sortKey: { $toLower: "$category" } } }, { $sort: { sortKey: 1 } }]
+```
+
+For `.flatMap` that field is not just a workaround — `$unwind` puts each element back into a named field, so you have to say which one.
 
 On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 

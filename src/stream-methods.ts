@@ -187,7 +187,7 @@ function validateSingleIntArg(sig: string, args: readonly CallArg[], callPos: nu
  * `""` and `"$…"` strings also return null so the caller keeps its own targeted
  * "plain field name" message for them.
  */
-export function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null {
+function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null {
   if (arg.type === "StringLiteral") {
     return arg.value === "" || arg.value.startsWith("$") ? null : arg.value;
   }
@@ -195,6 +195,34 @@ export function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null 
     return paramFieldPath(arg.body, arg.params[0]);
   }
   return null;
+}
+
+/**
+ * Resolve a key argument to the MQL **expression** it evaluates to, for slots the
+ * server evaluates per-document — i.e. `$group._id`.
+ *
+ * Generalises `fieldKeyArg`: every spelling that one resolves still yields the plain
+ * `"$cat"` path (so a field key emits byte-identically to before), and a *computed*
+ * iteratee now resolves too:
+ *
+ *   `d => d.cat.toLowerCase()`      →  `{ $toLower: "$cat" }`
+ *   `{ cat: "a" }` / `["cat", "a"]` →  `{ $eq: ["$cat", "a"] }`   (lodash `_.matches`)
+ *
+ * The lambda param IS the current document, so `extractLetsFromExpr` rewrites
+ * `d.<path>` to a bare field path and `rejectLocalDocRef` rejects a `$.<field>` read
+ * (which would silently mean the outer document). A `$sort` key can NOT use this —
+ * that slot is a field path, not an expression; see `computedKeyError`.
+ */
+function keyExpr(arg: CallArg, ctx: GenerateCtx, sig: string): unknown {
+  const name = fieldKeyArg(arg);
+  if (name !== null) return `$${name}`;
+  const method = sig.slice(1, sig.indexOf("("));
+  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg as Expr, method, "jsmqlEl");
+  if (lambda === null) throw computedKeyError(sig, "pos" in arg ? arg.pos : 0);
+  const param = lambda.params[0];
+  const { rewritten, letVars } = extractLetsFromExpr(mapBodyExpr(lambda, method), param);
+  rejectLocalDocRef(letVars, param, lambda.pos, ctx.sourceSwitch?.desc, method);
+  return generateWithCtx(rewritten, ctx);
 }
 
 /**
@@ -207,17 +235,25 @@ function computedKeyError(sig: string, pos: number, alsoTakes = ""): CodegenErro
   // demonstrates `.countBy("status")` sends the reader to the wrong docs page.
   const name = sig.slice(1, sig.indexOf("("));
   return new CodegenError(
-    `${sig} keys on a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent ` +
-      `bare-path arrow ('.${name}(d => d.status)'). On a stream the key becomes part of the emitted stage — ` +
-      `a '$sort' key or a '$group._id' — which the server fixes at plan time, so a computed arrow, a ` +
-      `matches-object, or a dynamic value has nothing to key on. Materialise the key into a field first, then ` +
-      `key on its name: '$.key = <expr>; $$ = $$.${name}("key");' — or, inside a foreign chain, ` +
+    `${sig} names a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent ` +
+      `bare-path arrow ('.${name}(d => d.status)'). It lowers to a slot the server needs as a literal field ` +
+      `path (a '$sort' key / '$unwind' path), so a computed arrow, a matches-object, or a dynamic value has ` +
+      `nothing to name — unlike the '$group'-keyed methods ('.groupBy'/'.countBy'/'.keyBy'/'.uniqBy'), whose ` +
+      `key IS an expression slot and so does accept them. Materialise the value into a field first, then name ` +
+      `it: '$.key = <expr>; $$ = $$.${name}("key");' — or, inside a foreign chain, ` +
       `'.map(d => ({ key: <expr>, … })).${name}("key")'.`,
     pos,
   );
 }
 
-function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: number): void {
+/**
+ * Validate the argument of a `$group`-keyed method (`.groupBy` / `.countBy` /
+ * `.keyBy` / `.uniqBy`). `$group._id` is an **expression** slot, so beyond a field
+ * key these take any computed iteratee — an arrow with an arbitrary expression body,
+ * or a lodash matches shorthand. `lower` resolves the actual expression via `keyExpr`;
+ * this only rejects shapes that can't be an iteratee at all.
+ */
+function validateKeyArg(sig: string, args: readonly CallArg[], callPos: number, alsoTakes = ""): void {
   if (args.length !== 1) {
     throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
   }
@@ -231,7 +267,26 @@ function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: 
       arg.pos,
     );
   }
-  if (fieldKeyArg(arg) === null) throw computedKeyError(sig, arg.pos);
+  if (fieldKeyArg(arg) !== null) return; // plain field key
+  const name = sig.slice(1, sig.indexOf("("));
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter iteratee '(d) => <key expr>', got ${arg.params.length} parameters.`,
+        arg.pos,
+      );
+    }
+    mapBodyExpr(arg, name); // rejects a multi-statement / binding-bearing block with its own message
+    return;
+  }
+  // A lodash matches shorthand keys on the match BOOLEAN (lodash `_.matches`).
+  if (shorthandToLambda(arg, name, "jsmqlEl") !== null) return;
+  throw new CodegenError(
+    `${sig} takes a field name ('.${name}("status")'), a bare-path arrow ('.${name}(d => d.status)'), ` +
+      `a computed iteratee ('.${name}(d => d.status.toLowerCase())')${alsoTakes}, or a lodash matches shorthand ` +
+      `('{ active: true }' / '["status", "open"]').`,
+    arg.pos,
+  );
 }
 
 // ── .take(n) → $limit ─────────────────────────────────────────────────────────
@@ -458,21 +513,24 @@ const CONCAT: StreamMethodDef = {
 // statement-block arrow form (`d => { stmt; …; return X }`) is parsed as a
 // pipeline block (`lambda.block` + `lambda.ret`) and handled by MAP.lower's
 // dedicated block path — it never reaches here (callers guard on `lambda.block`).
-function mapBodyExpr(lambda: LambdaNode): Expr {
+// `method` names the caller, because the `$group`-keyed methods reuse this for their
+// computed-key iteratee — an error on `.countBy(d => { … })` that talks about `.map`
+// sends the reader to the wrong docs page (same rule as `computedKeyError`).
+function mapBodyExpr(lambda: LambdaNode, method = "map"): Expr {
   if (lambda.body !== undefined) return lambda.body;
   const eb = lambda.exprBlock;
   if (eb !== undefined) {
     if (eb.decls.length > 0) {
       throw new CodegenError(
-        `.map(d => { … }) with 'let'/'const' bindings isn't supported — use a single 'return <expr>' (e.g. '.map(d => ({ … }))'), ` +
-          `or hoist the bindings to a top-level 'let' before the chain.`,
+        `.${method}(d => { … }) with 'let'/'const' bindings isn't supported — use a single 'return <expr>' ` +
+          `(e.g. '.${method}(d => d.field)'), or hoist the bindings to a top-level 'let' before the chain.`,
         lambda.pos,
       );
     }
     return eb.ret;
   }
   throw new CodegenError(
-    `.map(d => <expr>) requires an expression or single-'return' body — a multi-statement block isn't supported here; split into separate stages ($set, $project, …) instead.`,
+    `.${method}(d => <expr>) requires an expression or single-'return' body — a multi-statement block isn't supported here; split into separate stages ($set, $project, …) instead.`,
     lambda.pos,
   );
 }
@@ -543,6 +601,7 @@ function rejectLocalDocRef(
   param: string,
   pos: number,
   sourceSwitchDesc?: string,
+  method = "map",
 ): void {
   if (Object.keys(letVars).length === 0) return;
   const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
@@ -557,7 +616,7 @@ function rejectLocalDocRef(
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos,
   );
 }
@@ -1268,15 +1327,16 @@ const GROUP_BY: StreamMethodDef = {
     }
     // An ObjectLiteral is the `$group`-body form (jsmql's own surface, carrying
     // accumulators), NOT a lodash matches-shorthand — so it is checked by
-    // `generateGroupBody`, not as a key. Everything else must name a key field:
-    // `"dept"` or the equivalent bare-path arrow `d => d.dept`.
+    // `generateGroupBody`, not as a key. `.groupBy` is the one keyed method where
+    // the matcher spelling is unavailable, because that spelling is already taken.
+    // Every other argument is a key, computed or not (`$group._id` is an expression).
     if (a.type === "ObjectLiteral") return;
-    fieldNameLiteral(a, ".groupBy(key)", ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
+    validateKeyArg(".groupBy(key)", args, callPos, ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
   },
   lower(args, ctx, callPos) {
     const a = args[0] as Expr;
     if (a.type !== "ObjectLiteral") {
-      const key = fieldKeyArg(a) as string; // validate() guarantees a field path
+      const key = keyExpr(a, ctx, ".groupBy(key)");
       // Bare-key form is lodash `_.groupBy(coll, key)` → the OBJECT
       // `{ <keyValue>: [elements] }`. Collapse the stream to that single object
       // (mirroring value-mode `$.arr.groupBy(...)`): `$push: "$$ROOT"` gathers each
@@ -1286,7 +1346,7 @@ const GROUP_BY: StreamMethodDef = {
       // it carries accumulators with no lodash analogue.
       return {
         stages: [
-          { $group: { _id: `$${key}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: key, [GROUP_TMP]: { $push: "$$ROOT" } } },
           { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
           { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
         ],
@@ -1311,13 +1371,13 @@ const GROUP_BY: StreamMethodDef = {
 const COUNT_BY: StreamMethodDef = {
   name: "countBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".countBy(field)", args, callPos);
+    validateKeyArg(".countBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = fieldKeyArg(args[0]) as string; // validate() guarantees a field path
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".countBy(key)");
     return {
       stages: [
-        { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
+        { $group: { _id: key, [GROUP_TMP]: { $sum: 1 } } },
         { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
         { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
       ],
@@ -1337,13 +1397,13 @@ const COUNT_BY: StreamMethodDef = {
 const KEY_BY: StreamMethodDef = {
   name: "keyBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".keyBy(field)", args, callPos);
+    validateKeyArg(".keyBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = fieldKeyArg(args[0]) as string; // validate() guarantees a field path
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".keyBy(key)");
     return {
       stages: [
-        { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
+        { $group: { _id: key, [GROUP_TMP]: { $last: "$$ROOT" } } },
         { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
         { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
       ],
@@ -1361,12 +1421,12 @@ const KEY_BY: StreamMethodDef = {
 const UNIQ_BY: StreamMethodDef = {
   name: "uniqBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".uniqBy(field)", args, callPos);
+    validateKeyArg(".uniqBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = fieldKeyArg(args[0]) as string; // validate() guarantees a field path
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".uniqBy(key)");
     return {
-      stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
+      stages: [{ $group: { _id: key, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
       clearLets: true,
     };
   },

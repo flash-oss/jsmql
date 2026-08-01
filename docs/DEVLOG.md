@@ -10,6 +10,52 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — feat: `$group`-keyed stream methods accept a computed key
+
+`.countBy(d => d.cat.toLowerCase())`, `.groupBy(d => d.email.split("@")[1])`,
+`.keyBy({ active: true })`, `.uniqBy(d => d.a + d.b)` — the four grouping methods
+now take any iteratee, not just a field key. This was the capability gap left over
+from the spelling work below, which had lumped all six keyed methods under one
+"a stream key must be a plan-time field path" rule. That rule was too broad:
+**`$group._id` is an expression slot the server evaluates per document**, so a
+computed key lowers straight into it with **zero extra stages**.
+
+The line is the SLOT, not the method. `keyExpr` resolves a key argument to the MQL
+expression it evaluates to, keeping a `fieldKeyArg` fast path first so a plain
+`"cat"` still emits the byte-identical `"$cat"` it always did; only when that
+declines does it desugar the iteratee, rewrite the lambda param to the document
+root (`extractLetsFromExpr`), and generate. A `$sort` key and an `$unwind` path
+really are literal field paths, so those keep rejecting — but the message now says
+the group-keyed methods accept one, so nobody reads it as "jsmql can't do computed
+keys".
+
+Auto-materialising a computed value into a temp field for the other two was
+considered and rejected, for different reasons each. For `.flatMap` it would be
+wrong: `$unwind` puts each element back into a *named* field, so the field name is
+part of what the user means, not an implementation detail — which is why the manual
+route is the answer rather than a workaround. For `.sortBy`/`.orderBy` it is merely
+blocked: the temp needs an explicit `$unset` (a `$lookup.pipeline` gets no trailing
+`{ $unset: "__jsmql" }` to sweep it), that `$unset` lands after the `$sort`, and
+`reverseSortTrick` only inspects the immediately preceding stage — so
+`.sortBy(<computed>).toReversed()` would break. Lifting it means extending
+`StreamMethodResult.replacesPreviousStage` to pop N stages; not done here.
+
+Two traps re-opened by the feature and closed with it. `isCollapsingTerminal` asked
+`fieldKeyArg` whether `.groupBy`'s argument was a key — true when that was the whole
+key surface, wrong the moment computed keys existed, silently skipping the `$first`
+unwrap for `.groupBy(d => d.cat.toLowerCase())` and returning the raw `[obj]` slot.
+That is the *second* time this predicate fell behind the key surface (it keyed on
+`StringLiteral` before), so it now tests the key FORM — anything but the `$group`
+body — which can't go stale again. And because the group methods reuse `.map`'s body
+and param helpers, their errors talked about `.map`; `mapBodyExpr` / `rejectLocalDocRef`
+now take the calling method's name, the same wrong-method-in-the-message bug as
+`.keyBy` citing `.countBy("status")`.
+
+Verified against a live mongod: each computed-key form runs and returns what the
+hand-materialised `$.k = <expr>; …("k")` equivalent returns.
+
+---
+
 ## 2026-08-01 — fix: stream callback spelling never changes the emitted MQL
 
 Generalises the two entries below from `.filter` to the whole higher-order stream
