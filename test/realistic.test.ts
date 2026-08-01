@@ -390,6 +390,61 @@ $$ = $$$.orders
   },
 );
 
+// Regional revenue leaderboard, attached to every active user.
+// Shows the CHAINED STAGE CALL surface: `$match`/`$group`/`$sort`/`$limit` are
+// pipeline stages written as `.$stage(...)` chain links, so a whole grouped
+// sub-pipeline fits in one `$$$.<coll>` expression — no `.aggregate((o) => {…})`
+// block, and the chain still ends in a plain lodash `.map(...)` over the result.
+// `$group` / `$sort` / `$limit` have no JavaScript spelling; before stage links
+// they were unreachable from a chain.
+describe("regional revenue leaderboard (chained stage calls)", { features: ["Pipelines"] }, () => {
+  it(
+    "grouped foreign sub-pipeline built from chained stage calls, mapped value-mode",
+    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      expect(
+        jsmql`
+$match($.status === "active");
+const cohortRevenue = $$$.orders
+  .$match({ status: "shipped" })
+  .$group({ _id: "$region", revenue: $sum("$total"), orders: $sum(1) })
+  .$sort({ revenue: -1 })
+  .$limit(5)
+  .map(r => ({ region: r._id, revenue: r.revenue, avgOrder: r.revenue / r.orders }));
+$set({ topRegions: cohortRevenue });
+`,
+      ).toEqual([
+        { $match: { status: "active" } },
+        {
+          $lookup: {
+            from: "orders",
+            pipeline: [
+              { $match: { status: "shipped" } },
+              { $group: { _id: "$region", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
+              { $sort: { revenue: -1 } },
+              { $limit: 5 },
+            ],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        {
+          $set: {
+            "__jsmql.var.cohortRevenue": {
+              $map: {
+                input: "$__jsmql.tmp.1",
+                as: "r",
+                in: { region: "$$r._id", revenue: "$$r.revenue", avgOrder: { $divide: ["$$r.revenue", "$$r.orders"] } },
+              },
+            },
+          },
+        },
+        { $set: { topRegions: "$__jsmql.var.cohortRevenue" } },
+        { $unset: "__jsmql" },
+      ]);
+    },
+  );
+});
+
 describe("top-orders report by department", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     expect(

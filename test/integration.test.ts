@@ -374,4 +374,76 @@ assert($$.length <= 1000, "too many in-stock products to render");`,
     expect(rows.every((r) => (r as { sharePct: number }).sharePct === 12.5)).toBe(true);
     expect(rows.every((r) => !("__jsmql" in (r as object)))).toBe(true); // scratch namespace cleaned up
   });
+
+  // ── chained stage calls (`.$stage(...)`) ──────────────────────────────────
+
+  // Stage links on the current stream, and the guarantee that they are the same
+  // pipeline as the `;`-separated statement spelling — asserted on the SERVER's
+  // output, not just the emitted MQL.
+  it("pipeline: stage links on $$ run identically to the statement spelling", async () => {
+    const chained = await aggregate(
+      "orders",
+      `$$.$match({ status: "shipped" }).$group({ _id: "$region", revenue: $sum("$total"), n: $sum(1) }).$sort({ revenue: -1 }).$limit(3);`,
+    );
+    const statements = await aggregate(
+      "orders",
+      `$match({ status: "shipped" }); $group({ _id: "$region", revenue: $sum("$total"), n: $sum(1) }); $sort({ revenue: -1 }); $limit(3);`,
+    );
+    expect(chained).toEqual([
+      { _id: "AU", revenue: 2804, n: 9 },
+      { _id: "US", revenue: 1990, n: 4 },
+    ]);
+    expect(chained).toEqual(statements);
+  });
+
+  // A grouped foreign sub-pipeline assembled entirely from chained stage calls,
+  // then mapped value-mode over the lookup result. `$group`/`$sort`/`$limit`
+  // have no JavaScript spelling, so before stage links this chain was
+  // unreachable without an `.aggregate((o) => { … })` block.
+  it("pipeline: chained stage calls build a $lookup sub-pipeline", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+const byRegion = $$$.orders.$match({ status: "shipped" })
+  .$group({ _id: "$region", revenue: $sum("$total") })
+  .$sort({ revenue: -1 }).$limit(2)
+  .map(g => ({ region: g._id, revenue: g.revenue }));
+$ = { byRegion };`,
+    );
+    expect(rows).toEqual([
+      {
+        byRegion: [
+          { region: "AU", revenue: 2804 },
+          { region: "US", revenue: 1990 },
+        ],
+      },
+    ]);
+  });
+
+  // A correlated query-document `$match` — `{ userId: $._id }` reads the OUTER
+  // document. MongoDB doesn't evaluate `$$` vars in the query language, so the
+  // raw form would silently return nothing; jsmql re-expresses it as a
+  // predicate. This asserts real matched counts, which is the only way to catch
+  // that class of bug (the emitted MQL looked fine).
+  it("pipeline: correlated query-document $match returns real matches", async () => {
+    const src = (chain: string) =>
+      `$match($.status === "active");\n$.orders = ${chain};\n$ = { user: $._id, n: $.orders.length };`;
+    const counts = async (chain: string) =>
+      (await aggregate("users", src(chain)))
+        .map((r) => ({ user: String((r as { user: unknown }).user), n: (r as { n: number }).n }))
+        .sort((a, b) => (a.user < b.user ? -1 : 1));
+
+    const expected = [
+      { user: ID.user(1).toHexString(), n: 3 },
+      { user: ID.user(2).toHexString(), n: 3 },
+      { user: ID.user(3).toHexString(), n: 4 },
+      { user: ID.user(5).toHexString(), n: 2 },
+      { user: ID.user(6).toHexString(), n: 3 },
+      { user: ID.user(8).toHexString(), n: 3 },
+    ];
+    // All three spellings must agree, and none may return zero matches.
+    expect(await counts("$$$.orders.aggregate(o => { $match({ userId: $._id }); })")).toEqual(expected);
+    expect(await counts("$$$.orders.$match({ userId: $._id })")).toEqual(expected);
+    expect(await counts("$$$.orders.filter({ userId: $._id })")).toEqual(expected);
+  });
 });

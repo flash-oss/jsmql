@@ -144,6 +144,46 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     });
   });
 
+  // A stage link carries its OWN source offset (the parser stamps `member.pos`
+  // rather than the historical chain-root `left.pos`), so a long chain carets
+  // at the offending link instead of at `$$`.
+  describe("chained stage call errors", () => {
+    it("unknown stage name points at the stage link, not the chain root", () => {
+      const src = "$$.$match({ a: 1 }).$prject({ b: 1 });";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe("CODEGEN_ERROR");
+      assertPosInRange(src, result.errors[0].pos);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^\$prject/);
+    });
+
+    it("arity error points at the offending link", () => {
+      const src = "$$.$sort({ a: 1 }).$limit(5, 6);";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      assertPosInRange(src, result.errors[0].pos);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^\$limit/);
+    });
+
+    it("bare `.$stage` with no call is a syntax error at the stage", () => {
+      const src = "$$.$match";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe("SYNTAX_ERROR");
+      assertPosInRange(src, result.errors[0].pos);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^\$match/);
+    });
+
+    it("value-position stage link points at the link", () => {
+      const src = "$.out = $.items.$match({ a: 1 });";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe("CODEGEN_ERROR");
+      assertPosInRange(src, result.errors[0].pos);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^\$match/);
+    });
+  });
+
   describe("interpolation errors", () => {
     it("template-tag rejects undefined, surfaces slot info", () => {
       const result = jsmql.validate`$.x == ${undefined}`;

@@ -46,6 +46,10 @@ New AST node types add a case in the `_generate(expr, ctx)` switch. The public e
 
 `pipeline.ts` is the sugar-dispatch hub: per-element lowering is shared across all pipeline forms (`[ … ]`, `;`-separated, and the `,`-grouped update-filter op chain) through two helpers. Add a new `$ =`-rooted / lookup sugar in `tryLowerAssignSugar` (replace-stream, `$facet`, `$replaceWith`, `$out`, `$lookup`); add a new statement-style sugar (`$$.push` → `$unionWith`, system source stages, `assert(...)` → conditional-error `$match`, the generic stage-call path) in `lowerStatementTail`. Touch either helper and both pipeline forms pick it up at once. Each sugar's behaviour is owned by its spec in `docs/specs/` — keep the lowering rules there, not in comments here. A statement-style sugar that should also work without a trailing `;` (as a lone top-level call) needs a clause in `isStageCandidate` (`pipeline.ts`) **and** the auto-wrap sites in `index.ts` (`lowerWithCtx` / `lowerToPipelineStages`) — `assert` is the worked example.
 
+## Chained stage calls
+
+`<stream>.$match(<body>)` is the chain-position spelling of the `$match(<body>);` statement. It parses to an ordinary `MethodCall` whose `method` starts with `$` (no new AST node — that's what lets `collectStreamChain` and every chain walker handle it unchanged). Three containers lower it, and each **delegates** rather than reimplementing: the `$$` stream and the `$unionWith` source-switch call `lowerStageLink` → `generateStageBody` (the statement path), and the `$lookup` sub-pipeline calls `lowerCallbackBlock` (the engine `.aggregate((o) => { … })` uses). Name resolution, arity, and the sub-pipeline placement rules live in the leaf module [`stage-link.ts`](stage-link.ts) — a leaf because `lookup-translation.ts` sits *below* `pipeline.ts` and can't import back. When you add a container that assembles stages from a chain, call into `stage-link.ts` rather than re-deriving the rules. Behaviour is owned by [`docs/specs/aggregation-stages.md`](../docs/specs/aggregation-stages.md).
+
 ## Error classes
 
 | Class          | Where thrown | Has `.pos`                                                              |

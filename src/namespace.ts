@@ -126,6 +126,15 @@ export function letSysVar(name: string, depth: number): string {
 const JSMQL_NS_VAR = "jsmql_";
 
 /**
+ * Is `name` one of the `$lookup.let` correlation vars above? Used to catch a
+ * hoisted var that has landed in a QUERY-document slot, where MongoDB does not
+ * evaluate `$$vars` and the match would silently return nothing.
+ */
+export function isCorrelationVar(name: string): boolean {
+  return name.startsWith(JSMQL_NS_VAR);
+}
+
+/**
  * Matches a `$lookup.let` correlation-var name produced by `letFieldVar` /
  * `letBindingVar` / `letSysVar` (`jsmql_<f|v|s><depth>_<name>`). Used by codegen
  * to recognise a compiler-generated correlation `ParamRef` and emit `$$<name>`

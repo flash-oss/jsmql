@@ -1409,10 +1409,33 @@ export class Parser {
           continue;
         }
         const member = this.lexer.peek();
-        if (!this.isIdentOrKeyword(member)) {
-          throw new ParseError(`Expected property name after '.' at position ${member.pos}`, member.pos);
+        // `.$stage(<body>)` — a chained pipeline-stage call. The lexer emits
+        // `$match` as Dollar + Ident, so a stage link is a TWO-token member
+        // name; everything downstream sees an ordinary `MethodCall` whose
+        // method starts with `$`. Only the CALL form is a stage link — a bare
+        // `.$name` has no meaning (jsmql source has no `$`-prefixed fields).
+        // See docs/specs/aggregation-stages.md § chained stage calls.
+        const isStageLink = member.type === TokenType.Dollar && this.isIdentOrKeyword(this.lexer.lookahead(1));
+        let memberName: string;
+        if (isStageLink) {
+          const stageIdent = this.lexer.lookahead(1);
+          if (isOptional) {
+            throw new ParseError(
+              `Optional chaining ('?.') is not meaningful on the pipeline stage '$${stageIdent.value}' — a stage always runs. ` +
+                `Write '.$${stageIdent.value}(...)' at position ${member.pos}.`,
+              member.pos,
+            );
+          }
+          this.lexer.next(); // consume $
+          this.lexer.next(); // consume stage name
+          memberName = `$${stageIdent.value}`;
+        } else {
+          if (!this.isIdentOrKeyword(member)) {
+            throw new ParseError(`Expected property name after '.' at position ${member.pos}`, member.pos);
+          }
+          this.lexer.next(); // consume member name
+          memberName = member.value;
         }
-        this.lexer.next(); // consume member name
         if (this.lexer.peek().type === TokenType.LParen) {
           // Method call: left.member(args). A `=> { … }` callback body is a
           // *sub-pipeline* block (`;`-separated stages + an optional terminal
@@ -1429,22 +1452,30 @@ export class Parser {
           //   nested `$let`; see docs/specs/method-dispatch.md. JS-faithful:
           //   `=> {` always opens a block; an object return needs `=> ({ … })`.
           const blockKind: "pipeline" | "expr" =
-            STREAM_BLOCK_METHODS.has(member.value) && isStreamRooted(left) ? "pipeline" : "expr";
+            STREAM_BLOCK_METHODS.has(memberName) && isStreamRooted(left) ? "pipeline" : "expr";
           const args = this.parseMethodCallArgs(blockKind);
           left = {
             type: "MethodCall",
             object: left,
-            method: member.value,
+            method: memberName,
             args,
-            pos: left.pos,
+            // A stage link carries its OWN offset so per-link errors caret at
+            // the stage, not at the chain root (every other link keeps the
+            // historical `left.pos`).
+            pos: isStageLink ? member.pos : left.pos,
             ...(isOptional && { optional: true }),
           };
+        } else if (isStageLink) {
+          throw new ParseError(
+            `'${memberName}' is a pipeline stage — call it with its body: '${memberName}(<body>)' at position ${member.pos}.`,
+            member.pos,
+          );
         } else {
           // Property access: left.member
           left = {
             type: "MemberAccess",
             object: left,
-            member: member.value,
+            member: memberName,
             pos: left.pos,
             ...(isOptional && { optional: true }),
           };

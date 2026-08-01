@@ -10,6 +10,82 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — feat: pipeline stages as chain links (`<stream>.$match(...)`)
+
+A stage can now be written as a dot-chain link on a stream —
+`$$.$match({…}).$sort({…}).$limit(5)`, `$$$.orders.$match({…}).$group({…})` — not
+only as a `$match(…);` statement. The motivation is a hole in the surface: stage
+calls worked at statement position and the lodash chain methods worked in *both*,
+so the one thing you couldn't do was reach a stage from a chain. That bit hardest
+in a **value** position (`const x = $$$.<coll>.…`), where you can't drop into
+statements at all, and where the stages with no JavaScript spelling (`$group`,
+`$unwind`, `$setWindowFields`, `$bucket`, …) were reachable only by nesting an
+`.aggregate((o) => { … })` block.
+
+The design goal was to add **no new lowering**. A stage link parses to an ordinary
+`MethodCall` whose method starts with `$` (no new AST node — that's what lets
+`collectStreamChain` and every existing chain walker keep working), and each of
+the three containers delegates to the path that already lowers the equivalent
+spelling: on `$$` and in a `$unionWith` source-switch it calls the statement
+path's own `generateStageBody`; inside `$lookup.pipeline` it calls
+`lowerCallbackBlock`, the engine `.aggregate((o) => { <stage>; })` uses. So the
+two equivalences — `.$match(b)` ≡ `$match(b);` and, in a foreign chain,
+`.$match(b)` ≡ `.aggregate(o => { $match(b); })` — hold by construction rather
+than by parallel maintenance, and both are asserted as tests. Name resolution,
+arity, and the sub-pipeline placement rules live in one new leaf module,
+[src/stage-link.ts](../src/stage-link.ts), because `lookup-translation.ts` sits
+below `pipeline.ts` in the dependency graph and can't import back. `.aggregate()`
+stays: it still owns the multi-stage block (with a terminal `return`) and the raw
+`[{ $stage: … }]` array paste that keeps HR1 round-tripping.
+
+Two smaller things rode along because the feature made them reachable. Stage
+links are validated against their container's `forbiddenIn` / `position` data, so
+`.$out(…)` inside a `$lookup` chain is now rejected — partial progress on
+DEF-024, which still leaves the `.aggregate` *block* body unchecked. And
+`isCollectionMethodCall` in [src/index.ts](../src/index.ts) tested only one hop,
+so any multi-link `$$` chain without a trailing `;` fell into the generic
+"'`$$`' is statement-only" wall of text; it now tests the whole chain root, and
+the same clause was added to `lowerToPipelineStages` (the `jsmql.pipeline()`
+entry), which had been missing it.
+
+---
+
+## 2026-08-01 — fix: correlate a query-form `$match` inside a foreign sub-pipeline
+
+Found while verifying the chained-stage work against a live `mongod`, and it
+turned out to predate it. Inside a `$$$.<coll>` sub-pipeline, `$.` means the
+*outer* document and is hoisted into `$lookup.let` as a `$$jsmql_f0_<field>`
+reference. That resolves in every aggregation-**expression** slot — `$set`,
+`$group`, `$project` — but a `$match` whose body is an object literal is a
+**query document**, and the query language does not evaluate `$$` variables.
+MongoDB happily *accepts* `{ $match: { userId: "$$jsmql_f0__id" } }` and
+silently matches **nothing**, so
+`$$$.orders.aggregate((o) => { $match({ userId: $._id }); })` had been returning
+empty arrays since it shipped — a green `toEqual` covered the emitted shape and
+never caught it.
+
+`correlatedQueryMatchAsPredicate` in [src/pipeline.ts](../src/pipeline.ts) now
+re-expresses such a body as the equivalent predicate (`{ userId: $._id }` →
+`$.userId === $._id`) and hands it to the same `translateMatchBody` path
+`.filter(...)` uses, which splits it into an index-friendly query part plus a
+`$expr` residual for the correlated terms. `$match({ … })` and `.filter({ … })`
+now emit byte-identical sub-pipelines. Only entries that read the outer document
+move into `$expr`; an uncorrelated query document keeps the verbatim path, so
+raw MQL still round-trips (HR1).
+
+The first attempt at this shipped as a *rejection* — throw and point the user at
+`.filter(o => … === $._id)`. That was wrong twice over: it broke legitimate code
+(`$.orders = $$$.orders.aggregate(o => { $match({ userId: $._id }); })`), and
+turning a requested capability into a compile error is a product decision that
+wasn't mine to make unilaterally. Translating is what the user wanted and is
+strictly better — the correlated form works *and* keeps the uncorrelated terms
+indexable. A correlated shape the translator can't express (an `$and`/`$or`
+root, `$regex`, …) still errors, naming both the arrow-predicate and the
+expression-body alternative, because emitting a match that returns nothing is
+worse than saying so.
+
+---
+
 ## 2026-08-01 — test: showcase chains rewritten in the shorter lodash spellings
 
 [test/realistic.test.ts](../test/realistic.test.ts) (and the README / LANGUAGE

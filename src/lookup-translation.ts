@@ -41,6 +41,7 @@ import { didYouMean } from "./levenshtein.ts";
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
 import { lookupStreamMethod, streamMethodNames, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
+import { checkStageLinkPlacement, isStageLink, stageLinkBlockLambda, stageLinkBody } from "./stage-link.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -2395,6 +2396,24 @@ export function peelForeignChain(
 ): void {
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
+    // `.$match(<body>)` — a chained pipeline stage. Lowered as the equivalent
+    // one-statement `.aggregate((o) => { $match(<body>); })` block, through the
+    // very same engine, so an outer-document read in the body hoists into this
+    // `$lookup.let` identically. See docs/specs/aggregation-stages.md.
+    if (isStageLink(m)) {
+      const body = stageLinkBody(m);
+      checkStageLinkPlacement(m.method, m.pos, pipelineBody.length, i === chainEnd - 1, "lookup");
+      const { letVars: sLets, pipeline } = lowerCallbackBlock(
+        stageLinkBlockLambda(m, body),
+        { ...innerCtx, slotAllocator: allocSlot },
+        innerCtx.pipelineLets,
+        lowerBlock,
+        enclosing,
+      );
+      Object.assign(letVars, sLets);
+      pipelineBody.push(...pipeline);
+      continue;
+    }
     if (m.method === "filter" || m.method === "reject") {
       const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock, enclosing);
       Object.assign(letVars, fLets);
@@ -2412,9 +2431,16 @@ export function peelForeignChain(
   }
 }
 
-/** Is `name` a chain method that can head/extend a foreign stream chain? */
+/**
+ * Is `name` a chain method that can head/extend a foreign stream chain?
+ *
+ * `$`-prefixed names (stage links) are claimed unconditionally — including
+ * unregistered ones — so a typo reports "not a known aggregation stage" from
+ * `stageLinkBody` instead of bailing the whole chain to value-mode, where it
+ * would surface as a nonsense "unknown method" suggestion.
+ */
 function isPeelableChainMethod(name: string): boolean {
-  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
+  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject" || name.startsWith("$");
 }
 
 function tryExtractChainedLookup(

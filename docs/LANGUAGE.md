@@ -2877,6 +2877,74 @@ Two things to know:
 
 Each stage body is a regular jsmql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
 
+### Chained form: `.$stage(...)` on a stream
+
+A stage can also be written as a **chain link** on a stream — `$$` (the current
+collection) or `$$$.<coll>` (another one). It means exactly what the statement form means:
+
+```js
+jsmql("$$.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(5);");
+// → [{ $match: { status: "shipped" } }, { $sort: { total: -1 } }, { $limit: 5 }]
+
+// …identical to writing the same three stages as statements:
+jsmql("$match({ status: 'shipped' }); $sort({ total: -1 }); $limit(5);");
+```
+
+Stage links interleave with the JavaScript chain methods, so you can mix whichever reads
+better:
+
+```js
+jsmql("$$.filter(p => p.score > 0).$sort({ score: -1 }).take(10);");
+// → [{ $match: { score: { $gt: 0 } } }, { $sort: { score: -1 } }, { $limit: 10 }]
+```
+
+Where this earns its keep is a **value position**, where you can't drop into statements.
+`$group`, `$unwind`, `$setWindowFields`, `$bucket` and friends have no JavaScript
+spelling, so a chain could never reach them:
+
+```js
+jsmql(`
+const byRegion = $$$.orders
+  .$match({ status: "shipped" })
+  .$group({ _id: "$region", revenue: $sum("$total") })
+  .$sort({ revenue: -1 })
+  .$limit(5)
+  .map(g => ({ region: g._id, revenue: g.revenue }));
+$set({ topRegions: byRegion });
+`);
+// → [
+//     { $lookup: { from: "orders", pipeline: [
+//         { $match: { status: "shipped" } },
+//         { $group: { _id: "$region", revenue: { $sum: "$total" } } },
+//         { $sort: { revenue: -1 } },
+//         { $limit: 5 }
+//       ], as: "__jsmql.tmp.1" } },
+//     { $set: { "__jsmql.var.byRegion": { $map: { … } } } },
+//     { $set: { topRegions: "$__jsmql.var.byRegion" } },
+//     { $unset: "__jsmql" }
+//   ]
+```
+
+The name after the `.` must be a real aggregation stage — jsmql invents none — and takes
+exactly one argument, its body. Two things that may surprise you:
+
+- **Stages chain only while the chain is still a stream.** Once a link produces a value
+  (`.map("<field>")`, `.uniq()`, `.sum()`, …) a following `.$stage(...)` is rejected: a
+  value isn't a pipeline. `$.items.$match(...)` is rejected for the same reason — use the
+  array method `.filter(...)`.
+- **A correlated `$match` is rewritten for you.** In a `$$$.<coll>` chain, `$.` reads the
+  *outer* document. In a `$match` object body MongoDB wouldn't evaluate that (the query
+  language ignores variables, so the match would silently return nothing), so jsmql
+  re-expresses the body as a predicate — exactly what `.filter({ … })` does. Terms that
+  don't read the outer document stay in index-friendly query form:
+
+  ```js
+  $.orders = $$$.orders.$match({ userId: $._id, status: "shipped" });
+  // → { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+  //                pipeline: [{ $match: { status: "shipped",
+  //                                       $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: … } }
+  ```
+
 ### Alternative: bracketed array literal
 
 When you want jsmql to *evaluate to* a pipeline array (rather than statements that build one), wrap the same stage calls in a `[…]` literal. Stages can be written as call expressions or as MongoDB-shaped stage objects — both compile identically and may be mixed in one array.

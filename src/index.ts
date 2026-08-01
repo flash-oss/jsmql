@@ -23,6 +23,7 @@ import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts
 import { lookupStage } from "./stages.ts";
 import { LexError, Lexer, TokenType } from "./lexer.ts";
 import { containsLookupCall } from "./lookup-translation.ts";
+import { collectStreamChain } from "./stream-methods.ts";
 import { containsUnionPush, detectUnionPush } from "./union-translation.ts";
 import { containsOutAssign } from "./out-translation.ts";
 import { isSystemStageCall } from "./system-stage-translation.ts";
@@ -1093,10 +1094,17 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
     return Array.isArray(result) ? result : [result];
   }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx) as object[];
-  // A bare stage call (`$match(...)`) or a diagnostic source-stage sugar
-  // (`$$.indexStats()`, `$$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`)
-  // is a one-stage Pipeline — wrap it so the user needn't add a trailing `;`.
-  if (detectStageIntent(ast) !== null || isSystemStageCall(ast as Expr) || isAssertCall(ast as Expr)) {
+  // A bare stage call (`$match(...)`), a `$$`-rooted stream chain
+  // (`$$.$match({…}).$limit(5)`, `$$.filter(p).take(2)`), or a diagnostic
+  // source-stage sugar (`$$.indexStats()`, `$$$$.currentOp(...)`,
+  // `$$$$.shardedDataDistribution()`) is a Pipeline — wrap it so the user
+  // needn't add a trailing `;`. Mirrors the `lowerWithCtx` auto-wrap sites.
+  if (
+    detectStageIntent(ast) !== null ||
+    isCollectionMethodCall(ast as Expr) ||
+    isSystemStageCall(ast as Expr) ||
+    isAssertCall(ast as Expr)
+  ) {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx) as object[];
   }
@@ -1176,7 +1184,13 @@ function generateFilter(ast: Expr, ctx: GenerateCtx): object {
  * "statement-only" codegen throw.
  */
 function isCollectionMethodCall(ast: Expr): boolean {
-  return ast.type === "MethodCall" && ast.object.type === "CollectionRef";
+  // The WHOLE chain, not just a single hop: `$$.take(2)` and
+  // `$$.$match({a:1}).$limit(5)` are equally statement-shaped, so both route
+  // through Pipeline mode without a trailing `;`. (A one-hop test used to send
+  // every multi-link chain to the generic "'$$' is statement-only" wall of
+  // text — see docs/specs/stream-methods.md.)
+  const chain = collectStreamChain(ast);
+  return chain.root.type === "CollectionRef" && chain.methods.length > 0;
 }
 
 function detectStageIntent(ast: Expr): string | null {
