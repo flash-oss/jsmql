@@ -236,7 +236,7 @@ describe(".shuffle() → $rand sort", () => {
   });
 });
 
-describe("stream .takeWhile / .dropWhile are deferred [DEF-034]", () => {
+describe("stream .takeWhile / .dropWhile are deferred [DEF-035]", () => {
   it("throw an actionable error pointing at the value-mode / sort+filter forms", () => {
     expect(() => jsmql("$$.takeWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
     expect(() => jsmql("$$.dropWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);

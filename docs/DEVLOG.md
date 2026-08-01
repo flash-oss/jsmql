@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — docs: record the from-the-end removal in §B; fix a duplicate DEF id
+
+Three DEFERRED.md changes, at the developer's request plus one defect found while
+making them.
+
+**§B row for the removal.** The from-the-end stream methods (entry below) now have a
+won't-implement entry with the full rationale, so the decision isn't re-litigated from
+the DEVLOG alone. It states the boundary that matters: rejected on a *stream*, still
+shipping on an *array value* — the distinction is the receiver, not the method.
+
+**`DEF-035` (was the second `DEF-034`) — the `_id` fallback is out.** Its success
+criterion read "both reject (or default to `_id`) when no order is defined". That
+silent substitution is precisely what got the from-the-end family removed, so it now
+says a defined order is a **precondition, not a default**: with no preceding
+`.sort(...)`, `.takeWhile`/`.dropWhile` must reject and name the sort to add. The
+target-lowering line said the same thing and was corrected too.
+
+**The duplicate id.** Two unrelated items both carried `DEF-034` — the `.aggregate()`
+union source and stream `.takeWhile`/`.dropWhile` — and `[DEF-034]` tags in
+`src/union-translation.ts` and `src/pipeline.ts` pointed at different rows under the
+same number. The drift test could not see it: `parseDeferred` collects rows into a
+`Map`, so the second row silently overwrote the first and both the forward and reverse
+gates still found a match. `.takeWhile`/`.dropWhile` (the fewer tag sites) moved to
+`DEF-035`, and a new **UNIQUE-ID gate** collects ids in file order *with* duplicates
+and fails on any repeat — verified by reintroducing the collision and watching it fail.
+
+---
+
 ## 2026-08-01 — feat!: the "from the end" array methods are removed from the stream surface
 
 `.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` no longer exist as

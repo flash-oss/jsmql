@@ -1496,12 +1496,12 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       m.pos,
     );
   }
-  // Stream `.takeWhile` / `.dropWhile` are not yet supported [DEF-034]: they need a
+  // Stream `.takeWhile` / `.dropWhile` are not yet supported [DEF-035]: they need a
   // running "still taking" flag across documents ($setWindowFields) plus a defined
   // order. The value-mode forms (on an array) already ship.
   if (m.method === "takeWhile" || m.method === "dropWhile") {
     return new CodegenError(
-      `'.${m.method}(...)' as a stream method is not yet supported [DEF-034] — it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
+      `'.${m.method}(...)' as a stream method is not yet supported [DEF-035] — it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
       m.pos,
     );
   }
