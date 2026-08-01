@@ -228,7 +228,6 @@ describe("reusable functions — review-driven hardening", () => {
       {
         $lookup: {
           from: "users",
-          let: {},
           pipeline: [{ $match: { $expr: { $gt: [{ $let: { vars: {}, in: { $multiply: ["$age", 2] } } }, 100] } } }],
           as: "user",
         },

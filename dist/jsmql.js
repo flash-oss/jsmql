@@ -12786,15 +12786,16 @@ function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
   const stages = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
-  } else if (call.method === "aggregate" && Object.keys(pred.letVars).length === 0) {
-    stages.push({ $lookup: { from, pipeline: pred.pipeline, as } });
   } else {
-    stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
+    stages.push({ $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, as) });
   }
   if (call.method === "find") {
     stages.push({ $set: { [as]: { $first: `$${as}` } } });
   }
   return stages;
+}
+function pipelineLookupBody(from, letVars, pipeline, as) {
+  return Object.keys(letVars).length === 0 ? { from, pipeline, as } : { from, let: letVars, pipeline, as };
 }
 function injectImplicitFilterForValueTerminal(expr) {
   if (expr.type !== "MethodCall") return expr;
@@ -13064,8 +13065,7 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   const from = requireSameDbColl(target.db, target.collection, target.pos);
   const slotRef = { type: "FieldRef", path: slot, pos: expr.pos };
   const rewritten = terminalMap !== null ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos } : slotRef;
-  const lookupBody = direct === null && Object.keys(letVars).length === 0 ? { from, pipeline: pipelineBody, as: slot } : { from, let: letVars, pipeline: pipelineBody, as: slot };
-  const stages = [{ $lookup: lookupBody }];
+  const stages = [{ $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) }];
   if (isCollapsingTerminal(methods[methods.length - 1])) {
     stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
   }
@@ -14507,7 +14507,7 @@ function lowerReplaceRoot(el, ctx, allocSlot, lowerBlockFn) {
     if (pred.kind === "basic") {
       stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
     } else {
-      stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } });
+      stages.push({ $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, slot) });
     }
     stages.push({ $replaceWith: { $first: `$${slot}` } });
     return stages;
@@ -14795,7 +14795,7 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
     if (pred.kind === "basic") {
       lookupStage2 = { $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } };
     } else {
-      lookupStage2 = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
+      lookupStage2 = { $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, slot) };
     }
   } else {
     const letVars = {};
@@ -14820,7 +14820,7 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
       pipelineBody,
       letVars
     );
-    lookupStage2 = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
+    lookupStage2 = { $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) };
   }
   return { stages: [lookupStage2, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }

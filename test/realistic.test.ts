@@ -101,8 +101,7 @@ $ = candidateProductIds
           $lookup: {
             from: "orders",
             // No `$.`-correlation in the matches-object predicate → nothing to
-            // capture, so the `let` slot stays empty.
-            let: {},
+            // capture, so no `let` at all (an empty one would be pure noise).
             pipeline: [
               { $match: { userId: new ObjectId("507f1f77bcf86cd799439011") } },
               { $sort: { createdAt: -1 } },

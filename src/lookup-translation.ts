@@ -2070,12 +2070,8 @@ export function lowerLookup(
   const stages: object[] = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
-  } else if (call.method === "aggregate" && Object.keys(pred.letVars).length === 0) {
-    // Uncorrelated `.aggregate` — no `$.<field>` correlation, so no `let`. Emit
-    // the lean `{ from, pipeline, as }` shape (an empty `let` is pure noise).
-    stages.push({ $lookup: { from, pipeline: pred.pipeline, as } });
   } else {
-    stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
+    stages.push({ $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, as) });
   }
   if (call.method === "find") {
     // JS `.find()` returns scalar-or-null. Overwrite the slot with `$first`
@@ -2084,6 +2080,27 @@ export function lowerLookup(
     stages.push({ $set: { [as]: { $first: `$${as}` } } });
   }
   return stages;
+}
+
+/**
+ * Assemble a pipeline-form `$lookup` body, **omitting `let` when nothing was
+ * correlated** — an empty `let: {}` is pure noise, and the server treats
+ * `let` as optional.
+ *
+ * Every pipeline-form emission site routes through here so the shape can't
+ * depend on which one ran. It used to: the lean form was gated on `.aggregate`
+ * in `lowerLookup`, and on "the chain had no `.filter` head" in
+ * `tryExtractChainedLookup` — so `$$$.orders.take(2)` and
+ * `$$$.orders.filter(p).take(2)` disagreed about `let: {}` for no semantic
+ * reason. One helper, one shape.
+ */
+export function pipelineLookupBody(
+  from: string,
+  letVars: Record<string, string>,
+  pipeline: object[],
+  as: string,
+): object {
+  return Object.keys(letVars).length === 0 ? { from, pipeline, as } : { from, let: letVars, pipeline, as };
 }
 
 // ── Chained-terminal recognition + materialisation ────────────────────────────
@@ -2604,14 +2621,7 @@ function tryExtractChainedLookup(
     terminalMap !== null
       ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos }
       : slotRef;
-  // A filter-headed chain keeps the `let: {}` shape (matching the existing lookup
-  // output); a stream-method-headed chain with no correlation omits the empty `let`
-  // entirely — the lean `.aggregate`-style `{ from, pipeline, as }`.
-  const lookupBody =
-    direct === null && Object.keys(letVars).length === 0
-      ? { from, pipeline: pipelineBody, as: slot }
-      : { from, let: letVars, pipeline: pipelineBody, as: slot };
-  const stages: object[] = [{ $lookup: lookupBody }];
+  const stages: object[] = [{ $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) }];
   // A collapsing terminal (`.countBy`/`.keyBy`/`.groupBy("k")`) makes the sub-
   // pipeline emit exactly one object doc, but `$lookup.as` is always an array — so
   // the slot holds `[obj]`. Unwrap it to the single object (mirrors lowerLookup's

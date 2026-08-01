@@ -469,7 +469,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "a",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -493,7 +492,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "a",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -589,7 +587,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
         {
           $lookup: {
             from: "a",
-            let: {},
             pipeline: [
               { $match: { $expr: "$active" } },
               {
@@ -615,7 +612,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "a",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -641,7 +637,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "users",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -715,7 +710,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // non-document root). Instead the sub-pipeline is just the `.filter`'s `$match`,
     // and the map runs as a value-mode `$map` over the result array in the `$set`.
     expect(jsmql("$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));")).toEqual([
-      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
       { $set: { stats: { $map: { input: "$__jsmql.tmp.1", as: "u", in: { id: "$$u._id", name: "$$u.name" } } } } },
       { $unset: "__jsmql" },
     ]);
@@ -822,7 +817,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "users",
-          let: {},
           pipeline: [{ $match: { $expr: "$active" } }, { $sort: { score: -1 } }, { $limit: 5 }],
           as: "__jsmql.tmp.1",
         },
@@ -875,7 +869,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // that fire BEFORE the chain-extension check in extractLookupCalls; they
     // continue to lower the same way they did before this commit.
     expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
-      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
       { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
       { $set: { count: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
@@ -951,7 +945,6 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
       {
         $lookup: {
           from: "orders",
-          let: {},
           pipeline: [{ $match: { qty: { $gt: 1 } } }, { $match: { status: "paid" } }],
           as: "__jsmql.tmp.1",
         },
@@ -1013,7 +1006,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     // `as: "x"` write straight to the destination field (no tmp slot, no trailing
     // `$set`/`$unset`) that the arrow form has always had.
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
-      { $lookup: { from: "orders", let: {}, pipeline: [{ $match: { uid: 1 } }], as: "x" } },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "x" } },
     ]);
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual(jsmql("$.x = $$$.orders.filter(o => o.uid === 1);"));
   });
@@ -1049,6 +1042,29 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
       expect(() => jsmql(`$$$.orders.filter(${shorthand}).length > 0`)).toThrow(/requires Pipeline mode/);
     });
   }
+
+  it("an uncorrelated $lookup omits `let` entirely, whatever assembled it", () => {
+    // `let` is optional to the server, so an empty `let: {}` is pure noise. The
+    // rule used to be re-decided per emission site (lean only for `.aggregate`,
+    // and only for a non-`.filter`-headed chain), which made these four disagree
+    // for no semantic reason. `pipelineLookupBody` is now the single decider.
+    // Verified against a live mongod.
+    const lookupOf = (src: string) => ((jsmql(src) as object[])[0] as { $lookup: Record<string, unknown> }).$lookup;
+    for (const src of [
+      "$.x = $$$.orders.filter(o => o.uid === 1);", // direct lookup, filter head
+      "$.x = $$$.orders.filter({ uid: 1 });", // …and its shorthand twin
+      "$.x = $$$.orders.filter(o => o.uid === 1).take(2);", // chained, filter head
+      "$.x = $$$.orders.take(2);", // chained, stream-method head
+      "$.x = $$$.orders.aggregate(o => { $limit(2); });", // .aggregate
+    ]) {
+      expect(Object.keys(lookupOf(src)), src).not.toContain("let");
+    }
+    // A predicate that DOES correlate still gets its `let` — the shape follows the
+    // predicate, never the code path.
+    expect(lookupOf("$.x = $$$.orders.filter(o => o.uid === $._id && o.qty > 0);").let).toEqual({
+      jsmql_f0__id: "$_id",
+    });
+  });
 
   it("a malformed shorthand still reports its own targeted error, not a lookup-shape one", () => {
     // `filterArgToLambda` returns null rather than throwing, so `validateLookupShape`

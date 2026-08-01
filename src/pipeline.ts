@@ -67,6 +67,7 @@ import {
   lowerLambdaPredicate,
   isValueCollapsingMap,
   peelForeignChain,
+  pipelineLookupBody,
   type LookupCall,
   type LookupTarget,
   type SlotAllocator,
@@ -817,7 +818,7 @@ function lowerReplaceRoot(
     if (pred.kind === "basic") {
       stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
     } else {
-      stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } });
+      stages.push({ $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, slot) });
     }
     stages.push({ $replaceWith: { $first: `$${slot}` } });
     return stages;
@@ -1421,7 +1422,7 @@ function lowerLookupPivot(
     if (pred.kind === "basic") {
       lookupStage = { $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } };
     } else {
-      lookupStage = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
+      lookupStage = { $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, slot) };
     }
   } else {
     // General pipeline form: peel EVERY method (arbitrary stream head + `.filter`/
@@ -1452,7 +1453,7 @@ function lowerLookupPivot(
       pipelineBody,
       letVars,
     );
-    lookupStage = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
+    lookupStage = { $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) };
   }
   return { stages: [lookupStage, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }

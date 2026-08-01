@@ -851,7 +851,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     expect(() => jsmql("$$$.orders.head();")).toThrow(/returns a single value, not a pipeline stage/);
     // 4. Assignment — value-mode over ALL orders (implicit match-all $lookup + $first).
     expect(jsmql("$.field = $$$.orders.head();")).toEqual([
-      { $lookup: { from: "orders", let: {}, pipeline: [{ $match: { $expr: true } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "orders", pipeline: [{ $match: { $expr: true } }], as: "__jsmql.tmp.1" } },
       { $set: { field: { $first: "$__jsmql.tmp.1" } } },
       { $unset: "__jsmql" },
     ]);

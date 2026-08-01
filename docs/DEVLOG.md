@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — fix: an uncorrelated `$lookup` never emits an empty `let: {}`
+
+Closes the empty-`let` wart flagged as "tracked separately" in
+[test: showcase chains rewritten in the shorter lodash spellings](#2026-08-01--test-showcase-chains-rewritten-in-the-shorter-lodash-spellings).
+`$lookup.let` is optional to the server, so emitting `let: {}` when the predicate
+correlated nothing is pure noise — the leaner `{ from, pipeline, as }` says the
+same thing. jsmql already knew this: `lowerLookup` dropped the empty `let`, but
+only for `.aggregate`, and `tryExtractChainedLookup` dropped it only when the
+chain had no `.filter` head. So the rule was re-decided at each of the five
+emission sites, and `$$$.orders.take(2)` disagreed with
+`$$$.orders.filter(p).take(2)` about `let: {}` for no semantic reason.
+
+All five sites now route through one exported `pipelineLookupBody(from, letVars,
+pipeline, as)` in [src/lookup-translation.ts](../src/lookup-translation.ts),
+which omits `let` iff `letVars` is empty. The emitted shape is now a function of
+the *predicate* alone, never of which code path assembled it — which is the same
+invariant the sibling entry above establishes for predicate *spelling*, and the
+reason both were worth fixing together: a `$lookup` shape that shifts with
+anything other than what the query means is the bug, not the specific trigger.
+
+This is why the preceding fix is a strict win rather than a trade: normalising
+the shorthand at detection had, on its own, moved uncorrelated shorthand chains
+*onto* the arrow's `let: {}` path. Rather than accept the noisier output for the
+sake of agreement, both spellings now get the lean shape. Thirteen expectations
+across four suites lost exactly one `"let": {}` line each and nothing else.
+
+---
+
 ## 2026-08-01 — fix: a shorthand `.filter(...)` lookup predicate lowers identically to its arrow
 
 `$$$.orders.filter({ userId: $._id })` and `$$$.orders.filter(o => o.userId === $._id)`
