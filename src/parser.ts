@@ -1459,10 +1459,11 @@ export class Parser {
             object: left,
             method: memberName,
             args,
-            // A stage link carries its OWN offset so per-link errors caret at
-            // the stage, not at the chain root (every other link keeps the
-            // historical `left.pos`).
-            pos: isStageLink ? member.pos : left.pos,
+            // Every link carries its OWN offset, so a chain error carets at the
+            // offending call rather than at the chain root — in
+            // `$$.filter(p).uniq().take(2)` the `.uniq()` error points at
+            // `.uniq`, not at `$$` 24 characters earlier.
+            pos: member.pos,
             ...(isOptional && { optional: true }),
           };
         } else if (isStageLink) {

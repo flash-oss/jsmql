@@ -144,6 +144,35 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     });
   });
 
+  // Every chain link carries its own source offset, so a chain error carets at
+  // the offending call instead of at the chain root.
+  describe("chain links caret at the offending call", () => {
+    it("an unknown stream method points at that method, not at `$$`", () => {
+      const src = "$$.filter(p => p.a > 1).uniq().take(2);";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      assertPosInRange(src, result.errors[0].pos);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^uniq/);
+    });
+
+    it("a type-incompatible receiver points at the call that produced it", () => {
+      const src = "$.n + $.items.every(x => x.ok).map(y => y)";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^every/);
+    });
+
+    // …but an error about the whole context-ref construct still points at the
+    // `$$$` prefix, not at whichever link happens to be outermost.
+    it("a context-ref mode error still points at the `$$$` prefix", () => {
+      const src = "$$$.myColl.find(o => o.x === $.y)";
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toMatch(/requires Pipeline mode/);
+      expect(result.errors[0].pos).toBe(0);
+    });
+  });
+
   // A stage link carries its OWN source offset (the parser stamps `member.pos`
   // rather than the historical chain-root `left.pos`), so a long chain carets
   // at the offending link instead of at `$$`.

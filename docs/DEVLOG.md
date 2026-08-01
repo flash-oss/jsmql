@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — fix: chain errors caret at the offending call, not the chain root
+
+`parsePostfix` stamped `pos: left.pos` on every `MethodCall` it built, so every
+link of a chain shared the chain root's source offset. An error deep in a chain
+therefore underlined the wrong thing:
+
+```
+$$.filter(p => p.a > 1).uniq().take(2);
+^                                          ← before: the caret sat on `$$`
+                        ^                  ← after:  it sits on `.uniq`
+```
+
+Each link now carries the offset of its own member token — a one-line change in
+[src/parser.ts](../src/parser.ts). Two existing assertions moved and both moved
+for the better: the incompatible-receiver error in a chain now points at
+`.every(...)`, the call its own message names, instead of at the `$.items`
+chain root.
+
+One site needed the opposite treatment. The "lookup syntax requires Pipeline
+mode" error is about the whole `$$$.<coll>.find(...)` construct, not about
+whichever link is outermost, so it now resolves the `$$$` prefix's own offset
+via a small `contextRefPos` walk in [src/index.ts](../src/index.ts) rather than
+taking `ast.pos`. The general rule: an error about *a call* takes the call's
+position; an error about *a construct* resolves the construct's head.
+
+---
+
 ## 2026-08-01 — feat: pipeline stages as chain links (`<stream>.$match(...)`)
 
 A stage can now be written as a dot-chain link on a stream —

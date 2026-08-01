@@ -2055,10 +2055,11 @@ var Parser = class {
             object: left,
             method: memberName,
             args,
-            // A stage link carries its OWN offset so per-link errors caret at
-            // the stage, not at the chain root (every other link keeps the
-            // historical `left.pos`).
-            pos: isStageLink2 ? member.pos : left.pos,
+            // Every link carries its OWN offset, so a chain error carets at the
+            // offending call rather than at the chain root — in
+            // `$$.filter(p).uniq().take(2)` the `.uniq()` error points at
+            // `.uniq`, not at `$$` 24 characters earlier.
+            pos: member.pos,
             ...isOptional && { optional: true }
           };
         } else if (isStageLink2) {
@@ -15900,7 +15901,10 @@ function lowerWithCtx(ast, ctx) {
   if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) === null && containsLookupCall(ast, ctx)) {
     throw new CodegenError(
       "Lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') requires Pipeline mode. Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
-      ast.pos
+      // Point at the `$$$` prefix, not at the `.find(...)` link: the whole
+      // construct is what needs Pipeline mode, and every chain link now carries
+      // its own offset.
+      contextRefPos(ast)
     );
   }
   const result = lowerProgram(ast, ctx, generateFilter);
@@ -16043,6 +16047,17 @@ function generateFilter(ast, ctx) {
   }
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   return mergeTranslatedQuery(t, ctx) ?? {};
+}
+function contextRefPos(node) {
+  let pos = null;
+  someExpr(node, (e) => {
+    if (e.type === "DatabaseRef" || e.type === "ClusterRef") {
+      pos = e.pos;
+      return true;
+    }
+    return false;
+  });
+  return pos ?? node.pos;
 }
 function isCollectionMethodCall(ast) {
   const chain = collectStreamChain(ast);
