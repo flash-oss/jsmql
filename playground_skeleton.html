@@ -581,19 +581,30 @@
       /* "MongoDB call" hint shown above the editor, directly below the grey
          "jsmql input" label. The kind-coloured strip on the left mirrors the
          example's kind so a user scanning the playground can connect the
-         label → call site → input → output at a glance. */
+         label → call site → input → output at a glance. It also carries the
+         disclosure control for the Variables editor below it (see
+         `.vars-toggle`), so the bar itself never scrolls — only its inner
+         `.usage-main` does, keeping the chevron pinned to the right edge. */
       .usage-bar {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 10px;
         padding: 8px 12px;
         border-bottom: 1px solid var(--border);
         background: var(--sidebar-bg);
         font-size: 12px;
-        overflow-x: auto;
-        white-space: nowrap;
         flex-shrink: 0;
         border-left: 3px solid var(--expr);
+      }
+
+      .usage-bar .usage-main {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        white-space: nowrap;
       }
 
       .panel.input-panel.pipeline .usage-bar {
@@ -623,12 +634,59 @@
         min-width: 0;
       }
 
+      /* Disclosure for the Variables editor: a labelled chevron pinned to the
+         right of the "MongoDB call" bar. Collapsed is the default — variables
+         are optional, so the call site sits directly above the query until the
+         user asks for them. The label carries the panel's name because a bare
+         chevron says "something opens" without saying what. */
+      .vars-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        margin: -4px -6px -4px 0;
+        padding: 4px 6px;
+        border: 0;
+        border-radius: 5px;
+        background: none;
+        color: var(--muted);
+        font-family: inherit;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+      }
+
+      .vars-toggle:hover {
+        color: var(--update);
+        background: var(--panel);
+      }
+
+      .vars-toggle svg {
+        width: 13px;
+        height: 13px;
+        flex-shrink: 0;
+        transition: transform 0.15s ease;
+      }
+
+      /* Chevron points down while collapsed ("opens downward"), flips up once
+         the panel below is showing. */
+      .vars-toggle[aria-expanded="true"] {
+        color: var(--update);
+      }
+
+      .vars-toggle[aria-expanded="true"] svg {
+        transform: rotate(180deg);
+      }
+
       /* Optional "Variables" editor: a free-form JS object literal whose keys
          become bindings supplied to `jsmql.compile()` (see `parseVars` /
-         `buildArrow` below). Empty → the playground uses the plain entry points
-         exactly as before; non-empty → it routes through their `.compile(...)`
-         builders. The purple `--update` accent marks it as the parameterising
-         (compile) concept, distinct from the kind-coloured usage-bar above it. */
+         `buildArrow` below). No keys → the playground uses the plain entry
+         points exactly as before; ≥1 key → it routes through their
+         `.compile(...)` builders. The purple `--update` accent marks it as the
+         parameterising (compile) concept, distinct from the kind-coloured
+         usage-bar above it. Hidden until the usage bar's chevron reveals it —
+         `[hidden]` needs the explicit rule to beat this `display: flex`. */
       .vars-section {
         display: flex;
         flex-direction: column;
@@ -636,6 +694,10 @@
         border-bottom: 1px solid var(--border);
         border-left: 3px solid var(--update);
         background: var(--sidebar-bg);
+      }
+
+      .vars-section[hidden] {
+        display: none;
       }
 
       .vars-header {
@@ -1158,10 +1220,33 @@
           </span>
         </div>
         <div class="usage-bar" id="usage-bar">
-          <span class="usage-label">MongoDB call:</span>
-          <code class="usage-code" id="usage-code"></code>
+          <span class="usage-main">
+            <span class="usage-label">MongoDB call:</span>
+            <code class="usage-code" id="usage-code"></code>
+          </span>
+          <button
+            type="button"
+            class="vars-toggle"
+            id="vars-toggle"
+            aria-expanded="false"
+            aria-controls="vars-section"
+            title="Show the Variables editor"
+          >
+            Variables
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
         </div>
-        <div class="vars-section" id="vars-section">
+        <div class="vars-section" id="vars-section" hidden>
           <div class="vars-header">
             <span class="vars-title">Variables</span>
             <span class="lang-tag js" title="Plain JavaScript — evaluated in your run-time to build the params object, then bound to the query via jsmql.compile(). This box is not JSMQL.">run-time JS</span>
@@ -1243,6 +1328,20 @@
       const varsEl = document.getElementById("vars-input");
       const varsSection = document.getElementById("vars-section");
       const varsHint = document.getElementById("vars-hint");
+      const varsToggleBtn = document.getElementById("vars-toggle");
+
+      // What the Variables editor starts with: a commented-out template. It
+      // parses to `{}` — no bindings, so the playground behaves exactly as it
+      // does with an empty box — while naming the two shapes people reach for
+      // first (a plain run-time value, and an ObjectId literal, which is the
+      // one that isn't obvious because JSON can't express it). Seeded onto the
+      // textarea BEFORE CodeMirror adopts it, so no `change` fires and the
+      // restore ladder at the bottom can still overwrite it.
+      const DEFAULT_VARS = `{
+  // runTimeVar1: "runTimeValue",
+  // exampleId: ObjectId("507f1f77bcf86cd799439011")
+}`;
+      varsEl.value = DEFAULT_VARS;
 
       const inputCm = CodeMirror.fromTextArea(inputEl, {
         mode: { name: "javascript" },
@@ -1375,6 +1474,33 @@
       function updateUsageBar() {
         if (!usageEl) return;
         usageCodeEl.textContent = usageForMode(currentMode);
+      }
+
+      // ── Variables disclosure ──────────────────────────────────────────────
+      // The Variables editor hangs off the "MongoDB call" bar as a collapsed
+      // panel: variables are optional, so by default the call site sits
+      // directly above the query and the chevron on the right reveals the box.
+      function setVarsOpen(open) {
+        varsSection.hidden = !open;
+        varsToggleBtn.setAttribute("aria-expanded", String(open));
+        varsToggleBtn.title = open ? "Hide the Variables editor" : "Show the Variables editor";
+        // CodeMirror can't measure itself inside a `display: none` parent — it
+        // lays out at zero height and stays that way until told to re-measure.
+        if (open) requestAnimationFrame(() => varsCm.refresh());
+      }
+      varsToggleBtn.addEventListener("click", () => {
+        setVarsOpen(varsSection.hidden);
+      });
+
+      // Open the panel when the box actually holds bindings (or fails to
+      // parse): both change the MQL output and the call-site hint, so the
+      // source of that change must not be hidden. Derived from the content
+      // rather than persisted, so the panel state can never disagree with the
+      // session it is showing. Called on every restore path — a page refresh,
+      // and a `#s=` share link (which can carry someone else's variables).
+      function syncVarsDisclosure() {
+        const v = parseVars(varsCm.getValue());
+        setVarsOpen(Boolean(v.error) || v.keys.length > 0);
       }
 
       // Set the active compile mode: update the toggle UI, the call-site hint,
@@ -1951,6 +2077,7 @@
         setMode(shared.mode, { rerender: false });
         inputCm.setValue(shared.input);
         render();
+        syncVarsDisclosure();
         writeHash(null);
       }
 
@@ -2160,6 +2287,9 @@
       //   3. a saved free-form query — restored with the compile mode it was
       //      last rendered with, so the output matches what the user left;
       //   4. the first example — the default for a first visit.
+      // Either branch ends with `syncVarsDisclosure()` deciding whether the
+      // Variables panel starts open — collapsed unless the restored session
+      // actually put variables in play.
       const shared = parseShareHash();
       if (shared) {
         applySharedSession(shared);
@@ -2178,6 +2308,7 @@
         } else if (orderedSlugs.length > 0) {
           selectExample(orderedSlugs[0], { scroll: false });
         }
+        syncVarsDisclosure();
       }
     </script>
   </body>

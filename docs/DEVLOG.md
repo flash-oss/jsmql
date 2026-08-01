@@ -47,6 +47,35 @@ DX gaps in the compiler, not in the tests.
 
 ---
 
+## 2026-08-01 — feat: playground Variables panel is a disclosure under the "MongoDB call" bar
+
+The Variables editor no longer occupies the input panel permanently. It now
+hangs off the "MongoDB call" bar as a collapsed panel, revealed by a labelled
+chevron pinned to the right of that bar
+([playground_skeleton.html](../playground_skeleton.html) — `.vars-toggle`,
+`setVarsOpen` / `syncVarsDisclosure`). Variables are optional, so the default
+view puts the call site directly above the query and gives the editor its
+vertical space back; the chevron is what asks for them. To keep the control
+pinned while the call site can still be long, the bar itself stopped scrolling —
+its label+code moved into an inner `.usage-main` that owns the `overflow-x`.
+
+Open/closed is **derived from the content, not persisted**: on every restore
+path (page refresh, and a `#s=` share link, which can carry someone else's
+variables) `syncVarsDisclosure()` opens the panel when the box actually holds
+bindings or fails to parse. Both cases change the MQL output and the call-site
+hint, so hiding their cause would leave the user with a `.compile(...)({ age })`
+call site and nothing visible that explains it. Nothing about the panel state
+goes into localStorage or the share payload, so the panel can never disagree
+with the session it is showing.
+
+The box also stops starting empty: it now opens on a commented-out template
+(`runTimeVar1` plus an `ObjectId("507f…")` line). It parses to `{}` — no
+bindings, so behaviour is identical to the old empty box — while naming the two
+shapes people reach for first, the second of which isn't guessable because JSON
+can't express it.
+
+---
+
 ## 2026-07-27 — feat: fold array `.slice` in `const`/`let` (lowering is now JS-faithful)
 
 Re-adds array `.slice` to compile-time constant folding. It was deliberately
