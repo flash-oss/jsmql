@@ -1446,3 +1446,81 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
     expect(() => jsmql("$$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);
   });
 });
+
+// Callback SPELLING must never change what is emitted. jsmql accepts the lodash
+// shorthands in value position, so the stream forms have to accept exactly the same
+// set — a spelling that compiles against `$.arr` but errors against `$$$.coll` is a
+// bug, not a restriction. Two spellings that mean one thing:
+//   • a field key   — `"cat"`  ≡  `d => d.cat`   (both name the same plan-time path)
+//   • a predicate   — `o => o.cat === "a"`  ≡  `{ cat: "a" }`  ≡  `["cat", "a"]`
+// Each pair below is asserted BYTE-IDENTICAL rather than merely "both compile", which
+// is what catches a divergence that still produces valid-but-different MQL (the
+// `.groupBy(d => d.cat)` case did: it silently skipped the `$first` unwrap that
+// `.groupBy("cat")` gets, leaving the caller the raw `[obj]` slot). Verified on a
+// live mongod: every pair returns the same documents.
+describe("stream callbacks — spelling never changes the emitted MQL", () => {
+  const FIELD_KEY_METHODS = ["sortBy", "orderBy", "groupBy", "countBy", "keyBy", "uniqBy", "flatMap"];
+  for (const m of FIELD_KEY_METHODS) {
+    it(`.${m}: the bare-path arrow emits exactly what the field-name string does`, () => {
+      expect(jsmql(`$.o = $$$.orders.${m}(d => d.cat);`)).toEqual(jsmql(`$.o = $$$.orders.${m}("cat");`));
+      // …and in a chained position, where a different assembler builds the stage.
+      expect(jsmql(`$.o = $$$.orders.take(3).${m}(d => d.cat);`)).toEqual(
+        jsmql(`$.o = $$$.orders.take(3).${m}("cat");`),
+      );
+    });
+  }
+
+  it(".groupBy(<arrow>) still gets the collapsing $first unwrap the string form gets", () => {
+    // The regression this guards: `isCollapsingTerminal` keyed on `StringLiteral`, so
+    // only the string spelling was recognised as collapsing to a single object.
+    const stages = jsmql(`$.o = $$$.orders.groupBy(d => d.cat);`) as object[];
+    expect(JSON.stringify(stages)).toContain("$first");
+  });
+
+  it(".groupBy({ _id, … }) stays the $group-body form, NOT a matches-shorthand key", () => {
+    expect(jsmql(`$$ = $$.groupBy({ _id: "$dept", n: $sum(1) });`)).toEqual([
+      { $group: { _id: "$dept", n: { $sum: 1 } } },
+    ]);
+  });
+
+  const PREDICATE_SPELLINGS = [`{ cat: "a" }`, `["cat", "a"]`];
+  for (const spelling of PREDICATE_SPELLINGS) {
+    it(`.find(${spelling}) emits exactly what the equivalent arrow does`, () => {
+      expect(jsmql(`$.o = $$$.orders.find(${spelling});`)).toEqual(jsmql(`$.o = $$$.orders.find(o => o.cat === "a");`));
+    });
+    it(`.map(${spelling}) emits exactly what the equivalent arrow does`, () => {
+      // The twin spells its param `jsmqlEl` — the synthetic name a shorthand desugars
+      // to. A user arrow names its own param, so `$map.as` differs there and nowhere
+      // else; that is the bound variable's name, not a difference in meaning.
+      expect(jsmql(`$.o = $$$.orders.map(${spelling});`)).toEqual(
+        jsmql(`$.o = $$$.orders.map(jsmqlEl => jsmqlEl.cat === "a");`),
+      );
+    });
+  }
+
+  // A key slot genuinely cannot take a computed value — a `$sort` key / `$group._id`
+  // is fixed at plan time. That limit is real, so the error has to name the way out.
+  it("a computed key is rejected with the materialise-first alternative", () => {
+    for (const m of ["sortBy", "orderBy", "groupBy", "countBy", "keyBy", "uniqBy"]) {
+      expect(() => jsmql(`$.o = $$$.orders.${m}(d => d.cat.toLowerCase());`), m).toThrow(
+        /Materialise the key into a field first/,
+      );
+    }
+    // The matches-object is rejected only where that spelling is free. On the sort /
+    // group methods an object is already claimed by a MORE useful surface, which is
+    // why the lodash matcher isn't available there — a principled clash, not a gap:
+    for (const m of ["countBy", "keyBy", "uniqBy"]) {
+      expect(() => jsmql(`$.o = $$$.orders.${m}({ cat: 1 });`), m).toThrow(/Materialise the key into a field first/);
+    }
+    expect(jsmql(`$.o = $$$.orders.orderBy({ cat: -1 });`)).toEqual(jsmql(`$.o = $$$.orders.orderBy(["cat"], [-1]);`));
+    expect(jsmql(`$$ = $$.groupBy({ _id: "$cat" });`)).toEqual([{ $group: { _id: "$cat" } }]);
+    expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(/Use '\.orderBy\({ field: -1 }\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.flatMap({ cat: 1 });`)).toThrow(/Materialise the array into a field first/);
+  });
+
+  it("each key-slot error names the method it was called on, not a sibling", () => {
+    // `.keyBy`/`.uniqBy` used to demonstrate `.countBy("status")` in their own errors.
+    expect(() => jsmql(`$.o = $$$.orders.keyBy(d => d.a.b());`)).toThrow(/'\.keyBy\("status"\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.uniqBy(d => d.a.b());`)).toThrow(/'\.uniqBy\("status"\)'/);
+  });
+});

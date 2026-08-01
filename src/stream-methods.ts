@@ -9,7 +9,7 @@
 
 import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
-import { CodegenError, generateWithCtx, type GenerateCtx, stringKeyExpr } from "./codegen.ts";
+import { CodegenError, generateWithCtx, type GenerateCtx, shorthandToLambda, stringKeyExpr } from "./codegen.ts";
 import {
   aggregateArgToLambda,
   EMPTY_ENCLOSING,
@@ -175,6 +175,48 @@ function validateSingleIntArg(sig: string, args: readonly CallArg[], callPos: nu
   }
 }
 
+/**
+ * Resolve a *field-key* argument to the field name it names. Two spellings, one
+ * meaning: the lodash property string (`"status"`) and the equivalent bare-field-path
+ * arrow (`d => d.status`) — the arrow is just a longer way to write the same path, so
+ * every stream method that keys on a field takes both, exactly as value position does.
+ *
+ * Returns null for anything that is not a plan-time field path (a *computed* arrow, a
+ * matches-object, a dynamic value); callers reject those with the materialise-first
+ * hint, since a `$sort` key / `$group._id` is fixed when the plan is built.
+ * `""` and `"$…"` strings also return null so the caller keeps its own targeted
+ * "plain field name" message for them.
+ */
+export function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null {
+  if (arg.type === "StringLiteral") {
+    return arg.value === "" || arg.value.startsWith("$") ? null : arg.value;
+  }
+  if (arg.type === "Lambda" && arg.params.length === 1 && arg.block === undefined && arg.body !== undefined) {
+    return paramFieldPath(arg.body, arg.params[0]);
+  }
+  return null;
+}
+
+/**
+ * The rejection shared by every field-key slot that was handed a non-path argument.
+ * `alsoTakes` names any additional form the specific method accepts (e.g. `.groupBy`'s
+ * `$group` body), so one message can serve them all without under-selling a method.
+ */
+function computedKeyError(sig: string, pos: number, alsoTakes = ""): CodegenError {
+  // The example has to name the method being called — a `.keyBy(...)` error that
+  // demonstrates `.countBy("status")` sends the reader to the wrong docs page.
+  const name = sig.slice(1, sig.indexOf("("));
+  return new CodegenError(
+    `${sig} keys on a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent ` +
+      `bare-path arrow ('.${name}(d => d.status)'). On a stream the key becomes part of the emitted stage — ` +
+      `a '$sort' key or a '$group._id' — which the server fixes at plan time, so a computed arrow, a ` +
+      `matches-object, or a dynamic value has nothing to key on. Materialise the key into a field first, then ` +
+      `key on its name: '$.key = <expr>; $$ = $$.${name}("key");' — or, inside a foreign chain, ` +
+      `'.map(d => ({ key: <expr>, … })).${name}("key")'.`,
+    pos,
+  );
+}
+
 function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: number): void {
   if (args.length !== 1) {
     throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
@@ -183,18 +225,13 @@ function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: 
   if (arg.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
   }
-  if (arg.type !== "StringLiteral") {
-    throw new CodegenError(
-      `${sig} requires a field-name string literal, e.g. '.countBy("status")'. Computed or dynamic arguments aren't supported on streams.`,
-      arg.pos,
-    );
-  }
-  if (arg.value === "" || arg.value.startsWith("$")) {
+  if (arg.type === "StringLiteral" && (arg.value === "" || arg.value.startsWith("$"))) {
     throw new CodegenError(
       `${sig} requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
       arg.pos,
     );
   }
+  if (fieldKeyArg(arg) === null) throw computedKeyError(sig, arg.pos);
 }
 
 // ── .take(n) → $limit ─────────────────────────────────────────────────────────
@@ -571,20 +608,16 @@ const MAP: StreamMethodDef = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.map(...) does not accept a spread argument — pass a '(d) => <expr>' arrow.`, arg.pos);
     }
-    // lodash property shorthand: `.map("userId")` ≡ `.map(d => d.userId)` — projects
-    // each document down to that field's value ($replaceWith: "$userId").
-    if (arg.type === "StringLiteral") {
-      if (arg.value === "" || arg.value.startsWith("$")) {
-        throw new CodegenError(
-          `.map("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
-          arg.pos,
-        );
-      }
-      return;
-    }
+    // Any lodash iteratee shorthand: `.map("userId")` ≡ `.map(d => d.userId)` (pluck),
+    // `.map({ a: 1 })` / `.map(["a", 1])` ≡ a `_.matches` boolean per element. Each
+    // desugars to its arrow and lowers as a value-mode `$map` over the result array
+    // (see `peelableTerminalMap`), matching what value position already accepts —
+    // `shorthandToLambda` throws the per-form message for a malformed one.
     if (arg.type !== "Lambda") {
+      if (shorthandToLambda(arg, "map", "jsmqlEl") !== null) return;
       throw new CodegenError(
-        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))') or a field-name string ('.map("userId")').`,
+        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))'), a field-name string ` +
+          `('.map("userId")'), a matches-object ('{ active: true }'), or a ["field", value] pair.`,
         arg.pos,
       );
     }
@@ -1097,20 +1130,21 @@ const TO_REVERSED: StreamMethodDef = {
 
 // Key-form sort helpers, shared by `.sort` / `.toSorted` above and by the `$group`
 // key form. A plain field-name literal (no leading `$`):
-function fieldNameLiteral(e: Expr | SpreadElement, sig: string): string {
+function fieldNameLiteral(e: Expr | SpreadElement, sig: string, alsoTakes = ""): string {
   if (e.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
   }
-  if (e.type !== "StringLiteral") {
-    throw new CodegenError(`${sig} requires field-name string literals; got '${e.type}'.`, e.pos);
-  }
-  if (e.value === "" || e.value.startsWith("$")) {
+  if (e.type === "StringLiteral" && (e.value === "" || e.value.startsWith("$"))) {
     throw new CodegenError(
       `${sig} requires plain field names (no leading '$'), got ${JSON.stringify(e.value)}.`,
       e.pos,
     );
   }
-  return e.value;
+  // `"cat"` and `d => d.cat` name the same path — accept both here so the spelling
+  // is free wherever a sort/group key is taken (`fieldKeyArg`).
+  const name = fieldKeyArg(e);
+  if (name === null) throw computedKeyError(sig, e.pos, alsoTakes);
+  return name;
 }
 
 // 1 (ascending) or -1 (descending), from a `1` / `-1` number or an `"asc"` /
@@ -1126,7 +1160,8 @@ function sortDirection(e: Expr): 1 | -1 | null {
 // A field name ("age"), an array of field names (all ascending), or a
 // `{ field: 1 | -1 | "asc" | "desc" }` spec → a `$sort` document.
 function buildKeySortSpec(arg: Expr, sig: string): Record<string, 1 | -1> {
-  if (arg.type === "StringLiteral") {
+  // `"age"` and the bare-path arrow `d => d.age` are the same ascending key.
+  if (arg.type === "StringLiteral" || arg.type === "Lambda") {
     return { [fieldNameLiteral(arg, sig)]: 1 };
   }
   if (arg.type === "ArrayLiteral") {
@@ -1231,17 +1266,17 @@ const GROUP_BY: StreamMethodDef = {
     if (a.type === "SpreadElement") {
       throw new CodegenError(`.groupBy(...) does not accept a spread argument.`, a.pos);
     }
-    if (a.type !== "StringLiteral" && a.type !== "ObjectLiteral") {
-      throw new CodegenError(
-        `.groupBy(...) takes a field name ("dept") or a '$group' body ({ _id: "$dept", n: $sum(1) }).`,
-        a.pos,
-      );
-    }
-    if (a.type === "StringLiteral") fieldNameLiteral(a, ".groupBy(key)");
+    // An ObjectLiteral is the `$group`-body form (jsmql's own surface, carrying
+    // accumulators), NOT a lodash matches-shorthand — so it is checked by
+    // `generateGroupBody`, not as a key. Everything else must name a key field:
+    // `"dept"` or the equivalent bare-path arrow `d => d.dept`.
+    if (a.type === "ObjectLiteral") return;
+    fieldNameLiteral(a, ".groupBy(key)", ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
   },
   lower(args, ctx, callPos) {
     const a = args[0] as Expr;
-    if (a.type === "StringLiteral") {
+    if (a.type !== "ObjectLiteral") {
+      const key = fieldKeyArg(a) as string; // validate() guarantees a field path
       // Bare-key form is lodash `_.groupBy(coll, key)` → the OBJECT
       // `{ <keyValue>: [elements] }`. Collapse the stream to that single object
       // (mirroring value-mode `$.arr.groupBy(...)`): `$push: "$$ROOT"` gathers each
@@ -1251,7 +1286,7 @@ const GROUP_BY: StreamMethodDef = {
       // it carries accumulators with no lodash analogue.
       return {
         stages: [
-          { $group: { _id: `$${a.value}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: `$${key}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
           { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
           { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
         ],
@@ -1279,7 +1314,7 @@ const COUNT_BY: StreamMethodDef = {
     validateSingleFieldArg(".countBy(field)", args, callPos);
   },
   lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    const key = fieldKeyArg(args[0]) as string; // validate() guarantees a field path
     return {
       stages: [
         { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
@@ -1305,7 +1340,7 @@ const KEY_BY: StreamMethodDef = {
     validateSingleFieldArg(".keyBy(field)", args, callPos);
   },
   lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    const key = fieldKeyArg(args[0]) as string; // validate() guarantees a field path
     return {
       stages: [
         { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
@@ -1329,7 +1364,7 @@ const UNIQ_BY: StreamMethodDef = {
     validateSingleFieldArg(".uniqBy(field)", args, callPos);
   },
   lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+    const key = fieldKeyArg(args[0]) as string; // validate() guarantees a field path
     return {
       stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
       clearLets: true,
@@ -1398,7 +1433,12 @@ const FLAT_MAP: StreamMethodDef = {
     }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.flatMap(...) requires an arrow whose body is a bare field-path on the param (e.g. '.flatMap(d => d.items)') or a field-name string ('.flatMap("items")').`,
+        `.flatMap(...) names the array field to flatten, so it takes a bare-path arrow ` +
+          `('.flatMap(d => d.items)') or the equivalent field-name string ('.flatMap("items")'). On a stream it ` +
+          `lowers to '$unwind', which needs a field path — a computed arrow, a matches-object, or a ` +
+          `["field", value] pair doesn't name one. Materialise the array into a field first, then flatten it ` +
+          `by name: '$.items = <expr>; $$ = $$.flatMap("items");' — or, inside a foreign chain, ` +
+          `'.map(d => ({ items: <expr>, … })).flatMap("items")'.`,
         arg.pos,
       );
     }

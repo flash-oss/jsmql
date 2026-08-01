@@ -10364,6 +10364,22 @@ function validateSingleIntArg(sig, args, callPos, min) {
     throw new CodegenError(`${sig} requires an integer >= ${min}; got ${arg.value}.`, arg.pos);
   }
 }
+function fieldKeyArg(arg) {
+  if (arg.type === "StringLiteral") {
+    return arg.value === "" || arg.value.startsWith("$") ? null : arg.value;
+  }
+  if (arg.type === "Lambda" && arg.params.length === 1 && arg.block === void 0 && arg.body !== void 0) {
+    return paramFieldPath(arg.body, arg.params[0]);
+  }
+  return null;
+}
+function computedKeyError(sig, pos, alsoTakes = "") {
+  const name = sig.slice(1, sig.indexOf("("));
+  return new CodegenError(
+    `${sig} keys on a field, so it takes a field name ('.${name}("status")')${alsoTakes}, or the equivalent bare-path arrow ('.${name}(d => d.status)'). On a stream the key becomes part of the emitted stage \u2014 a '$sort' key or a '$group._id' \u2014 which the server fixes at plan time, so a computed arrow, a matches-object, or a dynamic value has nothing to key on. Materialise the key into a field first, then key on its name: '$.key = <expr>; $$ = $$.${name}("key");' \u2014 or, inside a foreign chain, '.map(d => ({ key: <expr>, \u2026 })).${name}("key")'.`,
+    pos
+  );
+}
 function validateSingleFieldArg(sig, args, callPos) {
   if (args.length !== 1) {
     throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
@@ -10372,18 +10388,13 @@ function validateSingleFieldArg(sig, args, callPos) {
   if (arg.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
   }
-  if (arg.type !== "StringLiteral") {
-    throw new CodegenError(
-      `${sig} requires a field-name string literal, e.g. '.countBy("status")'. Computed or dynamic arguments aren't supported on streams.`,
-      arg.pos
-    );
-  }
-  if (arg.value === "" || arg.value.startsWith("$")) {
+  if (arg.type === "StringLiteral" && (arg.value === "" || arg.value.startsWith("$"))) {
     throw new CodegenError(
       `${sig} requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
       arg.pos
     );
   }
+  if (fieldKeyArg(arg) === null) throw computedKeyError(sig, arg.pos);
 }
 var TAKE = {
   name: "take",
@@ -10596,18 +10607,10 @@ var MAP = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.map(...) does not accept a spread argument \u2014 pass a '(d) => <expr>' arrow.`, arg.pos);
     }
-    if (arg.type === "StringLiteral") {
-      if (arg.value === "" || arg.value.startsWith("$")) {
-        throw new CodegenError(
-          `.map("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
-          arg.pos
-        );
-      }
-      return;
-    }
     if (arg.type !== "Lambda") {
+      if (shorthandToLambda(arg, "map", "jsmqlEl") !== null) return;
       throw new CodegenError(
-        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))') or a field-name string ('.map("userId")').`,
+        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))'), a field-name string ('.map("userId")'), a matches-object ('{ active: true }'), or a ["field", value] pair.`,
         arg.pos
       );
     }
@@ -10960,20 +10963,19 @@ var TO_REVERSED = {
     return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
   }
 };
-function fieldNameLiteral(e, sig) {
+function fieldNameLiteral(e, sig, alsoTakes = "") {
   if (e.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
   }
-  if (e.type !== "StringLiteral") {
-    throw new CodegenError(`${sig} requires field-name string literals; got '${e.type}'.`, e.pos);
-  }
-  if (e.value === "" || e.value.startsWith("$")) {
+  if (e.type === "StringLiteral" && (e.value === "" || e.value.startsWith("$"))) {
     throw new CodegenError(
       `${sig} requires plain field names (no leading '$'), got ${JSON.stringify(e.value)}.`,
       e.pos
     );
   }
-  return e.value;
+  const name = fieldKeyArg(e);
+  if (name === null) throw computedKeyError(sig, e.pos, alsoTakes);
+  return name;
 }
 function sortDirection(e) {
   if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
@@ -10982,7 +10984,7 @@ function sortDirection(e) {
   return null;
 }
 function buildKeySortSpec(arg, sig) {
-  if (arg.type === "StringLiteral") {
+  if (arg.type === "StringLiteral" || arg.type === "Lambda") {
     return { [fieldNameLiteral(arg, sig)]: 1 };
   }
   if (arg.type === "ArrayLiteral") {
@@ -11063,20 +11065,16 @@ var GROUP_BY = {
     if (a.type === "SpreadElement") {
       throw new CodegenError(`.groupBy(...) does not accept a spread argument.`, a.pos);
     }
-    if (a.type !== "StringLiteral" && a.type !== "ObjectLiteral") {
-      throw new CodegenError(
-        `.groupBy(...) takes a field name ("dept") or a '$group' body ({ _id: "$dept", n: $sum(1) }).`,
-        a.pos
-      );
-    }
-    if (a.type === "StringLiteral") fieldNameLiteral(a, ".groupBy(key)");
+    if (a.type === "ObjectLiteral") return;
+    fieldNameLiteral(a, ".groupBy(key)", ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
   },
   lower(args, ctx, callPos) {
     const a = args[0];
-    if (a.type === "StringLiteral") {
+    if (a.type !== "ObjectLiteral") {
+      const key = fieldKeyArg(a);
       return {
         stages: [
-          { $group: { _id: `$${a.value}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: `$${key}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
           { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
           { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } }
         ],
@@ -11093,7 +11091,7 @@ var COUNT_BY = {
     validateSingleFieldArg(".countBy(field)", args, callPos);
   },
   lower(args) {
-    const key = args[0].value;
+    const key = fieldKeyArg(args[0]);
     return {
       stages: [
         { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
@@ -11110,7 +11108,7 @@ var KEY_BY = {
     validateSingleFieldArg(".keyBy(field)", args, callPos);
   },
   lower(args) {
-    const key = args[0].value;
+    const key = fieldKeyArg(args[0]);
     return {
       stages: [
         { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
@@ -11127,7 +11125,7 @@ var UNIQ_BY = {
     validateSingleFieldArg(".uniqBy(field)", args, callPos);
   },
   lower(args) {
-    const key = args[0].value;
+    const key = fieldKeyArg(args[0]);
     return {
       stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
       clearLets: true
@@ -11179,7 +11177,7 @@ var FLAT_MAP = {
     }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.flatMap(...) requires an arrow whose body is a bare field-path on the param (e.g. '.flatMap(d => d.items)') or a field-name string ('.flatMap("items")').`,
+        `.flatMap(...) names the array field to flatten, so it takes a bare-path arrow ('.flatMap(d => d.items)') or the equivalent field-name string ('.flatMap("items")'). On a stream it lowers to '$unwind', which needs a field path \u2014 a computed arrow, a matches-object, or a ["field", value] pair doesn't name one. Materialise the array into a field first, then flatten it by name: '$.items = <expr>; $$ = $$.flatMap("items");' \u2014 or, inside a foreign chain, '.map(d => ({ items: <expr>, \u2026 })).flatMap("items")'.`,
         arg.pos
       );
     }
@@ -11806,7 +11804,7 @@ function detectLookupCall(expr, ctx) {
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
-  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : expr.method === "filter" ? filterArgToLambda(arg) : null;
+  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : predicateArgToLambda(arg, expr.method);
   if (lambda === null) return null;
   return {
     pos: target.pos,
@@ -11817,10 +11815,13 @@ function detectLookupCall(expr, ctx) {
     lambda
   };
 }
-function filterArgToLambda(arg) {
+function predicateArgToLambda(arg, method) {
+  return tryShorthandToLambda(arg, method, FOREIGN_SHORTHAND_PARAM);
+}
+function tryShorthandToLambda(arg, method, param) {
   if (arg.type === "SpreadElement") return null;
   try {
-    return shorthandToLambda(arg, "filter", FOREIGN_SHORTHAND_PARAM);
+    return shorthandToLambda(arg, method, param);
   } catch (e) {
     if (e instanceof CodegenError) return null;
     throw e;
@@ -11961,11 +11962,11 @@ function validateLookupShape(expr) {
   }
   const arg = expr.args[0];
   if (arg.type !== "Lambda") {
-    if (expr.method === "filter" && arg.type !== "SpreadElement" && shorthandToLambda(arg, "filter", FOREIGN_SHORTHAND_PARAM) !== null) {
+    if (arg.type !== "SpreadElement" && shorthandToLambda(arg, expr.method, FOREIGN_SHORTHAND_PARAM) !== null) {
       return;
     }
     throw new CodegenError(
-      `.${expr.method}(predicate) requires an arrow predicate, e.g. \`.${expr.method}(o => o._id === $.userId)\`.`,
+      `.${expr.method}(predicate) requires an arrow predicate (\`.${expr.method}(o => o._id === $.userId)\`), a matches-object (\`{ userId: $._id }\`), a field name (\`"active"\`), or a \`["field", value]\` pair.`,
       "pos" in arg ? arg.pos : expr.pos
     );
   }
@@ -12887,12 +12888,7 @@ function extractLookupCalls(exprArg, outerCtx, allocSlot, lowerBlock2, enclosing
   if (chained !== null) return chained;
   return descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing);
 }
-function fieldPathLambda(path, pos) {
-  const param = "jsmqlEl";
-  let body = { type: "ParamRef", name: param, pos };
-  for (const seg of path.split(".")) body = { type: "MemberAccess", object: body, member: seg, pos };
-  return { type: "Lambda", params: [param], body, pos };
-}
+var ITERATEE_SHORTHAND_PARAM = "jsmqlEl";
 function peelableTerminalMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return null;
   const arg = m.args[0];
@@ -12912,23 +12908,19 @@ function peelableTerminalMap(m) {
     }
     return arg;
   }
-  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
-    return fieldPathLambda(arg.value, arg.pos);
-  }
-  return null;
+  return tryShorthandToLambda(arg, "map", ITERATEE_SHORTHAND_PARAM);
 }
 function isValueCollapsingMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return false;
   const arg = m.args[0];
-  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
-  if (arg.type !== "Lambda") return false;
+  if (arg.type !== "Lambda") return tryShorthandToLambda(arg, "map", ITERATEE_SHORTHAND_PARAM) !== null;
   if (arg.block === void 0 && arg.body !== void 0) return arg.body.type !== "ObjectLiteral";
   if (arg.block !== void 0 && arg.ret !== void 0) return arg.ret.type !== "ObjectLiteral";
   return false;
 }
 function isCollapsingTerminal(m) {
   if (m.method === "countBy" || m.method === "keyBy") return true;
-  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
+  if (m.method === "groupBy") return m.args.length === 1 && fieldKeyArg(m.args[0]) !== null;
   return false;
 }
 function chainFilterLambda(m) {

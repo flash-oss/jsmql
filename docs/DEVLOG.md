@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — fix: stream callback spelling never changes the emitted MQL
+
+Generalises the two entries below from `.filter` to the whole higher-order stream
+surface. Value position accepts the lodash shorthands everywhere, so a spelling
+that compiles against `$.arr` but errors against `$$$.<coll>` is a bug, not a
+restriction. An acceptance matrix over {`.find` `.filter` `.reject` `.some`
+`.every` `.map` `.flatMap` `.sortBy` `.orderBy` `.groupBy` `.countBy` `.keyBy`
+`.uniqBy`} × {arrow, property string, matches-object, `["field", value]`} ×
+{value, stream head, stream chain} turned up twenty divergent cells. They
+collapsed into two equivalence classes, each now behind one resolver:
+
+- **Field key** (`.sortBy` / `.orderBy` / `.groupBy` / `.countBy` / `.keyBy` /
+  `.uniqBy` / `.flatMap`) — `"cat"` and `d => d.cat` name the same path, so
+  `fieldKeyArg` resolves both. Only `.flatMap` accepted the arrow before.
+- **Predicate** (`.find`, plus the `.map` iteratee) — `.find` demanded an arrow
+  even though `.filter`, value position, and a chained `.find` all took the
+  shorthands; `.map` took the property string but not the other two.
+
+The sharpest find was `.groupBy(d => d.cat)`: once accepted, it emitted *valid but
+different* MQL, because `isCollapsingTerminal` asked whether the argument was a
+`StringLiteral` rather than whether it named a key — so the arrow spelling silently
+skipped the `$first` unwrap and handed back the raw `[obj]` slot. That is the same
+`StringLiteral`-as-proxy-for-meaning mistake as the `.find` rejection, and it is
+why the guards assert pairs **byte-identical** rather than "both compile".
+
+What a stream genuinely cannot take is a *computed* key — a `$sort` key /
+`$group._id` is fixed at plan time. That limit stays, but now speaks with one
+voice: the shared `computedKeyError` names the method it was called on and points
+at `.map(d => ({ ...d, key: <expr> })).<method>("key")`. Previously `.keyBy` and
+`.uniqBy` illustrated their own errors with `.countBy("status")`, sending the
+reader to a different method's docs. Three methods keep the object spelling for a
+*richer* meaning — `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })`
+are direction specs, `.groupBy({ _id, … })` is the `$group` body — so the matcher
+is unavailable there by claim, not by accident.
+
+Verified on a live mongod: every newly-accepted spelling runs and returns what its
+established twin returns. Two pairs first looked like mismatches and were not —
+`$group` fixes neither output key order nor which duplicate `$first` keeps, and the
+emitted MQL for those pairs is byte-identical, so the difference was the server's,
+not jsmql's.
+
+---
+
 ## 2026-08-01 — fix: an uncorrelated `$lookup` never emits an empty `let: {}`
 
 Closes the empty-`let` wart flagged as "tracked separately" in

@@ -2721,13 +2721,39 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
-| `.flatMap(d => d.<path>)` / `.flatMap("path")` | Single-param arrow whose body is a bare field-path on the param (v1), or the property shorthand `.flatMap("path")` | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
-| `.groupBy("key")` / `.groupBy({ _id, … })` | A bare field name, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
-| `.countBy("field")` | One plain field-name string | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
-| `.keyBy("field")` | One plain field-name string | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
-| `.uniqBy("field")` | One plain field-name string | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
+| `.flatMap(<key>)` | One field key — the array field to flatten | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
+| `.groupBy(<key>)` / `.groupBy({ _id, … })` | One field key, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
+| `.countBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
+| `.keyBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
+| `.uniqBy(<key>)` | One field key | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
 
-`.filter(<pred>)` accepts an arrow predicate **or** the lodash matches-object shorthand (`.filter({ status: "CLOSED", tier: "gold" })` → `$match: { status: "CLOSED", tier: "gold" }`), and can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
+`.filter(<pred>)` can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
+
+#### Callback spellings
+
+**How you spell a callback never changes the MQL.** The lodash shorthands work the same on a stream as on an array value, and each is exactly its longhand:
+
+| Slot | Write any of these | They all mean |
+|---|---|---|
+| **Field key** — `.sortBy` `.orderBy` `.groupBy` `.countBy` `.keyBy` `.uniqBy` `.flatMap` | `"cat"` · `d => d.cat` | key on the `cat` field |
+| **Predicate** — `.find` `.filter` `.reject` (and `.map`'s iteratee) | `o => o.cat === "a"` · `{ cat: "a" }` · `["cat", "a"]` · `"active"` (truthy test) | match on `cat` |
+
+```js
+$.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userId === $._id)
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "…" } },
+//    { $set: { "…": { $size: "$…" } } }, …]  — same indexed $lookup either way
+```
+
+A field key must be a **plain field path**, because it becomes a `$sort` key or a `$group._id` and MongoDB fixes those when it builds the plan. A *computed* key (`d => d.cat.toLowerCase()`) can't lower — put it in a field first, then key on that field's name:
+
+```js
+$.cat = $.category.toLowerCase();
+$$ = $$.countBy("cat");
+// → [{ $set: { cat: { $toLower: "$category" } } },
+//    { $group: { _id: "$cat", __jsmqlTmp: { $sum: 1 } } }, … ]
+```
+
+On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 
 `.map(d => …)` / `.map("field")` replaces each document with the body via `$replaceWith`, so the **body must resolve to a document** (MongoDB requires an object root). A provably non-document body — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])` — is rejected at compile time; a field ref that turns out to be a scalar at runtime (e.g. `.map("userId")` where `userId` is an ObjectId) is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
 
