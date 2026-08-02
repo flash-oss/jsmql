@@ -2970,6 +2970,24 @@ function generateMethodCall(
   callPos: number,
   optional: boolean = false,
 ): unknown {
+  // ── Stage link in value position ───────────────────────────────────────────
+  // `.$match(...)` parses anywhere, but only the stream/collection chain
+  // lowerers claim it. Reaching value-mode codegen means the receiver isn't a
+  // stream — either an in-document array (`$.items.$match(...)`) or a chain
+  // that already collapsed to a value (`….uniq().$limit(5)`). Caught here so
+  // the user gets the real diagnosis instead of the generic unknown-method
+  // fallthrough ("Did you mean '.match()'?") — and so a stage name can never
+  // reach `generateUnknownOperator` and emit plausible-looking invalid MQL
+  // (HR3). Purely a `$`-prefix test: codegen stays free of the stage registry.
+  if (method.startsWith("$")) {
+    throw new CodegenError(
+      `'.${method}(...)' is a pipeline stage, but its receiver here is a value, not a stream. ` +
+        `Stages chain on '$$' or '$$$.<coll>', and only while the chain is still a stream — ` +
+        `a value-producing link ('.map("<field>")', '.uniq()', …) ends it, and '$.<field>' is an in-document array. ` +
+        `For a value, use the JavaScript array method instead (e.g. '.filter(...)' rather than '.$match(...)').`,
+      callPos,
+    );
+  }
   // ── Set receiver: new Set(arr).intersection / union / difference / ... ─────
   if (object.type === "NewSet") {
     return generateSetMethodCall(object, method, args, ctx);

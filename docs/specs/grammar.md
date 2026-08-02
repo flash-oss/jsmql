@@ -101,7 +101,8 @@ postfix        = primary (
                  | "(" call_arg_list ")"                     (* direct call — IIFE → $let *)
                  )*
 
-member_call    = FIELD_SEGMENT "(" call_arg_list ")"         (* method call *)
+member_call    = "$" FIELD_SEGMENT "(" call_arg_list ")"     (* chained stage call — see aggregation-stages.md *)
+               | FIELD_SEGMENT "(" call_arg_list ")"         (* method call *)
                | FIELD_SEGMENT                               (* property access *)
 
 primary        = operator_call
@@ -259,6 +260,8 @@ Because JS allows a single trailing comma after the last element of any comma-se
 A template literal is a sequence of literal chunks alternating with `${expr}` interpolations, delimited by backticks. The lexer emits a stream of tokens (`TemplateStart`, `TemplateChars`, `TemplateExprStart`, ..., `TemplateEnd`) and tracks brace depth across `${...}` regions so that an inner `}` returns the lexer to template-chunk mode rather than emitting `RBrace`. Templates may nest.
 
 ## Optional chaining
+
+A `.` followed by `$<name>(` is a **chained stage call** (`$$.$match({…}).$limit(5)`), not a property access — the lexer emits `$match` as `Dollar` + `Ident`, so the parser consumes both and produces an ordinary `MethodCall` whose `method` is `"$match"`. Only the *call* form is a stage link: a bare `.$name` and an optional-chained `?.$name(…)` are both parse errors. Semantics and lowering: [aggregation-stages.md](aggregation-stages.md#chained-stage-calls).
 
 `?.` is accepted everywhere `.` is. The parser produces the same `MemberAccess` / `MethodCall` / `IndexAccess` AST nodes — there is no separate "optional" node. This is sound because MongoDB's dotted-path semantics already null-pass through missing fields, so `$.a?.b` and `$.a.b` produce identical MQL.
 

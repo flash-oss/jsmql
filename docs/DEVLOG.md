@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — feat: a lone `.$match(<plain equality map>)` lookup head takes the `.filter` path
+
+Merge resolution between the chained-stage-call work and this branch's predicate
+normalisation. Both had landed a piece of the same invariant and they disagreed:
+
+```js
+$.t = $$$.orders.filter({ userId: $._id });   // → indexed basic form, 1 stage
+$.t = $$$.orders.$match({ userId: $._id });   // → correlated $lookup.pipeline, 3 stages
+```
+
+Same predicate, same meaning, two plans — and the chained-stage-call suite already
+asserted the two must be equal, so the merge went red exactly where it should have.
+`.$match` is the STAGE spelling of the same filter, so `detectLookupCall` now
+normalises it to `filter` and it takes the identical path — indexed basic form
+included:
+
+```js
+$.t = $$$.orders.$match({ userId: $._id });
+// → [ { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } } ]
+```
+
+**Only a plain equality map converts.** A query document carrying operators means
+something a lodash matcher cannot, so `isPlainEqualityMap` refuses it and the
+sub-pipeline path stands:
+
+```js
+$.t = $$$.orders.$match({ qty: { $gt: 5 } });     // query: greater than 5
+// → [ { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], … } }, … ]
+$.t = $$$.orders.filter({ qty: { $gt: 5 } });     // matcher: EQUALS the object { $gt: 5 }
+// → [ { $lookup: { from: "orders", pipeline: [{ $match: { $expr: { $eq: ["$qty", { $gt: 5 }] } } }], as: "t" } } ]
+```
+
+Scope is the **lone head** only. A `.$match(...)` with anything chained after it is
+byte-identical to before — checked across seven shapes — because the chain assembler
+keeps peeling stage links through `lowerCallbackBlock`. Verified on a live mongod:
+correlated, plain, operator-bearing, mixed, and chained forms all return the same
+documents as their `.filter` twin where a twin exists.
+
+---
+
 ## 2026-08-01 — docs: record the from-the-end removal in §B; fix a duplicate DEF id
 
 Three DEFERRED.md changes, at the developer's request plus one defect found while
@@ -35,48 +75,6 @@ same number. The drift test could not see it: `parseDeferred` collects rows into
 gates still found a match. `.takeWhile`/`.dropWhile` (the fewer tag sites) moved to
 `DEF-035`, and a new **UNIQUE-ID gate** collects ids in file order *with* duplicates
 and fails on any repeat — verified by reintroducing the collision and watching it fail.
-
----
-
-## 2026-08-01 — feat!: the "from the end" array methods are removed from the stream surface
-
-`.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` no longer exist as
-stream methods, and `reverseSortTrick` is gone with them. **Developer decision**, on
-the grounds that MongoDB has no stage that reverses a stream — `$reverseArray` is an
-*expression*, for an array inside a document — and a stream has no order except the
-one a `$sort` gives it, so "the last n" has nothing to count back from.
-
-The implementation was the argument against it. These four worked by reaching back and
-rewriting the *preceding* `$sort`, which made them position-dependent in a way the JS
-methods they are named after never are, and — with no `$sort` in front — silently
-ordered by `_id` rather than erroring. `.toSorted(c).toReversed()` was also a longer
-spelling of writing the comparator descending, i.e. a second spelling for a capability
-that already had one. All four remain in **value position** on a real array
-(`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where
-the array carries its own order and they mean exactly what JS means.
-
-`fromTheEndRejection` (`src/stream-methods.ts`) owns the message and is wired into all
-three places a stream chain is assembled: `unknownStreamMethod` (bare `$$` / `$$ =`),
-`validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop in
-`tryExtractChainedLookup`. That third site is the one worth calling out — without it a
-foreign chain would quietly fall through to value-mode and slice the tail of the
-materialised array, whose order is whatever the foreign scan produced. Same
-unanswerable question, answered silently; the rejection is the point. The message names
-the rewrite: `.toSorted({ <field>: -1 }).take(n)`.
-
-Two things survive the removal. The chain-cleanup ordering rule from the entry below
-stays (a method's stages should end with the stage that describes the stream, not its
-own housekeeping) — it is general, and the bug that motivated it happened to involve
-`.takeRight`. And `prevStages` / `replacesPreviousStage` stay on the
-`StreamMethodResult` contract but now have **no users**, deliberately: reaching back at
-the preceding stage is the coupling that made these four fragile, so a future method
-should reach for it only when nothing else expresses the operation, and error rather
-than guess when the expected stage isn't there.
-
-`DEF-034` (stream `.takeWhile`/`.dropWhile`) is unaffected in principle — those run
-from the FRONT of an order a preceding `.sort(...)` establishes — but its
-"or default to `_id`" success criterion is now explicitly disallowed for the same
-reason, and the row says so.
 
 ---
 
@@ -169,74 +167,114 @@ hand-materialised `$.k = <expr>; …("k")` equivalent returns.
 
 ---
 
-## 2026-08-01 — fix: stream callback spelling never changes the emitted MQL
+## 2026-08-01 — feat: pipeline stages as chain links (`<stream>.$match(...)`)
 
-Generalises the two entries below from `.filter` to the whole higher-order stream
-surface. Value position accepts the lodash shorthands everywhere, so a spelling
-that compiles against `$.arr` but errors against `$$$.<coll>` is a bug, not a
-restriction. An acceptance matrix over {`.find` `.filter` `.reject` `.some`
-`.every` `.map` `.flatMap` `.sortBy` `.orderBy` `.groupBy` `.countBy` `.keyBy`
-`.uniqBy`} × {arrow, property string, matches-object, `["field", value]`} ×
-{value, stream head, stream chain} turned up twenty divergent cells. They
-collapsed into two equivalence classes, each now behind one resolver:
+A stage can now be written as a dot-chain link on a stream —
+`$$.$match({…}).$sort({…}).$limit(5)`, `$$$.orders.$match({…}).$group({…})` — not
+only as a `$match(…);` statement. The motivation is a hole in the surface: stage
+calls worked at statement position and the lodash chain methods worked in *both*,
+so the one thing you couldn't do was reach a stage from a chain. That bit hardest
+in a **value** position (`const x = $$$.<coll>.…`), where you can't drop into
+statements at all, and where the stages with no JavaScript spelling (`$group`,
+`$unwind`, `$setWindowFields`, `$bucket`, …) were reachable only by nesting an
+`.aggregate((o) => { … })` block.
 
-- **Field key** (`.sortBy` / `.orderBy` / `.groupBy` / `.countBy` / `.keyBy` /
-  `.uniqBy` / `.flatMap`) — `"cat"` and `d => d.cat` name the same path, so
-  `fieldKeyArg` resolves both. Only `.flatMap` accepted the arrow before.
-- **Predicate** (`.find`, plus the `.map` iteratee) — `.find` demanded an arrow
-  even though `.filter`, value position, and a chained `.find` all took the
-  shorthands; `.map` took the property string but not the other two.
+The design goal was to add **no new lowering**. A stage link parses to an ordinary
+`MethodCall` whose method starts with `$` (no new AST node — that's what lets
+`collectStreamChain` and every existing chain walker keep working), and each of
+the three containers delegates to the path that already lowers the equivalent
+spelling: on `$$` and in a `$unionWith` source-switch it calls the statement
+path's own `generateStageBody`; inside `$lookup.pipeline` it calls
+`lowerCallbackBlock`, the engine `.aggregate((o) => { <stage>; })` uses. So the
+two equivalences — `.$match(b)` ≡ `$match(b);` and, in a foreign chain,
+`.$match(b)` ≡ `.aggregate(o => { $match(b); })` — hold by construction rather
+than by parallel maintenance, and both are asserted as tests. Name resolution,
+arity, and the sub-pipeline placement rules live in one new leaf module,
+[src/stage-link.ts](../src/stage-link.ts), because `lookup-translation.ts` sits
+below `pipeline.ts` in the dependency graph and can't import back. `.aggregate()`
+stays: it still owns the multi-stage block (with a terminal `return`) and the raw
+`[{ $stage: … }]` array paste that keeps HR1 round-tripping.
 
-The sharpest find was `.groupBy(d => d.cat)`: once accepted, it emitted *valid but
-different* MQL, because `isCollapsingTerminal` asked whether the argument was a
-`StringLiteral` rather than whether it named a key — so the arrow spelling silently
-skipped the `$first` unwrap and handed back the raw `[obj]` slot. That is the same
-`StringLiteral`-as-proxy-for-meaning mistake as the `.find` rejection, and it is
-why the guards assert pairs **byte-identical** rather than "both compile".
-
-What a stream genuinely cannot take is a *computed* key — a `$sort` key /
-`$group._id` is fixed at plan time. That limit stays, but now speaks with one
-voice: the shared `computedKeyError` names the method it was called on and points
-at `.map(d => ({ ...d, key: <expr> })).<method>("key")`. Previously `.keyBy` and
-`.uniqBy` illustrated their own errors with `.countBy("status")`, sending the
-reader to a different method's docs. Three methods keep the object spelling for a
-*richer* meaning — `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })`
-are direction specs, `.groupBy({ _id, … })` is the `$group` body — so the matcher
-is unavailable there by claim, not by accident.
-
-Verified on a live mongod: every newly-accepted spelling runs and returns what its
-established twin returns. Two pairs first looked like mismatches and were not —
-`$group` fixes neither output key order nor which duplicate `$first` keeps, and the
-emitted MQL for those pairs is byte-identical, so the difference was the server's,
-not jsmql's.
+Two smaller things rode along because the feature made them reachable. Stage
+links are validated against their container's `forbiddenIn` / `position` data, so
+`.$out(…)` inside a `$lookup` chain is now rejected — partial progress on
+DEF-024, which still leaves the `.aggregate` *block* body unchecked. And
+`isCollectionMethodCall` in [src/index.ts](../src/index.ts) tested only one hop,
+so any multi-link `$$` chain without a trailing `;` fell into the generic
+"'`$$`' is statement-only" wall of text; it now tests the whole chain root, and
+the same clause was added to `lowerToPipelineStages` (the `jsmql.pipeline()`
+entry), which had been missing it.
 
 ---
 
-## 2026-08-01 — fix: an uncorrelated `$lookup` never emits an empty `let: {}`
+## 2026-08-01 — feat: playground Variables panel is a disclosure under the "MongoDB call" bar
 
-Closes the empty-`let` wart flagged as "tracked separately" in
-[test: showcase chains rewritten in the shorter lodash spellings](#2026-08-01--test-showcase-chains-rewritten-in-the-shorter-lodash-spellings).
-`$lookup.let` is optional to the server, so emitting `let: {}` when the predicate
-correlated nothing is pure noise — the leaner `{ from, pipeline, as }` says the
-same thing. jsmql already knew this: `lowerLookup` dropped the empty `let`, but
-only for `.aggregate`, and `tryExtractChainedLookup` dropped it only when the
-chain had no `.filter` head. So the rule was re-decided at each of the five
-emission sites, and `$$$.orders.take(2)` disagreed with
-`$$$.orders.filter(p).take(2)` about `let: {}` for no semantic reason.
+The Variables editor no longer occupies the input panel permanently. It now
+hangs off the "MongoDB call" bar as a collapsed panel, revealed by a labelled
+chevron pinned to the right of that bar
+([playground_skeleton.html](../playground_skeleton.html) — `.vars-toggle`,
+`setVarsOpen` / `syncVarsDisclosure`). Variables are optional, so the default
+view puts the call site directly above the query and gives the editor its
+vertical space back; the chevron is what asks for them. To keep the control
+pinned while the call site can still be long, the bar itself stopped scrolling —
+its label+code moved into an inner `.usage-main` that owns the `overflow-x`.
 
-All five sites now route through one exported `pipelineLookupBody(from, letVars,
-pipeline, as)` in [src/lookup-translation.ts](../src/lookup-translation.ts),
-which omits `let` iff `letVars` is empty. The emitted shape is now a function of
-the *predicate* alone, never of which code path assembled it — which is the same
-invariant the sibling entry above establishes for predicate *spelling*, and the
-reason both were worth fixing together: a `$lookup` shape that shifts with
-anything other than what the query means is the bug, not the specific trigger.
+Open/closed is **derived from the content, not persisted**: on every restore
+path (page refresh, and a `#s=` share link, which can carry someone else's
+variables) `syncVarsDisclosure()` opens the panel when the box actually holds
+bindings or fails to parse. Both cases change the MQL output and the call-site
+hint, so hiding their cause would leave the user with a `.compile(...)({ age })`
+call site and nothing visible that explains it. Nothing about the panel state
+goes into localStorage or the share payload, so the panel can never disagree
+with the session it is showing.
 
-This is why the preceding fix is a strict win rather than a trade: normalising
-the shorthand at detection had, on its own, moved uncorrelated shorthand chains
-*onto* the arrow's `let: {}` path. Rather than accept the noisier output for the
-sake of agreement, both spellings now get the lean shape. Thirteen expectations
-across four suites lost exactly one `"let": {}` line each and nothing else.
+The box also stops starting empty: it now opens on a commented-out template
+(`runTimeVar1` plus an `ObjectId("507f…")` line). It parses to `{}` — no
+bindings, so behaviour is identical to the old empty box — while naming the two
+shapes people reach for first, the second of which isn't guessable because JSON
+can't express it.
+
+---
+
+## 2026-08-01 — feat!: the "from the end" array methods are removed from the stream surface
+
+`.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` no longer exist as
+stream methods, and `reverseSortTrick` is gone with them. **Developer decision**, on
+the grounds that MongoDB has no stage that reverses a stream — `$reverseArray` is an
+*expression*, for an array inside a document — and a stream has no order except the
+one a `$sort` gives it, so "the last n" has nothing to count back from.
+
+The implementation was the argument against it. These four worked by reaching back and
+rewriting the *preceding* `$sort`, which made them position-dependent in a way the JS
+methods they are named after never are, and — with no `$sort` in front — silently
+ordered by `_id` rather than erroring. `.toSorted(c).toReversed()` was also a longer
+spelling of writing the comparator descending, i.e. a second spelling for a capability
+that already had one. All four remain in **value position** on a real array
+(`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where
+the array carries its own order and they mean exactly what JS means.
+
+`fromTheEndRejection` (`src/stream-methods.ts`) owns the message and is wired into all
+three places a stream chain is assembled: `unknownStreamMethod` (bare `$$` / `$$ =`),
+`validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop in
+`tryExtractChainedLookup`. That third site is the one worth calling out — without it a
+foreign chain would quietly fall through to value-mode and slice the tail of the
+materialised array, whose order is whatever the foreign scan produced. Same
+unanswerable question, answered silently; the rejection is the point. The message names
+the rewrite: `.toSorted({ <field>: -1 }).take(n)`.
+
+Two things survive the removal. The chain-cleanup ordering rule from the entry below
+stays (a method's stages should end with the stage that describes the stream, not its
+own housekeeping) — it is general, and the bug that motivated it happened to involve
+`.takeRight`. And `prevStages` / `replacesPreviousStage` stay on the
+`StreamMethodResult` contract but now have **no users**, deliberately: reaching back at
+the preceding stage is the coupling that made these four fragile, so a future method
+should reach for it only when nothing else expresses the operation, and error rather
+than guess when the expected stage isn't there.
+
+`DEF-034` (stream `.takeWhile`/`.dropWhile`) is unaffected in principle — those run
+from the FRONT of an order a preceding `.sort(...)` establishes — but its
+"or default to `_id`" success criterion is now explicitly disallowed for the same
+reason, and the row says so.
 
 ---
 
@@ -282,6 +320,140 @@ documents.
 
 ---
 
+## 2026-08-01 — fix: an uncorrelated `$lookup` never emits an empty `let: {}`
+
+Closes the empty-`let` wart flagged as "tracked separately" in
+[test: showcase chains rewritten in the shorter lodash spellings](#2026-08-01--test-showcase-chains-rewritten-in-the-shorter-lodash-spellings).
+`$lookup.let` is optional to the server, so emitting `let: {}` when the predicate
+correlated nothing is pure noise — the leaner `{ from, pipeline, as }` says the
+same thing. jsmql already knew this: `lowerLookup` dropped the empty `let`, but
+only for `.aggregate`, and `tryExtractChainedLookup` dropped it only when the
+chain had no `.filter` head. So the rule was re-decided at each of the five
+emission sites, and `$$$.orders.take(2)` disagreed with
+`$$$.orders.filter(p).take(2)` about `let: {}` for no semantic reason.
+
+All five sites now route through one exported `pipelineLookupBody(from, letVars,
+pipeline, as)` in [src/lookup-translation.ts](../src/lookup-translation.ts),
+which omits `let` iff `letVars` is empty. The emitted shape is now a function of
+the *predicate* alone, never of which code path assembled it — which is the same
+invariant the sibling entry above establishes for predicate *spelling*, and the
+reason both were worth fixing together: a `$lookup` shape that shifts with
+anything other than what the query means is the bug, not the specific trigger.
+
+This is why the preceding fix is a strict win rather than a trade: normalising
+the shorthand at detection had, on its own, moved uncorrelated shorthand chains
+*onto* the arrow's `let: {}` path. Rather than accept the noisier output for the
+sake of agreement, both spellings now get the lean shape. Thirteen expectations
+across four suites lost exactly one `"let": {}` line each and nothing else.
+
+---
+
+## 2026-08-01 — fix: chain errors caret at the offending call, not the chain root
+
+`parsePostfix` stamped `pos: left.pos` on every `MethodCall` it built, so every
+link of a chain shared the chain root's source offset. An error deep in a chain
+therefore underlined the wrong thing:
+
+```
+$$.filter(p => p.a > 1).uniq().take(2);
+^                                          ← before: the caret sat on `$$`
+                        ^                  ← after:  it sits on `.uniq`
+```
+
+Each link now carries the offset of its own member token — a one-line change in
+[src/parser.ts](../src/parser.ts). Two existing assertions moved and both moved
+for the better: the incompatible-receiver error in a chain now points at
+`.every(...)`, the call its own message names, instead of at the `$.items`
+chain root.
+
+One site needed the opposite treatment. The "lookup syntax requires Pipeline
+mode" error is about the whole `$$$.<coll>.find(...)` construct, not about
+whichever link is outermost, so it now resolves the `$$$` prefix's own offset
+via a small `contextRefPos` walk in [src/index.ts](../src/index.ts) rather than
+taking `ast.pos`. The general rule: an error about *a call* takes the call's
+position; an error about *a construct* resolves the construct's head.
+
+---
+
+## 2026-08-01 — fix: correlate a query-form `$match` inside a foreign sub-pipeline
+
+Found while verifying the chained-stage work against a live `mongod`, and it
+turned out to predate it. Inside a `$$$.<coll>` sub-pipeline, `$.` means the
+*outer* document and is hoisted into `$lookup.let` as a `$$jsmql_f0_<field>`
+reference. That resolves in every aggregation-**expression** slot — `$set`,
+`$group`, `$project` — but a `$match` whose body is an object literal is a
+**query document**, and the query language does not evaluate `$$` variables.
+MongoDB happily *accepts* `{ $match: { userId: "$$jsmql_f0__id" } }` and
+silently matches **nothing**, so
+`$$$.orders.aggregate((o) => { $match({ userId: $._id }); })` had been returning
+empty arrays since it shipped — a green `toEqual` covered the emitted shape and
+never caught it.
+
+`correlatedQueryMatchAsPredicate` in [src/pipeline.ts](../src/pipeline.ts) now
+re-expresses such a body as the equivalent predicate (`{ userId: $._id }` →
+`$.userId === $._id`) and hands it to the same `translateMatchBody` path
+`.filter(...)` uses, which splits it into an index-friendly query part plus a
+`$expr` residual for the correlated terms. `$match({ … })` and `.filter({ … })`
+now emit byte-identical sub-pipelines. Only entries that read the outer document
+move into `$expr`; an uncorrelated query document keeps the verbatim path, so
+raw MQL still round-trips (HR1).
+
+The first attempt at this shipped as a *rejection* — throw and point the user at
+`.filter(o => … === $._id)`. That was wrong twice over: it broke legitimate code
+(`$.orders = $$$.orders.aggregate(o => { $match({ userId: $._id }); })`), and
+turning a requested capability into a compile error is a product decision that
+wasn't mine to make unilaterally. Translating is what the user wanted and is
+strictly better — the correlated form works *and* keeps the uncorrelated terms
+indexable. A correlated shape the translator can't express (an `$and`/`$or`
+root, `$regex`, …) still errors, naming both the arrow-predicate and the
+expression-body alternative, because emitting a match that returns nothing is
+worse than saying so.
+
+---
+
+## 2026-08-01 — fix: stream callback spelling never changes the emitted MQL
+
+Generalises the two entries below from `.filter` to the whole higher-order stream
+surface. Value position accepts the lodash shorthands everywhere, so a spelling
+that compiles against `$.arr` but errors against `$$$.<coll>` is a bug, not a
+restriction. An acceptance matrix over {`.find` `.filter` `.reject` `.some`
+`.every` `.map` `.flatMap` `.sortBy` `.orderBy` `.groupBy` `.countBy` `.keyBy`
+`.uniqBy`} × {arrow, property string, matches-object, `["field", value]`} ×
+{value, stream head, stream chain} turned up twenty divergent cells. They
+collapsed into two equivalence classes, each now behind one resolver:
+
+- **Field key** (`.sortBy` / `.orderBy` / `.groupBy` / `.countBy` / `.keyBy` /
+  `.uniqBy` / `.flatMap`) — `"cat"` and `d => d.cat` name the same path, so
+  `fieldKeyArg` resolves both. Only `.flatMap` accepted the arrow before.
+- **Predicate** (`.find`, plus the `.map` iteratee) — `.find` demanded an arrow
+  even though `.filter`, value position, and a chained `.find` all took the
+  shorthands; `.map` took the property string but not the other two.
+
+The sharpest find was `.groupBy(d => d.cat)`: once accepted, it emitted *valid but
+different* MQL, because `isCollapsingTerminal` asked whether the argument was a
+`StringLiteral` rather than whether it named a key — so the arrow spelling silently
+skipped the `$first` unwrap and handed back the raw `[obj]` slot. That is the same
+`StringLiteral`-as-proxy-for-meaning mistake as the `.find` rejection, and it is
+why the guards assert pairs **byte-identical** rather than "both compile".
+
+What a stream genuinely cannot take is a *computed* key — a `$sort` key /
+`$group._id` is fixed at plan time. That limit stays, but now speaks with one
+voice: the shared `computedKeyError` names the method it was called on and points
+at `.map(d => ({ ...d, key: <expr> })).<method>("key")`. Previously `.keyBy` and
+`.uniqBy` illustrated their own errors with `.countBy("status")`, sending the
+reader to a different method's docs. Three methods keep the object spelling for a
+*richer* meaning — `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })`
+are direction specs, `.groupBy({ _id, … })` is the `$group` body — so the matcher
+is unavailable there by claim, not by accident.
+
+Verified on a live mongod: every newly-accepted spelling runs and returns what its
+established twin returns. Two pairs first looked like mismatches and were not —
+`$group` fixes neither output key order nor which duplicate `$first` keeps, and the
+emitted MQL for those pairs is byte-identical, so the difference was the server's,
+not jsmql's.
+
+---
+
 ## 2026-08-01 — test: showcase chains rewritten in the shorter lodash spellings
 
 [test/realistic.test.ts](../test/realistic.test.ts) (and the README / LANGUAGE
@@ -316,35 +488,6 @@ instead of writing straight into `as: "recentOrders"`), and every `.length`
 after a correlated filter keeps its arrow — the matches-object form loses the
 basic-form indexable `$lookup` and the known-array `$size`. Those last two are
 DX gaps in the compiler, not in the tests.
-
----
-
-## 2026-08-01 — feat: playground Variables panel is a disclosure under the "MongoDB call" bar
-
-The Variables editor no longer occupies the input panel permanently. It now
-hangs off the "MongoDB call" bar as a collapsed panel, revealed by a labelled
-chevron pinned to the right of that bar
-([playground_skeleton.html](../playground_skeleton.html) — `.vars-toggle`,
-`setVarsOpen` / `syncVarsDisclosure`). Variables are optional, so the default
-view puts the call site directly above the query and gives the editor its
-vertical space back; the chevron is what asks for them. To keep the control
-pinned while the call site can still be long, the bar itself stopped scrolling —
-its label+code moved into an inner `.usage-main` that owns the `overflow-x`.
-
-Open/closed is **derived from the content, not persisted**: on every restore
-path (page refresh, and a `#s=` share link, which can carry someone else's
-variables) `syncVarsDisclosure()` opens the panel when the box actually holds
-bindings or fails to parse. Both cases change the MQL output and the call-site
-hint, so hiding their cause would leave the user with a `.compile(...)({ age })`
-call site and nothing visible that explains it. Nothing about the panel state
-goes into localStorage or the share payload, so the panel can never disagree
-with the session it is showing.
-
-The box also stops starting empty: it now opens on a commented-out template
-(`runTimeVar1` plus an `ObjectId("507f…")` line). It parses to `{}` — no
-bindings, so behaviour is identical to the old empty box — while naming the two
-shapes people reach for first, the second of which isn't guessable because JSON
-can't express it.
 
 ---
 

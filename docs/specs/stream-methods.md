@@ -151,6 +151,8 @@ identically to `$ = $.userId`. Arithmetic bodies (`d.a + d.b`) share the same
 pre-existing gap as `$ = <expr>` and are not caught (would need type inference jsmql
 doesn't do for `$replaceWith`).
 
+A chain link may also be a **pipeline stage** (`$$.$match({…}).$limit(5)`) — stage links interleave with these methods in every container; they are not registry entries and are owned by [aggregation-stages.md](aggregation-stages.md#chained-stage-calls).
+
 `.filter` is handled outside this registry (its predicate translation is shared
 with `$unionWith`/`$facet`). It takes any predicate spelling (see § Callback
 spellings) and may appear **anywhere** in the chain — as the head or after a

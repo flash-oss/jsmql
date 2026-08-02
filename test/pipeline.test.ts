@@ -1189,3 +1189,103 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     expect(result.errors[0].pos).toBeLessThanOrEqual(src.length);
   });
 });
+
+// ── Chained stage calls: `<stream>.$match(<body>)` ───────────────────────────
+// The chain-position spelling of the `$match(<body>);` statement. See
+// docs/specs/aggregation-stages.md § chained stage calls.
+describe("chained stage calls on the current stream", () => {
+  it("lowers a chain of stage links to the same stages as the statement form", () => {
+    expect(jsmql("$$.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(5);")).toEqual([
+      { $match: { status: "shipped" } },
+      { $sort: { total: -1 } },
+      { $limit: 5 },
+    ]);
+  });
+
+  // THE EQUIVALENCE: a stage link is defined as its statement form, so the two
+  // spellings must be byte-identical for every stage. Guarding it here keeps
+  // the two paths from drifting apart.
+  it("is byte-identical to the `;`-separated statement spelling", () => {
+    const chained = jsmql("$$.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(5);");
+    const statements = jsmql("$match({ status: 'shipped' }); $sort({ total: -1 }); $limit(5);");
+    expect(chained).toEqual(statements);
+  });
+
+  it("reaches stages that have no JavaScript spelling", () => {
+    expect(jsmql("$$.$match({ status: 'shipped' }).$group({ _id: '$dept', n: $sum(1) }).$sort({ n: -1 });")).toEqual([
+      { $match: { status: "shipped" } },
+      { $group: { _id: "$dept", n: { $sum: 1 } } },
+      { $sort: { n: -1 } },
+    ]);
+  });
+
+  it("interleaves freely with lodash chain methods", () => {
+    expect(jsmql("$$.filter(p => p.a > 1).$sort({ b: -1 }).take(2);")).toEqual([
+      { $match: { a: { $gt: 1 } } },
+      { $sort: { b: -1 } },
+      { $limit: 2 },
+    ]);
+  });
+
+  // `.toReversed()` rewrites the PRECEDING `$sort` in place (replacesPreviousStage).
+  // A stage-link `$sort` lands in the same buffer, so it composes unchanged.
+  it("a stage link composes with registry stream methods either way round", () => {
+    // `.toReversed()` (which this test used to pair with `.$sort`) was removed from
+    // the stream surface — a descending sort is written directly now.
+    expect(jsmql("$$.$sort({ a: -1 }).take(3);")).toEqual([{ $sort: { a: -1 } }, { $limit: 3 }]);
+    expect(jsmql("$$.take(3).$sort({ a: -1 });")).toEqual([{ $limit: 3 }, { $sort: { a: -1 } }]);
+  });
+
+  it("a removed 'from the end' method is rejected after a stage link too", () => {
+    expect(() => jsmql("$$.$sort({ a: 1 }).toReversed();")).toThrow(/isn't available on a stream/);
+  });
+
+  it("works as a whole program with no trailing semicolon", () => {
+    expect(jsmql("$$.$match({ a: 1 }).$limit(5)")).toEqual([{ $match: { a: 1 } }, { $limit: 5 }]);
+  });
+
+  // A reshaping stage link drops in-scope `let`s, and reports the real stage
+  // name — registry chain methods have always reported `$unionWith` here.
+  it("a reshaping stage link clears the let scope, naming itself", () => {
+    expect(() => jsmql("let n = $.qty * 2; $$.$group({ _id: '$a' }); $set({ x: n });")).toThrow(
+      /`n` is a `let` binding and can't be read after `\$group`/,
+    );
+  });
+
+  describe("errors", () => {
+    it("rejects an unknown stage name with a suggestion", () => {
+      expect(() => jsmql("$$.$prject({ a: 1 });")).toThrow(
+        /'\$prject' is not a known aggregation stage\. Did you mean '\$project'\?/,
+      );
+    });
+
+    it("rejects an expression operator chained as a stage", () => {
+      expect(() => jsmql("$$.$abs(1);")).toThrow(/'\$abs' is an expression operator, not an aggregation stage/);
+    });
+
+    it("rejects the wrong argument count", () => {
+      expect(() => jsmql("$$.$limit();")).toThrow(/'\.\$limit\(<body>\)' takes exactly one argument/);
+      expect(() => jsmql("$$.$limit(5, 6);")).toThrow(/takes exactly one argument — the stage body, got 2/);
+    });
+
+    it("rejects a bare `.$stage` with no call", () => {
+      expect(() => jsmql("$$.$match")).toThrow(/'\$match' is a pipeline stage — call it with its body/);
+    });
+
+    it("rejects optional chaining on a stage link", () => {
+      expect(() => jsmql("$$?.$match({ a: 1 });")).toThrow(/Optional chaining \('\?\.'\) is not meaningful/);
+    });
+
+    it("rejects a stage link whose receiver is a value, not a stream", () => {
+      expect(() => jsmql("$.out = $.items.$match({ a: 1 });")).toThrow(
+        /'\.\$match\(\.\.\.\)' is a pipeline stage, but its receiver here is a value/,
+      );
+    });
+
+    it("rejects a stage link after the chain has collapsed to a value", () => {
+      expect(() => jsmql("$.out = $$$.orders.filter({ a: 1 }).map('x').uniq().$limit(5);")).toThrow(
+        /'\.\$limit\(\.\.\.\)' is a pipeline stage, but its receiver here is a value/,
+      );
+    });
+  });
+});

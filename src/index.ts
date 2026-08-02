@@ -23,6 +23,8 @@ import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts
 import { lookupStage } from "./stages.ts";
 import { LexError, Lexer, TokenType } from "./lexer.ts";
 import { containsLookupCall } from "./lookup-translation.ts";
+import { someExpr } from "./ast-walk.ts";
+import { collectStreamChain } from "./stream-methods.ts";
 import { containsUnionPush, detectUnionPush } from "./union-translation.ts";
 import { containsOutAssign } from "./out-translation.ts";
 import { isSystemStageCall } from "./system-stage-translation.ts";
@@ -865,7 +867,10 @@ function lowerWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
       "Lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') requires Pipeline mode. " +
         "Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, " +
         "and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
-      ast.pos,
+      // Point at the `$$$` prefix, not at the `.find(...)` link: the whole
+      // construct is what needs Pipeline mode, and every chain link now carries
+      // its own offset.
+      contextRefPos(ast as Expr),
     );
   }
   const result = lowerProgram(ast, ctx, generateFilter);
@@ -1093,10 +1098,17 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
     return Array.isArray(result) ? result : [result];
   }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx) as object[];
-  // A bare stage call (`$match(...)`) or a diagnostic source-stage sugar
-  // (`$$.indexStats()`, `$$$$.currentOp(...)`, `$$$$.shardedDataDistribution()`)
-  // is a one-stage Pipeline — wrap it so the user needn't add a trailing `;`.
-  if (detectStageIntent(ast) !== null || isSystemStageCall(ast as Expr) || isAssertCall(ast as Expr)) {
+  // A bare stage call (`$match(...)`), a `$$`-rooted stream chain
+  // (`$$.$match({…}).$limit(5)`, `$$.filter(p).take(2)`), or a diagnostic
+  // source-stage sugar (`$$.indexStats()`, `$$$$.currentOp(...)`,
+  // `$$$$.shardedDataDistribution()`) is a Pipeline — wrap it so the user
+  // needn't add a trailing `;`. Mirrors the `lowerWithCtx` auto-wrap sites.
+  if (
+    detectStageIntent(ast) !== null ||
+    isCollectionMethodCall(ast as Expr) ||
+    isSystemStageCall(ast as Expr) ||
+    isAssertCall(ast as Expr)
+  ) {
     const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx) as object[];
   }
@@ -1175,8 +1187,31 @@ function generateFilter(ast: Expr, ctx: GenerateCtx): object {
  * and sees the targeted stream error instead of the generic CollectionRef
  * "statement-only" codegen throw.
  */
+/**
+ * Offset of the `$$$` / `$$$$` prefix inside `node`, for errors about the whole
+ * context-ref construct rather than one link of its chain. Falls back to the
+ * node's own offset when no prefix is present.
+ */
+function contextRefPos(node: Expr): number {
+  let pos: number | null = null;
+  someExpr(node, (e) => {
+    if (e.type === "DatabaseRef" || e.type === "ClusterRef") {
+      pos = e.pos;
+      return true;
+    }
+    return false;
+  });
+  return pos ?? node.pos;
+}
+
 function isCollectionMethodCall(ast: Expr): boolean {
-  return ast.type === "MethodCall" && ast.object.type === "CollectionRef";
+  // The WHOLE chain, not just a single hop: `$$.take(2)` and
+  // `$$.$match({a:1}).$limit(5)` are equally statement-shaped, so both route
+  // through Pipeline mode without a trailing `;`. (A one-hop test used to send
+  // every multi-link chain to the generic "'$$' is statement-only" wall of
+  // text — see docs/specs/stream-methods.md.)
+  const chain = collectStreamChain(ast);
+  return chain.root.type === "CollectionRef" && chain.methods.length > 0;
 }
 
 function detectStageIntent(ast: Expr): string | null {

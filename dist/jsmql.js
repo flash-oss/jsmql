@@ -2027,26 +2027,51 @@ var Parser = class {
           continue;
         }
         const member = this.lexer.peek();
-        if (!this.isIdentOrKeyword(member)) {
-          throw new ParseError(`Expected property name after '.' at position ${member.pos}`, member.pos);
+        const isStageLink2 = member.type === TokenType.Dollar && this.isIdentOrKeyword(this.lexer.lookahead(1));
+        let memberName;
+        if (isStageLink2) {
+          const stageIdent = this.lexer.lookahead(1);
+          if (isOptional) {
+            throw new ParseError(
+              `Optional chaining ('?.') is not meaningful on the pipeline stage '$${stageIdent.value}' \u2014 a stage always runs. Write '.$${stageIdent.value}(...)' at position ${member.pos}.`,
+              member.pos
+            );
+          }
+          this.lexer.next();
+          this.lexer.next();
+          memberName = `$${stageIdent.value}`;
+        } else {
+          if (!this.isIdentOrKeyword(member)) {
+            throw new ParseError(`Expected property name after '.' at position ${member.pos}`, member.pos);
+          }
+          this.lexer.next();
+          memberName = member.value;
         }
-        this.lexer.next();
         if (this.lexer.peek().type === TokenType.LParen) {
-          const blockKind = STREAM_BLOCK_METHODS.has(member.value) && isStreamRooted(left) ? "pipeline" : "expr";
+          const blockKind = STREAM_BLOCK_METHODS.has(memberName) && isStreamRooted(left) ? "pipeline" : "expr";
           const args = this.parseMethodCallArgs(blockKind);
           left = {
             type: "MethodCall",
             object: left,
-            method: member.value,
+            method: memberName,
             args,
-            pos: left.pos,
+            // Every link carries its OWN offset, so a chain error carets at the
+            // offending call rather than at the chain root — in
+            // `$$.filter(p).uniq().take(2)` the `.uniq()` error points at
+            // `.uniq`, not at `$$` 24 characters earlier.
+            pos: member.pos,
             ...isOptional && { optional: true }
           };
+        } else if (isStageLink2) {
+          throw new ParseError(
+            `'${memberName}' is a pipeline stage \u2014 call it with its body: '${memberName}(<body>)' at position ${member.pos}.`,
+            member.pos
+          );
         } else {
           left = {
             type: "MemberAccess",
             object: left,
-            member: member.value,
+            member: memberName,
             pos: left.pos,
             ...isOptional && { optional: true }
           };
@@ -4259,6 +4284,9 @@ function letSysVar(name, depth) {
   return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name)}`;
 }
 var JSMQL_NS_VAR = "jsmql_";
+function isCorrelationVar(name) {
+  return name.startsWith(JSMQL_NS_VAR);
+}
 var CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;
 
 // src/objectid.ts
@@ -6948,6 +6976,12 @@ function utcDate(date) {
   return { date, timezone: "UTC" };
 }
 function generateMethodCall(object, method, args, ctx, callPos, optional = false) {
+  if (method.startsWith("$")) {
+    throw new CodegenError(
+      `'.${method}(...)' is a pipeline stage, but its receiver here is a value, not a stream. Stages chain on '$$' or '$$$.<coll>', and only while the chain is still a stream \u2014 a value-producing link ('.map("<field>")', '.uniq()', \u2026) ends it, and '$.<field>' is an in-document array. For a value, use the JavaScript array method instead (e.g. '.filter(...)' rather than '.$match(...)').`,
+      callPos
+    );
+  }
   if (object.type === "NewSet") {
     return generateSetMethodCall(object, method, args, ctx);
   }
@@ -9593,6 +9627,71 @@ function stageForbiddenIn(def, container) {
   return def.forbiddenIn?.includes(container) ?? false;
 }
 
+// src/stage-link.ts
+function isStageLink(m) {
+  return m.method.startsWith("$");
+}
+function stageLinkBody(m) {
+  if (lookupStage(m.method) === void 0) {
+    throw new CodegenError(formatUnknownStageLink(m.method), m.pos);
+  }
+  if (m.args.length !== 1) {
+    throw new CodegenError(
+      `'.${m.method}(<body>)' takes exactly one argument \u2014 the stage body, got ${m.args.length}.`,
+      m.pos
+    );
+  }
+  const body = m.args[0];
+  if (body.type === "SpreadElement") {
+    throw new CodegenError(
+      `'.${m.method}(<body>)' takes the stage body directly, not a spread ('...'). Write '.${m.method}({ \u2026 })'.`,
+      m.pos
+    );
+  }
+  return body;
+}
+function formatUnknownStageLink(name) {
+  const suggestion = didYouMean(name, Object.keys(STAGES), (s) => s);
+  if (lookupOperator(name) !== void 0) {
+    return `'${name}' is an expression operator, not an aggregation stage \u2014 only stages chain as '.${name}(...)'.${suggestion} To use '${name}' as an expression, write it inside a stage body (e.g. '.$set({ x: ${name}(...) })').`;
+  }
+  return `'${name}' is not a known aggregation stage.${suggestion}`;
+}
+function mustBeFirstLiteralMessage(stageName) {
+  return `'${stageName}' must be the first stage in a pipeline \u2014 it produces the pipeline's source documents, so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`;
+}
+function forbiddenInContextMessage(stageName, container) {
+  const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
+  return `'${stageName}' is not allowed inside a '${owner}' sub-pipeline. Move it to the outer (top-level) pipeline.`;
+}
+function checkStageLinkPlacement(name, pos, indexInContainer, isLastInContainer, container) {
+  const def = lookupStage(name);
+  if (def === void 0) return;
+  if (container !== "top" && stageForbiddenIn(def, container)) {
+    throw new CodegenError(forbiddenInContextMessage(name, container), pos);
+  }
+  if (stageMustBeFirst(def) && indexInContainer > 0) {
+    throw new CodegenError(mustBeFirstLiteralMessage(name), pos);
+  }
+  if (stageMustBeLast(def) && !isLastInContainer) {
+    throw new CodegenError(
+      `'${name}' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.`,
+      pos
+    );
+  }
+}
+function stageLinkBlockLambda(m, body) {
+  const stmt = {
+    type: "OperatorCall",
+    name: m.method,
+    style: body.type === "ObjectLiteral" ? "object" : "positional",
+    args: [body],
+    pos: m.pos
+  };
+  const block = { type: "Pipeline", stmts: [stmt], pos: m.pos };
+  return { type: "Lambda", params: [], block, pos: m.pos };
+}
+
 // src/match-translation.ts
 function mergeTranslatedQuery(t, ctx) {
   const queryEmpty = Object.keys(t.query).length === 0;
@@ -11800,21 +11899,28 @@ function requireSameDbColl(db, collection, pos) {
 }
 function detectLookupCall(expr, ctx) {
   if (expr.type !== "MethodCall") return null;
-  if (expr.method !== "find" && expr.method !== "filter" && expr.method !== "aggregate") return null;
+  const method = expr.method === "$match" && isPlainEqualityMap(expr.args[0]) ? "filter" : expr.method;
+  if (method !== "find" && method !== "filter" && method !== "aggregate") return null;
   const target = extractLookupTarget(expr.object, ctx);
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
-  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : predicateArgToLambda(arg, expr.method);
+  const lambda = method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : predicateArgToLambda(arg, method);
   if (lambda === null) return null;
-  return {
-    pos: target.pos,
-    callPos: expr.pos,
-    db: target.db,
-    collection: target.collection,
-    method: expr.method,
-    lambda
-  };
+  return { pos: target.pos, callPos: expr.pos, db: target.db, collection: target.collection, method, lambda };
+}
+function isPlainEqualityMap(arg) {
+  if (arg === void 0 || arg.type !== "ObjectLiteral" || arg.entries.length === 0) return false;
+  return arg.entries.every((e) => {
+    if (e.type !== "KeyValueEntry" || e.key.kind !== "static" || e.key.name.startsWith("$")) return false;
+    const v = e.value;
+    if (v.type === "ObjectLiteral") {
+      return v.entries.every(
+        (k) => k.type === "KeyValueEntry" && k.key.kind === "static" && !k.key.name.startsWith("$")
+      );
+    }
+    return true;
+  });
 }
 function predicateArgToLambda(arg, method) {
   return tryShorthandToLambda(arg, method, FOREIGN_SHORTHAND_PARAM);
@@ -12961,6 +13067,20 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
   const cleanup = [];
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
+    if (isStageLink(m)) {
+      const body = stageLinkBody(m);
+      checkStageLinkPlacement(m.method, m.pos, pipelineBody.length, i === chainEnd - 1, "lookup");
+      const { letVars: sLets, pipeline } = lowerCallbackBlock(
+        stageLinkBlockLambda(m, body),
+        { ...innerCtx, slotAllocator: allocSlot },
+        innerCtx.pipelineLets,
+        lowerBlock2,
+        enclosing
+      );
+      Object.assign(letVars, sLets);
+      pipelineBody.push(...pipeline);
+      continue;
+    }
     if (m.method === "filter" || m.method === "reject") {
       const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing);
       Object.assign(letVars, fLets);
@@ -12979,7 +13099,7 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
   pipelineBody.push(...cleanup);
 }
 function isPeelableChainMethod(name) {
-  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
+  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject" || name.startsWith("$");
 }
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
@@ -14205,13 +14325,6 @@ function makeAfterTerminalError(terminal, afterPos) {
     afterPos
   );
 }
-function mustBeFirstLiteralMessage(stageName) {
-  return `'${stageName}' must be the first stage in a pipeline \u2014 it produces the pipeline's source documents, so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`;
-}
-function forbiddenInContextMessage(stageName, container) {
-  const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
-  return `'${stageName}' is not allowed inside a '${owner}' sub-pipeline. Move it to the outer (top-level) pipeline.`;
-}
 function containerKindFor(stageName) {
   if (stageName === "$facet") return "facet";
   if (stageName === "$unionWith") return "unionWith";
@@ -14636,14 +14749,24 @@ function isAllObjectLiteralElements(arr) {
 }
 function lowerChainOnStream(methods, outerCtx, lowerBlockFn, allocSlot, rhs) {
   const stages = [];
-  const clearLets = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
+  const { clearLets } = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
   return { stages, clearLets };
 }
-function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) {
+function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, validator = makePipelineValidator("top")) {
   let clearLets = false;
   const cleanup = [];
+  let clearedBy = "$unionWith";
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (isStageLink(m)) {
+      const linked = lowerStageLink(m, ctx, target, validator);
+      target.push(linked.stage);
+      if (linked.clearedBy !== null) {
+        clearLets = true;
+        clearedBy = linked.clearedBy;
+      }
+      continue;
+    }
     if (m.method === "filter") {
       target.push(...lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, i === 0));
       continue;
@@ -14670,7 +14793,7 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs) 
     if (result.clearLets) clearLets = true;
   }
   target.push(...cleanup);
-  return clearLets;
+  return { clearLets, clearedBy };
 }
 function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {
   if (m.args.length === 1 && m.args[0].type === "Lambda") {
@@ -14745,8 +14868,13 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) }
   };
   const inner = [];
+  const innerValidator = makePipelineValidator("unionWith");
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (isStageLink(m)) {
+      inner.push(lowerStageLink(m, innerCtx, inner, innerValidator).stage);
+      continue;
+    }
     if (m.method === "filter") {
       inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
       continue;
@@ -14848,7 +14976,7 @@ function unknownStreamMethod(m, receiver) {
   }
   if (m.method === "takeWhile" || m.method === "dropWhile") {
     return new CodegenError(
-      `'.${m.method}(...)' as a stream method is not yet supported [DEF-034] \u2014 it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
+      `'.${m.method}(...)' as a stream method is not yet supported [DEF-035] \u2014 it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
       m.pos
     );
   }
@@ -14960,12 +15088,110 @@ function lowerStageElement(el, index, ctx) {
   const nextCtx = RESHAPE_CLEARING_STAGES.has(stage.name) ? clearCtxLets(ctx, stage.name) : ctx;
   return { stage: { [stage.name]: body }, ctx: nextCtx };
 }
+function lowerStageLink(m, ctx, target, validator) {
+  const body = stageLinkBody(m);
+  validator.checkStage(m.method, m.pos, target.length, body);
+  return {
+    stage: { [m.method]: generateStageBody(m.method, body, ctx) },
+    clearedBy: RESHAPE_CLEARING_STAGES.has(m.method) ? m.method : null
+  };
+}
+function correlatedQueryMatchAsPredicate(body) {
+  if (body.type !== "ObjectLiteral") return null;
+  if (findQuerySlotCorrelation(body) === null) return null;
+  const predicate = queryDocToPredicate(body);
+  if (predicate === null) {
+    throw new CodegenError(
+      `This '$match' reads the outer document ('$.<field>') from a query-document body that jsmql can't translate \u2014 MongoDB doesn't evaluate '$$' variables in the query language, so it would silently match nothing. Rewrite the correlated part as a predicate arrow ('$$$.<coll>.filter(o => o.<field> === $.<outerField>)'), or write the stage body as an expression ('$match($.<field> === $.<outerField>)').`,
+      body.pos
+    );
+  }
+  return predicate;
+}
+var QUERY_CMP_OPS = {
+  $eq: "===",
+  $ne: "!==",
+  $gt: ">",
+  $gte: ">=",
+  $lt: "<",
+  $lte: "<=",
+  $in: "in"
+};
+function queryDocToPredicate(obj2) {
+  const terms = [];
+  for (const entry of obj2.entries) {
+    if (entry.type === "SpreadElement" || entry.key.kind !== "static") return null;
+    const field = entry.key.name;
+    if (field.startsWith("$")) return null;
+    const lhs = { type: "FieldRef", path: field, pos: entry.pos };
+    const value = entry.value;
+    if (value.type === "ObjectLiteral" && value.entries.length === 1) {
+      const inner = value.entries[0];
+      if (inner.type === "KeyValueEntry" && inner.key.kind === "static" && inner.key.name.startsWith("$")) {
+        const op = QUERY_CMP_OPS[inner.key.name];
+        if (op === void 0) return null;
+        terms.push({ type: "BinaryExpr", op, left: lhs, right: inner.value, pos: entry.pos });
+        continue;
+      }
+    }
+    if (value.type === "ObjectLiteral" && findQuerySlotCorrelation(value) !== null) return null;
+    terms.push({ type: "BinaryExpr", op: "===", left: lhs, right: value, pos: entry.pos });
+  }
+  if (terms.length === 0) return null;
+  return terms.reduce((acc2, t) => ({ type: "BinaryExpr", op: "&&", left: acc2, right: t, pos: obj2.pos }));
+}
+function findQuerySlotCorrelation(node) {
+  if (node.type === "ObjectLiteral") {
+    for (const entry of node.entries) {
+      if (entry.type === "SpreadElement") {
+        const hit2 = findQuerySlotCorrelation(entry.argument);
+        if (hit2 !== null) return hit2;
+        continue;
+      }
+      if (entry.key.kind === "computed") {
+        const hit2 = findQuerySlotCorrelation(entry.key.expr);
+        if (hit2 !== null) return hit2;
+      } else if (entry.key.name === "$expr") {
+        continue;
+      }
+      const hit = findQuerySlotCorrelation(entry.value);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (node.type === "ArrayLiteral") {
+    for (const el of node.elements) {
+      if (el.type === "SpreadElement") {
+        const hit2 = findQuerySlotCorrelation(el.argument);
+        if (hit2 !== null) return hit2;
+        continue;
+      }
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
+        continue;
+      }
+      const hit = findQuerySlotCorrelation(el);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  let found = null;
+  someExpr(node, (e) => {
+    if (e.type === "ParamRef" && isCorrelationVar(e.name)) {
+      found = e.name;
+      return true;
+    }
+    return false;
+  });
+  return found;
+}
 function generateStageBody(stageName, body, ctx) {
   validateStageBody(stageName, body);
   if (stageName === "$match") {
-    if (body.type === "ObjectLiteral") {
+    const correlated = correlatedQueryMatchAsPredicate(body);
+    if (body.type === "ObjectLiteral" && correlated === null) {
       return generateBodyObject(body, stageName, ctx);
     }
+    if (correlated !== null) body = correlated;
     const t = translateMatchBody(body, { bindings: ctx.bindings });
     return mergeTranslatedQuery(t, ctx) ?? {};
   }
@@ -15240,15 +15466,16 @@ function lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlockFn)
     }
     const streamChain = collectStreamChain(el);
     if (streamChain.root.type === "CollectionRef" && streamChain.methods.length > 0) {
-      const clearLets = applyStreamMethods(
+      const { clearLets, clearedBy } = applyStreamMethods(
         streamChain.methods,
         out,
         ctx,
         lowerBlockFn,
         allocSlot,
-        el
+        el,
+        validator
       );
-      return clearLets ? clearCtxLets(ctx, "$unionWith") : ctx;
+      return clearLets ? clearCtxLets(ctx, clearedBy) : ctx;
     }
   }
   const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);
@@ -15696,7 +15923,10 @@ function lowerWithCtx(ast, ctx) {
   if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) === null && containsLookupCall(ast, ctx)) {
     throw new CodegenError(
       "Lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') requires Pipeline mode. Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
-      ast.pos
+      // Point at the `$$$` prefix, not at the `.find(...)` link: the whole
+      // construct is what needs Pipeline mode, and every chain link now carries
+      // its own offset.
+      contextRefPos(ast)
     );
   }
   const result = lowerProgram(ast, ctx, generateFilter);
@@ -15816,7 +16046,7 @@ function lowerToPipelineStages(ast, ctx, apiName) {
     return Array.isArray(result) ? result : [result];
   }
   if (isPipelineAst(ast)) return generatePipeline(ast, ctx);
-  if (detectStageIntent(ast) !== null || isSystemStageCall(ast) || isAssertCall(ast)) {
+  if (detectStageIntent(ast) !== null || isCollectionMethodCall(ast) || isSystemStageCall(ast) || isAssertCall(ast)) {
     const synthetic = { type: "Pipeline", stmts: [ast], pos: ast.pos };
     return generateImplicitPipeline(synthetic, ctx);
   }
@@ -15840,8 +16070,20 @@ function generateFilter(ast, ctx) {
   const t = translateMatchBody(ast, { bindings: ctx.bindings });
   return mergeTranslatedQuery(t, ctx) ?? {};
 }
+function contextRefPos(node) {
+  let pos = null;
+  someExpr(node, (e) => {
+    if (e.type === "DatabaseRef" || e.type === "ClusterRef") {
+      pos = e.pos;
+      return true;
+    }
+    return false;
+  });
+  return pos ?? node.pos;
+}
 function isCollectionMethodCall(ast) {
-  return ast.type === "MethodCall" && ast.object.type === "CollectionRef";
+  const chain = collectStreamChain(ast);
+  return chain.root.type === "CollectionRef" && chain.methods.length > 0;
 }
 function detectStageIntent(ast) {
   if (ast.type === "OperatorCall" && lookupStage(ast.name) !== void 0) {

@@ -1363,3 +1363,204 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 });
+
+// ── Chained stage calls on a foreign collection ──────────────────────────────
+// Stage links peel into `$lookup.pipeline` alongside the lodash chain methods.
+// See docs/specs/lookup-stage.md and docs/specs/aggregation-stages.md.
+describe("chained stage calls on $$$.<coll>", () => {
+  it("peels a run of stage links into $lookup.pipeline", () => {
+    expect(jsmql("const top = $$$.orders.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(3);")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [{ $match: { status: "shipped" } }, { $sort: { total: -1 } }, { $limit: 3 }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { "__jsmql.var.top": "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // THE EQUIVALENCE: in a foreign chain a stage link is lowered as the
+  // one-statement `.aggregate((o) => { <stage>; })` block it stands for,
+  // through the same engine — so the two spellings can't drift.
+  it("is equivalent to the one-statement .aggregate(...) block spelling", () => {
+    const chained = jsmql("$.t = $$$.orders.$match({ x: 1 });");
+    const block = jsmql("$.t = $$$.orders.aggregate((o) => { $match({ x: 1 }); });");
+    // `.aggregate` as the chain HEAD writes `as:` straight into the destination;
+    // a chained link materialises through a tmp slot. The sub-pipeline — the part
+    // the stage link is responsible for — must match exactly.
+    const subPipeline = (mql: unknown) => (mql as { $lookup: { pipeline: unknown } }[])[0].$lookup.pipeline;
+    expect(subPipeline(chained)).toEqual(subPipeline(block));
+  });
+
+  // `$.` in a foreign sub-pipeline means the OUTER document and hoists into
+  // `$lookup.let`. That works in every aggregation-EXPRESSION slot…
+  it("hoists an outer-document read into $lookup.let in an expression slot", () => {
+    expect(jsmql("$.t = $$$.orders.$set({ owner: $.tag });")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_tag: "$tag" },
+          pipeline: [{ $set: { owner: "$$jsmql_f0_tag" } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { t: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // …and in a query-document `$match` body it is re-expressed as a predicate
+  // first, because MongoDB doesn't evaluate `$$` vars in the query language —
+  // a raw `{ $match: { userId: "$$jsmql_f0__id" } }` is accepted by the server
+  // and silently matches nothing (verified live). Output is the `$expr` split
+  // `.filter(...)` produces, so both spellings agree byte for byte.
+  it("re-expresses a correlated query-document $match as a predicate", () => {
+    // A lone `.$match(<plain equality map>)` IS `.filter(<matches object>)` — same
+    // predicate, so it normalises to `filter` in `detectLookupCall` and earns the
+    // same indexed basic form, not a correlated sub-pipeline.
+    const stageLink = jsmql("$.t = $$$.orders.$match({ userId: $._id });");
+    expect(stageLink).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } }]);
+    expect(stageLink).toEqual(jsmql("$.t = $$$.orders.filter({ userId: $._id });"));
+  });
+
+  // Uncorrelated terms stay in index-friendly query form; only the correlated
+  // ones move into `$expr` — again matching `.filter({ … })` exactly.
+  it("splits a mixed correlated/plain query-document $match like .filter does", () => {
+    const stageLink = jsmql('$.t = $$$.orders.$match({ userId: $._id, status: "shipped" });');
+    expect(stageLink).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { status: "shipped", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "t",
+        },
+      },
+    ]);
+    expect(stageLink).toEqual(jsmql('$.t = $$$.orders.filter({ userId: $._id, status: "shipped" });'));
+  });
+
+  it("an operator-bearing $match body is NOT converted — it isn't a lodash matcher", () => {
+    // `{ qty: { $gt: 5 } }` as a QUERY means "greater than 5"; as a lodash
+    // matches-object it would mean "equals the object { $gt: 5 }". Different
+    // meanings, so `.$match` keeps the query form and `.filter` keeps the equality.
+    expect(jsmql("$.t = $$$.orders.$match({ qty: { $gt: 5 } });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], as: "__jsmql.tmp.1" } },
+      { $set: { t: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("$.t = $$$.orders.filter({ qty: { $gt: 5 } });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { $expr: { $eq: ["$qty", { $gt: 5 }] } } }], as: "t" } },
+    ]);
+  });
+
+  // Comparison-operator form correlates too.
+  it("translates a correlated comparison-operator query term", () => {
+    expect(jsmql("$.t = $$$.orders.$match({ createdAt: { $gte: $.since } });")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_since: "$since" },
+          pipeline: [{ $match: { $expr: { $gte: ["$createdAt", "$$jsmql_f0_since"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { t: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // An UNcorrelated query document keeps the verbatim query-form path (HR1).
+  it("leaves an uncorrelated query-document $match verbatim", () => {
+    // The point is the BODY: an uncorrelated term stays index-friendly query form
+    // and is never rewritten into `$expr`. (The lone head also writes straight to
+    // `as: "t"` — it normalises to `.filter`, which skips the tmp slot.)
+    expect(jsmql('$.t = $$$.orders.$match({ status: "shipped" });')).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { status: "shipped" } }], as: "t" } },
+    ]);
+    expect(jsmql('$.t = $$$.orders.$match({ status: "shipped" });')).toEqual(
+      jsmql('$.t = $$$.orders.filter({ status: "shipped" });'),
+    );
+  });
+
+  // The `$expr` escape hatch is the supported hand-written correlation, and
+  // `$$vars` DO resolve inside it — the guard must not fire there.
+  it("allows an outer-document read inside the $expr escape hatch", () => {
+    expect(jsmql('$.t = $$$.orders.$match({ $expr: { $eq: ["$userId", $._id] } });')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { t: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // The `.aggregate(...)` block spelling correlates through the same path. It
+  // had emitted the silently-empty raw query form since it shipped.
+  it("correlates a query-document $match inside an .aggregate(...) block", () => {
+    expect(jsmql("$.orders = $$$.orders.aggregate((o) => { $match({ userId: $._id }); });")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "orders",
+        },
+      },
+    ]);
+  });
+
+  it("mixes stage links with lodash chain methods and a value-mode tail", () => {
+    expect(
+      jsmql("const ids = $$$.orders.$match({ userId: 'u1' }).$sort({ createdAt: -1 }).$limit(10).map('productIds');"),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [{ $match: { userId: "u1" } }, { $sort: { createdAt: -1 } }, { $limit: 10 }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { "__jsmql.var.ids": { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("lowers stage links into a $unionWith source-switch", () => {
+    expect(jsmql("$$ = $$$.orders.$match({ a: 1 }).$limit(2);")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { coll: "orders", pipeline: [{ $match: { a: 1 } }, { $limit: 2 }] } },
+    ]);
+  });
+
+  // Placement rules are the declarative `forbiddenIn` set from stages.ts —
+  // the same source the statement path reads.
+  it("rejects a stage forbidden inside a $lookup sub-pipeline", () => {
+    expect(() => jsmql("$.t = $$$.orders.$out('archive');")).toThrow(
+      /'\$out' is not allowed inside a '\$lookup' sub-pipeline/,
+    );
+    expect(() => jsmql("$.t = $$$.orders.$merge({ into: 'archive' });")).toThrow(
+      /'\$merge' is not allowed inside a '\$lookup' sub-pipeline/,
+    );
+  });
+
+  it("rejects a must-be-first stage that isn't first in the chain", () => {
+    expect(() => jsmql("$.t = $$$.orders.$match({ a: 1 }).$documents([{ x: 1 }]);")).toThrow(
+      /'\$documents' must be the first stage/,
+    );
+  });
+
+  it("rejects an unknown stage name in a foreign chain with a suggestion", () => {
+    expect(() => jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toThrow(
+      /'\$sortt' is not a known aggregation stage\. Did you mean '\$sort'\?/,
+    );
+  });
+});

@@ -46,6 +46,7 @@ import {
   streamMethodNames,
   VALUE_TERMINAL_METHODS,
 } from "./stream-methods.ts";
+import { checkStageLinkPlacement, isStageLink, stageLinkBlockLambda, stageLinkBody } from "./stage-link.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
 // specific variants we touch directly need local aliases extracted from
@@ -420,7 +421,13 @@ export function requireSameDbColl(db: string | undefined, collection: string, po
  */
 export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | null {
   if (expr.type !== "MethodCall") return null;
-  if (expr.method !== "find" && expr.method !== "filter" && expr.method !== "aggregate") return null;
+  // `.$match(<plain equality map>)` is the STAGE spelling of `.filter(<matches
+  // object>)` — same predicate, same meaning — so it is normalised to `filter`
+  // here and takes the identical path, indexed basic form included. Only a plain
+  // equality map converts; a query document carrying operators (`{ qty: { $gt: 5 } }`,
+  // `$and`, `$expr`) is NOT a lodash matcher and stays on the sub-pipeline path.
+  const method = expr.method === "$match" && isPlainEqualityMap(expr.args[0]) ? "filter" : expr.method;
+  if (method !== "find" && method !== "filter" && method !== "aggregate") return null;
   const target = extractLookupTarget(expr.object, ctx);
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
@@ -433,20 +440,39 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
   // A malformed argument (expression-body arrow, spread-bearing array, empty
   // matcher) returns null here; `validateLookupShape` surfaces the actionable error.
   const lambda =
-    expr.method === "aggregate"
+    method === "aggregate"
       ? aggregateArgToLambda(arg)
       : arg.type === "Lambda"
         ? arg
-        : predicateArgToLambda(arg, expr.method);
+        : predicateArgToLambda(arg, method);
   if (lambda === null) return null;
-  return {
-    pos: target.pos,
-    callPos: expr.pos,
-    db: target.db,
-    collection: target.collection,
-    method: expr.method,
-    lambda,
-  };
+  return { pos: target.pos, callPos: expr.pos, db: target.db, collection: target.collection, method, lambda };
+}
+
+/**
+ * Is this `$match` body a **plain equality map** — every key a literal field name
+ * mapped to a plain value, exactly what a lodash matches-object means?
+ *
+ * `{ userId: $._id }` qualifies: it says "userId equals this", which is what
+ * `.filter({ userId: $._id })` says. `{ qty: { $gt: 5 } }`, `{ $and: [...] }` and
+ * `{ $expr: … }` do NOT — those are query-language constructs with no matcher
+ * equivalent, so converting them would change what the predicate means.
+ */
+function isPlainEqualityMap(arg: CallArg | undefined): boolean {
+  if (arg === undefined || arg.type !== "ObjectLiteral" || arg.entries.length === 0) return false;
+  return arg.entries.every((e) => {
+    if (e.type !== "KeyValueEntry" || e.key.kind !== "static" || e.key.name.startsWith("$")) return false;
+    const v = e.value;
+    // A nested object is an operator document (`{ $gt: 5 }`) whenever any key is
+    // `$`-prefixed; a plain sub-document (`{ city: "NY" }`) is a legitimate
+    // equality value and stays convertible.
+    if (v.type === "ObjectLiteral") {
+      return v.entries.every(
+        (k) => k.type === "KeyValueEntry" && k.key.kind === "static" && !k.key.name.startsWith("$"),
+      );
+    }
+    return true; // any other expression is a plain value on the right of the equality
+  });
 }
 
 /**
@@ -2482,6 +2508,24 @@ export function peelForeignChain(
   const cleanup: object[] = [];
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
+    // `.$match(<body>)` — a chained pipeline stage. Lowered as the equivalent
+    // one-statement `.aggregate((o) => { $match(<body>); })` block, through the
+    // very same engine, so an outer-document read in the body hoists into this
+    // `$lookup.let` identically. See docs/specs/aggregation-stages.md.
+    if (isStageLink(m)) {
+      const body = stageLinkBody(m);
+      checkStageLinkPlacement(m.method, m.pos, pipelineBody.length, i === chainEnd - 1, "lookup");
+      const { letVars: sLets, pipeline } = lowerCallbackBlock(
+        stageLinkBlockLambda(m, body),
+        { ...innerCtx, slotAllocator: allocSlot },
+        innerCtx.pipelineLets,
+        lowerBlock,
+        enclosing,
+      );
+      Object.assign(letVars, sLets);
+      pipelineBody.push(...pipeline);
+      continue;
+    }
     if (m.method === "filter" || m.method === "reject") {
       const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock, enclosing);
       Object.assign(letVars, fLets);
@@ -2501,9 +2545,16 @@ export function peelForeignChain(
   pipelineBody.push(...cleanup);
 }
 
-/** Is `name` a chain method that can head/extend a foreign stream chain? */
+/**
+ * Is `name` a chain method that can head/extend a foreign stream chain?
+ *
+ * `$`-prefixed names (stage links) are claimed unconditionally — including
+ * unregistered ones — so a typo reports "not a known aggregation stage" from
+ * `stageLinkBody` instead of bailing the whole chain to value-mode, where it
+ * would surface as a nonsense "unknown method" suggestion.
+ */
 function isPeelableChainMethod(name: string): boolean {
-  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject";
+  return lookupStreamMethod(name) !== null || name === "filter" || name === "reject" || name.startsWith("$");
 }
 
 function tryExtractChainedLookup(

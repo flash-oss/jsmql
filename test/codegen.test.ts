@@ -3436,12 +3436,13 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   });
   it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
     // Offset the chain so the receiver isn't at column 0 — the error's .pos must
-    // point at the boolean-producing receiver ('$.items.every(...)'), not be a 0
-    // placeholder. (A top-level chain legitimately reports pos 0, the input start.)
+    // point at the boolean-producing receiver, not be a 0 placeholder. Every
+    // chain link carries its own offset, so this lands on `.every` — the call
+    // the message names — rather than on the `$.items` chain root.
     const src = "$.n + $.items.every(x => x.ok).map(y => y)";
     const r = jsmql.validate(src);
     expect(r.valid).toBe(false);
-    expect(r.errors[0].pos).toBe(src.indexOf("$.items"));
+    expect(r.errors[0].pos).toBe(src.indexOf("every"));
   });
 });
 

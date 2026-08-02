@@ -20,6 +20,93 @@ jsmql accepts two surface forms that both compile through `src/pipeline.ts`. The
 
 The two forms agree on stage shapes, the `$match` body translation rule, and sub-pipeline recursion. They differ only in coalescing behaviour, which falls out of the choice of separator: `,` is in-stage (and groups update ops), `;` is a hard stage boundary.
 
+## Chained stage calls
+
+A stage may also be written as a **chain link** on a stream: `<stream>.$match(<body>)`.
+This is the chain-position spelling of the `$match(<body>);` statement — same `STAGES`
+registry, same body lowering, same placement rules.
+
+```js
+$$.$match({ status: "shipped" }).$sort({ total: -1 }).$limit(5);
+const top = $$$.orders.$match({ status: "shipped" }).$group({ _id: "$region", n: $sum(1) }).$limit(3);
+```
+
+Why it exists: stage calls worked at statement position and JS chain methods worked in
+both, leaving one empty cell — a chain could not reach a stage. That matters most for the
+stages with **no JavaScript spelling** (`$group`, `$unwind`, `$setWindowFields`,
+`$bucket`, `$graphLookup`, …), which in a value position (`const x = $$$.<coll>.…`) were
+previously reachable only by nesting an `.aggregate((o) => { … })` block.
+
+**Surface.**
+
+- **Receiver** — a stream: `$$`, `$$$.<coll>`, `$$$$.<db>.<coll>`, or any chain link off
+  one of those. Stage links and the lodash chain methods ([stream-methods.md](stream-methods.md))
+  interleave freely while the chain is still stream-shaped.
+- **Name** — any key in `STAGES`; `$count` resolves as the *stage*, matching statement
+  position. Unregistered `$`-names are still claimed by the chain lowerers (mirroring
+  `isStageCandidate`) so a typo reports "not a known aggregation stage" rather than
+  falling through to value-mode method dispatch.
+- **Arity** — exactly one argument, the stage body (same rule as `asStageShape`).
+- **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse
+  errors; see [grammar.md](grammar.md).
+- Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), a
+  following stage link is rejected by the guard at the top of `generateMethodCall`.
+
+**Lowering — two equivalences, by construction.** A stage link has no lowering of its own;
+each container delegates to the path that already lowers the equivalent spelling, so the
+two can't drift:
+
+| Container | `.$stage(b)` is defined as | Delegates to |
+|---|---|---|
+| `$$` current stream | the `$stage(b);` statement | `lowerStageLink` → `generateStageBody` |
+| `$$$.<coll>` foreign chain (`$lookup.pipeline`) | `.aggregate((o) => { $stage(b); })` | `lowerCallbackBlock` — the engine `.aggregate` uses |
+| `$$ = $$$.<coll>.…` source-switch (`$unionWith.pipeline`) | the `$stage(b);` statement | `lowerStageLink` → `generateStageBody` |
+
+Name resolution, arity, and the sub-pipeline placement rules live in one leaf module,
+[src/stage-link.ts](../../src/stage-link.ts), so all three containers share the wording.
+Placement is validated per container from the same declarative `forbiddenIn` / `position`
+data the statement path reads — so `.$out(…)` inside a `$lookup` chain is rejected. (The
+`.aggregate((o) => { … })` block body still lacks that container check — see DEF-024.)
+
+**Correlation.** Inside a foreign sub-pipeline `$.` means the *outer* document and hoists
+into `$lookup.let`. That works in every aggregation-**expression** slot:
+
+```js
+$.t = $$$.orders.$set({ owner: $.tag });
+// → { $lookup: { from: "orders", let: { jsmql_f0_tag: "$tag" },
+//                pipeline: [{ $set: { owner: "$$jsmql_f0_tag" } }], as: … } }
+```
+
+and in a `$match` whose body is an **object literal** it takes one extra step. That body is
+a *query document*, and the query language does not evaluate `$$` variables — mongod
+*accepts* `{ $match: { userId: "$$jsmql_f0__id" } }` and silently matches **nothing**
+(verified on a live server). So `correlatedQueryMatchAsPredicate` re-expresses the query
+document as the equivalent predicate (`{ userId: $._id }` → `$.userId === $._id`) and hands
+it to the same `translateMatchBody` path `.filter(...)` uses, which splits it into an
+index-friendly query part plus a `$expr` residual for the correlated terms:
+
+```js
+$.orders = $$$.orders.$match({ userId: $._id, status: "shipped" });
+// → { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+//                pipeline: [{ $match: { status: "shipped",
+//                                       $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: … } }
+```
+
+`$match({ … })` and `.filter({ … })` therefore emit byte-identical sub-pipelines, and the
+`.aggregate((o) => { $match({ … }); })` block spelling — which had emitted the
+silently-empty raw form since it shipped — is fixed by the same change. Only entries whose
+value reads the outer document move into `$expr`; an **uncorrelated** query document keeps
+the verbatim path untouched, so raw MQL still round-trips (HR1). Field terms and
+single-key comparison operators (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`) translate; a
+correlated shape outside that set (an `$and`/`$or` root, `$regex`, …) raises an actionable
+error naming the arrow-predicate and expression-body alternatives rather than emitting a
+match that would return nothing.
+
+**Relationship to `.aggregate(...)`.** Both remain. `.aggregate` keeps the two jobs a
+single link can't do: a multi-stage *block* (with a terminal `return`), and the raw
+`[{ $stage: … }, …]` stage-array paste that preserves HR1 round-tripping. Chained stage
+calls are the flatter spelling when the stages compose inline with other chain methods.
+
 ## Detection (bracketed form)
 
 `jsmql()` runs in **pipeline mode** for an `[…]` literal when the parsed root AST satisfies `isPipelineAst(ast)`:

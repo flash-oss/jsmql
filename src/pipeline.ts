@@ -15,6 +15,7 @@
 
 import type {
   Expr,
+  BinaryOp,
   ArrayElement,
   UpdateOp,
   AssignExpr,
@@ -48,8 +49,15 @@ import {
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr, someElement, someStmt } from "./ast-walk.ts";
-import { JSMQL_NS, bindingSlot, streamLengthStage } from "./namespace.ts";
+import { JSMQL_NS, bindingSlot, isCorrelationVar, streamLengthStage } from "./namespace.ts";
 import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
+import {
+  forbiddenInContextMessage,
+  isStageLink,
+  mustBeFirstLiteralMessage,
+  stageLinkBody,
+  type ContainerKind,
+} from "./stage-link.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
   argsReadRootStreamLength,
@@ -241,8 +249,6 @@ export function isPipelineAst(ast: Expr): boolean {
 // `$$.indexStats()`) keep their own dedicated, sugar-aware messages and feed
 // this validator through `markSugarOut` for the must-be-last "after" error.
 
-type ContainerKind = "top" | "facet" | "lookup" | "unionWith";
-
 type TerminalState = { stageName: string; pos: number; viaSugar: boolean };
 
 type PipelineValidator = {
@@ -310,21 +316,6 @@ function makeAfterTerminalError(terminal: TerminalState, afterPos: number): Code
 }
 
 /** Message for a source stage (must-be-first) used in a non-first position, literal form. */
-function mustBeFirstLiteralMessage(stageName: string): string {
-  return (
-    `'${stageName}' must be the first stage in a pipeline — it produces the pipeline's source documents, ` +
-    `so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`
-  );
-}
-
-/** Message for a stage used inside a sub-pipeline container that forbids it. */
-function forbiddenInContextMessage(stageName: string, container: "facet" | "lookup" | "unionWith"): string {
-  const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
-  return (
-    `'${stageName}' is not allowed inside a '${owner}' sub-pipeline. ` + `Move it to the outer (top-level) pipeline.`
-  );
-}
-
 /** Maps a sub-pipeline-owning stage to its container kind. */
 function containerKindFor(stageName: string): "facet" | "lookup" | "unionWith" {
   if (stageName === "$facet") return "facet";
@@ -1082,7 +1073,7 @@ function lowerChainOnStream(
   rhs: Expr,
 ): { stages: object[]; clearLets: boolean } {
   const stages: object[] = [];
-  const clearLets = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
+  const { clearLets } = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
   return { stages, clearLets };
 }
 
@@ -1114,12 +1105,27 @@ function applyStreamMethods(
   lowerBlockFn: SubPipelineLowerer,
   allocSlot: SlotAllocator,
   rhs: Expr,
-): boolean {
+  validator: PipelineValidator = makePipelineValidator("top"),
+): { clearLets: boolean; clearedBy: string } {
   let clearLets = false;
   // Temp-field cleanup runs once after the whole chain — see StreamMethodResult.
   const cleanup: object[] = [];
+  // Registry methods have always reported `$unionWith` as the clearing stage;
+  // a stage link knows its real name and reports that instead.
+  let clearedBy = "$unionWith";
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    // `.$match(<body>)` — a chained pipeline stage on the current stream. Same
+    // lowering as the `$match(<body>);` statement.
+    if (isStageLink(m)) {
+      const linked = lowerStageLink(m, ctx, target, validator);
+      target.push(linked.stage);
+      if (linked.clearedBy !== null) {
+        clearLets = true;
+        clearedBy = linked.clearedBy;
+      }
+      continue;
+    }
     // `.filter` is handled outside the registry (its predicate translation is
     // shared with $unionWith/$facet). It may appear anywhere in the chain — as
     // the head, or after a reshaping method like `.flatMap`/`.groupBy`.
@@ -1154,7 +1160,7 @@ function applyStreamMethods(
     if (result.clearLets) clearLets = true;
   }
   target.push(...cleanup);
-  return clearLets;
+  return { clearLets, clearedBy };
 }
 
 /**
@@ -1326,8 +1332,15 @@ function lowerChainOnCollection(
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) },
   };
   const inner: object[] = [];
+  // The switched stream flows through `$unionWith.pipeline`, so stage links are
+  // validated against that container ($out/$merge and friends are rejected).
+  const innerValidator = makePipelineValidator("unionWith");
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    if (isStageLink(m)) {
+      inner.push(lowerStageLink(m, innerCtx, inner, innerValidator).stage);
+      continue;
+    }
     if (m.method === "filter") {
       inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
       continue;
@@ -1675,6 +1688,166 @@ function lowerStageElement(el: ArrayElement, index: number, ctx: GenerateCtx): S
   return { stage: { [stage.name]: body }, ctx: nextCtx };
 }
 
+/**
+ * Lower a stage link into the buffer its container is filling. `target.length`
+ * is the link's position within that container, which is exactly what the
+ * must-be-first / `$match`-placement rules key on. Returns the stage plus the
+ * name that cleared the `let` scope (null when it didn't).
+ */
+function lowerStageLink(
+  m: MethodCallNode,
+  ctx: GenerateCtx,
+  target: readonly object[],
+  validator: PipelineValidator,
+): { stage: Record<string, unknown>; clearedBy: string | null } {
+  const body = stageLinkBody(m);
+  validator.checkStage(m.method, m.pos, target.length, body);
+  return {
+    stage: { [m.method]: generateStageBody(m.method, body, ctx) },
+    clearedBy: RESHAPE_CLEARING_STAGES.has(m.method) ? m.method : null,
+  };
+}
+
+/**
+ * A `$match` **query document** inside a foreign sub-pipeline that reads the
+ * outer document, rewritten into the equivalent predicate expression.
+ *
+ * Inside a foreign sub-pipeline an outer-document read (`$._id`) is hoisted into
+ * `$lookup.let` and becomes a `$$jsmql_f0__id` reference. That resolves in every
+ * aggregation-*expression* slot (`$set`, `$group`, `$project`, …) — but a
+ * `$match` whose body is an object literal is a **query document**, and the
+ * query language does not evaluate `$$` variables. mongod *accepts*
+ * `{ $match: { userId: "$$jsmql_f0__id" } }` and silently matches **nothing**
+ * (verified on a live server).
+ *
+ * So `$match({ userId: $._id })` is translated to the predicate
+ * `$.userId === $._id` and handed to the same `translateMatchBody` path
+ * `.filter(...)` uses — which splits it into an index-friendly query part plus a
+ * `$expr` residual for the correlated terms. `$match({ userId: $._id })` and
+ * `.filter({ userId: $._id })` therefore emit identical MQL.
+ *
+ * Returns null when the body has no correlation (the overwhelmingly common
+ * case) — the caller then keeps the verbatim query-document path, so raw MQL
+ * still round-trips untouched (HR1).
+ *
+ * Reached from both spellings that can produce it: a chained `.$match({ … })`
+ * and the `.aggregate((o) => { $match({ … }); })` block body.
+ */
+function correlatedQueryMatchAsPredicate(body: Expr): Expr | null {
+  if (body.type !== "ObjectLiteral") return null;
+  if (findQuerySlotCorrelation(body) === null) return null;
+  const predicate = queryDocToPredicate(body);
+  if (predicate === null) {
+    throw new CodegenError(
+      `This '$match' reads the outer document ('$.<field>') from a query-document body that jsmql can't ` +
+        `translate — MongoDB doesn't evaluate '$$' variables in the query language, so it would silently ` +
+        `match nothing. Rewrite the correlated part as a predicate arrow ` +
+        `('$$$.<coll>.filter(o => o.<field> === $.<outerField>)'), or write the stage body as an expression ` +
+        `('$match($.<field> === $.<outerField>)').`,
+      body.pos,
+    );
+  }
+  return predicate;
+}
+
+/** Query-document comparison operators and their jsmql expression spelling. */
+const QUERY_CMP_OPS: Record<string, BinaryOp> = {
+  $eq: "===",
+  $ne: "!==",
+  $gt: ">",
+  $gte: ">=",
+  $lt: "<",
+  $lte: "<=",
+  $in: "in",
+};
+
+/**
+ * `{ userId: <expr>, status: "shipped" }` → `$.userId === <expr> && $.status === "shipped"`.
+ * Field values may also be a single-key comparison object (`{ $gte: <expr> }`).
+ * Returns null for anything outside that shape (`$and`/`$or` roots, `$regex`,
+ * spreads, computed keys) so the caller can raise a precise error rather than
+ * guess.
+ */
+function queryDocToPredicate(obj: Extract<Expr, { type: "ObjectLiteral" }>): Expr | null {
+  const terms: Expr[] = [];
+  for (const entry of obj.entries) {
+    if (entry.type === "SpreadElement" || entry.key.kind !== "static") return null;
+    const field = entry.key.name;
+    if (field.startsWith("$")) return null; // $and / $or / $expr roots — not a field term
+    const lhs: Expr = { type: "FieldRef", path: field, pos: entry.pos };
+    const value = entry.value;
+    // Operator form: `{ field: { $gte: <expr> } }` — exactly one `$`-key.
+    if (value.type === "ObjectLiteral" && value.entries.length === 1) {
+      const inner = value.entries[0];
+      if (inner.type === "KeyValueEntry" && inner.key.kind === "static" && inner.key.name.startsWith("$")) {
+        const op = QUERY_CMP_OPS[inner.key.name];
+        if (op === undefined) return null;
+        terms.push({ type: "BinaryExpr", op, left: lhs, right: inner.value, pos: entry.pos });
+        continue;
+      }
+    }
+    if (value.type === "ObjectLiteral" && findQuerySlotCorrelation(value) !== null) return null;
+    terms.push({ type: "BinaryExpr", op: "===", left: lhs, right: value, pos: entry.pos });
+  }
+  if (terms.length === 0) return null;
+  return terms.reduce((acc, t) => ({ type: "BinaryExpr", op: "&&", left: acc, right: t, pos: obj.pos }));
+}
+
+/**
+ * Find a correlation var sitting in a QUERY-language slot of a `$match` body,
+ * or null. Subtrees under the `$expr` escape hatch are skipped: there MongoDB
+ * *does* evaluate `$$vars`, which is precisely why `$expr` is the supported
+ * hand-written way to correlate (`$match({ $expr: { $eq: ["$userId", $._id] } })`
+ * keeps working). Object/array structure is walked explicitly so the skip is
+ * honoured at any nesting depth; other node shapes fall back to a plain scan.
+ */
+function findQuerySlotCorrelation(node: Expr): string | null {
+  if (node.type === "ObjectLiteral") {
+    for (const entry of node.entries) {
+      if (entry.type === "SpreadElement") {
+        const hit = findQuerySlotCorrelation(entry.argument);
+        if (hit !== null) return hit;
+        continue;
+      }
+      if (entry.key.kind === "computed") {
+        const hit = findQuerySlotCorrelation(entry.key.expr);
+        if (hit !== null) return hit;
+      } else if (entry.key.name === "$expr") {
+        continue; // aggregation-expression context — `$$vars` resolve here
+      }
+      const hit = findQuerySlotCorrelation(entry.value);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (node.type === "ArrayLiteral") {
+    for (const el of node.elements) {
+      if (el.type === "SpreadElement") {
+        const hit = findQuerySlotCorrelation(el.argument);
+        if (hit !== null) return hit;
+        continue;
+      }
+      // Statement-shaped elements only occur in pipeline position, never in a
+      // `$match` body — skip rather than widen the Expr walk.
+      if (el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "LetDecl" || el.type === "FuncDecl") {
+        continue;
+      }
+      const hit = findQuerySlotCorrelation(el);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  let found: string | null = null;
+  someExpr(node, (e) => {
+    if (e.type === "ParamRef" && isCorrelationVar(e.name)) {
+      found = e.name;
+      return true;
+    }
+    return false;
+  });
+  return found;
+}
+
 function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
   // Body-shape validation (literal-gated; see stage-validation.ts). Runs for
   // every user-written stage body before lowering.
@@ -1685,9 +1858,15 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
   // pipeline ctx so a let referenced inside the residual still resolves to its
   // namespace field path.
   if (stageName === "$match") {
-    if (body.type === "ObjectLiteral") {
+    // A query document that reads the outer document of a foreign sub-pipeline
+    // is re-expressed as a predicate first, so it takes the translation path
+    // below and comes out as `.filter(...)` would. Uncorrelated bodies (the
+    // common case) keep the verbatim query-document path.
+    const correlated = correlatedQueryMatchAsPredicate(body);
+    if (body.type === "ObjectLiteral" && correlated === null) {
       return generateBodyObject(body, stageName, ctx);
     }
+    if (correlated !== null) body = correlated;
     const t = translateMatchBody(body, { bindings: ctx.bindings });
     // `?? {}` is defensive — translateMatchBody never yields empty-query +
     // null-residual (a vacuous body lands in the residual as `$expr`).
@@ -2215,15 +2394,16 @@ function lowerStatementTail(
     // generic stage path.
     const streamChain = collectStreamChain(el as Expr);
     if (streamChain.root.type === "CollectionRef" && streamChain.methods.length > 0) {
-      const clearLets = applyStreamMethods(
+      const { clearLets, clearedBy } = applyStreamMethods(
         streamChain.methods,
         out as object[],
         ctx,
         lowerBlockFn,
         allocSlot,
         el as Expr,
+        validator,
       );
-      return clearLets ? clearCtxLets(ctx, "$unionWith") : ctx;
+      return clearLets ? clearCtxLets(ctx, clearedBy) : ctx;
     }
   }
   const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);
