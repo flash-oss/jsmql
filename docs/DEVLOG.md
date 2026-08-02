@@ -10,34 +10,6 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-02 — feat: `$facet` branches accept any `$$` chain, not only `.filter(<arrow>)`
-
-Stage links shipped into three containers and missed the fourth. A facet branch
-took `$$.filter(o => …)` and nothing else, so `$$.$match({ a: 1 })` — the same
-thing, differently spelled — fell through to value-mode codegen and produced a
-misleading "its receiver here is a value, not a stream".
-
-`detectFacetShape` now classifies each branch as either the dedicated
-`.filter(<arrow>)` predicate (which keeps its facet-specific `$.<field>`
-rejection) or an ordinary `$$` chain, lowered by `applyStreamMethods` against
-`freshFacetCtx` and a `"facet"` validator. So a branch takes the whole
-vocabulary, placement rules included:
-
-```js
-$ = { hi: $$.$match({ s: "a" }).$limit(2), lo: $$.filter(d => d.n < 5) };
-// → [{ $facet: { hi: [{ $match: { s: "a" } }, { $limit: 2 }],
-//                lo: [{ $match: { n: { $lt: 5 } } }] } }]
-
-$ = { k: $$.$out("x") };
-// ✗ '$out' is not allowed inside a '$facet' sub-pipeline.
-```
-
-A plain object RHS still lowers to `$replaceWith`; the mixed-shape error wording
-widened from "every value must be `$$.filter(<predicate>)`" to "every value must
-be a `$$` chain".
-
----
-
 ## 2026-08-02 — chore: drop the dead `replacesPreviousStage` hook and its stale references
 
 Removing the "from the end" stream family left `replacesPreviousStage` set by
@@ -66,115 +38,70 @@ named the wrong path for one of them.
 
 ---
 
-## 2026-08-01 — feat: stream `.takeWhile(pred)` / `.dropWhile(pred)` (closes DEF-035)
+## 2026-08-02 — feat: `$facet` branches accept any `$$` chain, not only `.filter(<arrow>)`
+
+Stage links shipped into three containers and missed the fourth. A facet branch
+took `$$.filter(o => …)` and nothing else, so `$$.$match({ a: 1 })` — the same
+thing, differently spelled — fell through to value-mode codegen and produced a
+misleading "its receiver here is a value, not a stream".
+
+`detectFacetShape` now classifies each branch as either the dedicated
+`.filter(<arrow>)` predicate (which keeps its facet-specific `$.<field>`
+rejection) or an ordinary `$$` chain, lowered by `applyStreamMethods` against
+`freshFacetCtx` and a `"facet"` validator. So a branch takes the whole
+vocabulary, placement rules included:
 
 ```js
-$$.toSorted({ t: 1 }).takeWhile(o => o.ok);
-// → [ { $sort: { t: 1 } },
-//     { $setWindowFields: { sortBy: { t: 1 },
-//         output: { "__jsmql.tmp.1": { $max: { $cond: ["$ok", 0, 1] },
-//                   window: { documents: ["unbounded", "current"] } } } } },
-//     { $match: { "__jsmql.tmp.1": 0 } },
-//     { $unset: "__jsmql" } ]
+$ = { hi: $$.$match({ s: "a" }).$limit(2), lo: $$.filter(d => d.n < 5) };
+// → [{ $facet: { hi: [{ $match: { s: "a" } }, { $limit: 2 }],
+//                lo: [{ $match: { n: { $lt: 5 } } }] } }]
 
-$$.toSorted({ t: 1 }).dropWhile(o => o.ok);
-// → identical, but  { $match: { "__jsmql.tmp.1": 1 } }
+$ = { k: $$.$out("x") };
+// ✗ '$out' is not allowed inside a '$facet' sub-pipeline.
 ```
 
-One `$setWindowFields` carries a running `$max` of "has the predicate failed at or
-before this document?", and the two methods differ **only** in the `$match`
-polarity — so they are exact complements by construction, not by two parallel
-implementations. On `t: 1 ok, 2 ok, 3 FAIL, 4 ok` a live mongod returns `[1,2]` and
-`[3,4]`. That data matters: it is the case where the previously-suggested workaround
-`.sort() + .filter()` gives `[1,2,4]`, because `.filter` keeps every match while
-`.takeWhile` stops at the first failure.
-
-**The order comes from the preceding sort, and any spelling counts** (developer
-decision). `$setWindowFields` *requires* `sortBy` for a document window — the server
-rejects it otherwise with "Document-based bounds require a sortBy" — so the spec is
-lifted from the last `$sort` the chain emitted. Every sort spelling ends in one, so
-all five work uniformly, including a computed `.sortBy(d => …)` whose key is a
-`__jsmql.tmp` scratch field:
-
-```js
-$$.sort({ t: 1 }).takeWhile(p)                    // sortBy { t: 1 }
-$$.toSorted({ t: 1 }).takeWhile(p)                // sortBy { t: 1 }
-$$.sortBy("t").takeWhile(p)                       // sortBy { t: 1 }
-$$.orderBy("t", -1).takeWhile(p)                  // sortBy { t: -1 }
-$$.$sort({ t: 1 }).takeWhile(p)                   // sortBy { t: 1 }   (the chain-link stage)
-$$.sortBy(d => d.cat.toLowerCase()).takeWhile(p)  // sortBy { "__jsmql.tmp.1": 1 }
-```
-
-With **no** sort it rejects and names the fix. It does not fall back to `_id`:
-silently substituting an order nobody asked for is exactly what got the "from the
-end" family removed two entries below, and `DEF-035` had already been amended to
-forbid it.
-
-These are the only registered methods that read `prevStages`, and they show the safe
-shape of that dependency — they **read** the sort spec (never rewrite it) and
-**reject** when it is absent (never guess). The removed family did the opposite on
-both counts. `replacesPreviousStage` now has no users at all.
-
-The predicate takes the same spellings `.filter` does — arrow, matches-object, field
-name, `["field", value]` — all asserted byte-identical to the arrow. `DEF-035` is
-deleted from `docs/DEFERRED.md`; the generator's own guard caught the missing
-`STREAM_METHOD_SIGNATURES` entries before the tests did.
+A plain object RHS still lowers to `$replaceWith`; the mixed-shape error wording
+widened from "every value must be `$$.filter(<predicate>)`" to "every value must
+be a `$$` chain".
 
 ---
 
-## 2026-08-01 — feat: a lone `.$match(<plain equality map>)` lookup head takes the `.filter` path
+## 2026-08-02 — fix: errors name the `$$$.<coll>` head, never the methods that may follow it
 
-Merge resolution between the chained-stage-call work and this branch's predicate
-normalisation. Both had landed a piece of the same invariant and they disagreed:
+Nine error messages still spelled the lookup surface `'$$$.<coll>.find/filter(...)'`
+or `'$$$.<coll>.find/filter/aggregate(...)'` — an inventory that went stale the day
+[any lodash stream method could head the chain](specs/lookup-stage.md), and again
+when stage links (`.$match(...)`) joined it. The enumeration is now one exported
+constant, `LOOKUP_SYNTAX` in [src/codegen.ts](../src/codegen.ts), spelled
+`'$$$.<coll>.<method>(...)'`: it names the **head**, which is what actually makes a
+chain a lookup, and says nothing about the open set that follows. When the method
+itself is the problem, the unknown-method throw in
+[lookup-translation.ts](../src/lookup-translation.ts) still names the categories and
+offers a `didYouMean` — that message is the one place the categories belong.
 
-```js
-$.t = $$$.orders.filter({ userId: $._id });   // → indexed basic form, 1 stage
-$.t = $$$.orders.$match({ userId: $._id });   // → correlated $lookup.pipeline, 3 stages
-```
+**The same staleness had leaked one layer down, into detection.** `containsLookupCall`
+— which backs every mode gate in [index.ts](../src/index.ts) — asked
+`detectLookupCall`, i.e. "is the head `.find`/`.filter`/`.aggregate`?", so a
+stream-method head was invisible to all four gates. `jsmql.expr("$.x = $$$.c.toSorted({a:1}).take(5)")`
+**returned a three-stage `$lookup` pipeline** instead of rejecting; `jsmql.filter()`
+and `jsmql.update()` fell back to generic shape errors; and without a trailing `;`
+the `$$ =` form reached `jsmql internal error (please report …)`. It now asks the
+receiver instead — any `MethodCall` that `extractLookupTarget`s to `$$$.<coll>` /
+`$$$$.<db>.<coll>` is lookup syntax. The collection hop that helper requires is also
+what keeps the bare-receiver diagnostics (`$$$$.currentOp(…)`) out. Both no-`;`
+forms now lower byte-identically to their `;` counterparts.
 
-Same predicate, same meaning, two plans — and the chained-stage-call suite already
-asserted the two must be equal, so the merge went red exactly where it should have.
-`.$match` is the STAGE spelling of the same filter, so `detectLookupCall` now
-normalises it to `filter` and it takes the identical path — indexed basic form
-included:
-
-```js
-$.t = $$$.orders.$match({ userId: $._id });
-// → [ { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } } ]
-```
-
-**Only a plain equality map converts.** A query document carrying operators means
-something a lodash matcher cannot, so `isPlainEqualityMap` refuses it and the
-sub-pipeline path stands:
-
-```js
-$.t = $$$.orders.$match({ qty: { $gt: 5 } });     // query: greater than 5
-// → [ { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], … } }, … ]
-$.t = $$$.orders.filter({ qty: { $gt: 5 } });     // matcher: EQUALS the object { $gt: 5 }
-// → [ { $lookup: { from: "orders", pipeline: [{ $match: { $expr: { $eq: ["$qty", { $gt: 5 }] } } }], as: "t" } } ]
-```
-
-Scope is the **lone head** only. A `.$match(...)` with anything chained after it is
-byte-identical to before — checked across seven shapes — because the chain assembler
-keeps peeling stage links through `lowerCallbackBlock`. Verified on a live mongod:
-correlated, plain, operator-bearing, mixed, and chained forms all return the same
-documents as their `.filter` twin where a twin exists.
-## 2026-08-01 — docs: `$` is the ROOT document at every depth (HR4 wording)
-
-HR4 said "`$` = the current document", which reads as "whichever document is
-nearest" and is wrong inside a sub-pipeline. `$.x` is a **root**-document read
-at any depth — jsmql threads it in through `$lookup.let` — while the
-sub-pipeline's own document is the callback parameter or a raw `"$x"` MQL path
-string. The consequence is sharp enough to deserve the example now in
-[docs/LANG_RULES.md](LANG_RULES.md) and [docs/LANGUAGE.md](LANGUAGE.md):
-`$$$.orders.$set({ owner: $.tag })` and `$$$.orders.$set({ owner: "$tag" })`
-differ by one character and read two different documents.
-
-Also: the §B row rejecting a second spelling on "which one does my codebase
-use?" grounds is gone, and the chained-stage docs now show the lodash and
-`$stage` spellings side by side without naming a winner. Two spellings of the
-same lowering are fine; what jsmql avoids is the *same* input producing
-different output.
+**One message was not merely stale but wrong.** `.map()`/`.find()` rejecting a
+statement block claimed "that form is only for `'$$$.<coll>.find/filter(...)'`" —
+while the user was *looking at* a `$$$.<coll>.map(…)`, which does take one. The real
+cause is the **position**: a scalar `return` (or a chained `.find`) collapses the
+chain into a value, so it lowers to an array operator with nowhere to run stages.
+The message says that now, and names the two rewrites that work — `return` a
+document, or move the stages into a heading `.filter`/`.aggregate` block — both
+asserted as compiling in [test/lookup.test.ts](../test/lookup.test.ts). The four
+remaining statement-block rejections (`$let`, IIFE / reusable function,
+`Object.groupBy`, `Array.from` — all unreachable-by-parser, defensive) share one
+`STREAM_BLOCK_FORM` constant with a single open-ended example.
 
 ---
 
@@ -295,6 +222,62 @@ hand-materialised `$.k = <expr>; …("k")` equivalent returns.
 
 ---
 
+## 2026-08-01 — feat: a lone `.$match(<plain equality map>)` lookup head takes the `.filter` path
+
+Merge resolution between the chained-stage-call work and this branch's predicate
+normalisation. Both had landed a piece of the same invariant and they disagreed:
+
+```js
+$.t = $$$.orders.filter({ userId: $._id });   // → indexed basic form, 1 stage
+$.t = $$$.orders.$match({ userId: $._id });   // → correlated $lookup.pipeline, 3 stages
+```
+
+Same predicate, same meaning, two plans — and the chained-stage-call suite already
+asserted the two must be equal, so the merge went red exactly where it should have.
+`.$match` is the STAGE spelling of the same filter, so `detectLookupCall` now
+normalises it to `filter` and it takes the identical path — indexed basic form
+included:
+
+```js
+$.t = $$$.orders.$match({ userId: $._id });
+// → [ { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } } ]
+```
+
+**Only a plain equality map converts.** A query document carrying operators means
+something a lodash matcher cannot, so `isPlainEqualityMap` refuses it and the
+sub-pipeline path stands:
+
+```js
+$.t = $$$.orders.$match({ qty: { $gt: 5 } });     // query: greater than 5
+// → [ { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], … } }, … ]
+$.t = $$$.orders.filter({ qty: { $gt: 5 } });     // matcher: EQUALS the object { $gt: 5 }
+// → [ { $lookup: { from: "orders", pipeline: [{ $match: { $expr: { $eq: ["$qty", { $gt: 5 }] } } }], as: "t" } } ]
+```
+
+Scope is the **lone head** only. A `.$match(...)` with anything chained after it is
+byte-identical to before — checked across seven shapes — because the chain assembler
+keeps peeling stage links through `lowerCallbackBlock`. Verified on a live mongod:
+correlated, plain, operator-bearing, mixed, and chained forms all return the same
+documents as their `.filter` twin where a twin exists.
+## 2026-08-01 — docs: `$` is the ROOT document at every depth (HR4 wording)
+
+HR4 said "`$` = the current document", which reads as "whichever document is
+nearest" and is wrong inside a sub-pipeline. `$.x` is a **root**-document read
+at any depth — jsmql threads it in through `$lookup.let` — while the
+sub-pipeline's own document is the callback parameter or a raw `"$x"` MQL path
+string. The consequence is sharp enough to deserve the example now in
+[docs/LANG_RULES.md](LANG_RULES.md) and [docs/LANGUAGE.md](LANGUAGE.md):
+`$$$.orders.$set({ owner: $.tag })` and `$$$.orders.$set({ owner: "$tag" })`
+differ by one character and read two different documents.
+
+Also: the §B row rejecting a second spelling on "which one does my codebase
+use?" grounds is gone, and the chained-stage docs now show the lodash and
+`$stage` spellings side by side without naming a winner. Two spellings of the
+same lowering are fine; what jsmql avoids is the *same* input producing
+different output.
+
+---
+
 ## 2026-08-01 — feat: pipeline stages as chain links (`<stream>.$match(...)`)
 
 A stage can now be written as a dot-chain link on a stream —
@@ -361,6 +344,62 @@ The box also stops starting empty: it now opens on a commented-out template
 bindings, so behaviour is identical to the old empty box — while naming the two
 shapes people reach for first, the second of which isn't guessable because JSON
 can't express it.
+
+---
+
+## 2026-08-01 — feat: stream `.takeWhile(pred)` / `.dropWhile(pred)` (closes DEF-035)
+
+```js
+$$.toSorted({ t: 1 }).takeWhile(o => o.ok);
+// → [ { $sort: { t: 1 } },
+//     { $setWindowFields: { sortBy: { t: 1 },
+//         output: { "__jsmql.tmp.1": { $max: { $cond: ["$ok", 0, 1] },
+//                   window: { documents: ["unbounded", "current"] } } } } },
+//     { $match: { "__jsmql.tmp.1": 0 } },
+//     { $unset: "__jsmql" } ]
+
+$$.toSorted({ t: 1 }).dropWhile(o => o.ok);
+// → identical, but  { $match: { "__jsmql.tmp.1": 1 } }
+```
+
+One `$setWindowFields` carries a running `$max` of "has the predicate failed at or
+before this document?", and the two methods differ **only** in the `$match`
+polarity — so they are exact complements by construction, not by two parallel
+implementations. On `t: 1 ok, 2 ok, 3 FAIL, 4 ok` a live mongod returns `[1,2]` and
+`[3,4]`. That data matters: it is the case where the previously-suggested workaround
+`.sort() + .filter()` gives `[1,2,4]`, because `.filter` keeps every match while
+`.takeWhile` stops at the first failure.
+
+**The order comes from the preceding sort, and any spelling counts** (developer
+decision). `$setWindowFields` *requires* `sortBy` for a document window — the server
+rejects it otherwise with "Document-based bounds require a sortBy" — so the spec is
+lifted from the last `$sort` the chain emitted. Every sort spelling ends in one, so
+all five work uniformly, including a computed `.sortBy(d => …)` whose key is a
+`__jsmql.tmp` scratch field:
+
+```js
+$$.sort({ t: 1 }).takeWhile(p)                    // sortBy { t: 1 }
+$$.toSorted({ t: 1 }).takeWhile(p)                // sortBy { t: 1 }
+$$.sortBy("t").takeWhile(p)                       // sortBy { t: 1 }
+$$.orderBy("t", -1).takeWhile(p)                  // sortBy { t: -1 }
+$$.$sort({ t: 1 }).takeWhile(p)                   // sortBy { t: 1 }   (the chain-link stage)
+$$.sortBy(d => d.cat.toLowerCase()).takeWhile(p)  // sortBy { "__jsmql.tmp.1": 1 }
+```
+
+With **no** sort it rejects and names the fix. It does not fall back to `_id`:
+silently substituting an order nobody asked for is exactly what got the "from the
+end" family removed two entries below, and `DEF-035` had already been amended to
+forbid it.
+
+These are the only registered methods that read `prevStages`, and they show the safe
+shape of that dependency — they **read** the sort spec (never rewrite it) and
+**reject** when it is absent (never guess). The removed family did the opposite on
+both counts. `replacesPreviousStage` now has no users at all.
+
+The predicate takes the same spellings `.filter` does — arrow, matches-object, field
+name, `["field", value]` — all asserted byte-identical to the arrow. `DEF-035` is
+deleted from `docs/DEFERRED.md`; the generator's own guard caught the missing
+`STREAM_METHOD_SIGNATURES` entries before the tests did.
 
 ---
 

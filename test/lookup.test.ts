@@ -433,6 +433,38 @@ describe("$$$.coll.find/filter — error cases", () => {
     expect(() => jsmql("$$$.users.find(u => u._id === $._id)")).toThrow(/requires Pipeline mode/);
   });
 
+  // The mode gates key off `containsLookupCall`, which used to recognise only
+  // the `.find`/`.filter`/`.aggregate` heads. A stream-method head slipped
+  // through every one of them: the strict entries fell back to generic shape
+  // errors, and `jsmql.expr()` silently RETURNED a `$lookup` pipeline.
+  describe("a stream-method-headed chain is lookup syntax at every mode gate", () => {
+    const streamHead = "$.x = $$$.users.toSorted({ createdAt: -1 }).take(5)";
+    const findHead = "$.x = $$$.users.find(u => u._id === $._id)";
+
+    it("jsmql.filter() rejects it the same way it rejects a `.find` head", () => {
+      expect(() => jsmql.filter(streamHead)).toThrow(/jsmql\.filter\(\) does not allow lookup syntax/);
+      expect(() => jsmql.filter(findHead)).toThrow(/jsmql\.filter\(\) does not allow lookup syntax/);
+    });
+
+    it("jsmql.expr() rejects it instead of emitting a $lookup pipeline", () => {
+      expect(() => jsmql.expr(streamHead)).toThrow(/jsmql\.expr\(\) does not allow lookup syntax/);
+    });
+
+    it("jsmql.update() rejects it pre-codegen, naming jsmql.pipeline()", () => {
+      expect(() => jsmql.update(`${streamHead};`)).toThrow(
+        /jsmql\.update\(\) does not allow lookup syntax.*Run the lookup in a regular aggregation pipeline/s,
+      );
+    });
+
+    it("jsmql() lowers it identically with and without the trailing `;`", () => {
+      expect(jsmql(streamHead)).toEqual(jsmql(`${streamHead};`));
+      // A `$$ =` source switch took the same path — it used to reach an
+      // `internal error (please report …)` without the `;`.
+      const pivot = "$$ = $$$.users.toSorted({ createdAt: -1 }).take(5)";
+      expect(jsmql(pivot)).toEqual(jsmql(`${pivot};`));
+    });
+  });
+
   it("bare foreign param (`o` alone) inside a richer predicate is rejected", () => {
     // `o` alone would need $$ROOT semantics — out of scope for v1.
     expect(() => jsmql("$.users = $$$.users.filter(o => o);")).toThrow(
@@ -1102,8 +1134,30 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   });
 
   it("a block-body .map with REAL stages + a scalar return is still rejected (can't value-extract through stages)", () => {
+    // The rejection blames the POSITION (a value, so an array operator), not
+    // the method — `.map` does take a statement block wherever the chain stays
+    // a stage, and the scalar `return` is what collapsed it here. Both named
+    // rewrites compile (asserted below).
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      /statement-block body/,
+      /\.map\(\) can't take a statement-block body .* in this position — the chain is consumed as a value here/s,
+    );
+    expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
+      /`return` a document instead of a scalar/,
+    );
+    // Rewrite 1: return a document — the block stays a `$replaceWith` stage.
+    expect(() =>
+      jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).map(o => { $sort({ x: -1 }); return { t: o.total }; });"),
+    ).not.toThrow();
+    // Rewrite 2: move the stages into the heading `.filter` block.
+    expect(() => jsmql("$.x = $$$.orders.filter(o => { $sort({ x: -1 }); }).map(o => o.total);")).not.toThrow();
+  });
+
+  it("the same rejection on a chained `.find` doesn't offer the `.map`-only rewrite", () => {
+    expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).toThrow(
+      /\.find\(\) can't take a statement-block body/,
+    );
+    expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).not.toThrow(
+      /`return` a document/,
     );
   });
 
@@ -1331,8 +1385,24 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("aggregate syntax outside Pipeline mode is rejected", () => {
     expect(() => jsmql("$$$.c.aggregate((o) => { $limit(5); })")).toThrow(
-      /Lookup syntax \('\$\$\$\.<coll>\.find\/filter\/aggregate\(\.\.\.\)'\) requires Pipeline mode/,
+      /Lookup syntax \('\$\$\$\.<coll>\.<method>\(\.\.\.\)'\) requires Pipeline mode/,
     );
+  });
+
+  // The message names the `$$$.<coll>` HEAD, never the methods that may follow
+  // it — that set grows (`.find`/`.filter`, `.aggregate`, every lodash stream
+  // method, every chained stage call) and an enumeration goes stale on each
+  // addition. Every head therefore gets the identical rejection.
+  it("every chain head gets the same Pipeline-mode rejection (no method enumeration)", () => {
+    for (const src of [
+      "$$$.c.find(o => o.a === 1)",
+      "$$$.c.filter(o => o.a === 1)",
+      "$$$.c.aggregate((o) => { $limit(5); })",
+      "$$$.c.toSorted({ a: 1 }).take(5)",
+      "$$$.c.$match({ a: 1 })",
+    ]) {
+      expect(() => jsmql(src), src).toThrow(/Lookup syntax \('\$\$\$\.<coll>\.<method>\(\.\.\.\)'\) requires Pipeline/);
+    }
   });
 
   it("a trailing `return` inside an aggregate block is rejected (it's not a per-doc reshape)", () => {
