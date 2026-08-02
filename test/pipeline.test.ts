@@ -851,7 +851,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     expect(() => jsmql("$$$.orders.head();")).toThrow(/returns a single value, not a pipeline stage/);
     // 4. Assignment — value-mode over ALL orders (implicit match-all $lookup + $first).
     expect(jsmql("$.field = $$$.orders.head();")).toEqual([
-      { $lookup: { from: "orders", let: {}, pipeline: [{ $match: { $expr: true } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "orders", pipeline: [{ $match: { $expr: true } }], as: "__jsmql.tmp.1" } },
       { $set: { field: { $first: "$__jsmql.tmp.1" } } },
       { $unset: "__jsmql" },
     ]);
@@ -1227,10 +1227,12 @@ describe("chained stage calls on the current stream", () => {
     ]);
   });
 
-  // `.toReversed()` rewrites the PRECEDING `$sort` in place (replacesPreviousStage).
-  // A stage-link `$sort` lands in the same buffer, so it composes unchanged.
-  it("composes with the stage-coupled .toReversed()", () => {
-    expect(jsmql("$$.$sort({ a: 1 }).toReversed();")).toEqual([{ $sort: { a: -1 } }]);
+  // A stage link pushes into the SAME buffer the registry methods use, so a
+  // stage-coupled method (one that reads `prevStages`) sees it. `.toReversed()`
+  // was the case that proved this and has since been removed from the stream
+  // surface; `.take` after a stage-link `$sort` keeps the ordering guarantee.
+  it("shares the stage buffer with registry chain methods", () => {
+    expect(jsmql("$$.$sort({ a: 1 }).take(3);")).toEqual([{ $sort: { a: 1 } }, { $limit: 3 }]);
   });
 
   it("works as a whole program with no trailing semicolon", () => {

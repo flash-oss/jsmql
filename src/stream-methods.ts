@@ -9,7 +9,7 @@
 
 import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
-import { CodegenError, generateWithCtx, type GenerateCtx, stringKeyExpr } from "./codegen.ts";
+import { CodegenError, generateWithCtx, type GenerateCtx, shorthandToLambda, stringKeyExpr } from "./codegen.ts";
 import {
   aggregateArgToLambda,
   EMPTY_ENCLOSING,
@@ -21,7 +21,7 @@ import {
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
-import { GROUP_TMP, LENGTH_SLOT, streamLengthStage } from "./namespace.ts";
+import { GROUP_TMP, JSMQL_NS, LENGTH_SLOT, streamLengthStage } from "./namespace.ts";
 import { containsUnionPush } from "./union-translation.ts";
 import { lowerUnionPush } from "./union-translation.ts";
 
@@ -43,6 +43,25 @@ export type StreamMethodResult = {
    * a new stage. Defaults to false.
    */
   replacesPreviousStage?: boolean;
+  /**
+   * Stages appended **once, at the very end of the chain** — never immediately
+   * after this method's own `stages`. For clearing a `__jsmql.tmp` scratch field
+   * a method had to materialise (a computed `$sort` key, `.shuffle`'s `$rand`).
+   *
+   * Deferring matters because several methods read `prevStages[last]` to find the
+   * live `$sort`: `.toReversed()` rewrites it, and `.takeRight`/`.dropRight`/
+   * `.initial` reverse it. An `$unset` sitting between the `$sort` and the next
+   * method hides it — and `reverseSortTrick` then *silently* falls back to
+   * ordering by `_id` rather than erroring, so `.shuffle().takeRight(3)` used to
+   * return the last 3 by `_id` and discard the shuffle entirely.
+   *
+   * Only needed inside a `$lookup.pipeline` (the `inSubPipeline` argument to
+   * `lower`): there the sub-pipeline's docs land in an array field, so the outer
+   * `{ $unset: "__jsmql" }` can't reach them. At the top level and inside a
+   * `$unionWith.pipeline` that trailing sweep runs over these documents, so
+   * emitting a second `$unset` would be pure noise.
+   */
+  cleanupStages?: object[];
   /**
    * `$lookup.let` correlation vars this method's body captured that must be
    * merged into the ENCLOSING lookup's `let` clause. Set by a statement-block
@@ -175,7 +194,143 @@ function validateSingleIntArg(sig: string, args: readonly CallArg[], callPos: nu
   }
 }
 
-function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: number): void {
+/**
+ * Resolve a *field-key* argument to the field name it names. Two spellings, one
+ * meaning: the lodash property string (`"status"`) and the equivalent bare-field-path
+ * arrow (`d => d.status`) — the arrow is just a longer way to write the same path, so
+ * every stream method that keys on a field takes both, exactly as value position does.
+ *
+ * Returns null for anything that is not a plan-time field path (a *computed* arrow, a
+ * matches-object, a dynamic value); callers reject those with the materialise-first
+ * hint, since a `$sort` key / `$group._id` is fixed when the plan is built.
+ * `""` and `"$…"` strings also return null so the caller keeps its own targeted
+ * "plain field name" message for them.
+ */
+function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null {
+  if (arg.type === "StringLiteral") {
+    return arg.value === "" || arg.value.startsWith("$") ? null : arg.value;
+  }
+  if (arg.type === "Lambda" && arg.params.length === 1 && arg.block === undefined && arg.body !== undefined) {
+    return paramFieldPath(arg.body, arg.params[0]);
+  }
+  return null;
+}
+
+/**
+ * The JS array methods that count "from the end" — deliberately NOT on the stream
+ * surface. Value maps each to the equivalent the user should write instead.
+ *
+ * MongoDB has no stage that reverses a stream (`$reverseArray` is an *expression*,
+ * for an array inside a document), and a stream has no ordering except the one a
+ * `$sort` gives it. jsmql used to fake these by rewriting the preceding `$sort`,
+ * which made them position-dependent in a way the JS methods never are and — with
+ * no `$sort` in front — *silently* ordered by `_id` instead of erroring. Reversing
+ * a sort you already wrote is also just a longer spelling of writing it descending.
+ *
+ * They remain available in VALUE position on a real array (`$.items.takeRight(3)`
+ * → `$slice`, `$.items.toReversed()` → `$reverseArray`), where the array carries
+ * its own order and the method means exactly what it means in JS.
+ */
+const FROM_THE_END_METHODS: Record<string, string> = {
+  takeRight: `.toSorted({ <field>: -1 }).take(n)`,
+  dropRight: `.toSorted({ <field>: -1 }).drop(n)`,
+  initial: `.toSorted({ <field>: -1 }).drop(1)`,
+  toReversed: `.toSorted({ <field>: -1 })`,
+};
+
+/** The rejection for a "from the end" method on a stream, or null if `name` isn't one. */
+export function fromTheEndRejection(name: string, receiver: string, pos: number): CodegenError | null {
+  const rewrite = FROM_THE_END_METHODS[name];
+  if (rewrite === undefined) return null;
+  const why =
+    name === "toReversed"
+      ? `it reverses the stream, and a MongoDB stream has no order to reverse`
+      : `it counts from the END of the stream, and a MongoDB stream has no end to count back from`;
+  const arg = name === "takeRight" || name === "dropRight" ? "n" : "";
+  return new CodegenError(
+    `'.${name}(...)' isn't available on a stream — ${why} (there is no stage that reverses one; ` +
+      `'$reverseArray' is an expression, for an array inside a document). Say the order you want and take ` +
+      `from the FRONT instead: '${receiver}${rewrite}'. On a real array value it still works exactly as in ` +
+      `JS — '$.items.${name}(${arg})'.`,
+    pos,
+  );
+}
+
+/**
+ * `$unset` stages for scratch slots a method materialised — but only inside a
+ * `$lookup.pipeline`, where the sub-pipeline's documents land in an array field
+ * that the outer `{ $unset: "__jsmql" }` cannot reach. At the top level and inside
+ * a `$unionWith.pipeline` that trailing sweep already runs over these documents, so
+ * a second `$unset` would be pure noise. Returns undefined when nothing is needed.
+ */
+function tempCleanup(slots: string[], inSubPipeline: boolean | undefined): object[] | undefined {
+  if (!inSubPipeline || slots.length === 0) return undefined;
+  // Unset the NAMESPACE ROOT, not the individual `__jsmql.tmp.<n>` slots: `$unset` of
+  // a dotted path removes only the leaf, leaving the empty parents behind, so every
+  // foreign document came back carrying `__jsmql: { tmp: {} }`. Nothing reads the
+  // namespace after the chain ends, so dropping the whole thing is both correct and
+  // one stage regardless of how many slots were used.
+  return [{ $unset: JSMQL_NS }];
+}
+
+/**
+ * Resolve a key argument to the MQL **expression** it evaluates to, for slots the
+ * server evaluates per-document — i.e. `$group._id`.
+ *
+ * Generalises `fieldKeyArg`: every spelling that one resolves still yields the plain
+ * `"$cat"` path (so a field key emits byte-identically to before), and a *computed*
+ * iteratee now resolves too:
+ *
+ *   `d => d.cat.toLowerCase()`      →  `{ $toLower: "$cat" }`
+ *   `{ cat: "a" }` / `["cat", "a"]` →  `{ $eq: ["$cat", "a"] }`   (lodash `_.matches`)
+ *
+ * The lambda param IS the current document, so `extractLetsFromExpr` rewrites
+ * `d.<path>` to a bare field path and `rejectLocalDocRef` rejects a `$.<field>` read
+ * (which would silently mean the outer document). A `$sort` key can NOT use this —
+ * that slot is a field path, not an expression; see `computedKeyError`.
+ */
+function keyExpr(arg: CallArg, ctx: GenerateCtx, sig: string): unknown {
+  const name = fieldKeyArg(arg);
+  if (name !== null) return `$${name}`;
+  const method = sig.slice(1, sig.indexOf("("));
+  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg as Expr, method, "jsmqlEl");
+  if (lambda === null) throw computedKeyError(sig, "pos" in arg ? arg.pos : 0);
+  const param = lambda.params[0];
+  const { rewritten, letVars } = extractLetsFromExpr(mapBodyExpr(lambda, method), param);
+  rejectLocalDocRef(letVars, param, lambda.pos, ctx.sourceSwitch?.desc, method);
+  return generateWithCtx(rewritten, ctx);
+}
+
+/**
+ * The rejection shared by every key slot handed something that is neither a field
+ * path nor an iteratee — a number, a stray object, a dynamic value. `alsoTakes` names
+ * any extra form the specific method accepts (e.g. `.groupBy`'s `$group` body), so one
+ * message serves them all without under-selling a method.
+ *
+ * Note this is NOT "computed keys are unsupported": a sort key materialises through
+ * `SortKeySink` and a group key lowers straight into `$group._id`. The one slot that
+ * still can't take one is `.flatMap`'s `$unwind` path, which has its own message.
+ */
+function computedKeyError(sig: string, pos: number, alsoTakes = ""): CodegenError {
+  // The example has to name the method being called — a `.keyBy(...)` error that
+  // demonstrates `.countBy("status")` sends the reader to the wrong docs page.
+  const name = sig.slice(1, sig.indexOf("("));
+  return new CodegenError(
+    `${sig} keys on a field, so it takes a field name ('.${name}("status")')${alsoTakes}, the equivalent ` +
+      `bare-path arrow ('.${name}(d => d.status)'), or a computed key iteratee ` +
+      `('.${name}(d => d.status.toLowerCase())').`,
+    pos,
+  );
+}
+
+/**
+ * Validate the argument of a `$group`-keyed method (`.groupBy` / `.countBy` /
+ * `.keyBy` / `.uniqBy`). `$group._id` is an **expression** slot, so beyond a field
+ * key these take any computed iteratee — an arrow with an arbitrary expression body,
+ * or a lodash matches shorthand. `lower` resolves the actual expression via `keyExpr`;
+ * this only rejects shapes that can't be an iteratee at all.
+ */
+function validateKeyArg(sig: string, args: readonly CallArg[], callPos: number, alsoTakes = ""): void {
   if (args.length !== 1) {
     throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
   }
@@ -183,18 +338,32 @@ function validateSingleFieldArg(sig: string, args: readonly CallArg[], callPos: 
   if (arg.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
   }
-  if (arg.type !== "StringLiteral") {
-    throw new CodegenError(
-      `${sig} requires a field-name string literal, e.g. '.countBy("status")'. Computed or dynamic arguments aren't supported on streams.`,
-      arg.pos,
-    );
-  }
-  if (arg.value === "" || arg.value.startsWith("$")) {
+  if (arg.type === "StringLiteral" && (arg.value === "" || arg.value.startsWith("$"))) {
     throw new CodegenError(
       `${sig} requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
       arg.pos,
     );
   }
+  if (fieldKeyArg(arg) !== null) return; // plain field key
+  const name = sig.slice(1, sig.indexOf("("));
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter iteratee '(d) => <key expr>', got ${arg.params.length} parameters.`,
+        arg.pos,
+      );
+    }
+    mapBodyExpr(arg, name); // rejects a multi-statement / binding-bearing block with its own message
+    return;
+  }
+  // A lodash matches shorthand keys on the match BOOLEAN (lodash `_.matches`).
+  if (shorthandToLambda(arg, name, "jsmqlEl") !== null) return;
+  throw new CodegenError(
+    `${sig} takes a field name ('.${name}("status")'), a bare-path arrow ('.${name}(d => d.status)'), ` +
+      `a computed iteratee ('.${name}(d => d.status.toLowerCase())')${alsoTakes}, or a lodash matches shorthand ` +
+      `('{ active: true }' / '["status", "open"]').`,
+    arg.pos,
+  );
 }
 
 // ── .take(n) → $limit ─────────────────────────────────────────────────────────
@@ -242,74 +411,6 @@ const TAIL: StreamMethodDef = {
   },
 };
 
-// ── .takeRight(n) / .dropRight(n) / .initial() → the reverse-sort trick ────────
-//
-// "From the end" of a stream needs an ordering. If the immediately-preceding
-// stage is a directional `$sort` S, reverse it (S'), apply `$limit`/`$skip`, then
-// restore S — so `takeRight(n)` is the last n IN S ORDER. With no preceding sort,
-// order by `_id` (`$sort:{_id:-1}` … `$sort:{_id:1}`) — the n largest-`_id`
-// documents, roughly insertion order.
-function reverseSortTrick(
-  prevStages: readonly object[],
-  op: "$limit" | "$skip",
-  n: number,
-  method: string,
-  callPos: number,
-): StreamMethodResult {
-  const last = prevStages[prevStages.length - 1] as Record<string, unknown> | undefined;
-  const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
-  if (sortSpec !== undefined) {
-    const flipped: Record<string, 1 | -1> = {};
-    for (const key of Object.keys(sortSpec)) {
-      const dir = sortSpec[key];
-      if (dir !== 1 && dir !== -1) {
-        throw new CodegenError(
-          `.${method}() counts 'from the end' by reversing the preceding sort, but that $sort on '${key}' isn't a directional 1/-1 sort. Precede '.${method}()' with a '.sort(...)' on 1/-1 fields (or remove the non-directional sort).`,
-          callPos,
-        );
-      }
-      flipped[key] = dir === 1 ? -1 : 1;
-    }
-    // Reverse the prior sort, apply the op, then restore the original order.
-    return { stages: [{ $sort: flipped }, { [op]: n }, { $sort: sortSpec }], replacesPreviousStage: true };
-  }
-  return { stages: [{ $sort: { _id: -1 } }, { [op]: n }, { $sort: { _id: 1 } }] };
-}
-
-const TAKE_RIGHT: StreamMethodDef = {
-  name: "takeRight",
-  validate(args, callPos) {
-    validateSingleIntArg(".takeRight(n)", args, callPos, 0);
-  },
-  lower(args, _ctx, callPos, _lb, prevStages) {
-    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
-    if (n === 0) return { stages: [{ $match: { $expr: false } }] }; // last 0 → empty
-    return reverseSortTrick(prevStages, "$limit", n, "takeRight", callPos);
-  },
-};
-
-const DROP_RIGHT: StreamMethodDef = {
-  name: "dropRight",
-  validate(args, callPos) {
-    validateSingleIntArg(".dropRight(n)", args, callPos, 0);
-  },
-  lower(args, _ctx, callPos, _lb, prevStages) {
-    const n = (args[0] as Extract<Expr, { type: "NumberLiteral" }>).value;
-    if (n === 0) return { stages: [] }; // drop last 0 → identity
-    return reverseSortTrick(prevStages, "$skip", n, "dropRight", callPos);
-  },
-};
-
-const INITIAL: StreamMethodDef = {
-  name: "initial",
-  validate(args, callPos) {
-    if (args.length !== 0) throw new CodegenError(`.initial() takes no arguments, got ${args.length}.`, callPos);
-  },
-  lower(_args, _ctx, callPos, _lb, prevStages) {
-    return reverseSortTrick(prevStages, "$skip", 1, "initial", callPos); // dropRight(1)
-  },
-};
-
 // ── .shuffle() → $rand sort ───────────────────────────────────────────────────
 //
 // Random order: stamp each doc with a `$rand` key, sort by it, drop the key.
@@ -320,9 +421,14 @@ const SHUFFLE: StreamMethodDef = {
   validate(args, callPos) {
     if (args.length !== 0) throw new CodegenError(`.shuffle() takes no arguments, got ${args.length}.`, callPos);
   },
-  lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot) {
+  lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
     const slot = allocSlot();
-    return { stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }, { $unset: slot }] };
+    // The `$unset` is held back to the end of the chain, so the `$sort` stays the
+    // last stage and a following `.takeRight`/`.toReversed` can still see it.
+    return {
+      stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }],
+      cleanupStages: tempCleanup([slot], inSubPipeline),
+    };
   },
 };
 
@@ -421,21 +527,24 @@ const CONCAT: StreamMethodDef = {
 // statement-block arrow form (`d => { stmt; …; return X }`) is parsed as a
 // pipeline block (`lambda.block` + `lambda.ret`) and handled by MAP.lower's
 // dedicated block path — it never reaches here (callers guard on `lambda.block`).
-function mapBodyExpr(lambda: LambdaNode): Expr {
+// `method` names the caller, because the `$group`-keyed methods reuse this for their
+// computed-key iteratee — an error on `.countBy(d => { … })` that talks about `.map`
+// sends the reader to the wrong docs page (same rule as `computedKeyError`).
+function mapBodyExpr(lambda: LambdaNode, method = "map"): Expr {
   if (lambda.body !== undefined) return lambda.body;
   const eb = lambda.exprBlock;
   if (eb !== undefined) {
     if (eb.decls.length > 0) {
       throw new CodegenError(
-        `.map(d => { … }) with 'let'/'const' bindings isn't supported — use a single 'return <expr>' (e.g. '.map(d => ({ … }))'), ` +
-          `or hoist the bindings to a top-level 'let' before the chain.`,
+        `.${method}(d => { … }) with 'let'/'const' bindings isn't supported — use a single 'return <expr>' ` +
+          `(e.g. '.${method}(d => d.field)'), or hoist the bindings to a top-level 'let' before the chain.`,
         lambda.pos,
       );
     }
     return eb.ret;
   }
   throw new CodegenError(
-    `.map(d => <expr>) requires an expression or single-'return' body — a multi-statement block isn't supported here; split into separate stages ($set, $project, …) instead.`,
+    `.${method}(d => <expr>) requires an expression or single-'return' body — a multi-statement block isn't supported here; split into separate stages ($set, $project, …) instead.`,
     lambda.pos,
   );
 }
@@ -506,6 +615,7 @@ function rejectLocalDocRef(
   param: string,
   pos: number,
   sourceSwitchDesc?: string,
+  method = "map",
 ): void {
   if (Object.keys(letVars).length === 0) return;
   const samplePath = Object.values(letVars)[0].replace(/^\$+/, "");
@@ -520,7 +630,7 @@ function rejectLocalDocRef(
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this map, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos,
   );
 }
@@ -571,20 +681,16 @@ const MAP: StreamMethodDef = {
     if (arg.type === "SpreadElement") {
       throw new CodegenError(`.map(...) does not accept a spread argument — pass a '(d) => <expr>' arrow.`, arg.pos);
     }
-    // lodash property shorthand: `.map("userId")` ≡ `.map(d => d.userId)` — projects
-    // each document down to that field's value ($replaceWith: "$userId").
-    if (arg.type === "StringLiteral") {
-      if (arg.value === "" || arg.value.startsWith("$")) {
-        throw new CodegenError(
-          `.map("field") requires a plain field name (no leading '$'), got ${JSON.stringify(arg.value)}.`,
-          arg.pos,
-        );
-      }
-      return;
-    }
+    // Any lodash iteratee shorthand: `.map("userId")` ≡ `.map(d => d.userId)` (pluck),
+    // `.map({ a: 1 })` / `.map(["a", 1])` ≡ a `_.matches` boolean per element. Each
+    // desugars to its arrow and lowers as a value-mode `$map` over the result array
+    // (see `peelableTerminalMap`), matching what value position already accepts —
+    // `shorthandToLambda` throws the per-form message for a malformed one.
     if (arg.type !== "Lambda") {
+      if (shorthandToLambda(arg, "map", "jsmqlEl") !== null) return;
       throw new CodegenError(
-        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))') or a field-name string ('.map("userId")').`,
+        `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))'), a field-name string ` +
+          `('.map("userId")'), a matches-object ('{ active: true }'), or a ["field", value] pair.`,
         arg.pos,
       );
     }
@@ -910,7 +1016,7 @@ const SORT: StreamMethodDef = {
 // ── .sortBy(field | [fields]) / .orderBy(keys, orders) → $sort ─────────────────
 // The lodash sort names, value-mode siblings re-added for streams. `.sortBy` is
 // ascending by one or more keys; `.orderBy` takes parallel keys + directions.
-function buildSortByStreamSpec(args: readonly CallArg[], callPos: number): Record<string, 1 | -1> {
+function buildSortByStreamSpec(args: readonly CallArg[], callPos: number, sink?: SortKeySink): Record<string, 1 | -1> {
   if (args.length !== 1) {
     throw new CodegenError(`.sortBy(<field> | [fields]) takes exactly one argument, got ${args.length}.`, callPos);
   }
@@ -921,7 +1027,7 @@ function buildSortByStreamSpec(args: readonly CallArg[], callPos: number): Recor
       arg.pos,
     );
   }
-  return buildKeySortSpec(arg as Expr, ".sortBy(...)"); // field / [fields] → ascending
+  return buildKeySortSpec(arg as Expr, ".sortBy(...)", sink); // field / [fields] → ascending
 }
 
 // A single `.orderBy` direction slot: 1 / -1 / "asc" / "desc".
@@ -936,7 +1042,7 @@ function orderByStreamDir(e: Expr | SpreadElement): 1 | -1 {
   return dir;
 }
 
-function buildOrderByStreamSpec(args: readonly CallArg[], callPos: number): Record<string, 1 | -1> {
+function buildOrderByStreamSpec(args: readonly CallArg[], callPos: number, sink?: SortKeySink): Record<string, 1 | -1> {
   if (args.length < 1 || args.length > 2) {
     throw new CodegenError(
       `.orderBy(keys[, orders] | { field: dir }) takes one or two arguments, got ${args.length}.`,
@@ -955,12 +1061,12 @@ function buildOrderByStreamSpec(args: readonly CallArg[], callPos: number): Reco
         ordersArg.pos,
       );
     }
-    return buildKeySortSpec(keysArg, ".orderBy({ … })");
+    return buildKeySortSpec(keysArg, ".orderBy({ … })", sink);
   }
   const names =
     keysArg.type === "ArrayLiteral"
-      ? keysArg.elements.map((el) => fieldNameLiteral(el as Expr | SpreadElement, ".orderBy(keys)"))
-      : [fieldNameLiteral(keysArg, ".orderBy(keys)")];
+      ? keysArg.elements.map((el) => fieldNameLiteral(el as Expr | SpreadElement, ".orderBy(keys)", "", sink))
+      : [fieldNameLiteral(keysArg, ".orderBy(keys)", "", sink)];
   const dirs =
     ordersArg === undefined
       ? []
@@ -977,20 +1083,24 @@ function buildOrderByStreamSpec(args: readonly CallArg[], callPos: number): Reco
 const SORT_BY: StreamMethodDef = {
   name: "sortBy",
   validate(args, callPos) {
-    buildSortByStreamSpec(args, callPos);
+    buildSortByStreamSpec(args, callPos, validatingSortKeys());
   },
-  lower(args, _ctx, callPos) {
-    return { stages: [{ $sort: buildSortByStreamSpec(args, callPos) }] };
+  lower(args, ctx, callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
+    const { sink, computed } = materialisingSortKeys(ctx, allocSlot);
+    const spec = buildSortByStreamSpec(args, callPos, sink);
+    return sortStages(spec, computed, inSubPipeline);
   },
 };
 
 const ORDER_BY: StreamMethodDef = {
   name: "orderBy",
   validate(args, callPos) {
-    buildOrderByStreamSpec(args, callPos);
+    buildOrderByStreamSpec(args, callPos, validatingSortKeys());
   },
-  lower(args, _ctx, callPos) {
-    return { stages: [{ $sort: buildOrderByStreamSpec(args, callPos) }] };
+  lower(args, ctx, callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
+    const { sink, computed } = materialisingSortKeys(ctx, allocSlot);
+    const spec = buildOrderByStreamSpec(args, callPos, sink);
+    return sortStages(spec, computed, inSubPipeline);
   },
 };
 
@@ -1053,64 +1163,92 @@ const OMIT: StreamMethodDef = {
   },
 };
 
-// ── .toReversed() → flips the preceding $sort spec ────────────────────────────
-//
-// Zero-arg. Only valid when the immediately preceding stage is a `$sort` —
-// MongoDB streams of documents have no natural ordering, so reversing requires
-// a sort key. In the `$$ = $$.<chain>` form that preceding `$sort` comes from a
-// `.toSorted(...)` earlier in the same chain; in the bare-statement form
-// (`$$.toReversed();`) it can also come from a prior statement or a literal
-// `$sort(...)` stage, since the chain is lowered against the live pipeline.
-// Lowering doesn't emit a new $sort stage: it rewrites the preceding one with
-// all directions flipped (1 → -1, -1 → 1), so the total stage count stays equal
-// to a hand-written descending `.toSorted`.
-const TO_REVERSED: StreamMethodDef = {
-  name: "toReversed",
-  validate(args, callPos) {
-    if (args.length !== 0) {
-      throw new CodegenError(`.toReversed() takes no arguments, got ${args.length}.`, callPos);
-    }
-  },
-  lower(_args, _ctx, callPos, _lowerBlock, prevStages) {
-    const last = prevStages[prevStages.length - 1] as Record<string, unknown> | undefined;
-    const sortSpec = last !== undefined ? (last["$sort"] as Record<string, unknown> | undefined) : undefined;
-    if (sortSpec === undefined) {
-      throw new CodegenError(
-        `.toReversed() needs a preceding $sort (from a '.toSorted(...)' call or a '$sort' stage) to invert — MongoDB streams have no natural document ordering. Either swap to '.toSorted((a, b) => b.<field> - a.<field>)' for descending directly, or place '.toReversed()' after a sort.`,
-        callPos,
-      );
-    }
-    const flipped: Record<string, 1 | -1> = {};
-    for (const key of Object.keys(sortSpec)) {
-      const dir = sortSpec[key];
-      if (dir !== 1 && dir !== -1) {
-        throw new CodegenError(
-          `.toReversed() can only invert a '$sort' with numeric 1/-1 directions (preceding stage has '${key}: ${String(dir)}'). Inverting non-direction sort specs (text-meta, custom expressions) isn't supported.`,
-          callPos,
-        );
-      }
-      flipped[key] = dir === 1 ? -1 : 1;
-    }
-    return { stages: [{ $sort: flipped }], replacesPreviousStage: true };
-  },
-};
-
 // Key-form sort helpers, shared by `.sort` / `.toSorted` above and by the `$group`
 // key form. A plain field-name literal (no leading `$`):
-function fieldNameLiteral(e: Expr | SpreadElement, sig: string): string {
+/**
+ * Turns a *computed* sort key into the field path `$sort` will read. `$sort` needs a
+ * literal path, so the expression has to be materialised into a scratch field first;
+ * the sink allocates that slot and records the expression for the caller's
+ * `$addFields` prologue. Absent (`undefined`) means "this slot takes only a field
+ * path" and a computed key is rejected outright.
+ */
+type SortKeySink = (e: LambdaNode, sig: string) => string;
+
+function fieldNameLiteral(e: Expr | SpreadElement, sig: string, alsoTakes = "", sink?: SortKeySink): string {
   if (e.type === "SpreadElement") {
     throw new CodegenError(`${sig} does not accept spread elements.`, e.pos);
   }
-  if (e.type !== "StringLiteral") {
-    throw new CodegenError(`${sig} requires field-name string literals; got '${e.type}'.`, e.pos);
-  }
-  if (e.value === "" || e.value.startsWith("$")) {
+  if (e.type === "StringLiteral" && (e.value === "" || e.value.startsWith("$"))) {
     throw new CodegenError(
       `${sig} requires plain field names (no leading '$'), got ${JSON.stringify(e.value)}.`,
       e.pos,
     );
   }
-  return e.value;
+  // `"cat"` and `d => d.cat` name the same path — accept both here so the spelling
+  // is free wherever a sort/group key is taken (`fieldKeyArg`).
+  const name = fieldKeyArg(e);
+  if (name !== null) return name;
+  // Only an ARROW may be a computed key. An object stays claimed by the richer
+  // surface it already means here (`.orderBy({ field: dir })` directions), and
+  // `.sortBy({ … })` keeps its own message pointing at those.
+  if (sink !== undefined && e.type === "Lambda") return sink(e, sig);
+  throw computedKeyError(sig, e.pos, alsoTakes);
+}
+
+/**
+ * The `lower`-time sink: allocate a `__jsmql.tmp` slot per computed key and record
+ * its expression. `computed` becomes one `$addFields` ahead of the `$sort`.
+ */
+function materialisingSortKeys(
+  ctx: GenerateCtx,
+  allocSlot: SlotAllocator,
+): { sink: SortKeySink; computed: Record<string, unknown> } {
+  const computed: Record<string, unknown> = {};
+  return {
+    computed,
+    sink: (e, sig) => {
+      const slot = allocSlot();
+      computed[slot] = keyExpr(e, ctx, sig);
+      return slot;
+    },
+  };
+}
+
+/**
+ * The `validate`-time sink. `validate` runs without a ctx or a slot allocator, so it
+ * can't resolve the expression — it re-runs the same shape checks `keyExpr` would and
+ * hands back a distinct placeholder per key (distinct so a multi-key spec object
+ * doesn't collapse to one entry and hide a later key's error).
+ */
+/**
+ * Assemble the stages for a key-form sort. With no computed key this is the single
+ * `$sort` it always was; otherwise one `$addFields` materialises every computed key
+ * ahead of it, and the scratch slots are cleared at the END of the chain (never
+ * between the `$sort` and the next method — see `StreamMethodResult.cleanupStages`).
+ */
+function sortStages(
+  spec: Record<string, 1 | -1>,
+  computed: Record<string, unknown>,
+  inSubPipeline: boolean | undefined,
+): StreamMethodResult {
+  const slots = Object.keys(computed);
+  if (slots.length === 0) return { stages: [{ $sort: spec }] };
+  return { stages: [{ $addFields: computed }, { $sort: spec }], cleanupStages: tempCleanup(slots, inSubPipeline) };
+}
+
+function validatingSortKeys(): SortKeySink {
+  let n = 0;
+  return (e, sig) => {
+    const method = sig.slice(1, sig.indexOf("("));
+    if (e.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter key iteratee '(d) => <key expr>', got ${e.params.length} parameters.`,
+        e.pos,
+      );
+    }
+    mapBodyExpr(e, method); // rejects a multi-statement / binding-bearing block
+    return `__jsmqlSortKeyProbe${n++}`;
+  };
 }
 
 // 1 (ascending) or -1 (descending), from a `1` / `-1` number or an `"asc"` /
@@ -1125,16 +1263,17 @@ function sortDirection(e: Expr): 1 | -1 | null {
 
 // A field name ("age"), an array of field names (all ascending), or a
 // `{ field: 1 | -1 | "asc" | "desc" }` spec → a `$sort` document.
-function buildKeySortSpec(arg: Expr, sig: string): Record<string, 1 | -1> {
-  if (arg.type === "StringLiteral") {
-    return { [fieldNameLiteral(arg, sig)]: 1 };
+function buildKeySortSpec(arg: Expr, sig: string, sink?: SortKeySink): Record<string, 1 | -1> {
+  // `"age"` and the bare-path arrow `d => d.age` are the same ascending key.
+  if (arg.type === "StringLiteral" || arg.type === "Lambda") {
+    return { [fieldNameLiteral(arg, sig, "", sink)]: 1 };
   }
   if (arg.type === "ArrayLiteral") {
     if (arg.elements.length === 0) {
       throw new CodegenError(`${sig} needs at least one field name.`, arg.pos);
     }
     const spec: Record<string, 1 | -1> = {};
-    for (const el of arg.elements) spec[fieldNameLiteral(el as Expr | SpreadElement, sig)] = 1;
+    for (const el of arg.elements) spec[fieldNameLiteral(el as Expr | SpreadElement, sig, "", sink)] = 1;
     return spec;
   }
   if (arg.type !== "ObjectLiteral") {
@@ -1231,17 +1370,18 @@ const GROUP_BY: StreamMethodDef = {
     if (a.type === "SpreadElement") {
       throw new CodegenError(`.groupBy(...) does not accept a spread argument.`, a.pos);
     }
-    if (a.type !== "StringLiteral" && a.type !== "ObjectLiteral") {
-      throw new CodegenError(
-        `.groupBy(...) takes a field name ("dept") or a '$group' body ({ _id: "$dept", n: $sum(1) }).`,
-        a.pos,
-      );
-    }
-    if (a.type === "StringLiteral") fieldNameLiteral(a, ".groupBy(key)");
+    // An ObjectLiteral is the `$group`-body form (jsmql's own surface, carrying
+    // accumulators), NOT a lodash matches-shorthand — so it is checked by
+    // `generateGroupBody`, not as a key. `.groupBy` is the one keyed method where
+    // the matcher spelling is unavailable, because that spelling is already taken.
+    // Every other argument is a key, computed or not (`$group._id` is an expression).
+    if (a.type === "ObjectLiteral") return;
+    validateKeyArg(".groupBy(key)", args, callPos, ` or a '$group' body ('{ _id: "$dept", n: $sum(1) }')`);
   },
   lower(args, ctx, callPos) {
     const a = args[0] as Expr;
-    if (a.type === "StringLiteral") {
+    if (a.type !== "ObjectLiteral") {
+      const key = keyExpr(a, ctx, ".groupBy(key)");
       // Bare-key form is lodash `_.groupBy(coll, key)` → the OBJECT
       // `{ <keyValue>: [elements] }`. Collapse the stream to that single object
       // (mirroring value-mode `$.arr.groupBy(...)`): `$push: "$$ROOT"` gathers each
@@ -1251,7 +1391,7 @@ const GROUP_BY: StreamMethodDef = {
       // it carries accumulators with no lodash analogue.
       return {
         stages: [
-          { $group: { _id: `$${a.value}`, [GROUP_TMP]: { $push: "$$ROOT" } } },
+          { $group: { _id: key, [GROUP_TMP]: { $push: "$$ROOT" } } },
           { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
           { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
         ],
@@ -1276,13 +1416,13 @@ const GROUP_BY: StreamMethodDef = {
 const COUNT_BY: StreamMethodDef = {
   name: "countBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".countBy(field)", args, callPos);
+    validateKeyArg(".countBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".countBy(key)");
     return {
       stages: [
-        { $group: { _id: `$${key}`, [GROUP_TMP]: { $sum: 1 } } },
+        { $group: { _id: key, [GROUP_TMP]: { $sum: 1 } } },
         { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
         { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
       ],
@@ -1302,13 +1442,13 @@ const COUNT_BY: StreamMethodDef = {
 const KEY_BY: StreamMethodDef = {
   name: "keyBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".keyBy(field)", args, callPos);
+    validateKeyArg(".keyBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".keyBy(key)");
     return {
       stages: [
-        { $group: { _id: `$${key}`, [GROUP_TMP]: { $last: "$$ROOT" } } },
+        { $group: { _id: key, [GROUP_TMP]: { $last: "$$ROOT" } } },
         { $group: { _id: null, [GROUP_TMP]: { $push: { k: stringKeyExpr("$_id"), v: `$${GROUP_TMP}` } } } },
         { $replaceWith: { $arrayToObject: `$${GROUP_TMP}` } },
       ],
@@ -1326,12 +1466,12 @@ const KEY_BY: StreamMethodDef = {
 const UNIQ_BY: StreamMethodDef = {
   name: "uniqBy",
   validate(args, callPos) {
-    validateSingleFieldArg(".uniqBy(field)", args, callPos);
+    validateKeyArg(".uniqBy(key)", args, callPos);
   },
-  lower(args) {
-    const key = (args[0] as Extract<Expr, { type: "StringLiteral" }>).value;
+  lower(args, ctx) {
+    const key = keyExpr(args[0], ctx, ".uniqBy(key)");
     return {
-      stages: [{ $group: { _id: `$${key}`, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
+      stages: [{ $group: { _id: key, [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
       clearLets: true,
     };
   },
@@ -1339,7 +1479,7 @@ const UNIQ_BY: StreamMethodDef = {
 
 // ── .flatMap(d => d.<path>) → $unwind ─────────────────────────────────────────
 //
-// v1 only supports bare-field-path bodies. The lambda body must walk back
+// Only bare-field-path bodies are supported. The lambda body must walk back
 // to the param ref through `.member` / `["literal"]` access; the lowered
 // stage is a single `$unwind: "$<path>"` that splits each input doc into
 // one-per-element, with surrounding fields preserved (MQL-natural — differs
@@ -1398,7 +1538,12 @@ const FLAT_MAP: StreamMethodDef = {
     }
     if (arg.type !== "Lambda") {
       throw new CodegenError(
-        `.flatMap(...) requires an arrow whose body is a bare field-path on the param (e.g. '.flatMap(d => d.items)') or a field-name string ('.flatMap("items")').`,
+        `.flatMap(...) names the array field to flatten, so it takes a bare-path arrow ` +
+          `('.flatMap(d => d.items)') or the equivalent field-name string ('.flatMap("items")'). On a stream it ` +
+          `lowers to '$unwind', which needs a field path — a computed arrow, a matches-object, or a ` +
+          `["field", value] pair doesn't name one. Materialise the array into a field first, then flatten it ` +
+          `by name: '$.items = <expr>; $$ = $$.flatMap("items");' — or, inside a foreign chain, ` +
+          `'.map(d => ({ items: <expr>, … })).flatMap("items")'.`,
         arg.pos,
       );
     }
@@ -1423,7 +1568,7 @@ const FLAT_MAP: StreamMethodDef = {
     const path = paramFieldPath(body, param);
     if (path === null) {
       throw new CodegenError(
-        `.flatMap(d => …) v1 only supports a bare field-path body on the lambda param (e.g. '.flatMap(d => d.items)'). Complex bodies (e.g. '.flatMap(d => d.items.map(...))') aren't supported yet — hoist the transformation to a separate stage above the chain.`,
+        `.flatMap(d => …) needs a field path — it lowers to '$unwind', which returns each element to a NAMED field, so a computed body (e.g. '.flatMap(d => d.items.map(...))') has nothing to unwind into. Build the array into a field first, then flatten it by name: '$.items = <expr>; $$ = $$.flatMap("items");'.`,
         body.pos ?? callPos,
       );
     }
@@ -2139,9 +2284,6 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
-  takeRight: TAKE_RIGHT,
-  dropRight: DROP_RIGHT,
-  initial: INITIAL,
   shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
@@ -2151,7 +2293,6 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   toSorted: TO_SORTED,
   sortBy: SORT_BY,
   orderBy: ORDER_BY,
-  toReversed: TO_REVERSED,
   groupBy: GROUP_BY,
   countBy: COUNT_BY,
   keyBy: KEY_BY,

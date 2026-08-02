@@ -58,7 +58,7 @@ src/stream-methods.ts::future work — needs object-returning reducer patterns
 # -----------------------------------------------------------------------------
 # Spec-section headers (categorical — their child bullets carry the tags)
 # -----------------------------------------------------------------------------
-docs/specs/stream-methods.md::## Out of scope (v1)
+docs/specs/stream-methods.md::## Out of scope
 docs/specs/union-stage.md::Out of scope for v1
 docs/specs/context-references.md::## Future work
 docs/specs/aggregation-stages.md::## Out of scope (future work)

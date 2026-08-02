@@ -82,6 +82,7 @@ import {
   lowerLambdaPredicate,
   isValueCollapsingMap,
   peelForeignChain,
+  pipelineLookupBody,
   type LookupCall,
   type LookupTarget,
   type SlotAllocator,
@@ -102,6 +103,7 @@ import {
   detectArrayReducerWrap,
   detectDictBuildWrap,
   detectReduceWrap,
+  fromTheEndRejection,
   lookupStreamMethod,
   lowerDictBuildWrap,
   lowerReduceWrap,
@@ -815,7 +817,7 @@ function lowerReplaceRoot(
     if (pred.kind === "basic") {
       stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } });
     } else {
-      stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } });
+      stages.push({ $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, slot) });
     }
     stages.push({ $replaceWith: { $first: `$${slot}` } });
     return stages;
@@ -1116,6 +1118,8 @@ function applyStreamMethods(
   // Registry methods have always reported `$unionWith` as the clearing stage;
   // a stage link knows its real name and reports that instead.
   let clearedBy = "$unionWith";
+  // Temp-field cleanup runs once after the whole chain — see StreamMethodResult.
+  const cleanup: object[] = [];
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
     // `.$match(<body>)` — a chained pipeline stage on the current stream. Same
@@ -1159,8 +1163,10 @@ function applyStreamMethods(
     const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     if (result.replacesPreviousStage) target.pop();
     target.push(...result.stages);
+    if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
   }
+  target.push(...cleanup);
   return { clearLets, clearedBy };
 }
 
@@ -1441,7 +1447,7 @@ function lowerLookupPivot(
     if (pred.kind === "basic") {
       lookupStage = { $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as: slot } };
     } else {
-      lookupStage = { $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as: slot } };
+      lookupStage = { $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, slot) };
     }
   } else {
     // General pipeline form: peel EVERY method (arbitrary stream head + `.filter`/
@@ -1472,12 +1478,14 @@ function lowerLookupPivot(
       pipelineBody,
       letVars,
     );
-    lookupStage = { $lookup: { from, let: letVars, pipeline: pipelineBody, as: slot } };
+    lookupStage = { $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) };
   }
   return { stages: [lookupStage, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }
 
 function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError {
+  const fromTheEnd = fromTheEndRejection(m.method, receiver, m.pos);
+  if (fromTheEnd !== null) return fromTheEnd;
   // Methods that return a single element in JS — deliberately rejected because
   // pipelines are arrays. The error names the explicit alternative so the user
   // doesn't have to dig for it.
@@ -1508,12 +1516,12 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       m.pos,
     );
   }
-  // Stream `.takeWhile` / `.dropWhile` are not yet supported [DEF-034]: they need a
+  // Stream `.takeWhile` / `.dropWhile` are not yet supported [DEF-035]: they need a
   // running "still taking" flag across documents ($setWindowFields) plus a defined
   // order. The value-mode forms (on an array) already ship.
   if (m.method === "takeWhile" || m.method === "dropWhile") {
     return new CodegenError(
-      `'.${m.method}(...)' as a stream method is not yet supported [DEF-034] — it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
+      `'.${m.method}(...)' as a stream method is not yet supported [DEF-035] — it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
       m.pos,
     );
   }

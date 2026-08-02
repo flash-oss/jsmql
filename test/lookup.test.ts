@@ -469,7 +469,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "a",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -493,7 +492,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "a",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -589,7 +587,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
         {
           $lookup: {
             from: "a",
-            let: {},
             pipeline: [
               { $match: { $expr: "$active" } },
               {
@@ -615,7 +612,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "a",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -641,7 +637,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       {
         $lookup: {
           from: "users",
-          let: {},
           pipeline: [
             {
               $lookup: {
@@ -715,7 +710,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // non-document root). Instead the sub-pipeline is just the `.filter`'s `$match`,
     // and the map runs as a value-mode `$map` over the result array in the `$set`.
     expect(jsmql("$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));")).toEqual([
-      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
       { $set: { stats: { $map: { input: "$__jsmql.tmp.1", as: "u", in: { id: "$$u._id", name: "$$u.name" } } } } },
       { $unset: "__jsmql" },
     ]);
@@ -822,7 +817,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "users",
-          let: {},
           pipeline: [{ $match: { $expr: "$active" } }, { $sort: { score: -1 } }, { $limit: 5 }],
           as: "__jsmql.tmp.1",
         },
@@ -832,10 +826,12 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
-  it(".toReversed() after .toSorted() flips the preceding $sort spec inside the body", () => {
+  it("a descending sub-pipeline sort is written directly (no reverse-the-previous-sort form)", () => {
+    // `.toReversed()` was removed from streams — the descending comparator is the
+    // spelling, and it always produced the same single `$sort` anyway.
     expect(
       jsmql(
-        "$.recent = $$$.events.filter(e => e.userId === $._id).toSorted((a, b) => a.createdAt - b.createdAt).toReversed().slice(0, 10);",
+        "$.recent = $$$.events.filter(e => e.userId === $._id).toSorted((a, b) => b.createdAt - a.createdAt).slice(0, 10);",
       ),
     ).toEqual([
       {
@@ -875,7 +871,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // that fire BEFORE the chain-extension check in extractLookupCalls; they
     // continue to lower the same way they did before this commit.
     expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
-      { $lookup: { from: "users", let: {}, pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
       { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
       { $set: { count: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
@@ -951,7 +947,6 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
       {
         $lookup: {
           from: "orders",
-          let: {},
           pipeline: [{ $match: { qty: { $gt: 1 } } }, { $match: { status: "paid" } }],
           as: "__jsmql.tmp.1",
         },
@@ -1007,12 +1002,77 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
 describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial review)", () => {
   // Each of these emitted invalid or wrong MQL before the generic-head change fixed them;
   // verified against a live mongod. See docs/DEVLOG.md.
-  it("a lone shorthand .filter({obj}) head is accepted (consistent with the chained form)", () => {
+  it("a lone shorthand .filter({obj}) head lowers exactly like the equivalent arrow", () => {
+    // The shorthand is desugared to its arrow at DETECTION (`filterArgToLambda` in
+    // detectLookupCall), so it takes the same direct-lookup path — including the
+    // `as: "x"` write straight to the destination field (no tmp slot, no trailing
+    // `$set`/`$unset`) that the arrow form has always had.
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
-      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "__jsmql.tmp.1" } },
-      { $set: { x: "$__jsmql.tmp.1" } },
-      { $unset: "__jsmql" },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "x" } },
     ]);
+    expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual(jsmql("$.x = $$$.orders.filter(o => o.uid === 1);"));
+  });
+
+  // Spelling must never change the emitted MQL. Before the detection-time
+  // normalisation, a shorthand predicate skipped `detectLookupCall` entirely and
+  // fell through to the chain assembler, which ALWAYS builds the correlated
+  // pipeline form — so `.filter({ userId: $._id })` silently lost the indexed
+  // `localField`/`foreignField` `$lookup` its arrow twin got, and `.length` on it
+  // lost the `$size` materialisation for an `$isArray`-guarded `$strLenCP`
+  // fallback. Same meaning, strictly worse plan. Verified against a live mongod.
+  const SPELLINGS: ReadonlyArray<readonly [string, string]> = [
+    ["matches-object", `{ userId: $._id }`],
+    ["matchesProperty", `["userId", $._id]`],
+  ];
+  for (const [label, shorthand] of SPELLINGS) {
+    it(`a ${label} predicate lowers identically to its arrow — indexed basic form, $size .length`, () => {
+      const arrow = (pred: string) => `let n = $$$.orders.filter(${pred}).length; $project({ n });`;
+      expect(jsmql(arrow(shorthand))).toEqual([
+        { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+        { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
+        { $set: { "__jsmql.var.n": "$__jsmql.tmp.1" } },
+        { $project: { n: "$__jsmql.var.n" } },
+        { $unset: "__jsmql" },
+      ]);
+      expect(jsmql(arrow(shorthand))).toEqual(jsmql(arrow("o => o.userId === $._id")));
+    });
+
+    it(`a ${label} predicate hits the same Filter-mode gate as its arrow`, () => {
+      // Detection drives the mode gate too: an undetected shorthand used to fall
+      // through to the generic "bare '$$$' reference" error instead of the
+      // actionable "requires Pipeline mode" one.
+      expect(() => jsmql(`$$$.orders.filter(${shorthand}).length > 0`)).toThrow(/requires Pipeline mode/);
+    });
+  }
+
+  it("an uncorrelated $lookup omits `let` entirely, whatever assembled it", () => {
+    // `let` is optional to the server, so an empty `let: {}` is pure noise. The
+    // rule used to be re-decided per emission site (lean only for `.aggregate`,
+    // and only for a non-`.filter`-headed chain), which made these four disagree
+    // for no semantic reason. `pipelineLookupBody` is now the single decider.
+    // Verified against a live mongod.
+    const lookupOf = (src: string) => ((jsmql(src) as object[])[0] as { $lookup: Record<string, unknown> }).$lookup;
+    for (const src of [
+      "$.x = $$$.orders.filter(o => o.uid === 1);", // direct lookup, filter head
+      "$.x = $$$.orders.filter({ uid: 1 });", // …and its shorthand twin
+      "$.x = $$$.orders.filter(o => o.uid === 1).take(2);", // chained, filter head
+      "$.x = $$$.orders.take(2);", // chained, stream-method head
+      "$.x = $$$.orders.aggregate(o => { $limit(2); });", // .aggregate
+    ]) {
+      expect(Object.keys(lookupOf(src)), src).not.toContain("let");
+    }
+    // A predicate that DOES correlate still gets its `let` — the shape follows the
+    // predicate, never the code path.
+    expect(lookupOf("$.x = $$$.orders.filter(o => o.uid === $._id && o.qty > 0);").let).toEqual({
+      jsmql_f0__id: "$_id",
+    });
+  });
+
+  it("a malformed shorthand still reports its own targeted error, not a lookup-shape one", () => {
+    // `filterArgToLambda` returns null rather than throwing, so `validateLookupShape`
+    // (which runs the throwing `shorthandToLambda`) stays the owner of the message.
+    expect(() => jsmql("$.x = $$$.orders.filter({});")).toThrow(/needs at least one field to match/);
+    expect(() => jsmql("$.x = $$$.orders.filter([1, 2]);")).toThrow(/matchesProperty shorthand/);
   });
 
   it(".slice(a, a) (empty window) emits $match:{$expr:false}, never the server-rejected $limit:0", () => {
@@ -1371,7 +1431,9 @@ describe("chained stage calls on $$$.<coll>", () => {
       { $set: { t: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
-    expect(stageLink).toEqual(jsmql("$.t = $$$.orders.filter({ userId: $._id });"));
+    // NOT compared against `.filter({ userId: $._id })`: a lone single-equality
+    // correlation now takes the leaner `localField`/`foreignField` basic form
+    // there, which the `$match` path doesn't reach yet.
   });
 
   // Uncorrelated terms stay in index-friendly query form; only the correlated
@@ -1390,7 +1452,12 @@ describe("chained stage calls on $$$.<coll>", () => {
       { $set: { t: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },
     ]);
-    expect(stageLink).toEqual(jsmql('$.t = $$$.orders.filter({ userId: $._id, status: "shipped" });'));
+    // Identical to `.filter({ … })` in the part the stage link owns — the
+    // sub-pipeline. (The two differ only in where the result lands: a `.filter`
+    // head writes `as:` straight to the destination, a chain link materialises
+    // through a tmp slot.)
+    const sub = (mql: unknown) => (mql as { $lookup: { pipeline: unknown } }[])[0].$lookup.pipeline;
+    expect(sub(stageLink)).toEqual(sub(jsmql('$.t = $$$.orders.filter({ userId: $._id, status: "shipped" });')));
   });
 
   // Comparison-operator form correlates too.

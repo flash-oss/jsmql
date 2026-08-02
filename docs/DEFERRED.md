@@ -242,14 +242,14 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-034 — stream `.takeWhile(pred)` / `.dropWhile(pred)` (running-flag over an ordered stream)
+### DEF-035 — stream `.takeWhile(pred)` / `.dropWhile(pred)` (running-flag over an ordered stream)
 
 - **What's blocked.** The lodash predicate-run methods as **stream** methods on `$$` / `$$$.<coll>`. The value-mode forms (on an array) already ship (`.takeWhile`/`.dropWhile` → first-falsy-index `$slice`); only the stream forms are deferred.
-- **Target lowering.** MongoDB streams have no cross-document running state except `$setWindowFields`. `takeWhile(p)` ≈ compute a running max of the negated predicate over an ordered stream (`$setWindowFields` with an unbounded preceding window), then `$match` documents before the first `p`-failure; `dropWhile` keeps the complement. Requires a defined order (a preceding `.sort(...)` or `_id`), and the boundary semantics (stop at the FIRST failure) make the window/`$match` interplay fiddly.
-- **Why blocked.** Contorted and rarely needed on a stream — the running-flag `$setWindowFields` + boundary `$match` is heavy, and the far more common intent (take while sorted-key < X) is already expressible as `.sort(<key>)` + `.filter(o => o.<key> < X)`. Deferred by developer decision (2026-07-19) after implementing the rest of the lodash stream Tier 3 (`.takeRight`/`.dropRight`/`.initial`/`.shuffle`).
+- **Target lowering.** MongoDB streams have no cross-document running state except `$setWindowFields`. `takeWhile(p)` ≈ compute a running max of the negated predicate over an ordered stream (`$setWindowFields` with an unbounded preceding window), then `$match` documents before the first `p`-failure; `dropWhile` keeps the complement. Requires a defined order — an explicit preceding `.sort(...)`, never an implicit `_id` — and the boundary semantics (stop at the FIRST failure) make the window/`$match` interplay fiddly.
+- **Why blocked.** Contorted and rarely needed on a stream — the running-flag `$setWindowFields` + boundary `$match` is heavy, and the far more common intent (take while sorted-key < X) is already expressible as `.sort(<key>)` + `.filter(o => o.<key> < X)`. Deferred by developer decision (2026-07-19) after implementing the rest of the lodash stream Tier 3 (`.takeRight`/`.dropRight`/`.initial`/`.shuffle`) — three of which were later **removed** from the stream surface (2026-08-01, see §B). That removal does not extend to these two: they run from the FRONT of an order a preceding `.sort(...)` establishes, which is a well-defined thing to ask for. It does bind their design, though — see the success criteria.
 - **Attempted approaches.** None yet — deferred at design time.
-- **Success criteria.** `$$.sort("t").takeWhile(o => o.t < cutoff)` keeps the leading run below the cutoff; `.dropWhile` keeps the complement; both reject (or default to `_id`) when no order is defined.
-- **Rejection site(s).** `src/pipeline.ts` `unknownStreamMethod` (the `takeWhile`/`dropWhile` branch), tagged `[DEF-034]`.
+- **Success criteria.** `$$.sort("t").takeWhile(o => o.t < cutoff)` keeps the leading run below the cutoff and `.dropWhile` keeps the complement. **A defined order is a precondition, not a default**: with no preceding `.sort(...)` both must REJECT, naming the sort to add. Falling back to `_id` is explicitly out — silently substituting an order the user didn't ask for is what got the from-the-end family removed (see §B).
+- **Rejection site(s).** `src/pipeline.ts` `unknownStreamMethod` (the `takeWhile`/`dropWhile` branch), tagged `[DEF-035]`.
 - **Spec.** `docs/specs/stream-methods.md`.
 - **Status.** open
 - **Effort.** M
@@ -268,6 +268,22 @@ Was DEF-007. The idea was to make `.slice()` / `.some()` lower to *projection-fo
 - `{ $elemMatch: { … } }` → `Cannot use $elemMatch in this context` — `$elemMatch` is not an aggregation operator at all. Even where it is valid (`find()` projection), it returns the *matched element*, not a boolean — which would break `.some()`'s JS semantics.
 
 The expression forms jsmql already emits run correctly in `$project`: `$.items.slice(0, 3)` → `{ $slice: ["$items", 3] }` and `$.items.some(i => i.x > 5)` → `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships in `src/operators.ts` as a normal aggregation expression reachable via `$op($meta("textScore"))`. So there was nothing valid left to build — implementing it would have made jsmql knowingly emit invalid MQL, an HR3 violation.
+
+### "From the end" array methods on a document STREAM (`.takeRight` / `.dropRight` / `.initial` / `.toReversed`)
+
+Shipped 2026-07-19, **removed 2026-08-01** by developer decision. MongoDB has no stage that reverses a stream — `$reverseArray` is an *expression*, for an array inside a document — and a stream carries no order except the one a `$sort` gives it, so "the last n" has nothing to count back from.
+
+The implementation was the argument against the feature. All four worked by reaching back and rewriting the **preceding** `$sort` (`reverseSortTrick`, now deleted), which:
+
+- made them **position-dependent** in a way the JS methods they are named after never are — `.takeRight(3)` meant different things depending on which stage happened to precede it;
+- **silently ordered by `_id`** when no `$sort` preceded, rather than erroring — a wrong answer with no diagnostic. This is what made `$$.shuffle().takeRight(3)` return the last 3 by `_id` and discard the shuffle entirely;
+- made `.toSorted(c).toReversed()` a second, longer spelling of writing the comparator descending — the "which spelling does my codebase use?" friction rejected elsewhere in this section (see `feedback_no_silent_output_drift.md` in user memory).
+
+**Not** rejected in value position: `$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray` and friends all still ship. A stored array carries its own order, so there the methods mean exactly what they mean in JS. The distinction is the receiver, not the method.
+
+The stream rewrite is to state the order and take from the front — `$$.toSorted({ createdAt: -1 }).take(3)` — which `fromTheEndRejection` (`src/stream-methods.ts`) names in the error. It is wired into all three chain-assembly sites: `unknownStreamMethod`, `validateLookupShape`, and the peel loop in `tryExtractChainedLookup` (that last one so a foreign chain can't quietly fall back to value-mode and slice the tail of an array whose order is whatever the foreign scan produced).
+
+Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation over the existing `$sort` machinery would land back on the same two defects.
 
 ### CLI `-S` / `--sort-keys`
 

@@ -95,9 +95,15 @@ function extOf(name: string): string {
   return dot < 0 ? "" : name.substring(dot);
 }
 
-function parseDeferred(): { rows: Map<string, { title: string; status: string; section: string }> } {
+function parseDeferred(): {
+  rows: Map<string, { title: string; status: string; section: string }>;
+  /** Every §A id in file order, duplicates INCLUDED — `rows` is a Map, so a repeated
+   *  id silently overwrites and both the forward and reverse gates still pass. */
+  idsInOrder: string[];
+} {
   const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
   const rows = new Map<string, { title: string; status: string; section: string }>();
+  const idsInOrder: string[] = [];
 
   // Section §B (Decisions) records won't-implement choices with `### <title>`
   // (no DEF-NNN ID) — pull only §A. Section markers are `## §A.` / `## §B.`.
@@ -116,8 +122,9 @@ function parseDeferred(): { rows: Map<string, { title: string; status: string; s
     const statusMatch = STATUS_RE.exec(body);
     const status = statusMatch ? statusMatch[1].trim().toLowerCase() : "open";
     rows.set(id, { title, status, section: "A" });
+    idsInOrder.push(id);
   }
-  return { rows };
+  return { rows, idsInOrder };
 }
 
 /** True if any line within ±TAG_CONTEXT of the given index carries a [DEF-NNN] tag. */
@@ -190,6 +197,18 @@ describe("deferred-tracking drift protection", () => {
     }
     return hits;
   }
+
+  it("UNIQUE-ID GATE: no two §A rows share a DEF-NNN id", () => {
+    // Two features under one id makes every `[DEF-NNN]` tag ambiguous — a reader
+    // following the tag lands on whichever row happens to come first. It also hides
+    // from the other gates: `rows` is a Map, so the duplicate overwrites and both
+    // forward and reverse still find a match. DEF-034 was shared by two unrelated
+    // items this way until 2026-08-01.
+    const { idsInOrder } = parseDeferred();
+    const seen = new Set<string>();
+    const dupes = idsInOrder.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
+    expect(dupes, `duplicate DEF ids in docs/DEFERRED.md §A: ${[...new Set(dupes)].join(", ")}`).toEqual([]);
+  });
 
   it("FORWARD GATE: every [DEF-NNN] tag has a row in docs/DEFERRED.md", () => {
     const violations: string[] = [];

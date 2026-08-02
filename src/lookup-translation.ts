@@ -40,7 +40,12 @@ import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
-import { lookupStreamMethod, streamMethodNames, VALUE_TERMINAL_METHODS } from "./stream-methods.ts";
+import {
+  fromTheEndRejection,
+  lookupStreamMethod,
+  streamMethodNames,
+  VALUE_TERMINAL_METHODS,
+} from "./stream-methods.ts";
 import { checkStageLinkPlacement, isStageLink, stageLinkBlockLambda, stageLinkBody } from "./stage-link.ts";
 
 // AST shapes are exported only as the discriminated union `Expr`. The
@@ -422,12 +427,18 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
   // `.aggregate(<pipeline>)` accepts a block-body arrow OR a stage-array literal;
-  // both normalise to a block-body `Lambda` so the rest of the lookup machinery
-  // (translatePredicate → buildBlockBodyPredicate, chained-terminal
-  // materialisation, cross-DB gate) treats it exactly like a block-body join.
-  // A malformed argument (expression-body arrow, spread-bearing array) returns
-  // null here; `validateLookupShape` surfaces the actionable error.
-  const lambda = expr.method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : null;
+  // `.find`/`.filter` accept an arrow OR any lodash predicate shorthand. Each
+  // normalises to a `Lambda` HERE, so the rest of the lookup machinery
+  // (translatePredicate → tryBasicForm / buildBlockBodyPredicate, chained-terminal
+  // materialisation, cross-DB gate) treats every spelling identically.
+  // A malformed argument (expression-body arrow, spread-bearing array, empty
+  // matcher) returns null here; `validateLookupShape` surfaces the actionable error.
+  const lambda =
+    expr.method === "aggregate"
+      ? aggregateArgToLambda(arg)
+      : arg.type === "Lambda"
+        ? arg
+        : predicateArgToLambda(arg, expr.method);
   if (lambda === null) return null;
   return {
     pos: target.pos,
@@ -438,6 +449,54 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
     lambda,
   };
 }
+
+/**
+ * Normalise a `.find(<pred>)` / `.filter(<pred>)` argument that is a lodash
+ * predicate SHORTHAND (matches-object / field name / `["field", value]`) into the
+ * equivalent single-parameter arrow, so `$$$.<coll>.find({ userId: $._id })` IS
+ * `$$$.<coll>.find(o => o.userId === $._id)` from detection onward — same
+ * `$lookup` form (basic when the predicate qualifies), same `.length` lowering,
+ * same mode-gate error. Spelling must never change the emitted MQL.
+ *
+ * Both methods take a *predicate*, so both take every predicate spelling; `.find`
+ * differing only in how its RESULT is consumed (scalar-or-null via `$first`) is no
+ * reason to restrict how its predicate is WRITTEN.
+ *
+ * Returns null for a non-shorthand argument, and — per `detectLookupCall`'s
+ * normalise-or-null contract, the same one `aggregateArgToLambda` follows — for a
+ * MALFORMED shorthand: detection stays side-effect-free, and `validateLookupShape`
+ * (which runs the throwing `shorthandToLambda`) owns the actionable message.
+ */
+function predicateArgToLambda(arg: CallArg, method: string): Lambda | null {
+  return tryShorthandToLambda(arg, method, FOREIGN_SHORTHAND_PARAM);
+}
+
+/**
+ * Non-throwing `shorthandToLambda`: yields the desugared arrow for a well-formed
+ * lodash shorthand, and `null` for both a non-shorthand argument and a MALFORMED
+ * one (empty matcher, computed key, bad `["field", value]` pair).
+ *
+ * Callers are *detection* / *classification* sites — "is this a shorthand?" — which
+ * must stay side-effect-free: they run on expressions that may not even be the
+ * construct they are testing for. The matching `validate` runs the throwing form
+ * and owns the actionable message, so nothing is swallowed, only deferred.
+ */
+export function tryShorthandToLambda(arg: CallArg, method: string, param: string): Lambda | null {
+  if (arg.type === "SpreadElement") return null;
+  try {
+    return shorthandToLambda(arg, method, param);
+  } catch (e) {
+    if (e instanceof CodegenError) return null;
+    throw e;
+  }
+}
+
+/**
+ * Synthetic foreign-document parameter for a shorthand-spelled `.filter(...)`
+ * predicate. Shared with the chained-`.filter` normaliser (`chainFilterLambda`)
+ * so head and chain positions desugar to a byte-identical lambda.
+ */
+const FOREIGN_SHORTHAND_PARAM = "jsmqlItem";
 
 /**
  * Normalise a `.aggregate(...)` argument into the block-body `Lambda` the lookup
@@ -618,6 +677,11 @@ export function validateLookupShape(expr: Expr): void {
     // to the chain assembler (`tryExtractChainedLookup`) / implicit-filter injector.
     // Only a genuinely unknown method is malformed here.
     if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
+    // A "from the end" method (`.takeRight`/`.toReversed`/…) is not merely unknown —
+    // it was removed on purpose, so say why and name the rewrite rather than offering
+    // a spelling suggestion for a method that no longer exists.
+    const fromTheEnd = fromTheEndRejection(expr.method, spell, expr.pos);
+    if (fromTheEnd !== null) throw fromTheEnd;
     const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
     throw new CodegenError(
       `'${spell}' supports .find(pred), .filter(pred), .aggregate(pipeline), and the lodash stream methods ` +
@@ -635,20 +699,18 @@ export function validateLookupShape(expr: Expr): void {
   }
   const arg = expr.args[0];
   if (arg.type !== "Lambda") {
-    // `.filter` also accepts a lodash matches-object / field / `["field", value]`
-    // shorthand — the same forms the chained `.filter(...)` position accepts (via
-    // `chainFilterLambda`). Let a valid shorthand flow to the chain assembler; only
-    // `.find` (a direct scalar lookup) strictly needs the arrow. This keeps the lone
-    // `$$$.coll.filter({ x: 1 })` head consistent with `$$$.coll.filter({ x: 1 }).take(2)`.
-    if (
-      expr.method === "filter" &&
-      arg.type !== "SpreadElement" &&
-      shorthandToLambda(arg, "filter", "jsmqlItem") !== null
-    ) {
+    // Both `.find` and `.filter` take a *predicate*, so both accept every lodash
+    // predicate spelling — arrow, matches-object, field name, `["field", value]`.
+    // Which one you write is a spelling choice; it never changes what is emitted
+    // (`filterArgToLambda` desugars it at detection). `.find` used to demand the
+    // arrow, which made `$$$.coll.find({ x: 1 })` an error even though the same
+    // shorthand was fine on `.filter`, in value position, and on a chained `.find`.
+    if (arg.type !== "SpreadElement" && shorthandToLambda(arg, expr.method, FOREIGN_SHORTHAND_PARAM) !== null) {
       return;
     }
     throw new CodegenError(
-      `.${expr.method}(predicate) requires an arrow predicate, e.g. \`.${expr.method}(o => o._id === $.userId)\`.`,
+      `.${expr.method}(predicate) requires an arrow predicate (\`.${expr.method}(o => o._id === $.userId)\`), ` +
+        `a matches-object (\`{ userId: $._id }\`), a field name (\`"active"\`), or a \`["field", value]\` pair.`,
       "pos" in arg ? arg.pos : expr.pos,
     );
   }
@@ -2033,12 +2095,8 @@ export function lowerLookup(
   const stages: object[] = [];
   if (pred.kind === "basic") {
     stages.push({ $lookup: { from, localField: pred.localField, foreignField: pred.foreignField, as } });
-  } else if (call.method === "aggregate" && Object.keys(pred.letVars).length === 0) {
-    // Uncorrelated `.aggregate` — no `$.<field>` correlation, so no `let`. Emit
-    // the lean `{ from, pipeline, as }` shape (an empty `let` is pure noise).
-    stages.push({ $lookup: { from, pipeline: pred.pipeline, as } });
   } else {
-    stages.push({ $lookup: { from, let: pred.letVars, pipeline: pred.pipeline, as } });
+    stages.push({ $lookup: pipelineLookupBody(from, pred.letVars, pred.pipeline, as) });
   }
   if (call.method === "find") {
     // JS `.find()` returns scalar-or-null. Overwrite the slot with `$first`
@@ -2047,6 +2105,27 @@ export function lowerLookup(
     stages.push({ $set: { [as]: { $first: `$${as}` } } });
   }
   return stages;
+}
+
+/**
+ * Assemble a pipeline-form `$lookup` body, **omitting `let` when nothing was
+ * correlated** — an empty `let: {}` is pure noise, and the server treats
+ * `let` as optional.
+ *
+ * Every pipeline-form emission site routes through here so the shape can't
+ * depend on which one ran. It used to: the lean form was gated on `.aggregate`
+ * in `lowerLookup`, and on "the chain had no `.filter` head" in
+ * `tryExtractChainedLookup` — so `$$$.orders.take(2)` and
+ * `$$$.orders.filter(p).take(2)` disagreed about `let: {}` for no semantic
+ * reason. One helper, one shape.
+ */
+export function pipelineLookupBody(
+  from: string,
+  letVars: Record<string, string>,
+  pipeline: object[],
+  as: string,
+): object {
+  return Object.keys(letVars).length === 0 ? { from, pipeline, as } : { from, let: letVars, pipeline, as };
 }
 
 // ── Chained-terminal recognition + materialisation ────────────────────────────
@@ -2234,12 +2313,8 @@ export function extractLookupCalls(
  */
 // A synthesized `el => el.<path>` lambda for the `.map("<path>")` shorthand, used
 // when peeling a terminal map off a lookup chain (below).
-function fieldPathLambda(path: string, pos: number): Lambda {
-  const param = "jsmqlEl";
-  let body: Expr = { type: "ParamRef", name: param, pos };
-  for (const seg of path.split(".")) body = { type: "MemberAccess", object: body, member: seg, pos };
-  return { type: "Lambda", params: [param], body, pos };
-}
+/** Synthetic element parameter for a shorthand-spelled `.map` iteratee. */
+const ITERATEE_SHORTHAND_PARAM = "jsmqlEl";
 
 // If a chain's terminal method is a value-extracting `.map(iteratee)` — a field
 // string or an expression-body arrow — return its iteratee as a lambda so it can
@@ -2278,10 +2353,12 @@ function peelableTerminalMap(m: MethodCall): Lambda | null {
     }
     return arg;
   }
-  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) {
-    return fieldPathLambda(arg.value, arg.pos);
-  }
-  return null;
+  // Any lodash iteratee shorthand — `"a.b"`, `{ a: 1 }`, `["a.b", v]` — desugars to
+  // its arrow and peels the same way. Value position already accepts all three, so
+  // restricting the stream form to the field-string spelling was an accidental gap,
+  // not a capability one: every shorthand yields a NON-document (a plucked value or
+  // a match boolean), which is exactly the value-mode `$map` this peel produces.
+  return tryShorthandToLambda(arg, "map", ITERATEE_SHORTHAND_PARAM);
 }
 
 // A `.map` whose result is NOT provably a document — a field-string shorthand or
@@ -2298,8 +2375,9 @@ function peelableTerminalMap(m: MethodCall): Lambda | null {
 export function isValueCollapsingMap(m: MethodCall): boolean {
   if (m.method !== "map" || m.args.length !== 1) return false;
   const arg = m.args[0];
-  if (arg.type === "StringLiteral" && arg.value !== "" && !arg.value.startsWith("$")) return true;
-  if (arg.type !== "Lambda") return false;
+  // Every iteratee shorthand collapses: `"a.b"` plucks a (possibly scalar) value and
+  // `{ a: 1 }` / `["a", 1]` yield a match BOOLEAN — never a document.
+  if (arg.type !== "Lambda") return tryShorthandToLambda(arg, "map", ITERATEE_SHORTHAND_PARAM) !== null;
   // Expression body OR block-body return that isn't an object literal → the map
   // produces a (possibly) non-document, so it collapses a document stream to a value
   // stream. Same structural rule for both arrow shapes.
@@ -2315,7 +2393,14 @@ export function isValueCollapsingMap(m: MethodCall): boolean {
 // lands as `[obj]`; the caller unwraps it with `$first` (see the return below).
 function isCollapsingTerminal(m: MethodCall): boolean {
   if (m.method === "countBy" || m.method === "keyBy") return true;
-  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type === "StringLiteral";
+  // `.groupBy(<key>)` collapses to one object; `.groupBy({ _id, … })` — the
+  // `$group`-body form — stays a document stream. The test is therefore "is it the
+  // KEY form", i.e. anything but an object literal. Narrowing it to a *recognised*
+  // key (`StringLiteral`, later `fieldKeyArg`) is the recurring trap: each time the
+  // key surface grew, the unwrap silently stopped firing for the new spelling and
+  // the caller got the raw `[obj]` slot. An unrecognised key can't reach here at
+  // all — `validate` rejected it long before.
+  if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type !== "ObjectLiteral";
   return false;
 }
 
@@ -2334,7 +2419,7 @@ function chainFilterLambda(m: MethodCall): Lambda {
     throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => …')${rejectHint}.`, m.pos);
   }
   const arg = m.args[0];
-  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
   if (base === null || base.params.length !== 1) {
     throw new CodegenError(
       `.${m.method}(<predicate>) takes a single-parameter arrow ('o => …')${rejectHint}.`,
@@ -2394,6 +2479,8 @@ export function peelForeignChain(
   pipelineBody: object[],
   letVars: Record<string, string>,
 ): void {
+  // Temp-field cleanup runs once after the whole chain — see StreamMethodResult.
+  const cleanup: object[] = [];
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
     // `.$match(<body>)` — a chained pipeline stage. Lowered as the equivalent
@@ -2426,9 +2513,11 @@ export function peelForeignChain(
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
     if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
+    if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     // A block-body `.map` may capture cross-level reads into THIS lookup's let.
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
+  pipelineBody.push(...cleanup);
 }
 
 /**
@@ -2536,6 +2625,13 @@ function tryExtractChainedLookup(
   // otherwise the chain falls back to the expression-form path (`descendAndExtract`),
   // which still handles value-terminals / string methods on the lookup result.
   for (let i = start; i < chainEnd; i++) {
+    // …except a "from the end" method, which must REJECT rather than fall back.
+    // Falling back would materialise the sub-pipeline into an array and slice its
+    // tail — but that array's order is whatever the foreign scan produced, so "the
+    // last 3" is exactly as meaningless as it is on the stream itself. Silently
+    // answering a question with no answer is the failure mode being removed here.
+    const fromTheEnd = fromTheEndRejection(methods[i].method, `$$$.${target.collection}`, methods[i].pos);
+    if (fromTheEnd !== null) throw fromTheEnd;
     if (!isPeelableChainMethod(methods[i].method)) return null;
   }
   // A value-collapsing `.map` anywhere in the SUB-PIPELINE portion (before the
@@ -2592,14 +2688,7 @@ function tryExtractChainedLookup(
     terminalMap !== null
       ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos }
       : slotRef;
-  // A filter-headed chain keeps the `let: {}` shape (matching the existing lookup
-  // output); a stream-method-headed chain with no correlation omits the empty `let`
-  // entirely — the lean `.aggregate`-style `{ from, pipeline, as }`.
-  const lookupBody =
-    direct === null && Object.keys(letVars).length === 0
-      ? { from, pipeline: pipelineBody, as: slot }
-      : { from, let: letVars, pipeline: pipelineBody, as: slot };
-  const stages: object[] = [{ $lookup: lookupBody }];
+  const stages: object[] = [{ $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) }];
   // A collapsing terminal (`.countBy`/`.keyBy`/`.groupBy("k")`) makes the sub-
   // pipeline emit exactly one object doc, but `$lookup.as` is always an array — so
   // the slot holds `[obj]`. Unwrap it to the single object (mirrors lowerLookup's

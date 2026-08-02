@@ -2215,12 +2215,6 @@ declare global {
     drop(n: number): JsmqlCollectionRef;
     /** All but the first document → `$skip: 1` (lodash `_.tail`). */
     tail(): JsmqlCollectionRef;
-    /** Last `n` documents → reverse-sort + `$limit` + restore (reverses a preceding `$sort`, else orders by `_id`). */
-    takeRight(n: number): JsmqlCollectionRef;
-    /** All but the last `n` documents → reverse-sort + `$skip` + restore. */
-    dropRight(n: number): JsmqlCollectionRef;
-    /** All but the last document → `.dropRight(1)`. */
-    initial(): JsmqlCollectionRef;
     /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
     shuffle(): JsmqlCollectionRef;
     /** `n` random documents → `$sample`. */
@@ -2244,8 +2238,6 @@ declare global {
       keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
     ): JsmqlCollectionRef;
-    /** Reverse the preceding sort — flips the preceding `$sort`. */
-    toReversed(): JsmqlCollectionRef;
     /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
     groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
     /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */

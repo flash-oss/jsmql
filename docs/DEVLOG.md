@@ -10,41 +10,6 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-01 — fix: `$out` / `$merge` rejected in every sub-pipeline, block bodies included
-
-HR3 says jsmql never knowingly emits invalid MQL, and mongod rejects a write
-stage anywhere but the last position of a top-level pipeline (Location51047).
-Four spellings still slipped one through — a foreign `.aggregate((o) => { … })`
-block, a `.filter` predicate block-body, and a `$facet` branch block-body all
-emitted `{ $out: … }` straight into a sub-pipeline.
-
-The blocker recorded in DEF-024 was that `lowerBlock` has no unambiguous
-container to validate against. That is true, but it doesn't apply to *these*
-stages: `$out` and `$merge` are the only ones the registry forbids in **all
-three** containers, so they are decidable without a container label. A stage
-matching `stageForbiddenInAnySubPipeline` is now rejected on a single
-`GenerateCtx.inSubPipeline` flag, stamped by both `freshSubPipelineCtx` and
-`freshFacetCtx`. Membership is read from `forbiddenIn`, so a future
-all-container stage is covered with no code change. Where the container *is*
-known the named message still wins — it runs first, in the loop validator.
-DEF-024 narrows to what actually remains: imprecise wording for the
-single-container diagnostics inside a block body.
-
----
-
-## 2026-08-01 — fix: a bare `$$$.<coll>.<chain>;` statement names its missing destination
-
-`$$$.orders.$match({ a: 1 });` reported "Element 0 of pipeline is not a
-recognised stage" plus the full 45-stage list — technically true, useless in
-practice. Reading another collection produces a *value*, so the statement needs
-a destination; the error now says which three exist (`$.<field> = …`,
-`const <name> = …`, `$$ = …`) and notes the contrast the user is most likely
-tripping over: a bare `$$.<chain>;` needs no destination because it transforms
-the current stream in place. A value-collapsing terminal (`$$$.orders.head();`)
-keeps its own more specific message, which names the method.
-
----
-
 ## 2026-08-01 — docs: `$` is the ROOT document at every depth (HR4 wording)
 
 HR4 said "`$` = the current document", which reads as "whichever document is
@@ -64,30 +29,120 @@ different output.
 
 ---
 
-## 2026-08-01 — fix: chain errors caret at the offending call, not the chain root
+## 2026-08-01 — docs: record the from-the-end removal in §B; fix a duplicate DEF id
 
-`parsePostfix` stamped `pos: left.pos` on every `MethodCall` it built, so every
-link of a chain shared the chain root's source offset. An error deep in a chain
-therefore underlined the wrong thing:
+Three DEFERRED.md changes, at the developer's request plus one defect found while
+making them.
 
-```
-$$.filter(p => p.a > 1).uniq().take(2);
-^                                          ← before: the caret sat on `$$`
-                        ^                  ← after:  it sits on `.uniq`
-```
+**§B row for the removal.** The from-the-end stream methods (entry below) now have a
+won't-implement entry with the full rationale, so the decision isn't re-litigated from
+the DEVLOG alone. It states the boundary that matters: rejected on a *stream*, still
+shipping on an *array value* — the distinction is the receiver, not the method.
 
-Each link now carries the offset of its own member token — a one-line change in
-[src/parser.ts](../src/parser.ts). Two existing assertions moved and both moved
-for the better: the incompatible-receiver error in a chain now points at
-`.every(...)`, the call its own message names, instead of at the `$.items`
-chain root.
+**`DEF-035` (was the second `DEF-034`) — the `_id` fallback is out.** Its success
+criterion read "both reject (or default to `_id`) when no order is defined". That
+silent substitution is precisely what got the from-the-end family removed, so it now
+says a defined order is a **precondition, not a default**: with no preceding
+`.sort(...)`, `.takeWhile`/`.dropWhile` must reject and name the sort to add. The
+target-lowering line said the same thing and was corrected too.
 
-One site needed the opposite treatment. The "lookup syntax requires Pipeline
-mode" error is about the whole `$$$.<coll>.find(...)` construct, not about
-whichever link is outermost, so it now resolves the `$$$` prefix's own offset
-via a small `contextRefPos` walk in [src/index.ts](../src/index.ts) rather than
-taking `ast.pos`. The general rule: an error about *a call* takes the call's
-position; an error about *a construct* resolves the construct's head.
+**The duplicate id.** Two unrelated items both carried `DEF-034` — the `.aggregate()`
+union source and stream `.takeWhile`/`.dropWhile` — and `[DEF-034]` tags in
+`src/union-translation.ts` and `src/pipeline.ts` pointed at different rows under the
+same number. The drift test could not see it: `parseDeferred` collects rows into a
+`Map`, so the second row silently overwrote the first and both the forward and reverse
+gates still found a match. `.takeWhile`/`.dropWhile` (the fewer tag sites) moved to
+`DEF-035`, and a new **UNIQUE-ID gate** collects ids in file order *with* duplicates
+and fails on any repeat — verified by reintroducing the collision and watching it fail.
+
+---
+
+## 2026-08-01 — feat: `.sortBy`/`.orderBy` accept a computed key; chain cleanup is held to the end
+
+`$$.sortBy(d => d.category.toLowerCase())` now lowers. `$sort` needs a literal field
+path, so unlike a `$group._id` key the expression can't go inline: `SortKeySink`
+allocates a `__jsmql.tmp` slot, one `$addFields` computes it ahead of the `$sort`, and
+the slot is cleared once the chain ends. A plain `"cat"` key is untouched — still the
+single `$sort` it always was.
+
+The blocker recorded in the entry below turned out to be **both worse and easier than
+described**. Worse: it was never specific to `.toReversed()`. `.takeRight`/`.dropRight`/
+`.initial` read `prevStages[last]` for the live `$sort` too, and `reverseSortTrick`
+*silently* falls back to ordering by `_id` when it doesn't find one instead of
+erroring. So the bug already existed on master without any computed keys —
+`$$.shuffle().takeRight(3)` returned the last 3 by `_id` and threw the shuffle away.
+Easier: it needed no change to `replacesPreviousStage` at all. The scratch `$unset`
+simply moves to the END of the chain (`StreamMethodResult.cleanupStages`, appended
+once by both `applyStreamMethods` and `peelForeignChain`), so the `$sort` stays the
+last stage and every downstream method still sees it. `.shuffle` moves onto the same
+mechanism, which fixes that pre-existing bug.
+
+Cleanup is emitted only inside a `$lookup.pipeline` — there the sub-pipeline's
+documents land in an array field the outer `{ $unset: "__jsmql" }` can't reach, while
+at the top level and inside a `$unionWith.pipeline` that sweep already covers them, so
+a second `$unset` was pure noise (top-level `.shuffle()` drops from four stages to
+three). And when it is emitted it now unsets the **namespace root**: `$unset` of a
+dotted path removes only the leaf, so `$unset: "__jsmql.tmp.1"` had been leaving
+`__jsmql: { tmp: {} }` on every foreign document. That was live on master too — the
+mongod probe caught it; no `toEqual` would have.
+
+`.flatMap` deliberately still takes a path only, and that is semantic rather than
+mechanical: `$unwind` returns each element to a **named** field, so the field name is
+part of what the user means and jsmql can't invent one. Its message now says so
+instead of the old "v1 only supports…" wording (which also violated the project's
+no-version-markers rule; the two other `v1` markers in the docs went with it).
+
+This supersedes the "not done here" note in
+[feat: `$group`-keyed stream methods accept a computed key](#2026-08-01--feat-group-keyed-stream-methods-accept-a-computed-key).
+`.toReversed()` did **not** need to be dropped to get here — it composes with a
+computed sort key and is verified doing so against a live mongod, along with
+`.takeRight` reversing the computed ordering rather than `_id`.
+
+---
+
+## 2026-08-01 — feat: `$group`-keyed stream methods accept a computed key
+
+`.countBy(d => d.cat.toLowerCase())`, `.groupBy(d => d.email.split("@")[1])`,
+`.keyBy({ active: true })`, `.uniqBy(d => d.a + d.b)` — the four grouping methods
+now take any iteratee, not just a field key. This was the capability gap left over
+from the spelling work below, which had lumped all six keyed methods under one
+"a stream key must be a plan-time field path" rule. That rule was too broad:
+**`$group._id` is an expression slot the server evaluates per document**, so a
+computed key lowers straight into it with **zero extra stages**.
+
+The line is the SLOT, not the method. `keyExpr` resolves a key argument to the MQL
+expression it evaluates to, keeping a `fieldKeyArg` fast path first so a plain
+`"cat"` still emits the byte-identical `"$cat"` it always did; only when that
+declines does it desugar the iteratee, rewrite the lambda param to the document
+root (`extractLetsFromExpr`), and generate. A `$sort` key and an `$unwind` path
+really are literal field paths, so those keep rejecting — but the message now says
+the group-keyed methods accept one, so nobody reads it as "jsmql can't do computed
+keys".
+
+Auto-materialising a computed value into a temp field for the other two was
+considered and rejected, for different reasons each. For `.flatMap` it would be
+wrong: `$unwind` puts each element back into a *named* field, so the field name is
+part of what the user means, not an implementation detail — which is why the manual
+route is the answer rather than a workaround. For `.sortBy`/`.orderBy` it is merely
+blocked: the temp needs an explicit `$unset` (a `$lookup.pipeline` gets no trailing
+`{ $unset: "__jsmql" }` to sweep it), that `$unset` lands after the `$sort`, and
+`reverseSortTrick` only inspects the immediately preceding stage — so
+`.sortBy(<computed>).toReversed()` would break. Lifting it means extending
+`StreamMethodResult.replacesPreviousStage` to pop N stages; not done here.
+
+Two traps re-opened by the feature and closed with it. `isCollapsingTerminal` asked
+`fieldKeyArg` whether `.groupBy`'s argument was a key — true when that was the whole
+key surface, wrong the moment computed keys existed, silently skipping the `$first`
+unwrap for `.groupBy(d => d.cat.toLowerCase())` and returning the raw `[obj]` slot.
+That is the *second* time this predicate fell behind the key surface (it keyed on
+`StringLiteral` before), so it now tests the key FORM — anything but the `$group`
+body — which can't go stale again. And because the group methods reuse `.map`'s body
+and param helpers, their errors talked about `.map`; `mapBodyExpr` / `rejectLocalDocRef`
+now take the calling method's name, the same wrong-method-in-the-message bug as
+`.keyBy` citing `.countBy("status")`.
+
+Verified against a live mongod: each computed-key form runs and returns what the
+hand-materialised `$.k = <expr>; …("k")` equivalent returns.
 
 ---
 
@@ -131,6 +186,209 @@ entry), which had been missing it.
 
 ---
 
+## 2026-08-01 — feat: playground Variables panel is a disclosure under the "MongoDB call" bar
+
+The Variables editor no longer occupies the input panel permanently. It now
+hangs off the "MongoDB call" bar as a collapsed panel, revealed by a labelled
+chevron pinned to the right of that bar
+([playground_skeleton.html](../playground_skeleton.html) — `.vars-toggle`,
+`setVarsOpen` / `syncVarsDisclosure`). Variables are optional, so the default
+view puts the call site directly above the query and gives the editor its
+vertical space back; the chevron is what asks for them. To keep the control
+pinned while the call site can still be long, the bar itself stopped scrolling —
+its label+code moved into an inner `.usage-main` that owns the `overflow-x`.
+
+Open/closed is **derived from the content, not persisted**: on every restore
+path (page refresh, and a `#s=` share link, which can carry someone else's
+variables) `syncVarsDisclosure()` opens the panel when the box actually holds
+bindings or fails to parse. Both cases change the MQL output and the call-site
+hint, so hiding their cause would leave the user with a `.compile(...)({ age })`
+call site and nothing visible that explains it. Nothing about the panel state
+goes into localStorage or the share payload, so the panel can never disagree
+with the session it is showing.
+
+The box also stops starting empty: it now opens on a commented-out template
+(`runTimeVar1` plus an `ObjectId("507f…")` line). It parses to `{}` — no
+bindings, so behaviour is identical to the old empty box — while naming the two
+shapes people reach for first, the second of which isn't guessable because JSON
+can't express it.
+
+---
+
+## 2026-08-01 — feat!: the "from the end" array methods are removed from the stream surface
+
+`.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` no longer exist as
+stream methods, and `reverseSortTrick` is gone with them. **Developer decision**, on
+the grounds that MongoDB has no stage that reverses a stream — `$reverseArray` is an
+*expression*, for an array inside a document — and a stream has no order except the
+one a `$sort` gives it, so "the last n" has nothing to count back from.
+
+The implementation was the argument against it. These four worked by reaching back and
+rewriting the *preceding* `$sort`, which made them position-dependent in a way the JS
+methods they are named after never are, and — with no `$sort` in front — silently
+ordered by `_id` rather than erroring. `.toSorted(c).toReversed()` was also a longer
+spelling of writing the comparator descending, i.e. a second spelling for a capability
+that already had one. All four remain in **value position** on a real array
+(`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where
+the array carries its own order and they mean exactly what JS means.
+
+`fromTheEndRejection` (`src/stream-methods.ts`) owns the message and is wired into all
+three places a stream chain is assembled: `unknownStreamMethod` (bare `$$` / `$$ =`),
+`validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop in
+`tryExtractChainedLookup`. That third site is the one worth calling out — without it a
+foreign chain would quietly fall through to value-mode and slice the tail of the
+materialised array, whose order is whatever the foreign scan produced. Same
+unanswerable question, answered silently; the rejection is the point. The message names
+the rewrite: `.toSorted({ <field>: -1 }).take(n)`.
+
+Two things survive the removal. The chain-cleanup ordering rule from the entry below
+stays (a method's stages should end with the stage that describes the stream, not its
+own housekeeping) — it is general, and the bug that motivated it happened to involve
+`.takeRight`. And `prevStages` / `replacesPreviousStage` stay on the
+`StreamMethodResult` contract but now have **no users**, deliberately: reaching back at
+the preceding stage is the coupling that made these four fragile, so a future method
+should reach for it only when nothing else expresses the operation, and error rather
+than guess when the expected stage isn't there.
+
+`DEF-034` (stream `.takeWhile`/`.dropWhile`) is unaffected in principle — those run
+from the FRONT of an order a preceding `.sort(...)` establishes — but its
+"or default to `_id`" success criterion is now explicitly disallowed for the same
+reason, and the row says so.
+
+---
+
+## 2026-08-01 — fix: `$out` / `$merge` rejected in every sub-pipeline, block bodies included
+
+HR3 says jsmql never knowingly emits invalid MQL, and mongod rejects a write
+stage anywhere but the last position of a top-level pipeline (Location51047).
+Four spellings still slipped one through — a foreign `.aggregate((o) => { … })`
+block, a `.filter` predicate block-body, and a `$facet` branch block-body all
+emitted `{ $out: … }` straight into a sub-pipeline.
+
+The blocker recorded in DEF-024 was that `lowerBlock` has no unambiguous
+container to validate against. That is true, but it doesn't apply to *these*
+stages: `$out` and `$merge` are the only ones the registry forbids in **all
+three** containers, so they are decidable without a container label. A stage
+matching `stageForbiddenInAnySubPipeline` is now rejected on a single
+`GenerateCtx.inSubPipeline` flag, stamped by both `freshSubPipelineCtx` and
+`freshFacetCtx`. Membership is read from `forbiddenIn`, so a future
+all-container stage is covered with no code change. Where the container *is*
+known the named message still wins — it runs first, in the loop validator.
+DEF-024 narrows to what actually remains: imprecise wording for the
+single-container diagnostics inside a block body.
+
+---
+
+## 2026-08-01 — fix: a bare `$$$.<coll>.<chain>;` statement names its missing destination
+
+`$$$.orders.$match({ a: 1 });` reported "Element 0 of pipeline is not a
+recognised stage" plus the full 45-stage list — technically true, useless in
+practice. Reading another collection produces a *value*, so the statement needs
+a destination; the error now says which three exist (`$.<field> = …`,
+`const <name> = …`, `$$ = …`) and notes the contrast the user is most likely
+tripping over: a bare `$$.<chain>;` needs no destination because it transforms
+the current stream in place. A value-collapsing terminal (`$$$.orders.head();`)
+keeps its own more specific message, which names the method.
+
+---
+
+## 2026-08-01 — fix: a shorthand `.filter(...)` lookup predicate lowers identically to its arrow
+
+`$$$.orders.filter({ userId: $._id })` and `$$$.orders.filter(o => o.userId === $._id)`
+mean the same thing, but until now they compiled to different — and unequally
+performant — MQL. The arrow got the **basic-form** `$lookup`
+(`localField`/`foreignField`, which the server can serve from an index); the
+shorthand got the correlated **pipeline form**. Chain `.length` onto each and the
+gap widened: the arrow materialised a clean `{ $set: { slot: { $size: … } } }`,
+while the shorthand fell all the way through to the generic value-mode
+`.length`, emitting an `$isArray`-guarded `$strLenCP` fallback for a value that is
+always an array. Even the Filter-mode gate diverged — the shorthand missed the
+actionable "requires Pipeline mode" error and got the generic "bare `$$$`
+reference" one. Same meaning, three different outputs, strictly worse plan.
+
+All three traced to one line in `detectLookupCall`
+([src/lookup-translation.ts](../src/lookup-translation.ts)), which accepted only
+`arg.type === "Lambda"` and returned `null` for everything else. A shorthand
+therefore wasn't a *detected lookup* at all: it fell through to the chain
+assembler, whose `.filter` handling always builds the pipeline form, and the
+`.length` / mode-gate paths (which both ask `detectLookupCall`) simply never saw
+it. The fix normalises the shorthand to its equivalent arrow **at detection**, via
+a new `filterArgToLambda` that mirrors the `aggregateArgToLambda` already sitting
+beside it — so `.filter(<shorthand>)` *is* `.filter(<arrow>)` from the first
+moment the compiler names it, and every downstream consumer inherits the identical
+treatment for free rather than each needing its own shorthand branch. Detection
+stays side-effect-free: a malformed shorthand returns `null` (not a throw), leaving
+`validateLookupShape` the owner of the targeted message.
+
+Normalising at *detection* rather than teaching the chain assembler about basic
+form was the deliberate choice — the alternative would have left a second place
+that decides basic-vs-pipeline, i.e. the same divergence class one refactor later.
+Two spot-effects worth noting: a lone `$$$.coll.filter({…})` now writes straight to
+its destination `as` (no tmp slot, no trailing `$set`/`$unset`), and an
+uncorrelated shorthand chain now carries the arrow's `let: {}` — see the follow-up
+entry on dropping the empty `let`. Guards live in
+[test/lookup.test.ts](../test/lookup.test.ts) (both shorthand spellings asserted
+equal to the arrow's MQL, plus the mode-gate and malformed-shorthand cases); all
+eight shapes were run against a live mongod and the paired forms return identical
+documents.
+
+---
+
+## 2026-08-01 — fix: an uncorrelated `$lookup` never emits an empty `let: {}`
+
+Closes the empty-`let` wart flagged as "tracked separately" in
+[test: showcase chains rewritten in the shorter lodash spellings](#2026-08-01--test-showcase-chains-rewritten-in-the-shorter-lodash-spellings).
+`$lookup.let` is optional to the server, so emitting `let: {}` when the predicate
+correlated nothing is pure noise — the leaner `{ from, pipeline, as }` says the
+same thing. jsmql already knew this: `lowerLookup` dropped the empty `let`, but
+only for `.aggregate`, and `tryExtractChainedLookup` dropped it only when the
+chain had no `.filter` head. So the rule was re-decided at each of the five
+emission sites, and `$$$.orders.take(2)` disagreed with
+`$$$.orders.filter(p).take(2)` about `let: {}` for no semantic reason.
+
+All five sites now route through one exported `pipelineLookupBody(from, letVars,
+pipeline, as)` in [src/lookup-translation.ts](../src/lookup-translation.ts),
+which omits `let` iff `letVars` is empty. The emitted shape is now a function of
+the *predicate* alone, never of which code path assembled it — which is the same
+invariant the sibling entry above establishes for predicate *spelling*, and the
+reason both were worth fixing together: a `$lookup` shape that shifts with
+anything other than what the query means is the bug, not the specific trigger.
+
+This is why the preceding fix is a strict win rather than a trade: normalising
+the shorthand at detection had, on its own, moved uncorrelated shorthand chains
+*onto* the arrow's `let: {}` path. Rather than accept the noisier output for the
+sake of agreement, both spellings now get the lean shape. Thirteen expectations
+across four suites lost exactly one `"let": {}` line each and nothing else.
+
+---
+
+## 2026-08-01 — fix: chain errors caret at the offending call, not the chain root
+
+`parsePostfix` stamped `pos: left.pos` on every `MethodCall` it built, so every
+link of a chain shared the chain root's source offset. An error deep in a chain
+therefore underlined the wrong thing:
+
+```
+$$.filter(p => p.a > 1).uniq().take(2);
+^                                          ← before: the caret sat on `$$`
+                        ^                  ← after:  it sits on `.uniq`
+```
+
+Each link now carries the offset of its own member token — a one-line change in
+[src/parser.ts](../src/parser.ts). Two existing assertions moved and both moved
+for the better: the incompatible-receiver error in a chain now points at
+`.every(...)`, the call its own message names, instead of at the `$.items`
+chain root.
+
+One site needed the opposite treatment. The "lookup syntax requires Pipeline
+mode" error is about the whole `$$$.<coll>.find(...)` construct, not about
+whichever link is outermost, so it now resolves the `$$$` prefix's own offset
+via a small `contextRefPos` walk in [src/index.ts](../src/index.ts) rather than
+taking `ast.pos`. The general rule: an error about *a call* takes the call's
+position; an error about *a construct* resolves the construct's head.
+
+---
+
 ## 2026-08-01 — fix: correlate a query-form `$match` inside a foreign sub-pipeline
 
 Found while verifying the chained-stage work against a live `mongod`, and it
@@ -164,6 +422,49 @@ indexable. A correlated shape the translator can't express (an `$and`/`$or`
 root, `$regex`, …) still errors, naming both the arrow-predicate and the
 expression-body alternative, because emitting a match that returns nothing is
 worse than saying so.
+
+---
+
+## 2026-08-01 — fix: stream callback spelling never changes the emitted MQL
+
+Generalises the two entries below from `.filter` to the whole higher-order stream
+surface. Value position accepts the lodash shorthands everywhere, so a spelling
+that compiles against `$.arr` but errors against `$$$.<coll>` is a bug, not a
+restriction. An acceptance matrix over {`.find` `.filter` `.reject` `.some`
+`.every` `.map` `.flatMap` `.sortBy` `.orderBy` `.groupBy` `.countBy` `.keyBy`
+`.uniqBy`} × {arrow, property string, matches-object, `["field", value]`} ×
+{value, stream head, stream chain} turned up twenty divergent cells. They
+collapsed into two equivalence classes, each now behind one resolver:
+
+- **Field key** (`.sortBy` / `.orderBy` / `.groupBy` / `.countBy` / `.keyBy` /
+  `.uniqBy` / `.flatMap`) — `"cat"` and `d => d.cat` name the same path, so
+  `fieldKeyArg` resolves both. Only `.flatMap` accepted the arrow before.
+- **Predicate** (`.find`, plus the `.map` iteratee) — `.find` demanded an arrow
+  even though `.filter`, value position, and a chained `.find` all took the
+  shorthands; `.map` took the property string but not the other two.
+
+The sharpest find was `.groupBy(d => d.cat)`: once accepted, it emitted *valid but
+different* MQL, because `isCollapsingTerminal` asked whether the argument was a
+`StringLiteral` rather than whether it named a key — so the arrow spelling silently
+skipped the `$first` unwrap and handed back the raw `[obj]` slot. That is the same
+`StringLiteral`-as-proxy-for-meaning mistake as the `.find` rejection, and it is
+why the guards assert pairs **byte-identical** rather than "both compile".
+
+What a stream genuinely cannot take is a *computed* key — a `$sort` key /
+`$group._id` is fixed at plan time. That limit stays, but now speaks with one
+voice: the shared `computedKeyError` names the method it was called on and points
+at `.map(d => ({ ...d, key: <expr> })).<method>("key")`. Previously `.keyBy` and
+`.uniqBy` illustrated their own errors with `.countBy("status")`, sending the
+reader to a different method's docs. Three methods keep the object spelling for a
+*richer* meaning — `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })`
+are direction specs, `.groupBy({ _id, … })` is the `$group` body — so the matcher
+is unavailable there by claim, not by accident.
+
+Verified on a live mongod: every newly-accepted spelling runs and returns what its
+established twin returns. Two pairs first looked like mismatches and were not —
+`$group` fixes neither output key order nor which duplicate `$first` keeps, and the
+emitted MQL for those pairs is byte-identical, so the difference was the server's,
+not jsmql's.
 
 ---
 
@@ -201,35 +502,6 @@ instead of writing straight into `as: "recentOrders"`), and every `.length`
 after a correlated filter keeps its arrow — the matches-object form loses the
 basic-form indexable `$lookup` and the known-array `$size`. Those last two are
 DX gaps in the compiler, not in the tests.
-
----
-
-## 2026-08-01 — feat: playground Variables panel is a disclosure under the "MongoDB call" bar
-
-The Variables editor no longer occupies the input panel permanently. It now
-hangs off the "MongoDB call" bar as a collapsed panel, revealed by a labelled
-chevron pinned to the right of that bar
-([playground_skeleton.html](../playground_skeleton.html) — `.vars-toggle`,
-`setVarsOpen` / `syncVarsDisclosure`). Variables are optional, so the default
-view puts the call site directly above the query and gives the editor its
-vertical space back; the chevron is what asks for them. To keep the control
-pinned while the call site can still be long, the bar itself stopped scrolling —
-its label+code moved into an inner `.usage-main` that owns the `overflow-x`.
-
-Open/closed is **derived from the content, not persisted**: on every restore
-path (page refresh, and a `#s=` share link, which can carry someone else's
-variables) `syncVarsDisclosure()` opens the panel when the box actually holds
-bindings or fails to parse. Both cases change the MQL output and the call-site
-hint, so hiding their cause would leave the user with a `.compile(...)({ age })`
-call site and nothing visible that explains it. Nothing about the panel state
-goes into localStorage or the share payload, so the panel can never disagree
-with the session it is showing.
-
-The box also stops starting empty: it now opens on a commented-out template
-(`runTimeVar1` plus an `ObjectId("507f…")` line). It parses to `{}` — no
-bindings, so behaviour is identical to the old empty box — while naming the two
-shapes people reach for first, the second of which isn't guessable because JSON
-can't express it.
 
 ---
 

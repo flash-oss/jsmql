@@ -160,44 +160,83 @@ describe(".tail() → $skip: 1 — lodash all-but-first", () => {
   });
 });
 
-describe(".takeRight / .dropRight / .initial — the reverse-sort trick", () => {
-  it("no preceding sort → reverses by _id", () => {
-    expect(jsmql("$$ = $$.takeRight(3);")).toEqual([{ $sort: { _id: -1 } }, { $limit: 3 }, { $sort: { _id: 1 } }]);
-    expect(jsmql("$$ = $$.dropRight(2);")).toEqual([{ $sort: { _id: -1 } }, { $skip: 2 }, { $sort: { _id: 1 } }]);
+describe("'from the end' array methods are NOT on the stream surface", () => {
+  // MongoDB has no stage that reverses a stream (`$reverseArray` is an EXPRESSION,
+  // for an array inside a document), and a stream has no order except the one a
+  // `$sort` gives it. These four used to be faked by rewriting the preceding
+  // `$sort`, which made them position-dependent in a way the JS methods never are —
+  // and with no `$sort` in front they silently ordered by `_id` instead of erroring.
+  const REMOVED = ["takeRight(3)", "dropRight(2)", "initial()", "toReversed()"];
+  const CONTEXTS = [
+    ["$$ = pivot", (c: string) => `$$ = $$.${c};`],
+    ["bare statement", (c: string) => `$$.${c};`],
+    ["after a sort", (c: string) => `$$ = $$.toSorted({ age: 1 }).${c};`],
+    ["foreign pivot", (c: string) => `$$ = $$$.orders.${c};`],
+    ["foreign value position", (c: string) => `$.x = $$$.orders.${c};`],
+    ["foreign after filter", (c: string) => `$.x = $$$.orders.filter({ a: 1 }).${c};`],
+  ] as const;
+  for (const call of REMOVED) {
+    for (const [label, build] of CONTEXTS) {
+      it(`.${call} is rejected in the ${label} context`, () => {
+        expect(() => jsmql(build(call)), build(call)).toThrow(/isn't available on a stream/);
+      });
+    }
+  }
+
+  it("the rejection names the take-from-the-front rewrite", () => {
+    expect(() => jsmql("$$ = $$.takeRight(3);")).toThrow(/\.toSorted\({ <field>: -1 }\)\.take\(n\)/);
+    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/\.toSorted\({ <field>: -1 }\)/);
   });
-  it("a preceding directional $sort is reversed, applied, then restored", () => {
-    expect(jsmql('$$ = $$.sort("createdAt").takeRight(3);')).toEqual([
-      { $sort: { createdAt: -1 } },
-      { $limit: 3 },
-      { $sort: { createdAt: 1 } },
-    ]);
-    expect(jsmql("$$ = $$.sort({ score: -1 }).dropRight(2);")).toEqual([
-      { $sort: { score: 1 } },
-      { $skip: 2 },
-      { $sort: { score: -1 } },
-    ]);
-  });
-  it(".initial() is .dropRight(1)", () => {
-    expect(jsmql('$$ = $$.sort("v").initial();')).toEqual([{ $sort: { v: -1 } }, { $skip: 1 }, { $sort: { v: 1 } }]);
-  });
-  it(".takeRight(0) is empty; .dropRight(0) is identity", () => {
-    expect(jsmql("$$ = $$.takeRight(0);")).toEqual([{ $match: { $expr: false } }]);
-    expect(jsmql("$$ = $$.dropRight(0);")).toEqual([]);
+
+  it("all four still work in VALUE position on a real array", () => {
+    // A stored array carries its own order, so there they mean what JS means.
+    expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([{ $set: { x: { $slice: ["$items", -3] } } }]);
+    expect(jsmql("$.x = $.items.toReversed();")).toEqual([{ $set: { x: { $reverseArray: "$items" } } }]);
+    expect(jsmql("$.x = $.items.initial();")).toBeDefined();
+    expect(jsmql("$.x = $.items.dropRight(2);")).toBeDefined();
   });
 });
 
 describe(".shuffle() → $rand sort", () => {
-  it("stamps a $rand key, sorts by it, then drops it (residue cleared by the trailing $unset)", () => {
+  it("stamps a $rand key and sorts by it; the trailing $unset clears the residue", () => {
+    // No per-slot `$unset` at the top level — the pipeline's own trailing
+    // `{ $unset: "__jsmql" }` already sweeps it, so emitting both was noise.
     expect(jsmql("$$.shuffle();")).toEqual([
       { $addFields: { "__jsmql.tmp.1": { $rand: {} } } },
       { $sort: { "__jsmql.tmp.1": 1 } },
-      { $unset: "__jsmql.tmp.1" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("inside a $lookup.pipeline the whole __jsmql namespace is unset, not the leaf slot", () => {
+    // The outer sweep can't reach documents nested in the `as` array, so the
+    // sub-pipeline cleans up itself — and it must drop the NAMESPACE ROOT.
+    // `$unset` of a dotted path removes only the leaf, so unsetting
+    // `__jsmql.tmp.1` left every foreign doc carrying `__jsmql: { tmp: {} }`.
+    // Verified against a live mongod, where the residue showed up in the results.
+    const inner = ((jsmql("$.x = $$$.orders.shuffle();") as object[])[0] as { $lookup: { pipeline: object[] } }).$lookup
+      .pipeline;
+    expect(inner).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $rand: {} } } },
+      { $sort: { "__jsmql.tmp.1": 1 } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("the scratch $unset is held to the end, never wedged between the $sort and the next stage", () => {
+    // The `$sort` must stay adjacent to whatever follows it. When the slot `$unset`
+    // sat in between, `.takeRight` (since removed) silently reversed by `_id`
+    // instead of by the shuffle. The ordering rule outlives that method.
+    expect(jsmql("$$ = $$.shuffle().take(3);")).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $rand: {} } } },
+      { $sort: { "__jsmql.tmp.1": 1 } },
+      { $limit: 3 },
       { $unset: "__jsmql" },
     ]);
   });
 });
 
-describe("stream .takeWhile / .dropWhile are deferred [DEF-034]", () => {
+describe("stream .takeWhile / .dropWhile are deferred [DEF-035]", () => {
   it("throw an actionable error pointing at the value-mode / sort+filter forms", () => {
     expect(() => jsmql("$$.takeWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
     expect(() => jsmql("$$.dropWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
@@ -898,50 +937,6 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
   });
 });
 
-describe(".toReversed() — flips the preceding $sort", () => {
-  it("after ascending .toSorted → descending $sort", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => a.age - b.age).toReversed();")).toEqual([{ $sort: { age: -1 } }]);
-  });
-
-  it("after descending .toSorted → ascending $sort", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => b.score - a.score).toReversed();")).toEqual([{ $sort: { score: 1 } }]);
-  });
-
-  it("compound sort: every key flips", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => a.x - b.x || b.y - a.y).toReversed();")).toEqual([
-      { $sort: { x: -1, y: 1 } },
-    ]);
-  });
-
-  it("composes with .slice — $sort + $limit (top-N bottom-first)", () => {
-    expect(jsmql("$$ = $$.toSorted((a, b) => a.score - b.score).toReversed().slice(0, 3);")).toEqual([
-      { $sort: { score: -1 } },
-      { $limit: 3 },
-    ]);
-  });
-
-  it("works inside the $$$.<coll> lookup body", () => {
-    expect(
-      jsmql("$$ = $$$.archive.filter(o => o.active === true).toSorted((a, b) => a.x - b.x).toReversed();"),
-    ).toEqual([
-      { $match: { $expr: false } },
-      { $unionWith: { coll: "archive", pipeline: [{ $match: { active: true } }, { $sort: { x: -1 } }] } },
-    ]);
-  });
-
-  it("without a preceding .toSorted is rejected", () => {
-    expect(() => jsmql("$$ = $$.toReversed();")).toThrow(/needs a preceding \$sort/);
-  });
-
-  it("after a non-$sort stage (e.g. .slice) is rejected", () => {
-    expect(() => jsmql("$$ = $$.slice(0, 10).toReversed();")).toThrow(/needs a preceding \$sort/);
-  });
-
-  it("rejects positional args", () => {
-    expect(() => jsmql("$$ = $$.toSorted((a, b) => a.x - b.x).toReversed(1);")).toThrow(/takes no arguments/);
-  });
-});
-
 describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   it("bare field path lowers to $unwind", () => {
     expect(jsmql("$$ = $$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }]);
@@ -965,11 +960,13 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   });
 
   it("non-path body is rejected with a 'hoist to a separate stage' hint", () => {
-    expect(() => jsmql("$$ = $$.flatMap(d => d.items.map(x => x * 2));")).toThrow(/bare field-path body.*hoist/);
+    expect(() => jsmql("$$ = $$.flatMap(d => d.items.map(x => x * 2));")).toThrow(
+      /needs a field path.*Build the array into a field first/s,
+    );
   });
 
   it("zero-arg body is rejected (no path → not derivable)", () => {
-    expect(() => jsmql("$$ = $$.flatMap(d => 5);")).toThrow(/bare field-path body/);
+    expect(() => jsmql("$$ = $$.flatMap(d => 5);")).toThrow(/needs a field path/);
   });
 
   it("two-param arrow is rejected", () => {
@@ -1422,27 +1419,174 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
     expect(assigned).toEqual(expected);
   });
 
-  // The crux: .toReversed() composes against the live pipeline, so splitting
-  // it from its .toSorted() into a separate statement still flips the $sort.
-  it("toSorted().toReversed(): chained ≡ split (cross-statement) ≡ assignment", () => {
-    const chained = jsmql("$$.toSorted((a, b) => a.age - b.age).toReversed();");
-    const split = jsmql("$$.toSorted((a, b) => a.age - b.age); $$.toReversed();");
-    const assigned = jsmql("$$ = $$.toSorted((a, b) => a.age - b.age).toReversed();");
+  it("a descending sort is written directly, not as sort-then-reverse", () => {
+    // `.toReversed()` is gone from streams, so the descending comparator IS the
+    // spelling — and it was always the shorter one for the same single `$sort`.
     const expected = [{ $sort: { age: -1 } }];
-    expect(chained).toEqual(expected);
-    expect(split).toEqual(expected);
-    expect(assigned).toEqual(expected);
-  });
-
-  it("bare .toReversed() inverts a preceding literal $sort stage", () => {
-    expect(jsmql("$sort({ age: 1 }); $$.toReversed();")).toEqual([{ $sort: { age: -1 } }]);
-  });
-
-  it("bare .toReversed() with no preceding sort is rejected with the new wording", () => {
-    expect(() => jsmql("$$.toReversed();")).toThrow(/needs a preceding \$sort/);
+    expect(jsmql("$$.toSorted((a, b) => b.age - a.age);")).toEqual(expected);
+    expect(jsmql("$$ = $$.toSorted({ age: -1 });")).toEqual(expected);
+    expect(jsmql('$$.orderBy("age", -1);')).toEqual(expected);
   });
 
   it("unknown bare chain method surfaces the registry hint", () => {
     expect(() => jsmql("$$.slise(0, 5);")).toThrow(/Did you mean '\.slice'/);
+  });
+});
+
+// Callback SPELLING must never change what is emitted. jsmql accepts the lodash
+// shorthands in value position, so the stream forms have to accept exactly the same
+// set — a spelling that compiles against `$.arr` but errors against `$$$.coll` is a
+// bug, not a restriction. Two spellings that mean one thing:
+//   • a field key   — `"cat"`  ≡  `d => d.cat`   (both name the same plan-time path)
+//   • a predicate   — `o => o.cat === "a"`  ≡  `{ cat: "a" }`  ≡  `["cat", "a"]`
+// Each pair below is asserted BYTE-IDENTICAL rather than merely "both compile", which
+// is what catches a divergence that still produces valid-but-different MQL (the
+// `.groupBy(d => d.cat)` case did: it silently skipped the `$first` unwrap that
+// `.groupBy("cat")` gets, leaving the caller the raw `[obj]` slot). Verified on a
+// live mongod: every pair returns the same documents.
+describe("stream callbacks — spelling never changes the emitted MQL", () => {
+  const FIELD_KEY_METHODS = ["sortBy", "orderBy", "groupBy", "countBy", "keyBy", "uniqBy", "flatMap"];
+  for (const m of FIELD_KEY_METHODS) {
+    it(`.${m}: the bare-path arrow emits exactly what the field-name string does`, () => {
+      expect(jsmql(`$.o = $$$.orders.${m}(d => d.cat);`)).toEqual(jsmql(`$.o = $$$.orders.${m}("cat");`));
+      // …and in a chained position, where a different assembler builds the stage.
+      expect(jsmql(`$.o = $$$.orders.take(3).${m}(d => d.cat);`)).toEqual(
+        jsmql(`$.o = $$$.orders.take(3).${m}("cat");`),
+      );
+    });
+  }
+
+  it(".groupBy(<arrow>) still gets the collapsing $first unwrap the string form gets", () => {
+    // The regression this guards: `isCollapsingTerminal` keyed on `StringLiteral`, so
+    // only the string spelling was recognised as collapsing to a single object.
+    const stages = jsmql(`$.o = $$$.orders.groupBy(d => d.cat);`) as object[];
+    expect(JSON.stringify(stages)).toContain("$first");
+  });
+
+  it(".groupBy({ _id, … }) stays the $group-body form, NOT a matches-shorthand key", () => {
+    expect(jsmql(`$$ = $$.groupBy({ _id: "$dept", n: $sum(1) });`)).toEqual([
+      { $group: { _id: "$dept", n: { $sum: 1 } } },
+    ]);
+  });
+
+  const PREDICATE_SPELLINGS = [`{ cat: "a" }`, `["cat", "a"]`];
+  for (const spelling of PREDICATE_SPELLINGS) {
+    it(`.find(${spelling}) emits exactly what the equivalent arrow does`, () => {
+      expect(jsmql(`$.o = $$$.orders.find(${spelling});`)).toEqual(jsmql(`$.o = $$$.orders.find(o => o.cat === "a");`));
+    });
+    it(`.map(${spelling}) emits exactly what the equivalent arrow does`, () => {
+      // The twin spells its param `jsmqlEl` — the synthetic name a shorthand desugars
+      // to. A user arrow names its own param, so `$map.as` differs there and nowhere
+      // else; that is the bound variable's name, not a difference in meaning.
+      expect(jsmql(`$.o = $$$.orders.map(${spelling});`)).toEqual(
+        jsmql(`$.o = $$$.orders.map(jsmqlEl => jsmqlEl.cat === "a");`),
+      );
+    });
+  }
+
+  // Whether a computed key works is decided by the SLOT it lands in, not by the
+  // method's spelling rules: `$group._id` is an expression the server evaluates per
+  // document, so it takes one; a `$sort` key / `$unwind` path must be a literal field
+  // path, so it can't. The split below is that line, and nothing else.
+  it("a computed key lowers straight into $group._id — no extra stages", () => {
+    expect(jsmql(`$$ = $$.countBy(d => d.cat.toLowerCase());`)).toEqual([
+      { $group: { _id: { $toLower: "$cat" }, __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql(`$$ = $$.uniqBy(d => d.a + d.b);`)).toEqual([
+      { $group: { _id: { $add: ["$a", "$b"] }, __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
+    // A lodash matches shorthand keys on the match BOOLEAN, same as `_.matches`.
+    expect(jsmql(`$$ = $$.keyBy({ active: true });`)).toEqual(jsmql(`$$ = $$.keyBy(d => d.active === true);`));
+    expect(jsmql(`$$ = $$.countBy(["status", "open"]);`)).toEqual(jsmql(`$$ = $$.countBy(d => d.status === "open");`));
+  });
+
+  it("a plain field key still emits byte-identically after the computed-key change", () => {
+    // The `fieldKeyArg` fast path in `keyExpr` exists so adding expression support
+    // couldn't perturb the overwhelmingly common spelling.
+    for (const m of ["groupBy", "countBy", "keyBy", "uniqBy"]) {
+      expect(JSON.stringify(jsmql(`$$ = $$.${m}("cat");`)), m).toContain(`"_id":"$cat"`);
+    }
+  });
+
+  it(".groupBy(<computed>) still collapses — the unwrap follows the key FORM, not its spelling", () => {
+    // Each time the key surface grew, `isCollapsingTerminal` stopped recognising the
+    // new spelling and silently returned the raw `[obj]` slot. It now tests "not the
+    // $group-body form", so it can't fall behind again.
+    for (const key of [`"cat"`, `d => d.cat`, `d => d.cat.toLowerCase()`]) {
+      expect(JSON.stringify(jsmql(`$.o = $$$.orders.groupBy(${key});`)), key).toContain("$first");
+    }
+    expect(jsmql(`$$ = $$.groupBy({ _id: "$cat" });`)).toEqual([{ $group: { _id: "$cat" } }]);
+  });
+
+  it("a computed sort key materialises into a scratch field ahead of the $sort", () => {
+    // `$sort` needs a literal field path, so unlike `$group._id` the expression can't
+    // go inline — one `$addFields` puts it in a `__jsmql.tmp` slot first.
+    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase());`)).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $toLower: "$cat" } } },
+      { $sort: { "__jsmql.tmp.1": 1 } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $toLower: "$cat" } } },
+      { $sort: { "__jsmql.tmp.1": -1 } },
+      { $unset: "__jsmql" },
+    ]);
+    // A plain field key is untouched — still the single `$sort` it always was.
+    expect(jsmql(`$$ = $$.sortBy("cat");`)).toEqual([{ $sort: { cat: 1 } }]);
+  });
+
+  it("a computed sort key's scratch $unset stays out of the way of later stages", () => {
+    // The `$sort` must remain adjacent to whatever follows, so the cleanup is held to
+    // the end of the chain rather than emitted right after the `$sort`.
+    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);`)).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $toLower: "$cat" } } },
+      { $sort: { "__jsmql.tmp.1": 1 } },
+      { $limit: 3 },
+      { $unset: "__jsmql" },
+    ]);
+    // Descending is written directly — there is no reverse-a-previous-sort form.
+    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
+      { $addFields: { "__jsmql.tmp.1": { $toLower: "$cat" } } },
+      { $sort: { "__jsmql.tmp.1": -1 } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("`.flatMap` is the one key slot that still can't take a computed value", () => {
+    // `$unwind` returns each element to a NAMED field, so the name is part of what the
+    // user means — auto-materialising into a scratch slot would discard the elements.
+    expect(() => jsmql(`$.o = $$$.orders.flatMap({ cat: 1 });`)).toThrow(/Materialise the array into a field first/);
+    expect(() => jsmql(`$.o = $$$.orders.flatMap(d => d.a.concat(d.b));`)).toThrow(/needs a field path/);
+  });
+
+  it("an object on a sort method still means directions, not a matcher", () => {
+    expect(jsmql(`$.o = $$$.orders.orderBy({ cat: -1 });`)).toEqual(jsmql(`$.o = $$$.orders.orderBy(["cat"], [-1]);`));
+    expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(/Use '\.orderBy\({ field: -1 }\)'/);
+  });
+
+  it("a computed-key iteratee's own errors name the calling method, not `.map`", () => {
+    // The `$group`-keyed methods reuse `.map`'s body/param helpers to lower a computed
+    // key, so their errors have to be re-pointed — otherwise `.countBy(d => …)` fails
+    // talking about `.map`, the same wrong-method trap as `.keyBy` citing `.countBy`.
+    expect(() => jsmql(`$$ = $$.countBy(d => $.other);`)).toThrow(/inside '\.countBy\(d => …\)'/);
+    expect(() => jsmql(`$$ = $$.uniqBy(function (d) { const y = d.x; return y; });`)).toThrow(
+      /^\.uniqBy\(d => \{ … \}\) with 'let'\/'const' bindings/,
+    );
+    expect(() => jsmql(`$$ = $$.countBy((d, i) => d.x);`)).toThrow(/single-parameter iteratee/);
+  });
+
+  it("each key-slot error names the method it was called on, not a sibling", () => {
+    // `.keyBy`/`.uniqBy` used to demonstrate `.countBy("status")` in their own errors.
+    expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(/'\.keyBy\("status"\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.uniqBy(5);`)).toThrow(/'\.uniqBy\("status"\)'/);
+    expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(/'\.sortBy\("status"\)'/);
   });
 });
