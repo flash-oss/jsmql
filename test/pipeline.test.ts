@@ -1282,3 +1282,63 @@ describe("chained stage calls on the current stream", () => {
     });
   });
 });
+
+// HR3: `$out` / `$merge` are rejected by mongod in ANY sub-pipeline
+// (Location51047), so jsmql must never emit one there. The loop-position
+// validator covers the containers it can name; a block-body lambda has no
+// unambiguous container (DEF-024) but is unambiguously *a* sub-pipeline, so the
+// check keys on that instead. Derived from `forbiddenIn` in the registry — a
+// stage forbidden in facet AND lookup AND unionWith is forbidden everywhere but
+// the top level.
+describe("write stages are forbidden in every sub-pipeline", () => {
+  const cases: [string, string][] = [
+    ["a foreign .aggregate(...) block", '$.t = $$$.orders.aggregate(o => { $out("archive"); });'],
+    ["a foreign .aggregate(...) block ($merge)", '$.t = $$$.orders.aggregate(o => { $merge({ into: "m" }); });'],
+    ["a lookup predicate block-body", '$.t = $$$.orders.filter(o => { $out("archive"); return o.a; });'],
+    ["a $facet branch block-body", '$ = { k: $$.filter(d => { $out("archive"); return d.a; }) };'],
+  ];
+  for (const [label, src] of cases) {
+    it(`rejects a write stage inside ${label}`, () => {
+      expect(() => jsmql(src)).toThrow(/is not allowed inside a sub-pipeline/);
+    });
+  }
+
+  // A named container keeps its more specific message.
+  it("keeps the container-specific wording where the container is known", () => {
+    expect(() => jsmql('$.t = $$$.orders.$out("archive");')).toThrow(
+      /'\$out' is not allowed inside a '\$lookup' sub-pipeline/,
+    );
+  });
+
+  // …and the top-level write stage still works.
+  it("still allows a top-level $out", () => {
+    expect(jsmql("$$$.archive = $$;")).toEqual([{ $out: "archive" }]);
+    expect(jsmql('$out("archive");')).toEqual([{ $out: "archive" }]);
+  });
+});
+
+// A foreign chain produces a value, so a bare statement has nowhere to put it.
+describe("a bare `$$$.<coll>.<chain>;` statement names its missing destination", () => {
+  it("points at the three destinations", () => {
+    expect(() => jsmql("$$$.orders.$match({ a: 1 });")).toThrow(
+      /A '\$\$\$\.orders\.<chain>' statement has no destination/,
+    );
+    expect(() => jsmql("$$$.orders.filter({ a: 1 }).take(2);")).toThrow(/has no destination/);
+  });
+
+  it("names the cross-database ref when there is one", () => {
+    expect(() => jsmql("$$$$.other.orders.$match({ a: 1 });")).toThrow(
+      /A '\$\$\$\$\.other\.orders\.<chain>' statement has no destination/,
+    );
+  });
+
+  // A value-collapsing terminal keeps its own, more specific message.
+  it("leaves the value-terminal message alone", () => {
+    expect(() => jsmql("$$$.orders.head();")).toThrow(/returns a single value, not a pipeline stage/);
+  });
+
+  // The contrast the message calls out: a `$$` chain needs no destination.
+  it("a bare `$$` chain still works — it transforms the current stream", () => {
+    expect(jsmql("$$.$match({ a: 1 });")).toEqual([{ $match: { a: 1 } }]);
+  });
+});

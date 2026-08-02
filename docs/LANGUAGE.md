@@ -416,6 +416,20 @@ $.items[0].name    // array element by index — use bracket access (`$.items.0`
 $.in               // field literally named "in" (no conflict with operator)
 ```
 
+**`$.` always means the *root* document — not "whichever document is nearest".** That matters
+once you read another collection: inside a `$$$.<coll>` chain, an `.aggregate((o) => { … })`
+block, or a `.filter((o) => …)` predicate, `$.x` still reads the **outer** document. The
+sub-pipeline's own document is the callback parameter (`o`), or a raw MQL path string
+(`"$x"`). So the two spellings in one stage body address two different documents:
+
+```js
+$.t = $$$.orders.$set({ owner: $.tag });    // owner ← the ROOT doc's `tag`
+$.t = $$$.orders.$set({ owner: "$tag" });   // owner ← the ORDERS doc's `tag`
+```
+
+jsmql threads the root-document read through `$lookup.let` for you; see
+[Cross-collection lookups](#cross-collection-lookups-coll-find--filter).
+
 ### Bracket Access
 
 > **Dot access is interpreted; bracket access is raw.** A `.member` access can carry compiler meaning — most notably `.length`, which folds to the string-or-array length operator. Square brackets never do: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. jsmql does not interpret what's inside the brackets — whatever you spell is the property you get. So when you mean "the data at this key, verbatim" (including a field literally named `length`), reach for brackets.
@@ -2890,8 +2904,15 @@ jsmql("$$.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(5);");
 jsmql("$match({ status: 'shipped' }); $sort({ total: -1 }); $limit(5);");
 ```
 
-Stage links interleave with the JavaScript chain methods, so you can mix whichever reads
-better:
+**Two spellings, no winner.** Where a stage has a JavaScript equivalent, both compile to the
+same thing — pick whichever reads better for the query at hand:
+
+```js
+jsmql("$$.filter({ a: 1 }).take(5);");     // → [{ $match: { a: 1 } }, { $limit: 5 }]
+jsmql("$$.$match({ a: 1 }).$limit(5);");   // → [{ $match: { a: 1 } }, { $limit: 5 }]
+```
+
+They interleave freely, so a chain can use each where it's clearest:
 
 ```js
 jsmql("$$.filter(p => p.score > 0).$sort({ score: -1 }).take(10);");
@@ -2928,10 +2949,20 @@ $set({ topRegions: byRegion });
 The name after the `.` must be a real aggregation stage — jsmql invents none — and takes
 exactly one argument, its body. Two things that may surprise you:
 
-- **Stages chain only while the chain is still a stream.** Once a link produces a value
-  (`.map("<field>")`, `.uniq()`, `.sum()`, …) a following `.$stage(...)` is rejected: a
-  value isn't a pipeline. `$.items.$match(...)` is rejected for the same reason — use the
-  array method `.filter(...)`.
+- **Stages chain only while the chain is still a stream.** A stage runs *inside* the
+  pipeline; once a link turns the chain into a **value** — `.map("<field>")` (extracting a
+  field, not reshaping a document), `.flatten()`, `.uniq()`, `.sum()`, `.head()`, and the
+  other value terminals — everything after it is ordinary array/value work, and a stage
+  there has nothing to run in. Put the stages first:
+
+  ```js
+  $.x = $$$.c.$match({ a: 1 }).$limit(5).map("f");   // ✅ stages, then values
+  $.x = $$$.c.$match({ a: 1 }).map("f").$limit(5);   // ❌ '.$limit(...)' is a pipeline stage,
+                                                     //    but its receiver here is a value
+  ```
+
+  `$.items.$match(...)` is rejected for the same reason — an in-document array was never a
+  stream. Use the array method `.filter(...)`.
 - **A correlated `$match` is rewritten for you.** In a `$$$.<coll>` chain, `$.` reads the
   *outer* document. In a `$match` object body MongoDB wouldn't evaluate that (the query
   language ignores variables, so the match would silently return nothing), so jsmql

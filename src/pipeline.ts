@@ -50,7 +50,14 @@ import {
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr, someElement, someStmt } from "./ast-walk.ts";
 import { JSMQL_NS, bindingSlot, isCorrelationVar, streamLengthStage } from "./namespace.ts";
-import { lookupStage, STAGES, stageMustBeFirst, stageMustBeLast, stageForbiddenIn } from "./stages.ts";
+import {
+  lookupStage,
+  STAGES,
+  stageForbiddenIn,
+  stageForbiddenInAnySubPipeline,
+  stageMustBeFirst,
+  stageMustBeLast,
+} from "./stages.ts";
 import {
   forbiddenInContextMessage,
   isStageLink,
@@ -1841,6 +1848,22 @@ function findQuerySlotCorrelation(node: Expr): string | null {
 }
 
 function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
+  // HR3: a write stage inside ANY sub-pipeline is rejected by mongod
+  // (Location51047), so jsmql must never emit one. The loop-position validator
+  // covers the containers it can label; this covers the rest — notably a
+  // block-body lambda (`.aggregate((o) => { $out(…); })`), which has no
+  // unambiguous container name (DEF-024) but is unambiguously *a* sub-pipeline.
+  // Registry-derived, so a future all-container stage is picked up for free.
+  if (ctx.inSubPipeline === true) {
+    const def = lookupStage(stageName);
+    if (def !== undefined && stageForbiddenInAnySubPipeline(def)) {
+      throw new CodegenError(
+        `'${stageName}' is not allowed inside a sub-pipeline — MongoDB only accepts it as the last stage of a ` +
+          `top-level pipeline. Move it to the outer pipeline.`,
+        body.pos,
+      );
+    }
+  }
   // Body-shape validation (literal-gated; see stage-validation.ts). Runs for
   // every user-written stage body before lowering.
   validateStageBody(stageName, body);
@@ -2396,6 +2419,28 @@ function lowerStatementTail(
         validator,
       );
       return clearLets ? clearCtxLets(ctx, clearedBy) : ctx;
+    }
+    // A `$$$.<coll>.<chain>;` statement — a FOREIGN chain with nowhere to go.
+    // Unlike a `$$` chain (which transforms the running stream in place), this
+    // one produces a value and needs a destination. Say that, rather than
+    // falling through to the generic "not a recognised stage" complaint. A
+    // value-collapsing terminal (`.head()`/`.size()`/…) keeps its own, more
+    // specific message from `formatNotAStageError` — it names the method.
+    if (
+      streamChain.methods.length > 0 &&
+      !VALUE_TERMINAL_METHODS.has(streamChain.methods[streamChain.methods.length - 1].method)
+    ) {
+      const foreign = extractLookupTarget(streamChain.root, ctx);
+      if (foreign !== null) {
+        const ref = foreign.db !== undefined ? `$$$$.${foreign.db}.${foreign.collection}` : `$$$.${foreign.collection}`;
+        throw new CodegenError(
+          `A '${ref}.<chain>' statement has no destination — reading another collection produces a value, ` +
+            `so it needs somewhere to go. Assign it to a field ('$.<field> = ${ref}.…'), bind it ` +
+            `('const <name> = ${ref}.…'), or make it the new stream ('$$ = ${ref}.…'). ` +
+            `(A bare '$$.<chain>;' works because it transforms the CURRENT stream in place.)`,
+          streamChain.methods[0].pos,
+        );
+      }
     }
   }
   const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);
