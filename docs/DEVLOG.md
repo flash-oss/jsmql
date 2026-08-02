@@ -103,6 +103,22 @@ byte-identical to before — checked across seven shapes — because the chain a
 keeps peeling stage links through `lowerCallbackBlock`. Verified on a live mongod:
 correlated, plain, operator-bearing, mixed, and chained forms all return the same
 documents as their `.filter` twin where a twin exists.
+## 2026-08-01 — docs: `$` is the ROOT document at every depth (HR4 wording)
+
+HR4 said "`$` = the current document", which reads as "whichever document is
+nearest" and is wrong inside a sub-pipeline. `$.x` is a **root**-document read
+at any depth — jsmql threads it in through `$lookup.let` — while the
+sub-pipeline's own document is the callback parameter or a raw `"$x"` MQL path
+string. The consequence is sharp enough to deserve the example now in
+[docs/LANG_RULES.md](LANG_RULES.md) and [docs/LANGUAGE.md](LANGUAGE.md):
+`$$$.orders.$set({ owner: $.tag })` and `$$$.orders.$set({ owner: "$tag" })`
+differ by one character and read two different documents.
+
+Also: the §B row rejecting a second spelling on "which one does my codebase
+use?" grounds is gone, and the chained-stage docs now show the lodash and
+`$stage` spellings side by side without naming a winner. Two spellings of the
+same lowering are fine; what jsmql avoids is the *same* input producing
+different output.
 
 ---
 
@@ -331,6 +347,41 @@ than guess when the expected stage isn't there.
 from the FRONT of an order a preceding `.sort(...)` establishes — but its
 "or default to `_id`" success criterion is now explicitly disallowed for the same
 reason, and the row says so.
+
+---
+
+## 2026-08-01 — fix: `$out` / `$merge` rejected in every sub-pipeline, block bodies included
+
+HR3 says jsmql never knowingly emits invalid MQL, and mongod rejects a write
+stage anywhere but the last position of a top-level pipeline (Location51047).
+Four spellings still slipped one through — a foreign `.aggregate((o) => { … })`
+block, a `.filter` predicate block-body, and a `$facet` branch block-body all
+emitted `{ $out: … }` straight into a sub-pipeline.
+
+The blocker recorded in DEF-024 was that `lowerBlock` has no unambiguous
+container to validate against. That is true, but it doesn't apply to *these*
+stages: `$out` and `$merge` are the only ones the registry forbids in **all
+three** containers, so they are decidable without a container label. A stage
+matching `stageForbiddenInAnySubPipeline` is now rejected on a single
+`GenerateCtx.inSubPipeline` flag, stamped by both `freshSubPipelineCtx` and
+`freshFacetCtx`. Membership is read from `forbiddenIn`, so a future
+all-container stage is covered with no code change. Where the container *is*
+known the named message still wins — it runs first, in the loop validator.
+DEF-024 narrows to what actually remains: imprecise wording for the
+single-container diagnostics inside a block body.
+
+---
+
+## 2026-08-01 — fix: a bare `$$$.<coll>.<chain>;` statement names its missing destination
+
+`$$$.orders.$match({ a: 1 });` reported "Element 0 of pipeline is not a
+recognised stage" plus the full 45-stage list — technically true, useless in
+practice. Reading another collection produces a *value*, so the statement needs
+a destination; the error now says which three exist (`$.<field> = …`,
+`const <name> = …`, `$$ = …`) and notes the contrast the user is most likely
+tripping over: a bare `$$.<chain>;` needs no destination because it transforms
+the current stream in place. A value-collapsing terminal (`$$$.orders.head();`)
+keeps its own more specific message, which names the method.
 
 ---
 

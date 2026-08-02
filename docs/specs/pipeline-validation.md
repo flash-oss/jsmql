@@ -171,6 +171,19 @@ typically a runtime expression, not a literal: `$redact` resolving to
 selection (depends on the field's runtime type), and deep `$geoNear.near`
 GeoJSON shape (only presence of `near` is required).
 
+## Write stages: forbidden in every sub-pipeline
+
+`$out` and `$merge` are the only stages the registry forbids in **all three** containers,
+which makes them decidable without knowing which container you are in. `generateStageBody`
+rejects such a stage whenever `GenerateCtx.inSubPipeline` is set — a flag both
+`freshSubPipelineCtx` and `freshFacetCtx` stamp on — so a block-body lambda
+(`.aggregate((o) => { $out(…); })`, a `.filter` predicate block, a `$facet` branch block)
+is covered even though the loop-position validator can't label its container. Membership
+is read from `forbiddenIn` via `stageForbiddenInAnySubPipeline`, so a future all-container
+stage is picked up with no code change. mongod rejects these with Location51047; HR3 says
+jsmql must not emit them. Where the container *is* known, the named message
+("inside a '$lookup' sub-pipeline") wins — it runs first, in the loop validator.
+
 ## Known gap
 
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays

@@ -5426,6 +5426,7 @@ function ctxHasLets(ctx) {
 function freshSubPipelineCtx(outer) {
   return {
     lambdaParams: /* @__PURE__ */ new Set(),
+    inSubPipeline: true,
     bindings: outer.bindings,
     pipelineContext: outer.pipelineContext,
     // The slot allocator is a pipeline-global resource (gensym counter for
@@ -5439,6 +5440,7 @@ function freshSubPipelineCtx(outer) {
 function freshFacetCtx(outer) {
   return {
     lambdaParams: /* @__PURE__ */ new Set(),
+    inSubPipeline: true,
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
@@ -9622,6 +9624,9 @@ function stageMustBeFirst(def) {
 }
 function stageMustBeLast(def) {
   return def.position === "last";
+}
+function stageForbiddenInAnySubPipeline(def) {
+  return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");
 }
 function stageForbiddenIn(def, container) {
   return def.forbiddenIn?.includes(container) ?? false;
@@ -14834,8 +14839,8 @@ function lowerChainOnStream(methods, outerCtx, lowerBlockFn, allocSlot, rhs) {
 }
 function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, validator = makePipelineValidator("top")) {
   let clearLets = false;
-  const cleanup = [];
   let clearedBy = "$unionWith";
+  const cleanup = [];
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
     if (isStageLink(m)) {
@@ -15259,6 +15264,15 @@ function findQuerySlotCorrelation(node) {
   return found;
 }
 function generateStageBody(stageName, body, ctx) {
+  if (ctx.inSubPipeline === true) {
+    const def = lookupStage(stageName);
+    if (def !== void 0 && stageForbiddenInAnySubPipeline(def)) {
+      throw new CodegenError(
+        `'${stageName}' is not allowed inside a sub-pipeline \u2014 MongoDB only accepts it as the last stage of a top-level pipeline. Move it to the outer pipeline.`,
+        body.pos
+      );
+    }
+  }
   validateStageBody(stageName, body);
   if (stageName === "$match") {
     const correlated = correlatedQueryMatchAsPredicate(body);
@@ -15550,6 +15564,16 @@ function lowerStatementTail(el, i, ctx, out, validator, allocSlot, lowerBlockFn)
         validator
       );
       return clearLets ? clearCtxLets(ctx, clearedBy) : ctx;
+    }
+    if (streamChain.methods.length > 0 && !VALUE_TERMINAL_METHODS.has(streamChain.methods[streamChain.methods.length - 1].method)) {
+      const foreign = extractLookupTarget(streamChain.root, ctx);
+      if (foreign !== null) {
+        const ref = foreign.db !== void 0 ? `$$$$.${foreign.db}.${foreign.collection}` : `$$$.${foreign.collection}`;
+        throw new CodegenError(
+          `A '${ref}.<chain>' statement has no destination \u2014 reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = ${ref}.\u2026'), bind it ('const <name> = ${ref}.\u2026'), or make it the new stream ('$$ = ${ref}.\u2026'). (A bare '$$.<chain>;' works because it transforms the CURRENT stream in place.)`,
+          streamChain.methods[0].pos
+        );
+      }
     }
   }
   const rewrittenEl = extractFromStageElement(el, ctx, allocSlot, lowerBlockFn, out);

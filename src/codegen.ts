@@ -62,6 +62,14 @@ export class UnknownIdentifierError extends CodegenError {
 
 export type GenerateCtx = {
   lambdaParams: ReadonlySet<string>;
+  /**
+   * True inside ANY sub-pipeline body (`$lookup.pipeline`, `$unionWith.pipeline`,
+   * a `$facet` branch) — including a block-body lambda, which the loop-position
+   * validator can't label with a specific container (see DEF-024). Stages the
+   * registry forbids in *every* container ($out / $merge) are rejected on this
+   * flag alone, so no sub-pipeline can emit one (HR3).
+   */
+  inSubPipeline?: boolean;
   reduceRemap?: ReadonlyMap<string, string>;
   /**
    * Pipeline-scoped `let` bindings in scope. Key is the user-facing name; value
@@ -351,6 +359,7 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
 export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
   return {
     lambdaParams: new Set(),
+    inSubPipeline: true,
     bindings: outer.bindings,
     pipelineContext: outer.pipelineContext,
     // The slot allocator is a pipeline-global resource (gensym counter for
@@ -374,6 +383,7 @@ export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
 export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
   return {
     lambdaParams: new Set(),
+    inSubPipeline: true,
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,

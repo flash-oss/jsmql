@@ -1415,8 +1415,8 @@ describe("chained stage calls on $$$.<coll>", () => {
   // …and in a query-document `$match` body it is re-expressed as a predicate
   // first, because MongoDB doesn't evaluate `$$` vars in the query language —
   // a raw `{ $match: { userId: "$$jsmql_f0__id" } }` is accepted by the server
-  // and silently matches nothing (verified live). Output is the `$expr` split
-  // `.filter(...)` produces, so both spellings agree byte for byte.
+  // and silently matches nothing (verified live). Whatever `.filter(...)` emits for
+  // the same predicate, `.$match` emits too — byte for byte.
   it("re-expresses a correlated query-document $match as a predicate", () => {
     // A lone `.$match(<plain equality map>)` IS `.filter(<matches object>)` — same
     // predicate, so it normalises to `filter` in `detectLookupCall` and earns the
