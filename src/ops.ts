@@ -2215,6 +2215,10 @@ declare global {
     drop(n: number): JsmqlCollectionRef;
     /** All but the first document → `$skip: 1` (lodash `_.tail`). */
     tail(): JsmqlCollectionRef;
+    /** Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort. */
+    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
+    /** Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort. */
+    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
     /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
     shuffle(): JsmqlCollectionRef;
     /** `n` random documents → `$sample`. */

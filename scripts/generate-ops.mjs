@@ -165,6 +165,14 @@ const STREAM_METHOD_SIGNATURES = {
   take: { doc: "First `n` documents → `$limit`.", params: "(n: number)" },
   drop: { doc: "Skip the first `n` documents → `$skip`.", params: "(n: number)" },
   tail: { doc: "All but the first document → `$skip: 1` (lodash `_.tail`).", params: "()" },
+  takeWhile: {
+    doc: "Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort.",
+    params: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
+  },
+  dropWhile: {
+    doc: "Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort.",
+    params: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
+  },
   takeRight: {
     doc: "Last `n` documents → reverse-sort + `$limit` + restore (reverses a preceding `$sort`, else orders by `_id`).",
     params: "(n: number)",

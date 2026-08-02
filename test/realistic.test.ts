@@ -3270,3 +3270,36 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
     },
   );
 });
+
+// A device's uptime run: from a sensor's readings in time order, keep the leading
+// stretch before the first bad reading, and report how long it lasted. `.takeWhile`
+// is the whole point here — `.filter(r => r.status === "ok")` would silently include
+// every later good reading after the fault, inflating the run.
+// Verified against a live mongod.
+describe("sensor uptime run before the first fault", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.readings.aggregate(jsmql(...))" }, () => {
+    expect(
+      jsmql(`
+$match($.deviceId === "dev-7");
+$$.toSorted({ readAt: 1 }).takeWhile(r => r.status === "ok");
+$group({ _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } });
+        `),
+    ).toEqual([
+      { $match: { deviceId: "dev-7" } },
+      { $sort: { readAt: 1 } },
+      {
+        $setWindowFields: {
+          sortBy: { readAt: 1 },
+          output: {
+            "__jsmql.tmp.1": {
+              $max: { $cond: [{ $eq: ["$status", "ok"] }, 0, 1] },
+              window: { documents: ["unbounded", "current"] },
+            },
+          },
+        },
+      },
+      { $match: { "__jsmql.tmp.1": 0 } },
+      { $group: { _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } } },
+    ]);
+  });
+});

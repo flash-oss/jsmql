@@ -10562,6 +10562,84 @@ var DROP = {
     return { stages: n === 0 ? [] : [{ $skip: n }] };
   }
 };
+function lowerWhile(keep, args, ctx, callPos, prevStages, allocSlot, inSubPipeline) {
+  const method = keep === 0 ? "takeWhile" : "dropWhile";
+  const sortBy = lastSortSpec(prevStages);
+  if (sortBy === null) {
+    throw new CodegenError(
+      `.${method}(<predicate>) needs a preceding sort \u2014 it keeps the ${keep === 0 ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${method}(...)': e.g. '$$.toSorted({ t: 1 }).${method}(o => o.ok)'. Any sort spelling works ('.sort' / '.toSorted' / '.sortBy' / '.orderBy' / '.$sort({ \u2026 })').`,
+      callPos
+    );
+  }
+  const slot = allocSlot();
+  return {
+    stages: [
+      {
+        $setWindowFields: {
+          sortBy,
+          output: {
+            [slot]: {
+              $max: { $cond: [keyExpr(args[0], ctx, `.${method}(predicate)`), 0, 1] },
+              window: { documents: ["unbounded", "current"] }
+            }
+          }
+        }
+      },
+      { $match: { [slot]: keep } }
+    ],
+    cleanupStages: tempCleanup([slot], inSubPipeline)
+  };
+}
+function lastSortSpec(prevStages) {
+  for (let i = prevStages.length - 1; i >= 0; i--) {
+    const spec = prevStages[i]["$sort"];
+    if (spec !== void 0) return spec;
+  }
+  return null;
+}
+function validateWhileArg(method, args, callPos) {
+  const sig = `.${method}(predicate)`;
+  if (args.length !== 1) {
+    throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter arrow '(o) => <condition>', got ${arg.params.length} parameters.`,
+        arg.pos
+      );
+    }
+    mapBodyExpr(arg, method);
+    return;
+  }
+  if (shorthandToLambda(arg, method, "jsmqlEl") !== null) return;
+  throw new CodegenError(
+    `${sig} takes an arrow predicate ('o => o.active'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.`,
+    arg.pos
+  );
+}
+var TAKE_WHILE = {
+  name: "takeWhile",
+  validate(args, callPos) {
+    validateWhileArg("takeWhile", args, callPos);
+  },
+  lower(args, ctx, callPos, _lb, prevStages, allocSlot, inSubPipeline) {
+    return lowerWhile(0, args, ctx, callPos, prevStages, allocSlot, inSubPipeline);
+  }
+};
+var DROP_WHILE = {
+  name: "dropWhile",
+  validate(args, callPos) {
+    validateWhileArg("dropWhile", args, callPos);
+  },
+  lower(args, ctx, callPos, _lb, prevStages, allocSlot, inSubPipeline) {
+    return lowerWhile(1, args, ctx, callPos, prevStages, allocSlot, inSubPipeline);
+  }
+};
 var TAIL = {
   name: "tail",
   validate(args, callPos) {
@@ -11691,6 +11769,8 @@ var STREAM_METHODS = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
+  takeWhile: TAKE_WHILE,
+  dropWhile: DROP_WHILE,
   shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
@@ -14971,12 +15051,6 @@ function unknownStreamMethod(m, receiver) {
     const streamHint = single2 ? ` For a one-document stream, use '${receiver}.filter(<pred>).take(1)' / '.slice(...)'.` : "";
     return new CodegenError(
       `'.${m.method}(...)' returns a single value, not a stream \u2014 it collapses '${receiver}' to one value, so it's only valid in a VALUE position: 'const x = ${receiver}.${m.method}(...)' or '$.field = ${receiver}.${m.method}(...)', not as a '$$ = \u2026' pivot or a bare statement.${streamHint}`,
-      m.pos
-    );
-  }
-  if (m.method === "takeWhile" || m.method === "dropWhile") {
-    return new CodegenError(
-      `'.${m.method}(...)' as a stream method is not yet supported [DEF-035] \u2014 it needs a running flag ($setWindowFields) over an ordered stream. Use it value-mode on an array (e.g. a materialised lookup result: 'const xs = $$$.<coll>.filter(...); xs.${m.method}(...)'), or approximate with '.sort(...)' + '.filter(<pred>)'.`,
       m.pos
     );
   }

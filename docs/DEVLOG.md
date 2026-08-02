@@ -10,6 +10,62 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-01 — feat: stream `.takeWhile(pred)` / `.dropWhile(pred)` (closes DEF-035)
+
+```js
+$$.toSorted({ t: 1 }).takeWhile(o => o.ok);
+// → [ { $sort: { t: 1 } },
+//     { $setWindowFields: { sortBy: { t: 1 },
+//         output: { "__jsmql.tmp.1": { $max: { $cond: ["$ok", 0, 1] },
+//                   window: { documents: ["unbounded", "current"] } } } } },
+//     { $match: { "__jsmql.tmp.1": 0 } },
+//     { $unset: "__jsmql" } ]
+
+$$.toSorted({ t: 1 }).dropWhile(o => o.ok);
+// → identical, but  { $match: { "__jsmql.tmp.1": 1 } }
+```
+
+One `$setWindowFields` carries a running `$max` of "has the predicate failed at or
+before this document?", and the two methods differ **only** in the `$match`
+polarity — so they are exact complements by construction, not by two parallel
+implementations. On `t: 1 ok, 2 ok, 3 FAIL, 4 ok` a live mongod returns `[1,2]` and
+`[3,4]`. That data matters: it is the case where the previously-suggested workaround
+`.sort() + .filter()` gives `[1,2,4]`, because `.filter` keeps every match while
+`.takeWhile` stops at the first failure.
+
+**The order comes from the preceding sort, and any spelling counts** (developer
+decision). `$setWindowFields` *requires* `sortBy` for a document window — the server
+rejects it otherwise with "Document-based bounds require a sortBy" — so the spec is
+lifted from the last `$sort` the chain emitted. Every sort spelling ends in one, so
+all five work uniformly, including a computed `.sortBy(d => …)` whose key is a
+`__jsmql.tmp` scratch field:
+
+```js
+$$.sort({ t: 1 }).takeWhile(p)                    // sortBy { t: 1 }
+$$.toSorted({ t: 1 }).takeWhile(p)                // sortBy { t: 1 }
+$$.sortBy("t").takeWhile(p)                       // sortBy { t: 1 }
+$$.orderBy("t", -1).takeWhile(p)                  // sortBy { t: -1 }
+$$.$sort({ t: 1 }).takeWhile(p)                   // sortBy { t: 1 }   (the chain-link stage)
+$$.sortBy(d => d.cat.toLowerCase()).takeWhile(p)  // sortBy { "__jsmql.tmp.1": 1 }
+```
+
+With **no** sort it rejects and names the fix. It does not fall back to `_id`:
+silently substituting an order nobody asked for is exactly what got the "from the
+end" family removed two entries below, and `DEF-035` had already been amended to
+forbid it.
+
+These are the only registered methods that read `prevStages`, and they show the safe
+shape of that dependency — they **read** the sort spec (never rewrite it) and
+**reject** when it is absent (never guess). The removed family did the opposite on
+both counts. `replacesPreviousStage` now has no users at all.
+
+The predicate takes the same spellings `.filter` does — arrow, matches-object, field
+name, `["field", value]` — all asserted byte-identical to the arrow. `DEF-035` is
+deleted from `docs/DEFERRED.md`; the generator's own guard caught the missing
+`STREAM_METHOD_SIGNATURES` entries before the tests did.
+
+---
+
 ## 2026-08-01 — feat: a lone `.$match(<plain equality map>)` lookup head takes the `.filter` path
 
 Merge resolution between the chained-stage-call work and this branch's predicate

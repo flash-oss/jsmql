@@ -242,20 +242,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ---
 
-### DEF-035 — stream `.takeWhile(pred)` / `.dropWhile(pred)` (running-flag over an ordered stream)
-
-- **What's blocked.** The lodash predicate-run methods as **stream** methods on `$$` / `$$$.<coll>`. The value-mode forms (on an array) already ship (`.takeWhile`/`.dropWhile` → first-falsy-index `$slice`); only the stream forms are deferred.
-- **Target lowering.** MongoDB streams have no cross-document running state except `$setWindowFields`. `takeWhile(p)` ≈ compute a running max of the negated predicate over an ordered stream (`$setWindowFields` with an unbounded preceding window), then `$match` documents before the first `p`-failure; `dropWhile` keeps the complement. Requires a defined order — an explicit preceding `.sort(...)`, never an implicit `_id` — and the boundary semantics (stop at the FIRST failure) make the window/`$match` interplay fiddly.
-- **Why blocked.** Contorted and rarely needed on a stream — the running-flag `$setWindowFields` + boundary `$match` is heavy, and the far more common intent (take while sorted-key < X) is already expressible as `.sort(<key>)` + `.filter(o => o.<key> < X)`. Deferred by developer decision (2026-07-19) after implementing the rest of the lodash stream Tier 3 (`.takeRight`/`.dropRight`/`.initial`/`.shuffle`) — three of which were later **removed** from the stream surface (2026-08-01, see §B). That removal does not extend to these two: they run from the FRONT of an order a preceding `.sort(...)` establishes, which is a well-defined thing to ask for. It does bind their design, though — see the success criteria.
-- **Attempted approaches.** None yet — deferred at design time.
-- **Success criteria.** `$$.sort("t").takeWhile(o => o.t < cutoff)` keeps the leading run below the cutoff and `.dropWhile` keeps the complement. **A defined order is a precondition, not a default**: with no preceding `.sort(...)` both must REJECT, naming the sort to add. Falling back to `_id` is explicitly out — silently substituting an order the user didn't ask for is what got the from-the-end family removed (see §B).
-- **Rejection site(s).** `src/pipeline.ts` `unknownStreamMethod` (the `takeWhile`/`dropWhile` branch), tagged `[DEF-035]`.
-- **Spec.** `docs/specs/stream-methods.md`.
-- **Status.** open
-- **Effort.** M
-
----
-
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)
 
 This section records features we considered and **decided against**. Recording them prevents future-us from blindly reconsidering — the rationale is preserved.

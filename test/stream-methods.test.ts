@@ -236,10 +236,66 @@ describe(".shuffle() → $rand sort", () => {
   });
 });
 
-describe("stream .takeWhile / .dropWhile are deferred [DEF-035]", () => {
-  it("throw an actionable error pointing at the value-mode / sort+filter forms", () => {
-    expect(() => jsmql("$$.takeWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
-    expect(() => jsmql("$$.dropWhile(o => o.active);")).toThrow(/running flag.*value-mode/s);
+describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () => {
+  // One `$setWindowFields` computes "has the predicate failed at or before this
+  // document?"; the two methods are exact complements, differing only in the
+  // `$match` polarity. Verified on a live mongod with data where the predicate
+  // FAILS then RECOVERS — the case where `.filter()` would give a different answer.
+  const FLAG = {
+    $setWindowFields: {
+      sortBy: { t: 1 },
+      output: { "__jsmql.tmp.1": { $max: { $cond: ["$ok", 0, 1] }, window: { documents: ["unbounded", "current"] } } },
+    },
+  };
+
+  it("takeWhile keeps the leading run; dropWhile keeps the complement", () => {
+    expect(jsmql("$$.toSorted({ t: 1 }).takeWhile(o => o.ok);")).toEqual([
+      { $sort: { t: 1 } },
+      FLAG,
+      { $match: { "__jsmql.tmp.1": 0 } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("$$.toSorted({ t: 1 }).dropWhile(o => o.ok);")).toEqual([
+      { $sort: { t: 1 } },
+      FLAG,
+      { $match: { "__jsmql.tmp.1": 1 } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("lifts sortBy from ANY sort spelling", () => {
+    const sortBy = (src: string) =>
+      ((jsmql(src) as object[]).find((x) => "$setWindowFields" in x) as { $setWindowFields: { sortBy: unknown } })
+        .$setWindowFields.sortBy;
+    expect(sortBy("$$.sort({ t: 1 }).takeWhile(o => o.ok);")).toEqual({ t: 1 });
+    expect(sortBy("$$.toSorted({ t: 1 }).takeWhile(o => o.ok);")).toEqual({ t: 1 });
+    expect(sortBy('$$.sortBy("t").takeWhile(o => o.ok);')).toEqual({ t: 1 });
+    expect(sortBy('$$.orderBy("t", -1).takeWhile(o => o.ok);')).toEqual({ t: -1 });
+    expect(sortBy("$$.$sort({ t: 1 }).takeWhile(o => o.ok);")).toEqual({ t: 1 });
+    // A computed sort key lives in a scratch field — the window sorts by that.
+    expect(sortBy("$$.sortBy(d => d.cat.toLowerCase()).takeWhile(o => o.ok);")).toEqual({ "__jsmql.tmp.1": 1 });
+  });
+
+  it("takes the same predicate spellings .filter does", () => {
+    const arrow = jsmql('$$.sortBy("t").takeWhile(o => o.ok === true);');
+    expect(jsmql('$$.sortBy("t").takeWhile({ ok: true });')).toEqual(arrow);
+    expect(jsmql('$$.sortBy("t").takeWhile(["ok", true]);')).toEqual(arrow);
+  });
+
+  it("with no preceding sort it REJECTS — never defaults to _id", () => {
+    // Silently substituting an order nobody asked for is what got the
+    // "from the end" family removed; this slot must not repeat it.
+    for (const m of ["takeWhile", "dropWhile"]) {
+      expect(() => jsmql(`$$.${m}(o => o.ok);`), m).toThrow(/needs a preceding sort/);
+      expect(() => jsmql(`$$.${m}(o => o.ok);`), m).toThrow(/\.toSorted\({ t: 1 }\)/);
+    }
+    // A non-sort stage in between is fine — the last $sort still defines the order.
+    expect(() => jsmql('$$.sortBy("t").take(9).takeWhile(o => o.ok);')).not.toThrow();
+  });
+
+  it("value-mode on a real array is unaffected", () => {
+    expect(jsmql("$.x = $.rows.takeWhile(o => o.ok);")).toBeDefined();
+    expect(jsmql("$.x = $.rows.dropWhile(o => o.ok);")).toBeDefined();
   });
 });
 

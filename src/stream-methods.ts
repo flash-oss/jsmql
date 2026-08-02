@@ -397,6 +397,121 @@ const DROP: StreamMethodDef = {
   },
 };
 
+// ── .takeWhile(pred) / .dropWhile(pred) → $setWindowFields running flag ───────
+//
+// lodash `_.takeWhile(coll, p)` keeps the LEADING RUN where `p` holds and stops at
+// the first failure; `_.dropWhile` keeps the complement. On a stream that needs
+// cross-document state, which MongoDB has only via `$setWindowFields`: a running
+// `$max` of "has `p` failed at or before this document?" over an unbounded-preceding
+// window. The two methods share that one stage and differ only in the `$match`
+// polarity, so they are exact complements by construction.
+//
+// The window needs an ORDER. `$setWindowFields` requires `sortBy` for a
+// document-based window ("Document-based bounds require a sortBy"), so the spec is
+// lifted from the last `$sort` the chain has emitted — every sort spelling ends in
+// one (`.sort` / `.toSorted` / `.sortBy` / `.orderBy` / the `.$sort(…)` stage link),
+// including a computed `.sortBy(d => …)` whose key is a `__jsmql.tmp` scratch field.
+// With no sort at all there is no leading run to speak of, so it is rejected rather
+// than defaulted to `_id`: silently substituting an order nobody asked for is what
+// got the "from the end" family removed. See docs/specs/stream-methods.md.
+function lowerWhile(
+  keep: 0 | 1,
+  args: readonly CallArg[],
+  ctx: GenerateCtx,
+  callPos: number,
+  prevStages: readonly object[],
+  allocSlot: SlotAllocator,
+  inSubPipeline: boolean | undefined,
+): StreamMethodResult {
+  const method = keep === 0 ? "takeWhile" : "dropWhile";
+  const sortBy = lastSortSpec(prevStages);
+  if (sortBy === null) {
+    throw new CodegenError(
+      `.${method}(<predicate>) needs a preceding sort — it keeps the ${keep === 0 ? "LEADING" : "TRAILING"} run of ` +
+        `the stream, and a MongoDB stream has no order until you give it one. Sort first, then ` +
+        `'.${method}(...)': e.g. '$$.toSorted({ t: 1 }).${method}(o => o.ok)'. Any sort spelling works ` +
+        `('.sort' / '.toSorted' / '.sortBy' / '.orderBy' / '.$sort({ … })').`,
+      callPos,
+    );
+  }
+  const slot = allocSlot();
+  return {
+    stages: [
+      {
+        $setWindowFields: {
+          sortBy,
+          output: {
+            [slot]: {
+              $max: { $cond: [keyExpr(args[0], ctx, `.${method}(predicate)`), 0, 1] },
+              window: { documents: ["unbounded", "current"] },
+            },
+          },
+        },
+      },
+      { $match: { [slot]: keep } },
+    ],
+    cleanupStages: tempCleanup([slot], inSubPipeline),
+  };
+}
+
+/** The spec of the last `$sort` the chain has emitted, or null if there is none. */
+function lastSortSpec(prevStages: readonly object[]): Record<string, unknown> | null {
+  for (let i = prevStages.length - 1; i >= 0; i--) {
+    const spec = (prevStages[i] as Record<string, unknown>)["$sort"];
+    if (spec !== undefined) return spec as Record<string, unknown>;
+  }
+  return null;
+}
+
+function validateWhileArg(method: string, args: readonly CallArg[], callPos: number): void {
+  const sig = `.${method}(predicate)`;
+  if (args.length !== 1) {
+    throw new CodegenError(`${sig} takes exactly 1 argument, got ${args.length}.`, callPos);
+  }
+  const arg = args[0];
+  if (arg.type === "SpreadElement") {
+    throw new CodegenError(`${sig} does not accept a spread argument.`, arg.pos);
+  }
+  if (arg.type === "Lambda") {
+    if (arg.params.length !== 1) {
+      throw new CodegenError(
+        `${sig} takes a single-parameter arrow '(o) => <condition>', got ${arg.params.length} parameters.`,
+        arg.pos,
+      );
+    }
+    mapBodyExpr(arg, method);
+    return;
+  }
+  // Same predicate spellings `.filter` takes — a matches-object, a field name, a
+  // `["field", value]` pair.
+  if (shorthandToLambda(arg, method, "jsmqlEl") !== null) return;
+  throw new CodegenError(
+    `${sig} takes an arrow predicate ('o => o.active'), a matches-object ('{ active: true }'), ` +
+      `a field name ('"active"'), or a ["field", value] pair.`,
+    arg.pos,
+  );
+}
+
+const TAKE_WHILE: StreamMethodDef = {
+  name: "takeWhile",
+  validate(args, callPos) {
+    validateWhileArg("takeWhile", args, callPos);
+  },
+  lower(args, ctx, callPos, _lb, prevStages, allocSlot, inSubPipeline) {
+    return lowerWhile(0, args, ctx, callPos, prevStages, allocSlot, inSubPipeline);
+  },
+};
+
+const DROP_WHILE: StreamMethodDef = {
+  name: "dropWhile",
+  validate(args, callPos) {
+    validateWhileArg("dropWhile", args, callPos);
+  },
+  lower(args, ctx, callPos, _lb, prevStages, allocSlot, inSubPipeline) {
+    return lowerWhile(1, args, ctx, callPos, prevStages, allocSlot, inSubPipeline);
+  },
+};
+
 // ── .tail() → $skip: 1 ────────────────────────────────────────────────────────
 //
 // lodash `_.tail(coll)` — all but the first document; the stream analogue of
@@ -2284,6 +2399,8 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   take: TAKE,
   drop: DROP,
   tail: TAIL,
+  takeWhile: TAKE_WHILE,
+  dropWhile: DROP_WHILE,
   shuffle: SHUFFLE,
   sampleSize: SAMPLE_SIZE,
   concat: CONCAT,
