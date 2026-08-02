@@ -583,6 +583,13 @@ function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt 
   const expr = node;
   if (detectLookupCall(expr, ctx) !== null) return true;
   if (expr.type === "MethodCall") {
+    // ANY method on a `$$$.<coll>` / `$$$$.<db>.<coll>` receiver heads a lookup
+    // chain — not just the `detectLookupCall` heads. Every lodash stream method
+    // and every chained stage call (`.$match(...)`) does too, so the mode gates
+    // must see `$$$.orders.toSorted(...).take(...)` as lookup syntax as well.
+    // (`extractLookupTarget` needs the collection hop, so a bare `$$$` / `$$$$`
+    // receiver — the `$$$$.currentOp(...)` diagnostics — stays out.)
+    if (extractLookupTarget(expr.object, ctx) !== null) return true;
     if (walkContainsLookup(expr.object, ctx)) return true;
     return walkArgsContainLookup(expr.args, ctx);
   }

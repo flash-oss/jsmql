@@ -5360,6 +5360,8 @@ var CodegenError = class extends Error {
 function internalError(detail, pos = 0) {
   throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
 }
+var LOOKUP_SYNTAX = "'$$$.<coll>.<method>(...)'";
+var STREAM_BLOCK_FORM = "a stream-chain callback (e.g. `$$$.<coll>.aggregate((o) => { \u2026 })`)";
 var UnknownIdentifierError = class extends CodegenError {
   constructor(identifier, pos = 0) {
     super(`Unknown identifier '${identifier}'. Did you mean '$.${identifier}'?`, pos);
@@ -6105,7 +6107,7 @@ function _generateBody(expr, ctx) {
       );
     case "DatabaseRef":
       throw new CodegenError(
-        `'$$$.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a $lookup read), or assigned to as a destination ('$$$.<coll> = $$' \u2192 $out write). Bare '$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()). (System diagnostics aren't database-scoped: collection ones are on '$$', server/cluster ones on '$$$$'.)`,
+        `'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read \u2014 any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs a full sub-pipeline), or assigned to as a destination ('$$$.<coll> = $$' \u2192 $out write). Bare '$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()). (System diagnostics aren't database-scoped: collection ones are on '$$', server/cluster ones on '$$$$'.)`,
         expr.pos
       );
     case "ClusterRef":
@@ -6674,7 +6676,7 @@ function generateOperatorCall(name, style, args, ctx, pos) {
     if (lambdaExpr.type !== "Lambda") throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
     if (lambdaExpr.block !== void 0) {
       throw new CodegenError(
-        "$let second argument cannot be a statement-block arrow (a sub-pipeline) \u2014 that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block `() => { const a = \u2026; return a; }`.",
+        `$let second argument cannot be a statement-block arrow (a sub-pipeline of stages) \u2014 that form is only for ${STREAM_BLOCK_FORM}. Use an expression, or a value-returning block \`() => { const a = \u2026; return a; }\`.`,
         lambdaExpr.pos
       );
     }
@@ -8678,8 +8680,9 @@ function requireLambda(args, method, callerPos, ctx) {
     );
   }
   if (first.block !== void 0) {
+    const keepIt = method === "map" ? "`return` a document instead of a scalar (a document `.map` stays a '$replaceWith' stage), or move the stages into a heading `.filter(o => { \u2026 })` / `.aggregate((o) => { \u2026 })`" : "move the stages into a heading `.filter(o => { \u2026 })` / `.aggregate((o) => { \u2026 })`";
     throw new CodegenError(
-      `.${method}() does not accept a statement-block body (a sub-pipeline of stages) \u2014 that form is only for '$$$.<coll>.find/filter(...)' and '$$.filter(...)'. Use an expression \`x => x > 0\`, or a value-returning block \`x => { const y = \u2026; return y; }\`.`,
+      `.${method}() can't take a statement-block body (a sub-pipeline of stages) in this position \u2014 the chain is consumed as a value here, so it lowers to an array operator, which takes an expression and has nowhere to run stages. Keep it a sub-pipeline: ${keepIt}. Or make the callback a value: an expression \`x => x > 0\`, or a value-returning block \`x => { const y = \u2026; return y; }\`.`,
       first.pos
     );
   }
@@ -8688,7 +8691,7 @@ function requireLambda(args, method, callerPos, ctx) {
 function applyLambda(lambda, args, argCtx, bodyCtx, pos, label) {
   if (lambda.block !== void 0) {
     throw new CodegenError(
-      `${label} cannot have a statement-block body (a sub-pipeline of stages) \u2014 that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = \u2026; return y; }\`.`,
+      `${label} cannot have a statement-block body (a sub-pipeline of stages) \u2014 that form is only for ${STREAM_BLOCK_FORM}. Use an expression, or a value-returning block \`(x) => { const y = \u2026; return y; }\`.`,
       lambda.pos
     );
   }
@@ -8913,7 +8916,7 @@ function generateObjectCall(method, args, ctx, pos) {
       }
       if (lambda.block !== void 0) {
         throw new CodegenError(
-          `Object.groupBy() does not accept a statement-block arrow (a sub-pipeline) \u2014 that form is only for '$$$.<coll>.find/filter(...)'. Use an expression \`x => x.key\`, or a value-returning block.`,
+          `Object.groupBy() does not accept a statement-block arrow (a sub-pipeline of stages) \u2014 that form is only for ${STREAM_BLOCK_FORM}. Use an expression \`x => x.key\`, or a value-returning block.`,
           lambda.pos
         );
       }
@@ -9070,7 +9073,7 @@ function generateArrayFrom(input, mapFn, ctx, pos) {
   }
   if (mapFn.block !== void 0) {
     throw new CodegenError(
-      `Array.from() does not accept a statement-block arrow (a sub-pipeline) \u2014 that form is only for '$$$.<coll>.find/filter(...)'. Use an expression \`(_, i) => i * 2\`, or a value-returning block.`,
+      `Array.from() does not accept a statement-block arrow (a sub-pipeline of stages) \u2014 that form is only for ${STREAM_BLOCK_FORM}. Use an expression \`(_, i) => i * 2\`, or a value-returning block.`,
       mapFn.pos
     );
   }
@@ -12053,6 +12056,7 @@ function walkContainsLookup(node, ctx) {
   const expr = node;
   if (detectLookupCall(expr, ctx) !== null) return true;
   if (expr.type === "MethodCall") {
+    if (extractLookupTarget(expr.object, ctx) !== null) return true;
     if (walkContainsLookup(expr.object, ctx)) return true;
     return walkArgsContainLookup(expr.args, ctx);
   }
@@ -16020,7 +16024,7 @@ function lowerWithCtx(ast, ctx) {
   }
   if (ast.type !== "Pipeline" && ast.type !== "UpdateFilter" && !isPipelineAst(ast) && detectStageIntent(ast) === null && containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      "Lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') requires Pipeline mode. Assign the lookup to a field (`$.x = $$$.coll.find(...)`) or wrap in a let / pipeline statement, and ensure the source has at least one `;` so jsmql routes through Pipeline lowering.",
+      `Lookup syntax (${LOOKUP_SYNTAX}) requires Pipeline mode. Assign the lookup to a field (\`$.x = $$$.coll.find(...)\`) or wrap in a let / pipeline statement, and ensure the source has at least one \`;\` so jsmql routes through Pipeline lowering.`,
       // Point at the `$$$` prefix, not at the `.find(...)` link: the whole
       // construct is what needs Pipeline mode, and every chain link now carries
       // its own offset.
@@ -16085,7 +16089,7 @@ function lowerPipelineStrict(ast, ctx) {
 function lowerUpdateStrict(ast, ctx) {
   if (containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      "jsmql.update() does not allow lookup syntax ('$$$.<coll>.find/filter/aggregate(...)'): MongoDB's aggregation-pipeline update form only accepts " + Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") + ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
+      `jsmql.update() does not allow lookup syntax (${LOOKUP_SYNTAX}): MongoDB's aggregation-pipeline update form only accepts ` + Array.from(UPDATE_PIPELINE_STAGES).sort().join(", ") + ". Run the lookup in a regular aggregation pipeline (jsmql.pipeline()) and apply updates separately.",
       ast.pos
     );
   }
@@ -16111,7 +16115,7 @@ function lowerUpdateStrict(ast, ctx) {
 function rejectLookupOutsidePipeline(ast, apiName, ctx) {
   if (containsLookupCall(ast, ctx)) {
     throw new CodegenError(
-      `${apiName}() does not allow lookup syntax ('$$$.<coll>.find/filter/aggregate(...)') \u2014 joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.`,
+      `${apiName}() does not allow lookup syntax (${LOOKUP_SYNTAX}) \u2014 joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.`,
       ast.pos
     );
   }

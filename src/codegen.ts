@@ -49,6 +49,31 @@ export function internalError(detail: string, pos: number = 0): never {
   throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
 }
 
+/**
+ * How every user-facing error spells the cross-collection lookup surface — one
+ * constant so the phrasing can't drift between throw sites.
+ *
+ * Deliberately NOT a list of the methods that may head the chain. `.find` /
+ * `.filter`, `.aggregate`, every lodash stream method, and every chained stage
+ * call (`.$match(...)`) all can, and that set grows with the registries that
+ * own it (`STREAM_METHODS` in stream-methods.ts, `STAGES` in stages.ts). What
+ * makes a chain a lookup is the `$$$.<coll>` head, so that is what these
+ * messages name; when the method itself is the problem, the unknown-method
+ * throw in lookup-translation.ts names the categories and offers a
+ * `didYouMean`. See docs/specs/lookup-stage.md.
+ */
+export const LOOKUP_SYNTAX = "'$$$.<coll>.<method>(...)'";
+
+/**
+ * How errors name *where* a `=> { … }` statement block is legal. A statement
+ * block parses as a sub-pipeline only in a callback on a stream — `$$` or a
+ * `$$$.<coll>` chain (parser: `STREAM_BLOCK_METHODS` × `isStreamRooted`) — and
+ * only lowers where that chain stays a stage. Same rule as `LOOKUP_SYNTAX`
+ * above: one open-ended example, never an inventory of the methods that take
+ * one.
+ */
+const STREAM_BLOCK_FORM = "a stream-chain callback (e.g. `$$$.<coll>.aggregate((o) => { … })`)";
+
 export class UnknownIdentifierError extends CodegenError {
   identifier: string;
   constructor(identifier: string, pos: number = 0) {
@@ -1453,15 +1478,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "DatabaseRef":
       // The two supported uses of `$$$` are both materialised by `pipeline.ts`
       // *before* codegen sees the surrounding expression:
-      //   - `$$$.<coll>.find/filter(pred)` → `$lookup` stage (read).
-      //   - `$$$.<coll> = <RHS>`            → `$out` stage (write).
+      //   - `$$$.<coll>.<chain>` → `$lookup` stage (read).
+      //   - `$$$.<coll> = <RHS>` → `$out` stage (write).
       // Reaching this case means neither matched: the user wrote `$$$.<coll>`
       // as a bare value, used the chain in an expression-only position (a
-      // Filter, `jsmql.expr`, an arithmetic operand), or used a method other
-      // than `.find/.filter` that the pre-materialisation walker didn't
-      // recognise.
+      // Filter, `jsmql.expr`, an arithmetic operand), or headed it with a
+      // method the pre-materialisation walker didn't recognise.
       throw new CodegenError(
-        `'$$$.<coll>' must be either followed by .find(pred) / .filter(pred) and consumed as a value (a $lookup read), ` +
+        `'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — ` +
+          `any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and ` +
+          `'.aggregate((o) => { ... })' runs a full sub-pipeline), ` +
           `or assigned to as a destination ('$$$.<coll> = $$' → $out write). ` +
           `Bare '$$$' reference is not a value, and these sugars are only valid in Pipeline mode (use \`;\`-separated statements or jsmql.pipeline()). ` +
           `(System diagnostics aren't database-scoped: collection ones are on '$$', server/cluster ones on '$$$$'.)`,
@@ -2521,7 +2547,7 @@ function generateOperatorCall(
     if (lambdaExpr.type !== "Lambda") throw new CodegenError("$let second argument must be a lambda", lambdaExpr.pos);
     if (lambdaExpr.block !== undefined) {
       throw new CodegenError(
-        "$let second argument cannot be a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block `() => { const a = …; return a; }`.",
+        `$let second argument cannot be a statement-block arrow (a sub-pipeline of stages) — that form is only for ${STREAM_BLOCK_FORM}. Use an expression, or a value-returning block \`() => { const a = …; return a; }\`.`,
         lambdaExpr.pos,
       );
     }
@@ -5159,8 +5185,17 @@ function requireLambda(
     );
   }
   if (first.block !== undefined) {
+    // A statement block only ever parses on a stream-rooted callback, so
+    // reaching here means the chain that carried it is being consumed as a
+    // VALUE (`.map` returning a scalar, a chained `.find`) and lowers to an
+    // array operator — which has no stage position to run the block in. Say
+    // that, rather than claiming the block form belongs to some other method.
+    const keepIt =
+      method === "map"
+        ? "`return` a document instead of a scalar (a document `.map` stays a '$replaceWith' stage), or move the stages into a heading `.filter(o => { … })` / `.aggregate((o) => { … })`"
+        : "move the stages into a heading `.filter(o => { … })` / `.aggregate((o) => { … })`";
     throw new CodegenError(
-      `.${method}() does not accept a statement-block body (a sub-pipeline of stages) — that form is only for '$$$.<coll>.find/filter(...)' and '$$.filter(...)'. Use an expression \`x => x > 0\`, or a value-returning block \`x => { const y = …; return y; }\`.`,
+      `.${method}() can't take a statement-block body (a sub-pipeline of stages) in this position — the chain is consumed as a value here, so it lowers to an array operator, which takes an expression and has nowhere to run stages. Keep it a sub-pipeline: ${keepIt}. Or make the callback a value: an expression \`x => x > 0\`, or a value-returning block \`x => { const y = …; return y; }\`.`,
       first.pos,
     );
   }
@@ -5192,7 +5227,7 @@ function applyLambda(
 ): unknown {
   if (lambda.block !== undefined) {
     throw new CodegenError(
-      `${label} cannot have a statement-block body (a sub-pipeline of stages) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression, or a value-returning block \`(x) => { const y = …; return y; }\`.`,
+      `${label} cannot have a statement-block body (a sub-pipeline of stages) — that form is only for ${STREAM_BLOCK_FORM}. Use an expression, or a value-returning block \`(x) => { const y = …; return y; }\`.`,
       lambda.pos,
     );
   }
@@ -5487,7 +5522,7 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
       }
       if (lambda.block !== undefined) {
         throw new CodegenError(
-          `Object.groupBy() does not accept a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression \`x => x.key\`, or a value-returning block.`,
+          `Object.groupBy() does not accept a statement-block arrow (a sub-pipeline of stages) — that form is only for ${STREAM_BLOCK_FORM}. Use an expression \`x => x.key\`, or a value-returning block.`,
           lambda.pos,
         );
       }
@@ -5742,7 +5777,7 @@ function generateArrayFrom(input: Expr, mapFn: Expr | null, ctx: GenerateCtx, po
   }
   if (mapFn.block !== undefined) {
     throw new CodegenError(
-      `Array.from() does not accept a statement-block arrow (a sub-pipeline) — that form is only for '$$$.<coll>.find/filter(...)'. Use an expression \`(_, i) => i * 2\`, or a value-returning block.`,
+      `Array.from() does not accept a statement-block arrow (a sub-pipeline of stages) — that form is only for ${STREAM_BLOCK_FORM}. Use an expression \`(_, i) => i * 2\`, or a value-returning block.`,
       mapFn.pos,
     );
   }

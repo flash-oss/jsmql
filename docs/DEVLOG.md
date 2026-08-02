@@ -10,6 +10,45 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-02 — fix: errors name the `$$$.<coll>` head, never the methods that may follow it
+
+Nine error messages still spelled the lookup surface `'$$$.<coll>.find/filter(...)'`
+or `'$$$.<coll>.find/filter/aggregate(...)'` — an inventory that went stale the day
+[any lodash stream method could head the chain](specs/lookup-stage.md), and again
+when stage links (`.$match(...)`) joined it. The enumeration is now one exported
+constant, `LOOKUP_SYNTAX` in [src/codegen.ts](../src/codegen.ts), spelled
+`'$$$.<coll>.<method>(...)'`: it names the **head**, which is what actually makes a
+chain a lookup, and says nothing about the open set that follows. When the method
+itself is the problem, the unknown-method throw in
+[lookup-translation.ts](../src/lookup-translation.ts) still names the categories and
+offers a `didYouMean` — that message is the one place the categories belong.
+
+**The same staleness had leaked one layer down, into detection.** `containsLookupCall`
+— which backs every mode gate in [index.ts](../src/index.ts) — asked
+`detectLookupCall`, i.e. "is the head `.find`/`.filter`/`.aggregate`?", so a
+stream-method head was invisible to all four gates. `jsmql.expr("$.x = $$$.c.toSorted({a:1}).take(5)")`
+**returned a three-stage `$lookup` pipeline** instead of rejecting; `jsmql.filter()`
+and `jsmql.update()` fell back to generic shape errors; and without a trailing `;`
+the `$$ =` form reached `jsmql internal error (please report …)`. It now asks the
+receiver instead — any `MethodCall` that `extractLookupTarget`s to `$$$.<coll>` /
+`$$$$.<db>.<coll>` is lookup syntax. The collection hop that helper requires is also
+what keeps the bare-receiver diagnostics (`$$$$.currentOp(…)`) out. Both no-`;`
+forms now lower byte-identically to their `;` counterparts.
+
+**One message was not merely stale but wrong.** `.map()`/`.find()` rejecting a
+statement block claimed "that form is only for `'$$$.<coll>.find/filter(...)'`" —
+while the user was *looking at* a `$$$.<coll>.map(…)`, which does take one. The real
+cause is the **position**: a scalar `return` (or a chained `.find`) collapses the
+chain into a value, so it lowers to an array operator with nowhere to run stages.
+The message says that now, and names the two rewrites that work — `return` a
+document, or move the stages into a heading `.filter`/`.aggregate` block — both
+asserted as compiling in [test/lookup.test.ts](../test/lookup.test.ts). The four
+remaining statement-block rejections (`$let`, IIFE / reusable function,
+`Object.groupBy`, `Array.from` — all unreachable-by-parser, defensive) share one
+`STREAM_BLOCK_FORM` constant with a single open-ended example.
+
+---
+
 ## 2026-08-01 — feat: stream `.takeWhile(pred)` / `.dropWhile(pred)` (closes DEF-035)
 
 ```js
