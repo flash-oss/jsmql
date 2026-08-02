@@ -216,3 +216,56 @@ describe("$out — validate() carries meaningful positions", () => {
     expect(v.errors[0].pos).toBeGreaterThan(0);
   });
 });
+
+// A `$out` RHS chain runs at the OUTER pipeline level, so a stage link there is
+// an ordinary top-level stage placed before the write.
+describe("$out RHS accepts chained stage calls", () => {
+  it("lowers a stage link before the write", () => {
+    expect(jsmql("$$$.archive = $$.$sort({ a: 1 });")).toEqual([{ $sort: { a: 1 } }, { $out: "archive" }]);
+  });
+
+  it("chains several, and mixes with .filter", () => {
+    expect(jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 }).$limit(10);')).toEqual([
+      { $match: { s: "x" } },
+      { $sort: { a: -1 } },
+      { $limit: 10 },
+      { $out: "archive" },
+    ]);
+    expect(jsmql("$$$.archive = $$.filter(d => d.a > 1).$sort({ a: 1 });")).toEqual([
+      { $match: { a: { $gt: 1 } } },
+      { $sort: { a: 1 } },
+      { $out: "archive" },
+    ]);
+  });
+
+  // Same stages, whichever way they're written.
+  it("is identical to writing the stages as statements before the write", () => {
+    expect(jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });')).toEqual(
+      jsmql('$match({ s: "x" }); $sort({ a: -1 }); $$$.archive = $$;'),
+    );
+  });
+
+  it("carries the cross-database write destination", () => {
+    expect(jsmql("$$$$.otherdb.archive = $$.$sort({ a: 1 });")).toEqual([
+      { $sort: { a: 1 } },
+      { $out: { db: "otherdb", coll: "archive" } },
+    ]);
+  });
+
+  describe("placement", () => {
+    // The `$out` always follows, so a second write stage can never be last.
+    it("rejects a write stage in the chain", () => {
+      expect(() => jsmql('$$$.archive = $$.$out("other");')).toThrow(/'\$out' must be the last stage in a pipeline/);
+    });
+    it("rejects a source stage that isn't first", () => {
+      expect(() => jsmql('$$$.archive = $$.$match({ s: "x" }).$documents([{ x: 1 }]);')).toThrow(
+        /'\$documents' must be the first stage/,
+      );
+    });
+    it("rejects an unknown stage name with a suggestion", () => {
+      expect(() => jsmql("$$$.archive = $$.$prject({ a: 1 });")).toThrow(
+        /'\$prject' is not a known aggregation stage\. Did you mean '\$project'\?/,
+      );
+    });
+  });
+});

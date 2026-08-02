@@ -11,6 +11,7 @@ import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp }
 import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import { lowerLambdaPredicate, type SubPipelineLowerer, type SlotAllocator } from "./lookup-translation.ts";
 import { lookupStreamMethod } from "./stream-methods.ts";
+import { checkStageLinkPlacement, isStageLink, stageLinkBlock, stageLinkBody } from "./stage-link.ts";
 
 // ── Detection ─────────────────────────────────────────────────────────────────
 
@@ -257,8 +258,9 @@ function walkChain(
  * Lower one method-call layer of a `$$.…` chain into one or more pipeline
  * stages. `.filter(<predicate>)` → `$match` is special-cased so it can
  * compose with the existing query-translator (and emit `$expr` residuals);
- * every other method is routed through the shared `STREAM_METHODS` registry
- * (`.slice`, `.map`, `.toSorted`, `.flatMap`, `.concat`).
+ * `.$stage(<body>)` is a chained pipeline stage. Every other method is routed
+ * through the shared `STREAM_METHODS` registry (`.slice`, `.map`, `.toSorted`,
+ * `.flatMap`, `.concat`).
  *
  * `prevStages` is passed through for the methods that read it
  * (`.takeWhile`/`.dropWhile` need a preceding `$sort`).
@@ -270,6 +272,16 @@ function lowerChainMethod(
   prevStages: readonly object[],
   allocSlot: SlotAllocator,
 ): { stages: object[] } {
+  // `.$sort({ … })` — a chained pipeline stage before the write. The `$out`
+  // chain lives at the OUTER pipeline level, so a stage link here is an
+  // ordinary top-level stage: run its one-statement block through the same
+  // lowerer the statement form uses. `isLastInContainer: false` because the
+  // `$out` itself always follows, which rejects a second write stage.
+  if (isStageLink(call)) {
+    const body = stageLinkBody(call);
+    checkStageLinkPlacement(call.method, call.pos, prevStages.length, false, "top");
+    return { stages: lowerBlock(stageLinkBlock(call, body), outerCtx) };
+  }
   if (call.method === "filter") {
     return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock) };
   }

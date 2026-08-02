@@ -9689,6 +9689,9 @@ function checkStageLinkPlacement(name, pos, indexInContainer, isLastInContainer,
   }
 }
 function stageLinkBlockLambda(m, body) {
+  return { type: "Lambda", params: [], block: stageLinkBlock(m, body), pos: m.pos };
+}
+function stageLinkBlock(m, body) {
   const stmt = {
     type: "OperatorCall",
     name: m.method,
@@ -9696,8 +9699,7 @@ function stageLinkBlockLambda(m, body) {
     args: [body],
     pos: m.pos
   };
-  const block = { type: "Pipeline", stmts: [stmt], pos: m.pos };
-  return { type: "Lambda", params: [], block, pos: m.pos };
+  return { type: "Pipeline", stmts: [stmt], pos: m.pos };
 }
 
 // src/match-translation.ts
@@ -14131,6 +14133,11 @@ function walkChain(call, outerCtx, lowerBlock2, allocSlot) {
   return prefix;
 }
 function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
+  if (isStageLink(call)) {
+    const body = stageLinkBody(call);
+    checkStageLinkPlacement(call.method, call.pos, prevStages.length, false, "top");
+    return { stages: lowerBlock2(stageLinkBlock(call, body), outerCtx) };
+  }
   if (call.method === "filter") {
     return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock2) };
   }

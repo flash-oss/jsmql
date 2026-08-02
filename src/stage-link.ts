@@ -1,13 +1,13 @@
 // Chained pipeline-stage calls — `<stream>.$match(<body>)`, the chain-position
 // spelling of the `$match(<body>);` statement.
 //
-// This is a LEAF module on purpose. Three containers resolve chain links — the
-// `$$` stream and the `$unionWith` source-switch (both in pipeline.ts) and the
-// `$lookup` sub-pipeline (in lookup-translation.ts) — and lookup-translation.ts
-// sits *below* pipeline.ts in the dependency graph, so it cannot import back.
-// Keeping name resolution, arity, and the placement rules here gives all three
-// one cycle-free home, and keeps the error wording identical wherever a stage
-// link was written.
+// This is a LEAF module on purpose. Five containers resolve chain links — the
+// `$$` stream, a `$facet` branch and the `$unionWith` source-switch (all in
+// pipeline.ts), the `$out` write chain (out-translation.ts), and the `$lookup`
+// sub-pipeline (lookup-translation.ts) — and those last two sit *below*
+// pipeline.ts in the dependency graph, so they cannot import back. Keeping name
+// resolution, arity, and the placement rules here gives all five one cycle-free
+// home, and keeps the error wording identical wherever a stage link was written.
 //
 // See docs/specs/aggregation-stages.md § chained stage calls.
 
@@ -88,8 +88,8 @@ export function forbiddenInContextMessage(stageName: string, container: "facet" 
 
 /**
  * Structural placement rules for a stage link, for the containers that assemble
- * their stages outside `makePipelineValidator`'s loop (currently
- * `$lookup.pipeline`, via `peelForeignChain`). Same declarative source as the
+ * their stages outside `makePipelineValidator`'s loop (`$lookup.pipeline` via
+ * `peelForeignChain`, and the `$out` write chain). Same declarative source as the
  * statement path — `stages.ts`'s `forbiddenIn` / `position` — so a stage
  * rejected as `$out(...)` at statement level is rejected as `.$out(...)` too.
  */
@@ -128,6 +128,15 @@ export function checkStageLinkPlacement(
  * raw `"$field"` refs pass through untouched.
  */
 export function stageLinkBlockLambda(m: MethodCallNode, body: Expr): LambdaNode {
+  return { type: "Lambda", params: [], block: stageLinkBlock(m, body), pos: m.pos };
+}
+
+/**
+ * A stage link as the one-statement `Pipeline` it stands for. Any container
+ * holding a `SubPipelineLowerer` can lower a stage link by running this through
+ * it, which is exactly the statement-form lowering.
+ */
+export function stageLinkBlock(m: MethodCallNode, body: Expr): Pipeline {
   const stmt: Expr = {
     type: "OperatorCall",
     name: m.method,
@@ -135,6 +144,5 @@ export function stageLinkBlockLambda(m: MethodCallNode, body: Expr): LambdaNode 
     args: [body],
     pos: m.pos,
   };
-  const block: Pipeline = { type: "Pipeline", stmts: [stmt], pos: m.pos };
-  return { type: "Lambda", params: [], block, pos: m.pos };
+  return { type: "Pipeline", stmts: [stmt], pos: m.pos };
 }

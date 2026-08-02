@@ -62,9 +62,13 @@ two can't drift:
 | `$ = { k: $$.… }` facet branch (`$facet.<k>`) | the `$stage(b);` statement | `applyStreamMethods` with the `"facet"` validator |
 | `$$$.<coll>` foreign chain (`$lookup.pipeline`) | `.aggregate((o) => { $stage(b); })` | `lowerCallbackBlock` — the engine `.aggregate` uses, for the bodies rule 1 above doesn't claim |
 | `$$ = $$$.<coll>.…` source-switch (`$unionWith.pipeline`) | the `$stage(b);` statement | `lowerStageLink` → `generateStageBody` |
+| `$$$.<coll> = $$.…` write chain (stages before `$out`) | the `$stage(b);` statement | the chain's `SubPipelineLowerer`, over `stageLinkBlock` |
 
-A `$out` RHS (`$$$.<coll> = $$.…`) is deliberately **not** a stage-link container — write the
-stage as a statement before the write.
+```js
+$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
+// → [{ $match: { s: "x" } }, { $sort: { a: -1 } }, { $out: "archive" }]
+//   identical to: $match({ s: "x" }); $sort({ a: -1 }); $$$.archive = $$;
+```
 
 Name resolution, arity, and the sub-pipeline placement rules live in one leaf module,
 [src/stage-link.ts](../../src/stage-link.ts), so all three containers share the wording.

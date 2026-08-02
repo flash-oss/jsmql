@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-02 — feat: chained stage calls on a `$out` write chain
+
+The fifth and last container. `$$$.archive = $$.$sort({ a: 1 })` was rejected
+with "isn't a recognised chain method for a '$out' RHS", which was accurate but
+arbitrary once every other container took stage links.
+
+A `$out` chain runs at the OUTER pipeline level, so a stage link there is just a
+top-level stage sitting before the write. `lowerChainMethod` already receives the
+`SubPipelineLowerer`, so lowering is one line: run the link's one-statement block
+(`stageLinkBlock`, factored out of `stageLinkBlockLambda`) through it. No new
+plumbing, and the result is the statement lowering by construction:
+
+```js
+$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
+// → [{ $match: { s: "x" } }, { $sort: { a: -1 } }, { $out: "archive" }]
+//   identical to: $match({ s: "x" }); $sort({ a: -1 }); $$$.archive = $$;
+```
+
+Placement is checked with `isLastInContainer: false`, since the `$out` always
+follows. That is what rejects a second write stage:
+
+```js
+$$$.archive = $$.$out("other");
+// ✗ '$out' must be the last stage in a pipeline.
+$$$.archive = $$.$match({ s: "x" }).$documents([{ x: 1 }]);
+// ✗ '$documents' must be the first stage in a pipeline.
+```
+
+This reverses the "deliberately not a container" note added to
+`docs/specs/out-stage.md` earlier the same day. It was written to describe the
+behaviour as it stood, not to argue for it.
+
+---
+
 ## 2026-08-02 — chore: drop the dead `replacesPreviousStage` hook and its stale references
 
 Removing the "from the end" stream family left `replacesPreviousStage` set by

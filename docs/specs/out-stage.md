@@ -140,8 +140,12 @@ other method through the shared `STREAM_METHODS` registry from
 `.toSorted`, `.flatMap`, `.concat`. The chain walker in `lowerOutChain`
 recurses into `MethodCall.object` first, then emits the current layer's
 stage, so source order is preserved. Chained pipeline stages
-(`$$.$sort({ … })`) are not accepted on a `$out` RHS; write the stage as a
-statement before the write instead.
+(`$$.$sort({ … })`) compose too: a `$out` chain runs at the OUTER pipeline
+level, so a stage link is an ordinary top-level stage placed before the write,
+lowered by running its one-statement block through the same `SubPipelineLowerer`
+the statement form uses. Placement is checked with `isLastInContainer: false`,
+because the `$out` itself always follows — which is what rejects a second write
+stage in the chain.
 
 `.filter` reuses the same predicate translator that `$match`, the
 `$facet` variant of `$ = { … }`, and the union-form sub-pipelines all
