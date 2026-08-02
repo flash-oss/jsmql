@@ -13176,7 +13176,6 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
     if (def === null) continue;
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
-    if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
@@ -13500,15 +13499,15 @@ function rewriteCallArgs(args, rewrite) {
 function detectFacetShape(value) {
   if (value.type !== "ObjectLiteral") return null;
   if (value.entries.length === 0) return null;
-  let hasFilter = false;
+  let hasBranch = false;
   for (const entry of value.entries) {
     if (entry.type !== "KeyValueEntry") continue;
-    if (asCollectionFilterLambda(entry.value) !== null) {
-      hasFilter = true;
+    if (asFacetBranch(entry.value) !== null) {
+      hasBranch = true;
       break;
     }
   }
-  if (!hasFilter) return null;
+  if (!hasBranch) return null;
   const facets = [];
   for (const entry of value.entries) {
     if (entry.type !== "KeyValueEntry") {
@@ -13523,27 +13522,27 @@ function detectFacetShape(value) {
         entry.pos
       );
     }
-    const lambda = asCollectionFilterLambda(entry.value);
-    if (lambda === null) {
+    const branch = asFacetBranch(entry.value);
+    if (branch === null) {
       throw new CodegenError(
-        `\`$ = { ... }\` $facet pattern: every value must be \`$$.filter(<predicate>)\`. Entry '${entry.key.name}' is something else. Either convert it to \`$$.filter(<predicate>)\` or move it out of the object.`,
+        `\`$ = { ... }\` $facet pattern: every value must be a \`$$\` chain \u2014 \`$$.filter(<predicate>)\`, a stage call (\`$$.$match({ \u2026 })\`), or any chain of them. Entry '${entry.key.name}' is something else. Either convert it to a \`$$\` chain or move it out of the object.`,
         entry.value.pos
       );
     }
-    facets.push({ key: entry.key.name, lambda, pos: entry.pos });
+    facets.push({ key: entry.key.name, pos: entry.pos, ...branch });
   }
   return facets;
 }
-function asCollectionFilterLambda(expr) {
+function asFacetBranch(expr) {
   if (expr.type !== "MethodCall") return null;
-  if (expr.method !== "filter") return null;
-  if (expr.object.type !== "CollectionRef") return null;
-  if (expr.args.length !== 1) return null;
-  const arg = expr.args[0];
-  if (arg.type !== "Lambda") return null;
-  return arg;
+  if (expr.method === "filter" && expr.object.type === "CollectionRef" && expr.args.length === 1 && expr.args[0].type === "Lambda") {
+    return { kind: "filter", lambda: expr.args[0] };
+  }
+  const chain = collectStreamChain(expr);
+  if (chain.root.type !== "CollectionRef" || chain.methods.length === 0) return null;
+  return { kind: "chain", methods: chain.methods };
 }
-function lowerFacet(facets, outerCtx, lowerBlock2) {
+function lowerFacet(facets, outerCtx, lowerBlock2, lowerChain, rhs) {
   const body = {};
   const seen = /* @__PURE__ */ new Set();
   for (const f of facets) {
@@ -13554,7 +13553,7 @@ function lowerFacet(facets, outerCtx, lowerBlock2) {
       );
     }
     seen.add(f.key);
-    body[f.key] = lowerFacetEntry(f.lambda, outerCtx, lowerBlock2);
+    body[f.key] = f.kind === "filter" ? lowerFacetEntry(f.lambda, outerCtx, lowerBlock2) : lowerChain(f.methods, outerCtx, rhs);
   }
   return [{ $facet: body }];
 }
@@ -14124,7 +14123,6 @@ function walkChain(call, outerCtx, lowerBlock2, allocSlot) {
   }
   const prefix = call.object.type === "CollectionRef" ? [] : walkChain(call.object, outerCtx, lowerBlock2, allocSlot);
   const here = lowerChainMethod(call, outerCtx, lowerBlock2, prefix, allocSlot);
-  if (here.replacesPreviousStage) prefix.pop();
   prefix.push(...here.stages);
   return prefix;
 }
@@ -14136,7 +14134,7 @@ function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
   if (def !== null) {
     def.validate(call.args, call.pos);
     const result = def.lower(call.args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
-    return { stages: result.stages, replacesPreviousStage: result.replacesPreviousStage };
+    return { stages: result.stages };
   }
   const equivalent = STAGE_EQUIVALENT_HINT[call.method];
   const hint = equivalent !== void 0 ? ` Use '${equivalent}' as a separate stage before the '$out' instead.` : ` Add the equivalent stage call (e.g. '$sort({ \u2026 })', '$skip(N)', '$limit(N)') before the '$out' instead.`;
@@ -14872,7 +14870,6 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
     }
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
-    if (result.replacesPreviousStage) target.pop();
     target.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
@@ -14974,7 +14971,6 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
     }
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
-    if (result.replacesPreviousStage) inner.pop();
     inner.push(...result.stages);
   }
   const from = requireSameDbColl(target.db, target.collection, target.pos);
@@ -15507,7 +15503,20 @@ function tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlockFn, isFir
     const facets = detectFacetShape(op.value);
     if (facets !== null) {
       flush();
-      for (const s of lowerFacet(facets, ctx, lowerBlockFn)) out.push(s);
+      const lowerFacetChain = (methods, branchCtx, branchRhs) => {
+        const branch = [];
+        applyStreamMethods(
+          methods,
+          branch,
+          freshFacetCtx(branchCtx),
+          lowerBlockFn,
+          allocSlot,
+          branchRhs,
+          makePipelineValidator("facet")
+        );
+        return branch;
+      };
+      for (const s of lowerFacet(facets, ctx, lowerBlockFn, lowerFacetChain, op.value)) out.push(s);
       return { handled: true, ctx: clearCtxLets(ctx, "$facet"), outPos: null };
     }
     flush();

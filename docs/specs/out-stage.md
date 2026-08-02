@@ -137,12 +137,11 @@ The chain dispatch in `lowerChainMethod` handles `.filter(<predicate>)`
 inline (it reuses the index-friendly `$match` translator), and routes every
 other method through the shared `STREAM_METHODS` registry from
 [`src/stream-methods.ts`](../../src/stream-methods.ts): `.slice`, `.map`,
-`.toSorted`, `.toReversed`, `.flatMap`, `.concat`. The chain walker in
-`lowerOutChain` recurses into `MethodCall.object` first, then emits the
-current layer's stage, so source order is preserved. A method's `lower`
-function may return `replacesPreviousStage: true` (as `.toReversed` does
-to flip the preceding `$sort`); the walker pops the previous stage before
-appending the new one.
+`.toSorted`, `.flatMap`, `.concat`. The chain walker in `lowerOutChain`
+recurses into `MethodCall.object` first, then emits the current layer's
+stage, so source order is preserved. Chained pipeline stages
+(`$$.$sort({ … })`) are not accepted on a `$out` RHS; write the stage as a
+statement before the write instead.
 
 `.filter` reuses the same predicate translator that `$match`, the
 `$facet` variant of `$ = { … }`, and the union-form sub-pipelines all
@@ -256,8 +255,7 @@ src/
 - **Multi-method RHS chains** (Wave 4 #11). The chain dispatch in
   `lowerChainMethod` routes every non-`.filter` method through the
   shared `STREAM_METHODS` registry. `.map`, `.slice`, `.toSorted`,
-  `.toReversed`, `.flatMap`, `.concat` all compose freely before the
-  trailing `$out`.
+  `.flatMap`, `.concat` all compose freely before the trailing `$out`.
 - **Bound destination via `jsmql.compile`** (Wave 4 #12). `$$$[boundColl] = $$`
   resolves the bracket-index at compile time when `boundColl` is a string-typed
   parameter binding (via `ctx.bindings`). Non-string bindings surface a

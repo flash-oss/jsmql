@@ -37,23 +37,16 @@ export type StreamMethodResult = {
    */
   clearLets?: boolean;
   /**
-   * If true, the caller drops the *immediately preceding* stage from the
-   * accumulator before appending `stages`. Used by methods like
-   * `.toReversed()` that rewrite the preceding `$sort` rather than appending
-   * a new stage. Defaults to false.
-   */
-  replacesPreviousStage?: boolean;
-  /**
    * Stages appended **once, at the very end of the chain** — never immediately
    * after this method's own `stages`. For clearing a `__jsmql.tmp` scratch field
    * a method had to materialise (a computed `$sort` key, `.shuffle`'s `$rand`).
    *
-   * Deferring matters because several methods read `prevStages[last]` to find the
-   * live `$sort`: `.toReversed()` rewrites it, and `.takeRight`/`.dropRight`/
-   * `.initial` reverse it. An `$unset` sitting between the `$sort` and the next
-   * method hides it — and `reverseSortTrick` then *silently* falls back to
-   * ordering by `_id` rather than erroring, so `.shuffle().takeRight(3)` used to
-   * return the last 3 by `_id` and discard the shuffle entirely.
+   * Deferring matters because `.takeWhile`/`.dropWhile` read `prevStages[last]`
+   * to find the live `$sort`. An `$unset` sitting between the `$sort` and the
+   * next method would hide it. (The now-removed "from the end" family made this
+   * worse: it *silently* fell back to ordering by `_id` rather than erroring, so
+   * `.shuffle().takeRight(3)` returned the last 3 by `_id` and discarded the
+   * shuffle entirely.)
    *
    * Only needed inside a `$lookup.pipeline` (the `inSubPipeline` argument to
    * `lower`): there the sub-pipeline's docs land in an array field, so the outer
@@ -88,9 +81,10 @@ export type StreamMethodDef = {
    * `prevStages` is the read-only view of stages the chain has emitted so
    * far in this context (outer pipeline for `$$` chains; `$unionWith`
    * sub-pipeline body for `$$$.<coll>` chains). Methods that don't need to
-   * peek (`.slice`, `.map`, …) simply ignore it. Methods that do
-   * (`.toReversed`) can read the last stage and return
-   * `replacesPreviousStage: true` so the caller drops it before appending.
+   * peek (`.slice`, `.map`, …) simply ignore it. `.takeWhile`/`.dropWhile`
+   * are the only readers: they read the last `$sort`'s spec and reject when
+   * there is none. Rewriting a previous stage is deliberately not offered —
+   * see docs/specs/stream-methods.md § prevStages.
    *
    * `allocSlot` allocates a fresh `__jsmql.tmp.<N>` slot from the
    * surrounding pipeline's tracker — used by methods that need to
@@ -539,7 +533,7 @@ const SHUFFLE: StreamMethodDef = {
   lower(_args, _ctx, _callPos, _lb, _prevStages, allocSlot, inSubPipeline) {
     const slot = allocSlot();
     // The `$unset` is held back to the end of the chain, so the `$sort` stays the
-    // last stage and a following `.takeRight`/`.toReversed` can still see it.
+    // last stage and a following `.takeWhile`/`.dropWhile` can still see it.
     return {
       stages: [{ $addFields: { [slot]: { $rand: {} } } }, { $sort: { [slot]: 1 } }],
       cleanupStages: tempCleanup([slot], inSubPipeline),

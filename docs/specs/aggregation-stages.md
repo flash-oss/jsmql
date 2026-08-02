@@ -59,8 +59,12 @@ two can't drift:
 | Container | `.$stage(b)` is defined as | Delegates to |
 |---|---|---|
 | `$$` current stream | the `$stage(b);` statement | `lowerStageLink` → `generateStageBody` |
-| `$$$.<coll>` foreign chain (`$lookup.pipeline`) | `.aggregate((o) => { $stage(b); })` | `lowerCallbackBlock` — the engine `.aggregate` uses |
+| `$ = { k: $$.… }` facet branch (`$facet.<k>`) | the `$stage(b);` statement | `applyStreamMethods` with the `"facet"` validator |
+| `$$$.<coll>` foreign chain (`$lookup.pipeline`) | `.aggregate((o) => { $stage(b); })` | `lowerCallbackBlock` — the engine `.aggregate` uses, for the bodies rule 1 above doesn't claim |
 | `$$ = $$$.<coll>.…` source-switch (`$unionWith.pipeline`) | the `$stage(b);` statement | `lowerStageLink` → `generateStageBody` |
+
+A `$out` RHS (`$$$.<coll> = $$.…`) is deliberately **not** a stage-link container — write the
+stage as a statement before the write.
 
 Name resolution, arity, and the sub-pipeline placement rules live in one leaf module,
 [src/stage-link.ts](../../src/stage-link.ts), so all three containers share the wording.
@@ -77,30 +81,38 @@ $.t = $$$.orders.$set({ owner: $.tag });
 //                pipeline: [{ $set: { owner: "$$jsmql_f0_tag" } }], as: … } }
 ```
 
-and in a `$match` whose body is an **object literal** it takes one extra step. That body is
-a *query document*, and the query language does not evaluate `$$` variables — mongod
+and in a `$match` whose body is an **object literal** it takes one extra step, because that
+body is a *query document* and the query language does not evaluate `$$` variables. mongod
 *accepts* `{ $match: { userId: "$$jsmql_f0__id" } }` and silently matches **nothing**
-(verified on a live server). So `correlatedQueryMatchAsPredicate` re-expresses the query
-document as the equivalent predicate (`{ userId: $._id }` → `$.userId === $._id`) and hands
-it to the same `translateMatchBody` path `.filter(...)` uses, which splits it into an
-index-friendly query part plus a `$expr` residual for the correlated terms:
+(verified on a live server). Two mechanisms cover it, in this order:
 
-```js
-$.orders = $$$.orders.$match({ userId: $._id, status: "shipped" });
-// → { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                pipeline: [{ $match: { status: "shipped",
-//                                       $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: … } }
-```
+1. **A plain equality map is a matcher.** `detectLookupCall` normalises
+   `.$match({ userId: $._id })` to `filter` and it takes the identical route, indexed
+   basic form included. `{ qty: { $gt: 5 } }`, `$and` and `$expr` bodies are *not* lodash
+   matchers and are left alone.
 
-`$match({ … })` and `.filter({ … })` therefore emit byte-identical sub-pipelines, and the
-`.aggregate((o) => { $match({ … }); })` block spelling — which had emitted the
-silently-empty raw form since it shipped — is fixed by the same change. Only entries whose
-value reads the outer document move into `$expr`; an **uncorrelated** query document keeps
-the verbatim path untouched, so raw MQL still round-trips (HR1). Field terms and
-single-key comparison operators (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`) translate; a
-correlated shape outside that set (an `$and`/`$or` root, `$regex`, …) raises an actionable
-error naming the arrow-predicate and expression-body alternatives rather than emitting a
-match that would return nothing.
+   ```js
+   $.t = $$$.orders.$match({ userId: $._id });
+   // → { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } }
+   ```
+
+2. **Anything else correlated** goes through `correlatedQueryMatchAsPredicate`, which
+   re-expresses the query document as a predicate and hands it to the same
+   `translateMatchBody` path `.filter(...)` uses. That splits it into an index-friendly
+   query part plus a `$expr` residual for the correlated terms.
+
+   ```js
+   $.t = $$$.orders.$match({ qty: { $gte: $.min } });
+   // → { $lookup: { from: "orders", let: { jsmql_f0_min: "$min" },
+   //                pipeline: [{ $match: { $expr: { $gte: ["$qty", "$$jsmql_f0_min"] } } }], as: … } }
+   ```
+
+Either way `$match({ … })` and `.filter({ … })` agree, and the
+`.aggregate((o) => { $match({ … }); })` block spelling — which emitted the silently-empty
+raw form since it shipped — is fixed by the same change. An **uncorrelated** query document
+keeps the verbatim path untouched, so raw MQL still round-trips (HR1). A correlated shape
+neither mechanism can express (an `$and`/`$or` root, `$regex`) raises an actionable error
+naming the arrow-predicate and expression-body alternatives.
 
 **Relationship to `.aggregate(...)`.** Both remain. `.aggregate` keeps the two jobs a
 single link can't do: a multi-stage *block* (with a terminal `return`), and the raw

@@ -367,13 +367,12 @@ To add a new method:
 6. Add a [DEVLOG.md](../DEVLOG.md) entry.
 
 Methods that need state from earlier in the chain receive `prevStages: readonly
-object[]` — the read-only view of stages emitted so far in the same context — and
-may return `replacesPreviousStage: true` to have the caller drop the previous stage
-before appending their own.
+object[]` — the read-only view of stages emitted so far in the same context. It is
+read-only in practice too: no method may rewrite or drop an earlier stage.
 
 `.takeWhile`/`.dropWhile` are the only readers, and they show the safe shape: they
 **read** the last `$sort`'s spec (never rewrite it) and **reject** when there is none
-(never guess one). `replacesPreviousStage` has no users at all. The contrast is the
+(never guess one). The contrast is the
 removed "from the end" family (§ below), which rewrote the preceding stage AND fell
 back to `_id` when it was absent — a wrong answer with no diagnostic. Reach for
 `prevStages` only when a method genuinely cannot be expressed without it; then read,

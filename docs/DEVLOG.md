@@ -10,6 +10,62 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-02 — feat: `$facet` branches accept any `$$` chain, not only `.filter(<arrow>)`
+
+Stage links shipped into three containers and missed the fourth. A facet branch
+took `$$.filter(o => …)` and nothing else, so `$$.$match({ a: 1 })` — the same
+thing, differently spelled — fell through to value-mode codegen and produced a
+misleading "its receiver here is a value, not a stream".
+
+`detectFacetShape` now classifies each branch as either the dedicated
+`.filter(<arrow>)` predicate (which keeps its facet-specific `$.<field>`
+rejection) or an ordinary `$$` chain, lowered by `applyStreamMethods` against
+`freshFacetCtx` and a `"facet"` validator. So a branch takes the whole
+vocabulary, placement rules included:
+
+```js
+$ = { hi: $$.$match({ s: "a" }).$limit(2), lo: $$.filter(d => d.n < 5) };
+// → [{ $facet: { hi: [{ $match: { s: "a" } }, { $limit: 2 }],
+//                lo: [{ $match: { n: { $lt: 5 } } }] } }]
+
+$ = { k: $$.$out("x") };
+// ✗ '$out' is not allowed inside a '$facet' sub-pipeline.
+```
+
+A plain object RHS still lowers to `$replaceWith`; the mixed-shape error wording
+widened from "every value must be `$$.filter(<predicate>)`" to "every value must
+be a `$$` chain".
+
+---
+
+## 2026-08-02 — chore: drop the dead `replacesPreviousStage` hook and its stale references
+
+Removing the "from the end" stream family left `replacesPreviousStage` set by
+nobody and read by four call sites, plus a scatter of comments and specs
+describing `.toReversed()` as a live stream method. `docs/specs/stream-methods.md`
+had already noticed ("`replacesPreviousStage` has no users at all") without the
+code following.
+
+The field and its four pop sites are gone. `prevStages` stays, and is now
+read-only in fact as well as in name: a method may read an earlier stage, never
+rewrite or drop one. `.takeWhile`/`.dropWhile` are the only readers, and the
+comments that used `.toReversed()` to illustrate cross-statement composition now
+use them, because the property still holds:
+
+```js
+$$.toSorted({a:1}).takeWhile(d => d.a < 5);      // ≡
+$$.toSorted({a:1}); $$.takeWhile(d => d.a < 5);
+```
+
+Also corrected: `docs/specs/out-stage.md` listed `.toReversed` as a supported
+`$out` RHS chain method (it is rejected), and my own
+`docs/specs/aggregation-stages.md` credited `correlatedQueryMatchAsPredicate`
+with the plain-equality `$match` case, which `detectLookupCall` now claims first
+and routes to the indexed basic form. `src/CLAUDE.md` said "three containers" and
+named the wrong path for one of them.
+
+---
+
 ## 2026-08-01 — feat: stream `.takeWhile(pred)` / `.dropWhile(pred)` (closes DEF-035)
 
 ```js

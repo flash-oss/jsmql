@@ -2331,7 +2331,7 @@ export function extractLookupCalls(
  *
  * This is the stage-form counterpart to the expression-form fallthrough
  * `descendAndExtract` would produce: same final array, fewer stages, and
- * stream-method semantics for `.toSorted` / `.toReversed` / `.flatMap` /
+ * stream-method semantics for `.toSorted` / `.flatMap` /
  * `.slice` / `.concat` / `.map` / `.filter` (which expression-form either
  * couldn't represent or represented as the bulkier `$map` / `$filter` / `$slice`
  * operators).
@@ -2536,7 +2536,6 @@ export function peelForeignChain(
     if (def === null) continue; // caller pre-validated the chain; defensive no-op
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
-    if (result.replacesPreviousStage) pipelineBody.pop();
     pipelineBody.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     // A block-body `.map` may capture cross-level reads into THIS lookup's let.

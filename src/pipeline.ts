@@ -42,6 +42,7 @@ import {
   ctxHasLets,
   extendCtxFunctions,
   freshSubPipelineCtx,
+  freshFacetCtx,
   internalError,
   isWritableFieldPath,
   shorthandToLambda,
@@ -89,7 +90,7 @@ import {
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
 import { detectUnionPush, lowerUnionPush } from "./union-translation.ts";
-import { detectFacetShape, lowerFacet } from "./facet-translation.ts";
+import { detectFacetShape, lowerFacet, type FacetChainLowerer } from "./facet-translation.ts";
 import { validateStageBody, validateMatchPlacement } from "./stage-validation.ts";
 import { detectOutAssign, lowerOut } from "./out-translation.ts";
 import {
@@ -1086,18 +1087,17 @@ function lowerChainOnStream(
 
 /**
  * Apply a `$$`-rooted method chain onto `target`, appending each method's
- * stages and using `target` itself as the `prevStages` view (and the
- * `replacesPreviousStage` pop target).
+ * stages and using `target` itself as the `prevStages` view.
  *
  * Shared by two callers that differ only in *which* buffer they pass:
  *   - `lowerChainOnStream` (the `$$ = $$.<chain>` assignment form) passes a
  *     fresh local array, so the chain composes only against itself.
  *   - `lowerStatementTail` (the bare `$$.<chain>;` statement form) passes the
- *     live pipeline `out`, so a stage-coupled method (`.toReversed`) flips the
- *     `$sort` emitted just before it — whether that `$sort` came from an
- *     earlier method in this chain OR an earlier *statement*. That's what makes
- *     `$$.toSorted(c).toReversed();` and `$$.toSorted(c); $$.toReversed();`
- *     lower identically.
+ *     live pipeline `out`, so a method that reads `prevStages` (`.takeWhile`,
+ *     `.dropWhile`) sees the `$sort` emitted just before it — whether that
+ *     `$sort` came from an earlier method in this chain OR an earlier
+ *     *statement*. That's what makes `$$.toSorted(c).takeWhile(p);` and
+ *     `$$.toSorted(c); $$.takeWhile(p);` lower identically.
  *
  * The first method may be `.filter(<lambda>)` → a `$match` stage (predicate
  * translated in `ctx` so prior `let` bindings resolve). Any subsequent method,
@@ -1161,7 +1161,6 @@ function applyStreamMethods(
     }
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
-    if (result.replacesPreviousStage) target.pop();
     target.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
@@ -1362,7 +1361,6 @@ function lowerChainOnCollection(
     }
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
-    if (result.replacesPreviousStage) inner.pop();
     inner.push(...result.stages);
   }
   const from = requireSameDbColl(target.db, target.collection, target.pos);
@@ -2325,7 +2323,23 @@ function tryLowerAssignSugar(
     const facets = detectFacetShape(op.value);
     if (facets !== null) {
       flush();
-      for (const s of lowerFacet(facets, ctx, lowerBlockFn)) out.push(s);
+      // A facet branch that isn't a lone `.filter(<arrow>)` is an ordinary `$$`
+      // stream chain, lowered by the same engine every other container uses —
+      // against a fresh facet ctx and the "facet" placement rules.
+      const lowerFacetChain: FacetChainLowerer = (methods, branchCtx, branchRhs) => {
+        const branch: object[] = [];
+        applyStreamMethods(
+          methods,
+          branch,
+          freshFacetCtx(branchCtx),
+          lowerBlockFn,
+          allocSlot,
+          branchRhs,
+          makePipelineValidator("facet"),
+        );
+        return branch;
+      };
+      for (const s of lowerFacet(facets, ctx, lowerBlockFn, lowerFacetChain, op.value)) out.push(s);
       return { handled: true, ctx: clearCtxLets(ctx, "$facet"), outPos: null };
     }
     flush();
@@ -2399,7 +2413,7 @@ function lowerStatementTail(
     // Bare-statement stream chain: `$$.filter(p).map(f);` (no `$$ =` head),
     // sugar for `$$ = $$.<chain>;`. Lowered against the live `out` so that a
     // stage-coupled method composes with earlier statements — guaranteeing
-    // `$$.toSorted(c); $$.toReversed();` ≡ `$$.toSorted(c).toReversed();`.
+    // `$$.toSorted(c); $$.takeWhile(p);` ≡ `$$.toSorted(c).takeWhile(p);`.
     // `$$.push(...)` / `$$.indexStats()` are handled above; any other method on
     // a bare `$$` (valid stream method, or an unknown one → actionable error
     // from `applyStreamMethods`) flows through here. This supersedes the old

@@ -27,10 +27,24 @@
 import type { Expr } from "./ast.ts";
 import { CodegenError, freshFacetCtx, type GenerateCtx } from "./codegen.ts";
 import { lowerLambdaPredicate, type SubPipelineLowerer } from "./lookup-translation.ts";
+import { collectStreamChain, type MethodCallNode } from "./stream-methods.ts";
 
 type LambdaNode = Extract<Expr, { type: "Lambda" }>;
 
-export type FacetEntry = { key: string; lambda: LambdaNode; pos: number };
+/**
+ * One facet branch. `.filter(<lambda>)` keeps its dedicated predicate lowering
+ * (it rejects `$.<field>` in favour of the param spelling). Any other `$$`
+ * chain — a stage link (`$$.$match({ … })`), a registry method, or a mix —
+ * lowers through the shared stream-chain engine, so a facet branch accepts the
+ * same vocabulary as every other container.
+ */
+export type FacetEntry = { key: string; pos: number } & (
+  | { kind: "filter"; lambda: LambdaNode }
+  | { kind: "chain"; methods: MethodCallNode[] }
+);
+
+/** Lower a `$$`-rooted chain into a facet branch body. Supplied by pipeline.ts. */
+export type FacetChainLowerer = (methods: MethodCallNode[], outerCtx: GenerateCtx, rhs: Expr) => object[];
 
 /**
  * Recognise an object-literal RHS where every value is a `$$.filter(<lambda>)`.
@@ -46,15 +60,15 @@ export function detectFacetShape(value: Expr): FacetEntry[] | null {
   if (value.type !== "ObjectLiteral") return null;
   if (value.entries.length === 0) return null;
 
-  let hasFilter = false;
+  let hasBranch = false;
   for (const entry of value.entries) {
     if (entry.type !== "KeyValueEntry") continue;
-    if (asCollectionFilterLambda(entry.value) !== null) {
-      hasFilter = true;
+    if (asFacetBranch(entry.value) !== null) {
+      hasBranch = true;
       break;
     }
   }
-  if (!hasFilter) return null;
+  if (!hasBranch) return null;
 
   const facets: FacetEntry[] = [];
   for (const entry of value.entries) {
@@ -70,26 +84,38 @@ export function detectFacetShape(value: Expr): FacetEntry[] | null {
         entry.pos,
       );
     }
-    const lambda = asCollectionFilterLambda(entry.value);
-    if (lambda === null) {
+    const branch = asFacetBranch(entry.value);
+    if (branch === null) {
       throw new CodegenError(
-        `\`$ = { ... }\` $facet pattern: every value must be \`$$.filter(<predicate>)\`. Entry '${entry.key.name}' is something else. Either convert it to \`$$.filter(<predicate>)\` or move it out of the object.`,
+        `\`$ = { ... }\` $facet pattern: every value must be a \`$$\` chain — \`$$.filter(<predicate>)\`, a stage call (\`$$.$match({ … })\`), or any chain of them. Entry '${entry.key.name}' is something else. Either convert it to a \`$$\` chain or move it out of the object.`,
         entry.value.pos,
       );
     }
-    facets.push({ key: entry.key.name, lambda, pos: entry.pos });
+    facets.push({ key: entry.key.name, pos: entry.pos, ...branch });
   }
   return facets;
 }
 
-function asCollectionFilterLambda(expr: Expr): LambdaNode | null {
+/**
+ * Classify a facet branch value. A lone `$$.filter(<arrow>)` keeps the dedicated
+ * predicate path (its `$.<field>` rejection is facet-specific); everything else
+ * rooted at `$$` is a stream chain.
+ */
+function asFacetBranch(
+  expr: Expr,
+): { kind: "filter"; lambda: LambdaNode } | { kind: "chain"; methods: MethodCallNode[] } | null {
   if (expr.type !== "MethodCall") return null;
-  if (expr.method !== "filter") return null;
-  if (expr.object.type !== "CollectionRef") return null;
-  if (expr.args.length !== 1) return null;
-  const arg = expr.args[0];
-  if (arg.type !== "Lambda") return null;
-  return arg as LambdaNode;
+  if (
+    expr.method === "filter" &&
+    expr.object.type === "CollectionRef" &&
+    expr.args.length === 1 &&
+    expr.args[0].type === "Lambda"
+  ) {
+    return { kind: "filter", lambda: expr.args[0] as LambdaNode };
+  }
+  const chain = collectStreamChain(expr);
+  if (chain.root.type !== "CollectionRef" || chain.methods.length === 0) return null;
+  return { kind: "chain", methods: chain.methods };
 }
 
 /**
@@ -97,7 +123,13 @@ function asCollectionFilterLambda(expr: Expr): LambdaNode | null {
  * becomes one sub-pipeline (one `$match` for expression-body predicates;
  * the block's stages for block-body predicates).
  */
-export function lowerFacet(facets: FacetEntry[], outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object[] {
+export function lowerFacet(
+  facets: FacetEntry[],
+  outerCtx: GenerateCtx,
+  lowerBlock: SubPipelineLowerer,
+  lowerChain: FacetChainLowerer,
+  rhs: Expr,
+): object[] {
   const body: Record<string, object[]> = {};
   const seen = new Set<string>();
   for (const f of facets) {
@@ -108,7 +140,8 @@ export function lowerFacet(facets: FacetEntry[], outerCtx: GenerateCtx, lowerBlo
       );
     }
     seen.add(f.key);
-    body[f.key] = lowerFacetEntry(f.lambda, outerCtx, lowerBlock);
+    body[f.key] =
+      f.kind === "filter" ? lowerFacetEntry(f.lambda, outerCtx, lowerBlock) : lowerChain(f.methods, outerCtx, rhs);
   }
   return [{ $facet: body }];
 }

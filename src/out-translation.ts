@@ -187,8 +187,8 @@ function findContextRefLeaf(node: Expr): { type: "DatabaseRef" | "ClusterRef" } 
  *   - bare `$$`                                    → []
  *   - `$$.filter(<predicate>)`                     → [{ $match: ... }]
  *   - chained stream-methods registry methods
- *     (`.slice`, `.map`, `.toSorted`, `.toReversed`,
- *     `.flatMap`, `.concat`) compose freely        → [<their stages>...]
+ *     (`.slice`, `.map`, `.toSorted`, `.flatMap`,
+ *     `.concat`) compose freely                    → [<their stages>...]
  *
  * Unrecognised methods throw an actionable error naming the
  * stage-call alternative.
@@ -249,7 +249,6 @@ function walkChain(
     call.object.type === "CollectionRef" ? [] : walkChain(call.object, outerCtx, lowerBlock, allocSlot);
 
   const here = lowerChainMethod(call, outerCtx, lowerBlock, prefix, allocSlot);
-  if (here.replacesPreviousStage) prefix.pop();
   prefix.push(...here.stages);
   return prefix;
 }
@@ -259,11 +258,10 @@ function walkChain(
  * stages. `.filter(<predicate>)` → `$match` is special-cased so it can
  * compose with the existing query-translator (and emit `$expr` residuals);
  * every other method is routed through the shared `STREAM_METHODS` registry
- * (`.slice`, `.map`, `.toSorted`, `.toReversed`, `.flatMap`, `.concat`).
+ * (`.slice`, `.map`, `.toSorted`, `.flatMap`, `.concat`).
  *
- * Returns `{ stages, replacesPreviousStage? }` — `.toReversed()` reads
- * `prevStages` and may flip the preceding `$sort`, in which case it asks
- * the caller to drop the last emitted stage before appending its own.
+ * `prevStages` is passed through for the methods that read it
+ * (`.takeWhile`/`.dropWhile` need a preceding `$sort`).
  */
 function lowerChainMethod(
   call: Expr & { type: "MethodCall" },
@@ -271,7 +269,7 @@ function lowerChainMethod(
   lowerBlock: SubPipelineLowerer,
   prevStages: readonly object[],
   allocSlot: SlotAllocator,
-): { stages: object[]; replacesPreviousStage?: boolean } {
+): { stages: object[] } {
   if (call.method === "filter") {
     return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock) };
   }
@@ -281,7 +279,7 @@ function lowerChainMethod(
     // `inSubPipeline = false` — `$out` chains live at the outer pipeline level,
     // not inside a `$unionWith.pipeline` body.
     const result = def.lower(call.args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
-    return { stages: result.stages, replacesPreviousStage: result.replacesPreviousStage };
+    return { stages: result.stages };
   }
   // Method not in the stream-methods registry either. Mention the stage-call
   // alternative so the user has an immediate workaround.

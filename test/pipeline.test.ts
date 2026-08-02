@@ -536,7 +536,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("rejects mixed-shape RHS where some values aren't `$$.filter(...)`", () => {
     expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), b: 1 };`)).toThrow(
-      /every value must be `\$\$\.filter\(<predicate>\)`.*Entry 'b'/,
+      /every value must be a `\$\$` chain.*Entry 'b'/,
     );
   });
 
@@ -1352,5 +1352,35 @@ describe("a bare `$$$.<coll>.<chain>;` statement names its missing destination",
   // The contrast the message calls out: a `$$` chain needs no destination.
   it("a bare `$$` chain still works — it transforms the current stream", () => {
     expect(jsmql("$$.$match({ a: 1 });")).toEqual([{ $match: { a: 1 } }]);
+  });
+});
+
+// A `$facet` branch is a `$$` stream like any other container, so it takes the
+// whole chain vocabulary — stage links included, not only `.filter(<arrow>)`.
+describe("$facet branches accept any `$$` chain", () => {
+  it("accepts a bare stage link", () => {
+    expect(jsmql("$ = { k: $$.$match({ a: 1 }) };")).toEqual([{ $facet: { k: [{ $match: { a: 1 } }] } }]);
+  });
+
+  it("accepts a stage link after a .filter", () => {
+    expect(jsmql("$ = { k: $$.filter(d => d.a === 1).$limit(3) };")).toEqual([
+      { $facet: { k: [{ $match: { a: 1 } }, { $limit: 3 }] } },
+    ]);
+  });
+
+  it("mixes chain branches with the classic .filter(<arrow>) branch", () => {
+    expect(jsmql('$ = { hi: $$.$match({ s: "a" }).$limit(2), lo: $$.filter(d => d.n < 5) };')).toEqual([
+      { $facet: { hi: [{ $match: { s: "a" } }, { $limit: 2 }], lo: [{ $match: { n: { $lt: 5 } } }] } },
+    ]);
+  });
+
+  // Placement is validated against the facet container.
+  it("rejects a write stage in a branch, naming $facet", () => {
+    expect(() => jsmql('$ = { k: $$.$out("x") };')).toThrow(/'\$out' is not allowed inside a '\$facet' sub-pipeline/);
+  });
+
+  // A plain object RHS is still a $replaceWith, not a one-branch facet.
+  it("leaves a non-chain object RHS as $replaceWith", () => {
+    expect(jsmql("$ = { a: 1, b: 2 };")).toEqual([{ $replaceWith: { a: 1, b: 2 } }]);
   });
 });
