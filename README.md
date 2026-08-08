@@ -61,7 +61,7 @@ import { jsmql } from "@koresar/jsmql";
 // Arrow form — your prettier/oxfmt handles formatting.
 // No `;` at top level → query Filter (the doc db.coll.find(filter) takes).
 jsmql(({ $ }) => $.email === $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
-// → {"$expr":{"$eq":["$email",{"$let":{"vars":{"jsmqlStr":{"$toLower":{"$trim":{"input":"$email"}}}},"in":{"$eq":[{"$substrCP":["$$jsmqlStr",{"$max":[0,{"$subtract":[{"$strLenCP":"$$jsmqlStr"},{"$strLenCP":"@flash-payments.com"}]}]},{"$strLenCP":"@flash-payments.com"}]},"@flash-payments.com"]}}}]}}
+// → {"$expr":{"$eq":["$email",{"$let":{"vars":{"jsmqlStr":{"$ifNull":[{"$toLower":{"$trim":{"input":"$email"}}},""]}},"in":{"$eq":[{"$substrCP":["$$jsmqlStr",{"$max":[0,{"$subtract":[{"$strLenCP":"$$jsmqlStr"},19]}]},19]},"@flash-payments.com"]}}}]}}
 
 // Pipelines — any `;` flips to stage mode (the array db.coll.aggregate(pipeline) takes).
 jsmql(({ $ }) => {

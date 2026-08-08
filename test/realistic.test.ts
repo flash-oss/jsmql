@@ -1144,7 +1144,7 @@ $.customer.region.trim().toLowerCase() === "us"
                 $cond: {
                   if: { $isArray: "$cart.items" },
                   then: { $size: "$cart.items" },
-                  else: { $strLenCP: "$cart.items" },
+                  else: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
                 },
               },
               20,
@@ -1210,7 +1210,7 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
           then: {
             $and: [
               { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
-              { $gt: [{ $strLenCP: { $trim: { input: "$name" } } }, 0] },
+              { $gt: [{ $strLenCP: { $ifNull: [{ $trim: { input: "$name" } }, ""] } }, 0] },
             ],
           },
           else: "$active",
@@ -1710,14 +1710,19 @@ $.file.size <= 25_000_000
           { $in: [{ $toLower: "$file.ext" }, [".jpg", ".png", ".pdf", ".docx"]] },
           {
             $let: {
-              vars: { jsmqlStr: "$file.name" },
+              vars: { jsmqlStr: { $ifNull: ["$file.name", ""] } },
               in: {
                 $eq: [
                   {
                     $substrCP: [
                       "$$jsmqlStr",
-                      { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: "$file.ext" }] }] },
-                      { $strLenCP: "$file.ext" },
+                      {
+                        $max: [
+                          0,
+                          { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }] },
+                        ],
+                      },
+                      { $strLenCP: { $ifNull: ["$file.ext", ""] } },
                     ],
                   },
                   "$file.ext",

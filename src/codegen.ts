@@ -1132,6 +1132,30 @@ function clampNonNegative(value: unknown): unknown {
   return { $max: [0, value] };
 }
 
+/** True when `value` is already an `$ifNull` wrap (e.g. an optional-chain receiver). */
+function isIfNullWrapped(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
+}
+
+/**
+ * `$strLenCP` of a generated value, tolerant of a missing field.
+ *
+ * `$strLenCP` is the one string primitive that **aborts the query** on a
+ * missing/null input (`Location34471`) — `$indexOfCP` returns null and
+ * `$substrCP` returns "". Since a length is something jsmql derives rather than
+ * something the user wrote, an absent field would otherwise take down a query
+ * through `.endsWith()` while the same predicate spelled `.startsWith()` simply
+ * returned false. Coercing here makes the whole string surface behave alike.
+ *
+ * Folds a literal receiver to its **code point** count: `$strLenCP` counts code
+ * points where JS `.length` counts UTF-16 units, so "a👍b" is 3, not 4. A source
+ * string starting with `$` is an MQL field reference (HR1), never a literal.
+ */
+function strLenOf(value: unknown): unknown {
+  if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
+  return { $strLenCP: isIfNullWrapped(value) ? value : wrapIfNull(value, "") };
+}
+
 /** Subtract `b` from `a`, folding when both operands are numeric literals. */
 function foldedSubtract(a: unknown, b: unknown): unknown {
   if (typeof a === "number" && typeof b === "number") return a - b;
@@ -1169,13 +1193,13 @@ function cond(
 function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unknown {
   if (node.type === "NumberLiteral") {
     if (node.value >= 0) return node.value;
-    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, -node.value));
+    return clampNonNegative(foldedSubtract(strLenOf(genObj), -node.value));
   }
   if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
-    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, node.operand.value));
+    return clampNonNegative(foldedSubtract(strLenOf(genObj), node.operand.value));
   }
   const gen = _generate(node, ctx);
-  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, { $strLenCP: genObj }] }), gen);
+  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, strLenOf(genObj)] }), gen);
 }
 
 /** Signed integer value of a slice-index literal (`5` or `-5`), else null
@@ -1306,7 +1330,7 @@ function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unkno
     const negativeLiteral = negativeLiteralValue(exprArgs[0]);
     if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
     // `strLen - start` is negative when start runs past the end ("".slice(1)).
-    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
+    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
   }
   const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
   return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
@@ -1856,10 +1880,13 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
     return { $size: optional ? wrapIfNull(v, []) : v };
   }
   const rawObj = _generate(object, ctx);
-  if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
+  if (isStringProducing(object)) return strLenOf(rawObj);
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
   const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-  return cond({ $isArray: obj }, { $size: obj }, { $strLenCP: obj });
+  // Only the string branch needs coercing: an absent field is already routed to
+  // `$size([])` by the `[]` neutral when the chain is optional, and reaches the
+  // else branch (where `$strLenCP` would abort) when it isn't.
+  return cond({ $isArray: obj }, { $size: obj }, strLenOf(obj));
 }
 
 /**
@@ -2761,7 +2788,7 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
 // by design: `$toUpper`/`$toLower` are ASCII, and word splitting matches ASCII
 // alphanumerics (accented text passes through / is treated as separators).
 function strTail(s: unknown, from: number): unknown {
-  return { $substrCP: [s, from, { $strLenCP: s }] };
+  return { $substrCP: [s, from, strLenOf(s)] };
 }
 function capitalizeExpr(s: unknown): unknown {
   return { $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }] };
@@ -3095,7 +3122,7 @@ function generateMethodCall(
       if (exprArgs.length === 1) {
         // A length past the end is clamped by the server, so the full length
         // stands in for "the rest of the string".
-        return { $substrCP: [genObj, start, { $strLenCP: genObj }] };
+        return { $substrCP: [genObj, start, strLenOf(genObj)] };
       }
       return { $substrCP: [genObj, start, clampNonNegativeIndex(exprArgs[1], ctx)] };
     }
@@ -3109,7 +3136,7 @@ function generateMethodCall(
       const start = clampNonNegativeIndex(exprArgs[0], ctx);
       if (exprArgs.length === 1) {
         // `strLen - start` is negative when start runs past the end.
-        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
+        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
       }
       const end = clampNonNegativeIndex(exprArgs[1], ctx);
       return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
@@ -3144,10 +3171,13 @@ function generateMethodCall(
       // re-evaluated, and the start is floored: a receiver shorter than the
       // needle makes `strLen - N` negative, which $substrCP rejects outright
       // (it aborts the query rather than returning false).
-      const needleLen = { $strLenCP: needle };
+      // The receiver is coerced once at the binding, so `$strLenCP` inside sees
+      // a string even when the field is absent. A literal needle folds to its
+      // code-point count, which also stops it being spliced in three times.
+      const needleLen = strLenOf(needle);
       return {
         $let: {
-          vars: { jsmqlStr: genObj },
+          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
           in: {
             $eq: [
               {
@@ -3299,9 +3329,12 @@ function generateMethodCall(
         },
       };
       const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
+      // The binding itself is coerced, not just the `$strLenCP` argument: an
+      // uncoerced `$$s` would leave the trailing `$concat` returning null on a
+      // missing field rather than the fully-padded string JS gives for "".
       return {
         $let: {
-          vars: { s: genObj },
+          vars: { s: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
           in: cond({ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }),
         },
       };
@@ -4449,12 +4482,20 @@ function generateMethodCall(
         }
       }
       const keep = Math.max(0, length - omission.length);
+      // Bound once (and coerced) so the receiver isn't evaluated three times and
+      // an absent field truncates to "" like lodash, rather than passing null
+      // through the else branch.
       return {
-        $cond: [
-          { $gt: [{ $strLenCP: genObj }, length] },
-          { $concat: [{ $substrCP: [genObj, 0, keep] }, omission] },
-          genObj,
-        ],
+        $let: {
+          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
+          in: {
+            $cond: [
+              { $gt: [{ $strLenCP: "$$jsmqlStr" }, length] },
+              { $concat: [{ $substrCP: ["$$jsmqlStr", 0, keep] }, omission] },
+              "$$jsmqlStr",
+            ],
+          },
+        },
       };
     }
 

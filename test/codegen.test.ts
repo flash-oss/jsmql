@@ -1802,7 +1802,9 @@ describe("string methods", () => {
     expect(jsmql.expr('$.str.match("^[a-z]")')).toEqual({ $regexMatch: { input: "$str", regex: "^[a-z]" } });
   });
   it("length on string-producing expression → $strLenCP", () => {
-    expect(jsmql.expr("$.name.trim().length")).toEqual({ $strLenCP: { $trim: { input: "$name" } } });
+    // Coerced: $strLenCP aborts the query on a missing field, so `.length` of an
+    // absent string is 0 rather than an executor error.
+    expect(jsmql.expr("$.name.trim().length")).toEqual({ $strLenCP: { $ifNull: [{ $trim: { input: "$name" } }, ""] } });
   });
   it("length on array-producing expression → $size", () => {
     expect(jsmql.expr('$.csv.split(",").length')).toEqual({ $size: { $split: ["$csv", ","] } });
@@ -1813,8 +1815,14 @@ describe("string methods", () => {
     });
   });
   it("length on unknown field → runtime dispatch", () => {
+    // Only the string branch coerces — the array branch is already shielded by
+    // the $isArray test, which an absent field fails.
     expect(jsmql.expr("$.items.length")).toEqual({
-      $cond: { if: { $isArray: "$items" }, then: { $size: "$items" }, else: { $strLenCP: "$items" } },
+      $cond: {
+        if: { $isArray: "$items" },
+        then: { $size: "$items" },
+        else: { $strLenCP: { $ifNull: ["$items", ""] } },
+      },
     });
   });
   it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
@@ -1908,7 +1916,9 @@ describe("array methods (no lambda)", () => {
             in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
           },
         },
-        else: { $substrCP: ["$items", 2, { $max: [0, { $subtract: [{ $strLenCP: "$items" }, 2] }] }] },
+        else: {
+          $substrCP: ["$items", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$items", ""] } }, 2] }] }],
+        },
       },
     });
   });
@@ -3771,13 +3781,22 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
 describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
   it(".capitalize() / .upperFirst() / .lowerFirst()", () => {
     expect(jsmql.expr("$.s.capitalize()")).toEqual({
-      $concat: [{ $toUpper: { $substrCP: ["$s", 0, 1] } }, { $toLower: { $substrCP: ["$s", 1, { $strLenCP: "$s" }] } }],
+      $concat: [
+        { $toUpper: { $substrCP: ["$s", 0, 1] } },
+        { $toLower: { $substrCP: ["$s", 1, { $strLenCP: { $ifNull: ["$s", ""] } }] } },
+      ],
     });
     expect(jsmql.expr("$.s.upperFirst()")).toEqual({
-      $concat: [{ $toUpper: { $substrCP: ["$s", 0, 1] } }, { $substrCP: ["$s", 1, { $strLenCP: "$s" }] }],
+      $concat: [
+        { $toUpper: { $substrCP: ["$s", 0, 1] } },
+        { $substrCP: ["$s", 1, { $strLenCP: { $ifNull: ["$s", ""] } }] },
+      ],
     });
     expect(jsmql.expr("$.s.lowerFirst()")).toEqual({
-      $concat: [{ $toLower: { $substrCP: ["$s", 0, 1] } }, { $substrCP: ["$s", 1, { $strLenCP: "$s" }] }],
+      $concat: [
+        { $toLower: { $substrCP: ["$s", 0, 1] } },
+        { $substrCP: ["$s", 1, { $strLenCP: { $ifNull: ["$s", ""] } }] },
+      ],
     });
   });
   it(".words() → $regexFindAll with the ASCII word pattern (splits camelCase)", () => {
@@ -3790,12 +3809,22 @@ describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
     });
   });
   it(".truncate() default (length 30, '...'); .truncate({ length }) overrides", () => {
-    expect(jsmql.expr("$.s.truncate()")).toEqual({
-      $cond: [{ $gt: [{ $strLenCP: "$s" }, 30] }, { $concat: [{ $substrCP: ["$s", 0, 27] }, "..."] }, "$s"],
+    // Bound once and coerced: the receiver was previously emitted three times,
+    // and an absent field fell through the else branch as null instead of "".
+    const truncated = (length: number, keep: number) => ({
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$s", ""] } },
+        in: {
+          $cond: [
+            { $gt: [{ $strLenCP: "$$jsmqlStr" }, length] },
+            { $concat: [{ $substrCP: ["$$jsmqlStr", 0, keep] }, "..."] },
+            "$$jsmqlStr",
+          ],
+        },
+      },
     });
-    expect(jsmql.expr("$.s.truncate({ length: 10 })")).toEqual({
-      $cond: [{ $gt: [{ $strLenCP: "$s" }, 10] }, { $concat: [{ $substrCP: ["$s", 0, 7] }, "..."] }, "$s"],
-    });
+    expect(jsmql.expr("$.s.truncate()")).toEqual(truncated(30, 27));
+    expect(jsmql.expr("$.s.truncate({ length: 10 })")).toEqual(truncated(10, 7));
     expect(() => jsmql.expr('$.s.truncate({ separator: " " })')).toThrow(/word-boundary/);
   });
   // camelCase/kebabCase/snakeCase/startCase/escape emit large deterministic trees;
@@ -4061,7 +4090,7 @@ describe("string padding methods", () => {
   it("padStart with explicit char", () => {
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual({
       $let: {
-        vars: { s: "$code" },
+        vars: { s: { $ifNull: ["$code", ""] } },
         in: {
           $cond: {
             if: { $gte: [{ $strLenCP: "$$s" }, 5] },
@@ -4280,7 +4309,9 @@ describe("error cases", () => {
 
 describe("1-arg substr", () => {
   it("substr(start) slices to end of string", () => {
-    expect(jsmql.expr("$.email.substr(1)")).toEqual({ $substrCP: ["$email", 1, { $strLenCP: "$email" }] });
+    expect(jsmql.expr("$.email.substr(1)")).toEqual({
+      $substrCP: ["$email", 1, { $strLenCP: { $ifNull: ["$email", ""] } }],
+    });
   });
   it("substr(start, count) keeps 2-arg form", () => {
     expect(jsmql.expr("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
@@ -4288,23 +4319,25 @@ describe("1-arg substr", () => {
   it("substr with expression start normalises sign at runtime", () => {
     // A runtime start could be negative, which JS reads as "from the end" and
     // $substrCP rejects outright — so the sign is resolved at query time.
+    const len = { $strLenCP: { $ifNull: ["$email", ""] } };
     expect(jsmql.expr("$.email.substr($.headerLength + 1)")).toEqual({
       $substrCP: [
         "$email",
         {
           $cond: {
             if: { $lt: [{ $add: ["$headerLength", 1] }, 0] },
-            then: { $max: [0, { $add: [{ $add: ["$headerLength", 1] }, { $strLenCP: "$email" }] }] },
+            then: { $max: [0, { $add: [{ $add: ["$headerLength", 1] }, len] }] },
             else: { $add: ["$headerLength", 1] },
           },
         },
-        { $strLenCP: "$email" },
+        len,
       ],
     });
   });
   it("substr(-n) counts from the end, like JS", () => {
+    const len = { $strLenCP: { $ifNull: ["$email", ""] } };
     expect(jsmql.expr("$.email.substr(-3)")).toEqual({
-      $substrCP: ["$email", { $max: [0, { $subtract: [{ $strLenCP: "$email" }, 3] }] }, { $strLenCP: "$email" }],
+      $substrCP: ["$email", { $max: [0, { $subtract: [len, 3] }] }, len],
     });
   });
   it("substr with a negative count yields an empty string, like JS", () => {
@@ -4313,6 +4346,10 @@ describe("1-arg substr", () => {
 });
 
 describe(".slice on strings", () => {
+  // The runtime length of `String($.s)`, coerced so a missing field is 0 rather
+  // than an executor error.
+  const strLen = { $strLenCP: { $ifNull: [{ $toString: "$s" }, ""] } };
+
   it("string literal receiver → $substrCP", () => {
     expect(jsmql.expr('"hello".slice(1, 3)')).toEqual({ $substrCP: ["hello", 1, 2] });
   });
@@ -4320,40 +4357,33 @@ describe(".slice on strings", () => {
     expect(jsmql.expr("$.name.toLowerCase().slice(0, 3)")).toEqual({ $substrCP: [{ $toLower: "$name" }, 0, 3] });
   });
   it("1-arg form on string → from start to end", () => {
-    // The derived length is floored: `strLen - start` goes negative when start
-    // runs past the end ("".slice(1)), which $substrCP rejects outright.
-    expect(jsmql.expr('"hello".slice(2)')).toEqual({
-      $substrCP: ["hello", 2, { $max: [0, { $subtract: [{ $strLenCP: "hello" }, 2] }] }],
+    // A literal receiver's length is known, so the whole derived length folds.
+    expect(jsmql.expr('"hello".slice(2)')).toEqual({ $substrCP: ["hello", 2, 3] });
+    // On a runtime receiver the length is derived, and floored: `strLen - start`
+    // goes negative when start runs past the end ("".slice(1)), which $substrCP
+    // rejects outright.
+    expect(jsmql.expr("String($.s).slice(2)")).toEqual({
+      $substrCP: [{ $toString: "$s" }, 2, { $max: [0, { $subtract: [strLen, 2] }] }],
     });
   });
   it("negative-literal start on string → folded to strLen - n, floored", () => {
-    expect(jsmql.expr('"hello".slice(-3)')).toEqual({
-      $substrCP: ["hello", { $max: [0, { $subtract: [{ $strLenCP: "hello" }, 3] }] }, 3],
+    expect(jsmql.expr('"hello".slice(-3)')).toEqual({ $substrCP: ["hello", 2, 3] });
+    expect(jsmql.expr("String($.s).slice(-3)")).toEqual({
+      $substrCP: [{ $toString: "$s" }, { $max: [0, { $subtract: [strLen, 3] }] }, 3],
     });
   });
   it("negative end on string → strLen - n", () => {
-    expect(jsmql.expr('"hello".slice(1, -1)')).toEqual({
-      $substrCP: [
-        "hello",
-        1,
-        { $max: [0, { $subtract: [{ $max: [0, { $subtract: [{ $strLenCP: "hello" }, 1] }] }, 1] }] },
-      ],
+    expect(jsmql.expr('"hello".slice(1, -1)')).toEqual({ $substrCP: ["hello", 1, 3] });
+    expect(jsmql.expr("String($.s).slice(1, -1)")).toEqual({
+      $substrCP: [{ $toString: "$s" }, 1, { $max: [0, { $subtract: [{ $max: [0, { $subtract: [strLen, 1] }] }, 1] }] }],
     });
   });
   it("non-literal index on string → runtime $cond normalises sign", () => {
     const normalisedIndex = {
-      $cond: {
-        if: { $lt: ["$i", 0] },
-        then: { $max: [0, { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }] },
-        else: "$i",
-      },
+      $cond: { if: { $lt: ["$i", 0] }, then: { $max: [0, { $add: ["$i", strLen] }] }, else: "$i" },
     };
     expect(jsmql.expr("String($.s).slice($.i)")).toEqual({
-      $substrCP: [
-        { $toString: "$s" },
-        normalisedIndex,
-        { $max: [0, { $subtract: [{ $strLenCP: { $toString: "$s" } }, normalisedIndex] }] },
-      ],
+      $substrCP: [{ $toString: "$s" }, normalisedIndex, { $max: [0, { $subtract: [strLen, normalisedIndex] }] }],
     });
   });
   it("slice() with no args is identity on string", () => {
@@ -4367,7 +4397,7 @@ describe(".substring", () => {
   });
   it("substring(start) slices to end of string", () => {
     expect(jsmql.expr("$.email.substring(1)")).toEqual({
-      $substrCP: ["$email", 1, { $max: [0, { $subtract: [{ $strLenCP: "$email" }, 1] }] }],
+      $substrCP: ["$email", 1, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$email", ""] } }, 1] }] }],
     });
   });
   it("substring() with no args is identity", () => {
@@ -4766,22 +4796,52 @@ describe(".startsWith / .endsWith", () => {
     expect(jsmql.expr('$.email.startsWith("admin")')).toEqual({ $eq: [{ $indexOfCP: ["$email", "admin"] }, 0] });
   });
   it("endsWith maps to substring equality at the tail", () => {
-    // The receiver is bound once, and the start floored — a receiver shorter
-    // than the needle makes `strLen - needleLen` negative, and $substrCP aborts
-    // the query on a negative start rather than returning false.
+    // The receiver is bound once (and coerced), and the start floored — a
+    // receiver shorter than the needle makes `strLen - needleLen` negative, and
+    // $substrCP aborts the query on a negative start rather than returning
+    // false. A literal needle's length folds, so it isn't spliced in 3 times.
     expect(jsmql.expr('$.file.endsWith(".pdf")')).toEqual({
       $let: {
-        vars: { jsmqlStr: "$file" },
+        vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
+        in: {
+          $eq: [
+            { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 4] }] }, 4] },
+            ".pdf",
+          ],
+        },
+      },
+    });
+  });
+  it("endsWith folds the needle length by code points, not UTF-16 units", () => {
+    // "a👍b" is 3 code points but 4 UTF-16 units — $strLenCP counts the former.
+    expect(jsmql.expr('$.file.endsWith("a👍b")')).toEqual({
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
+        in: {
+          $eq: [
+            { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 3] }] }, 3] },
+            "a👍b",
+          ],
+        },
+      },
+    });
+  });
+  it("endsWith with a $-prefixed needle keeps it a field ref, never folds its length", () => {
+    // HR1: a source "$ext" IS the field reference $ext, so its length is a
+    // runtime `$strLenCP`, not the 4 that folding the literal would give.
+    expect(jsmql.expr('$.file.endsWith("$ext")')).toEqual({
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
         in: {
           $eq: [
             {
               $substrCP: [
                 "$$jsmqlStr",
-                { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: ".pdf" }] }] },
-                { $strLenCP: ".pdf" },
+                { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$ext", ""] } }] }] },
+                { $strLenCP: { $ifNull: ["$ext", ""] } },
               ],
             },
-            ".pdf",
+            "$ext",
           ],
         },
       },

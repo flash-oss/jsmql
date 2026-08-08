@@ -480,8 +480,14 @@ describe("$match translation — .length vs natural number → string-or-array $
   // number is the *length* of a string-or-array. It residualises into `$expr`
   // so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch — which,
   // unlike the old array-only `$size` peephole, also matches strings.
+  // The string branch coerces: `$strLenCP` aborts the query on a missing field,
+  // where `$size` on the array side is already shielded by the `$isArray` test.
   const lenCond = (path: string) => ({
-    $cond: { if: { $isArray: `$${path}` }, then: { $size: `$${path}` }, else: { $strLenCP: `$${path}` } },
+    $cond: {
+      if: { $isArray: `$${path}` },
+      then: { $size: `$${path}` },
+      else: { $strLenCP: { $ifNull: [`$${path}`, ""] } },
+    },
   });
 
   it("translates `$.arr.length === N` to the string-or-array $cond", () => {

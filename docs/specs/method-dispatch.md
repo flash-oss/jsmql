@@ -95,6 +95,26 @@ means these genuinely differ, so do not unify them:
   flooring to 0 would wrongly return the first character. A literal negative folds to `""`; a runtime
   index is guarded by a `$cond`.
 
+#### Missing-field coercion (`strLenOf`)
+
+`$strLenCP` is the one string primitive that **aborts the query** on a missing or null input
+(`Location34471`); `$indexOfCP` returns null and `$substrCP` returns `""`. That asymmetry meant a
+predicate spelled `.endsWith()` took the query down on a document lacking the field while the same
+predicate spelled `.startsWith()` simply returned `false`.
+
+So every length jsmql derives goes through `strLenOf` (`codegen.ts`), which coerces the receiver with
+`$ifNull: [_, ""]` — skipping the wrap when the value is already `$ifNull`-wrapped by an optional
+chain. Where a lowering `$let`-binds its receiver (`.endsWith`, `.padStart`/`.padEnd`, `.truncate`),
+the **binding** is coerced rather than each `$strLenCP` argument: coercing only the length would leave
+the trailing `$concat` returning `null` instead of the padded string. The net effect is that a string
+method on an absent field behaves as it would on `""` — `0`, `""`, or `false` — never an executor
+error. A *type* mismatch (an array or number where a string is expected) still errors, exactly as the
+already-safe methods do.
+
+`strLenOf` also folds a literal receiver to its **code point** count, since `$strLenCP` counts code
+points where JS `.length` counts UTF-16 units (`"a👍b"` is 3, not 4). A source string starting with
+`$` is an MQL field reference (HR1) and is never folded.
+
 ### Array methods (no lambda)
 
 | Method | MQL output |

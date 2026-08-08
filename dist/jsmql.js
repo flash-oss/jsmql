@@ -5924,6 +5924,13 @@ function clampNonNegative(value) {
   if (typeof value === "number") return Math.max(0, value);
   return { $max: [0, value] };
 }
+function isIfNullWrapped(value) {
+  return typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
+}
+function strLenOf(value) {
+  if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
+  return { $strLenCP: isIfNullWrapped(value) ? value : wrapIfNull(value, "") };
+}
 function foldedSubtract(a, b) {
   if (typeof a === "number" && typeof b === "number") return a - b;
   return { $subtract: [a, b] };
@@ -5934,13 +5941,13 @@ function cond(ifExpr, thenExpr, elseExpr) {
 function normaliseSliceIndex(node, ctx, genObj) {
   if (node.type === "NumberLiteral") {
     if (node.value >= 0) return node.value;
-    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, -node.value));
+    return clampNonNegative(foldedSubtract(strLenOf(genObj), -node.value));
   }
   if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
-    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, node.operand.value));
+    return clampNonNegative(foldedSubtract(strLenOf(genObj), node.operand.value));
   }
   const gen = _generate(node, ctx);
-  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, { $strLenCP: genObj }] }), gen);
+  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, strLenOf(genObj)] }), gen);
 }
 function literalIndexValue(node) {
   if (node.type === "NumberLiteral" && Number.isInteger(node.value)) return node.value;
@@ -6013,7 +6020,7 @@ function sliceString(genObj, exprArgs, ctx) {
   if (exprArgs.length === 1) {
     const negativeLiteral = negativeLiteralValue(exprArgs[0]);
     if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
-    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
+    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
   }
   const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
   return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
@@ -6275,10 +6282,10 @@ function generateLengthAccess(object, optional, ctx) {
     return { $size: optional ? wrapIfNull(v, []) : v };
   }
   const rawObj = _generate(object, ctx);
-  if (isStringProducing(object)) return { $strLenCP: optional ? wrapIfNull(rawObj, "") : rawObj };
+  if (isStringProducing(object)) return strLenOf(rawObj);
   if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
   const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
-  return cond({ $isArray: obj2 }, { $size: obj2 }, { $strLenCP: obj2 });
+  return cond({ $isArray: obj2 }, { $size: obj2 }, strLenOf(obj2));
 }
 function generateStreamLength(ctx, pos) {
   if (!ctx.pipelineContext) {
@@ -6807,7 +6814,7 @@ function generateTemplateLiteral(quasis, expressions, ctx) {
   return { $concat: parts };
 }
 function strTail(s, from) {
-  return { $substrCP: [s, from, { $strLenCP: s }] };
+  return { $substrCP: [s, from, strLenOf(s)] };
 }
 function capitalizeExpr(s) {
   return { $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }] };
@@ -7021,7 +7028,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
       const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
       if (exprArgs.length === 1) {
-        return { $substrCP: [genObj, start, { $strLenCP: genObj }] };
+        return { $substrCP: [genObj, start, strLenOf(genObj)] };
       }
       return { $substrCP: [genObj, start, clampNonNegativeIndex(exprArgs[1], ctx)] };
     }
@@ -7031,7 +7038,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       if (exprArgs.length === 0) return genObj;
       const start = clampNonNegativeIndex(exprArgs[0], ctx);
       if (exprArgs.length === 1) {
-        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
+        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
       }
       const end = clampNonNegativeIndex(exprArgs[1], ctx);
       return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
@@ -7058,10 +7065,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "endsWith");
       checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
-      const needleLen = { $strLenCP: needle };
+      const needleLen = strLenOf(needle);
       return {
         $let: {
-          vars: { jsmqlStr: genObj },
+          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
           in: {
             $eq: [
               {
@@ -7197,7 +7204,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
       return {
         $let: {
-          vars: { s: genObj },
+          vars: { s: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
           in: cond({ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder })
         }
       };
@@ -8223,11 +8230,16 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       }
       const keep = Math.max(0, length - omission.length);
       return {
-        $cond: [
-          { $gt: [{ $strLenCP: genObj }, length] },
-          { $concat: [{ $substrCP: [genObj, 0, keep] }, omission] },
-          genObj
-        ]
+        $let: {
+          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
+          in: {
+            $cond: [
+              { $gt: [{ $strLenCP: "$$jsmqlStr" }, length] },
+              { $concat: [{ $substrCP: ["$$jsmqlStr", 0, keep] }, omission] },
+              "$$jsmqlStr"
+            ]
+          }
+        }
       };
     }
     // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────

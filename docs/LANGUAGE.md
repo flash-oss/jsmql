@@ -1293,12 +1293,12 @@ $.name.trimStart()                 // { $ltrim: { input: "$name" } }
 $.name.trimEnd()                   // { $rtrim: { input: "$name" } }
 $.name.toLowerCase()               // { $toLower: "$name" }
 $.name.toUpperCase()               // { $toUpper: "$name" }
-$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
+$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: { $ifNull: ["$name", ""] } }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
-$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: "$name" }, 1] }] }] }
+$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$name", ""] } }, 1] }] }] }
 "hello".slice(1, 3)                // { $substrCP: ["hello", 1, 2] }   — `.slice` on a string-typed receiver
-"hello".slice(-3)                  // { $substrCP: ["hello", { $max: [0, { $subtract: [{ $strLenCP: "hello" }, 3] }] }, 3] }  — negative counts from end
+"hello".slice(-3)                  // { $substrCP: ["hello", 2, 3] }   — negative counts from end (folded: "hello" is 5 long)
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
@@ -1329,11 +1329,10 @@ index it derives, and `.endsWith()` binds its receiver once:
 
 ```js
 $.file.endsWith(".pdf")
-// { $let: { vars: { jsmqlStr: "$file" },
+// { $let: { vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
 //           in: { $eq: [{ $substrCP: ["$$jsmqlStr",
-//                                     { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" },
-//                                                               { $strLenCP: ".pdf" }] }] },
-//                                     { $strLenCP: ".pdf" }] },
+//                                     { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 4] }] },
+//                                     4] },
 //                       ".pdf"] } } }
 ```
 
@@ -1341,6 +1340,20 @@ Each method keeps its own JavaScript meaning for a negative index — `.slice()`
 from the end, `.substring()` clamps to 0, and `.charAt()` returns `""` (it is never floored, since
 that would return the *first* character). A start or length past the end of the string is safe and
 yields `""`, as in JS.
+
+**A missing field behaves like `""`, never an error.** MongoDB's `$strLenCP` — which every derived
+length needs — aborts the query when its input is missing or null, where `$indexOfCP` and `$substrCP`
+return `null` / `""`. Left alone, that would make `.endsWith()` take a query down on a document with
+no such field while `.startsWith()` on the same field simply returned `false`. So jsmql coerces the
+receiver of every length it derives, and the whole string surface agrees: on an absent field
+`.length` is `0`, `.padStart(5, "0")` is `"00000"`, `.capitalize()` is `""`, and `.endsWith(…)` is
+`false`. (Plain JS would throw a `TypeError` on `undefined` — matching MQL's null-tolerance is the
+more useful behaviour over a heterogeneous collection, and matches what the already-safe methods
+did.) A *type* mismatch is still an error: an array or number where a string is expected fails the
+same way it always has.
+
+Note this makes the emitted length of a **literal** fold at compile time, counting **code points**
+the way `$strLenCP` does rather than JS's UTF-16 units — `"a👍b"` is 3, not 4.
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent, so jsmql drops them from the emitted `options` (keeping `i`/`m`/`s`). Dropping `g` is harmless: `$regexFindAll` is inherently global, and `g` is irrelevant to `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex (matching JS, which throws without it), but the `g` doesn't appear in the output.
 
@@ -3139,7 +3152,7 @@ jsmql(`[{ $match: $.deletedAt === undefined }]`);
 jsmql(`[{ $match: typeof $.x === "boolean" }]`);
 // → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
 jsmql(`[{ $match: $.items.length === 3 }]`);
-// → [{ $match: { $expr: { $eq: [{ $cond: { if: { $isArray: "$items" }, then: { $size: "$items" }, else: { $strLenCP: "$items" } } }, 3] } } }]
+// → [{ $match: { $expr: { $eq: [{ $cond: { if: { $isArray: "$items" }, then: { $size: "$items" }, else: { $strLenCP: { $ifNull: ["$items", ""] } } } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).
 //   Compared against a non-natural value (=== 3.5, === "x"), `.length` reads as a literal field
 //   path instead → { "items.length": 3.5 }. To read a field literally named `length` against a
