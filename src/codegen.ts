@@ -1105,6 +1105,31 @@ function gensymInScope(ctx: GenerateCtx, base: string): string {
 }
 
 /**
+ * Bind `value` to an internal `$let` variable and build the body around a
+ * reference to it, using a name that cannot capture a user lambda param.
+ *
+ * Necessary whenever the body splices in a **user-supplied** expression — a
+ * method argument, a callback result — because that expression was generated in
+ * the OUTER scope and reads its lambda params as `$$name`. If the binding reuses
+ * that name, the spliced reference silently re-points at this receiver:
+ * `.map(s => s.code.padStart(3, s.pad))` read `.pad` off the code string and
+ * returned null instead of the padded value.
+ *
+ * A `vars` VALUE never needs this — MongoDB evaluates it in the enclosing scope,
+ * before the binding takes effect, which is why `Object.groupBy`'s `key` binding
+ * is safe despite the common name.
+ */
+function letBind(ctx: GenerateCtx, base: string, value: unknown, body: (ref: string) => unknown): unknown {
+  const name = gensymInScope(ctx, base);
+  return { $let: { vars: { [name]: value }, in: body(`$$${name}`) } };
+}
+
+/** Coerce a receiver to a string for a `$let` binding, without double-wrapping. */
+function coerceStringBinding(genObj: unknown): unknown {
+  return isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "");
+}
+
+/**
  * Clamp a string-index AST node to non-negative, matching JS `.substring`
  * semantics where negative arguments are treated as 0. Folds at compile time
  * when the node is a literal number (or unary-minus of one); otherwise wraps
@@ -1258,12 +1283,9 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
     // negative start is resolved from the end by `$slice`'s position arg).
     // count = max(1, size) so an empty array is `$slice: [[], start, 1]` → []
     // rather than a rejected count of 0 (same guard as `.drop(n)`).
-    return {
-      $let: {
-        vars: { jsmqlArr: genObj },
-        in: { $slice: ["$$jsmqlArr", _generate(startNode, ctx), { $max: [1, { $size: "$$jsmqlArr" }] }] },
-      },
-    };
+    return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
+      $slice: [arr, _generate(startNode, ctx), { $max: [1, { $size: arr }] }],
+    }));
   }
 
   // --- slice(start, end): elements at indices [start, end) ---
@@ -1282,12 +1304,9 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
   // start 0 (literal), non-literal-or-negative end → "first `end`": resolve the
   // end index and lean on the 2-arg (count-tolerant) `$slice`.
   if (startLit === 0) {
-    return {
-      $let: {
-        vars: { jsmqlArr: genObj },
-        in: { $slice: ["$$jsmqlArr", resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" })] },
-      },
-    };
+    return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
+      $slice: [arr, resolveSliceIndex(endNode, ctx, { $size: arr })],
+    }));
   }
 
   // General case (negative start, or a runtime index): resolve both indices
@@ -1298,20 +1317,17 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
   // branch instead of rejecting a constant 0-count `$slice`; the outer `$cond`
   // still returns `[]` for the empty range.
   const count = { $subtract: ["$$jsmqlF", "$$jsmqlK"] };
-  return {
+  return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
     $let: {
-      vars: { jsmqlArr: genObj },
-      in: {
-        $let: {
-          vars: {
-            jsmqlK: resolveSliceIndex(startNode, ctx, { $size: "$$jsmqlArr" }),
-            jsmqlF: resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" }),
-          },
-          in: { $cond: [{ $gt: [count, 0] }, { $slice: ["$$jsmqlArr", "$$jsmqlK", { $max: [count, 1] }] }, []] },
-        },
+      // These VALUES hold the user's index expressions, so they must be resolved
+      // against `arr` — the outer binding, which letBind kept collision-free.
+      vars: {
+        jsmqlK: resolveSliceIndex(startNode, ctx, { $size: arr }),
+        jsmqlF: resolveSliceIndex(endNode, ctx, { $size: arr }),
       },
+      in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, "$$jsmqlK", { $max: [count, 1] }] }, []] },
     },
-  };
+  }));
 }
 
 /** Negate a count that's either a compile-time number or a runtime expression. */
@@ -3175,23 +3191,9 @@ function generateMethodCall(
       // a string even when the field is absent. A literal needle folds to its
       // code-point count, which also stops it being spliced in three times.
       const needleLen = strLenOf(needle);
-      return {
-        $let: {
-          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
-          in: {
-            $eq: [
-              {
-                $substrCP: [
-                  "$$jsmqlStr",
-                  clampNonNegative(foldedSubtract({ $strLenCP: "$$jsmqlStr" }, needleLen)),
-                  needleLen,
-                ],
-              },
-              needle,
-            ],
-          },
-        },
-      };
+      return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => ({
+        $eq: [{ $substrCP: [s, clampNonNegative(foldedSubtract({ $strLenCP: s }, needleLen)), needleLen] }, needle],
+      }));
     }
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
@@ -3218,21 +3220,17 @@ function generateMethodCall(
         );
       }
       const needle = _generate(exprArgs[0], ctx);
-      // Find the first match in the reversed array, then map back to the original index.
-      // Wrap with $let so genObj is evaluated once.
-      return {
+      // Find the first match in the reversed array, then map back to the original
+      // index. Bound with letBind so genObj is evaluated once AND the binding
+      // can't capture `needle`, which is a user expression from the outer scope.
+      return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
         $let: {
-          vars: { jsmqlArr: genObj },
-          in: {
-            $let: {
-              vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] } },
-              in: cond({ $eq: ["$$jsmqlRevIdx", -1] }, -1, {
-                $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"],
-              }),
-            },
-          },
+          vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: arr }, needle] } },
+          in: cond({ $eq: ["$$jsmqlRevIdx", -1] }, -1, {
+            $subtract: [{ $subtract: [{ $size: arr }, 1] }, "$$jsmqlRevIdx"],
+          }),
         },
-      };
+      }));
     }
     case "replace": {
       const exprArgs = exprArgsOnly(args, "replace");
@@ -3319,25 +3317,24 @@ function generateMethodCall(
       checkArity(method, { sig: "targetLength[, padString]", allowed: [1, 2] }, exprArgs.length, callPos);
       const target = _generate(exprArgs[0], ctx);
       const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
-      // If str length >= target, return str. Otherwise build pad-str of (target - len)
-      // chars by reducing $range, then concat str on the appropriate side.
-      const padReduce = {
-        $reduce: {
-          input: { $range: [0, { $subtract: [target, { $strLenCP: "$$s" }] }] },
-          initialValue: "",
-          in: { $concat: ["$$value", pad] },
-        },
-      };
-      const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
       // The binding itself is coerced, not just the `$strLenCP` argument: an
-      // uncoerced `$$s` would leave the trailing `$concat` returning null on a
-      // missing field rather than the fully-padded string JS gives for "".
-      return {
-        $let: {
-          vars: { s: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
-          in: cond({ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }),
-        },
-      };
+      // uncoerced receiver would leave the trailing `$concat` returning null on
+      // a missing field rather than the fully-padded string JS gives for "".
+      // `target` and `pad` are user expressions spliced into the body, so the
+      // binding must go through letBind or it would capture their lambda refs.
+      return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => {
+        // If str length >= target, return str. Otherwise build pad-str of
+        // (target - len) chars by reducing $range, then concat on the right side.
+        const padReduce = {
+          $reduce: {
+            input: { $range: [0, { $subtract: [target, { $strLenCP: s }] }] },
+            initialValue: "",
+            in: { $concat: ["$$value", pad] },
+          },
+        };
+        const concatOrder = method === "padStart" ? [padReduce, s] : [s, padReduce];
+        return cond({ $gte: [{ $strLenCP: s }, target] }, s, { $concat: concatOrder });
+      });
     }
     case "repeat": {
       const exprArgs = exprArgsOnly(args, "repeat");
@@ -4022,28 +4019,27 @@ function generateMethodCall(
       // dropRight keeps the first max(0, size-n) — a 2-arg `$slice` (first-count), so a
       // count of 0 (n ≥ size) is `$slice: [arr, 0]` → `[]`, NOT the 3-arg `$slice: [arr,
       // 0, 0]` mongod rejects ("Third argument to $slice must be positive").
+      // `n` is a user expression spliced into the body, so bind via letBind.
       if (method === "dropRight") {
-        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
-        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+        return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
+          $slice: [arr, { $max: [0, { $subtract: [{ $size: arr }, n] }] }],
+        }));
       }
       // drop: from position n. The count (3rd arg) is max(1, size) so an EMPTY array
       // is `$slice: [[], n, 1]` → `[]` rather than a rejected 3-arg count of 0.
-      return {
-        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", n, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
-      };
+      return letBind(ctx, "jsmqlArr", genObj, (arr) => ({ $slice: [arr, n, { $max: [1, { $size: arr }] }] }));
     }
     case "tail":
     case "initial": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
       // initial = dropRight(1): keep the first max(0, size-1) via 2-arg `$slice`.
       if (method === "initial") {
-        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
-        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+        return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
+          $slice: [arr, { $max: [0, { $subtract: [{ $size: arr }, 1] }] }],
+        }));
       }
       // tail = drop(1): count max(1, size) guards the empty-array → count-0 rejection.
-      return {
-        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
-      };
+      return letBind(ctx, "jsmqlArr", genObj, (arr) => ({ $slice: [arr, 1, { $max: [1, { $size: arr }] }] }));
     }
     case "head":
     case "first": {
@@ -4174,15 +4170,14 @@ function generateMethodCall(
       checkArity(method, { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], method, ctx);
       const otherKeys = iterateeKeys(_generate(exprArgs[0], ctx), it);
-      const inOther = { $in: [it.value, "$$jsmqlOtherKeys"] };
-      return {
-        $let: {
-          vars: { jsmqlOtherKeys: otherKeys },
-          in: {
-            $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } },
-          },
-        },
-      };
+      // `genObj` (the receiver) and the iteratee body are outer-scope expressions
+      // spliced into the body, so the binding goes through letBind.
+      return letBind(ctx, "jsmqlOtherKeys", otherKeys, (keys) => {
+        const inOther = { $in: [it.value, keys] };
+        return {
+          $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } },
+        };
+      });
     }
     case "unionBy": {
       // Concatenate then keep-first dedupe BY iteratee key.
@@ -4485,18 +4480,9 @@ function generateMethodCall(
       // Bound once (and coerced) so the receiver isn't evaluated three times and
       // an absent field truncates to "" like lodash, rather than passing null
       // through the else branch.
-      return {
-        $let: {
-          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
-          in: {
-            $cond: [
-              { $gt: [{ $strLenCP: "$$jsmqlStr" }, length] },
-              { $concat: [{ $substrCP: ["$$jsmqlStr", 0, keep] }, omission] },
-              "$$jsmqlStr",
-            ],
-          },
-        },
-      };
+      return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => ({
+        $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s],
+      }));
     }
 
     // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────

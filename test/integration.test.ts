@@ -105,6 +105,23 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 }); // email absent
   });
 
+  // Variable capture: a lowering that `$let`-binds its receiver and then splices
+  // a user argument into the body used to shadow that argument's lambda param —
+  // here `s.qty`, the padStart target, which resolved against the padded string
+  // instead of the element. It produced WRONG VALUES rather than errors, so a
+  // `toEqual` on emitted MQL is no protection; only running it is.
+  it("pipeline: an argument referencing the lambda param is not captured by the internal $let", async () => {
+    const rows = (await aggregate(
+      "orders",
+      `$match($.status === "shipped");
+$sort({ _id: 1 });
+$ = { codes: $.items.map(s => String(s.qty).padStart(s.qty, "0")) };`,
+    )) as { codes: string[] }[];
+    // Each line's qty is BOTH the padded value and the target width, so a capture
+    // shows up immediately. Expected values match real String.prototype.padStart.
+    expect(rows.slice(0, 4).map((r) => r.codes)).toEqual([["1", "02"], ["1"], ["0000000010"], ["02", "1"]]);
+  });
+
   // The `0x…` ObjectId literal, end-to-end: jsmql mints a live BSON ObjectId so
   // the query uses the _id index and returns the one document. (realistic.test.ts
   // "fetch a document by its ObjectId" only checks the *emitted* shape.)

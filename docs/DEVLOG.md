@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-08 — fix: internal `$let` bindings no longer capture a user's lambda param
+
+Found while fixing the `$substrCP`/`$strLenCP` aborts below, and worse than either of them: this one returned **wrong data silently**, with no server error at all.
+
+`.padStart`/`.padEnd` bound their receiver to a `$let` variable named literally `s`. Inside a lambda that also used `s`, the binding shadowed it — and because the pad character and target length are user expressions *generated in the outer scope* and then spliced into the `$let` **body**, both re-pointed at the receiver string. `$.items.map(s => s.code.padStart(3, s.pad))` returned `[null, null]` where JS gives `["-ab","**x"]`: `$$s.pad` read `.pad` off the padded string, got missing, and `$concat` propagated null. `.padStart(s.width, "0")` was the same defect on the target argument, returning the string unpadded.
+
+A sweep of every internal `$let` name — each used as a lambda param, with an argument referencing it — found four more lowerings with the same defect: array `.slice(start)` (server error, `Second argument to $slice must be a numeric value, but is of type: array`), `.lastIndexOf(needle)` (silently `-1`), `.dropRight(n)` (`can't $subtract array from int`), and `.intersectionBy`/`.differenceBy` (silently `[]`). `.endsWith()` and `.truncate()`, added earlier the same day, carried it too — reachable only via a param named `jsmqlStr`, but reachable.
+
+The discriminator turned out to be **which side of the `$let` the user's expression lands on**. A `vars` *value* is evaluated in the enclosing scope, before the binding takes effect, so it can never be captured — which is why `Object.groupBy`'s equally common `key` binding was fine all along, and why `.with(i, v)` / `.toSpliced(s, n)` (whose args are bound into `vars`) were fine too. Only expressions spliced into the `in:` *body* are at risk.
+
+The fix routes every such binding through a new `letBind(ctx, base, value, body)` built on the pre-existing `gensymInScope` — which was already in the file for exactly this purpose but used at a single site. It returns the base name untouched when nothing collides, so emitted output is unchanged for virtually every program; a collision yields `jsmqlArr2`, `jsmqlStr2`, and so on. The `jsmql` prefix was doing this job by convention, but convention is not enforcement: nothing stops a user naming a parameter `jsmqlArr`, and `s` was not even prefixed. Verified by running each shape against a live mongod and diffing against real `Array.prototype`/`String.prototype` results, plus an integration case where a line's `qty` is both the padded value and the pad width, so a capture shows up in the returned documents.
+
+Separately noted while measuring, **not** fixed here: `.padStart(9, "US")` repeats a multi-character pad `target - len` times instead of filling to `target` characters — `"gold".padStart(9, "US")` yields `"USUSUSUSUSgold"` where JS gives `"USUSUgold"`. A distinct SR2 divergence in the same lowering, tracked separately.
+
 ## 2026-08-08 — test: the reported `.endsWith()` abort, covered against a live mongod
 
 The two fixes below were both proven with `test/probe`, but neither had a standing regression test that runs on a **server** — and this whole bug class exists precisely because a green `toEqual` proves only what jsmql *emits*. So [test/integration.test.ts](test/integration.test.ts) now carries the reported query end-to-end.

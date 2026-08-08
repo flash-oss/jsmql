@@ -4090,21 +4090,21 @@ describe("string padding methods", () => {
   it("padStart with explicit char", () => {
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual({
       $let: {
-        vars: { s: { $ifNull: ["$code", ""] } },
+        vars: { jsmqlStr: { $ifNull: ["$code", ""] } },
         in: {
           $cond: {
-            if: { $gte: [{ $strLenCP: "$$s" }, 5] },
-            then: "$$s",
+            if: { $gte: [{ $strLenCP: "$$jsmqlStr" }, 5] },
+            then: "$$jsmqlStr",
             else: {
               $concat: [
                 {
                   $reduce: {
-                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$s" }] }] },
+                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlStr" }] }] },
                     initialValue: "",
                     in: { $concat: ["$$value", "0"] },
                   },
                 },
-                "$$s",
+                "$$jsmqlStr",
               ],
             },
           },
@@ -4119,12 +4119,67 @@ describe("string padding methods", () => {
   });
   it("padEnd order is str-then-pad", () => {
     const out = jsmql.expr('$.s.padEnd(10, "-")') as Record<string, unknown>;
-    expect(JSON.stringify(out)).toContain('["$$s",{"$reduce"');
+    expect(JSON.stringify(out)).toContain('["$$jsmqlStr",{"$reduce"');
   });
   it("repeat", () => {
     expect(jsmql.expr('"-".repeat(5)')).toEqual({
       $reduce: { input: { $range: [0, 5] }, initialValue: "", in: { $concat: ["$$value", "-"] } },
     });
+  });
+});
+
+// A lowering that binds its receiver in a `$let` and then splices a USER
+// expression into the body must not name that binding something the user might
+// have named a lambda param — the spliced `$$name` would silently re-point at
+// the receiver. This produced wrong VALUES, not errors: `.padStart(3, s.pad)`
+// read `.pad` off the code string and returned null.
+describe("internal $let bindings never capture a lambda param", () => {
+  it("padStart's pad argument still reads the lambda param, not the receiver", () => {
+    const out = jsmql.expr("$.items.map(s => s.code.padStart(3, s.pad))") as Record<string, unknown>;
+    const json = JSON.stringify(out);
+    expect(json).toContain('"$$s.pad"'); // the pad char resolves to the $map element
+    expect(json).not.toContain('"vars":{"s":'); // the binding no longer shadows it
+  });
+
+  it("a colliding lambda param makes the internal binding gensym", () => {
+    // `jsmqlArr` as a param name pushes the internal binding to `jsmqlArr2`,
+    // so the needle keeps reading the element.
+    expect(jsmql.expr("$.items.map(jsmqlArr => jsmqlArr.list.lastIndexOf(jsmqlArr.needle))")).toEqual({
+      $map: {
+        input: "$items",
+        as: "jsmqlArr",
+        in: {
+          $let: {
+            vars: { jsmqlArr2: "$$jsmqlArr.list" },
+            in: {
+              $let: {
+                vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.needle"] } },
+                in: {
+                  $cond: {
+                    if: { $eq: ["$$jsmqlRevIdx", -1] },
+                    then: -1,
+                    else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr2" }, 1] }, "$$jsmqlRevIdx"] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("endsWith's needle survives a lambda param named after the binding", () => {
+    const json = JSON.stringify(jsmql.expr("$.items.map(jsmqlStr => jsmqlStr.name.endsWith(jsmqlStr.ext))"));
+    expect(json).toContain('"jsmqlStr2"'); // binding renamed out of the way
+    expect(json).toContain('"$$jsmqlStr.ext"'); // needle still reads the element
+  });
+
+  it("no gratuitous renaming when nothing collides", () => {
+    // Output stability: the overwhelmingly common case keeps the base name.
+    const json = JSON.stringify(jsmql.expr("$.items.map(x => x.list.lastIndexOf(x.needle))"));
+    expect(json).toContain('"jsmqlArr"');
+    expect(json).not.toContain('"jsmqlArr2"');
   });
 });
 

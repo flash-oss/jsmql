@@ -115,6 +115,23 @@ already-safe methods do.
 points where JS `.length` counts UTF-16 units (`"a👍b"` is 3, not 4). A source string starting with
 `$` is an MQL field reference (HR1) and is never folded.
 
+#### Internal `$let` bindings must not capture (`letBind`)
+
+Several lowerings bind their receiver in a `$let` so it is evaluated once. When such a lowering also
+splices a **user-supplied** expression into the `in:` body — a method argument, an iteratee result —
+the binding name can capture it: that expression was generated in the *outer* scope and refers to its
+lambda params as `$$name`, so a binding of the same name silently re-points it at the receiver. This
+yields **wrong values, not errors**, which no `toEqual` on emitted MQL can catch.
+
+Every such binding therefore goes through `letBind(ctx, base, value, body)` (`codegen.ts`), which
+picks the name with `gensymInScope` — returning `base` unchanged when nothing collides (so ordinary
+output is unaffected) and `base2`, `base3`, … when a lambda param already holds it.
+
+A `vars` **value** never needs this: MongoDB evaluates it in the enclosing scope, before the binding
+takes effect. That is why `Object.groupBy`'s `key` binding is safe despite the common name, while
+`.padStart`'s was not. When adding a lowering that emits a `$let`, ask which side the user's
+expression lands on — body ⇒ `letBind`, value ⇒ either is fine.
+
 ### Array methods (no lambda)
 
 | Method | MQL output |
