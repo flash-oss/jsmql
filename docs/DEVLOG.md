@@ -10,6 +10,52 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-08 — fix: compiler-internal bindings no longer capture user lambda params
+
+`.padStart()`/`.padEnd()` lowered to a `$let` whose variable was literally named
+`s`. The `targetLength`/`padString` arguments are generated in the **outer** scope
+but spliced **inside** that `$let`, so a lambda param of the same name was
+captured and the arguments silently re-resolved against the receiver string:
+
+```js
+$.items.map(s => s.code.padStart(s.width, s.pad))
+// docs [{code:"7",width:3,pad:"0"},{code:"42",width:5,pad:"*"}]
+// was → ["7", "42"]        ← padding silently vanished, no error
+// now → ["007", "***42"]   ← matches String.prototype.padStart
+```
+
+Wrong data with no error is the worst thing we can emit, so the audit that came
+with it covered every `$let`-emitting lowering in [src/codegen.ts](src/codegen.ts).
+Three more sites had the same defect, two of them producing MQL the server
+**rejects outright** — `.findIndex()`/`.findLastIndex()` and the reusable-function
+call site built their `vars` keys from raw param names, skipping `safeVarName`:
+
+```js
+$.a.findIndex((_, i) => i > 2)
+// was → mongod: "'_' starts with an invalid character for a user variable name"
+```
+
+That is an HR3 violation on the *idiomatic* JS throwaway param, and
+`safeVarName`'s own doc comment names that exact case as its reason to exist —
+the two sites simply forgot to call it. The fourth: a paramless callback's `as`
+fell back to a bare `"v"`, so `$.a.map(v => $.b.map(() => v))` had the inner
+binding shadow the outer element.
+
+The padding binding is now `gensymInScope(ctx, "jsmqlPad")` rather than a plain
+rename. A `jsmql` prefix alone is a convention nothing enforces — a user param
+named `jsmqlArr` breaks `.slice()` exactly the same way — whereas the gensym
+already shipped for `&&`/`||` short-circuit binding and consults the in-scope
+params. It returns the base name untouched when nothing collides, so output is
+unchanged for every program that doesn't actually use the name; only the
+colliding case moves *our* binding aside (`jsmqlPad2`) and leaves the user's name
+alone. Rejecting `jsmql*` user identifiers, or escaping them in `safeVarName`,
+would instead have renamed the developer's own param in the output.
+
+All four shapes were run against a live `mongod` and match plain Node's semantics
+for the same input.
+
+---
+
 ## 2026-08-02 — feat: chained stage calls on a `$out` write chain
 
 The fifth and last container. `$$$.archive = $$.$sort({ a: 1 })` was rejected

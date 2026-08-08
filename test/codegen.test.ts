@@ -3021,6 +3021,14 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
+  // A paramless callback still occupies an `as` name in the emitted MQL. Before it
+  // was gensym'd, the inner one shadowed the outer element and `$$v` resolved to
+  // the inner array's element (mongod returned [[0,0,0],[0,0,0]], not [[1,1,1],[2,2,2]]).
+  it("a paramless callback's synthetic `as` doesn't shadow an enclosing one", () => {
+    expect(jsmql.expr("$.a.map(v => $.b.map(() => v))")).toEqual({
+      $map: { input: "$a", as: "v", in: { $map: { input: "$b", as: "v2", in: "$$v" } } },
+    });
+  });
   it(".find((x, i) => cond) wraps with double $arrayElemAt", () => {
     expect(jsmql.expr("$.xs.find((x, i) => i === 2)")).toEqual({
       $arrayElemAt: [
@@ -3080,6 +3088,32 @@ describe("array callbacks support (element, index)", () => {
         },
       },
     });
+  });
+  // MongoDB rejects a user-variable name starting with `_`, so the idiomatic JS
+  // throwaway param has to go through safeVarName like every other binding site
+  // ("'_' starts with an invalid character for a user variable name").
+  it(".findIndex((_, i) => …) escapes the throwaway param to a server-valid name", () => {
+    expect(jsmql.expr("$.xs.findIndex((_, i) => i > 2)")).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        initialValue: -1,
+        in: {
+          $let: {
+            vars: { v_: { $arrayElemAt: ["$$this", 1] }, i: { $arrayElemAt: ["$$this", 0] } },
+            in: {
+              $cond: {
+                if: { $and: [{ $eq: ["$$value", -1] }, { $gt: ["$$i", 2] }] },
+                then: { $arrayElemAt: ["$$this", 0] },
+                else: "$$value",
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".findLastIndex((_, i) => …) escapes it too", () => {
+    expect(JSON.stringify(jsmql.expr("$.xs.findLastIndex((_, i) => i > 2)"))).toContain('"vars":{"v_":');
   });
   it(".reduce((acc, x, i) => …, init) zips input and rebinds in $let", () => {
     expect(jsmql.expr("$.xs.reduce((acc, x, i) => acc + x * i, 0)")).toEqual({
@@ -4061,21 +4095,21 @@ describe("string padding methods", () => {
   it("padStart with explicit char", () => {
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual({
       $let: {
-        vars: { s: "$code" },
+        vars: { jsmqlPad: "$code" },
         in: {
           $cond: {
-            if: { $gte: [{ $strLenCP: "$$s" }, 5] },
-            then: "$$s",
+            if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, 5] },
+            then: "$$jsmqlPad",
             else: {
               $concat: [
                 {
                   $reduce: {
-                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$s" }] }] },
+                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
                     initialValue: "",
                     in: { $concat: ["$$value", "0"] },
                   },
                 },
-                "$$s",
+                "$$jsmqlPad",
               ],
             },
           },
@@ -4090,7 +4124,48 @@ describe("string padding methods", () => {
   });
   it("padEnd order is str-then-pad", () => {
     const out = jsmql.expr('$.s.padEnd(10, "-")') as Record<string, unknown>;
-    expect(JSON.stringify(out)).toContain('["$$s",{"$reduce"');
+    expect(JSON.stringify(out)).toContain('["$$jsmqlPad",{"$reduce"');
+  });
+  // The targetLength/padString args are generated in the OUTER scope but land inside
+  // the $let, so a lambda param sharing the binding's name used to be captured: the
+  // args re-resolved against the receiver string and the padding silently vanished
+  // (verified on mongod: ["7","42"] instead of ["007","***42"]).
+  it("a lambda param named 's' is not captured by the internal binding", () => {
+    expect(jsmql.expr("$.items.map(s => s.code.padStart(s.width, s.pad))")).toEqual({
+      $map: {
+        input: "$items",
+        as: "s",
+        in: {
+          $let: {
+            vars: { jsmqlPad: "$$s.code" },
+            in: {
+              $cond: {
+                if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, "$$s.width"] },
+                then: "$$jsmqlPad",
+                else: {
+                  $concat: [
+                    {
+                      $reduce: {
+                        input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                        initialValue: "",
+                        in: { $concat: ["$$value", "$$s.pad"] },
+                      },
+                    },
+                    "$$jsmqlPad",
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it("a lambda param named after the binding itself gensyms the binding, not the param", () => {
+    const out = JSON.stringify(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))"));
+    expect(out).toContain('"as":"jsmqlPad"'); // the user's name is left alone
+    expect(out).toContain('"vars":{"jsmqlPad2":"$$jsmqlPad.code"}'); // ours moves aside
+    expect(out).toContain('{"$strLenCP":"$$jsmqlPad2"},"$$jsmqlPad.width"');
   });
   it("repeat", () => {
     expect(jsmql.expr('"-".repeat(5)')).toEqual({

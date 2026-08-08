@@ -3250,18 +3250,23 @@ function generateMethodCall(
       const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
       // If str length >= target, return str. Otherwise build pad-str of (target - len)
       // chars by reducing $range, then concat str on the appropriate side.
+      // `target`/`pad` are generated in the OUTER scope but land inside the $let, so
+      // the binding must not capture a name they can reference (`.padStart(s.n)`
+      // inside `.map(s => …)` used to re-resolve `s` against the receiver string).
+      const v = gensymInScope(ctx, "jsmqlPad");
+      const ref = `$$${v}`;
       const padReduce = {
         $reduce: {
-          input: { $range: [0, { $subtract: [target, { $strLenCP: "$$s" }] }] },
+          input: { $range: [0, { $subtract: [target, { $strLenCP: ref }] }] },
           initialValue: "",
           in: { $concat: ["$$value", pad] },
         },
       };
-      const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
+      const concatOrder = method === "padStart" ? [padReduce, ref] : [ref, padReduce];
       return {
         $let: {
-          vars: { s: genObj },
-          in: cond({ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder }),
+          vars: { [v]: genObj },
+          in: cond({ $gte: [{ $strLenCP: ref }, target] }, ref, { $concat: concatOrder }),
         },
       };
     }
@@ -3449,9 +3454,9 @@ function generateMethodCall(
       // references resolve correctly. For findIndex we want the *first* match —
       // guard the update with `$$value == -1` so later matches don't overwrite.
       // For findLastIndex any match overwrites, so the final value is the last.
-      const vars: Record<string, unknown> = { [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] } };
+      const vars: Record<string, unknown> = { [safeVarName(lambda.params[0])]: { $arrayElemAt: ["$$this", 1] } };
       if (lambda.params[1]) {
-        vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
+        vars[safeVarName(lambda.params[1])] = { $arrayElemAt: ["$$this", 0] };
       }
       const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
@@ -4508,7 +4513,9 @@ function arrayIterInput(
   const bodyCtx = arrayParam
     ? { ...elementCtx, bindingTypes: new Map([...(elementCtx.bindingTypes ?? []), [arrayParam, "array" as const]]) }
     : elementCtx;
-  const asName = params[0] ? safeVarName(params[0]) : "v";
+  // With no element param the binding is unreferenced, but it still occupies a name
+  // in the emitted MQL — gensym so a nested `.map(() => …)` can't shadow an outer one.
+  const asName = params[0] ? safeVarName(params[0]) : gensymInScope(ctx, "v");
 
   // The `$zip`/`$range` index machinery is only worth emitting when the index
   // param is *actually referenced* (at any depth). When it isn't — including the
@@ -5246,7 +5253,7 @@ function applyLambda(
         a.pos,
       );
     }
-    vars[lambda.params[i]] = _generate(a, argCtx);
+    vars[safeVarName(lambda.params[i])] = _generate(a, argCtx);
   }
   return { $let: { vars, in: genLambdaBody(lambda, bodyCtx) } };
 }

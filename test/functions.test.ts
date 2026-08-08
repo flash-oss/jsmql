@@ -137,6 +137,16 @@ describe("reusable functions — output stability", () => {
       { $set: { y: { $let: { vars: { x: "$x" }, in: { $multiply: ["$$x", 2] } } } } },
     ]);
   });
+
+  // A param the server can't spell as a `$$` variable has to be escaped at the call
+  // site's $let too, not just in the array-method binding sites — MongoDB rejects
+  // "'_' starts with an invalid character for a user variable name".
+  it("a param name the server rejects is escaped at the call site", () => {
+    expect(jsmql.expr("((_) => 1)(2)")).toEqual({ $let: { vars: { v_: 2 }, in: 1 } });
+    expect(jsmql("const f = (_, n) => n + 1; $.y = f($.a, $.b);")).toEqual([
+      { $set: { y: { $let: { vars: { v_: "$a", n: "$b" }, in: { $add: ["$$n", 1] } } } } },
+    ]);
+  });
 });
 
 describe("reusable functions — rejections (actionable errors)", () => {
