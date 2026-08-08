@@ -6479,7 +6479,8 @@ function keyArrayForObjectLiteral(entries, ctx) {
   for (const entry of entries) {
     if (entry.type === "SpreadElement") {
       flush();
-      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: "kv", in: "$$kv.k" } });
+      const [vKv, kv] = internalVar(ctx, "kv");
+      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: vKv, in: `${kv}.k` } });
       continue;
     }
     if (currentChunk === null) currentChunk = [];
@@ -8903,12 +8904,14 @@ function generateObjectCall(method, args, ctx, pos) {
     case "keys": {
       const exprArgs = exprArgsOnly(args, "Object.keys");
       checkArity("keys", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
-      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.k" } };
+      const [vKv, kv] = internalVar(ctx, "kv");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: vKv, in: `${kv}.k` } };
     }
     case "values": {
       const exprArgs = exprArgsOnly(args, "Object.values");
       checkArity("values", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
-      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.v" } };
+      const [vKv, kv] = internalVar(ctx, "kv");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: vKv, in: `${kv}.v` } };
     }
     case "entries": {
       const exprArgs = exprArgsOnly(args, "Object.entries");
@@ -8952,13 +8955,14 @@ function generateObjectCall(method, args, ctx, pos) {
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
       const keyExpr2 = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
+      const [vKey, key] = internalVar(ctx, "key");
       return {
         $reduce: {
           input: _generate(input, ctx),
           initialValue: {},
           in: {
             $let: {
-              vars: { key: keyExpr2 },
+              vars: { [vKey]: keyExpr2 },
               in: {
                 $mergeObjects: [
                   "$$value",
@@ -8966,10 +8970,10 @@ function generateObjectCall(method, args, ctx, pos) {
                     $arrayToObject: [
                       [
                         [
-                          "$$key",
+                          key,
                           {
                             $concatArrays: [
-                              { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
+                              { $ifNull: [{ $getField: { field: key, input: "$$value" } }, []] },
                               ["$$this"]
                             ]
                           }

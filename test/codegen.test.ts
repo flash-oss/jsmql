@@ -2650,12 +2650,12 @@ describe("bitwise infix operators", () => {
 describe("Object.*", () => {
   it("Object.keys", () => {
     expect(jsmql.expr("Object.keys($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.k" },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
   });
   it("Object.values", () => {
     expect(jsmql.expr("Object.values($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.v" },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.v" },
     });
   });
   it("Object.entries", () => {
@@ -4265,7 +4265,7 @@ describe("Object.groupBy", () => {
         initialValue: {},
         in: {
           $let: {
-            vars: { key: { $toString: "$$this.category" } },
+            vars: { jsmqlKey: { $toString: "$$this.category" } },
             in: {
               $mergeObjects: [
                 "$$value",
@@ -4273,10 +4273,10 @@ describe("Object.groupBy", () => {
                   $arrayToObject: [
                     [
                       [
-                        "$$key",
+                        "$$jsmqlKey",
                         {
                           $concatArrays: [
-                            { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
+                            { $ifNull: [{ $getField: { field: "$$jsmqlKey", input: "$$value" } }, []] },
                             ["$$this"],
                           ],
                         },
@@ -4518,12 +4518,15 @@ describe("in operator RHS validation", () => {
   });
   it("object literal with spread uses $objectToArray for the spread keys", () => {
     expect(jsmql.expr("$.x in { ...$.base, a: 1 }")).toEqual({
-      $in: ["$x", { $concatArrays: [{ $map: { input: { $objectToArray: "$base" }, as: "kv", in: "$$kv.k" } }, ["a"]] }],
+      $in: [
+        "$x",
+        { $concatArrays: [{ $map: { input: { $objectToArray: "$base" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, ["a"]] },
+      ],
     });
   });
   it("object literal with only spread reduces to $objectToArray.k directly", () => {
     expect(jsmql.expr("$.x in { ...$.other }")).toEqual({
-      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "kv", in: "$$kv.k" } }],
+      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }],
     });
   });
   it("accepts field ref RHS", () => {
@@ -4803,7 +4806,7 @@ describe("optional chaining (?.)", () => {
   // Object.keys / values / entries / fromEntries — `$objectToArray(null)` errors.
   it("Object.keys on optional wraps argument with {}", () => {
     expect(jsmql.expr("Object.keys($.user?.profile)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, as: "kv", in: "$$kv.k" },
+      $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
   });
   it("Object.entries on optional wraps argument with {}", () => {

@@ -2183,8 +2183,8 @@ fine there.
 ### Object Operations
 
 ```js
-Object.keys($.obj)                 // { $map: { input: { $objectToArray: "$obj" }, as: "kv", in: "$$kv.k" } }
-Object.values($.obj)               // { $map: { input: { $objectToArray: "$obj" }, as: "kv", in: "$$kv.v" } }
+Object.keys($.obj)                 // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+Object.values($.obj)               // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: "$$jsmqlKv.v" } }
 Object.entries($.obj)              // { $objectToArray: "$obj" }
 Object.fromEntries($.pairs)        // { $arrayToObject: "$pairs" }
 Object.assign($.a, $.b)            // { $mergeObjects: ["$a", "$b"] }
