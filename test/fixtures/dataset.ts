@@ -179,6 +179,28 @@ export const users = [
     tags: ["vip", "beta"],
     visits: 77,
   },
+  // Boundary user: `email` is ABSENT (u5's is present-but-null, so the two
+  // missing-vs-null paths are both represented). String methods derive lengths
+  // through `$strLenCP`, which aborts the query on a missing input, so this
+  // document is what proves the coercion actually holds on a real server.
+  // Deliberately archived + inactive, and with no email at all, so it falls
+  // outside every existing active/non-null-email assertion.
+  {
+    _id: ID.user(9),
+    name: "Karen Spärck Jones",
+    active: false,
+    status: "archived",
+    tier: "bronze",
+    country: "UK",
+    department: "research",
+    createdAt: D("2025-10-02"),
+    lastSeen: D("2026-01-20"),
+    expiresAt: D("2026-02-01"),
+    subscription: { tier: "basic", renews: false },
+    profile: { bio: "Inverse document frequency", verified: false },
+    tags: [],
+    visits: 3,
+  },
 ];
 
 // ── products ──────────────────────────────────────────────────────────────────

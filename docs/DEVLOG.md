@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-08 — test: the reported `.endsWith()` abort, covered against a live mongod
+
+The two fixes below were both proven with `test/probe`, but neither had a standing regression test that runs on a **server** — and this whole bug class exists precisely because a green `toEqual` proves only what jsmql *emits*. So [test/integration.test.ts](test/integration.test.ts) now carries the reported query end-to-end.
+
+The fixture gained one user ([test/fixtures/dataset.ts](test/fixtures/dataset.ts), u9 "Karen Spärck Jones") whose `email` key is **absent** — u5's is present-but-null, so missing and null are now both represented, which matters because they reach `$strLenCP` by different routes. She is deliberately archived + inactive and has no email at all, so she falls outside every pre-existing active/non-null-email assertion; nothing else in the suite needed re-deriving. The rest of the hazards were already in the data: u4's `"kat@nasa.gov"` is 12 characters, one shorter than the 13-character needle `"@bletchley.uk"`, which is exactly the negative index that started this.
+
+Three cases: the domain filter that must return only Joan Clarke, the user's own `"@flash-payments.com"` predicate (every email is shorter than the 19-char needle, so matching nothing is the right answer and aborting was the bug), and a value-mode case asserting `.slice(-13)` / `.length` results per user so missing and null are pinned to `""` / `0` rather than merely "didn't crash". Checked against the pre-fix compiler: all three fail with `$substrCP: the starting index must be nonnegative integer` — the reported error verbatim.
+
 ## 2026-08-08 — fix: string-length lowerings tolerate a missing field
 
 The companion half of the `$substrCP` fix below. `$strLenCP` is the one string primitive that **aborts the query** when its input is missing or null (`Location34471`) — `$indexOfCP` returns `null` and `$substrCP` returns `""`. Every length jsmql derives goes through `$strLenCP`, so ten lowerings took a query down on any document lacking the field: `.endsWith()`, string `.slice`/`.substr`/`.substring`, `.length`, `.padStart`/`.padEnd`, `.truncate`, and the `strTail` family (`.capitalize`/`.upperFirst`/`.lowerFirst`/`.camelCase`). The asymmetry was the tell: `.startsWith("@x")` on an absent field returned `false`, while `.endsWith("@x")` on the *same* field killed the query. Both spellings of one idea, opposite outcomes.

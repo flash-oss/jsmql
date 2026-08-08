@@ -70,6 +70,41 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     expect(hexes(rows)).toEqual(ids(ID.user, [1, 2, 3, 6, 8]));
   });
 
+  // The reported `.endsWith()` bug, end-to-end. `$substrCP` aborts the executor
+  // on a negative start, and `$strLenCP` aborts on a missing/null input, so
+  // before the fix this query returned NO rows — it killed the whole command.
+  // The dataset hits every hazard at once: u4's "kat@nasa.gov" (12) is SHORTER
+  // than the 13-char needle (→ negative index), u5's email is null, and u9 has
+  // no email field at all. A `toEqual` on emitted MQL can't catch this class;
+  // only a real run can.
+  it("filter: .endsWith() survives receivers shorter than the needle, plus null/missing", async () => {
+    const rows = await find("users", `$.email.endsWith("@bletchley.uk")`);
+    expect(hexes(rows)).toEqual(ids(ID.user, [7])); // Joan Clarke, the only match
+  });
+
+  // The user-reported predicate verbatim: every email is shorter than the
+  // 19-char needle, so EVERY document takes the negative-index path. Matching
+  // nothing is the correct answer; aborting is what it used to do.
+  it("filter: .endsWith() with a needle longer than every value matches nothing, without aborting", async () => {
+    const rows = await find("users", `$.email.endsWith("@flash-payments.com")`);
+    expect(rows).toEqual([]);
+  });
+
+  // The same hazards through the value-mode string methods, asserting the
+  // returned values rather than just "it ran". Missing and null both read as "".
+  it("expr: string methods on short / null / missing receivers match JS semantics", async () => {
+    const rows = (await aggregate("users", `$ = { name: $.name, tail: $.email.slice(-13), len: $.email.length };`)) as {
+      name: string;
+      tail: string;
+      len: number;
+    }[];
+    const byName = Object.fromEntries(rows.map((r) => [r.name, { tail: r.tail, len: r.len }]));
+    expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 }); // longer than 13
+    expect(byName["Katherine Johnson"]).toEqual({ tail: "kat@nasa.gov", len: 12 }); // SHORTER → clamped, whole string
+    expect(byName["Margaret Hamilton"]).toEqual({ tail: "", len: 0 }); // email: null
+    expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 }); // email absent
+  });
+
   // The `0x…` ObjectId literal, end-to-end: jsmql mints a live BSON ObjectId so
   // the query uses the _id index and returns the one document. (realistic.test.ts
   // "fetch a document by its ObjectId" only checks the *emitted* shape.)
