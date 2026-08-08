@@ -50,7 +50,7 @@ import {
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr, someElement, someStmt } from "./ast-walk.ts";
-import { JSMQL_NS, bindingSlot, isCorrelationVar, streamLengthStage } from "./namespace.ts";
+import { JSMQL_NS, bindingSlot, exprVar, isCorrelationVar, streamLengthStage } from "./namespace.ts";
 import {
   lookupStage,
   STAGES,
@@ -1222,7 +1222,7 @@ function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: Su
     body = arg.body;
     pos = arg.pos;
   } else {
-    const sh = shorthandToLambda(arg, "reject", "jsmqlItem");
+    const sh = shorthandToLambda(arg, "reject", exprVar("item"));
     if (sh === null || sh.body === undefined) {
       throw new CodegenError(
         `.reject(<predicate>) takes an arrow ('o => …'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
@@ -1290,7 +1290,7 @@ function chainHasCorrelatingFilter(methods: MethodCallNode[], outerCtx: Generate
     // routes a correlated shorthand to the uncorrelated `$unionWith`, which emits a
     // query-literal `$match: { userId: "$_id" }` (wrong: matches the string "$_id").
     const arg = m.args[0];
-    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, exprVar("item"));
     if (lambda !== null && predicateReferencesOuterDoc(lambda, outerCtx)) return true;
   }
   return false;

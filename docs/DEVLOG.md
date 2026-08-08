@@ -10,6 +10,64 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-08 — refactor: one namespace for compiler-emitted `$let` variable names
+
+The two capture bugs below were each fixed at their own site. This closes the
+class: `docs/specs/method-dispatch.md` already stated the law —
+
+> `as` becomes a synthetic name `jsmqlPair` so it never collides with a
+> user-named param
+
+— but the code didn't uphold it. The `jsmql` prefix was a convention nothing
+enforced, spelled as 33 hardcoded string literals across 164 occurrences in
+`codegen.ts` with no single source of truth, so a param that happened to spell one
+broke the lowering the same way `s` did:
+
+```js
+$.rows.map(jsmqlArr => jsmqlArr.list.slice(jsmqlArr.i))
+// was → {"$let":{"vars":{"jsmqlArr":"$$jsmqlArr.list"}, … "$$jsmqlArr.i" …}}
+// now → {"$let":{"vars":{"jsmqlArr2":"$$jsmqlArr.list"}, … "$$jsmqlArr.i" …}}
+```
+
+[src/namespace.ts](src/namespace.ts) gains `exprVar(base)` as the third namespace
+it owns, beside the `__jsmql` document fields and the `jsmql_` `$lookup.let`
+correlation vars. It owns the spelling only; `internalVar(ctx, base)` in
+[src/codegen.ts](src/codegen.ts) adds `gensymInScope` on top, and every emission
+site now routes through it. Per the CLAUDE.md rule that the spec wins on conflict,
+the sentence stayed as written and the code was fixed to match.
+
+Renaming is not the mechanism, and that matters: a prefix reservation in
+`safeVarName` would have been one line, but it renames the *developer's* param in
+the output (`as: "vjsmqlArr"`) and would also mangle jsmql's own synthetic
+`jsmqlEl`, which a pure string function can't tell apart. The gensym moves our
+binding and leaves theirs alone. It also returns the base untouched whenever
+nothing collides, so this is output-neutral for every existing test except the
+three deliberate renames below.
+
+Three latent bare names went with it (`key`, `x`, `kv` — reachable only if
+someone later spliced user codegen into those bodies), and the sweep turned up one
+more live bug. `.fill()` builds its lowering on the AST with synthetic params, and
+two of them were bare `x`/`i` — so the fill VALUE, generated inside them, captured
+a pipeline binding of the same name:
+
+```js
+let x = 5; $.arr.fill(x, 1);
+// was → "then": "$$x"   ← filled with each ELEMENT, not 5
+// now → "then": 5
+```
+
+That rewrite runs before codegen with no ctx to gensym against, and `.fill()` is
+reachable only at statement position (in expression position it throws), so no
+lambda param can be in scope — the namespace alone is what keeps those four clear.
+`wordsExpr`/`joinWords` are the other ctx-less callers; their bodies are fixed MQL
+built from the ref itself, so nothing user-written can be captured.
+
+Every lowering that binds an internal var and splices outer codegen into it now
+has a hostile case in `test/codegen.test.ts` — the user's param keeps its name, and
+the emitted MQL was run against a live `mongod` and matched Node's own semantics.
+
+---
+
 ## 2026-08-08 — fix: `.uniqBy` iteratee no longer shadows the `$reduce` accumulator
 
 Sibling of the capture bug fixed in the entry below, but the shadowed name is

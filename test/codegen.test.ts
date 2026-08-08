@@ -3610,8 +3610,8 @@ describe("lodash set-ops & By-iteratee value methods", () => {
           $reduce: {
             input: {
               $concatArrays: [
-                { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } },
-                { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } },
+                { $filter: { input: "$$jsmqlA", as: "jsmqlX", cond: { $not: [{ $in: ["$$jsmqlX", "$$jsmqlB"] }] } } },
+                { $filter: { input: "$$jsmqlB", as: "jsmqlX", cond: { $not: [{ $in: ["$$jsmqlX", "$$jsmqlA"] }] } } },
               ],
             },
             initialValue: [],
@@ -3965,6 +3965,14 @@ describe("statement-position mutators", () => {
     const out = jsmql("$.events.fill(0, 1, 3);") as Array<Record<string, unknown>>;
     const setVal = (out[0]?.$set as { events: unknown }).events as { $let: { vars: Record<string, unknown> } };
     expect(setVal.$let.vars).toEqual({ jsmqlFillStart: 1, jsmqlFillEnd: 3 });
+  });
+  // The fill VALUE is generated inside the synthetic `(el, idx)` map callback, so
+  // bare param names captured a pipeline binding of the same name: `let x = 5;
+  // $.arr.fill(x, 1)` filled with each ELEMENT instead of 5.
+  it("a pipeline binding named like the synthetic fill param isn't captured", () => {
+    const out = JSON.stringify(jsmql("let x = 5; $.arr.fill(x, 1); $.done = true;"));
+    expect(out).toContain('"then":5'); // the binding's value, not "$$x"
+    expect(out).not.toContain('"then":"$$x"');
   });
   it(".reverse() with extra args is rejected (preserves the existing .toReversed arg-count check)", () => {
     expect(() => jsmql("$.events.reverse(123);")).toThrow();
@@ -6342,5 +6350,51 @@ describe("trailing commas (JS syntax)", () => {
     // (`{ $ },`).
     expect(jsmql.compile("({ min, }, { $ },) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
     expect(jsmql.compile("({ min }, { $ }) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+  });
+});
+
+// The `jsmql` prefix on a compiler-emitted `$let`/`$map`/`$filter` variable is only
+// a convention — nothing stops a developer naming a param the same thing. What makes
+// the "never collides with a user-named param" invariant hold is `internalVar`'s
+// gensym (src/codegen.ts, over `exprVar` in src/namespace.ts): OUR binding moves
+// aside, the developer's name is left exactly as written.
+describe("internal expression-variable names never capture a user param", () => {
+  // One case per lowering that binds an internal var AND splices outer-scope
+  // codegen into it — [source, the internal name the user's param collides with].
+  const CASES: Array<[string, string]> = [
+    ["$.r.map(jsmqlArr => jsmqlArr.l.slice(jsmqlArr.i))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.slice(jsmqlArr.i, jsmqlArr.j))", "jsmqlArr"],
+    ["$.r.map(jsmqlPad => jsmqlPad.c.padStart(jsmqlPad.w))", "jsmqlPad"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.lastIndexOf(jsmqlArr.n))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.toSpliced(jsmqlArr.s, 1))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.with(jsmqlArr.i, jsmqlArr.v))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.drop(jsmqlArr.n))", "jsmqlArr"],
+    ["$.r.map(jsmqlItem => jsmqlItem.l.difference(jsmqlItem.o))", "jsmqlItem"],
+    ["$.r.map(jsmqlItem => jsmqlItem.l.without(jsmqlItem.o))", "jsmqlItem"],
+    ["$.r.map(jsmqlShuffled => jsmqlShuffled.l.sampleSize(jsmqlShuffled.n))", "jsmqlShuffled"],
+    ["$.r.map(jsmqlA => jsmqlA.l.xor(jsmqlA.o))", "jsmqlA"],
+    ['$.r.map(jsmqlOtherKeys => jsmqlOtherKeys.l.differenceBy(jsmqlOtherKeys.o, "id"))', "jsmqlOtherKeys"],
+    ["$.r.map(jsmqlI => jsmqlI.l.zipObject(jsmqlI.v))", "jsmqlI"],
+    ["$.r.map(jsmqlKey => jsmqlKey.l.uniqBy(d => d.id))", "jsmqlKey"],
+    ['$.r.map(jsmqlObj => jsmqlObj.o.pick(["a"]))', "jsmqlObj"],
+    ["$.r.map(jsmqlKv => jsmqlKv.o.mapValues(v => v + jsmqlKv.n))", "jsmqlKv"],
+    ["$.r.map(jsmqlFi => jsmqlFi.l.takeWhile(d => d.a < jsmqlFi.n))", "jsmqlFi"],
+    ["$.r.map(jsmqlSorted => jsmqlSorted.l.maxBy(d => d.a))", "jsmqlSorted"],
+    ["$.r.map(jsmqlPair => jsmqlPair.l.map((e, i) => e + i + jsmqlPair.n))", "jsmqlPair"],
+  ];
+  for (const [src, name] of CASES) {
+    it(`${name}: the binding moves aside, the param keeps its name`, () => {
+      const out = JSON.stringify(jsmql.expr(src));
+      // The user's param is emitted verbatim as the `$map` element…
+      expect(out).toContain(`"as":"${name}"`);
+      // …and every read of it still resolves to the element, because the internal
+      // binding took a fresh name instead.
+      expect(out).toContain(`"${name}2"`);
+    });
+  }
+
+  it("without a collision the base name is used — output is unchanged for normal code", () => {
+    expect(JSON.stringify(jsmql.expr("$.r.map(d => d.l.slice(d.i))"))).not.toContain("jsmqlArr2");
+    expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual(jsmql.expr('$.code.padStart(5, "0")'));
   });
 });
