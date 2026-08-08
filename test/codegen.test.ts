@@ -3640,6 +3640,42 @@ describe("lodash set-ops & By-iteratee value methods", () => {
     expect(jsmql.expr("$.a.sortedUniq()")).toEqual(jsmql.expr("$.a.uniq()"));
     expect(jsmql.expr('$.a.sortedUniqBy("id")')).toEqual(jsmql.expr('$.a.uniqBy("id")'));
   });
+  // The iteratee's $let must not enclose the $reduce accumulator reads: a param named
+  // `value` used to shadow `$$value`, so the "have I seen this key" test read `.seen`
+  // off the element and every element survived the dedupe.
+  it("an iteratee param named 'value' doesn't shadow the $reduce accumulator", () => {
+    expect(jsmql.expr("$.a.uniqBy(value => value.id)")).toEqual({
+      $getField: {
+        field: "out",
+        input: {
+          $reduce: {
+            input: "$a",
+            initialValue: { seen: [], out: [] },
+            in: {
+              $let: {
+                vars: { jsmqlKey: { $let: { vars: { value: "$$this" }, in: "$$value.id" } } },
+                in: {
+                  $cond: [
+                    { $in: ["$$jsmqlKey", "$$value.seen"] },
+                    "$$value",
+                    {
+                      seen: { $concatArrays: ["$$value.seen", ["$$jsmqlKey"]] },
+                      out: { $concatArrays: ["$$value.out", ["$$this"]] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it("an identity iteratee binds the element directly — no redundant inner $let", () => {
+    expect(jsmql.expr("$.a.uniqBy(x => x)")).toMatchObject({
+      $getField: { input: { $reduce: { in: { $let: { vars: { jsmqlKey: "$$this" } } } } } },
+    });
+  });
 });
 
 describe("lodash transpose value methods — zip / unzip / zipWith", () => {

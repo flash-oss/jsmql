@@ -2927,7 +2927,17 @@ function iterateeKeys(arr: unknown, it: ResolvedIteratee): unknown {
 // Order-preserving keep-first dedupe of `input` BY iteratee key (`.uniqBy`, and the
 // `.unionBy`/`.xorBy` tails). Tracks seen keys in a `{ seen, out }` accumulator, then
 // projects `out`.
-function uniqByReduce(input: unknown, it: ResolvedIteratee): unknown {
+function uniqByReduce(input: unknown, it: ResolvedIteratee, ctx: GenerateCtx): unknown {
+  // The iteratee is written against the user's own param name, so the $let binding it
+  // must NOT enclose the $reduce accumulator reads — an iteratee like `value => value.id`
+  // would otherwise shadow `$$value` and read `.seen`/`.out` off the element.
+  // A $let var's VALUE is evaluated in the enclosing scope, so computing the key there
+  // keeps the user's name scoped to the key expression alone. It also binds the key once
+  // instead of re-emitting the iteratee for both the membership test and the accumulator.
+  const k = gensymInScope(ctx, "jsmqlKey");
+  const key = `$$${k}`;
+  // An identity iteratee (`x => x`) is just the element — no binding needed.
+  const keyExpr = it.value === it.elem ? "$$this" : { $let: { vars: { [it.as]: "$$this" }, in: it.value } };
   return {
     $getField: {
       field: "out",
@@ -2937,13 +2947,13 @@ function uniqByReduce(input: unknown, it: ResolvedIteratee): unknown {
           initialValue: { seen: [], out: [] },
           in: {
             $let: {
-              vars: { [it.as]: "$$this" },
+              vars: { [k]: keyExpr },
               in: {
                 $cond: [
-                  { $in: [it.value, "$$value.seen"] },
+                  { $in: [key, "$$value.seen"] },
                   "$$value",
                   {
-                    seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                    seen: { $concatArrays: ["$$value.seen", [key]] },
                     out: { $concatArrays: ["$$value.out", ["$$this"]] },
                   },
                 ],
@@ -3896,7 +3906,7 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       // Track seen keys, keep the first element for each; then drop the tracker.
-      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx));
+      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx), ctx);
     }
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
@@ -4120,7 +4130,7 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, "unionBy");
       checkArity("unionBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], "unionBy", ctx);
-      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it);
+      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it, ctx);
     }
     case "xorBy": {
       // Symmetric difference BY iteratee key: uniqBy( A∖B ++ B∖A ) on the keys.
@@ -4142,7 +4152,7 @@ function generateMethodCall(
           in: {
             $let: {
               vars: { jsmqlAKeys: iterateeKeys("$$jsmqlA", it), jsmqlBKeys: iterateeKeys("$$jsmqlB", it) },
-              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it),
+              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it, ctx),
             },
           },
         },

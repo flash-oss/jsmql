@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-08 — fix: `.uniqBy` iteratee no longer shadows the `$reduce` accumulator
+
+Sibling of the capture bug fixed in the entry below, but the shadowed name is
+MongoDB's, not ours. `uniqByReduce` bound the user's iteratee param inside the
+`$reduce`'s `in:` and then read `$$value.seen` / `$$value.out` **within** that
+`$let` — so an iteratee spelling its param `value` shadowed the accumulator:
+
+```js
+$.a.uniqBy(value => value.id)
+// was → the "have I seen this key" test read `.seen` off the ELEMENT, so nothing
+//        ever matched and the dedupe returned every input document
+```
+
+`safeVarName` can't help here: `value` is a perfectly legal MongoDB variable name,
+it just happens to be the one `$reduce` already uses. Renaming *our* side isn't
+possible either — `$$value` is the server's spelling.
+
+The fix moves the user's binding into the `$let` **vars value** position, which
+MongoDB evaluates in the *enclosing* scope, so the accumulator reads in `in:` are
+never inside it. That also binds the key once instead of re-emitting the iteratee
+for both the membership test and the `seen` append, so the emitted document gets
+smaller for every non-trivial iteratee; an identity iteratee (`x => x`) skips the
+inner `$let` entirely since the key is just `$$this`. Affects `.uniqBy`,
+`.sortedUniqBy`, `.unionBy` and `.xorBy`, which all share this lowering
+([src/codegen.ts](src/codegen.ts)). Verified against a live `mongod`.
+
+---
+
 ## 2026-08-08 — fix: compiler-internal bindings no longer capture user lambda params
 
 `.padStart()`/`.padEnd()` lowered to a `$let` whose variable was literally named
