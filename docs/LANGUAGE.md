@@ -1296,9 +1296,9 @@ $.name.toUpperCase()               // { $toUpper: "$name" }
 $.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
-$.name.substring(1)                // { $substrCP: ["$name", 1, { $subtract: [{ $strLenCP: "$name" }, 1] }] }
+$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: "$name" }, 1] }] }] }
 "hello".slice(1, 3)                // { $substrCP: ["hello", 1, 2] }   — `.slice` on a string-typed receiver
-"hello".slice(-3)                  // { $substrCP: ["hello", { $subtract: [{ $strLenCP: "hello" }, 3] }, 3] }  — negative counts from end
+"hello".slice(-3)                  // { $substrCP: ["hello", { $max: [0, { $subtract: [{ $strLenCP: "hello" }, 3] }] }, 3] }  — negative counts from end
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
@@ -1320,6 +1320,27 @@ $.note.padEnd(10)                  // (default pad char is space)
 /word/i.exec($.s)                  // { $regexFind: { input: "$s", regex: "word", options: "i" } }
 /word/gi.test($.s)                 // { $regexMatch: { input: "$s", regex: "word", options: "i" } }  — g dropped
 ```
+
+**`.endsWith()` and out-of-range indices.** MongoDB's `$substrCP` is stricter than JavaScript's
+string slicing: a negative start or length makes the server **abort the whole query** instead of
+returning a value. That bites exactly where JS is most forgiving — `"a@b.com".endsWith("@example.com")`
+is simply `false` in JS, but the tail index `strLen - needleLen` is negative. So jsmql floors every
+index it derives, and `.endsWith()` binds its receiver once:
+
+```js
+$.file.endsWith(".pdf")
+// { $let: { vars: { jsmqlStr: "$file" },
+//           in: { $eq: [{ $substrCP: ["$$jsmqlStr",
+//                                     { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" },
+//                                                               { $strLenCP: ".pdf" }] }] },
+//                                     { $strLenCP: ".pdf" }] },
+//                       ".pdf"] } } }
+```
+
+Each method keeps its own JavaScript meaning for a negative index — `.slice()` / `.substr()` count
+from the end, `.substring()` clamps to 0, and `.charAt()` returns `""` (it is never floored, since
+that would return the *first* character). A start or length past the end of the string is safe and
+yields `""`, as in JS.
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent, so jsmql drops them from the emitted `options` (keeping `i`/`m`/`s`). Dropping `g` is harmless: `$regexFindAll` is inherently global, and `g` is irrelevant to `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex (matching JS, which throws without it), but the `g` doesn't appear in the output.
 

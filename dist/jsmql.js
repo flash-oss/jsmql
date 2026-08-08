@@ -5920,7 +5920,7 @@ function clampNonNegativeIndex(node, ctx) {
   }
   return { $max: [0, _generate(node, ctx)] };
 }
-function clampNonNegativeLength(value) {
+function clampNonNegative(value) {
   if (typeof value === "number") return Math.max(0, value);
   return { $max: [0, value] };
 }
@@ -5934,13 +5934,13 @@ function cond(ifExpr, thenExpr, elseExpr) {
 function normaliseSliceIndex(node, ctx, genObj) {
   if (node.type === "NumberLiteral") {
     if (node.value >= 0) return node.value;
-    return foldedSubtract({ $strLenCP: genObj }, -node.value);
+    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, -node.value));
   }
   if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
-    return foldedSubtract({ $strLenCP: genObj }, node.operand.value);
+    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, node.operand.value));
   }
   const gen = _generate(node, ctx);
-  return cond({ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen);
+  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, { $strLenCP: genObj }] }), gen);
 }
 function literalIndexValue(node) {
   if (node.type === "NumberLiteral" && Number.isInteger(node.value)) return node.value;
@@ -6013,10 +6013,10 @@ function sliceString(genObj, exprArgs, ctx) {
   if (exprArgs.length === 1) {
     const negativeLiteral = negativeLiteralValue(exprArgs[0]);
     if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
-    return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
   }
   const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
-  return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
+  return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
 }
 function negativeLiteralValue(node) {
   if (node.type === "NumberLiteral" && node.value < 0) return -node.value;
@@ -7019,10 +7019,11 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "substr": {
       const exprArgs = exprArgsOnly(args, "substr");
       checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
+      const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
       if (exprArgs.length === 1) {
-        return { $substrCP: [genObj, _generate(exprArgs[0], ctx), { $strLenCP: genObj }] };
+        return { $substrCP: [genObj, start, { $strLenCP: genObj }] };
       }
-      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+      return { $substrCP: [genObj, start, clampNonNegativeIndex(exprArgs[1], ctx)] };
     }
     case "substring": {
       const exprArgs = exprArgsOnly(args, "substring");
@@ -7030,15 +7031,18 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       if (exprArgs.length === 0) return genObj;
       const start = clampNonNegativeIndex(exprArgs[0], ctx);
       if (exprArgs.length === 1) {
-        return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
       }
       const end = clampNonNegativeIndex(exprArgs[1], ctx);
-      return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
+      return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
     }
     case "charAt": {
       const exprArgs = exprArgsOnly(args, "charAt");
       checkArity("charAt", { sig: "index", exact: 1 }, exprArgs.length, callPos);
-      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), 1] };
+      const lit = literalIndexValue(exprArgs[0]);
+      if (lit !== null) return lit < 0 ? "" : { $substrCP: [genObj, lit, 1] };
+      const index = _generate(exprArgs[0], ctx);
+      return cond({ $lt: [index, 0] }, "", { $substrCP: [genObj, index, 1] });
     }
     case "split": {
       const exprArgs = exprArgsOnly(args, "split");
@@ -7054,11 +7058,23 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "endsWith");
       checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
+      const needleLen = { $strLenCP: needle };
       return {
-        $eq: [
-          { $substrCP: [genObj, { $subtract: [{ $strLenCP: genObj }, { $strLenCP: needle }] }, { $strLenCP: needle }] },
-          needle
-        ]
+        $let: {
+          vars: { jsmqlStr: genObj },
+          in: {
+            $eq: [
+              {
+                $substrCP: [
+                  "$$jsmqlStr",
+                  clampNonNegative(foldedSubtract({ $strLenCP: "$$jsmqlStr" }, needleLen)),
+                  needleLen
+                ]
+              },
+              needle
+            ]
+          }
+        }
       };
     }
     case "indexOf": {

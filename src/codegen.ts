@@ -1119,8 +1119,15 @@ function clampNonNegativeIndex(node: Expr, ctx: GenerateCtx): unknown {
   return { $max: [0, _generate(node, ctx)] };
 }
 
-/** Clamp a derived length value to non-negative, folding when known. */
-function clampNonNegativeLength(value: unknown): unknown {
+/**
+ * Floor an already-generated index or length at 0, folding when known.
+ * `$substrCP` rejects a negative start (`Location34455`) and a negative length
+ * (`Location34454`) outright — it aborts the whole query rather than returning
+ * a value — so every index/length jsmql *derives* (rather than passes through
+ * from a literal) goes through here. `$max` ignores nulls, so a floored value
+ * stays safe when the receiver is missing.
+ */
+function clampNonNegative(value: unknown): unknown {
   if (typeof value === "number") return Math.max(0, value);
   return { $max: [0, value] };
 }
@@ -1147,9 +1154,13 @@ function cond(
 
 /**
  * Normalise a JS-style `.slice` index against a string length. JS treats
- * negative indices as `len + idx`; MQL `$substrCP` rejects negatives. Folds
- * literal negatives into `$strLenCP - n` at compile time; non-literals expand
- * to a `$cond` that picks the form at runtime.
+ * negative indices as `len + idx`, floored at 0; MQL `$substrCP` rejects
+ * negatives. Folds literal negatives into `$strLenCP - n` at compile time;
+ * non-literals expand to a `$cond` that picks the form at runtime. Either way
+ * the from-the-end result is floored, because `len + idx` is itself negative
+ * when the receiver is shorter than the index (`"abc".slice(-5)`).
+ *
+ * Mirrors `resolveSliceIndex`, the array analogue, which floors the same way.
  *
  * `genObj` is reused for `$strLenCP` rather than re-generating from the
  * source AST, so callers should pass the same generated value they use in
@@ -1158,13 +1169,13 @@ function cond(
 function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unknown {
   if (node.type === "NumberLiteral") {
     if (node.value >= 0) return node.value;
-    return foldedSubtract({ $strLenCP: genObj }, -node.value);
+    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, -node.value));
   }
   if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
-    return foldedSubtract({ $strLenCP: genObj }, node.operand.value);
+    return clampNonNegative(foldedSubtract({ $strLenCP: genObj }, node.operand.value));
   }
   const gen = _generate(node, ctx);
-  return cond({ $lt: [gen, 0] }, { $add: [gen, { $strLenCP: genObj }] }, gen);
+  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, { $strLenCP: genObj }] }), gen);
 }
 
 /** Signed integer value of a slice-index literal (`5` or `-5`), else null
@@ -1294,10 +1305,11 @@ function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unkno
     // a noisy `strLen - (strLen - n)`.
     const negativeLiteral = negativeLiteralValue(exprArgs[0]);
     if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
-    return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+    // `strLen - start` is negative when start runs past the end ("".slice(1)).
+    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
   }
   const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
-  return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
+  return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
 }
 
 /** Return the absolute value of a negative numeric literal AST node, else null. */
@@ -3076,10 +3088,16 @@ function generateMethodCall(
     case "substr": {
       const exprArgs = exprArgsOnly(args, "substr");
       checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
+      // JS .substr(start, count): a negative start counts from the end (as
+      // .slice does), and a negative count yields "". Both were previously
+      // passed straight to $substrCP, which rejects either outright.
+      const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
       if (exprArgs.length === 1) {
-        return { $substrCP: [genObj, _generate(exprArgs[0], ctx), { $strLenCP: genObj }] };
+        // A length past the end is clamped by the server, so the full length
+        // stands in for "the rest of the string".
+        return { $substrCP: [genObj, start, { $strLenCP: genObj }] };
       }
-      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), _generate(exprArgs[1], ctx)] };
+      return { $substrCP: [genObj, start, clampNonNegativeIndex(exprArgs[1], ctx)] };
     }
     case "substring": {
       const exprArgs = exprArgsOnly(args, "substring");
@@ -3087,18 +3105,25 @@ function generateMethodCall(
       if (exprArgs.length === 0) return genObj;
       // JS .substring(s, e) takes end-exclusive; MQL $substrCP takes a length.
       // JS clamps negative indices to 0 (and would also swap if start > end —
-      // we model the clamping but not the swap; see docs/specs/string-methods.md).
+      // we model the clamping but not the swap; see docs/specs/method-dispatch.md).
       const start = clampNonNegativeIndex(exprArgs[0], ctx);
       if (exprArgs.length === 1) {
-        return { $substrCP: [genObj, start, foldedSubtract({ $strLenCP: genObj }, start)] };
+        // `strLen - start` is negative when start runs past the end.
+        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract({ $strLenCP: genObj }, start))] };
       }
       const end = clampNonNegativeIndex(exprArgs[1], ctx);
-      return { $substrCP: [genObj, start, clampNonNegativeLength(foldedSubtract(end, start))] };
+      return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
     }
     case "charAt": {
       const exprArgs = exprArgsOnly(args, "charAt");
       checkArity("charAt", { sig: "index", exact: 1 }, exprArgs.length, callPos);
-      return { $substrCP: [genObj, _generate(exprArgs[0], ctx), 1] };
+      // JS .charAt(i) returns "" for a negative index, so this is the one string
+      // index that must NOT be floored — flooring to 0 would wrongly return the
+      // first character. Fold a literal negative away; guard a runtime one.
+      const lit = literalIndexValue(exprArgs[0]);
+      if (lit !== null) return lit < 0 ? "" : { $substrCP: [genObj, lit, 1] };
+      const index = _generate(exprArgs[0], ctx);
+      return cond({ $lt: [index, 0] }, "", { $substrCP: [genObj, index, 1] });
     }
     case "split": {
       const exprArgs = exprArgsOnly(args, "split");
@@ -3114,12 +3139,28 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, "endsWith");
       checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
-      // Compares the last N codepoints of the input with the needle, where N is the needle's length.
+      // Compares the last N codepoints of the input with the needle, where N is
+      // the needle's length. The receiver is bound once so a chained one isn't
+      // re-evaluated, and the start is floored: a receiver shorter than the
+      // needle makes `strLen - N` negative, which $substrCP rejects outright
+      // (it aborts the query rather than returning false).
+      const needleLen = { $strLenCP: needle };
       return {
-        $eq: [
-          { $substrCP: [genObj, { $subtract: [{ $strLenCP: genObj }, { $strLenCP: needle }] }, { $strLenCP: needle }] },
-          needle,
-        ],
+        $let: {
+          vars: { jsmqlStr: genObj },
+          in: {
+            $eq: [
+              {
+                $substrCP: [
+                  "$$jsmqlStr",
+                  clampNonNegative(foldedSubtract({ $strLenCP: "$$jsmqlStr" }, needleLen)),
+                  needleLen,
+                ],
+              },
+              needle,
+            ],
+          },
+        },
       };
     }
     case "indexOf": {

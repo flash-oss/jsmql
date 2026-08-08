@@ -1709,16 +1709,21 @@ $.file.size <= 25_000_000
         $and: [
           { $in: [{ $toLower: "$file.ext" }, [".jpg", ".png", ".pdf", ".docx"]] },
           {
-            $eq: [
-              {
-                $substrCP: [
-                  "$file.name",
-                  { $subtract: [{ $strLenCP: "$file.name" }, { $strLenCP: "$file.ext" }] },
-                  { $strLenCP: "$file.ext" },
+            $let: {
+              vars: { jsmqlStr: "$file.name" },
+              in: {
+                $eq: [
+                  {
+                    $substrCP: [
+                      "$$jsmqlStr",
+                      { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: "$file.ext" }] }] },
+                      { $strLenCP: "$file.ext" },
+                    ],
+                  },
+                  "$file.ext",
                 ],
               },
-              "$file.ext",
-            ],
+            },
           },
         ],
       },

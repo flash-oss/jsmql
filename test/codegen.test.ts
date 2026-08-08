@@ -1908,7 +1908,7 @@ describe("array methods (no lambda)", () => {
             in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
           },
         },
-        else: { $substrCP: ["$items", 2, { $subtract: [{ $strLenCP: "$items" }, 2] }] },
+        else: { $substrCP: ["$items", 2, { $max: [0, { $subtract: [{ $strLenCP: "$items" }, 2] }] }] },
       },
     });
   });
@@ -4285,10 +4285,30 @@ describe("1-arg substr", () => {
   it("substr(start, count) keeps 2-arg form", () => {
     expect(jsmql.expr("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
   });
-  it("substr with expression start", () => {
+  it("substr with expression start normalises sign at runtime", () => {
+    // A runtime start could be negative, which JS reads as "from the end" and
+    // $substrCP rejects outright — so the sign is resolved at query time.
     expect(jsmql.expr("$.email.substr($.headerLength + 1)")).toEqual({
-      $substrCP: ["$email", { $add: ["$headerLength", 1] }, { $strLenCP: "$email" }],
+      $substrCP: [
+        "$email",
+        {
+          $cond: {
+            if: { $lt: [{ $add: ["$headerLength", 1] }, 0] },
+            then: { $max: [0, { $add: [{ $add: ["$headerLength", 1] }, { $strLenCP: "$email" }] }] },
+            else: { $add: ["$headerLength", 1] },
+          },
+        },
+        { $strLenCP: "$email" },
+      ],
     });
+  });
+  it("substr(-n) counts from the end, like JS", () => {
+    expect(jsmql.expr("$.email.substr(-3)")).toEqual({
+      $substrCP: ["$email", { $max: [0, { $subtract: [{ $strLenCP: "$email" }, 3] }] }, { $strLenCP: "$email" }],
+    });
+  });
+  it("substr with a negative count yields an empty string, like JS", () => {
+    expect(jsmql.expr("$.email.substr(0, -1)")).toEqual({ $substrCP: ["$email", 0, 0] });
   });
 });
 
@@ -4300,33 +4320,39 @@ describe(".slice on strings", () => {
     expect(jsmql.expr("$.name.toLowerCase().slice(0, 3)")).toEqual({ $substrCP: [{ $toLower: "$name" }, 0, 3] });
   });
   it("1-arg form on string → from start to end", () => {
+    // The derived length is floored: `strLen - start` goes negative when start
+    // runs past the end ("".slice(1)), which $substrCP rejects outright.
     expect(jsmql.expr('"hello".slice(2)')).toEqual({
-      $substrCP: ["hello", 2, { $subtract: [{ $strLenCP: "hello" }, 2] }],
+      $substrCP: ["hello", 2, { $max: [0, { $subtract: [{ $strLenCP: "hello" }, 2] }] }],
     });
   });
-  it("negative-literal start on string → folded to strLen - n", () => {
+  it("negative-literal start on string → folded to strLen - n, floored", () => {
     expect(jsmql.expr('"hello".slice(-3)')).toEqual({
-      $substrCP: ["hello", { $subtract: [{ $strLenCP: "hello" }, 3] }, 3],
+      $substrCP: ["hello", { $max: [0, { $subtract: [{ $strLenCP: "hello" }, 3] }] }, 3],
     });
   });
   it("negative end on string → strLen - n", () => {
     expect(jsmql.expr('"hello".slice(1, -1)')).toEqual({
-      $substrCP: ["hello", 1, { $max: [0, { $subtract: [{ $subtract: [{ $strLenCP: "hello" }, 1] }, 1] }] }],
+      $substrCP: [
+        "hello",
+        1,
+        { $max: [0, { $subtract: [{ $max: [0, { $subtract: [{ $strLenCP: "hello" }, 1] }] }, 1] }] },
+      ],
     });
   });
   it("non-literal index on string → runtime $cond normalises sign", () => {
+    const normalisedIndex = {
+      $cond: {
+        if: { $lt: ["$i", 0] },
+        then: { $max: [0, { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }] },
+        else: "$i",
+      },
+    };
     expect(jsmql.expr("String($.s).slice($.i)")).toEqual({
       $substrCP: [
         { $toString: "$s" },
-        { $cond: { if: { $lt: ["$i", 0] }, then: { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, else: "$i" } },
-        {
-          $subtract: [
-            { $strLenCP: { $toString: "$s" } },
-            {
-              $cond: { if: { $lt: ["$i", 0] }, then: { $add: ["$i", { $strLenCP: { $toString: "$s" } }] }, else: "$i" },
-            },
-          ],
-        },
+        normalisedIndex,
+        { $max: [0, { $subtract: [{ $strLenCP: { $toString: "$s" } }, normalisedIndex] }] },
       ],
     });
   });
@@ -4341,7 +4367,7 @@ describe(".substring", () => {
   });
   it("substring(start) slices to end of string", () => {
     expect(jsmql.expr("$.email.substring(1)")).toEqual({
-      $substrCP: ["$email", 1, { $subtract: [{ $strLenCP: "$email" }, 1] }],
+      $substrCP: ["$email", 1, { $max: [0, { $subtract: [{ $strLenCP: "$email" }, 1] }] }],
     });
   });
   it("substring() with no args is identity", () => {
@@ -4740,11 +4766,25 @@ describe(".startsWith / .endsWith", () => {
     expect(jsmql.expr('$.email.startsWith("admin")')).toEqual({ $eq: [{ $indexOfCP: ["$email", "admin"] }, 0] });
   });
   it("endsWith maps to substring equality at the tail", () => {
+    // The receiver is bound once, and the start floored — a receiver shorter
+    // than the needle makes `strLen - needleLen` negative, and $substrCP aborts
+    // the query on a negative start rather than returning false.
     expect(jsmql.expr('$.file.endsWith(".pdf")')).toEqual({
-      $eq: [
-        { $substrCP: ["$file", { $subtract: [{ $strLenCP: "$file" }, { $strLenCP: ".pdf" }] }, { $strLenCP: ".pdf" }] },
-        ".pdf",
-      ],
+      $let: {
+        vars: { jsmqlStr: "$file" },
+        in: {
+          $eq: [
+            {
+              $substrCP: [
+                "$$jsmqlStr",
+                { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: ".pdf" }] }] },
+                { $strLenCP: ".pdf" },
+              ],
+            },
+            ".pdf",
+          ],
+        },
+      },
     });
   });
 });
@@ -4752,6 +4792,16 @@ describe(".startsWith / .endsWith", () => {
 describe(".charAt", () => {
   it("charAt(i)", () => {
     expect(jsmql.expr("$.name.charAt(2)")).toEqual({ $substrCP: ["$name", 2, 1] });
+  });
+  it("charAt(-1) folds to an empty string, like JS (never index -1)", () => {
+    // JS `.charAt` returns "" for a negative index — flooring to 0 would wrongly
+    // return the first character, so this is the one index that isn't clamped.
+    expect(jsmql.expr("$.name.charAt(-1)")).toEqual("");
+  });
+  it("charAt with a runtime index guards the negative case", () => {
+    expect(jsmql.expr("$.name.charAt($.i)")).toEqual({
+      $cond: { if: { $lt: ["$i", 0] }, then: "", else: { $substrCP: ["$name", "$i", 1] } },
+    });
   });
 });
 

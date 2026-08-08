@@ -58,15 +58,15 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | `.trimEnd()` / `.trimRight()` | `{ $rtrim: { input: expr } }` |
 | `.toLowerCase()` | `{ $toLower: expr }` |
 | `.toUpperCase()` | `{ $toUpper: expr }` |
-| `.substr(start)` | `{ $substrCP: [expr, start, { $strLenCP: expr }] }` |
-| `.substr(start, count)` | `{ $substrCP: [expr, start, count] }` |
+| `.substr(start)` | `{ $substrCP: [expr, start, { $strLenCP: expr }] }` — `start` normalised (see *Index normalisation* below) |
+| `.substr(start, count)` | `{ $substrCP: [expr, start, count] }` — `start` normalised, `count` floored at 0 |
 | `.split(sep)` | `{ $split: [expr, sep] }` |
 | `.indexOf(str)` | `{ $indexOfCP: [expr, str] }` *(known string receiver only)* |
 | `.replace(find, rep)` | `{ $replaceOne: { input, find, replacement } }` |
 | `.replaceAll(find, rep)` | `{ $replaceAll: { input, find, replacement } }` |
 | `.startsWith(s)` | `{ $eq: [{ $indexOfCP: [expr, s] }, 0] }` |
-| `.endsWith(s)` | substring-equality at the tail (computed from `$strLenCP`) |
-| `.charAt(n)` | `{ $substrCP: [expr, n, 1] }` |
+| `.endsWith(s)` | substring-equality at the tail: the receiver is `$let`-bound (evaluated once) and the tail index is `strLen - needleLen`, floored |
+| `.charAt(n)` | `{ $substrCP: [expr, n, 1] }` — a negative `n` yields `""`, **not** a floored index (see below) |
 | `.includes(str)` | `{ $gte: [{ $indexOfCP: [expr, str] }, 0] }` *(known string receiver only)* |
 | `.match(/pat/flags)` | `{ $regexMatch: { input, regex: "pat", options: "flags" } }` |
 | `.match("pat")` | `{ $regexMatch: { input, regex: "pat" } }` |
@@ -76,6 +76,24 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | `.padEnd(n[, ch])` | mirror of padStart, pad string concatenated *after* receiver |
 | `.repeat(n)` | `$reduce` over `$range(0, n)` concatenating receiver |
 | `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: { if: { $isArray: expr }, then: { $size: expr }, else: { $strLenCP: expr } } }` otherwise |
+
+#### Index normalisation (string methods)
+
+`$substrCP` **aborts the query** on a negative start (`Location34455`) or a negative length
+(`Location34454`) — it does not return a value the way JS does. A start or length past the end is
+safe (the server clamps it). So every index or length jsmql *derives* rather than passes through
+verbatim is floored at 0 by `clampNonNegative` (`codegen.ts`), folded at compile time when both
+operands are known. `normaliseSliceIndex` is the string counterpart of the array `resolveSliceIndex`
+and floors the same way.
+
+Which normalisation applies is decided by the JS method being modelled, not by the operator — SR2
+means these genuinely differ, so do not unify them:
+
+- **`.slice` / `.substr`** — a negative index counts from the end (`strLen + i`), floored at 0.
+- **`.substring`** — a negative index clamps to 0 (it never counts from the end).
+- **`.charAt`** — a negative index yields `""`. This is the one index that must **not** be floored:
+  flooring to 0 would wrongly return the first character. A literal negative folds to `""`; a runtime
+  index is guarded by a `$cond`.
 
 ### Array methods (no lambda)
 
