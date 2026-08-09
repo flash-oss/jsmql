@@ -165,6 +165,46 @@ describe("$out — multi-method RHS chains (Wave 4 #11)", () => {
   });
 });
 
+// `.reject` is `.filter` negated, and the pair stays in lockstep in every container.
+// A `$out` chain used to wire up only `.filter`, so the obvious next thing a user
+// writes ("archive everything that ISN'T expired") hit the unknown-method error.
+describe("$out — .reject is .filter negated", () => {
+  // Every predicate spelling, same negated $match — matching what a `$$ =` chain emits.
+  const NEGATED = { $match: { $expr: { $not: { $eq: ["$archived", true] } } } };
+  for (const [spelling, predicate] of [
+    ["arrow", "d => d.archived === true"],
+    ["matches-object", "{ archived: true }"],
+    ['["field", value] pair', '["archived", true]'],
+  ] as const) {
+    it(`accepts the ${spelling} spelling`, () => {
+      expect(jsmql(`$$$.live = $$.reject(${predicate});`)).toEqual([NEGATED, { $out: "live" }]);
+    });
+  }
+
+  it("emits exactly what the same .reject emits in a `$$ =` chain", () => {
+    expect(jsmql("$$$.live = $$.reject({ archived: true });")).toEqual([
+      ...(jsmql("$$ = $$.reject({ archived: true });") as object[]),
+      { $out: "live" },
+    ]);
+  });
+
+  it("chains with .filter and the rest of the stream methods", () => {
+    expect(jsmql("$$$.live = $$.filter(d => d.tier === 'gold').reject({ archived: true }).take(10);")).toEqual([
+      { $match: { tier: "gold" } },
+      NEGATED,
+      { $limit: 10 },
+      { $out: "live" },
+    ]);
+  });
+
+  it("accepts the `function` spelling of the predicate", () => {
+    expect(jsmql("$$$.live = $$.reject(function (d) { return d.archived === true; });")).toEqual([
+      NEGATED,
+      { $out: "live" },
+    ]);
+  });
+});
+
 describe("$out — ParamRef in bracket-LHS (Wave 4 #12, jsmql.compile binding)", () => {
   it("$$$[boundColl] resolves the bracket via the compile-time binding", () => {
     const fn = jsmql.compile(({ destColl }) => ($$$[destColl] = $$));

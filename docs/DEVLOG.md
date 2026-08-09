@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — feat: `$$.reject(...)` works in a `$out` write chain
+
+`$$$.<coll> = $$.reject(<predicate>)` now lowers, emitting the same negated
+`$match: { $expr: { $not: … } }` a `$$ = $$.reject(p)` chain emits, followed by the
+`$out`. It was the only container where the `.filter` / `.reject` pair had come apart:
+[src/out-translation.ts](src/out-translation.ts) special-cased `.filter` ahead of the
+stream-method registry, and `.reject` isn't in that registry (it's a `.filter`
+variant), so it fell through to the unknown-method error — while `.filter`,
+`.map`, `.take` and the rest all worked.
+
+That is exactly the next thing a user writes after the predicate-gate fix above:
+having learned `$$$.archive = $$.filter({ status: "expired" })`, the inverse
+("archive everything that ISN'T expired") is the obvious follow-up and hit a dead
+end. Now that both the gate and the negation live in shared helpers
+(`requireStreamPredicate` / `negateStreamPredicate`), the fix is one branch —
+`.filter` and `.reject` share it — rather than a second copy of the lowering.
+Verified against a live `mongod`: the emitted pipeline writes exactly the
+non-matching documents.
+
+---
+
 ## 2026-08-09 — fix: one gate for every local `$$` predicate, so spelling can't change the MQL
 
 `$$.filter(...)` / `$$.reject(...)` now take their argument through a single shared gate,

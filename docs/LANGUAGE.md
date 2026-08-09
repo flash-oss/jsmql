@@ -998,8 +998,11 @@ jsmql("$$$$.dw.archive = $$;")
 // → [{ $out: { db: "dw", coll: "archive" } }]
 
 // 3. Pre-filter inline — $$.filter(<predicate>) on the RHS emits a $match before the $out.
+//    Any predicate spelling works, and $$.reject(<predicate>) is its negation.
 jsmql("$$$$.dw.archive = $$.filter(u => !u.active);")
 // → [{ $match: ... }, { $out: { db: "dw", coll: "archive" } }]
+jsmql('$$$$.dw.archive = $$.filter({ status: "expired" });')
+// → [{ $match: { status: "expired" } }, { $out: { db: "dw", coll: "archive" } }]
 
 // 4. Bracket form — required for collection names that aren't valid JS identifiers.
 jsmql('$$$["my-archive.v2"] = $$;')
@@ -1029,6 +1032,7 @@ Bracket and dotted segments mix freely (`$$$$.dw["archive"]` is equivalent to `$
 |---|---|---|
 | bare `$$` | (none) | Writes the current stream unchanged. |
 | `$$.filter(<predicate>)` | `$match` | Same index-friendly translator `$match` uses, and the same predicate spellings as everywhere else. Expression body → query syntax + `$expr` residual; block body → full sub-pipeline. |
+| `$$.reject(<predicate>)` | `$match` | `.filter` negated — `$match: { $expr: { $not: … } }`, same as in a `$$ =` chain. |
 | `$$.<streamMethod>(…)` | that method's stage(s) | Any chainable stream method (e.g. `.take(n)`, `.toSorted(…)`) — see [Stream methods chained after the RHS](#stream-methods-chained-after-the-rhs) for the vocabulary. |
 | `$$.$<stage>(…)` | that stage | A chained stage call (e.g. `$$.$sort({ … })`). A `$out` chain runs at the outer pipeline level, so this is an ordinary top-level stage placed before the write. |
 

@@ -148,11 +148,16 @@ the statement form uses. Placement is checked with `isLastInContainer: false`,
 because the `$out` itself always follows — which is what rejects a second write
 stage in the chain.
 
-`.filter`'s **argument** first goes through `requireStreamPredicate` — the shared
-local-`$$` predicate gate — so a `$out` chain accepts exactly the predicate
-spellings the `$$ =` stream and a `$facet` branch do, and lowers each to the same
-MQL. See [pipeline-validation.md](pipeline-validation.md) § the local-`$$`
+`.filter`'s and `.reject`'s **argument** first goes through `requireStreamPredicate`
+— the shared local-`$$` predicate gate — so a `$out` chain accepts exactly the
+predicate spellings the `$$ =` stream and a `$facet` branch do, and lowers each to
+the same MQL. See [pipeline-validation.md](pipeline-validation.md) § the local-`$$`
 predicate gate.
+
+`.reject` is `.filter` negated (via the shared `negateStreamPredicate`), so the two
+share one branch in `lowerChainMethod` and stay in lockstep here exactly as they do
+in a `$$ =` chain: `$$$.live = $$.reject(p)` emits the same `$match: { $expr: { $not:
+… } }` that `$$ = $$.reject(p)` does, then the trailing `$out`.
 
 The normalised lambda then reuses the same predicate translator that `$match`, the
 `$facet` variant of `$ = { … }`, and the union-form sub-pipelines all

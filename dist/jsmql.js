@@ -14214,7 +14214,7 @@ function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
     checkStageLinkPlacement(call.method, call.pos, prevStages.length, false, "top");
     return { stages: lowerBlock2(stageLinkBlock(call, body), outerCtx) };
   }
-  if (call.method === "filter") {
+  if (call.method === "filter" || call.method === "reject") {
     return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock2) };
   }
   const def = lookupStreamMethod(call.method);
@@ -14237,28 +14237,32 @@ var STAGE_EQUIVALENT_HINT = {
   flat: "$unwind"
 };
 function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
+  const method = call.method;
   if (call.args.length !== 1) {
     throw new CodegenError(
-      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${call.args.length}.`,
+      `'$$.${method}(<predicate>)' takes exactly one predicate argument, got ${call.args.length}.`,
       call.pos
     );
   }
-  const arg = requireStreamPredicate(call.args[0], {
-    method: "filter",
-    position: OUT_PREDICATE_POSITION,
-    pos: call.pos
-  });
+  const predicate = requireStreamPredicate(call.args[0], { method, position: OUT_PREDICATE_POSITION, pos: call.pos });
+  const arg = method === "reject" ? negateStreamPredicate(predicate) : predicate;
+  if (arg === null) {
+    throw new CodegenError(
+      `'$$.reject(<predicate>)' ${OUT_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
+      predicate.pos
+    );
+  }
   return lowerLambdaPredicate(arg, outerCtx, lowerBlock2, {
     freshCtx: freshSubPipelineCtx,
     onLocalRef: (letVars, param, pos) => {
       throw new CodegenError(
-        localRefInPredicateMessage({ letVars, param, method: "filter", position: OUT_PREDICATE_POSITION }),
+        localRefInPredicateMessage({ letVars, param, method, position: OUT_PREDICATE_POSITION }),
         pos
       );
     },
     missingBody: () => {
       throw new CodegenError(
-        `'$$.filter(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
+        `'$$.${method}(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
         arg.pos
       );
     }

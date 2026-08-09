@@ -12,6 +12,7 @@ import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.t
 import {
   localRefInPredicateMessage,
   lowerLambdaPredicate,
+  negateStreamPredicate,
   requireStreamPredicate,
   type SubPipelineLowerer,
   type SlotAllocator,
@@ -288,7 +289,7 @@ function lowerChainMethod(
     checkStageLinkPlacement(call.method, call.pos, prevStages.length, false, "top");
     return { stages: lowerBlock(stageLinkBlock(call, body), outerCtx) };
   }
-  if (call.method === "filter") {
+  if (call.method === "filter" || call.method === "reject") {
     return { stages: lowerFilterAsMatch(call, outerCtx, lowerBlock) };
   }
   const def = lookupStreamMethod(call.method);
@@ -322,10 +323,12 @@ const STAGE_EQUIVALENT_HINT: Record<string, string> = {
 };
 
 /**
- * `$$.filter(<predicate>)` → `[{ $match: <translated> }]`. The argument goes
- * through the shared gate (`requireStreamPredicate`), so an arrow and its
- * matches-object / field-name / `["field", value]` equivalents all lower
+ * `$$.filter(<predicate>)` / `$$.reject(<predicate>)` → `[{ $match: <translated> }]`.
+ * The argument goes through the shared gate (`requireStreamPredicate`), so an arrow
+ * and its matches-object / field-name / `["field", value]` equivalents all lower
  * identically here — same vocabulary as the `$$ =` stream and a `$facet` branch.
+ * `.reject` is `.filter` negated via the shared `negateStreamPredicate`, so the pair
+ * stays in lockstep here as it does in a `$$ =` chain.
  * The normalised lambda is then lowered via the shared `lowerLambdaPredicate`,
  * which lookup/union/facet use too:
  *   - Expression body → match-translation's engine: translatable conjuncts emit
@@ -339,17 +342,26 @@ function lowerFilterAsMatch(
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
 ): object[] {
+  const method = call.method;
   if (call.args.length !== 1) {
     throw new CodegenError(
-      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${call.args.length}.`,
+      `'$$.${method}(<predicate>)' takes exactly one predicate argument, got ${call.args.length}.`,
       call.pos,
     );
   }
-  const arg = requireStreamPredicate(call.args[0], {
-    method: "filter",
-    position: OUT_PREDICATE_POSITION,
-    pos: call.pos,
-  });
+  const predicate = requireStreamPredicate(call.args[0], { method, position: OUT_PREDICATE_POSITION, pos: call.pos });
+  // `.reject` negates the same predicate `.filter` would have matched. A block body
+  // has no single expression to invert, so that combination is rejected rather than
+  // silently dropping the negation.
+  const arg = method === "reject" ? negateStreamPredicate(predicate) : predicate;
+  if (arg === null) {
+    throw new CodegenError(
+      `'$$.reject(<predicate>)' ${OUT_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
+        `a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
+        `or use a block-bodied '$$.filter' with the inverted condition.`,
+      predicate.pos,
+    );
+  }
   // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). A
   // `$out` chain has no `let` slot, so a predicate that references the local doc
   // (`$.<field>`, captured as a non-empty `letVars`) is rejected in favour of the
@@ -358,13 +370,13 @@ function lowerFilterAsMatch(
     freshCtx: freshSubPipelineCtx,
     onLocalRef: (letVars, param, pos) => {
       throw new CodegenError(
-        localRefInPredicateMessage({ letVars, param, method: "filter", position: OUT_PREDICATE_POSITION }),
+        localRefInPredicateMessage({ letVars, param, method, position: OUT_PREDICATE_POSITION }),
         pos,
       );
     },
     missingBody: () => {
       throw new CodegenError(
-        `'$$.filter(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
+        `'$$.${method}(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
         arg.pos,
       );
     },
