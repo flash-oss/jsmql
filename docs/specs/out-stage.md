@@ -266,15 +266,15 @@ src/
   might look like `$$$.coll += $$;` (compound assign — "merge into") to
   preserve the destination-on-the-left mental model, but the four merge-
   control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a
-  more careful design pass. Out of scope for this release.
+  more careful design pass. Out of scope for now.
 
 ## Landed
 
-- **Multi-method RHS chains** (Wave 4 #11). The chain dispatch in
-  `lowerChainMethod` routes every non-`.filter` method through the
-  shared `STREAM_METHODS` registry. `.map`, `.slice`, `.toSorted`,
-  `.flatMap`, `.concat` all compose freely before the trailing `$out`.
-- **Bound destination via `jsmql.compile`** (Wave 4 #12). `$$$[boundColl] = $$`
+- **Multi-method RHS chains.** `lowerChainMethod` routes everything outside its own
+  three shapes (stage link, `.filter`, `.reject`) through the shared
+  `STREAM_METHODS` registry, so registry methods compose freely before the trailing
+  `$out` — see [Adding more chain methods](#adding-more-chain-methods).
+- **Bound destination via `jsmql.compile`.** `$$$[boundColl] = $$`
   resolves the bracket-index at compile time when `boundColl` is a string-typed
   parameter binding (via `ctx.bindings`). Non-string bindings surface a
   "parameter binding must be a string" error.

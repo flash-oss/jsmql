@@ -323,7 +323,7 @@ src/
   is `$replaceWith` and no later stage uses the namespace, the trailing
   `$unset: "__jsmql"` is harmless but unnecessary (the field doesn't exist
   on the post-replace document). Folding it away would be a small win; out
-  of scope for this release.
+  of scope for now.
 - **`$replaceRoot` as an alternative target.** If a user explicitly wants
   the verbose 4.0-compatible shape, they can still write
   `$replaceRoot({ newRoot: <expr> })` directly — the stage-call form is

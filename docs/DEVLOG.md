@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — docs: drop the last phantom-release phrasing, and a `Landed` bullet that had already rotted
+
+Follow-on to the `v1` sweep below. Two specs said work was *"out of scope for this
+release"* — the same phantom timeline in different words, since there has been no
+release to be out of scope for. Now "out of scope for now", which says the true thing:
+nobody is working on it. `test/deferred-allowlist.txt` tracks the reworded phrase.
+
+The more interesting find is [docs/specs/out-stage.md](docs/specs/out-stage.md)'s
+`## Landed` section, whose "multi-method RHS chains" bullet claimed `lowerChainMethod`
+"routes every non-`.filter` method through the registry" and then listed five method
+names. That sentence was **invalidated two commits earlier** by the `$$.reject` work,
+which added a second special-cased method — a spec paragraph going stale inside the same
+session, which is about as sharp a demonstration of the rule as one could ask for. It now
+names the shape of the exception (stage link, `.filter`, `.reject`) instead of the
+membership of the set, and links to the section that owns the detail rather than
+re-listing methods.
+
+Worth noting what was *not* changed: the `Wave N` markers scattered through specs, test
+names, and code comments. They are internal planning references rather than claims about
+current state, so they mislead nobody — but a spec's `## Landed` section is duplicated
+DEVLOG, and the bullet above shows it rots exactly like any other status snapshot. If
+those sections go, this file is where their content already lives.
+
+---
+
 ## 2026-08-09 — docs: remove the phantom `v1` marker, including from user-facing errors
 
 The pre-1.0 rule in [CLAUDE.md](CLAUDE.md) bans `v1`/`v2` markers outright — they imply

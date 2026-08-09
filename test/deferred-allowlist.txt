@@ -46,7 +46,7 @@ docs/specs/lookup-stage.md::## Future work
 # Landed: .copyWithin (Wave 4 #13), $out multi-method RHS (#11), bound dest (#12)
 # Remaining $out deferral: $merge sugar (DEF-005, tag in DEFERRED.md).
 # -----------------------------------------------------------------------------
-docs/specs/out-stage.md::Out of scope for this release
+docs/specs/out-stage.md::Out of scope for now.
 
 # -----------------------------------------------------------------------------
 # Fork-in-flight: richer per-key reducer bodies (#32) + dict-build (landed but
