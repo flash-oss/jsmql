@@ -4112,6 +4112,45 @@ describe("string padding methods", () => {
       },
     });
   });
+  it("a multi-character pad is trimmed to the remaining width, like JS", () => {
+    // JS pads to exactly `targetLength` characters, cutting the pad mid-string:
+    // "gold".padStart(9, "US") === "USUSUgold". Repeating the pad (target - len)
+    // times over-fills, so the repeated run is trimmed back.
+    const need = { $subtract: [5, { $strLenCP: "$$jsmqlStr" }] };
+    expect(jsmql.expr('$.code.padStart(5, "US")')).toEqual({
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$code", ""] } },
+        in: {
+          $cond: {
+            if: { $gte: [{ $strLenCP: "$$jsmqlStr" }, 5] },
+            then: "$$jsmqlStr",
+            else: {
+              $concat: [
+                {
+                  $substrCP: [
+                    { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", "US"] } } },
+                    0,
+                    { $max: [0, need] },
+                  ],
+                },
+                "$$jsmqlStr",
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
+  it("a one-character pad skips the trim (it already lands exactly)", () => {
+    // Output stability for the overwhelmingly common `.padStart(n, "0")`.
+    const json = JSON.stringify(jsmql.expr('$.code.padStart(5, "0")'));
+    expect(json).not.toContain("$substrCP");
+  });
+  it("a runtime pad expression is always trimmed (length unknown at compile time)", () => {
+    // Includes a `$`-prefixed source string, which per HR1 is a field reference.
+    expect(JSON.stringify(jsmql.expr('$.code.padStart(5, "$sep")'))).toContain("$substrCP");
+    expect(JSON.stringify(jsmql.expr("$.code.padStart(5, $.sep)"))).toContain("$substrCP");
+  });
   it("padStart defaults to space", () => {
     const out = jsmql.expr("$.s.padStart(10)") as Record<string, unknown>;
     // Spot-check: pad string should be a space

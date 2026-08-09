@@ -122,6 +122,22 @@ $ = { codes: $.items.map(s => String(s.qty).padStart(s.qty, "0")) };`,
     expect(rows.slice(0, 4).map((r) => r.codes)).toEqual([["1", "02"], ["1"], ["0000000010"], ["02", "1"]]);
   });
 
+  // A multi-character pad must fill to exactly `targetLength`, cutting the pad
+  // mid-string as JS does — repeating it whole over-fills. Values checked against
+  // real String.prototype.padStart/padEnd.
+  it("expr: padStart/padEnd fill to the target width with a multi-character pad", async () => {
+    const rows = (await aggregate(
+      "users",
+      `$ = { name: $.name, s: $.tier.padStart(9, "<>"), e: $.tier.padEnd(9, "<>") };`,
+    )) as { name: string; s: string; e: string }[];
+    const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+    // "platinum" (8) → 1 pad char: the pad is cut mid-string, not repeated whole.
+    expect(byName["Ada Lovelace"]).toMatchObject({ s: "<platinum", e: "platinum<" });
+    // "gold" (4) → 5 pad chars = "<><><", NOT five whole "<>" units.
+    expect(byName["Grace Hopper"]).toMatchObject({ s: "<><><gold", e: "gold<><><" });
+    expect(byName["Karen Spärck Jones"]).toMatchObject({ s: "<><bronze", e: "bronze<><" });
+  });
+
   // The `0x…` ObjectId literal, end-to-end: jsmql mints a live BSON ObjectId so
   // the query uses the _id index and returns the one document. (realistic.test.ts
   // "fetch a document by its ObjectId" only checks the *emitted* shape.)

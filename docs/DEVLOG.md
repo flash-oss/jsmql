@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — fix: `.padStart()` / `.padEnd()` fill to a width instead of repeating the pad whole
+
+Noted while measuring the `$let`-capture fix below, and fixed here. The lowering built its padding by repeating the *entire* pad string `targetLength - strLen` times, which is only correct when the pad is one character. JS pads to exactly `targetLength` **characters**, cutting a multi-character pad mid-string: `"gold".padStart(9, "US")` is `"USUSUgold"`, but jsmql emitted `"USUSUSUSUSgold"` — 14 characters for a request of 9. An SR2 violation (a native JavaScript API must behave as its JavaScript self), and a silent one: the result is a plausible-looking string, so nothing signalled the error.
+
+MQL has no fill primitive, so the repeat stays and the run is trimmed back with `$substrCP`. Three details, each verified on a live mongod rather than reasoned about: the trim length is floored with `clampNonNegative`, because the `$cond` selects the other branch when the receiver is already long enough but the optimizer may fold this one anyway and `$substrCP` rejects a negative length; an empty pad needs no special case, since repeating `""` yields `""` and the trim leaves the receiver untouched exactly as JS does; and the trim is **skipped** when the pad is a source literal one code point long, so `.padStart(n, "0")` and the default space pad keep their existing, smaller output — the fix is invisible to the overwhelmingly common call.
+
+One divergence remains and is now documented rather than hidden: the width is counted in **code points** (`$strLenCP`), where JS counts UTF-16 units. `"gold".padStart(9, "👍")` pads to 9 code points; JS pads to 9 units and produces a lone surrogate half. jsmql cannot emit that broken string through `$substrCP`, and shouldn't — it is the same code-point model `.length` and `.endsWith()` already use. Checked against real `String.prototype` across 15 call shapes × 7 receivers (multi-char pads, an empty pad, a pad longer than the target, a receiver already past the target, literal receivers that let the optimizer fold, and missing/null), plus a live integration case over the fixture's tier strings.
+
 ## 2026-08-08 — fix: internal `$let` bindings no longer capture a user's lambda param
 
 Found while fixing the `$substrCP`/`$strLenCP` aborts below, and worse than either of them: this one returned **wrong data silently**, with no server error at all.

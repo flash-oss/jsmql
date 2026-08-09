@@ -1312,6 +1312,7 @@ $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "
 $.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
 $.code.padStart(5, "0")            // padded via $reduce + $range + $concat
+$.tier.padStart(9, "US")           // "gold" → "USUSUgold" — a multi-char pad is cut to fit, as in JS
 $.note.padEnd(10)                  // (default pad char is space)
 "-".repeat($.n)                    // $reduce concatenating "-" n times
 

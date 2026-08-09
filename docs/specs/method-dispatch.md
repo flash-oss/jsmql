@@ -72,7 +72,7 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | `.match("pat")` | `{ $regexMatch: { input, regex: "pat" } }` |
 | `.matchAll(/pat/g)` | `{ $regexFindAll: { input, regex, options } }` (requires `g` flag) |
 | `.search(/pat/)` | `$regexFind` + `.idx` field, with `$ifNull` fallback to `-1` |
-| `.padStart(n[, ch])` | `$let` + `$cond` + `$reduce`($range) — pad-string concatenated *before* receiver |
+| `.padStart(n[, ch])` | `$let` + `$cond` + `$reduce`($range) — pad-string concatenated *before* receiver, trimmed to the remaining width (see below) |
 | `.padEnd(n[, ch])` | mirror of padStart, pad string concatenated *after* receiver |
 | `.repeat(n)` | `$reduce` over `$range(0, n)` concatenating receiver |
 | `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: { if: { $isArray: expr }, then: { $size: expr }, else: { $strLenCP: expr } } }` otherwise |
@@ -131,6 +131,26 @@ A `vars` **value** never needs this: MongoDB evaluates it in the enclosing scope
 takes effect. That is why `Object.groupBy`'s `key` binding is safe despite the common name, while
 `.padStart`'s was not. When adding a lowering that emits a `$let`, ask which side the user's
 expression lands on — body ⇒ `letBind`, value ⇒ either is fine.
+
+#### Padding fills to a width, it does not repeat whole (`.padStart` / `.padEnd`)
+
+JS pads to exactly `targetLength` **characters**, cutting a multi-character pad mid-string:
+`"gold".padStart(9, "US")` is `"USUSUgold"`, not `"USUSUSUSUSgold"`. MQL has no fill primitive, so
+the lowering repeats the pad `targetLength - strLen` times (always enough, since the pad is at least
+one character) and then trims the run back to that width with `$substrCP`.
+
+The trim is skipped when the pad is a source literal exactly one code point long
+(`isSingleCodePointLiteral`) — repeating a one-character pad already lands exactly, so the common
+`.padStart(n, "0")` and the default space pad keep their smaller output. A runtime pad expression, or
+a `$`-prefixed source string (a field reference per HR1), has unknown length and is always trimmed.
+The trim length is floored by `clampNonNegative`: the `$cond` picks the other branch when the
+receiver is already long enough, but the optimizer may still fold this one, and `$substrCP` rejects a
+negative length.
+
+**Divergence — width is counted in code points, not UTF-16 units.** Like every other length here this
+uses `$strLenCP`, so `"gold".padStart(9, "👍")` pads to 9 code points where JS pads to 9 UTF-16 units
+and emits a lone surrogate half. jsmql cannot produce that broken string through `$substrCP`, and
+would not want to.
 
 ### Array methods (no lambda)
 

@@ -1130,6 +1130,16 @@ function coerceStringBinding(genObj: unknown): unknown {
 }
 
 /**
+ * True when a generated value is a source string literal exactly one code point
+ * long. Repeating such a pad N times lands on exactly N characters, so the
+ * padding lowering can skip its trim. Per HR1 a `$`-prefixed source string is a
+ * field reference, never a literal — its length is unknown at compile time.
+ */
+function isSingleCodePointLiteral(value: unknown): boolean {
+  return typeof value === "string" && !value.startsWith("$") && [...value].length === 1;
+}
+
+/**
  * Clamp a string-index AST node to non-negative, matching JS `.substring`
  * semantics where negative arguments are treated as 0. Folds at compile time
  * when the node is a literal number (or unary-minus of one); otherwise wraps
@@ -3323,16 +3333,20 @@ function generateMethodCall(
       // `target` and `pad` are user expressions spliced into the body, so the
       // binding must go through letBind or it would capture their lambda refs.
       return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => {
-        // If str length >= target, return str. Otherwise build pad-str of
-        // (target - len) chars by reducing $range, then concat on the right side.
-        const padReduce = {
-          $reduce: {
-            input: { $range: [0, { $subtract: [target, { $strLenCP: s }] }] },
-            initialValue: "",
-            in: { $concat: ["$$value", pad] },
-          },
+        // If str length >= target, return str. Otherwise build the filler by
+        // repeating `pad` and concat it on the right side.
+        const need = { $subtract: [target, { $strLenCP: s }] };
+        const repeated = {
+          $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } },
         };
-        const concatOrder = method === "padStart" ? [padReduce, s] : [s, padReduce];
+        // JS pads to exactly `targetLength` CHARACTERS, truncating a multi-character
+        // pad mid-string ("gold".padStart(9, "US") === "USUSUgold"). Repeating it
+        // `need` times over-fills, so trim back to `need`. A one-code-point literal
+        // already lands exactly, and skipping its trim keeps the common
+        // `.padStart(n, "0")` output unchanged. The length is floored because the
+        // optimizer may fold this branch even when the $cond selects the other one.
+        const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
+        const concatOrder = method === "padStart" ? [filler, s] : [s, filler];
         return cond({ $gte: [{ $strLenCP: s }, target] }, s, { $concat: concatOrder });
       });
     }
