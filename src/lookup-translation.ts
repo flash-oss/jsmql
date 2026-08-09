@@ -35,7 +35,7 @@ import {
   shorthandToLambda,
 } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
-import { LENGTH_SLOT, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "./namespace.ts";
+import { LENGTH_SLOT, exprVar, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "./namespace.ts";
 import { didYouMean } from "./levenshtein.ts";
 // Cycle-safe import: stream-methods.ts imports SlotAllocator / SubPipelineLowerer
 // from this module, and lookupStreamMethod is a runtime function (not consumed
@@ -521,7 +521,7 @@ export function tryShorthandToLambda(arg: CallArg, method: string, param: string
  * predicate. Shared with the chained-`.filter` normaliser (`chainFilterLambda`)
  * so head and chain positions desugar to a byte-identical lambda.
  */
-const FOREIGN_SHORTHAND_PARAM = "jsmqlItem";
+const FOREIGN_SHORTHAND_PARAM = exprVar("item");
 
 /**
  * Normalise a `.aggregate(...)` argument into the block-body `Lambda` the lookup
@@ -2204,7 +2204,7 @@ function injectImplicitFilterForValueTerminal(expr: Expr): Expr {
   if (classifyLookupReceiver(cur) === null) return expr; // not a `$$$.<coll>` receiver
   const trueArrow: Expr = {
     type: "Lambda",
-    params: ["jsmqlD"],
+    params: [exprVar("d")],
     body: { type: "BooleanLiteral", value: true, pos: innermost.pos },
     pos: innermost.pos,
   };
@@ -2346,7 +2346,7 @@ export function extractLookupCalls(
 // A synthesized `el => el.<path>` lambda for the `.map("<path>")` shorthand, used
 // when peeling a terminal map off a lookup chain (below).
 /** Synthetic element parameter for a shorthand-spelled `.map` iteratee. */
-const ITERATEE_SHORTHAND_PARAM = "jsmqlEl";
+const ITERATEE_SHORTHAND_PARAM = exprVar("el");
 
 // If a chain's terminal method is a value-extracting `.map(iteratee)` — a field
 // string or an expression-body arrow — return its iteratee as a lambda so it can

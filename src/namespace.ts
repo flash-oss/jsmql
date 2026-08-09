@@ -125,6 +125,41 @@ export function letSysVar(name: string, depth: number): string {
 /** Prefix for `$lookup.let` correlation vars — must start with a letter (no `__`). */
 const JSMQL_NS_VAR = "jsmql_";
 
+// ── In-expression `$let` / `$map` / `$filter` variable names ──────────────────
+//
+// The third namespace. When a lowering needs to bind a value it computed itself
+// — a receiver it must not re-evaluate, a loop element, an index — it emits a
+// MongoDB variable, and that name shares one flat scope with the user's own
+// lambda params. A bare name (`s`, `v`, `kv`) is therefore a capture hazard
+// whenever the lowering also splices OUTER-scope codegen into the `$let`'s
+// `in:`: `.padStart(s.n)` inside `.map(s => …)` re-resolved `s` against the
+// receiver. Same grammar constraint as the correlation vars above (lowercase
+// lead, `[A-Za-z0-9_]`), so the shared `jsmql` prefix carries over.
+//
+// The prefix alone is only a convention, though — nothing stops a user naming a
+// param `jsmqlArr`. Uniqueness is `internalVar()` in codegen.ts, which gensyms
+// this name against the in-scope params; this module owns the SPELLING only.
+
+/**
+ * Name for a compiler-emitted `$let` / `$map` / `$filter` variable —
+ * `exprVar("arr")` → `jsmqlArr`. Callers should reach this through
+ * `internalVar(ctx, base)` in codegen.ts, which adds the collision check; call
+ * it directly only where no `GenerateCtx` is in scope AND the binding is
+ * provably unreferenced by user codegen.
+ */
+export function exprVar(base: string): string {
+  return `jsmql${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+/**
+ * Does `name` sit in the expression-variable namespace? True for a user param
+ * that happens to spell one, which is exactly the case `internalVar` gensyms
+ * around — so this answers "is a collision possible", not "did we emit this".
+ */
+export function isExprVar(name: string): boolean {
+  return /^jsmql[A-Z]/.test(name);
+}
+
 /**
  * Is `name` one of the `$lookup.let` correlation vars above? Used to catch a
  * hoisted var that has landed in a QUERY-document slot, where MongoDB does not

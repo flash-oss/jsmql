@@ -3,7 +3,7 @@ import { checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-valida
 import { checkEnum } from "./literal-gate.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
-import { CORRELATION_VAR_RE, LENGTH_SLOT } from "./namespace.ts";
+import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import { ASCII_WORDS_RE, HTML_ESCAPE_PAIRS } from "./lodash-shared.ts";
 import { type ConstEnv, evalConst } from "./const-eval.ts";
@@ -1105,26 +1105,8 @@ function gensymInScope(ctx: GenerateCtx, base: string): string {
 }
 
 /**
- * Bind `value` to an internal `$let` variable and build the body around a
- * reference to it, using a name that cannot capture a user lambda param.
- *
- * Necessary whenever the body splices in a **user-supplied** expression — a
- * method argument, a callback result — because that expression was generated in
- * the OUTER scope and reads its lambda params as `$$name`. If the binding reuses
- * that name, the spliced reference silently re-points at this receiver:
- * `.map(s => s.code.padStart(3, s.pad))` read `.pad` off the code string and
- * returned null instead of the padded value.
- *
- * A `vars` VALUE never needs this — MongoDB evaluates it in the enclosing scope,
- * before the binding takes effect, which is why `Object.groupBy`'s `key` binding
- * is safe despite the common name.
+ * Coerce a receiver to a string for a `$let` binding, without double-wrapping.
  */
-function letBind(ctx: GenerateCtx, base: string, value: unknown, body: (ref: string) => unknown): unknown {
-  const name = gensymInScope(ctx, base);
-  return { $let: { vars: { [name]: value }, in: body(`$$${name}`) } };
-}
-
-/** Coerce a receiver to a string for a `$let` binding, without double-wrapping. */
 function coerceStringBinding(genObj: unknown): unknown {
   return isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "");
 }
@@ -1137,6 +1119,27 @@ function coerceStringBinding(genObj: unknown): unknown {
  */
 function isSingleCodePointLiteral(value: unknown): boolean {
   return typeof value === "string" && !value.startsWith("$") && [...value].length === 1;
+}
+
+/**
+ * Name a compiler-emitted `$let` / `$map` / `$filter` variable, plus its `$$` read.
+ * Returns `[name, ref]` because nearly every caller needs both — the `vars`/`as`
+ * key and the references spliced into the body.
+ *
+ * MongoDB variables live in ONE flat scope shared with the user's lambda params,
+ * so a lowering that binds its receiver and then splices outer-scope codegen into
+ * the same `$let` will capture any argument referencing a param of that name. The
+ * `jsmql` prefix (`src/namespace.ts` § expression variables) makes that unlikely;
+ * the gensym makes it impossible. It returns the prefixed base untouched unless
+ * the name is genuinely in scope, so output only changes for a program that
+ * actually uses it — and then OUR binding moves aside, never the user's param.
+ *
+ * Comparing against the raw `lambdaParams` is exact here: `safeVarName` only ever
+ * prepends `v`, and no `jsmql`-prefixed base can be the image of that.
+ */
+function internalVar(ctx: GenerateCtx, base: string): [string, string] {
+  const name = gensymInScope(ctx, exprVar(base));
+  return [name, `$$${name}`];
 }
 
 /**
@@ -1293,9 +1296,13 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
     // negative start is resolved from the end by `$slice`'s position arg).
     // count = max(1, size) so an empty array is `$slice: [[], start, 1]` → []
     // rather than a rejected count of 0 (same guard as `.drop(n)`).
-    return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
-      $slice: [arr, _generate(startNode, ctx), { $max: [1, { $size: arr }] }],
-    }));
+    const [vArr, arr] = internalVar(ctx, "arr");
+    return {
+      $let: {
+        vars: { [vArr]: genObj },
+        in: { $slice: [arr, _generate(startNode, ctx), { $max: [1, { $size: arr }] }] },
+      },
+    };
   }
 
   // --- slice(start, end): elements at indices [start, end) ---
@@ -1314,9 +1321,10 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
   // start 0 (literal), non-literal-or-negative end → "first `end`": resolve the
   // end index and lean on the 2-arg (count-tolerant) `$slice`.
   if (startLit === 0) {
-    return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
-      $slice: [arr, resolveSliceIndex(endNode, ctx, { $size: arr })],
-    }));
+    const [vArr, arr] = internalVar(ctx, "arr");
+    return {
+      $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, resolveSliceIndex(endNode, ctx, { $size: arr })] } },
+    };
   }
 
   // General case (negative start, or a runtime index): resolve both indices
@@ -1326,18 +1334,24 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
   // a compile-time literal, MongoDB's optimizer can fold the (unselected) slice
   // branch instead of rejecting a constant 0-count `$slice`; the outer `$cond`
   // still returns `[]` for the empty range.
-  const count = { $subtract: ["$$jsmqlF", "$$jsmqlK"] };
-  return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
+  const [vArr, arr] = internalVar(ctx, "arr");
+  const [vK, k] = internalVar(ctx, "k");
+  const [vF, f] = internalVar(ctx, "f");
+  const count = { $subtract: [f, k] };
+  return {
     $let: {
-      // These VALUES hold the user's index expressions, so they must be resolved
-      // against `arr` — the outer binding, which letBind kept collision-free.
-      vars: {
-        jsmqlK: resolveSliceIndex(startNode, ctx, { $size: arr }),
-        jsmqlF: resolveSliceIndex(endNode, ctx, { $size: arr }),
+      vars: { [vArr]: genObj },
+      in: {
+        $let: {
+          vars: {
+            [vK]: resolveSliceIndex(startNode, ctx, { $size: arr }),
+            [vF]: resolveSliceIndex(endNode, ctx, { $size: arr }),
+          },
+          in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, k, { $max: [count, 1] }] }, []] },
+        },
       },
-      in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, "$$jsmqlK", { $max: [count, 1] }] }, []] },
     },
-  }));
+  };
 }
 
 /** Negate a count that's either a compile-time number or a runtime expression. */
@@ -2245,7 +2259,8 @@ function keyArrayForObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx): unk
   for (const entry of entries) {
     if (entry.type === "SpreadElement") {
       flush();
-      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: "kv", in: "$$kv.k" } });
+      const [vKv, kv] = internalVar(ctx, "kv");
+      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: vKv, in: `${kv}.k` } });
       continue;
     }
     if (currentChunk === null) currentChunk = [];
@@ -2827,14 +2842,18 @@ function firstCharExpr(s: unknown, op: "$toUpper" | "$toLower"): unknown {
 // ["FOO", "Bar"]. Pattern (`ASCII_WORDS_RE`) is shared with the compile-time
 // fold (lodash-fold.ts) via lodash-shared.ts so the two can't drift.
 // `$regexFindAll` needs 4.4+.
+// These two take no ctx, so their element vars can't be gensym'd — safe because
+// both bodies are fixed MQL built from the ref itself, never user codegen, so
+// there is nothing inside that could reference an outer param. (`exprVar` still
+// owns the spelling.)
 function wordsExpr(s: unknown): unknown {
-  return {
-    $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: "jsmqlWord", in: "$$jsmqlWord.match" },
-  };
+  const w = exprVar("word");
+  return { $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: w, in: `$$${w}.match` } };
 }
 // Join word expressions with `sep`, optionally transforming each word first.
 function joinWords(words: unknown, sep: string, transform?: (w: unknown) => unknown): unknown {
-  const items = transform === undefined ? words : { $map: { input: words, as: "jsmqlW", in: transform("$$jsmqlW") } };
+  const w = exprVar("w");
+  const items = transform === undefined ? words : { $map: { input: words, as: w, in: transform(`$$${w}`) } };
   return {
     $reduce: {
       input: items,
@@ -2919,7 +2938,7 @@ export function shorthandToLambda(arg: Expr, method: string, param: string): Lam
 // `$map`/`$filter` element var name and the iteratee expression evaluated against it.
 type ResolvedIteratee = { as: string; elem: string; value: unknown };
 function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: GenerateCtx): ResolvedIteratee {
-  const AS = "jsmqlItem";
+  const AS = gensymInScope(ctx, exprVar("item"));
   if (iteratee === undefined) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
   if (iteratee.type === "Lambda" && iteratee.block === undefined && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
@@ -2945,23 +2964,27 @@ function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): { as: s
 
 // `.takeWhile` / `.dropWhile` from the LEFT: find the first element whose predicate
 // is falsy (`$indexOfArray` on the strict-boolified predicate array → -1 if none),
-// then slice on that boundary. The receiver is bound to `$$jsmqlArr`; the caller
+// then slice on that boundary. The receiver is bound to an internal var; the caller
 // passes the (possibly reversed) array in. `drop` picks the keep-from-boundary slice;
 // otherwise the take-up-to-boundary slice.
-function takeDropWhile(arrExpr: unknown, pred: { as: string; cond: unknown }, drop: boolean): unknown {
-  const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
+function takeDropWhile(
+  arrExpr: unknown,
+  pred: { as: string; cond: unknown },
+  drop: boolean,
+  ctx: GenerateCtx,
+): unknown {
+  const [vArr, arr] = internalVar(ctx, "arr");
+  const [vFi, fi] = internalVar(ctx, "fi");
+  const preds = { $map: { input: arr, as: pred.as, in: { $cond: [pred.cond, true, false] } } };
   const body = drop
-    ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] }
-    : // take: the first `jsmqlFi` elements. The 2-arg `$slice` (first-n) — NOT the
-      // 3-arg `$slice: [arr, 0, jsmqlFi]` — so a boundary at index 0 (the first
+    ? { $cond: [{ $eq: [fi, -1] }, [], { $slice: [arr, fi, { $size: arr }] }] }
+    : // take: the first `fi` elements. The 2-arg `$slice` (first-n) — NOT the
+      // 3-arg `$slice: [arr, 0, fi]` — so a boundary at index 0 (the first
       // element already fails the predicate) is `$slice: [arr, 0]` → `[]`, instead of
       // the 3-arg `$slice: [arr, 0, 0]` mongod rejects ("count must be positive").
-      { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] };
+      { $cond: [{ $eq: [fi, -1] }, arr, { $slice: [arr, fi] }] };
   return {
-    $let: {
-      vars: { jsmqlArr: arrExpr },
-      in: { $let: { vars: { jsmqlFi: { $indexOfArray: [preds, false] } }, in: body } },
-    },
+    $let: { vars: { [vArr]: arrExpr }, in: { $let: { vars: { [vFi]: { $indexOfArray: [preds, false] } }, in: body } } },
   };
 }
 
@@ -2992,7 +3015,16 @@ function iterateeKeys(arr: unknown, it: ResolvedIteratee): unknown {
 // Order-preserving keep-first dedupe of `input` BY iteratee key (`.uniqBy`, and the
 // `.unionBy`/`.xorBy` tails). Tracks seen keys in a `{ seen, out }` accumulator, then
 // projects `out`.
-function uniqByReduce(input: unknown, it: ResolvedIteratee): unknown {
+function uniqByReduce(input: unknown, it: ResolvedIteratee, ctx: GenerateCtx): unknown {
+  // The iteratee is written against the user's own param name, so the $let binding it
+  // must NOT enclose the $reduce accumulator reads — an iteratee like `value => value.id`
+  // would otherwise shadow `$$value` and read `.seen`/`.out` off the element.
+  // A $let var's VALUE is evaluated in the enclosing scope, so computing the key there
+  // keeps the user's name scoped to the key expression alone. It also binds the key once
+  // instead of re-emitting the iteratee for both the membership test and the accumulator.
+  const [k, key] = internalVar(ctx, "key");
+  // An identity iteratee (`x => x`) is just the element — no binding needed.
+  const keyExpr = it.value === it.elem ? "$$this" : { $let: { vars: { [it.as]: "$$this" }, in: it.value } };
   return {
     $getField: {
       field: "out",
@@ -3002,13 +3034,13 @@ function uniqByReduce(input: unknown, it: ResolvedIteratee): unknown {
           initialValue: { seen: [], out: [] },
           in: {
             $let: {
-              vars: { [it.as]: "$$this" },
+              vars: { [k]: keyExpr },
               in: {
                 $cond: [
-                  { $in: [it.value, "$$value.seen"] },
+                  { $in: [key, "$$value.seen"] },
                   "$$value",
                   {
-                    seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                    seen: { $concatArrays: ["$$value.seen", [key]] },
                     out: { $concatArrays: ["$$value.out", ["$$this"]] },
                   },
                 ],
@@ -3023,18 +3055,24 @@ function uniqByReduce(input: unknown, it: ResolvedIteratee): unknown {
 
 // A lodash (value[, key]) iteratee over `$objectToArray` entries (used by
 // `.mapValues`/`.mapKeys`/`.pickBy`/`.omitBy`). Binds the arrow's 1–2 params to
-// the entry's value (`$$jsmqlKv.v`) and key (`$$jsmqlKv.k`) via `$let`; the `$map`/
-// `$filter` element var is always `jsmqlKv`.
-function resolveObjIteratee(iteratee: Expr, method: string, ctx: GenerateCtx): unknown {
+// the entry's value (`.v`) and key (`.k`) via `$let`. Returns the `$map`/`$filter`
+// element var alongside the body so the caller emits the SAME name it was built
+// against — the user's lambda body sits inside that element binding, so the name
+// has to be gensym'd once, here, not re-derived at each call site.
+function objIterateeVar(ctx: GenerateCtx): [string, string] {
+  return internalVar(ctx, "kv");
+}
+function resolveObjIteratee(iteratee: Expr, method: string, ctx: GenerateCtx): { as: string; body: unknown } {
+  const [as, kv] = objIterateeVar(ctx);
   if (
     iteratee.type === "Lambda" &&
     iteratee.block === undefined &&
     iteratee.params.length >= 1 &&
     iteratee.params.length <= 2
   ) {
-    const vars: Record<string, unknown> = { [safeVarName(iteratee.params[0])]: "$$jsmqlKv.v" };
-    if (iteratee.params.length === 2) vars[safeVarName(iteratee.params[1])] = "$$jsmqlKv.k";
-    return { $let: { vars, in: _generate(iteratee.body as Expr, extendCtx(ctx, iteratee.params)) } };
+    const vars: Record<string, unknown> = { [safeVarName(iteratee.params[0])]: `${kv}.v` };
+    if (iteratee.params.length === 2) vars[safeVarName(iteratee.params[1])] = `${kv}.k`;
+    return { as, body: { $let: { vars, in: _generate(iteratee.body as Expr, extendCtx(ctx, iteratee.params)) } } };
   }
   throw new CodegenError(`.${method}((value[, key]) => …) takes a one- or two-parameter arrow.`, iteratee.pos);
 }
@@ -3201,9 +3239,17 @@ function generateMethodCall(
       // a string even when the field is absent. A literal needle folds to its
       // code-point count, which also stops it being spliced in three times.
       const needleLen = strLenOf(needle);
-      return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => ({
-        $eq: [{ $substrCP: [s, clampNonNegative(foldedSubtract({ $strLenCP: s }, needleLen)), needleLen] }, needle],
-      }));
+      // `needle` is generated in the OUTER scope but lands inside the $let, so the
+      // binding is gensym'd against the in-scope params.
+      const [vStr, s] = internalVar(ctx, "str");
+      return {
+        $let: {
+          vars: { [vStr]: coerceStringBinding(genObj) },
+          in: {
+            $eq: [{ $substrCP: [s, clampNonNegative(foldedSubtract({ $strLenCP: s }, needleLen)), needleLen] }, needle],
+          },
+        },
+      };
     }
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
@@ -3230,17 +3276,21 @@ function generateMethodCall(
         );
       }
       const needle = _generate(exprArgs[0], ctx);
-      // Find the first match in the reversed array, then map back to the original
-      // index. Bound with letBind so genObj is evaluated once AND the binding
-      // can't capture `needle`, which is a user expression from the outer scope.
-      return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
+      // Find the first match in the reversed array, then map back to the original index.
+      // Wrap with $let so genObj is evaluated once.
+      const [vArr, arr] = internalVar(ctx, "arr");
+      const [vRev, rev] = internalVar(ctx, "revIdx");
+      return {
         $let: {
-          vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: arr }, needle] } },
-          in: cond({ $eq: ["$$jsmqlRevIdx", -1] }, -1, {
-            $subtract: [{ $subtract: [{ $size: arr }, 1] }, "$$jsmqlRevIdx"],
-          }),
+          vars: { [vArr]: genObj },
+          in: {
+            $let: {
+              vars: { [vRev]: { $indexOfArray: [{ $reverseArray: arr }, needle] } },
+              in: cond({ $eq: [rev, -1] }, -1, { $subtract: [{ $subtract: [{ $size: arr }, 1] }, rev] }),
+            },
+          },
         },
-      }));
+      };
     }
     case "replace": {
       const exprArgs = exprArgsOnly(args, "replace");
@@ -3327,28 +3377,33 @@ function generateMethodCall(
       checkArity(method, { sig: "targetLength[, padString]", allowed: [1, 2] }, exprArgs.length, callPos);
       const target = _generate(exprArgs[0], ctx);
       const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
+      // If str length >= target, return str. Otherwise build the filler by
+      // repeating `pad`, then concat it on the appropriate side.
+      // `target`/`pad` are generated in the OUTER scope but land inside the $let, so
+      // the binding must not capture a name they can reference (`.padStart(s.n)`
+      // inside `.map(s => …)` used to re-resolve `s` against the receiver string).
+      const [v, ref] = internalVar(ctx, "pad");
+      const need = { $subtract: [target, { $strLenCP: ref }] };
+      const repeated = {
+        $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } },
+      };
+      // JS pads to exactly `targetLength` CHARACTERS, truncating a multi-character
+      // pad mid-string ("gold".padStart(9, "US") === "USUSUgold"). Repeating it
+      // `need` times over-fills, so trim back to `need`. A one-code-point literal
+      // already lands exactly, and skipping its trim keeps the common
+      // `.padStart(n, "0")` output unchanged. The length is floored because the
+      // optimizer may fold this branch even when the $cond selects the other one.
+      const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
+      const concatOrder = method === "padStart" ? [filler, ref] : [ref, filler];
       // The binding itself is coerced, not just the `$strLenCP` argument: an
       // uncoerced receiver would leave the trailing `$concat` returning null on
       // a missing field rather than the fully-padded string JS gives for "".
-      // `target` and `pad` are user expressions spliced into the body, so the
-      // binding must go through letBind or it would capture their lambda refs.
-      return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => {
-        // If str length >= target, return str. Otherwise build the filler by
-        // repeating `pad` and concat it on the right side.
-        const need = { $subtract: [target, { $strLenCP: s }] };
-        const repeated = {
-          $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } },
-        };
-        // JS pads to exactly `targetLength` CHARACTERS, truncating a multi-character
-        // pad mid-string ("gold".padStart(9, "US") === "USUSUgold"). Repeating it
-        // `need` times over-fills, so trim back to `need`. A one-code-point literal
-        // already lands exactly, and skipping its trim keeps the common
-        // `.padStart(n, "0")` output unchanged. The length is floored because the
-        // optimizer may fold this branch even when the $cond selects the other one.
-        const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-        const concatOrder = method === "padStart" ? [filler, s] : [s, filler];
-        return cond({ $gte: [{ $strLenCP: s }, target] }, s, { $concat: concatOrder });
-      });
+      return {
+        $let: {
+          vars: { [v]: coerceStringBinding(genObj) },
+          in: cond({ $gte: [{ $strLenCP: ref }, target] }, ref, { $concat: concatOrder }),
+        },
+      };
     }
     case "repeat": {
       const exprArgs = exprArgsOnly(args, "repeat");
@@ -3454,24 +3509,21 @@ function generateMethodCall(
       // Bind arr/start/end once: $let so size & arithmetic are computed a single time.
       // tailStart = start + deleteCount, or just start if deleteCount omitted (no removal, pure insert).
       // tailLen = $size - tailStart, clamped non-negative.
-      const tailStart = hasDeleteCount ? { $add: ["$$jsmqlStart", _generate(deleteCountArg!, ctx)] } : "$$jsmqlStart";
+      const [vArr, arr] = internalVar(ctx, "arr");
+      const [vStart, startRef] = internalVar(ctx, "start");
+      const [vTail, tail] = internalVar(ctx, "tailStart");
+      const tailStart = hasDeleteCount ? { $add: [startRef, _generate(deleteCountArg!, ctx)] } : startRef;
       return {
         $let: {
-          vars: { jsmqlArr: genObj, jsmqlStart: start },
+          vars: { [vArr]: genObj, [vStart]: start },
           in: {
             $let: {
-              vars: { jsmqlTailStart: tailStart },
+              vars: { [vTail]: tailStart },
               in: {
                 $concatArrays: [
-                  { $slice: ["$$jsmqlArr", 0, "$$jsmqlStart"] },
+                  { $slice: [arr, 0, startRef] },
                   items,
-                  {
-                    $slice: [
-                      "$$jsmqlArr",
-                      "$$jsmqlTailStart",
-                      { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }] },
-                    ],
-                  },
+                  { $slice: [arr, tail, { $max: [0, { $subtract: [{ $size: arr }, tail] }] }] },
                 ],
               },
             },
@@ -3491,18 +3543,21 @@ function generateMethodCall(
       }
       const idx = _generate(idxArg, ctx);
       const value = _generate(exprArgs[1], ctx);
+      const [vArr, arr] = internalVar(ctx, "arr");
+      const [vIdx, idxRef] = internalVar(ctx, "idx");
+      const [vVal, valRef] = internalVar(ctx, "val");
       return {
         $let: {
-          vars: { jsmqlArr: genObj, jsmqlIdx: idx, jsmqlVal: value },
+          vars: { [vArr]: genObj, [vIdx]: idx, [vVal]: value },
           in: {
             $concatArrays: [
-              { $slice: ["$$jsmqlArr", 0, "$$jsmqlIdx"] },
-              ["$$jsmqlVal"],
+              { $slice: [arr, 0, idxRef] },
+              [valRef],
               {
                 $slice: [
-                  "$$jsmqlArr",
-                  { $add: ["$$jsmqlIdx", 1] },
-                  { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }] },
+                  arr,
+                  { $add: [idxRef, 1] },
+                  { $max: [0, { $subtract: [{ $size: arr }, { $add: [idxRef, 1] }] }] },
                 ],
               },
             ],
@@ -3534,9 +3589,9 @@ function generateMethodCall(
       // references resolve correctly. For findIndex we want the *first* match —
       // guard the update with `$$value == -1` so later matches don't overwrite.
       // For findLastIndex any match overwrites, so the final value is the last.
-      const vars: Record<string, unknown> = { [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] } };
+      const vars: Record<string, unknown> = { [safeVarName(lambda.params[0])]: { $arrayElemAt: ["$$this", 1] } };
       if (lambda.params[1]) {
-        vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
+        vars[safeVarName(lambda.params[1])] = { $arrayElemAt: ["$$this", 0] };
       }
       const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
@@ -3645,11 +3700,12 @@ function generateMethodCall(
       }
       // Paired (index used): filter the (index, element) pairs, then project
       // back to elements.
+      const [vPair, pair] = internalVar(ctx, "pair");
       return {
         $map: {
           input: { $filter: { input: iter.input, as: iter.asName, cond } },
-          as: "jsmqlPair",
-          in: { $arrayElemAt: ["$$jsmqlPair", 1] },
+          as: vPair,
+          in: { $arrayElemAt: [pair, 1] },
         },
       };
     }
@@ -3945,17 +4001,18 @@ function generateMethodCall(
       const it = resolveIteratee(exprArgs[0], method, ctx);
       // Decorate each element with its key, sort ascending, take the last (max) or
       // first (min) element back out.
+      const [vSorted, sorted] = internalVar(ctx, "sorted");
       return {
         $let: {
           vars: {
-            jsmqlSorted: {
+            [vSorted]: {
               $sortArray: {
                 input: { $map: { input: genObj, as: it.as, in: { k: it.value, v: it.elem } } },
                 sortBy: { k: 1 },
               },
             },
           },
-          in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", method === "maxBy" ? -1 : 0] } } },
+          in: { $getField: { field: "v", input: { $arrayElemAt: [sorted, method === "maxBy" ? -1 : 0] } } },
         },
       };
     }
@@ -3976,12 +4033,13 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       // Track seen keys, keep the first element for each; then drop the tracker.
-      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx));
+      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx), ctx);
     }
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
       // MQL truthiness (drops false/null/0/missing; keeps ""/NaN — per project call).
-      return { $filter: { input: genObj, as: "jsmqlItem", cond: "$$jsmqlItem" } };
+      const [vItem, item] = internalVar(ctx, "item");
+      return { $filter: { input: genObj, as: vItem, cond: item } };
     }
     case "flatten": {
       checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);
@@ -4004,11 +4062,12 @@ function generateMethodCall(
           size.pos,
         );
       }
+      const [vI, i] = internalVar(ctx, "i");
       return {
         $map: {
           input: { $range: [0, { $size: genObj }, size.value] },
-          as: "jsmqlI",
-          in: { $slice: [genObj, "$$jsmqlI", size.value] },
+          as: vI,
+          in: { $slice: [genObj, i, size.value] },
         },
       };
     }
@@ -4033,27 +4092,26 @@ function generateMethodCall(
       // dropRight keeps the first max(0, size-n) — a 2-arg `$slice` (first-count), so a
       // count of 0 (n ≥ size) is `$slice: [arr, 0]` → `[]`, NOT the 3-arg `$slice: [arr,
       // 0, 0]` mongod rejects ("Third argument to $slice must be positive").
-      // `n` is a user expression spliced into the body, so bind via letBind.
+      const [vArr, arr] = internalVar(ctx, "arr");
       if (method === "dropRight") {
-        return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
-          $slice: [arr, { $max: [0, { $subtract: [{ $size: arr }, n] }] }],
-        }));
+        const keep = { $max: [0, { $subtract: [{ $size: arr }, n] }] };
+        return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, keep] } } };
       }
       // drop: from position n. The count (3rd arg) is max(1, size) so an EMPTY array
       // is `$slice: [[], n, 1]` → `[]` rather than a rejected 3-arg count of 0.
-      return letBind(ctx, "jsmqlArr", genObj, (arr) => ({ $slice: [arr, n, { $max: [1, { $size: arr }] }] }));
+      return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, n, { $max: [1, { $size: arr }] }] } } };
     }
     case "tail":
     case "initial": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
       // initial = dropRight(1): keep the first max(0, size-1) via 2-arg `$slice`.
+      const [vArr, arr] = internalVar(ctx, "arr");
       if (method === "initial") {
-        return letBind(ctx, "jsmqlArr", genObj, (arr) => ({
-          $slice: [arr, { $max: [0, { $subtract: [{ $size: arr }, 1] }] }],
-        }));
+        const keep = { $max: [0, { $subtract: [{ $size: arr }, 1] }] };
+        return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, keep] } } };
       }
       // tail = drop(1): count max(1, size) guards the empty-array → count-0 rejection.
-      return letBind(ctx, "jsmqlArr", genObj, (arr) => ({ $slice: [arr, 1, { $max: [1, { $size: arr }] }] }));
+      return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, 1, { $max: [1, { $size: arr }] }] } } };
     }
     case "head":
     case "first": {
@@ -4088,17 +4146,18 @@ function generateMethodCall(
       const drop = method === "dropWhile" || method === "dropRightWhile";
       const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
       // From the right = do the left-side scan on the reversed array, then reverse back.
-      if (!fromRight) return takeDropWhile(genObj, pred, drop);
-      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop) };
+      if (!fromRight) return takeDropWhile(genObj, pred, drop, ctx);
+      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop, ctx) };
     }
     case "sample": {
       // A random element: $arrayElemAt at floor($rand * size). Non-deterministic at
       // runtime (like the stream `.sample` / `$sample`), deterministic to compile.
       checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
+      const [vArr, arr] = internalVar(ctx, "arr");
       return {
         $let: {
-          vars: { jsmqlArr: genObj },
-          in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] },
+          vars: { [vArr]: genObj },
+          in: { $arrayElemAt: [arr, { $floor: { $multiply: [{ $rand: {} }, { $size: arr }] } }] },
         },
       };
     }
@@ -4111,17 +4170,19 @@ function generateMethodCall(
         throw new CodegenError(`.sampleSize(n) needs a non-negative count.`, exprArgs[0].pos);
       }
       const n = exprArgs[0] !== undefined ? _generate(exprArgs[0], ctx) : 1;
+      const [vShuf, shuf] = internalVar(ctx, "shuffled");
+      const [vItem, item] = internalVar(ctx, "item");
       return {
         $let: {
           vars: {
-            jsmqlShuffled: {
+            [vShuf]: {
               $sortArray: {
-                input: { $map: { input: genObj, as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+                input: { $map: { input: genObj, as: vItem, in: { k: { $rand: {} }, v: item } } },
                 sortBy: { k: 1 },
               },
             },
           },
-          in: { $map: { input: { $slice: ["$$jsmqlShuffled", n] }, as: "jsmqlItem", in: "$$jsmqlItem.v" } },
+          in: { $map: { input: { $slice: [shuf, n] }, as: vItem, in: `${item}.v` } },
         },
       };
     }
@@ -4132,10 +4193,9 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
       const other = _generate(exprArgs[0], ctx);
-      const inOther = { $in: ["$$jsmqlItem", other] };
-      return {
-        $filter: { input: genObj, as: "jsmqlItem", cond: method === "intersection" ? inOther : { $not: [inOther] } },
-      };
+      const [vItem, item] = internalVar(ctx, "item");
+      const inOther = { $in: [item, other] };
+      return { $filter: { input: genObj, as: vItem, cond: method === "intersection" ? inOther : { $not: [inOther] } } };
     }
     case "union": {
       const exprArgs = exprArgsOnly(args, "union");
@@ -4154,7 +4214,8 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, "without");
       checkArity("without", { sig: "...values", atLeast: 1 }, exprArgs.length, callPos);
       const values = exprArgs.map((a) => _generate(a, ctx));
-      return { $filter: { input: genObj, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", values] }] } } };
+      const [vItem, item] = internalVar(ctx, "item");
+      return { $filter: { input: genObj, as: vItem, cond: { $not: [{ $in: [item, values] }] } } };
     }
     case "xor": {
       // Symmetric difference of two arrays (chain `.xor(b).xor(c)` for more), order-
@@ -4162,11 +4223,14 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, "xor");
       checkArity("xor", { sig: "other", exact: 1 }, exprArgs.length, callPos);
       const other = _generate(exprArgs[0], ctx);
-      const notInB = { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } };
-      const notInA = { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } };
+      const [vA, a] = internalVar(ctx, "a");
+      const [vB, b] = internalVar(ctx, "b");
+      const [vX, x] = internalVar(ctx, "x");
+      const notInB = { $filter: { input: a, as: vX, cond: { $not: [{ $in: [x, b] }] } } };
+      const notInA = { $filter: { input: b, as: vX, cond: { $not: [{ $in: [x, a] }] } } };
       return {
         $let: {
-          vars: { jsmqlA: genObj, jsmqlB: other },
+          vars: { [vA]: genObj, [vB]: other },
           in: {
             $reduce: {
               input: { $concatArrays: [notInB, notInA] },
@@ -4184,21 +4248,25 @@ function generateMethodCall(
       checkArity(method, { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], method, ctx);
       const otherKeys = iterateeKeys(_generate(exprArgs[0], ctx), it);
-      // `genObj` (the receiver) and the iteratee body are outer-scope expressions
-      // spliced into the body, so the binding goes through letBind.
-      return letBind(ctx, "jsmqlOtherKeys", otherKeys, (keys) => {
-        const inOther = { $in: [it.value, keys] };
-        return {
-          $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } },
-        };
-      });
+      // The internal binding is read from inside a `$filter` bound to the USER's
+      // iteratee param, so it must be gensym'd against that name too.
+      const [vKeys, keys] = internalVar(extendCtx(ctx, [it.as]), "otherKeys");
+      const inOther = { $in: [it.value, keys] };
+      return {
+        $let: {
+          vars: { [vKeys]: otherKeys },
+          in: {
+            $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } },
+          },
+        },
+      };
     }
     case "unionBy": {
       // Concatenate then keep-first dedupe BY iteratee key.
       const exprArgs = exprArgsOnly(args, "unionBy");
       checkArity("unionBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], "unionBy", ctx);
-      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it);
+      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it, ctx);
     }
     case "xorBy": {
       // Symmetric difference BY iteratee key: uniqBy( A∖B ++ B∖A ) on the keys.
@@ -4206,21 +4274,24 @@ function generateMethodCall(
       checkArity("xorBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], "xorBy", ctx);
       const other = _generate(exprArgs[0], ctx);
-      const aNotInB = {
-        $filter: { input: "$$jsmqlA", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlBKeys"] }] } },
-      };
-      const bNotInA = {
-        $filter: { input: "$$jsmqlB", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlAKeys"] }] } },
-      };
+      // The key-set bindings are read from inside `$filter`s bound to the USER's
+      // iteratee param, so gensym them against that name too.
+      const itCtx = extendCtx(ctx, [it.as]);
+      const [vA, a] = internalVar(itCtx, "a");
+      const [vB, b] = internalVar(itCtx, "b");
+      const [vAKeys, aKeys] = internalVar(itCtx, "aKeys");
+      const [vBKeys, bKeys] = internalVar(itCtx, "bKeys");
+      const aNotInB = { $filter: { input: a, as: it.as, cond: { $not: [{ $in: [it.value, bKeys] }] } } };
+      const bNotInA = { $filter: { input: b, as: it.as, cond: { $not: [{ $in: [it.value, aKeys] }] } } };
       // Outer $let binds the two arrays once; inner derives their key sets from the
       // bound copies (MongoDB $let vars can't reference their siblings).
       return {
         $let: {
-          vars: { jsmqlA: genObj, jsmqlB: other },
+          vars: { [vA]: genObj, [vB]: other },
           in: {
             $let: {
-              vars: { jsmqlAKeys: iterateeKeys("$$jsmqlA", it), jsmqlBKeys: iterateeKeys("$$jsmqlB", it) },
-              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it),
+              vars: { [vAKeys]: iterateeKeys(a, it), [vBKeys]: iterateeKeys(b, it) },
+              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it, ctx),
             },
           },
         },
@@ -4231,12 +4302,13 @@ function generateMethodCall(
       checkArity("zipObject", { sig: "values", exact: 1 }, exprArgs.length, callPos);
       const values = _generate(exprArgs[0], ctx);
       // Pair keys with values by index (keys.length); stringify keys for $arrayToObject.
+      const [vI, i] = internalVar(ctx, "i");
       return {
         $arrayToObject: {
           $map: {
             input: { $range: [0, { $size: genObj }] },
-            as: "jsmqlI",
-            in: { k: { $toString: { $arrayElemAt: [genObj, "$$jsmqlI"] } }, v: { $arrayElemAt: [values, "$$jsmqlI"] } },
+            as: vI,
+            in: { k: { $toString: { $arrayElemAt: [genObj, i] } }, v: { $arrayElemAt: [values, i] } },
           },
         },
       };
@@ -4257,14 +4329,15 @@ function generateMethodCall(
       const fn = isWith ? exprArgs[exprArgs.length - 1] : null;
       const otherArrays = isWith ? exprArgs.slice(0, -1) : exprArgs;
       const arrays = [genObj, ...otherArrays.map((a) => _generate(a, ctx))];
+      const [vI, i] = internalVar(ctx, "i");
       const vars: Record<string, unknown> = {};
       const refs: string[] = [];
       arrays.forEach((arr, k) => {
-        const v = `jsmqlZip${k}`;
+        const [v, ref] = internalVar(ctx, `zip${k}`);
         vars[v] = arr;
-        refs.push(`$$${v}`);
+        refs.push(ref);
       });
-      const elems = refs.map((r) => ({ $arrayElemAt: [r, "$$jsmqlI"] }));
+      const elems = refs.map((r) => ({ $arrayElemAt: [r, i] }));
       let inExpr: unknown = elems; // the tuple
       if (isWith) {
         if (fn!.type !== "Lambda" || fn!.block !== undefined || fn!.params.length !== arrays.length) {
@@ -4282,7 +4355,7 @@ function generateMethodCall(
       return {
         $let: {
           vars,
-          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: "jsmqlI", in: inExpr } },
+          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: vI, in: inExpr } },
         },
       };
     }
@@ -4290,14 +4363,17 @@ function generateMethodCall(
       // Inverse of zip: transpose an array of equal-length tuples. Column count =
       // size of the first tuple ($ifNull → [] guards an empty receiver).
       checkArity("unzip", { sig: "", none: true }, exprArgsOnly(args, "unzip").length, callPos);
+      const [vT, t] = internalVar(ctx, "t");
+      const [vJ, j] = internalVar(ctx, "j");
+      const [vRow, row] = internalVar(ctx, "row");
       return {
         $let: {
-          vars: { jsmqlT: genObj },
+          vars: { [vT]: genObj },
           in: {
             $map: {
-              input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: ["$$jsmqlT", 0] }, []] } }] },
-              as: "jsmqlJ",
-              in: { $map: { input: "$$jsmqlT", as: "jsmqlRow", in: { $arrayElemAt: ["$$jsmqlRow", "$$jsmqlJ"] } } },
+              input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: [t, 0] }, []] } }] },
+              as: vJ,
+              in: { $map: { input: t, as: vRow, in: { $arrayElemAt: [row, j] } } },
             },
           },
         },
@@ -4318,15 +4394,16 @@ function generateMethodCall(
       // → `{ "1": 1, "2": 2 }`, `_.groupBy([1,2,2])` → `{ "1": [1], "2": [2,2] }`).
       checkArity(method, { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
-      const filtered = {
-        $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } },
-      };
+      // Read from inside a `$filter` bound to the USER's iteratee param — gensym
+      // against that name too.
+      const [vKey, key] = internalVar(extendCtx(ctx, [it.as]), "key");
+      const filtered = { $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), key] } } };
       return {
         $arrayToObject: {
           $map: {
             input: distinctKeysExpr(genObj, it),
-            as: "jsmqlKey",
-            in: { k: "$$jsmqlKey", v: method === "countBy" ? { $size: filtered } : filtered },
+            as: vKey,
+            in: { k: key, v: method === "countBy" ? { $size: filtered } : filtered },
           },
         },
       };
@@ -4346,31 +4423,29 @@ function generateMethodCall(
     case "mapKeys": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const mapped = resolveObjIteratee(exprArgs[0], method, ctx);
+      const { as, body: mapped } = resolveObjIteratee(exprArgs[0], method, ctx);
       const entry =
-        method === "mapValues" ? { k: "$$jsmqlKv.k", v: mapped } : { k: { $toString: mapped }, v: "$$jsmqlKv.v" };
-      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: entry } } };
+        method === "mapValues" ? { k: `$$${as}.k`, v: mapped } : { k: { $toString: mapped }, v: `$$${as}.v` };
+      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as, in: entry } } };
     }
     case "pick": {
       const exprArgs = exprArgsOnly(args, "pick");
       checkArity("pick", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
       const keys = pickKeys(exprArgs[0], "pick");
       // Field-select into a fresh object; a missing key drops out (lodash parity).
+      const [vObj, obj] = internalVar(ctx, "obj");
       const out: Record<string, unknown> = {};
-      for (const k of keys) out[k] = { $getField: { field: k, input: "$$jsmqlObj" } };
-      return { $let: { vars: { jsmqlObj: genObj }, in: out } };
+      for (const k of keys) out[k] = { $getField: { field: k, input: obj } };
+      return { $let: { vars: { [vObj]: genObj }, in: out } };
     }
     case "omit": {
       const exprArgs = exprArgsOnly(args, "omit");
       checkArity("omit", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
       const keys = pickKeys(exprArgs[0], "omit");
+      const [as, kv] = objIterateeVar(ctx);
       return {
         $arrayToObject: {
-          $filter: {
-            input: { $objectToArray: genObj },
-            as: "jsmqlKv",
-            cond: { $not: [{ $in: ["$$jsmqlKv.k", keys] }] },
-          },
+          $filter: { input: { $objectToArray: genObj }, as, cond: { $not: [{ $in: [`${kv}.k`, keys] }] } },
         },
       };
     }
@@ -4378,44 +4453,35 @@ function generateMethodCall(
     case "omitBy": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
-      const cond = resolveObjIteratee(exprArgs[0], method, ctx);
+      const { as, body: cond } = resolveObjIteratee(exprArgs[0], method, ctx);
       return {
         $arrayToObject: {
-          $filter: {
-            input: { $objectToArray: genObj },
-            as: "jsmqlKv",
-            cond: method === "pickBy" ? cond : { $not: [cond] },
-          },
+          $filter: { input: { $objectToArray: genObj }, as, cond: method === "pickBy" ? cond : { $not: [cond] } },
         },
       };
     }
     case "invert": {
       checkArity("invert", { sig: "", none: true }, exprArgsOnly(args, "invert").length, callPos);
       // Swap keys/values (new keys stringified; last wins — lodash parity).
+      const [as, kv] = objIterateeVar(ctx);
       return {
         $arrayToObject: {
-          $map: {
-            input: { $objectToArray: genObj },
-            as: "jsmqlKv",
-            in: { k: { $toString: "$$jsmqlKv.v" }, v: "$$jsmqlKv.k" },
-          },
+          $map: { input: { $objectToArray: genObj }, as, in: { k: { $toString: `${kv}.v` }, v: `${kv}.k` } },
         },
       };
     }
     case "toPairs": {
       checkArity("toPairs", { sig: "", none: true }, exprArgsOnly(args, "toPairs").length, callPos);
-      return { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } };
+      const [as, kv] = objIterateeVar(ctx);
+      return { $map: { input: { $objectToArray: genObj }, as, in: [`${kv}.k`, `${kv}.v`] } };
     }
     case "fromPairs": {
       checkArity("fromPairs", { sig: "", none: true }, exprArgsOnly(args, "fromPairs").length, callPos);
       // Receiver is a [[k, v], …] array; stringify keys for $arrayToObject.
+      const [vP, p] = internalVar(ctx, "p");
       return {
         $arrayToObject: {
-          $map: {
-            input: genObj,
-            as: "jsmqlP",
-            in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
-          },
+          $map: { input: genObj, as: vP, in: [{ $toString: { $arrayElemAt: [p, 0] } }, { $arrayElemAt: [p, 1] }] },
         },
       };
     }
@@ -4446,14 +4512,16 @@ function generateMethodCall(
           return { $toLower: joinWords(wordsExpr(genObj), "_") };
         case "startCase":
           return joinWords(wordsExpr(genObj), " ", capitalizeExpr);
-        case "camelCase":
+        case "camelCase": {
           // Pascal-case (capitalize each word, no separator) then lower the first char.
+          const [vPascal, pascal] = internalVar(ctx, "pascal");
           return {
             $let: {
-              vars: { jsmqlPascal: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
-              in: firstCharExpr("$$jsmqlPascal", "$toLower"),
+              vars: { [vPascal]: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
+              in: firstCharExpr(pascal, "$toLower"),
             },
           };
+        }
         default:
           return escapeHtmlExpr(genObj);
       }
@@ -4494,9 +4562,13 @@ function generateMethodCall(
       // Bound once (and coerced) so the receiver isn't evaluated three times and
       // an absent field truncates to "" like lodash, rather than passing null
       // through the else branch.
-      return letBind(ctx, "jsmqlStr", coerceStringBinding(genObj), (s) => ({
-        $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s],
-      }));
+      const [vStr, s] = internalVar(ctx, "str");
+      return {
+        $let: {
+          vars: { [vStr]: coerceStringBinding(genObj) },
+          in: { $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s] },
+        },
+      };
     }
 
     // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────
@@ -4590,7 +4662,9 @@ function arrayIterInput(
   const bodyCtx = arrayParam
     ? { ...elementCtx, bindingTypes: new Map([...(elementCtx.bindingTypes ?? []), [arrayParam, "array" as const]]) }
     : elementCtx;
-  const asName = params[0] ? safeVarName(params[0]) : "v";
+  // With no element param the binding is unreferenced, but it still occupies a name
+  // in the emitted MQL — gensym so a nested `.map(() => …)` can't shadow an outer one.
+  const asName = params[0] ? safeVarName(params[0]) : gensymInScope(ctx, "v");
 
   // The `$zip`/`$range` index machinery is only worth emitting when the index
   // param is *actually referenced* (at any depth). When it isn't — including the
@@ -4605,16 +4679,17 @@ function arrayIterInput(
     return { input: genObj, asName, bodyCtx, wrap, paired: false };
   }
 
+  const [vPair, pair] = internalVar(bodyCtx, "pair");
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
-    asName: "jsmqlPair",
+    asName: vPair,
     bodyCtx,
     paired: true,
     wrap: (body) => ({
       $let: {
         vars: {
-          [safeVarName(params[0])]: { $arrayElemAt: ["$$jsmqlPair", 1] },
-          [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] },
+          [safeVarName(params[0])]: { $arrayElemAt: [pair, 1] },
+          [safeVarName(params[1])]: { $arrayElemAt: [pair, 0] },
           ...(arrayParam ? { [safeVarName(arrayParam)]: genObj } : {}),
         },
         in: body,
@@ -5004,7 +5079,7 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
   // Compile-time fast path: when `start` and `end` are both omitted, every
   // element becomes `v`. Skip the IIFE and the index plumbing entirely.
   if (startArg === undefined && endArg === undefined) {
-    const unusedAndV: Expr = { type: "Lambda", params: ["jsmqlFillUnused"], body: v, pos };
+    const unusedAndV: Expr = { type: "Lambda", params: [exprVar("fillUnused")], body: v, pos };
     return { type: "MethodCall", object, method: "map", args: [unusedAndV], pos };
   }
 
@@ -5025,11 +5100,16 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
   const s0Init = normalize(startArg, () => zero);
   const e0Init = normalize(endArg, () => sizeOf());
 
-  // Inner map body: `(i >= jsmqlFillStart && i < jsmqlFillEnd) ? v : x`.
-  const sRef: Expr = { type: "ParamRef", name: "jsmqlFillStart", pos };
-  const eRef: Expr = { type: "ParamRef", name: "jsmqlFillEnd", pos };
-  const xRef: Expr = { type: "ParamRef", name: "x", pos };
-  const iRef: Expr = { type: "ParamRef", name: "i", pos };
+  // Inner map body: `(idx >= start && idx < end) ? v : el`. All four are synthetic
+  // params the user never wrote, and the fill VALUE `v` is generated INSIDE them —
+  // so bare names like `x`/`i` captured a pipeline binding of the same name
+  // (`let x = 5; $.arr.fill(x)` filled with each element instead of 5). This
+  // rewrite runs on the AST with no ctx to gensym against, so the namespace is
+  // what keeps them clear of user names.
+  const sRef: Expr = { type: "ParamRef", name: exprVar("fillStart"), pos };
+  const eRef: Expr = { type: "ParamRef", name: exprVar("fillEnd"), pos };
+  const xRef: Expr = { type: "ParamRef", name: exprVar("fillEl"), pos };
+  const iRef: Expr = { type: "ParamRef", name: exprVar("fillIdx"), pos };
   const condition: Expr = {
     type: "BinaryExpr",
     op: "&&",
@@ -5038,10 +5118,10 @@ function buildFillRhs(object: Expr, args: CallArg[], pos: number): Expr {
     pos,
   };
   const mapBody: Expr = { type: "TernaryExpr", condition, consequent: v, alternate: xRef, pos };
-  const mapLambda: Expr = { type: "Lambda", params: ["x", "i"], body: mapBody, pos };
+  const mapLambda: Expr = { type: "Lambda", params: [exprVar("fillEl"), exprVar("fillIdx")], body: mapBody, pos };
   const mapCall: Expr = { type: "MethodCall", object, method: "map", args: [mapLambda], pos };
 
-  const iifeCallee: Expr = { type: "Lambda", params: ["jsmqlFillStart", "jsmqlFillEnd"], body: mapCall, pos };
+  const iifeCallee: Expr = { type: "Lambda", params: [exprVar("fillStart"), exprVar("fillEnd")], body: mapCall, pos };
   return { type: "CallExpression", callee: iifeCallee, args: [s0Init, e0Init], pos };
 }
 
@@ -5248,7 +5328,7 @@ function requireLambda(
     first !== undefined &&
     (first.type === "StringLiteral" || first.type === "ObjectLiteral" || first.type === "ArrayLiteral")
   ) {
-    const sh = shorthandToLambda(first, method, "jsmqlItem");
+    const sh = shorthandToLambda(first, method, exprVar("item"));
     if (sh !== null) return sh;
   }
   if (!first || first.type !== "Lambda") {
@@ -5328,7 +5408,7 @@ function applyLambda(
         a.pos,
       );
     }
-    vars[lambda.params[i]] = _generate(a, argCtx);
+    vars[safeVarName(lambda.params[i])] = _generate(a, argCtx);
   }
   return { $let: { vars, in: genLambdaBody(lambda, bodyCtx) } };
 }
@@ -5570,12 +5650,14 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
     case "keys": {
       const exprArgs = exprArgsOnly(args, "Object.keys");
       checkArity("keys", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
-      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.k" } };
+      const [vKv, kv] = internalVar(ctx, "kv");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: vKv, in: `${kv}.k` } };
     }
     case "values": {
       const exprArgs = exprArgsOnly(args, "Object.values");
       checkArity("values", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
-      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.v" } };
+      const [vKv, kv] = internalVar(ctx, "kv");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: vKv, in: `${kv}.v` } };
     }
     case "entries": {
       const exprArgs = exprArgsOnly(args, "Object.entries");
@@ -5622,13 +5704,14 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
       const keyExpr = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
+      const [vKey, key] = internalVar(ctx, "key");
       return {
         $reduce: {
           input: _generate(input, ctx),
           initialValue: {},
           in: {
             $let: {
-              vars: { key: keyExpr },
+              vars: { [vKey]: keyExpr },
               in: {
                 $mergeObjects: [
                   "$$value",
@@ -5636,10 +5719,10 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
                     $arrayToObject: [
                       [
                         [
-                          "$$key",
+                          key,
                           {
                             $concatArrays: [
-                              { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
+                              { $ifNull: [{ $getField: { field: key, input: "$$value" } }, []] },
                               ["$$this"],
                             ],
                           },

@@ -18,19 +18,144 @@ MQL has no fill primitive, so the repeat stays and the run is trimmed back with 
 
 One divergence remains and is now documented rather than hidden: the width is counted in **code points** (`$strLenCP`), where JS counts UTF-16 units. `"gold".padStart(9, "👍")` pads to 9 code points; JS pads to 9 units and produces a lone surrogate half. jsmql cannot emit that broken string through `$substrCP`, and shouldn't — it is the same code-point model `.length` and `.endsWith()` already use. Checked against real `String.prototype` across 15 call shapes × 7 receivers (multi-char pads, an empty pad, a pad longer than the target, a receiver already past the target, literal receivers that let the optimizer fold, and missing/null), plus a live integration case over the fixture's tier strings.
 
-## 2026-08-08 — fix: internal `$let` bindings no longer capture a user's lambda param
+## 2026-08-08 — refactor: one namespace for compiler-emitted `$let` variable names
 
-Found while fixing the `$substrCP`/`$strLenCP` aborts below, and worse than either of them: this one returned **wrong data silently**, with no server error at all.
+The two capture bugs below were each fixed at their own site. This closes the
+class: `docs/specs/method-dispatch.md` already stated the law —
 
-`.padStart`/`.padEnd` bound their receiver to a `$let` variable named literally `s`. Inside a lambda that also used `s`, the binding shadowed it — and because the pad character and target length are user expressions *generated in the outer scope* and then spliced into the `$let` **body**, both re-pointed at the receiver string. `$.items.map(s => s.code.padStart(3, s.pad))` returned `[null, null]` where JS gives `["-ab","**x"]`: `$$s.pad` read `.pad` off the padded string, got missing, and `$concat` propagated null. `.padStart(s.width, "0")` was the same defect on the target argument, returning the string unpadded.
+> `as` becomes a synthetic name `jsmqlPair` so it never collides with a
+> user-named param
 
-A sweep of every internal `$let` name — each used as a lambda param, with an argument referencing it — found four more lowerings with the same defect: array `.slice(start)` (server error, `Second argument to $slice must be a numeric value, but is of type: array`), `.lastIndexOf(needle)` (silently `-1`), `.dropRight(n)` (`can't $subtract array from int`), and `.intersectionBy`/`.differenceBy` (silently `[]`). `.endsWith()` and `.truncate()`, added earlier the same day, carried it too — reachable only via a param named `jsmqlStr`, but reachable.
+— but the code didn't uphold it. The `jsmql` prefix was a convention nothing
+enforced, spelled as 33 hardcoded string literals across 164 occurrences in
+`codegen.ts` with no single source of truth, so a param that happened to spell one
+broke the lowering the same way `s` did:
 
-The discriminator turned out to be **which side of the `$let` the user's expression lands on**. A `vars` *value* is evaluated in the enclosing scope, before the binding takes effect, so it can never be captured — which is why `Object.groupBy`'s equally common `key` binding was fine all along, and why `.with(i, v)` / `.toSpliced(s, n)` (whose args are bound into `vars`) were fine too. Only expressions spliced into the `in:` *body* are at risk.
+```js
+$.rows.map(jsmqlArr => jsmqlArr.list.slice(jsmqlArr.i))
+// was → {"$let":{"vars":{"jsmqlArr":"$$jsmqlArr.list"}, … "$$jsmqlArr.i" …}}
+// now → {"$let":{"vars":{"jsmqlArr2":"$$jsmqlArr.list"}, … "$$jsmqlArr.i" …}}
+```
 
-The fix routes every such binding through a new `letBind(ctx, base, value, body)` built on the pre-existing `gensymInScope` — which was already in the file for exactly this purpose but used at a single site. It returns the base name untouched when nothing collides, so emitted output is unchanged for virtually every program; a collision yields `jsmqlArr2`, `jsmqlStr2`, and so on. The `jsmql` prefix was doing this job by convention, but convention is not enforcement: nothing stops a user naming a parameter `jsmqlArr`, and `s` was not even prefixed. Verified by running each shape against a live mongod and diffing against real `Array.prototype`/`String.prototype` results, plus an integration case where a line's `qty` is both the padded value and the pad width, so a capture shows up in the returned documents.
+[src/namespace.ts](src/namespace.ts) gains `exprVar(base)` as the third namespace
+it owns, beside the `__jsmql` document fields and the `jsmql_` `$lookup.let`
+correlation vars. It owns the spelling only; `internalVar(ctx, base)` in
+[src/codegen.ts](src/codegen.ts) adds `gensymInScope` on top, and every emission
+site now routes through it. Per the CLAUDE.md rule that the spec wins on conflict,
+the sentence stayed as written and the code was fixed to match.
 
-Separately noted while measuring, **not** fixed here: `.padStart(9, "US")` repeats a multi-character pad `target - len` times instead of filling to `target` characters — `"gold".padStart(9, "US")` yields `"USUSUSUSUSgold"` where JS gives `"USUSUgold"`. A distinct SR2 divergence in the same lowering, tracked separately.
+Renaming is not the mechanism, and that matters: a prefix reservation in
+`safeVarName` would have been one line, but it renames the *developer's* param in
+the output (`as: "vjsmqlArr"`) and would also mangle jsmql's own synthetic
+`jsmqlEl`, which a pure string function can't tell apart. The gensym moves our
+binding and leaves theirs alone. It also returns the base untouched whenever
+nothing collides, so this is output-neutral for every existing test except the
+three deliberate renames below.
+
+Three latent bare names went with it (`key`, `x`, `kv` — reachable only if
+someone later spliced user codegen into those bodies), and the sweep turned up one
+more live bug. `.fill()` builds its lowering on the AST with synthetic params, and
+two of them were bare `x`/`i` — so the fill VALUE, generated inside them, captured
+a pipeline binding of the same name:
+
+```js
+let x = 5; $.arr.fill(x, 1);
+// was → "then": "$$x"   ← filled with each ELEMENT, not 5
+// now → "then": 5
+```
+
+That rewrite runs before codegen with no ctx to gensym against, and `.fill()` is
+reachable only at statement position (in expression position it throws), so no
+lambda param can be in scope — the namespace alone is what keeps those four clear.
+`wordsExpr`/`joinWords` are the other ctx-less callers; their bodies are fixed MQL
+built from the ref itself, so nothing user-written can be captured.
+
+Every lowering that binds an internal var and splices outer codegen into it now
+has a hostile case in `test/codegen.test.ts` — the user's param keeps its name, and
+the emitted MQL was run against a live `mongod` and matched Node's own semantics.
+
+---
+
+## 2026-08-08 — fix: `.uniqBy` iteratee no longer shadows the `$reduce` accumulator
+
+Sibling of the capture bug fixed in the entry below, but the shadowed name is
+MongoDB's, not ours. `uniqByReduce` bound the user's iteratee param inside the
+`$reduce`'s `in:` and then read `$$value.seen` / `$$value.out` **within** that
+`$let` — so an iteratee spelling its param `value` shadowed the accumulator:
+
+```js
+$.a.uniqBy(value => value.id)
+// was → the "have I seen this key" test read `.seen` off the ELEMENT, so nothing
+//        ever matched and the dedupe returned every input document
+```
+
+`safeVarName` can't help here: `value` is a perfectly legal MongoDB variable name,
+it just happens to be the one `$reduce` already uses. Renaming *our* side isn't
+possible either — `$$value` is the server's spelling.
+
+The fix moves the user's binding into the `$let` **vars value** position, which
+MongoDB evaluates in the *enclosing* scope, so the accumulator reads in `in:` are
+never inside it. That also binds the key once instead of re-emitting the iteratee
+for both the membership test and the `seen` append, so the emitted document gets
+smaller for every non-trivial iteratee; an identity iteratee (`x => x`) skips the
+inner `$let` entirely since the key is just `$$this`. Affects `.uniqBy`,
+`.sortedUniqBy`, `.unionBy` and `.xorBy`, which all share this lowering
+([src/codegen.ts](src/codegen.ts)). Verified against a live `mongod`.
+
+---
+
+## 2026-08-08 — fix: compiler-internal bindings no longer capture user lambda params
+
+`.padStart()`/`.padEnd()` lowered to a `$let` whose variable was literally named
+`s`. The `targetLength`/`padString` arguments are generated in the **outer** scope
+but spliced **inside** that `$let`, so a lambda param of the same name was
+captured and the arguments silently re-resolved against the receiver string:
+
+```js
+$.items.map(s => s.code.padStart(s.width, s.pad))
+// docs [{code:"7",width:3,pad:"0"},{code:"42",width:5,pad:"*"}]
+// was → ["7", "42"]        ← padding silently vanished, no error
+// now → ["007", "***42"]   ← matches String.prototype.padStart
+```
+
+Wrong data with no error is the worst thing we can emit, so the audit that came
+with it covered every `$let`-emitting lowering in [src/codegen.ts](src/codegen.ts).
+Three more sites had the same defect, two of them producing MQL the server
+**rejects outright** — `.findIndex()`/`.findLastIndex()` and the reusable-function
+call site built their `vars` keys from raw param names, skipping `safeVarName`:
+
+```js
+$.a.findIndex((_, i) => i > 2)
+// was → mongod: "'_' starts with an invalid character for a user variable name"
+```
+
+That is an HR3 violation on the *idiomatic* JS throwaway param, and
+`safeVarName`'s own doc comment names that exact case as its reason to exist —
+the two sites simply forgot to call it. The fourth: a paramless callback's `as`
+fell back to a bare `"v"`, so `$.a.map(v => $.b.map(() => v))` had the inner
+binding shadow the outer element.
+
+The padding binding is now `gensymInScope(ctx, "jsmqlPad")` rather than a plain
+rename. A `jsmql` prefix alone is a convention nothing enforces — a user param
+named `jsmqlArr` breaks `.slice()` exactly the same way — whereas the gensym
+already shipped for `&&`/`||` short-circuit binding and consults the in-scope
+params. It returns the base name untouched when nothing collides, so output is
+unchanged for every program that doesn't actually use the name; only the
+colliding case moves *our* binding aside (`jsmqlPad2`) and leaves the user's name
+alone. Rejecting `jsmql*` user identifiers, or escaping them in `safeVarName`,
+would instead have renamed the developer's own param in the output.
+
+All four shapes were run against a live `mongod` and match plain Node's semantics
+for the same input.
+
+---
+## 2026-08-08 — fix: the same capture class, found from the other end
+
+Fixed in parallel with the two entries below, on a branch that started from the `$substrCP`/`$strLenCP` abort work. Same root cause, same `.padStart(3, s.pad)` reproduction; the mechanism converged on `internalVar` and this branch's own `letBind` helper was dropped in the merge as the narrower of the two.
+
+Worth keeping is what the two sweeps found *separately*, because they searched differently and the union is what the refactor had to cover. That one enumerated every `$let`-emitting lowering and turned up `.findIndex()`/`.findLastIndex()` and the reusable-function call site (raw param names skipping `safeVarName`), the paramless-callback `"v"` fallback, and `.uniqBy`. This one took each internal binding NAME, used it as a lambda param, and passed an argument referencing it — which surfaced array `.slice(start)` (`Second argument to $slice must be a numeric value, but is of type: array`), `.lastIndexOf(needle)` (silently `-1`), `.dropRight(n)` (`can't $subtract array from int`), and `.intersectionBy`/`.differenceBy` (silently `[]`).
+
+One discriminator is worth recording, since it explains why several equally common names were never at risk: only the `in:` **body** is exposed. A `vars` *value* is evaluated in the enclosing scope, before the binding takes effect, so `Object.groupBy`'s `key` binding and `.with(i, v)`'s bound arguments were always safe while `.padStart`'s body-spliced ones were not. It is now in [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md) beside the `internalVar` rule.
 
 ## 2026-08-08 — test: the reported `.endsWith()` abort, covered against a live mongod
 

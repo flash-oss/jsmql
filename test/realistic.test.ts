@@ -249,7 +249,11 @@ $ = candidateProductIds
         {
           $set: {
             "__jsmql.var.candidateProductIds": {
-              $map: { input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" }, as: "kv", in: "$$kv.k" },
+              $map: {
+                input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
+                as: "jsmqlKv",
+                in: "$$jsmqlKv.k",
+              },
             },
           },
         },

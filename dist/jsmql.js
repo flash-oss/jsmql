@@ -4284,6 +4284,9 @@ function letSysVar(name, depth) {
   return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name)}`;
 }
 var JSMQL_NS_VAR = "jsmql_";
+function exprVar(base) {
+  return `jsmql${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
 function isCorrelationVar(name) {
   return name.startsWith(JSMQL_NS_VAR);
 }
@@ -5913,6 +5916,16 @@ function gensymInScope(ctx, base) {
     if (!ctx.lambdaParams.has(name)) return name;
   }
 }
+function coerceStringBinding(genObj) {
+  return isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "");
+}
+function isSingleCodePointLiteral(value) {
+  return typeof value === "string" && !value.startsWith("$") && [...value].length === 1;
+}
+function internalVar(ctx, base) {
+  const name = gensymInScope(ctx, exprVar(base));
+  return [name, `$$${name}`];
+}
 function clampNonNegativeIndex(node, ctx) {
   if (node.type === "NumberLiteral") return Math.max(0, node.value);
   if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
@@ -5973,10 +5986,11 @@ function sliceArray(genObj, exprArgs, ctx) {
   if (exprArgs.length === 1) {
     if (startLit !== null && startLit < 0) return { $slice: [genObj, startLit] };
     if (startLit === 0) return genObj;
+    const [vArr2, arr2] = internalVar(ctx, "arr");
     return {
       $let: {
-        vars: { jsmqlArr: genObj },
-        in: { $slice: ["$$jsmqlArr", _generate(startNode, ctx), { $max: [1, { $size: "$$jsmqlArr" }] }] }
+        vars: { [vArr2]: genObj },
+        in: { $slice: [arr2, _generate(startNode, ctx), { $max: [1, { $size: arr2 }] }] }
       }
     };
   }
@@ -5988,24 +6002,25 @@ function sliceArray(genObj, exprArgs, ctx) {
     return { $slice: [genObj, startLit, endLit - startLit] };
   }
   if (startLit === 0) {
+    const [vArr2, arr2] = internalVar(ctx, "arr");
     return {
-      $let: {
-        vars: { jsmqlArr: genObj },
-        in: { $slice: ["$$jsmqlArr", resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" })] }
-      }
+      $let: { vars: { [vArr2]: genObj }, in: { $slice: [arr2, resolveSliceIndex(endNode, ctx, { $size: arr2 })] } }
     };
   }
-  const count = { $subtract: ["$$jsmqlF", "$$jsmqlK"] };
+  const [vArr, arr] = internalVar(ctx, "arr");
+  const [vK, k] = internalVar(ctx, "k");
+  const [vF, f] = internalVar(ctx, "f");
+  const count = { $subtract: [f, k] };
   return {
     $let: {
-      vars: { jsmqlArr: genObj },
+      vars: { [vArr]: genObj },
       in: {
         $let: {
           vars: {
-            jsmqlK: resolveSliceIndex(startNode, ctx, { $size: "$$jsmqlArr" }),
-            jsmqlF: resolveSliceIndex(endNode, ctx, { $size: "$$jsmqlArr" })
+            [vK]: resolveSliceIndex(startNode, ctx, { $size: arr }),
+            [vF]: resolveSliceIndex(endNode, ctx, { $size: arr })
           },
-          in: { $cond: [{ $gt: [count, 0] }, { $slice: ["$$jsmqlArr", "$$jsmqlK", { $max: [count, 1] }] }, []] }
+          in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, k, { $max: [count, 1] }] }, []] }
         }
       }
     }
@@ -6477,7 +6492,8 @@ function keyArrayForObjectLiteral(entries, ctx) {
   for (const entry of entries) {
     if (entry.type === "SpreadElement") {
       flush();
-      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: "kv", in: "$$kv.k" } });
+      const [vKv, kv] = internalVar(ctx, "kv");
+      operands.push({ $map: { input: { $objectToArray: _generate(entry.argument, ctx) }, as: vKv, in: `${kv}.k` } });
       continue;
     }
     if (currentChunk === null) currentChunk = [];
@@ -6823,12 +6839,12 @@ function firstCharExpr(s, op) {
   return { $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)] };
 }
 function wordsExpr(s) {
-  return {
-    $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: "jsmqlWord", in: "$$jsmqlWord.match" }
-  };
+  const w = exprVar("word");
+  return { $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: w, in: `$$${w}.match` } };
 }
 function joinWords(words2, sep, transform) {
-  const items = transform === void 0 ? words2 : { $map: { input: words2, as: "jsmqlW", in: transform("$$jsmqlW") } };
+  const w = exprVar("w");
+  const items = transform === void 0 ? words2 : { $map: { input: words2, as: w, in: transform(`$$${w}`) } };
   return {
     $reduce: {
       input: items,
@@ -6889,7 +6905,7 @@ function shorthandToLambda(arg, method, param) {
   return null;
 }
 function resolveIteratee(iteratee, method, ctx) {
-  const AS = "jsmqlItem";
+  const AS = gensymInScope(ctx, exprVar("item"));
   if (iteratee === void 0) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
   if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
@@ -6908,20 +6924,19 @@ function resolvePredicate(pred, method, ctx) {
   const it = resolveIteratee(pred, method, ctx);
   return { as: it.as, cond: it.value };
 }
-function takeDropWhile(arrExpr, pred, drop2) {
-  const preds = { $map: { input: "$$jsmqlArr", as: pred.as, in: { $cond: [pred.cond, true, false] } } };
-  const body = drop2 ? { $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }] } : (
-    // take: the first `jsmqlFi` elements. The 2-arg `$slice` (first-n) — NOT the
-    // 3-arg `$slice: [arr, 0, jsmqlFi]` — so a boundary at index 0 (the first
+function takeDropWhile(arrExpr, pred, drop2, ctx) {
+  const [vArr, arr] = internalVar(ctx, "arr");
+  const [vFi, fi] = internalVar(ctx, "fi");
+  const preds = { $map: { input: arr, as: pred.as, in: { $cond: [pred.cond, true, false] } } };
+  const body = drop2 ? { $cond: [{ $eq: [fi, -1] }, [], { $slice: [arr, fi, { $size: arr }] }] } : (
+    // take: the first `fi` elements. The 2-arg `$slice` (first-n) — NOT the
+    // 3-arg `$slice: [arr, 0, fi]` — so a boundary at index 0 (the first
     // element already fails the predicate) is `$slice: [arr, 0]` → `[]`, instead of
     // the 3-arg `$slice: [arr, 0, 0]` mongod rejects ("count must be positive").
-    { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] }
+    { $cond: [{ $eq: [fi, -1] }, arr, { $slice: [arr, fi] }] }
   );
   return {
-    $let: {
-      vars: { jsmqlArr: arrExpr },
-      in: { $let: { vars: { jsmqlFi: { $indexOfArray: [preds, false] } }, in: body } }
-    }
+    $let: { vars: { [vArr]: arrExpr }, in: { $let: { vars: { [vFi]: { $indexOfArray: [preds, false] } }, in: body } } }
   };
 }
 function stringKeyExpr(value) {
@@ -6933,7 +6948,9 @@ function distinctKeysExpr(arr, it) {
 function iterateeKeys(arr, it) {
   return { $map: { input: arr, as: it.as, in: it.value } };
 }
-function uniqByReduce(input, it) {
+function uniqByReduce(input, it, ctx) {
+  const [k, key] = internalVar(ctx, "key");
+  const keyExpr2 = it.value === it.elem ? "$$this" : { $let: { vars: { [it.as]: "$$this" }, in: it.value } };
   return {
     $getField: {
       field: "out",
@@ -6943,13 +6960,13 @@ function uniqByReduce(input, it) {
           initialValue: { seen: [], out: [] },
           in: {
             $let: {
-              vars: { [it.as]: "$$this" },
+              vars: { [k]: keyExpr2 },
               in: {
                 $cond: [
-                  { $in: [it.value, "$$value.seen"] },
+                  { $in: [key, "$$value.seen"] },
                   "$$value",
                   {
-                    seen: { $concatArrays: ["$$value.seen", [it.value]] },
+                    seen: { $concatArrays: ["$$value.seen", [key]] },
                     out: { $concatArrays: ["$$value.out", ["$$this"]] }
                   }
                 ]
@@ -6961,11 +6978,15 @@ function uniqByReduce(input, it) {
     }
   };
 }
+function objIterateeVar(ctx) {
+  return internalVar(ctx, "kv");
+}
 function resolveObjIteratee(iteratee, method, ctx) {
+  const [as, kv] = objIterateeVar(ctx);
   if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length >= 1 && iteratee.params.length <= 2) {
-    const vars = { [safeVarName(iteratee.params[0])]: "$$jsmqlKv.v" };
-    if (iteratee.params.length === 2) vars[safeVarName(iteratee.params[1])] = "$$jsmqlKv.k";
-    return { $let: { vars, in: _generate(iteratee.body, extendCtx(ctx, iteratee.params)) } };
+    const vars = { [safeVarName(iteratee.params[0])]: `${kv}.v` };
+    if (iteratee.params.length === 2) vars[safeVarName(iteratee.params[1])] = `${kv}.k`;
+    return { as, body: { $let: { vars, in: _generate(iteratee.body, extendCtx(ctx, iteratee.params)) } } };
   }
   throw new CodegenError(`.${method}((value[, key]) => \u2026) takes a one- or two-parameter arrow.`, iteratee.pos);
 }
@@ -7066,20 +7087,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
       const needle = _generate(exprArgs[0], ctx);
       const needleLen = strLenOf(needle);
+      const [vStr, s] = internalVar(ctx, "str");
       return {
         $let: {
-          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
+          vars: { [vStr]: coerceStringBinding(genObj) },
           in: {
-            $eq: [
-              {
-                $substrCP: [
-                  "$$jsmqlStr",
-                  clampNonNegative(foldedSubtract({ $strLenCP: "$$jsmqlStr" }, needleLen)),
-                  needleLen
-                ]
-              },
-              needle
-            ]
+            $eq: [{ $substrCP: [s, clampNonNegative(foldedSubtract({ $strLenCP: s }, needleLen)), needleLen] }, needle]
           }
         }
       };
@@ -7107,15 +7120,15 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         );
       }
       const needle = _generate(exprArgs[0], ctx);
+      const [vArr, arr] = internalVar(ctx, "arr");
+      const [vRev, rev] = internalVar(ctx, "revIdx");
       return {
         $let: {
-          vars: { jsmqlArr: genObj },
+          vars: { [vArr]: genObj },
           in: {
             $let: {
-              vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, needle] } },
-              in: cond({ $eq: ["$$jsmqlRevIdx", -1] }, -1, {
-                $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"]
-              })
+              vars: { [vRev]: { $indexOfArray: [{ $reverseArray: arr }, needle] } },
+              in: cond({ $eq: [rev, -1] }, -1, { $subtract: [{ $subtract: [{ $size: arr }, 1] }, rev] })
             }
           }
         }
@@ -7194,18 +7207,17 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity(method, { sig: "targetLength[, padString]", allowed: [1, 2] }, exprArgs.length, callPos);
       const target = _generate(exprArgs[0], ctx);
       const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
-      const padReduce = {
-        $reduce: {
-          input: { $range: [0, { $subtract: [target, { $strLenCP: "$$s" }] }] },
-          initialValue: "",
-          in: { $concat: ["$$value", pad] }
-        }
+      const [v, ref] = internalVar(ctx, "pad");
+      const need = { $subtract: [target, { $strLenCP: ref }] };
+      const repeated = {
+        $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } }
       };
-      const concatOrder = method === "padStart" ? [padReduce, "$$s"] : ["$$s", padReduce];
+      const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
+      const concatOrder = method === "padStart" ? [filler, ref] : [ref, filler];
       return {
         $let: {
-          vars: { s: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
-          in: cond({ $gte: [{ $strLenCP: "$$s" }, target] }, "$$s", { $concat: concatOrder })
+          vars: { [v]: coerceStringBinding(genObj) },
+          in: cond({ $gte: [{ $strLenCP: ref }, target] }, ref, { $concat: concatOrder })
         }
       };
     }
@@ -7298,24 +7310,21 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         );
       }
       const items = exprArgs.slice(2).map((a) => _generate(a, ctx));
-      const tailStart = hasDeleteCount ? { $add: ["$$jsmqlStart", _generate(deleteCountArg, ctx)] } : "$$jsmqlStart";
+      const [vArr, arr] = internalVar(ctx, "arr");
+      const [vStart, startRef] = internalVar(ctx, "start");
+      const [vTail, tail] = internalVar(ctx, "tailStart");
+      const tailStart = hasDeleteCount ? { $add: [startRef, _generate(deleteCountArg, ctx)] } : startRef;
       return {
         $let: {
-          vars: { jsmqlArr: genObj, jsmqlStart: start },
+          vars: { [vArr]: genObj, [vStart]: start },
           in: {
             $let: {
-              vars: { jsmqlTailStart: tailStart },
+              vars: { [vTail]: tailStart },
               in: {
                 $concatArrays: [
-                  { $slice: ["$$jsmqlArr", 0, "$$jsmqlStart"] },
+                  { $slice: [arr, 0, startRef] },
                   items,
-                  {
-                    $slice: [
-                      "$$jsmqlArr",
-                      "$$jsmqlTailStart",
-                      { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }] }
-                    ]
-                  }
+                  { $slice: [arr, tail, { $max: [0, { $subtract: [{ $size: arr }, tail] }] }] }
                 ]
               }
             }
@@ -7335,18 +7344,21 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       }
       const idx = _generate(idxArg, ctx);
       const value = _generate(exprArgs[1], ctx);
+      const [vArr, arr] = internalVar(ctx, "arr");
+      const [vIdx, idxRef] = internalVar(ctx, "idx");
+      const [vVal, valRef] = internalVar(ctx, "val");
       return {
         $let: {
-          vars: { jsmqlArr: genObj, jsmqlIdx: idx, jsmqlVal: value },
+          vars: { [vArr]: genObj, [vIdx]: idx, [vVal]: value },
           in: {
             $concatArrays: [
-              { $slice: ["$$jsmqlArr", 0, "$$jsmqlIdx"] },
-              ["$$jsmqlVal"],
+              { $slice: [arr, 0, idxRef] },
+              [valRef],
               {
                 $slice: [
-                  "$$jsmqlArr",
-                  { $add: ["$$jsmqlIdx", 1] },
-                  { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }] }
+                  arr,
+                  { $add: [idxRef, 1] },
+                  { $max: [0, { $subtract: [{ $size: arr }, { $add: [idxRef, 1] }] }] }
                 ]
               }
             ]
@@ -7373,9 +7385,9 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         );
       }
       const bodyCtx = elementTypedCtx(ctx, lambda.params, object);
-      const vars = { [lambda.params[0]]: { $arrayElemAt: ["$$this", 1] } };
+      const vars = { [safeVarName(lambda.params[0])]: { $arrayElemAt: ["$$this", 1] } };
       if (lambda.params[1]) {
-        vars[lambda.params[1]] = { $arrayElemAt: ["$$this", 0] };
+        vars[safeVarName(lambda.params[1])] = { $arrayElemAt: ["$$this", 0] };
       }
       const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
@@ -7472,11 +7484,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       if (!iter.paired) {
         return { $filter: { input: iter.input, as: iter.asName, cond: cond2 } };
       }
+      const [vPair, pair] = internalVar(ctx, "pair");
       return {
         $map: {
           input: { $filter: { input: iter.input, as: iter.asName, cond: cond2 } },
-          as: "jsmqlPair",
-          in: { $arrayElemAt: ["$$jsmqlPair", 1] }
+          as: vPair,
+          in: { $arrayElemAt: [pair, 1] }
         }
       };
     }
@@ -7726,17 +7739,18 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
+      const [vSorted, sorted] = internalVar(ctx, "sorted");
       return {
         $let: {
           vars: {
-            jsmqlSorted: {
+            [vSorted]: {
               $sortArray: {
                 input: { $map: { input: genObj, as: it.as, in: { k: it.value, v: it.elem } } },
                 sortBy: { k: 1 }
               }
             }
           },
-          in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", method === "maxBy" ? -1 : 0] } } }
+          in: { $getField: { field: "v", input: { $arrayElemAt: [sorted, method === "maxBy" ? -1 : 0] } } }
         }
       };
     }
@@ -7757,11 +7771,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "uniqBy": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx));
+      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx), ctx);
     }
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
-      return { $filter: { input: genObj, as: "jsmqlItem", cond: "$$jsmqlItem" } };
+      const [vItem, item] = internalVar(ctx, "item");
+      return { $filter: { input: genObj, as: vItem, cond: item } };
     }
     case "flatten": {
       checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);
@@ -7783,11 +7798,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           size.pos
         );
       }
+      const [vI, i] = internalVar(ctx, "i");
       return {
         $map: {
           input: { $range: [0, { $size: genObj }, size.value] },
-          as: "jsmqlI",
-          in: { $slice: [genObj, "$$jsmqlI", size.value] }
+          as: vI,
+          in: { $slice: [genObj, i, size.value] }
         }
       };
     }
@@ -7809,24 +7825,22 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const n = nArg !== void 0 ? _generate(nArg, ctx) : 1;
       if (method === "take") return { $slice: [genObj, n] };
       if (method === "takeRight") return { $slice: [genObj, negate(n)] };
+      const [vArr, arr] = internalVar(ctx, "arr");
       if (method === "dropRight") {
-        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, n] }] };
-        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+        const keep = { $max: [0, { $subtract: [{ $size: arr }, n] }] };
+        return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, keep] } } };
       }
-      return {
-        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", n, { $max: [1, { $size: "$$jsmqlArr" }] }] } }
-      };
+      return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, n, { $max: [1, { $size: arr }] }] } } };
     }
     case "tail":
     case "initial": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
+      const [vArr, arr] = internalVar(ctx, "arr");
       if (method === "initial") {
-        const keep = { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] };
-        return { $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", keep] } } };
+        const keep = { $max: [0, { $subtract: [{ $size: arr }, 1] }] };
+        return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, keep] } } };
       }
-      return {
-        $let: { vars: { jsmqlArr: genObj }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } }
-      };
+      return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, 1, { $max: [1, { $size: arr }] }] } } };
     }
     case "head":
     case "first": {
@@ -7857,15 +7871,16 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const pred = resolvePredicate(exprArgs[0], method, ctx);
       const drop2 = method === "dropWhile" || method === "dropRightWhile";
       const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
-      if (!fromRight) return takeDropWhile(genObj, pred, drop2);
-      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop2) };
+      if (!fromRight) return takeDropWhile(genObj, pred, drop2, ctx);
+      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop2, ctx) };
     }
     case "sample": {
       checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
+      const [vArr, arr] = internalVar(ctx, "arr");
       return {
         $let: {
-          vars: { jsmqlArr: genObj },
-          in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] }
+          vars: { [vArr]: genObj },
+          in: { $arrayElemAt: [arr, { $floor: { $multiply: [{ $rand: {} }, { $size: arr }] } }] }
         }
       };
     }
@@ -7876,17 +7891,19 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         throw new CodegenError(`.sampleSize(n) needs a non-negative count.`, exprArgs[0].pos);
       }
       const n = exprArgs[0] !== void 0 ? _generate(exprArgs[0], ctx) : 1;
+      const [vShuf, shuf] = internalVar(ctx, "shuffled");
+      const [vItem, item] = internalVar(ctx, "item");
       return {
         $let: {
           vars: {
-            jsmqlShuffled: {
+            [vShuf]: {
               $sortArray: {
-                input: { $map: { input: genObj, as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+                input: { $map: { input: genObj, as: vItem, in: { k: { $rand: {} }, v: item } } },
                 sortBy: { k: 1 }
               }
             }
           },
-          in: { $map: { input: { $slice: ["$$jsmqlShuffled", n] }, as: "jsmqlItem", in: "$$jsmqlItem.v" } }
+          in: { $map: { input: { $slice: [shuf, n] }, as: vItem, in: `${item}.v` } }
         }
       };
     }
@@ -7895,10 +7912,9 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
       const other = _generate(exprArgs[0], ctx);
-      const inOther = { $in: ["$$jsmqlItem", other] };
-      return {
-        $filter: { input: genObj, as: "jsmqlItem", cond: method === "intersection" ? inOther : { $not: [inOther] } }
-      };
+      const [vItem, item] = internalVar(ctx, "item");
+      const inOther = { $in: [item, other] };
+      return { $filter: { input: genObj, as: vItem, cond: method === "intersection" ? inOther : { $not: [inOther] } } };
     }
     case "union": {
       const exprArgs = exprArgsOnly(args, "union");
@@ -7915,17 +7931,21 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "without");
       checkArity("without", { sig: "...values", atLeast: 1 }, exprArgs.length, callPos);
       const values = exprArgs.map((a) => _generate(a, ctx));
-      return { $filter: { input: genObj, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", values] }] } } };
+      const [vItem, item] = internalVar(ctx, "item");
+      return { $filter: { input: genObj, as: vItem, cond: { $not: [{ $in: [item, values] }] } } };
     }
     case "xor": {
       const exprArgs = exprArgsOnly(args, "xor");
       checkArity("xor", { sig: "other", exact: 1 }, exprArgs.length, callPos);
       const other = _generate(exprArgs[0], ctx);
-      const notInB = { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } };
-      const notInA = { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } };
+      const [vA, a] = internalVar(ctx, "a");
+      const [vB, b] = internalVar(ctx, "b");
+      const [vX, x] = internalVar(ctx, "x");
+      const notInB = { $filter: { input: a, as: vX, cond: { $not: [{ $in: [x, b] }] } } };
+      const notInA = { $filter: { input: b, as: vX, cond: { $not: [{ $in: [x, a] }] } } };
       return {
         $let: {
-          vars: { jsmqlA: genObj, jsmqlB: other },
+          vars: { [vA]: genObj, [vB]: other },
           in: {
             $reduce: {
               input: { $concatArrays: [notInB, notInA] },
@@ -7942,10 +7962,11 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity(method, { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], method, ctx);
       const otherKeys = iterateeKeys(_generate(exprArgs[0], ctx), it);
-      const inOther = { $in: [it.value, "$$jsmqlOtherKeys"] };
+      const [vKeys, keys] = internalVar(extendCtx(ctx, [it.as]), "otherKeys");
+      const inOther = { $in: [it.value, keys] };
       return {
         $let: {
-          vars: { jsmqlOtherKeys: otherKeys },
+          vars: { [vKeys]: otherKeys },
           in: {
             $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } }
           }
@@ -7956,26 +7977,27 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "unionBy");
       checkArity("unionBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], "unionBy", ctx);
-      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it);
+      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it, ctx);
     }
     case "xorBy": {
       const exprArgs = exprArgsOnly(args, "xorBy");
       checkArity("xorBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[1], "xorBy", ctx);
       const other = _generate(exprArgs[0], ctx);
-      const aNotInB = {
-        $filter: { input: "$$jsmqlA", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlBKeys"] }] } }
-      };
-      const bNotInA = {
-        $filter: { input: "$$jsmqlB", as: it.as, cond: { $not: [{ $in: [it.value, "$$jsmqlAKeys"] }] } }
-      };
+      const itCtx = extendCtx(ctx, [it.as]);
+      const [vA, a] = internalVar(itCtx, "a");
+      const [vB, b] = internalVar(itCtx, "b");
+      const [vAKeys, aKeys] = internalVar(itCtx, "aKeys");
+      const [vBKeys, bKeys] = internalVar(itCtx, "bKeys");
+      const aNotInB = { $filter: { input: a, as: it.as, cond: { $not: [{ $in: [it.value, bKeys] }] } } };
+      const bNotInA = { $filter: { input: b, as: it.as, cond: { $not: [{ $in: [it.value, aKeys] }] } } };
       return {
         $let: {
-          vars: { jsmqlA: genObj, jsmqlB: other },
+          vars: { [vA]: genObj, [vB]: other },
           in: {
             $let: {
-              vars: { jsmqlAKeys: iterateeKeys("$$jsmqlA", it), jsmqlBKeys: iterateeKeys("$$jsmqlB", it) },
-              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it)
+              vars: { [vAKeys]: iterateeKeys(a, it), [vBKeys]: iterateeKeys(b, it) },
+              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it, ctx)
             }
           }
         }
@@ -7985,12 +8007,13 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, "zipObject");
       checkArity("zipObject", { sig: "values", exact: 1 }, exprArgs.length, callPos);
       const values = _generate(exprArgs[0], ctx);
+      const [vI, i] = internalVar(ctx, "i");
       return {
         $arrayToObject: {
           $map: {
             input: { $range: [0, { $size: genObj }] },
-            as: "jsmqlI",
-            in: { k: { $toString: { $arrayElemAt: [genObj, "$$jsmqlI"] } }, v: { $arrayElemAt: [values, "$$jsmqlI"] } }
+            as: vI,
+            in: { k: { $toString: { $arrayElemAt: [genObj, i] } }, v: { $arrayElemAt: [values, i] } }
           }
         }
       };
@@ -8008,14 +8031,15 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const fn = isWith ? exprArgs[exprArgs.length - 1] : null;
       const otherArrays = isWith ? exprArgs.slice(0, -1) : exprArgs;
       const arrays = [genObj, ...otherArrays.map((a) => _generate(a, ctx))];
+      const [vI, i] = internalVar(ctx, "i");
       const vars = {};
       const refs = [];
       arrays.forEach((arr, k) => {
-        const v = `jsmqlZip${k}`;
+        const [v, ref] = internalVar(ctx, `zip${k}`);
         vars[v] = arr;
-        refs.push(`$$${v}`);
+        refs.push(ref);
       });
-      const elems = refs.map((r) => ({ $arrayElemAt: [r, "$$jsmqlI"] }));
+      const elems = refs.map((r) => ({ $arrayElemAt: [r, i] }));
       let inExpr = elems;
       if (isWith) {
         if (fn.type !== "Lambda" || fn.block !== void 0 || fn.params.length !== arrays.length) {
@@ -8033,20 +8057,23 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return {
         $let: {
           vars,
-          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: "jsmqlI", in: inExpr } }
+          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: vI, in: inExpr } }
         }
       };
     }
     case "unzip": {
       checkArity("unzip", { sig: "", none: true }, exprArgsOnly(args, "unzip").length, callPos);
+      const [vT, t] = internalVar(ctx, "t");
+      const [vJ, j] = internalVar(ctx, "j");
+      const [vRow, row] = internalVar(ctx, "row");
       return {
         $let: {
-          vars: { jsmqlT: genObj },
+          vars: { [vT]: genObj },
           in: {
             $map: {
-              input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: ["$$jsmqlT", 0] }, []] } }] },
-              as: "jsmqlJ",
-              in: { $map: { input: "$$jsmqlT", as: "jsmqlRow", in: { $arrayElemAt: ["$$jsmqlRow", "$$jsmqlJ"] } } }
+              input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: [t, 0] }, []] } }] },
+              as: vJ,
+              in: { $map: { input: t, as: vRow, in: { $arrayElemAt: [row, j] } } }
             }
           }
         }
@@ -8063,15 +8090,14 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
       const it = resolveIteratee(exprArgs[0], method, ctx);
-      const filtered = {
-        $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), "$$jsmqlKey"] } }
-      };
+      const [vKey, key] = internalVar(extendCtx(ctx, [it.as]), "key");
+      const filtered = { $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), key] } } };
       return {
         $arrayToObject: {
           $map: {
             input: distinctKeysExpr(genObj, it),
-            as: "jsmqlKey",
-            in: { k: "$$jsmqlKey", v: method === "countBy" ? { $size: filtered } : filtered }
+            as: vKey,
+            in: { k: key, v: method === "countBy" ? { $size: filtered } : filtered }
           }
         }
       };
@@ -8090,29 +8116,27 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "mapKeys": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const mapped = resolveObjIteratee(exprArgs[0], method, ctx);
-      const entry = method === "mapValues" ? { k: "$$jsmqlKv.k", v: mapped } : { k: { $toString: mapped }, v: "$$jsmqlKv.v" };
-      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: entry } } };
+      const { as, body: mapped } = resolveObjIteratee(exprArgs[0], method, ctx);
+      const entry = method === "mapValues" ? { k: `$$${as}.k`, v: mapped } : { k: { $toString: mapped }, v: `$$${as}.v` };
+      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as, in: entry } } };
     }
     case "pick": {
       const exprArgs = exprArgsOnly(args, "pick");
       checkArity("pick", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
       const keys = pickKeys(exprArgs[0], "pick");
+      const [vObj, obj2] = internalVar(ctx, "obj");
       const out = {};
-      for (const k of keys) out[k] = { $getField: { field: k, input: "$$jsmqlObj" } };
-      return { $let: { vars: { jsmqlObj: genObj }, in: out } };
+      for (const k of keys) out[k] = { $getField: { field: k, input: obj2 } };
+      return { $let: { vars: { [vObj]: genObj }, in: out } };
     }
     case "omit": {
       const exprArgs = exprArgsOnly(args, "omit");
       checkArity("omit", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
       const keys = pickKeys(exprArgs[0], "omit");
+      const [as, kv] = objIterateeVar(ctx);
       return {
         $arrayToObject: {
-          $filter: {
-            input: { $objectToArray: genObj },
-            as: "jsmqlKv",
-            cond: { $not: [{ $in: ["$$jsmqlKv.k", keys] }] }
-          }
+          $filter: { input: { $objectToArray: genObj }, as, cond: { $not: [{ $in: [`${kv}.k`, keys] }] } }
         }
       };
     }
@@ -8120,42 +8144,33 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "omitBy": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
-      const cond2 = resolveObjIteratee(exprArgs[0], method, ctx);
+      const { as, body: cond2 } = resolveObjIteratee(exprArgs[0], method, ctx);
       return {
         $arrayToObject: {
-          $filter: {
-            input: { $objectToArray: genObj },
-            as: "jsmqlKv",
-            cond: method === "pickBy" ? cond2 : { $not: [cond2] }
-          }
+          $filter: { input: { $objectToArray: genObj }, as, cond: method === "pickBy" ? cond2 : { $not: [cond2] } }
         }
       };
     }
     case "invert": {
       checkArity("invert", { sig: "", none: true }, exprArgsOnly(args, "invert").length, callPos);
+      const [as, kv] = objIterateeVar(ctx);
       return {
         $arrayToObject: {
-          $map: {
-            input: { $objectToArray: genObj },
-            as: "jsmqlKv",
-            in: { k: { $toString: "$$jsmqlKv.v" }, v: "$$jsmqlKv.k" }
-          }
+          $map: { input: { $objectToArray: genObj }, as, in: { k: { $toString: `${kv}.v` }, v: `${kv}.k` } }
         }
       };
     }
     case "toPairs": {
       checkArity("toPairs", { sig: "", none: true }, exprArgsOnly(args, "toPairs").length, callPos);
-      return { $map: { input: { $objectToArray: genObj }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } };
+      const [as, kv] = objIterateeVar(ctx);
+      return { $map: { input: { $objectToArray: genObj }, as, in: [`${kv}.k`, `${kv}.v`] } };
     }
     case "fromPairs": {
       checkArity("fromPairs", { sig: "", none: true }, exprArgsOnly(args, "fromPairs").length, callPos);
+      const [vP, p] = internalVar(ctx, "p");
       return {
         $arrayToObject: {
-          $map: {
-            input: genObj,
-            as: "jsmqlP",
-            in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }]
-          }
+          $map: { input: genObj, as: vP, in: [{ $toString: { $arrayElemAt: [p, 0] } }, { $arrayElemAt: [p, 1] }] }
         }
       };
     }
@@ -8185,13 +8200,15 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           return { $toLower: joinWords(wordsExpr(genObj), "_") };
         case "startCase":
           return joinWords(wordsExpr(genObj), " ", capitalizeExpr);
-        case "camelCase":
+        case "camelCase": {
+          const [vPascal, pascal] = internalVar(ctx, "pascal");
           return {
             $let: {
-              vars: { jsmqlPascal: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
-              in: firstCharExpr("$$jsmqlPascal", "$toLower")
+              vars: { [vPascal]: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
+              in: firstCharExpr(pascal, "$toLower")
             }
           };
+        }
         default:
           return escapeHtmlExpr(genObj);
       }
@@ -8229,15 +8246,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         }
       }
       const keep = Math.max(0, length - omission.length);
+      const [vStr, s] = internalVar(ctx, "str");
       return {
         $let: {
-          vars: { jsmqlStr: isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "") },
+          vars: { [vStr]: coerceStringBinding(genObj) },
           in: {
-            $cond: [
-              { $gt: [{ $strLenCP: "$$jsmqlStr" }, length] },
-              { $concat: [{ $substrCP: ["$$jsmqlStr", 0, keep] }, omission] },
-              "$$jsmqlStr"
-            ]
+            $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s]
           }
         }
       };
@@ -8294,22 +8308,23 @@ function arrayIterInput(lambda, genObj, ctx, method, inputExpr) {
   const arrayParam = params.length === 3 ? params[2] : void 0;
   const elementCtx = elementTypedCtx(ctx, params, inputExpr);
   const bodyCtx = arrayParam ? { ...elementCtx, bindingTypes: new Map([...elementCtx.bindingTypes ?? [], [arrayParam, "array"]]) } : elementCtx;
-  const asName = params[0] ? safeVarName(params[0]) : "v";
+  const asName = params[0] ? safeVarName(params[0]) : gensymInScope(ctx, "v");
   const indexUsed = params.length >= 2 && someExpr(lambda, (e) => e.type === "ParamRef" && e.name === params[1]);
   if (!indexUsed) {
     const wrap = arrayParam ? (body) => ({ $let: { vars: { [safeVarName(arrayParam)]: genObj }, in: body } }) : (body) => body;
     return { input: genObj, asName, bodyCtx, wrap, paired: false };
   }
+  const [vPair, pair] = internalVar(bodyCtx, "pair");
   return {
     input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
-    asName: "jsmqlPair",
+    asName: vPair,
     bodyCtx,
     paired: true,
     wrap: (body) => ({
       $let: {
         vars: {
-          [safeVarName(params[0])]: { $arrayElemAt: ["$$jsmqlPair", 1] },
-          [safeVarName(params[1])]: { $arrayElemAt: ["$$jsmqlPair", 0] },
+          [safeVarName(params[0])]: { $arrayElemAt: [pair, 1] },
+          [safeVarName(params[1])]: { $arrayElemAt: [pair, 0] },
           ...arrayParam ? { [safeVarName(arrayParam)]: genObj } : {}
         },
         in: body
@@ -8554,7 +8569,7 @@ function buildFillRhs(object, args, pos) {
   const endArg = exprArgs[2];
   const zero = mkNumber(0, pos);
   if (startArg === void 0 && endArg === void 0) {
-    const unusedAndV = { type: "Lambda", params: ["jsmqlFillUnused"], body: v, pos };
+    const unusedAndV = { type: "Lambda", params: [exprVar("fillUnused")], body: v, pos };
     return { type: "MethodCall", object, method: "map", args: [unusedAndV], pos };
   }
   const sizeOf = () => mkOpCall("$size", [object], pos);
@@ -8568,10 +8583,10 @@ function buildFillRhs(object, args, pos) {
   };
   const s0Init = normalize(startArg, () => zero);
   const e0Init = normalize(endArg, () => sizeOf());
-  const sRef = { type: "ParamRef", name: "jsmqlFillStart", pos };
-  const eRef = { type: "ParamRef", name: "jsmqlFillEnd", pos };
-  const xRef = { type: "ParamRef", name: "x", pos };
-  const iRef = { type: "ParamRef", name: "i", pos };
+  const sRef = { type: "ParamRef", name: exprVar("fillStart"), pos };
+  const eRef = { type: "ParamRef", name: exprVar("fillEnd"), pos };
+  const xRef = { type: "ParamRef", name: exprVar("fillEl"), pos };
+  const iRef = { type: "ParamRef", name: exprVar("fillIdx"), pos };
   const condition = {
     type: "BinaryExpr",
     op: "&&",
@@ -8580,9 +8595,9 @@ function buildFillRhs(object, args, pos) {
     pos
   };
   const mapBody = { type: "TernaryExpr", condition, consequent: v, alternate: xRef, pos };
-  const mapLambda = { type: "Lambda", params: ["x", "i"], body: mapBody, pos };
+  const mapLambda = { type: "Lambda", params: [exprVar("fillEl"), exprVar("fillIdx")], body: mapBody, pos };
   const mapCall = { type: "MethodCall", object, method: "map", args: [mapLambda], pos };
-  const iifeCallee = { type: "Lambda", params: ["jsmqlFillStart", "jsmqlFillEnd"], body: mapCall, pos };
+  const iifeCallee = { type: "Lambda", params: [exprVar("fillStart"), exprVar("fillEnd")], body: mapCall, pos };
   return { type: "CallExpression", callee: iifeCallee, args: [s0Init, e0Init], pos };
 }
 var KNOWN_METHODS = new Set(Object.keys(METHODS));
@@ -8692,7 +8707,7 @@ function requireLambda(args, method, callerPos, ctx) {
     };
   }
   if (first !== void 0 && (first.type === "StringLiteral" || first.type === "ObjectLiteral" || first.type === "ArrayLiteral")) {
-    const sh = shorthandToLambda(first, method, "jsmqlItem");
+    const sh = shorthandToLambda(first, method, exprVar("item"));
     if (sh !== null) return sh;
   }
   if (!first || first.type !== "Lambda") {
@@ -8738,7 +8753,7 @@ function applyLambda(lambda, args, argCtx, bodyCtx, pos, label) {
         a.pos
       );
     }
-    vars[lambda.params[i]] = _generate(a, argCtx);
+    vars[safeVarName(lambda.params[i])] = _generate(a, argCtx);
   }
   return { $let: { vars, in: genLambdaBody(lambda, bodyCtx) } };
 }
@@ -8910,12 +8925,14 @@ function generateObjectCall(method, args, ctx, pos) {
     case "keys": {
       const exprArgs = exprArgsOnly(args, "Object.keys");
       checkArity("keys", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
-      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.k" } };
+      const [vKv, kv] = internalVar(ctx, "kv");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: vKv, in: `${kv}.k` } };
     }
     case "values": {
       const exprArgs = exprArgsOnly(args, "Object.values");
       checkArity("values", { sig: "obj", exact: 1 }, exprArgs.length, pos, "Object.");
-      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: "kv", in: "$$kv.v" } };
+      const [vKv, kv] = internalVar(ctx, "kv");
+      return { $map: { input: { $objectToArray: genWith(exprArgs[0], {}) }, as: vKv, in: `${kv}.v` } };
     }
     case "entries": {
       const exprArgs = exprArgsOnly(args, "Object.entries");
@@ -8959,13 +8976,14 @@ function generateObjectCall(method, args, ctx, pos) {
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
       const keyExpr2 = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };
+      const [vKey, key] = internalVar(ctx, "key");
       return {
         $reduce: {
           input: _generate(input, ctx),
           initialValue: {},
           in: {
             $let: {
-              vars: { key: keyExpr2 },
+              vars: { [vKey]: keyExpr2 },
               in: {
                 $mergeObjects: [
                   "$$value",
@@ -8973,10 +8991,10 @@ function generateObjectCall(method, args, ctx, pos) {
                     $arrayToObject: [
                       [
                         [
-                          "$$key",
+                          key,
                           {
                             $concatArrays: [
-                              { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
+                              { $ifNull: [{ $getField: { field: key, input: "$$value" } }, []] },
                               ["$$this"]
                             ]
                           }
@@ -10437,6 +10455,7 @@ function formatReceiver(call) {
 }
 
 // src/stream-methods.ts
+var STREAM_SHORTHAND_PARAM = exprVar("el");
 var SLICE = {
   name: "slice",
   validate(args, callPos) {
@@ -10534,7 +10553,7 @@ function keyExpr(arg, ctx, sig) {
   const name = fieldKeyArg(arg);
   if (name !== null) return `$${name}`;
   const method = sig.slice(1, sig.indexOf("("));
-  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, method, "jsmqlEl");
+  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, method, STREAM_SHORTHAND_PARAM);
   if (lambda === null) throw computedKeyError(sig, "pos" in arg ? arg.pos : 0);
   const param = lambda.params[0];
   const { rewritten, letVars } = extractLetsFromExpr(mapBodyExpr(lambda, method), param);
@@ -10574,7 +10593,7 @@ function validateKeyArg(sig, args, callPos, alsoTakes = "") {
     mapBodyExpr(arg, name);
     return;
   }
-  if (shorthandToLambda(arg, name, "jsmqlEl") !== null) return;
+  if (shorthandToLambda(arg, name, STREAM_SHORTHAND_PARAM) !== null) return;
   throw new CodegenError(
     `${sig} takes a field name ('.${name}("status")'), a bare-path arrow ('.${name}(d => d.status)'), a computed iteratee ('.${name}(d => d.status.toLowerCase())')${alsoTakes}, or a lodash matches shorthand ('{ active: true }' / '["status", "open"]').`,
     arg.pos
@@ -10654,7 +10673,7 @@ function validateWhileArg(method, args, callPos) {
     mapBodyExpr(arg, method);
     return;
   }
-  if (shorthandToLambda(arg, method, "jsmqlEl") !== null) return;
+  if (shorthandToLambda(arg, method, STREAM_SHORTHAND_PARAM) !== null) return;
   throw new CodegenError(
     `${sig} takes an arrow predicate ('o => o.active'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.`,
     arg.pos
@@ -10823,7 +10842,7 @@ var MAP = {
       throw new CodegenError(`.map(...) does not accept a spread argument \u2014 pass a '(d) => <expr>' arrow.`, arg.pos);
     }
     if (arg.type !== "Lambda") {
-      if (shorthandToLambda(arg, "map", "jsmqlEl") !== null) return;
+      if (shorthandToLambda(arg, "map", STREAM_SHORTHAND_PARAM) !== null) return;
       throw new CodegenError(
         `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))'), a field-name string ('.map("userId")'), a matches-object ('{ active: true }'), or a ["field", value] pair.`,
         arg.pos
@@ -12052,7 +12071,7 @@ function tryShorthandToLambda(arg, method, param) {
     throw e;
   }
 }
-var FOREIGN_SHORTHAND_PARAM = "jsmqlItem";
+var FOREIGN_SHORTHAND_PARAM = exprVar("item");
 function aggregateArgToLambda(arg) {
   if (arg.type === "Lambda") return arg.block !== void 0 ? arg : null;
   if (arg.type === "ArrayLiteral") {
@@ -13040,7 +13059,7 @@ function injectImplicitFilterForValueTerminal(expr) {
   if (classifyLookupReceiver(cur) === null) return expr;
   const trueArrow = {
     type: "Lambda",
-    params: ["jsmqlD"],
+    params: [exprVar("d")],
     body: { type: "BooleanLiteral", value: true, pos: innermost.pos },
     pos: innermost.pos
   };
@@ -13116,7 +13135,7 @@ function extractLookupCalls(exprArg, outerCtx, allocSlot, lowerBlock2, enclosing
   if (chained !== null) return chained;
   return descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing);
 }
-var ITERATEE_SHORTHAND_PARAM = "jsmqlEl";
+var ITERATEE_SHORTHAND_PARAM = exprVar("el");
 function peelableTerminalMap(m) {
   if (m.method !== "map" || m.args.length !== 1) return null;
   const arg = m.args[0];
@@ -14948,7 +14967,7 @@ function lowerStreamReject(m, ctx, lowerBlockFn) {
     body = arg.body;
     pos = arg.pos;
   } else {
-    const sh = shorthandToLambda(arg, "reject", "jsmqlItem");
+    const sh = shorthandToLambda(arg, "reject", exprVar("item"));
     if (sh === null || sh.body === void 0) {
       throw new CodegenError(
         `.reject(<predicate>) takes an arrow ('o => \u2026'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
@@ -14967,7 +14986,7 @@ function chainHasCorrelatingFilter(methods, outerCtx) {
     if (m.method !== "filter" && m.method !== "reject") continue;
     if (m.args.length !== 1 || m.args[0].type === "SpreadElement") continue;
     const arg = m.args[0];
-    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, "jsmqlItem");
+    const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, exprVar("item"));
     if (lambda !== null && predicateReferencesOuterDoc(lambda, outerCtx)) return true;
   }
   return false;

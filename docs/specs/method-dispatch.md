@@ -72,7 +72,7 @@ The `sig` always shows the intended call shape (parameter names, with optional o
 | `.match("pat")` | `{ $regexMatch: { input, regex: "pat" } }` |
 | `.matchAll(/pat/g)` | `{ $regexFindAll: { input, regex, options } }` (requires `g` flag) |
 | `.search(/pat/)` | `$regexFind` + `.idx` field, with `$ifNull` fallback to `-1` |
-| `.padStart(n[, ch])` | `$let` + `$cond` + `$reduce`($range) — pad-string concatenated *before* receiver, trimmed to the remaining width (see below) |
+| `.padStart(n[, ch])` | `$let` (binding from `internalVar`, see below) + `$cond` + `$reduce`($range) — pad-string concatenated *before* receiver, trimmed to the remaining width (see below) |
 | `.padEnd(n[, ch])` | mirror of padStart, pad string concatenated *after* receiver |
 | `.repeat(n)` | `$reduce` over `$range(0, n)` concatenating receiver |
 | `.length` (property) | `{ $strLenCP: expr }` if string-producing, `{ $size: expr }` if array-producing, `{ $cond: { if: { $isArray: expr }, then: { $size: expr }, else: { $strLenCP: expr } } }` otherwise |
@@ -114,23 +114,6 @@ already-safe methods do.
 `strLenOf` also folds a literal receiver to its **code point** count, since `$strLenCP` counts code
 points where JS `.length` counts UTF-16 units (`"a👍b"` is 3, not 4). A source string starting with
 `$` is an MQL field reference (HR1) and is never folded.
-
-#### Internal `$let` bindings must not capture (`letBind`)
-
-Several lowerings bind their receiver in a `$let` so it is evaluated once. When such a lowering also
-splices a **user-supplied** expression into the `in:` body — a method argument, an iteratee result —
-the binding name can capture it: that expression was generated in the *outer* scope and refers to its
-lambda params as `$$name`, so a binding of the same name silently re-points it at the receiver. This
-yields **wrong values, not errors**, which no `toEqual` on emitted MQL can catch.
-
-Every such binding therefore goes through `letBind(ctx, base, value, body)` (`codegen.ts`), which
-picks the name with `gensymInScope` — returning `base` unchanged when nothing collides (so ordinary
-output is unaffected) and `base2`, `base3`, … when a lambda param already holds it.
-
-A `vars` **value** never needs this: MongoDB evaluates it in the enclosing scope, before the binding
-takes effect. That is why `Object.groupBy`'s `key` binding is safe despite the common name, while
-`.padStart`'s was not. When adding a lowering that emits a `$let`, ask which side the user's
-expression lands on — body ⇒ `letBind`, value ⇒ either is fine.
 
 #### Padding fills to a width, it does not repeat whole (`.padStart` / `.padEnd`)
 
@@ -214,8 +197,8 @@ JS array-method callbacks receive `(element, index, array)`. jsmql supports all 
 **Paired form** (index used):
 
 - `input` becomes `{ $zip: { inputs: [{ $range: [0, { $size: expr }] }, expr] } }` (an array of `[index, element]` pairs).
-- `as` becomes a synthetic name `jsmqlPair` so it never collides with a user-named param.
-- The body is wrapped in `{ $let: { vars: { [elemName]: $arrayElemAt($$jsmqlPair, 1), [idxName]: $arrayElemAt($$jsmqlPair, 0)[, [arrName]: <input>] }, in: <body> } }` so the user's names resolve via the standard `lambdaParams` path.
+- `as` becomes a synthetic name — `internalVar(bodyCtx, "pair")`, normally `jsmqlPair` — so it never collides with a user-named param (see [Compiler-emitted variable names](#compiler-emitted-variable-names-internalvar) for what makes that hold).
+- The body is wrapped in `{ $let: { vars: { [elemName]: $arrayElemAt($$<pair>, 1), [idxName]: $arrayElemAt($$<pair>, 0)[, [arrName]: <input>] }, in: <body> } }` so the user's names resolve via the standard `lambdaParams` path.
 
 Per-method shape under the paired form:
 
@@ -332,6 +315,17 @@ When a lambda is processed, its parameters are added to `lambdaParams` via `exte
 - A **provably-string key** (`isStringProducing(idx)` — a string literal, template literal, `.toLowerCase()`-style string-returning method, etc. — or a `ParamRef` typed `"string"` in `bindingTypes`) → `$getField` directly, **even when the receiver is a known array**. A string is never a numeric array index, so the access is unambiguously an object property getter. This is not just an optimisation: `$arrayElemAt` *rejects* a string index at runtime ("second argument must be a numeric value, but is string"), so the old `$isArray`/`$arrayElemAt` dual guard would turn a valid-JS access (`arr["x"]` is a property lookup in JS, e.g. `[1,2]["length"]`) into a server error whenever the value is an array — an HR3 violation. `$getField` on an array input is accepted and yields missing, the faithful lowering.
 
 Everything else (`$.items[0]`, `$.cart.field[$.mainSide]`) takes the general dispatch: known-array receiver → `$arrayElemAt`; a **structurally- or binding-typed object** receiver → `$getField`; otherwise the runtime `$cond` on `$isArray`. A *structural* object is one provably never an array — the bare root document (`$` → `$$ROOT`, always a BSON object) or an object literal — so a computed key on it (`$[$.k]`, `$[SSTM_PROP[party]]`, `({a:1})[$.k]`) skips the dispatch and lowers straight to `$getField`, not a `$cond` whose dead `$arrayElemAt` branch would carry a string field name as an array index (rejected at *pipeline-optimization* time — "$arrayElemAt's second argument must be a numeric value, but is string" — on engines that don't prune unreachable branches; an HR3 violation that only surfaces on some servers). Notably there is **no** `["length"]` special case — `$.field["length"]` reads a property called "length" (now via `$getField`, since `"length"` is a string key), it does not compute a size.
+
+### Compiler-emitted variable names (`internalVar`)
+
+A lowering that must not re-evaluate its receiver, or that iterates, mints its own MongoDB variable — a `$let` `vars` key or a `$map`/`$filter` `as`. Those live in the **same flat scope** as the user's lambda params, and most such lowerings also splice codegen produced in the OUTER scope into the same `$let` body (`.padStart`'s `targetLength`/`padString`, `.slice`'s indices, `.with`'s value, …). A bare name therefore captures: the spliced argument re-resolves against the compiler's binding instead of the user's param.
+
+Every such name comes from `internalVar(ctx, base)` in `codegen.ts` — `exprVar(base)` from [`namespace.ts`](../../src/namespace.ts) for the spelling, `gensymInScope` for uniqueness. It returns the prefixed base unchanged unless that name is genuinely in `ctx.lambdaParams`, so emitted MQL is unaffected for code that doesn't use it; when it *is* in scope, the **compiler's** binding takes the suffixed name and the developer's param keeps the one they wrote. Two rules when adding a lowering:
+
+- Gensym against a ctx holding every name bound between your `$let` and the body that reads it. An iteratee's element var is not in the caller's ctx, so `.groupBy` / `.differenceBy` / `.xorBy` pass `extendCtx(ctx, [it.as])`.
+- With no `GenerateCtx` in hand (`wordsExpr`/`joinWords`; the AST-level `.fill()` rewrite, which is reachable only at statement position) call `exprVar` directly — sound only because those bodies are fixed MQL, or no lambda param can be in scope.
+
+Only the `in:` **body** is exposed. A `vars` *value* is evaluated in the enclosing scope, before the binding takes effect, so a user expression sitting there can never be captured — which is why `Object.groupBy`'s `key` binding and `.with(i, v)`'s bound arguments were always safe, while `.padStart`'s body-spliced ones were not. Worth knowing when judging an existing lowering; new ones should just use `internalVar` either way.
 
 ## `reduce` parameter remapping
 

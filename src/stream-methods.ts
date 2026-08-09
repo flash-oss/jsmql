@@ -21,11 +21,16 @@ import {
   type SlotAllocator,
   type SubPipelineLowerer,
 } from "./lookup-translation.ts";
-import { GROUP_TMP, JSMQL_NS, LENGTH_SLOT, streamLengthStage } from "./namespace.ts";
+import { GROUP_TMP, JSMQL_NS, LENGTH_SLOT, exprVar, streamLengthStage } from "./namespace.ts";
 import { containsUnionPush } from "./union-translation.ts";
 import { lowerUnionPush } from "./union-translation.ts";
 
 type LambdaNode = Extract<Expr, { type: "Lambda" }>;
+
+// The element name a shorthand iteratee (`"cat"` / `{ cat: "a" }` / `["cat", "a"]`)
+// desugars its synthetic arrow param to. In the expression-variable namespace so it
+// can't collide with a param the developer actually wrote — see src/namespace.ts.
+const STREAM_SHORTHAND_PARAM = exprVar("el");
 
 export type StreamMethodResult = {
   /** Stages this method contributes, appended to the surrounding chain. */
@@ -287,7 +292,7 @@ function keyExpr(arg: CallArg, ctx: GenerateCtx, sig: string): unknown {
   const name = fieldKeyArg(arg);
   if (name !== null) return `$${name}`;
   const method = sig.slice(1, sig.indexOf("("));
-  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg as Expr, method, "jsmqlEl");
+  const lambda = arg.type === "Lambda" ? arg : shorthandToLambda(arg as Expr, method, STREAM_SHORTHAND_PARAM);
   if (lambda === null) throw computedKeyError(sig, "pos" in arg ? arg.pos : 0);
   const param = lambda.params[0];
   const { rewritten, letVars } = extractLetsFromExpr(mapBodyExpr(lambda, method), param);
@@ -351,7 +356,7 @@ function validateKeyArg(sig: string, args: readonly CallArg[], callPos: number, 
     return;
   }
   // A lodash matches shorthand keys on the match BOOLEAN (lodash `_.matches`).
-  if (shorthandToLambda(arg, name, "jsmqlEl") !== null) return;
+  if (shorthandToLambda(arg, name, STREAM_SHORTHAND_PARAM) !== null) return;
   throw new CodegenError(
     `${sig} takes a field name ('.${name}("status")'), a bare-path arrow ('.${name}(d => d.status)'), ` +
       `a computed iteratee ('.${name}(d => d.status.toLowerCase())')${alsoTakes}, or a lodash matches shorthand ` +
@@ -478,7 +483,7 @@ function validateWhileArg(method: string, args: readonly CallArg[], callPos: num
   }
   // Same predicate spellings `.filter` takes — a matches-object, a field name, a
   // `["field", value]` pair.
-  if (shorthandToLambda(arg, method, "jsmqlEl") !== null) return;
+  if (shorthandToLambda(arg, method, STREAM_SHORTHAND_PARAM) !== null) return;
   throw new CodegenError(
     `${sig} takes an arrow predicate ('o => o.active'), a matches-object ('{ active: true }'), ` +
       `a field name ('"active"'), or a ["field", value] pair.`,
@@ -796,7 +801,7 @@ const MAP: StreamMethodDef = {
     // (see `peelableTerminalMap`), matching what value position already accepts —
     // `shorthandToLambda` throws the per-form message for a malformed one.
     if (arg.type !== "Lambda") {
-      if (shorthandToLambda(arg, "map", "jsmqlEl") !== null) return;
+      if (shorthandToLambda(arg, "map", STREAM_SHORTHAND_PARAM) !== null) return;
       throw new CodegenError(
         `.map(d => <expr>) requires an arrow function (e.g. '.map(d => ({ id: d._id }))'), a field-name string ` +
           `('.map("userId")'), a matches-object ('{ active: true }'), or a ["field", value] pair.`,

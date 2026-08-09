@@ -2660,12 +2660,12 @@ describe("bitwise infix operators", () => {
 describe("Object.*", () => {
   it("Object.keys", () => {
     expect(jsmql.expr("Object.keys($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.k" },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
   });
   it("Object.values", () => {
     expect(jsmql.expr("Object.values($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "kv", in: "$$kv.v" },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.v" },
     });
   });
   it("Object.entries", () => {
@@ -3031,6 +3031,14 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
+  // A paramless callback still occupies an `as` name in the emitted MQL. Before it
+  // was gensym'd, the inner one shadowed the outer element and `$$v` resolved to
+  // the inner array's element (mongod returned [[0,0,0],[0,0,0]], not [[1,1,1],[2,2,2]]).
+  it("a paramless callback's synthetic `as` doesn't shadow an enclosing one", () => {
+    expect(jsmql.expr("$.a.map(v => $.b.map(() => v))")).toEqual({
+      $map: { input: "$a", as: "v", in: { $map: { input: "$b", as: "v2", in: "$$v" } } },
+    });
+  });
   it(".find((x, i) => cond) wraps with double $arrayElemAt", () => {
     expect(jsmql.expr("$.xs.find((x, i) => i === 2)")).toEqual({
       $arrayElemAt: [
@@ -3090,6 +3098,32 @@ describe("array callbacks support (element, index)", () => {
         },
       },
     });
+  });
+  // MongoDB rejects a user-variable name starting with `_`, so the idiomatic JS
+  // throwaway param has to go through safeVarName like every other binding site
+  // ("'_' starts with an invalid character for a user variable name").
+  it(".findIndex((_, i) => …) escapes the throwaway param to a server-valid name", () => {
+    expect(jsmql.expr("$.xs.findIndex((_, i) => i > 2)")).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        initialValue: -1,
+        in: {
+          $let: {
+            vars: { v_: { $arrayElemAt: ["$$this", 1] }, i: { $arrayElemAt: ["$$this", 0] } },
+            in: {
+              $cond: {
+                if: { $and: [{ $eq: ["$$value", -1] }, { $gt: ["$$i", 2] }] },
+                then: { $arrayElemAt: ["$$this", 0] },
+                else: "$$value",
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".findLastIndex((_, i) => …) escapes it too", () => {
+    expect(JSON.stringify(jsmql.expr("$.xs.findLastIndex((_, i) => i > 2)"))).toContain('"vars":{"v_":');
   });
   it(".reduce((acc, x, i) => …, init) zips input and rebinds in $let", () => {
     expect(jsmql.expr("$.xs.reduce((acc, x, i) => acc + x * i, 0)")).toEqual({
@@ -3586,8 +3620,8 @@ describe("lodash set-ops & By-iteratee value methods", () => {
           $reduce: {
             input: {
               $concatArrays: [
-                { $filter: { input: "$$jsmqlA", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlB"] }] } } },
-                { $filter: { input: "$$jsmqlB", as: "x", cond: { $not: [{ $in: ["$$x", "$$jsmqlA"] }] } } },
+                { $filter: { input: "$$jsmqlA", as: "jsmqlX", cond: { $not: [{ $in: ["$$jsmqlX", "$$jsmqlB"] }] } } },
+                { $filter: { input: "$$jsmqlB", as: "jsmqlX", cond: { $not: [{ $in: ["$$jsmqlX", "$$jsmqlA"] }] } } },
               ],
             },
             initialValue: [],
@@ -3615,6 +3649,42 @@ describe("lodash set-ops & By-iteratee value methods", () => {
   it(".sortedUniq / .sortedUniqBy alias .uniq / .uniqBy (no sorted-array optimisation in MQL)", () => {
     expect(jsmql.expr("$.a.sortedUniq()")).toEqual(jsmql.expr("$.a.uniq()"));
     expect(jsmql.expr('$.a.sortedUniqBy("id")')).toEqual(jsmql.expr('$.a.uniqBy("id")'));
+  });
+  // The iteratee's $let must not enclose the $reduce accumulator reads: a param named
+  // `value` used to shadow `$$value`, so the "have I seen this key" test read `.seen`
+  // off the element and every element survived the dedupe.
+  it("an iteratee param named 'value' doesn't shadow the $reduce accumulator", () => {
+    expect(jsmql.expr("$.a.uniqBy(value => value.id)")).toEqual({
+      $getField: {
+        field: "out",
+        input: {
+          $reduce: {
+            input: "$a",
+            initialValue: { seen: [], out: [] },
+            in: {
+              $let: {
+                vars: { jsmqlKey: { $let: { vars: { value: "$$this" }, in: "$$value.id" } } },
+                in: {
+                  $cond: [
+                    { $in: ["$$jsmqlKey", "$$value.seen"] },
+                    "$$value",
+                    {
+                      seen: { $concatArrays: ["$$value.seen", ["$$jsmqlKey"]] },
+                      out: { $concatArrays: ["$$value.out", ["$$this"]] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it("an identity iteratee binds the element directly — no redundant inner $let", () => {
+    expect(jsmql.expr("$.a.uniqBy(x => x)")).toMatchObject({
+      $getField: { input: { $reduce: { in: { $let: { vars: { jsmqlKey: "$$this" } } } } } },
+    });
   });
 });
 
@@ -3925,6 +3995,14 @@ describe("statement-position mutators", () => {
     const setVal = (out[0]?.$set as { events: unknown }).events as { $let: { vars: Record<string, unknown> } };
     expect(setVal.$let.vars).toEqual({ jsmqlFillStart: 1, jsmqlFillEnd: 3 });
   });
+  // The fill VALUE is generated inside the synthetic `(el, idx)` map callback, so
+  // bare param names captured a pipeline binding of the same name: `let x = 5;
+  // $.arr.fill(x, 1)` filled with each ELEMENT instead of 5.
+  it("a pipeline binding named like the synthetic fill param isn't captured", () => {
+    const out = JSON.stringify(jsmql("let x = 5; $.arr.fill(x, 1); $.done = true;"));
+    expect(out).toContain('"then":5'); // the binding's value, not "$$x"
+    expect(out).not.toContain('"then":"$$x"');
+  });
   it(".reverse() with extra args is rejected (preserves the existing .toReversed arg-count check)", () => {
     expect(() => jsmql("$.events.reverse(123);")).toThrow();
   });
@@ -4090,21 +4168,21 @@ describe("string padding methods", () => {
   it("padStart with explicit char", () => {
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual({
       $let: {
-        vars: { jsmqlStr: { $ifNull: ["$code", ""] } },
+        vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
         in: {
           $cond: {
-            if: { $gte: [{ $strLenCP: "$$jsmqlStr" }, 5] },
-            then: "$$jsmqlStr",
+            if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, 5] },
+            then: "$$jsmqlPad",
             else: {
               $concat: [
                 {
                   $reduce: {
-                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlStr" }] }] },
+                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
                     initialValue: "",
                     in: { $concat: ["$$value", "0"] },
                   },
                 },
-                "$$jsmqlStr",
+                "$$jsmqlPad",
               ],
             },
           },
@@ -4116,14 +4194,14 @@ describe("string padding methods", () => {
     // JS pads to exactly `targetLength` characters, cutting the pad mid-string:
     // "gold".padStart(9, "US") === "USUSUgold". Repeating the pad (target - len)
     // times over-fills, so the repeated run is trimmed back.
-    const need = { $subtract: [5, { $strLenCP: "$$jsmqlStr" }] };
+    const need = { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] };
     expect(jsmql.expr('$.code.padStart(5, "US")')).toEqual({
       $let: {
-        vars: { jsmqlStr: { $ifNull: ["$code", ""] } },
+        vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
         in: {
           $cond: {
-            if: { $gte: [{ $strLenCP: "$$jsmqlStr" }, 5] },
-            then: "$$jsmqlStr",
+            if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, 5] },
+            then: "$$jsmqlPad",
             else: {
               $concat: [
                 {
@@ -4133,7 +4211,7 @@ describe("string padding methods", () => {
                     { $max: [0, need] },
                   ],
                 },
-                "$$jsmqlStr",
+                "$$jsmqlPad",
               ],
             },
           },
@@ -4158,7 +4236,56 @@ describe("string padding methods", () => {
   });
   it("padEnd order is str-then-pad", () => {
     const out = jsmql.expr('$.s.padEnd(10, "-")') as Record<string, unknown>;
-    expect(JSON.stringify(out)).toContain('["$$jsmqlStr",{"$reduce"');
+    expect(JSON.stringify(out)).toContain('["$$jsmqlPad",{"$reduce"');
+  });
+  // The targetLength/padString args are generated in the OUTER scope but land inside
+  // the $let, so a lambda param sharing the binding's name used to be captured: the
+  // args re-resolved against the receiver string and the padding silently vanished
+  // (verified on mongod: ["7","42"] instead of ["007","***42"]).
+  it("a lambda param named 's' is not captured by the internal binding", () => {
+    expect(jsmql.expr("$.items.map(s => s.code.padStart(s.width, s.pad))")).toEqual({
+      $map: {
+        input: "$items",
+        as: "s",
+        in: {
+          $let: {
+            // The pad is a runtime expression, so the repeated run is trimmed to
+            // the remaining width; the binding is coerced for a missing field.
+            vars: { jsmqlPad: { $ifNull: ["$$s.code", ""] } },
+            in: {
+              $cond: {
+                if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, "$$s.width"] },
+                then: "$$jsmqlPad",
+                else: {
+                  $concat: [
+                    {
+                      $substrCP: [
+                        {
+                          $reduce: {
+                            input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                            initialValue: "",
+                            in: { $concat: ["$$value", "$$s.pad"] },
+                          },
+                        },
+                        0,
+                        { $max: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                      ],
+                    },
+                    "$$jsmqlPad",
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it("a lambda param named after the binding itself gensyms the binding, not the param", () => {
+    const out = JSON.stringify(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))"));
+    expect(out).toContain('"as":"jsmqlPad"'); // the user's name is left alone
+    expect(out).toContain('"vars":{"jsmqlPad2":{"$ifNull":["$$jsmqlPad.code",""]}}'); // ours moves aside
+    expect(out).toContain('{"$strLenCP":"$$jsmqlPad2"},"$$jsmqlPad.width"');
   });
   it("repeat", () => {
     expect(jsmql.expr('"-".repeat(5)')).toEqual({
@@ -4269,7 +4396,7 @@ describe("Object.groupBy", () => {
         initialValue: {},
         in: {
           $let: {
-            vars: { key: { $toString: "$$this.category" } },
+            vars: { jsmqlKey: { $toString: "$$this.category" } },
             in: {
               $mergeObjects: [
                 "$$value",
@@ -4277,10 +4404,10 @@ describe("Object.groupBy", () => {
                   $arrayToObject: [
                     [
                       [
-                        "$$key",
+                        "$$jsmqlKey",
                         {
                           $concatArrays: [
-                            { $ifNull: [{ $getField: { field: "$$key", input: "$$value" } }, []] },
+                            { $ifNull: [{ $getField: { field: "$$jsmqlKey", input: "$$value" } }, []] },
                             ["$$this"],
                           ],
                         },
@@ -4549,12 +4676,15 @@ describe("in operator RHS validation", () => {
   });
   it("object literal with spread uses $objectToArray for the spread keys", () => {
     expect(jsmql.expr("$.x in { ...$.base, a: 1 }")).toEqual({
-      $in: ["$x", { $concatArrays: [{ $map: { input: { $objectToArray: "$base" }, as: "kv", in: "$$kv.k" } }, ["a"]] }],
+      $in: [
+        "$x",
+        { $concatArrays: [{ $map: { input: { $objectToArray: "$base" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, ["a"]] },
+      ],
     });
   });
   it("object literal with only spread reduces to $objectToArray.k directly", () => {
     expect(jsmql.expr("$.x in { ...$.other }")).toEqual({
-      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "kv", in: "$$kv.k" } }],
+      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }],
     });
   });
   it("accepts field ref RHS", () => {
@@ -4834,7 +4964,7 @@ describe("optional chaining (?.)", () => {
   // Object.keys / values / entries / fromEntries — `$objectToArray(null)` errors.
   it("Object.keys on optional wraps argument with {}", () => {
     expect(jsmql.expr("Object.keys($.user?.profile)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, as: "kv", in: "$$kv.k" },
+      $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
   });
   it("Object.entries on optional wraps argument with {}", () => {
@@ -6435,5 +6565,51 @@ describe("trailing commas (JS syntax)", () => {
     // (`{ $ },`).
     expect(jsmql.compile("({ min, }, { $ },) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
     expect(jsmql.compile("({ min }, { $ }) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+  });
+});
+
+// The `jsmql` prefix on a compiler-emitted `$let`/`$map`/`$filter` variable is only
+// a convention — nothing stops a developer naming a param the same thing. What makes
+// the "never collides with a user-named param" invariant hold is `internalVar`'s
+// gensym (src/codegen.ts, over `exprVar` in src/namespace.ts): OUR binding moves
+// aside, the developer's name is left exactly as written.
+describe("internal expression-variable names never capture a user param", () => {
+  // One case per lowering that binds an internal var AND splices outer-scope
+  // codegen into it — [source, the internal name the user's param collides with].
+  const CASES: Array<[string, string]> = [
+    ["$.r.map(jsmqlArr => jsmqlArr.l.slice(jsmqlArr.i))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.slice(jsmqlArr.i, jsmqlArr.j))", "jsmqlArr"],
+    ["$.r.map(jsmqlPad => jsmqlPad.c.padStart(jsmqlPad.w))", "jsmqlPad"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.lastIndexOf(jsmqlArr.n))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.toSpliced(jsmqlArr.s, 1))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.with(jsmqlArr.i, jsmqlArr.v))", "jsmqlArr"],
+    ["$.r.map(jsmqlArr => jsmqlArr.l.drop(jsmqlArr.n))", "jsmqlArr"],
+    ["$.r.map(jsmqlItem => jsmqlItem.l.difference(jsmqlItem.o))", "jsmqlItem"],
+    ["$.r.map(jsmqlItem => jsmqlItem.l.without(jsmqlItem.o))", "jsmqlItem"],
+    ["$.r.map(jsmqlShuffled => jsmqlShuffled.l.sampleSize(jsmqlShuffled.n))", "jsmqlShuffled"],
+    ["$.r.map(jsmqlA => jsmqlA.l.xor(jsmqlA.o))", "jsmqlA"],
+    ['$.r.map(jsmqlOtherKeys => jsmqlOtherKeys.l.differenceBy(jsmqlOtherKeys.o, "id"))', "jsmqlOtherKeys"],
+    ["$.r.map(jsmqlI => jsmqlI.l.zipObject(jsmqlI.v))", "jsmqlI"],
+    ["$.r.map(jsmqlKey => jsmqlKey.l.uniqBy(d => d.id))", "jsmqlKey"],
+    ['$.r.map(jsmqlObj => jsmqlObj.o.pick(["a"]))', "jsmqlObj"],
+    ["$.r.map(jsmqlKv => jsmqlKv.o.mapValues(v => v + jsmqlKv.n))", "jsmqlKv"],
+    ["$.r.map(jsmqlFi => jsmqlFi.l.takeWhile(d => d.a < jsmqlFi.n))", "jsmqlFi"],
+    ["$.r.map(jsmqlSorted => jsmqlSorted.l.maxBy(d => d.a))", "jsmqlSorted"],
+    ["$.r.map(jsmqlPair => jsmqlPair.l.map((e, i) => e + i + jsmqlPair.n))", "jsmqlPair"],
+  ];
+  for (const [src, name] of CASES) {
+    it(`${name}: the binding moves aside, the param keeps its name`, () => {
+      const out = JSON.stringify(jsmql.expr(src));
+      // The user's param is emitted verbatim as the `$map` element…
+      expect(out).toContain(`"as":"${name}"`);
+      // …and every read of it still resolves to the element, because the internal
+      // binding took a fresh name instead.
+      expect(out).toContain(`"${name}2"`);
+    });
+  }
+
+  it("without a collision the base name is used — output is unchanged for normal code", () => {
+    expect(JSON.stringify(jsmql.expr("$.r.map(d => d.l.slice(d.i))"))).not.toContain("jsmqlArr2");
+    expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual(jsmql.expr('$.code.padStart(5, "0")'));
   });
 });
