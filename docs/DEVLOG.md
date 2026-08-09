@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — fix: one gate for every local `$$` predicate, so spelling can't change the MQL
+
+`$$.filter(...)` / `$$.reject(...)` now take their argument through a single shared gate,
+[`requireStreamPredicate`](src/lookup-translation.ts), in **every** container that lowers one:
+the `$$ =` stream, a `$facet` branch, and an `$out` write chain. It normalises all four
+predicate spellings — arrow, matches-object, field name, `["field", value]` pair — to the
+single-parameter arrow the lowering consumes. This is the local-stream counterpart to what
+`detectLookupCall` + `validateLookupShape` already did for the foreign `$$$.<coll>.filter(...)`
+side, which was correct and complete all along.
+
+*Why a gate rather than three fixes.* Each container hand-rolled its own argument handling, and
+the three had drifted into a patchwork: `$out` accepted only an arrow (so
+`$$$.archive = $$.filter({ status: "expired" })` was rejected outright), and the field-name and
+`["field", value]` spellings worked in no local position at all. Worse, the `$$ =` stream *did*
+accept a matches-object but lowered it down a separate **raw-query** path
+(`{ $match: <the object generated as an expression> }`) instead of desugaring it like every other
+spelling. That made the spellings observably different rather than merely unevenly supported:
+`$$ = $$.filter({ a: 2 + 3 })` emitted `{ $match: { a: { $add: [2, 3] } } }` — an aggregation
+operator in query position, which mongod rejects with `unknown operator: $add` (an HR3 violation
+that a green `toEqual` had been endorsing), and `$$ = $$.filter({ a: $.b })` silently matched the
+*string* `"$b"` rather than the field, while the identical arrow spelling was explicitly rejected
+as ambiguous. Fixing the three sites separately would have left the next container free to invent
+a fourth handling; the gate makes "read the raw argument yourself" the thing you have to go out of
+your way to do.
+
+The paired `$.<field>` rejection is shared for the same reason, as `localRefInPredicateMessage`.
+Once a shorthand is normalised, its "lambda parameter" is the gate's *synthetic* name, so the old
+per-site messages would have told a user who wrote `{ a: $.b }` to write `jsmqlItem.b` — advice
+that cannot be typed. The shared builder names the parameter back only for a real arrow and
+redirects a shorthand to the arrow form instead. Locked down by a table-driven
+(position × spelling) equivalence test in [test/pipeline.test.ts](test/pipeline.test.ts), and the
+`$add`-in-query-position shape was re-run against a live `mongod` to confirm the emitted `$expr`
+form is accepted. Spec: [docs/specs/pipeline-validation.md](docs/specs/pipeline-validation.md)
+§ the local-`$$` predicate gate.
+
+While in the `$out` docs: the spec and [docs/LANGUAGE.md](docs/LANGUAGE.md) both still claimed
+only `.filter` was wired into a `$out` chain "in v1" and that `.map` / `.sort` / `.slice` were
+"not yet wired". The whole stream-method registry and chained stage calls have worked there for a
+while — the prose had simply gone stale (and carried a `v1` marker the pre-1.0 rule bans).
+
+---
+
 ## 2026-08-09 — fix: `.padStart()` / `.padEnd()` fill to a width instead of repeating the pad whole
 
 Noted while measuring the `$let`-capture fix below, and fixed here. The lowering built its padding by repeating the *entire* pad string `targetLength - strLen` times, which is only correct when the pad is one character. JS pads to exactly `targetLength` **characters**, cutting a multi-character pad mid-string: `"gold".padStart(9, "US")` is `"USUSUgold"`, but jsmql emitted `"USUSUSUSUSgold"` — 14 characters for a request of 9. An SR2 violation (a native JavaScript API must behave as its JavaScript self), and a silent one: the result is a plausible-looking string, so nothing signalled the error.

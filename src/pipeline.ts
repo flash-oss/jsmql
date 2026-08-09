@@ -81,6 +81,9 @@ import {
   extractLookupTarget,
   requireSameDbColl,
   lowerLambdaPredicate,
+  localRefInPredicateMessage,
+  requireStreamPredicate,
+  negateStreamPredicate,
   isValueCollapsingMap,
   peelForeignChain,
   pipelineLookupBody,
@@ -1170,11 +1173,12 @@ function applyStreamMethods(
 }
 
 /**
- * Lower a `.filter(...)` in a `$$` stream chain to `$match` stages. Accepts an
- * arrow predicate (`o => …`, via the shared predicate lowering) or the lodash
- * matches-object shorthand (`{ field: value, … }` → an equality `$match` query).
- * `isHead` gates the "RHS must be `.filter(<predicate>)`" error to the chain head
- * (where a bad shape means the whole `$$ = …` RHS is unrecognised).
+ * Lower a `.filter(...)` in a `$$` stream chain to `$match` stages. Every predicate
+ * spelling arrives through the shared gate (`requireStreamPredicate`), so an arrow
+ * and its matches-object / field-name / `["field", value]` equivalents all lower
+ * through one path. `isHead` gates the "RHS is unrecognised" error to the chain head,
+ * where a bad *argument count* means the whole `$$ = …` RHS failed to parse as a
+ * filter — a bad predicate *shape* has its own message from the gate.
  */
 function lowerStreamFilterArg(
   m: MethodCallNode,
@@ -1183,57 +1187,51 @@ function lowerStreamFilterArg(
   rhs: Expr,
   isHead: boolean,
 ): object[] {
-  if (m.args.length === 1 && m.args[0].type === "Lambda") {
-    return lowerStreamFilterPredicate(m.args[0] as LambdaNode, ctx, lowerBlockFn);
-  }
-  if (m.args.length === 1 && m.args[0].type === "ObjectLiteral") {
-    return [{ $match: generateWithCtx(m.args[0], ctx) }];
-  }
-  if (isHead) rejectInvalidReplaceStream(rhs, ctx);
-  throw new CodegenError(
-    `.filter(<predicate> | { field: value, … }) takes a single arrow predicate ('o => …') or a matches-object.`,
-    m.pos,
-  );
-}
-
-/**
- * Lower a `.reject(...)` stream method — `.filter` negated. Accepts the same
- * predicate forms (an arrow, or a lodash matches-object / field string / [field,
- * value] pair via `shorthandToLambda`), synthesizes `o => !(<predicate body>)`, and
- * reuses `lowerStreamFilterPredicate`. The negated arrow lowers to `$match: { $expr:
- * { $not: … } }` — no query-form De Morgan (which jsmql rejects project-wide).
- */
-function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: SubPipelineLowerer): object[] {
-  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+  if (m.args.length !== 1) {
+    if (isHead) rejectInvalidReplaceStream(rhs, ctx);
     throw new CodegenError(
-      `.reject(<predicate>) takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
+      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos,
     );
   }
-  const arg = m.args[0];
-  let params: string[];
-  let body: Expr;
-  let pos: number;
-  if (arg.type === "Lambda") {
-    if (arg.params.length !== 1 || arg.body === undefined) {
-      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => …').`, arg.pos);
-    }
-    params = arg.params;
-    body = arg.body;
-    pos = arg.pos;
-  } else {
-    const sh = shorthandToLambda(arg, "reject", exprVar("item"));
-    if (sh === null || sh.body === undefined) {
-      throw new CodegenError(
-        `.reject(<predicate>) takes an arrow ('o => …'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
-        arg.pos,
-      );
-    }
-    params = sh.params;
-    body = sh.body;
-    pos = sh.pos;
+  return lowerStreamFilterPredicate(
+    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos }),
+    ctx,
+    lowerBlockFn,
+  );
+}
+
+/** Where a `$$ = …` chain's predicate sits, for the shared gate's messages. */
+const STREAM_PREDICATE_POSITION = "on the RHS of '$$ = …'";
+
+/**
+ * Lower a `.reject(...)` stream method — `.filter` negated. Takes its predicate
+ * through the same gate `.filter` uses, so the two accept an identical vocabulary,
+ * then negates via `negateStreamPredicate` and reuses `lowerStreamFilterPredicate`.
+ * The negated arrow lowers to `$match: { $expr: { $not: … } }` — no query-form
+ * De Morgan (which jsmql rejects project-wide).
+ */
+function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: SubPipelineLowerer): object[] {
+  if (m.args.length !== 1) {
+    throw new CodegenError(
+      `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      m.pos,
+    );
   }
-  const negated: LambdaNode = { type: "Lambda", params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
+  const lambda = requireStreamPredicate(m.args[0], {
+    method: "reject",
+    position: STREAM_PREDICATE_POSITION,
+    pos: m.pos,
+  });
+  const negated = negateStreamPredicate(lambda);
+  if (negated === null) {
+    throw new CodegenError(
+      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
+        `a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
+        `or use a block-bodied '$$.filter' with the inverted condition.`,
+      lambda.pos,
+    );
+  }
   return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
 }
 
@@ -1600,10 +1598,8 @@ function lowerStreamFilterPredicate(
 }
 
 function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: string, pos: number): never {
-  const sample = Object.values(letVars)[0];
-  const samplePath = sample.replace(/^\$+/, "");
   throw new CodegenError(
-    `'$.<field>' inside the '.filter(<predicate>)' of '$$ = …' is not supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each document. Inside this filter, the lambda parameter IS the document being matched.`,
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION }),
     pos,
   );
 }

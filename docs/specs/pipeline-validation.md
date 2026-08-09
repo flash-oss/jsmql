@@ -184,6 +184,34 @@ stage is picked up with no code change. mongod rejects these with Location51047;
 jsmql must not emit them. Where the container *is* known, the named message
 ("inside a '$lookup' sub-pipeline") wins — it runs first, in the loop validator.
 
+## The local-`$$` predicate gate
+
+`requireStreamPredicate` (in [`src/lookup-translation.ts`](../../src/lookup-translation.ts),
+beside the predicate lowering it feeds) is the **single** entry point for the argument of a
+local `$$.filter(…)` / `$$.reject(…)`. It normalises every predicate spelling — arrow,
+matches-object, field name, `["field", value]` pair — into the single-parameter arrow the
+lowering consumes, and enforces that arity. It is the local-stream counterpart to what
+`detectLookupCall` + `validateLookupShape` already do for the foreign `$$$.<coll>.filter(…)`
+side.
+
+**The invariant: one predicate position, one vocabulary, one lowering — which spelling you
+write never changes the emitted MQL.** Every container routes through the gate: the `$$ =`
+stream ([replace-stream-stage.md](replace-stream-stage.md)), a `$facet` branch
+([replace-root-stage.md](replace-root-stage.md)), and an `$out` write chain
+([out-stage.md](out-stage.md)). A new container calls the gate and lowers the `Lambda` it
+returns; it must not read the raw argument itself.
+
+Why the gate exists rather than a convention: each container used to hand-roll its own
+argument handling, and the three drifted. `$out` accepted only an arrow; the `$$ =` stream
+accepted a matches-object but lowered it down a *raw-query* path (`{ $match: <object as
+query> }`), so a non-constant matcher value emitted an aggregation operator into query
+position — `$$ = $$.filter({ a: 2 + 3 })` produced `{ $match: { a: { $add: [2, 3] } } }`,
+which mongod rejects with "unknown operator: $add" (an HR3 violation), and
+`{ a: $.b }` silently matched the *string* `"$b"`; the field-name and `["field", value]`
+spellings worked in neither. The paired `localRefInPredicateMessage` is shared for the same
+reason — after normalisation the "lambda parameter" of a shorthand is the gate's *synthetic*
+name, which must never be named back at the user as if it were writable.
+
 ## Known gap
 
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays

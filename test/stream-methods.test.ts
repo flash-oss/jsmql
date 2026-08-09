@@ -411,7 +411,8 @@ describe(".reject(pred) → $match (filter negated)", () => {
     ]);
   });
   it("rejects a spread / multi-arg", () => {
-    expect(() => jsmql("$$.reject(o => o.a, o => o.b);")).toThrow(/takes a single/);
+    expect(() => jsmql("$$.reject(o => o.a, o => o.b);")).toThrow(/takes exactly one predicate argument, got 2/);
+    expect(() => jsmql("$$.reject(...preds);")).toThrow(/takes a single arrow predicate/);
   });
 });
 

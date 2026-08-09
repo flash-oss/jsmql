@@ -18,7 +18,8 @@ $$$$.dw.archive = $$.filter(u => !u.active);
 The LHS names *where* documents are written using the existing context-ref
 prefixes (`$$$` = same-database, `$$$$` = cross-database / cluster). The
 RHS is a chain rooted at `$$` (the current pipeline): bare `$$` writes the
-stream unchanged; chained methods (`.filter(…)` in v1) contribute one
+stream unchanged; chained methods — `.filter(<predicate>)`, any method in the
+`STREAM_METHODS` registry, or a stage link (`$$.$sort({ … })`) — contribute one
 pipeline stage each before the trailing `$out`.
 
 Statement-only and last-stage-only: nothing may follow the `$out` sugar
@@ -118,10 +119,10 @@ through the pipeline lowerer.
 | `$$$$.<a>.<b>.<c> = …` (three or more segments after `$$$$`) | `'$$$$.<a>.<b>.<c>' has too many segments for a \$out target — '\$out' writes to one collection in one database, so '$$$$.<db>.<coll>' is the deepest form.` |
 | `$$$[<non-literal>] = …` (computed bracket on the LHS) | `'\$out' target must be a literal collection name — use '$$$.<coll>' or '$$$["<coll>"]', not a runtime expression. If you need a parameterised target, use 'jsmql.compile' and pass the name in.` |
 | RHS not rooted at `$$` (e.g. `$$$.coll = $.x`) | `The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.` |
-| Unsupported chain method (`$$.map(…)`, `$$.sort(…)`, etc.) | `'$$.<method>(...)' isn't supported in a '\$out' chain yet — only '.filter(<predicate>)' is wired in v1. Use '<stage-equivalent>' as a separate stage before the '\$out' instead.` (Stage equivalent is keyed off the method name — `.map` → `$project`/`$addFields`, `.sort` → `$sort`, `.slice` → `$skip;$limit`, `.reduce` → `$group`, …) |
-| `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' expects exactly one arrow predicate, got N.` |
-| `$$.filter(<not-an-arrow>)` | `'$$.filter(<predicate>)' requires an arrow predicate, e.g. \`$$$.coll = $$.filter(d => d.active)\`.` |
-| `$.x` reference inside the `$$.filter` predicate | `\`$.<field>\` inside '$$.filter(<predicate>)' in a '\$out' chain is not supported — the lambda's parameter \`d\` IS the current document. Write \`d.<field>\` instead.` |
+| Chain method in neither the stream-method registry nor the stage-link form | `'$$.<method>(...)' isn't a recognised chain method for a '\$out' RHS. Use '<stage-equivalent>' as a separate stage before the '\$out' instead.` (Stage equivalent is keyed off the method name — `.map` → `$project`/`$addFields`, `.sort` → `$sort`, `.slice` → `$skip;$limit`, `.reduce` → `$group`, …) |
+| `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' takes exactly one predicate argument, got N.` |
+| `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [pipeline-validation.md](pipeline-validation.md)) |
+| `$.x` reference inside the `$$.filter` predicate | Shared message from `localRefInPredicateMessage`: names the lambda's own parameter for an arrow spelling, and redirects a shorthand spelling to the arrow form (a shorthand has no parameter the user could write). |
 | Statement appears after the `$out` sugar in the same pipeline | `'\$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position N), or remove it.` |
 | Two `$$$.<coll> = …` statements in one pipeline | Same as above — caught by the shared `sawOut` guard. |
 | `$$$.<coll> = …` inside `jsmql.filter(…)` / `jsmql.expr(…)` | `jsmql.<mode>() does not allow '\$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '\$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '\$out' stages.` |
@@ -147,7 +148,13 @@ the statement form uses. Placement is checked with `isLastInContainer: false`,
 because the `$out` itself always follows — which is what rejects a second write
 stage in the chain.
 
-`.filter` reuses the same predicate translator that `$match`, the
+`.filter`'s **argument** first goes through `requireStreamPredicate` — the shared
+local-`$$` predicate gate — so a `$out` chain accepts exactly the predicate
+spellings the `$$ =` stream and a `$facet` branch do, and lowers each to the same
+MQL. See [pipeline-validation.md](pipeline-validation.md) § the local-`$$`
+predicate gate.
+
+The normalised lambda then reuses the same predicate translator that `$match`, the
 `$facet` variant of `$ = { … }`, and the union-form sub-pipelines all
 use (`extractLetsFromExpr` / `extractLetsFromPipeline` from
 [`src/lookup-translation.ts`](../src/lookup-translation.ts) +
@@ -164,10 +171,11 @@ shapes:
   sub-pipeline ctx is used so outer let scopes don't cross the lambda
   boundary, matching the facet behaviour.
 
-`$.<field>` references inside the predicate are rejected with a "use
-the lambda param" hint — the lambda's parameter IS the current document,
-so allowing both spellings would invite drift. Mirrors the equivalent
-facet-form rejection.
+`$.<field>` references inside the predicate are rejected — the lambda's parameter
+IS the current document, so allowing both spellings would invite drift. The message
+comes from the shared `localRefInPredicateMessage`, which mirrors the facet-form and
+`$$ =` rejections and (crucially) never names the gate's synthetic parameter back at
+a user who wrote a shorthand.
 
 ### Adding more chain methods
 

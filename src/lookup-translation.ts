@@ -524,6 +524,104 @@ export function tryShorthandToLambda(arg: CallArg, method: string, param: string
 const FOREIGN_SHORTHAND_PARAM = exprVar("item");
 
 /**
+ * The local-`$$` predicate gate: normalise ANY predicate spelling — arrow,
+ * matches-object, field name, `["field", value]` pair — into the single-parameter
+ * arrow the lowering consumes, and enforce that arity.
+ *
+ * This is the local-stream counterpart to what `detectLookupCall`
+ * (`predicateArgToLambda`) + `validateLookupShape` already do for the foreign
+ * `$$$.<coll>.filter(...)` side. **Every** container that lowers a `$$.filter(...)`
+ * / `$$.reject(...)` — the `$$ =` stream, a `$facet` branch, an `$out` write chain
+ * — routes its argument through here, so one predicate position has one vocabulary
+ * and one lowering: which spelling you write never changes the emitted MQL.
+ *
+ * Adding a new container? Call this and lower the `Lambda` it returns; never read
+ * the raw argument yourself. Hand-rolling the check is what let the `$$ =` stream
+ * lower a matches-object through the raw-query path (emitting `{ a: { $add: … } }`,
+ * which mongod rejects) while `$out` rejected the same spelling outright.
+ */
+export function requireStreamPredicate(arg: CallArg, opts: { method: string; position: string; pos: number }): Lambda {
+  const { method, position } = opts;
+  const spell = `'$$.${method}(<predicate>)' ${position}`;
+  // A real arrow passes through; every other spelling desugars. `shorthandToLambda`
+  // is the THROWING form on purpose — this is a lowering site, not a detection one,
+  // so a malformed shorthand (`{}`, a computed key, a bad pair) must surface its own
+  // actionable message rather than being silently reclassified.
+  const lambda =
+    arg.type === "Lambda"
+      ? arg
+      : arg.type === "SpreadElement"
+        ? null
+        : shorthandToLambda(arg, method, FOREIGN_SHORTHAND_PARAM);
+  if (lambda === null) {
+    throw new CodegenError(
+      `${spell} takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), ` +
+        `a field name ('"active"'), or a ["field", value] pair.`,
+      "pos" in arg ? arg.pos : opts.pos,
+    );
+  }
+  if (lambda.params.length !== 1) {
+    throw new CodegenError(
+      `${spell} must take exactly one parameter — write '$$.${method}(o => …)' (the param name is ` +
+        `your choice). The param represents each document. Got ${lambda.params.length}.`,
+      lambda.pos,
+    );
+  }
+  return lambda;
+}
+
+/**
+ * The message for a `$.<field>` reference inside a local-`$$` predicate, where the
+ * parameter already IS the current document so the two spellings would mean the
+ * same thing (jsmql keeps one canonical spelling rather than both).
+ *
+ * Shared by every container for one reason beyond consistency: after
+ * `requireStreamPredicate` normalises a shorthand, the "lambda parameter" is the
+ * gate's *synthetic* name. Naming it back at the user ("use `jsmqlItem.b`") would be
+ * unwritable advice, so a shorthand-spelled predicate is pointed at the arrow form
+ * instead. Callers must not build this message themselves.
+ */
+export function localRefInPredicateMessage(opts: {
+  letVars: Record<string, string>;
+  param: string;
+  method: string;
+  position: string;
+}): string {
+  const { param, method, position } = opts;
+  const samplePath = Object.values(opts.letVars)[0].replace(/^\$+/, ""); // "$createdAt" → "createdAt"
+  const head = `'$.<field>' inside '$$.${method}(<predicate>)' ${position} is not supported`;
+  if (param === FOREIGN_SHORTHAND_PARAM) {
+    return (
+      `${head} — a matches-object / field-name predicate has no parameter to reference the current ` +
+      `document with. Rewrite it as an arrow and use that parameter, e.g. ` +
+      `'$$.${method}(o => … o.${samplePath} …)'.`
+    );
+  }
+  return (
+    `${head} — use the lambda parameter (e.g. '${param}.${samplePath}') to reference the current ` +
+    `document. Inside this predicate, the lambda's parameter \`${param}\` IS the current document.`
+  );
+}
+
+/**
+ * Negate a normalised predicate lambda — the `.reject` half of the `.filter`/
+ * `.reject` pair. Lives beside the gate so every container negates identically:
+ * `o => !(<body>)`, which lowers to `$match: { $expr: { $not: … } }` (no query-form
+ * De Morgan, which jsmql rejects project-wide). Returns null for a block body,
+ * which has no single expression to negate.
+ */
+export function negateStreamPredicate(lambda: Lambda): Lambda | null {
+  if (lambda.body === undefined) return null;
+  const pos = lambda.pos;
+  return {
+    type: "Lambda",
+    params: lambda.params,
+    body: { type: "UnaryExpr", op: "!", operand: lambda.body, pos },
+    pos,
+  };
+}
+
+/**
  * Normalise a `.aggregate(...)` argument into the block-body `Lambda` the lookup
  * machinery consumes. A block-body arrow (`(o) => { $sort(...); ... }`) is
  * returned as-is; a stage-array literal (`[{ $sort: ... }, ...]`) is wrapped in a

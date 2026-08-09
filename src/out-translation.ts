@@ -9,7 +9,13 @@
 
 import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
 import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
-import { lowerLambdaPredicate, type SubPipelineLowerer, type SlotAllocator } from "./lookup-translation.ts";
+import {
+  localRefInPredicateMessage,
+  lowerLambdaPredicate,
+  requireStreamPredicate,
+  type SubPipelineLowerer,
+  type SlotAllocator,
+} from "./lookup-translation.ts";
 import { lookupStreamMethod } from "./stream-methods.ts";
 import { checkStageLinkPlacement, isStageLink, stageLinkBlock, stageLinkBody } from "./stage-link.ts";
 
@@ -303,6 +309,9 @@ function lowerChainMethod(
   throw new CodegenError(`'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${hint}`, call.pos);
 }
 
+/** Where a `$out` write chain's predicate sits, for the shared gate's messages. */
+const OUT_PREDICATE_POSITION = "in a '$out' write chain";
+
 const STAGE_EQUIVALENT_HINT: Record<string, string> = {
   map: "$project({...}) or $addFields({...})",
   sort: "$sort({ field: 1 | -1 })",
@@ -313,10 +322,12 @@ const STAGE_EQUIVALENT_HINT: Record<string, string> = {
 };
 
 /**
- * `$$.filter(<lambda>)` → `[{ $match: <translated> }]`. After validating the
- * arrow shape (exactly one single-parameter predicate), the body is lowered via
- * the shared `lowerLambdaPredicate` from lookup-translation, which both
- * lookup/union/facet use:
+ * `$$.filter(<predicate>)` → `[{ $match: <translated> }]`. The argument goes
+ * through the shared gate (`requireStreamPredicate`), so an arrow and its
+ * matches-object / field-name / `["field", value]` equivalents all lower
+ * identically here — same vocabulary as the `$$ =` stream and a `$facet` branch.
+ * The normalised lambda is then lowered via the shared `lowerLambdaPredicate`,
+ * which lookup/union/facet use too:
  *   - Expression body → match-translation's engine: translatable conjuncts emit
  *     index-friendly `{ field: value }` syntax, residuals ride in `$expr`.
  *   - Block body → the caller-supplied `lowerBlock` (each statement → a stage).
@@ -330,33 +341,24 @@ function lowerFilterAsMatch(
 ): object[] {
   if (call.args.length !== 1) {
     throw new CodegenError(
-      `'$$.filter(<predicate>)' expects exactly one arrow predicate, got ${call.args.length}.`,
+      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${call.args.length}.`,
       call.pos,
     );
   }
-  const arg = call.args[0];
-  if (arg.type !== "Lambda") {
-    throw new CodegenError(
-      `'$$.filter(<predicate>)' requires an arrow predicate, e.g. \`$$$.coll = $$.filter(d => d.active)\`.`,
-      "pos" in arg ? arg.pos : call.pos,
-    );
-  }
-  if (arg.params.length !== 1) {
-    throw new CodegenError(
-      `'$$.filter(<predicate>)' takes a single-parameter arrow (the current document), got ${arg.params.length}.`,
-      arg.pos,
-    );
-  }
+  const arg = requireStreamPredicate(call.args[0], {
+    method: "filter",
+    position: OUT_PREDICATE_POSITION,
+    pos: call.pos,
+  });
   // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). A
   // `$out` chain has no `let` slot, so a predicate that references the local doc
   // (`$.<field>`, captured as a non-empty `letVars`) is rejected in favour of the
   // lambda parameter.
   return lowerLambdaPredicate(arg, outerCtx, lowerBlock, {
     freshCtx: freshSubPipelineCtx,
-    onLocalRef: (_letVars, param, pos) => {
+    onLocalRef: (letVars, param, pos) => {
       throw new CodegenError(
-        `\`$.<field>\` inside '$$.filter(<predicate>)' in a '$out' chain is not supported — the lambda's parameter \`${param}\` IS the current document. ` +
-          `Write \`${param}.<field>\` instead.`,
+        localRefInPredicateMessage({ letVars, param, method: "filter", position: OUT_PREDICATE_POSITION }),
         pos,
       );
     },

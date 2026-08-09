@@ -1384,3 +1384,55 @@ describe("$facet branches accept any `$$` chain", () => {
     expect(jsmql("$ = { a: 1, b: 2 };")).toEqual([{ $replaceWith: { a: 1, b: 2 } }]);
   });
 });
+
+// One predicate position, one vocabulary: every container that lowers a local
+// `$$.filter(...)` / `$$.reject(...)` routes its argument through the shared gate
+// (`requireStreamPredicate` in lookup-translation.ts), so which spelling you write
+// never changes the emitted MQL. Before that gate existed each container hand-rolled
+// its own arg handling and the three drifted apart: `$out` rejected everything but an
+// arrow, the `$$ =` stream lowered a matches-object down a raw-query path (emitting
+// `{ a: { $add: [...] } }`, which mongod rejects with "unknown operator: $add"), and
+// the field-name / ["field", value] spellings worked in neither.
+describe("`$$` predicate spellings are interchangeable in every container", () => {
+  // Each spelling means exactly `o => o.a === 1`, so each must emit exactly `$match: { a: 1 }`.
+  const SPELLINGS = [
+    ["arrow", "$$.filter(o => o.a === 1)"],
+    ["matches-object", "$$.filter({ a: 1 })"],
+    ['["field", value] pair', '$$.filter(["a", 1])'],
+  ] as const;
+  // Each container, and the stages its predicate is expected to produce.
+  const CONTAINERS = [
+    ["`$$ =` stream", (p: string) => `$$ = ${p};`, (m: object) => [m]],
+    ["`$facet` branch", (p: string) => `$ = { k: ${p} };`, (m: object) => [{ $facet: { k: [m] } }]],
+    ["`$out` write chain", (p: string) => `$$$.c = ${p};`, (m: object) => [m, { $out: "c" }]],
+  ] as const;
+
+  for (const [container, source, expected] of CONTAINERS) {
+    for (const [spelling, predicate] of SPELLINGS) {
+      it(`${container} accepts the ${spelling} spelling`, () => {
+        expect(jsmql(source(predicate))).toEqual(expected({ $match: { a: 1 } }));
+      });
+    }
+  }
+
+  // The bug that made the spellings observably different rather than merely
+  // unevenly supported: a matches-object value that isn't a constant. The raw-query
+  // path emitted the aggregation operator into query position, where it is invalid.
+  it("a non-constant matcher value lowers to $expr, not an invalid query operator", () => {
+    for (const [container, source, expected] of CONTAINERS) {
+      expect(jsmql(source("$$.filter({ a: 2 + 3 })")), container).toEqual(
+        expected({ $match: { $expr: { $eq: ["$a", { $add: [2, 3] }] } } }),
+      );
+    }
+  });
+
+  // `$.<field>` is rejected in a local predicate (the param already IS the document).
+  // A shorthand has only the gate's synthetic param, which must never be named back
+  // at the user as if it were writable ("use `jsmqlItem.b`" is unwritable advice).
+  it("rejects `$.<field>` without leaking the synthetic shorthand param", () => {
+    for (const [, source] of CONTAINERS) {
+      expect(() => jsmql(source("$$.filter({ a: $.b })"))).toThrow(/Rewrite it as an arrow/);
+      expect(() => jsmql(source("$$.filter({ a: $.b })"))).not.toThrow(/jsmqlItem/);
+    }
+  });
+});

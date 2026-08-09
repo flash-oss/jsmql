@@ -37,6 +37,11 @@ A `$$.<chain>;` bare statement (no `$$ =` head) is statement sugar for
 The two RHS shapes both reuse `lowerStreamFilterPredicate` for predicate
 translation; only the wrapping differs.
 
+`.filter` / `.reject` take their **argument** through the shared local-`$$` predicate
+gate first, so an arrow and its matches-object / field-name / `["field", value]`
+equivalents all lower identically here and in every other container. See
+[pipeline-validation.md](pipeline-validation.md) § the local-`$$` predicate gate.
+
 ## Bare `$$` as an assignment target
 
 `parseContextRef` in `src/parser.ts` was extended so the `CollectionRef`

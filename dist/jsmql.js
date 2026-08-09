@@ -8250,9 +8250,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return {
         $let: {
           vars: { [vStr]: coerceStringBinding(genObj) },
-          in: {
-            $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s]
-          }
+          in: { $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s] }
         }
       };
     }
@@ -12072,6 +12070,43 @@ function tryShorthandToLambda(arg, method, param) {
   }
 }
 var FOREIGN_SHORTHAND_PARAM = exprVar("item");
+function requireStreamPredicate(arg, opts) {
+  const { method, position } = opts;
+  const spell = `'$$.${method}(<predicate>)' ${position}`;
+  const lambda = arg.type === "Lambda" ? arg : arg.type === "SpreadElement" ? null : shorthandToLambda(arg, method, FOREIGN_SHORTHAND_PARAM);
+  if (lambda === null) {
+    throw new CodegenError(
+      `${spell} takes a single arrow predicate ('o => \u2026'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.`,
+      "pos" in arg ? arg.pos : opts.pos
+    );
+  }
+  if (lambda.params.length !== 1) {
+    throw new CodegenError(
+      `${spell} must take exactly one parameter \u2014 write '$$.${method}(o => \u2026)' (the param name is your choice). The param represents each document. Got ${lambda.params.length}.`,
+      lambda.pos
+    );
+  }
+  return lambda;
+}
+function localRefInPredicateMessage(opts) {
+  const { param, method, position } = opts;
+  const samplePath = Object.values(opts.letVars)[0].replace(/^\$+/, "");
+  const head = `'$.<field>' inside '$$.${method}(<predicate>)' ${position} is not supported`;
+  if (param === FOREIGN_SHORTHAND_PARAM) {
+    return `${head} \u2014 a matches-object / field-name predicate has no parameter to reference the current document with. Rewrite it as an arrow and use that parameter, e.g. '$$.${method}(o => \u2026 o.${samplePath} \u2026)'.`;
+  }
+  return `${head} \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference the current document. Inside this predicate, the lambda's parameter \`${param}\` IS the current document.`;
+}
+function negateStreamPredicate(lambda) {
+  if (lambda.body === void 0) return null;
+  const pos = lambda.pos;
+  return {
+    type: "Lambda",
+    params: lambda.params,
+    body: { type: "UnaryExpr", op: "!", operand: lambda.body, pos },
+    pos
+  };
+}
 function aggregateArgToLambda(arg) {
   if (arg.type === "Lambda") return arg.block !== void 0 ? arg : null;
   if (arg.type === "ArrayLiteral") {
@@ -13611,12 +13646,7 @@ function lowerFacet(facets, outerCtx, lowerBlock2, lowerChain, rhs) {
   return [{ $facet: body }];
 }
 function lowerFacetEntry(lambda, outerCtx, lowerBlock2) {
-  if (lambda.params.length !== 1) {
-    throw new CodegenError(
-      `\`$$.filter(<predicate>)\` inside \`$ = { ... }\` $facet must take exactly one parameter \u2014 write \`$$.filter(o => \u2026)\` (the param name is your choice). The param represents each input document inside the facet sub-pipeline.`,
-      lambda.pos
-    );
-  }
+  requireStreamPredicate(lambda, { method: "filter", position: FACET_PREDICATE_POSITION, pos: lambda.pos });
   return lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, {
     freshCtx: freshFacetCtx,
     onLocalRef: rejectLocalRef,
@@ -13629,13 +13659,12 @@ function lowerFacetEntry(lambda, outerCtx, lowerBlock2) {
   });
 }
 function rejectLocalRef(letVars, param, pos) {
-  const sample = Object.values(letVars)[0];
-  const samplePath = sample.replace(/^\$+/, "");
   throw new CodegenError(
-    `\`$.<field>\` inside \`$$.filter(p)\` in a \`$ = { ... }\` $facet is not supported \u2014 use the lambda parameter (e.g. \`${param}.${samplePath}\`) to reference the current document. Inside a facet sub-pipeline, the lambda param IS the current document; \`$.<field>\` would mean the same thing and adding a second spelling for it would only invite drift.`,
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: FACET_PREDICATE_POSITION }),
     pos
   );
 }
+var FACET_PREDICATE_POSITION = "in a `$ = { ... }` $facet branch";
 
 // src/stage-validation.ts
 function rejectNonDocumentNewRoot(stage, value) {
@@ -14198,6 +14227,7 @@ function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
   const hint = equivalent !== void 0 ? ` Use '${equivalent}' as a separate stage before the '$out' instead.` : ` Add the equivalent stage call (e.g. '$sort({ \u2026 })', '$skip(N)', '$limit(N)') before the '$out' instead.`;
   throw new CodegenError(`'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${hint}`, call.pos);
 }
+var OUT_PREDICATE_POSITION = "in a '$out' write chain";
 var STAGE_EQUIVALENT_HINT = {
   map: "$project({...}) or $addFields({...})",
   sort: "$sort({ field: 1 | -1 })",
@@ -14209,28 +14239,20 @@ var STAGE_EQUIVALENT_HINT = {
 function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
   if (call.args.length !== 1) {
     throw new CodegenError(
-      `'$$.filter(<predicate>)' expects exactly one arrow predicate, got ${call.args.length}.`,
+      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${call.args.length}.`,
       call.pos
     );
   }
-  const arg = call.args[0];
-  if (arg.type !== "Lambda") {
-    throw new CodegenError(
-      `'$$.filter(<predicate>)' requires an arrow predicate, e.g. \`$$$.coll = $$.filter(d => d.active)\`.`,
-      "pos" in arg ? arg.pos : call.pos
-    );
-  }
-  if (arg.params.length !== 1) {
-    throw new CodegenError(
-      `'$$.filter(<predicate>)' takes a single-parameter arrow (the current document), got ${arg.params.length}.`,
-      arg.pos
-    );
-  }
+  const arg = requireStreamPredicate(call.args[0], {
+    method: "filter",
+    position: OUT_PREDICATE_POSITION,
+    pos: call.pos
+  });
   return lowerLambdaPredicate(arg, outerCtx, lowerBlock2, {
     freshCtx: freshSubPipelineCtx,
-    onLocalRef: (_letVars, param, pos) => {
+    onLocalRef: (letVars, param, pos) => {
       throw new CodegenError(
-        `\`$.<field>\` inside '$$.filter(<predicate>)' in a '$out' chain is not supported \u2014 the lambda's parameter \`${param}\` IS the current document. Write \`${param}.<field>\` instead.`,
+        localRefInPredicateMessage({ letVars, param, method: "filter", position: OUT_PREDICATE_POSITION }),
         pos
       );
     },
@@ -14936,49 +14958,39 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
   return { clearLets, clearedBy };
 }
 function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {
-  if (m.args.length === 1 && m.args[0].type === "Lambda") {
-    return lowerStreamFilterPredicate(m.args[0], ctx, lowerBlockFn);
-  }
-  if (m.args.length === 1 && m.args[0].type === "ObjectLiteral") {
-    return [{ $match: generateWithCtx(m.args[0], ctx) }];
-  }
-  if (isHead) rejectInvalidReplaceStream(rhs, ctx);
-  throw new CodegenError(
-    `.filter(<predicate> | { field: value, \u2026 }) takes a single arrow predicate ('o => \u2026') or a matches-object.`,
-    m.pos
-  );
-}
-function lowerStreamReject(m, ctx, lowerBlockFn) {
-  if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
+  if (m.args.length !== 1) {
+    if (isHead) rejectInvalidReplaceStream(rhs, ctx);
     throw new CodegenError(
-      `.reject(<predicate>) takes a single arrow predicate ('o => \u2026'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
+      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos
     );
   }
-  const arg = m.args[0];
-  let params;
-  let body;
-  let pos;
-  if (arg.type === "Lambda") {
-    if (arg.params.length !== 1 || arg.body === void 0) {
-      throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => \u2026').`, arg.pos);
-    }
-    params = arg.params;
-    body = arg.body;
-    pos = arg.pos;
-  } else {
-    const sh = shorthandToLambda(arg, "reject", exprVar("item"));
-    if (sh === null || sh.body === void 0) {
-      throw new CodegenError(
-        `.reject(<predicate>) takes an arrow ('o => \u2026'), a matches-object ('{ active: true }'), a field name, or a ["field", value] pair.`,
-        arg.pos
-      );
-    }
-    params = sh.params;
-    body = sh.body;
-    pos = sh.pos;
+  return lowerStreamFilterPredicate(
+    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos }),
+    ctx,
+    lowerBlockFn
+  );
+}
+var STREAM_PREDICATE_POSITION = "on the RHS of '$$ = \u2026'";
+function lowerStreamReject(m, ctx, lowerBlockFn) {
+  if (m.args.length !== 1) {
+    throw new CodegenError(
+      `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      m.pos
+    );
   }
-  const negated = { type: "Lambda", params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
+  const lambda = requireStreamPredicate(m.args[0], {
+    method: "reject",
+    position: STREAM_PREDICATE_POSITION,
+    pos: m.pos
+  });
+  const negated = negateStreamPredicate(lambda);
+  if (negated === null) {
+    throw new CodegenError(
+      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
+      lambda.pos
+    );
+  }
   return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
 }
 function chainHasCorrelatingFilter(methods, outerCtx) {
@@ -15163,10 +15175,8 @@ function lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlockFn) {
   });
 }
 function rejectLocalRefInStreamFilter(letVars, param, pos) {
-  const sample = Object.values(letVars)[0];
-  const samplePath = sample.replace(/^\$+/, "");
   throw new CodegenError(
-    `'$.<field>' inside the '.filter(<predicate>)' of '$$ = \u2026' is not supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each document. Inside this filter, the lambda parameter IS the document being matched.`,
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION }),
     pos
   );
 }

@@ -26,7 +26,12 @@
 
 import type { Expr } from "./ast.ts";
 import { CodegenError, freshFacetCtx, type GenerateCtx } from "./codegen.ts";
-import { lowerLambdaPredicate, type SubPipelineLowerer } from "./lookup-translation.ts";
+import {
+  localRefInPredicateMessage,
+  lowerLambdaPredicate,
+  requireStreamPredicate,
+  type SubPipelineLowerer,
+} from "./lookup-translation.ts";
 import { collectStreamChain, type MethodCallNode } from "./stream-methods.ts";
 
 type LambdaNode = Extract<Expr, { type: "Lambda" }>;
@@ -158,12 +163,10 @@ export function lowerFacet(
  * force one canonical spelling rather than supporting both.
  */
 function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object[] {
-  if (lambda.params.length !== 1) {
-    throw new CodegenError(
-      `\`$$.filter(<predicate>)\` inside \`$ = { ... }\` $facet must take exactly one parameter — write \`$$.filter(o => …)\` (the param name is your choice). The param represents each input document inside the facet sub-pipeline.`,
-      lambda.pos,
-    );
-  }
+  // Arity via the shared gate, so all three `$$.filter` positions reject the same
+  // shapes with the same wording. (`asFacetBranch` only routes arrows here; the other
+  // predicate spellings reach the chain lowerer, which calls the same gate.)
+  requireStreamPredicate(lambda, { method: "filter", position: FACET_PREDICATE_POSITION, pos: lambda.pos });
   // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). Inside
   // a facet sub-pipeline the lambda param IS the current document, so a
   // `$.<field>` reference (captured as a non-empty `letVars`) is rejected in
@@ -181,10 +184,11 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
 }
 
 function rejectLocalRef(letVars: Record<string, string>, param: string, pos: number): never {
-  const sample = Object.values(letVars)[0]; // e.g. "$createdAt"
-  const samplePath = sample.replace(/^\$+/, "");
   throw new CodegenError(
-    `\`$.<field>\` inside \`$$.filter(p)\` in a \`$ = { ... }\` $facet is not supported — use the lambda parameter (e.g. \`${param}.${samplePath}\`) to reference the current document. Inside a facet sub-pipeline, the lambda param IS the current document; \`$.<field>\` would mean the same thing and adding a second spelling for it would only invite drift.`,
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: FACET_PREDICATE_POSITION }),
     pos,
   );
 }
+
+/** Where a `$facet` branch's predicate sits, for the shared gate's messages. */
+const FACET_PREDICATE_POSITION = "in a `$ = { ... }` $facet branch";
