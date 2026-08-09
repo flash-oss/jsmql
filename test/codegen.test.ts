@@ -3879,8 +3879,8 @@ describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
     });
   });
   it(".truncate() default (length 30, '...'); .truncate({ length }) overrides", () => {
-    // Bound once and coerced: the receiver was previously emitted three times,
-    // and an absent field fell through the else branch as null instead of "".
+    // Bound once and coerced: the receiver must be emitted once, not once per use,
+    // and an absent field must read as "" rather than falling through as null.
     const truncated = (length: number, keep: number) => ({
       $let: {
         vars: { jsmqlStr: { $ifNull: ["$s", ""] } },
@@ -4239,9 +4239,9 @@ describe("string padding methods", () => {
     expect(JSON.stringify(out)).toContain('["$$jsmqlPad",{"$reduce"');
   });
   // The targetLength/padString args are generated in the OUTER scope but land inside
-  // the $let, so a lambda param sharing the binding's name used to be captured: the
-  // args re-resolved against the receiver string and the padding silently vanished
-  // (verified on mongod: ["7","42"] instead of ["007","***42"]).
+  // the $let, so a lambda param sharing the binding's name would be captured without a
+  // gensym: the args re-resolve against the receiver string and the padding silently
+  // vanishes (on mongod: ["7","42"] instead of ["007","***42"]).
   it("a lambda param named 's' is not captured by the internal binding", () => {
     expect(jsmql.expr("$.items.map(s => s.code.padStart(s.width, s.pad))")).toEqual({
       $map: {
@@ -5470,7 +5470,7 @@ describe("function overload", () => {
   it("the document is referenced via `$` from the toolbox; a bare-identifier param is rejected", () => {
     // The document lives in the destructured toolbox — `({ $ }) => $.foo`.
     expect(jsmql.expr(({ $ }) => $.foo)).toEqual("$foo");
-    // The old bare-identifier `(doc) =>` shape is no longer a valid parameter slot.
+    // A bare-identifier `(doc) =>` shape is not a valid parameter slot.
     expect(() => jsmql.expr(new Function("return (doc) => doc.foo")() as never)).toThrow(/object destructure pattern/);
   });
 
@@ -5677,7 +5677,7 @@ describe("$accumulator and $function (custom aggregation)", () => {
       $function: { body: "function(x) { return x * 2; }", args: ["$value"], lang: "js" },
     });
   });
-  it("$accumulator object-style inside $group (Wave 5 #22: requires $group context)", () => {
+  it("$accumulator object-style inside $group (requires $group context)", () => {
     // accumulateArgs is REQUIRED ($accumulator rejects its absence — verified on
     // mongod), so include it: the operator-arg validator now enforces the full
     // required-key set.
@@ -5704,7 +5704,7 @@ describe("$accumulator and $function (custom aggregation)", () => {
   });
 });
 
-describe("$median and $percentile (statistical accumulators — Wave 5 #22: $group / $setWindowFields only)", () => {
+describe("$median and $percentile (statistical accumulators — $group / $setWindowFields only)", () => {
   it("$median positional (inside $group)", () => {
     const out = jsmql('[$group({ _id: null, m: $median($.scores, "approximate") })]') as Array<{
       $group: { m: unknown };
@@ -5745,7 +5745,7 @@ describe("encrypted-string operators ($encStr*)", () => {
   });
 });
 
-describe("window operators ($setWindowFields-only — Wave 5 #41)", () => {
+describe("window operators ($setWindowFields-only)", () => {
   // Window operators are gated to `$setWindowFields.output` slots by
   // `checkOperatorContext` in codegen.ts. Each test wraps the operator in
   // a `$setWindowFields` stage and extracts the inner emission.

@@ -807,9 +807,9 @@ export function validateLookupShape(expr: Expr): void {
     // to the chain assembler (`tryExtractChainedLookup`) / implicit-filter injector.
     // Only a genuinely unknown method is malformed here.
     if (isPeelableChainMethod(expr.method) || VALUE_TERMINAL_METHODS.has(expr.method)) return;
-    // A "from the end" method (`.takeRight`/`.toReversed`/…) is not merely unknown —
-    // it was removed on purpose, so say why and name the rewrite rather than offering
-    // a spelling suggestion for a method that no longer exists.
+    // A "from the end" method (`.takeRight`/`.toReversed`/…) is not merely unknown — it
+    // is deliberately absent, so say why and name the rewrite rather than offering a
+    // spelling suggestion for a method that does not exist on a stream.
     const fromTheEnd = fromTheEndRejection(expr.method, spell, expr.pos);
     if (fromTheEnd !== null) throw fromTheEnd;
     const hint = didYouMean(expr.method, ["find", "filter", "aggregate", ...streamMethodNames()], (s) => `.${s}`);
@@ -832,9 +832,9 @@ export function validateLookupShape(expr: Expr): void {
     // Both `.find` and `.filter` take a *predicate*, so both accept every lodash
     // predicate spelling — arrow, matches-object, field name, `["field", value]`.
     // Which one you write is a spelling choice; it never changes what is emitted
-    // (`filterArgToLambda` desugars it at detection). `.find` used to demand the
-    // arrow, which made `$$$.coll.find({ x: 1 })` an error even though the same
-    // shorthand was fine on `.filter`, in value position, and on a chained `.find`.
+    // (`filterArgToLambda` desugars it at detection). Restricting `.find` to the arrow
+    // would make `$$$.coll.find({ x: 1 })` an error while the same shorthand works on
+    // `.filter`, in value position, and on a chained `.find`.
     if (arg.type !== "SpreadElement" && shorthandToLambda(arg, expr.method, FOREIGN_SHORTHAND_PARAM) !== null) {
       return;
     }
@@ -1242,7 +1242,7 @@ export function translatePredicate(
     // the parts that have no query form — correlated `$$letVar` comparisons,
     // computed expressions — fall back to `$expr`. This is the same translator
     // the top-level `$match` / `$unionWith` / `$facet` / `$out` predicates use,
-    // so the lookup path is no longer the odd one wrapping everything in `$expr`.
+    // so the lookup path does not wrap everything in `$expr` the way a bespoke one would.
     const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
     return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }

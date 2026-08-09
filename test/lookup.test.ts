@@ -1078,10 +1078,9 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   }
 
   it("an uncorrelated $lookup omits `let` entirely, whatever assembled it", () => {
-    // `let` is optional to the server, so an empty `let: {}` is pure noise. The
-    // rule used to be re-decided per emission site (lean only for `.aggregate`,
-    // and only for a non-`.filter`-headed chain), which made these four disagree
-    // for no semantic reason. `pipelineLookupBody` is now the single decider.
+    // `let` is optional to the server, so an empty `let: {}` is pure noise. Deciding
+    // the rule per emission site would make these four disagree for no semantic
+    // reason, so `pipelineLookupBody` is the single decider.
     // Verified against a live mongod.
     const lookupOf = (src: string) => ((jsmql(src) as object[])[0] as { $lookup: Record<string, unknown> }).$lookup;
     for (const src of [

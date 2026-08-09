@@ -135,7 +135,7 @@ const RESHAPE_CLEARING_STAGES = new Set(["$group", "$bucket", "$bucketAuto", "$r
 
 /**
  * Peephole: skip the trailing `{ $unset: "__jsmql" }` cleanup when the
- * previous stage already dropped the document (Wave 5 #36). After
+ * previous stage already dropped the document. After
  * `$replaceWith` / `$replaceRoot` / `$group` / `$bucket*` / `$facet`, the
  * `__jsmql` field no longer exists on the output doc — cleaning up an
  * absent path is just noise. One stage saved per pipeline in the common
@@ -1606,10 +1606,10 @@ function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: st
 
 function rejectInvalidReplaceStream(value: Expr, ctx: GenerateCtx): never {
   if (value.type === "ArrayLiteral") {
-    // ArrayLiteral handling has moved up into `lowerReplaceStream` (empty → $limit:0,
-    // first-stage literal-doc list → $documents, non-first-stage rejection). The
-    // only ArrayLiteral RHSes that reach this rejection branch are ones that
-    // pass the reduce-wrap detectors *and* fall outside the new sugar — i.e.
+    // `lowerReplaceStream` owns ArrayLiteral handling (empty → $limit:0, first-stage
+    // literal-doc list → $documents, non-first-stage rejection). The only ArrayLiteral
+    // RHSes that reach this rejection branch are ones that pass the reduce-wrap
+    // detectors *and* fall outside that sugar — i.e.
     // a single-doc-shaped array element that didn't match any wrap form. Point
     // at the three reduce-wrap patterns explicitly.
     throw new CodegenError(
@@ -1937,7 +1937,7 @@ function generateBodyObject(
       out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx), containerKindFor(stageName));
       continue;
     }
-    // Accumulator-context gate (Wave 5 #22 + #41).
+    // Accumulator-context gate.
     //
     // - `$group` field-value slots (every key except `_id`) → "group" ctx,
     //   so accumulator-only operators ($addToSet, $push, $bottom*, etc.)

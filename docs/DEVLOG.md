@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — docs: the project reads as a finished product; history lives only here
+
+New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":
+**every file says what jsmql *is*; only this file says how it got here.** The repository
+is pre-1.0 and under active initial development, but it must never look *visibly
+mid-construction* to someone reading the source.
+
+The trigger was `Wave 4 #11`-style internal planning references — a phase-numbering
+scheme from a private plan, meaningless to any reader — sitting in `src/` comments, spec
+bullets, test names, and the deferred allowlist. All are gone. Sweeping for the rest of
+the class turned up more of it than the marker itself: `## Landed` sections (duplicated
+changelog), session narration (*"a parallel fork session is implementing 11 of the
+original 23-item batch"* in the allowlist header), and past-tense bug stories in test
+comments and spec prose (*"the receiver was previously emitted three times"*, *"jsmql
+used to fake these by rewriting the preceding `$sort`"*, *"was prototyped and
+reverted"*).
+
+Each was **rewritten, not deleted** — that prose was carrying real reasoning, and the
+reasoning is what a reader needs. The rule is to state the invariant or the hazard rather
+than the incident: "the receiver must be emitted once, not once per use"; "faking them
+means rewriting the preceding `$sort`, which makes them position-dependent". Where a
+section header narrated an event it now names a state — `## Removed: the "from the end"
+methods` became `## Deliberately absent`, and `## Landed` became `## Design notes`.
+Content that was *only* history moved here or was dropped, since git already has it.
+
+Two carve-outs, recorded in the rule so they aren't swept later by mistake.
+[docs/DEFERRED.md](docs/DEFERRED.md) and its markers are forward-looking statements about
+the product, not history. And facts about *external* dependencies' histories stay — the
+mongoose plugin's "modern mongoose (7+) no longer accepts callbacks" is a fact about
+mongoose that justifies a current heuristic, not a story about jsmql.
+
+---
+
 ## 2026-08-09 — docs: drop the last phantom-release phrasing, and a `Landed` bullet that had already rotted
 
 Follow-on to the `v1` sweep below. Two specs said work was *"out of scope for this

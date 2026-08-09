@@ -31,8 +31,8 @@ void _stream;
 
 // Note: foreign-collection chains on the database ref (`$$$.orders.filter(...)`)
 // do NOT get stream-method completion — `$$$.<coll>` rides an `[key: string]: any`
-// tail. Typing it as a chainable ref was prototyped and reverted (it regresses
-// `.find(pred)` callbacks or the `$out` write); it's gated on DEF-013/DEF-015.
+// tail. Typing it as a chainable ref does not work (it regresses `.find(pred)`
+// callbacks or the `$out` write); it's gated on DEF-013/DEF-015.
 
 // ── Value methods on concretely-typed receivers → completion + chaining ──────
 // This is the whole point: once a value has a real (array/string/number) type,

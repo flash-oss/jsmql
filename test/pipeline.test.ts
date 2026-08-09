@@ -334,10 +334,10 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(jsmql("$ = $.profile;")).toEqual([{ $replaceWith: "$profile" }]);
   });
 
-  // Regression: a bare `$ = <expr>` as the ONLY statement (no trailing `;`)
-  // parses as a one-op UpdateFilter rather than a Pipeline, and used to emit a
-  // meaningless `$set` on the "" field path (`[{ $set: { "": … } }]`). It must
-  // lower to `$replaceWith`, identical to the `;`-terminated form.
+  // A bare `$ = <expr>` as the ONLY statement (no trailing `;`) parses as a one-op
+  // UpdateFilter rather than a Pipeline. Without the reroute it would emit a
+  // meaningless `$set` on the "" field path (`[{ $set: { "": … } }]`); it must lower
+  // to `$replaceWith`, identical to the `;`-terminated form.
   it("single-statement `$ = { … }` (no `;`) lowers to `$replaceWith`, not `$set: { '': … }`", () => {
     expect(jsmql("$ = { a: 1 }")).toEqual([{ $replaceWith: { a: 1 } }]);
     // …byte-identical to the `;`-form and the bracketed form.
@@ -665,8 +665,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 
   it("`$$ = []` lowers to `$match: { $expr: false }` (drop all docs)", () => {
-    // Previously rejected; landed in the deferred-features Wave 5 push as
-    // the natural sugar for "empty the stream".
+    // The natural sugar for "empty the stream".
     expect(jsmql(`$$ = [];`)).toEqual([{ $match: { $expr: false } }]);
   });
 
@@ -880,9 +879,8 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   });
 
   it("keyBy/countBy/groupBy collapse to a lodash object and are valid as a `$$ =` pivot", () => {
-    // These three used to be value-position-only (keyBy) or emit a `$sortByCount` /
-    // `$group` stream (countBy/groupBy); now all collapse to the lodash object and
-    // work as a stream pivot too. Each ends in `$replaceWith: { $arrayToObject }`.
+    // All three collapse to the lodash object and work as a stream pivot, matching
+    // their value-position meaning. Each ends in `$replaceWith: { $arrayToObject }`.
     for (const term of ['keyBy("sku")', 'countBy("sku")', 'groupBy("sku")']) {
       const stages = jsmql(`$$ = $$.${term};`) as Record<string, unknown>[];
       expect(stages.at(-1)).toHaveProperty("$replaceWith");

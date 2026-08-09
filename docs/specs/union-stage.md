@@ -153,7 +153,7 @@ pushes work on every version that supports `$unionWith` (4.4+).
   correlation" error is the documented contract.
 - **Cross-database unions are rejected at compile time.** A cross-database
   `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`
-  no longer emits a `{ db, coll }` `$unionWith` namespace (that shape is
+  does not emit a `{ db, coll }` `$unionWith` namespace (that shape is
   Atlas-Data-Federation-only and a regular server rejects it at runtime);
   it throws at the shared `requireSameDbColl` choke point — see
   [`docs/specs/lookup-stage.md`](./lookup-stage.md) § Cross-database reads

@@ -160,6 +160,20 @@ The rule when writing anywhere else: **if you're about to copy a paragraph that 
 
 **Write prose future-proof — describe the invariant, not the current inventory.** Restating isn't only copying a *paragraph*; restating the *current membership of an evolving set* is the same drift, and rots faster. jsmql is pre-1.0 and its sets (recognised methods, operators, stages) change constantly, so any prose that pins down what a set holds *right now* — an inline list of supported methods/operators/stages, a count (`all N operators`), a "currently supports X, Y, Z", a version/status snapshot — is both a second copy of the code/registry SSOT and stale on the next change. Instead, state the stable **rule** and name the SSOT for the live list: write "a JavaScript method jsmql recognises (the `METHODS` registry in `src/codegen.ts`)", not "a method (`.map`, `.filter`, `.trim`)". One **illustrative** example — including an exact-output one, as the HARD RULES use — is still encouraged; a parenthetical that reads as "these are the members" is not. Cut it, or mark the single example open-ended (`e.g. .trim()`). Keep counts, versions, and "as of today" status out of prose entirely (outside `docs/DEVLOG.md` / `README.md`): a count belongs in the test that asserts it, status in `docs/DEFERRED.md`.
 
+### No development history outside DEVLOG
+**The project must read as a finished product at all times** — pre-1.0 and under active initial development, but never *visibly mid-construction*. Every file describes **what jsmql is**; only [docs/DEVLOG.md](docs/DEVLOG.md) describes **how it got here**. That file is the single historical record and the *only* place history may appear.
+
+This binds everything else: source, code comments, specs, `docs/LANGUAGE.md`, `README.md`, test names and test comments, config, and generated artifacts. Keep out:
+
+- **Internal planning references** — work-batch / phase / "wave" names, sprint labels, ticket or issue numbers.
+- **Session or authorship narration** — "a parallel session is implementing…", "this work added…", "we then changed…", "in this pass".
+- **Changelog framing** — `## Landed` sections, "*landed*", "shipped in…", "new in…", "previously rejected", "used to…", "no longer…".
+- **Phantom release markers** — `v1` / `v2`, "in this release", "not in v1". Pre-1.0 there are no releases to point at; see the pre-1.0 versioning rule below.
+
+**Rewrite, don't just delete.** When the sentence carries real information, restate it as current behaviour or as the rule — "`.reject` negates the predicate", not "`.reject` was added alongside…". When the only content *was* history, move it to `docs/DEVLOG.md` (or drop it — the git log already has it).
+
+Two things this does **not** forbid. `docs/DEFERRED.md` and the deferral markers it tracks are forward-looking statements about the product ("this isn't supported", "we decided against this"), not history — they stay. And a `// why` comment explaining a *current* constraint is fine; it becomes history only when it narrates the change rather than the reason ("guard against X" ✅, "added this guard after X broke" ❌).
+
 ### Maintain CLAUDE.md files
 Create and keep up to date a `CLAUDE.md` in every directory that contains non-trivial logic: `src/`, `docs/`, `test/`. Each one should explain the purpose of that directory and the conventions specific to it. When you add a new directory, add a `CLAUDE.md` immediately.
 

@@ -92,7 +92,7 @@ type JsmqlInput = string | JsmqlFn;
 // `$` so unannotated `$.foo` keeps autocomplete without `noImplicitAny`, and
 // each `$op` so a destructured `({ $, $dateDiff }) => …` type-checks even
 // without the `@koresar/jsmql/ops` ambient import (which is where rich
-// signatures come from). A bare `$` / bare identifier is no longer a valid
+// signatures come from). A bare `$` / bare identifier is not a valid
 // parameter slot — the document context must be destructured.
 
 type JsmqlOutput = object | object[];

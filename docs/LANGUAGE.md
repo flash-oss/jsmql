@@ -3305,7 +3305,7 @@ jsmql("[let big = $.score > 100, $match(big), $sort({ score: -1 })]");
 
 ### Compile-time constants (folding)
 
-When a `const`/`let` right-hand side is a **compile-time constant** — a value that doesn't depend on the document or the environment — jsmql evaluates it once at compile time and **inlines the value** everywhere the name is used. No `$set` stage, no `__jsmql` namespace, no `$unset`. And because the declaration emits no stage, a preamble of constants no longer forces Pipeline mode — so a constant plus a predicate compiles to a clean, indexable **Filter**:
+When a `const`/`let` right-hand side is a **compile-time constant** — a value that doesn't depend on the document or the environment — jsmql evaluates it once at compile time and **inlines the value** everywhere the name is used. No `$set` stage, no `__jsmql` namespace, no `$unset`. And because the declaration emits no stage, a preamble of constants does not force Pipeline mode — so a constant plus a predicate compiles to a clean, indexable **Filter**:
 
 ```js
 jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId");

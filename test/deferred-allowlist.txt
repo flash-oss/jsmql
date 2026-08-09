@@ -7,10 +7,9 @@
 # ±2 lines, the test skips it (i.e. treats it as known).
 #
 # Why allowlist at all? Three reasons:
-#   (1) A parallel "fork" session is implementing 11 of the original 23-item
-#       batch; tagging those rejection sites would conflict with the fork
-#       deleting them. Allowlist instead — entries are removed as each fork
-#       wave lands.
+#   (1) A rejection site that is actively being removed — tagging it would
+#       only have to be undone when the work lands. Allowlist instead, and
+#       drop the entry with the site.
 #   (2) A handful of spec-section headers (`## Out of scope`, `## Future
 #       work`) are *categorical* — their children may individually carry
 #       [DEF-NNN] tags, but the header itself doesn't need one.
@@ -34,17 +33,14 @@ docs/CLAUDE.md::"what did we decide against?"
 docs/LANGUAGE.md::features not yet implemented or rejected
 
 # -----------------------------------------------------------------------------
-# Landed: nested lookups in expression-body AND block-body predicates (the
-# latter shipped via the GenerateCtx.enclosingLookup ctx carrier). The
-# stream-method reducer guard below is a separate, unrelated rejection; the
-# lookup spec keeps a categorical "## Future work" header.
+# The lookup spec keeps a categorical "## Future work" header. The
+# stream-method reducer guard below is a separate, unrelated rejection.
 # -----------------------------------------------------------------------------
 src/stream-methods.ts::"nested lookup not yet supported"
 docs/specs/lookup-stage.md::## Future work
 
 # -----------------------------------------------------------------------------
-# Landed: .copyWithin (Wave 4 #13), $out multi-method RHS (#11), bound dest (#12)
-# Remaining $out deferral: $merge sugar (DEF-005, tag in DEFERRED.md).
+# The one $out deferral: $merge sugar (DEF-005, tag in DEFERRED.md).
 # -----------------------------------------------------------------------------
 docs/specs/out-stage.md::Out of scope for now.
 

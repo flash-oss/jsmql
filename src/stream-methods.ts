@@ -221,10 +221,10 @@ function fieldKeyArg(arg: CallArg | Expr | SpreadElement): string | null {
  *
  * MongoDB has no stage that reverses a stream (`$reverseArray` is an *expression*,
  * for an array inside a document), and a stream has no ordering except the one a
- * `$sort` gives it. jsmql used to fake these by rewriting the preceding `$sort`,
- * which made them position-dependent in a way the JS methods never are and — with
- * no `$sort` in front — *silently* ordered by `_id` instead of erroring. Reversing
- * a sort you already wrote is also just a longer spelling of writing it descending.
+ * `$sort` gives it. Faking them means rewriting the preceding `$sort`, which makes
+ * them position-dependent in a way the JS methods never are and — with no `$sort` in
+ * front — *silently* orders by `_id` instead of erroring. Reversing a sort you already
+ * wrote is in any case a longer spelling of writing it descending.
  *
  * They remain available in VALUE position on a real array (`$.items.takeRight(3)`
  * → `$slice`, `$.items.toReversed()` → `$reverseArray`), where the array carries

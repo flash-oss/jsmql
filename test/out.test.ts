@@ -153,7 +153,7 @@ describe("$out — RHS shape errors", () => {
   });
 });
 
-describe("$out — multi-method RHS chains (Wave 4 #11)", () => {
+describe("$out — multi-method RHS chains", () => {
   // Stream-methods registry methods compose freely before the $out: filter,
   // map, slice, toSorted, toReversed, flatMap, concat.
   it(".filter + .slice — $match + $limit + $out", () => {
@@ -222,7 +222,7 @@ describe("$out — .reject is .filter negated", () => {
   });
 });
 
-describe("$out — ParamRef in bracket-LHS (Wave 4 #12, jsmql.compile binding)", () => {
+describe("$out — ParamRef in bracket-LHS (jsmql.compile binding)", () => {
   it("$$$[boundColl] resolves the bracket via the compile-time binding", () => {
     const fn = jsmql.compile(({ destColl }) => ($$$[destColl] = $$));
     expect(fn({ destColl: "archive" })).toEqual([{ $out: "archive" }]);

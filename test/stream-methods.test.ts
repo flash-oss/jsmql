@@ -163,9 +163,9 @@ describe(".tail() → $skip: 1 — lodash all-but-first", () => {
 describe("'from the end' array methods are NOT on the stream surface", () => {
   // MongoDB has no stage that reverses a stream (`$reverseArray` is an EXPRESSION,
   // for an array inside a document), and a stream has no order except the one a
-  // `$sort` gives it. These four used to be faked by rewriting the preceding
-  // `$sort`, which made them position-dependent in a way the JS methods never are —
-  // and with no `$sort` in front they silently ordered by `_id` instead of erroring.
+  // `$sort` gives it. Faking them means rewriting the preceding `$sort`, which makes
+  // them position-dependent in a way the JS methods never are — and with no `$sort` in
+  // front they would silently order by `_id` instead of erroring.
   const REMOVED = ["takeRight(3)", "dropRight(2)", "initial()", "toReversed()"];
   const CONTEXTS = [
     ["$$ = pivot", (c: string) => `$$ = $$.${c};`],

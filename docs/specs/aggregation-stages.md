@@ -179,6 +179,21 @@ Stages whose body objects carry nested pipelines declare which keys via `subPipe
 
 For sub-pipeline slots, lowering checks whether the value is itself `isPipelineAst`-positive. If yes, recurse via `generatePipeline`; if no, fall back to `generate` (covering cases like `pipeline: $.someVar` — a field reference rather than a literal array).
 
+## Accumulator / window operator context
+
+Some operators are only valid in particular stage slots, and `checkOperatorContext`
+in [src/codegen.ts](../../src/codegen.ts) enforces that at compile time:
+
+- **Window-only** operators (any with `category: "window"` in the registry) are
+  confined to `$setWindowFields.output` slots.
+- **Accumulator-only** operators (those the registry marks with `acc(...)` — see
+  [operator-registry.md](operator-registry.md), which owns the flag) are confined to
+  `$group` field-value slots and `$setWindowFields.output`.
+
+The context is set by `generateBodyObject` in [src/pipeline.ts](../../src/pipeline.ts)
+via `GenerateCtx.accumulatorContext`. Both sets are read from the registry rather than
+listed here, so a new operator is gated by its registry entry alone.
+
 ## Object-key syntax for `$<name>`
 
 The parser accepts `Dollar` + identifier tokens as a static object key in `parseObjectEntry` ([src/parser.ts](../../src/parser.ts)). Without this, `{ $match: ... }` would fail to parse. The synthesised key name is `$<ident>` exactly — matching how operator names appear elsewhere. This is JS-syntax-valid (`$match` is a legal JS identifier), so the [strict-subset-of-JavaScript](grammar.md#strict-js-subset-rule) invariant holds.
@@ -214,6 +229,5 @@ A realistic, multi-stage example using the canonical `;`-separated form lives in
 
 - **Drift-protection test for `STAGES`** against `vendor/mql-specifications/definitions/stage/`, parallel to `test/operator-spec-coverage.test.ts`. New stages added to MongoDB would be silently missed today.
 - **Query-predicate operators inside `$match` object-literal bodies.** Today the body is passed through verbatim; we don't validate `$gt`, `$in`, etc. at the query layer. Will get its own spec when work begins; see the "future work areas" note in [docs/CLAUDE.md](../CLAUDE.md#docsspecs).
-- **`$setWindowFields` static validation** — *landed* (Wave 5 #41 + #22). `checkOperatorContext` in `src/codegen.ts` gates window-only operators (any with `category: "window"` in the registry) to `$setWindowFields.output` slots, and accumulator-only operators (`$accumulator`, `$addToSet`, `$bottom`/`$bottomN`/`$top`/`$topN`, `$push`, `$median`, `$percentile`) to `$group` field-value slots or `$setWindowFields.output`. Set by `pipeline.ts:generateBodyObject` via the `accumulatorContext` field on `GenerateCtx`.
 - **Type-level overloads** of `jsmql()` so a literal pipeline input narrows the return to `object[]`. The widened union is enough for now.
 - **Stage-call typo detection.** `$abs(1)` as the first array element triggers pipeline mode and fails strictly, but typos like `$prject({...})` are caught for the same reason — a mistyped stage name still produces a clear error. Object-form typos are caught with did-you-mean.

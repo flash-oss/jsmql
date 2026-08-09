@@ -268,7 +268,7 @@ src/
   control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a
   more careful design pass. Out of scope for now.
 
-## Landed
+## Design notes
 
 - **Multi-method RHS chains.** `lowerChainMethod` routes everything outside its own
   three shapes (stage link, `.filter`, `.reject`) through the shared

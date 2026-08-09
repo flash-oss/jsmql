@@ -44,12 +44,12 @@ equivalents all lower identically here and in every other container. See
 
 ## Bare `$$` as an assignment target
 
-`parseContextRef` in `src/parser.ts` was extended so the `CollectionRef`
-variant (`$$`) accepts a following `=` token, in addition to `.` and `[`.
+`parseContextRef` in `src/parser.ts` lets the `CollectionRef`
+variant (`$$`) accept a following `=` token, in addition to `.` and `[`.
 The other context prefixes (`$$$`, `$$$$`) keep the strict rule —
 `$$$ = X` / `$$$$ = X` are meaningless and stay parse-rejected.
 
-`isFieldPathTarget` in `src/parser.ts` was extended to accept
+`isFieldPathTarget` in `src/parser.ts` accepts
 `CollectionRef` as an assignment target, alongside the existing `FieldRef`
 and `MemberAccess` chains.
 

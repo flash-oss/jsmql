@@ -11,8 +11,8 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 > **Constant folding.** This `$set`/`__jsmql.var.<name>` lowering is the
 > **runtime** path, taken when the RHS reads document/environment state. When
 > the RHS is a **compile-time constant**, the declaration instead folds to a
-> value that is inlined at every reference (no stage, and the preamble no longer
-> forces Pipeline mode) — owned by [const-folding.md](const-folding.md). Folding
+> value that is inlined at every reference (no stage, and the preamble does not
+> force Pipeline mode) — owned by [const-folding.md](const-folding.md). Folding
 > is a post-parse pre-pass; everything below applies to the runtime fallback.
 
 > **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let).
@@ -241,8 +241,8 @@ semantics predictable and the error path well-defined.
 
 ## Output stability
 
-Pipelines with no `let` declarations produce **byte-identical** MQL output to
-pre-feature jsmql. The `__jsmql` field name and the trailing `$unset` only
+Pipelines with no `let` declarations carry **no trace** of the binding
+machinery. The `__jsmql` field name and the trailing `$unset` only
 appear when at least one `let` is in scope at some point during lowering — or
 at least one `$$$.<coll>.find/filter(...)` chained terminal materialises into
 an internal `__jsmql.tmp.<N>` slot (see [`lookup-stage.md`](./lookup-stage.md)).
@@ -282,16 +282,15 @@ materialises `__jsmql.var.<name>` from that slot in the standard way. See
   thread per-doc values into those sub-pipelines; jsmql already auto-extracts
   `$.x` refs into it.)
 
-## Landed
+## Outer lets inside `$facet` sub-pipelines
 
-- **Outer lets visible inside `$facet` sub-pipelines** (Wave 5 #28). Each
-  facet branch operates on the same input documents that arrived at the
-  outer `$facet` stage — they still carry the `__jsmql.var.<name>` fields the
-  outer lets materialised into. A new `freshFacetCtx` helper (in
-  `src/codegen.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
-  sub-pipeline ctx that PRESERVES `pipelineLets`; the facet branch lowering
-  in `src/facet-translation.ts` uses it. Tests in
-  `test/let-bindings.test.ts` cover the let-into-facet shape.
+Outer lets **are** visible inside a `$facet` branch. Each branch operates on the
+same input documents that arrived at the outer `$facet` stage, so they still carry
+the `__jsmql.var.<name>` fields the outer lets materialised into. `freshFacetCtx`
+(in `src/codegen.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
+sub-pipeline ctx that PRESERVES `pipelineLets`; the facet branch lowering in
+`src/facet-translation.ts` uses it. `test/let-bindings.test.ts` covers the
+let-into-facet shape.
 
 ## Tests
 

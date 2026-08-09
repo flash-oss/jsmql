@@ -85,11 +85,11 @@ export type StreamMethodResult = {
 | **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) | `keyExpr` (`src/stream-methods.ts`) |
 | **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair | `shorthandToLambda` (`src/codegen.ts`), reached at the lookup head via `detectLookupCall` — see [lookup-stage.md](lookup-stage.md) § Module layout |
 
-Everything downstream must ask the resolver what an argument **means**, never what type it is. Keying on `StringLiteral` is the recurring bug: it is how `.groupBy(d => d.cat)` came to skip the collapsing `$first` unwrap that `.groupBy("cat")` gets (`isCollapsingTerminal`), and how `.find({ … })` came to be rejected outright while `.filter({ … })` was fine.
+Everything downstream must ask the resolver what an argument **means**, never what type it is. Keying on `StringLiteral` is the recurring trap: it makes `.groupBy(d => d.cat)` skip the collapsing `$first` unwrap that `.groupBy("cat")` gets (`isCollapsingTerminal`), and rejects `.find({ … })` outright while `.filter({ … })` sails through — two spellings of one meaning, diverging on the AST node that happened to carry it.
 
 **The split is the SLOT, not the method.** `$group._id` is an expression the server evaluates per document, so a computed group key lowers straight into `_id` with **no extra stages** — `keyExpr` keeps a `fieldKeyArg` fast path first, so a plain key still emits the byte-identical `"$cat"` it always did. A `$sort` key is a *literal field path*, so a computed sort key is **materialised**: `SortKeySink` allocates a `__jsmql.tmp` slot, one `$addFields` computes it ahead of the `$sort`, and the slot is cleared at the end of the chain (`sortStages`). `.flatMap` is the one key slot with no computed form at all.
 
-**Cleanup is held to the end of the chain (`StreamMethodResult.cleanupStages`), never emitted next to the `$sort`.** A scratch `$unset` wedged between a `$sort` and the stage after it is a hazard for anything that inspects the stage it follows, and jsmql has shipped exactly that bug before: while the "from the end" methods existed (see below), `$$.shuffle().takeRight(3)` *silently* returned the last 3 by `_id` and discarded the shuffle, because the `$unset` hid the shuffle's `$sort` and the fallback was silent rather than an error. Those methods are gone, but the ordering rule stays — a method's stages should end with the stage that describes the stream, not with its own housekeeping.
+**Cleanup is held to the end of the chain (`StreamMethodResult.cleanupStages`), never emitted next to the `$sort`.** A scratch `$unset` wedged between a `$sort` and the stage after it is a hazard for anything that inspects the stage it follows: a method looking back for the ordering `$sort` sees the `$unset` instead and silently falls back. A method's stages should end with the stage that describes the stream, not with its own housekeeping.
 
 Cleanup is emitted **only inside a `$lookup.pipeline`** (the `inSubPipeline` argument to `lower`): there the sub-pipeline's documents land in an array field the outer `{ $unset: "__jsmql" }` cannot reach. At the top level and inside a `$unionWith.pipeline` that trailing sweep runs over these documents, so a second `$unset` would be noise. When it is emitted it drops the **namespace root** (`__jsmql`), not the individual slot: `$unset` of a dotted path removes only the leaf, so unsetting `__jsmql.tmp.1` left every foreign document carrying `__jsmql: { tmp: {} }`.
 
@@ -411,22 +411,21 @@ This holds for *every* method. The bare form passes the **live pipeline `out`** 
 `applyStreamMethods`' working buffer rather than a throwaway local array, so a method
 that reads `prevStages` sees the stages a previous *statement* emitted — while a
 `$$ = …` chain lowers against its own local buffer, which starts empty. That
-difference used to be an observable asymmetry, because `.toReversed()` reached across
-statements in the bare form and errored in the assignment form. With that family
-removed no registered method reads `prevStages`, so the two forms are now
-indistinguishable — and a future method that reads it would reintroduce the
-asymmetry, which is one more reason not to add one.
+difference is unobservable: no registered method reads `prevStages`, so the two forms
+behave identically. A method that *did* read it would make the bare form reach across
+statements while the assignment form did not — an asymmetry with no defensible
+semantics, and one more reason not to add one.
 
-## Removed: the "from the end" methods
+## Deliberately absent: the "from the end" methods
 
 `.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` are **not** stream
 methods. MongoDB has no stage that reverses a stream (`$reverseArray` is an
 expression, for an array inside a document) and a stream has no order but the one a
-`$sort` gives it, so "the last n" has nothing to count back from. jsmql used to fake
-them by rewriting the preceding `$sort` — which made them position-dependent in a way
-the JS methods are not, and, with no `$sort` in front, silently ordered by `_id`
-instead of erroring. `.toSorted(c).toReversed()` was also just a longer spelling of
-writing the comparator descending.
+`$sort` gives it, so "the last n" has nothing to count back from. The only way to fake
+them is to rewrite the preceding `$sort`, which makes them position-dependent in a way
+the JS methods are not and, with no `$sort` in front, silently orders by `_id` rather
+than erroring. `.toSorted(c).toReversed()` is in any case a longer spelling of writing
+the comparator descending.
 
 `fromTheEndRejection` (`src/stream-methods.ts`) owns the rejection and is called from
 all three places a stream chain is assembled — `unknownStreamMethod` (bare `$$` and
