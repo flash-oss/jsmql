@@ -119,7 +119,7 @@ through the pipeline lowerer.
 | `$$$$.<a>.<b>.<c> = …` (three or more segments after `$$$$`) | `'$$$$.<a>.<b>.<c>' has too many segments for a \$out target — '\$out' writes to one collection in one database, so '$$$$.<db>.<coll>' is the deepest form.` |
 | `$$$[<non-literal>] = …` (computed bracket on the LHS) | `'\$out' target must be a literal collection name — use '$$$.<coll>' or '$$$["<coll>"]', not a runtime expression. If you need a parameterised target, use 'jsmql.compile' and pass the name in.` |
 | RHS not rooted at `$$` (e.g. `$$$.coll = $.x`) | `The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.` |
-| Chain method in neither the stream-method registry nor the stage-link form | `'$$.<method>(...)' isn't a recognised chain method for a '\$out' RHS. Use '<stage-equivalent>' as a separate stage before the '\$out' instead.` (Stage equivalent is keyed off the method name — `.map` → `$project`/`$addFields`, `.sort` → `$sort`, `.slice` → `$skip;$limit`, `.reduce` → `$group`, …) |
+| Chain method in neither the stream-method registry nor the stage-link form | `'$$.<method>(...)' isn't a recognised chain method for a '\$out' RHS.[ Did you mean '.<near-miss>()'?] <workaround>` — the workaround is the method's entry in `STAGE_EQUIVALENT_HINT` when it has one (a JS method a stream chain deliberately lacks, e.g. `.reduce` → `$group({ … })`), else the generic "add the equivalent stage call, chained or as its own statement". A method the registry *does* carry must never be listed in that table: the table is only reached when `lookupStreamMethod` returns null, so an entry for a working method is unreachable. |
 | `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' takes exactly one predicate argument, got N.` |
 | `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [pipeline-validation.md](pipeline-validation.md)) |
 | `$.x` reference inside the `$$.filter` predicate | Shared message from `localRefInPredicateMessage`: names the lambda's own parameter for an arrow spelling, and redirects a shorthand spelling to the arrow form (a shorthand has no parameter the user could write). |
@@ -184,19 +184,20 @@ a user who wrote a shorthand.
 
 ### Adding more chain methods
 
-Each new method adds one branch in `lowerChainMethod`. Sketch:
+A new chain method is **not** a `$out`-specific branch — it goes in the shared
+`STREAM_METHODS` registry ([`src/stream-methods.ts`](../../src/stream-methods.ts),
+which owns the vocabulary and its lowering), and `lowerChainMethod` picks it up with
+no change here. That is what makes a `$out` chain accept the same methods a `$$ =`
+chain does. `lowerChainMethod` keeps its own branch only for the three shapes the
+registry does not cover: the stage-link form, and the `.filter` / `.reject` pair
+(whose predicate goes through the shared gate — see above).
 
-| Method | Stage(s) | Notes |
-|---|---|---|
-| `.map(d => obj)` | `$project` or `$addFields` | Disambiguation: explicit `{ field: 1 }`-style projection (replace) vs computed-field map (extend). |
-| `.sort((a, b) => a.x - b.x)` or `.sort($.x)` | `$sort` | Needs a comparator → MQL sort-spec translator. |
-| `.slice(start, end)` | `$skip` + `$limit` | Both args must be integer-typed at compile time. |
-| `.reduce(fn, init)` | `$group` | Significant design surface — pair with the lookup `.reduce` chain support work. |
-| `.flatMap(f)` / `.flat()` | `$unwind` + … | Semantics diverge from JS enough to warrant a separate spec discussion. |
-
-The `STAGE_EQUIVALENT_HINT` table in `src/out-translation.ts` is the
-single source of truth for the "use this stage instead" hint emitted by
-the unsupported-method error.
+When a method lands in the registry, remove any entry it has in
+`STAGE_EQUIVALENT_HINT`: that table is only consulted after `lookupStreamMethod`
+returns null, so an entry for a working method is unreachable and would sit there
+advertising a workaround for something that already works. The table is the single
+source of truth for the "use this stage instead" hint, and holds only JS methods a
+stream chain deliberately lacks.
 
 ## Mode gates
 

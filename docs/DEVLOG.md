@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — refactor: drop the unreachable half of `STAGE_EQUIVALENT_HINT`
+
+`STAGE_EQUIVALENT_HINT` in [src/out-translation.ts](src/out-translation.ts) maps a
+chain-method name to the stage call to use instead, and is consulted **only** after
+`lookupStreamMethod` returns null. Four of its six keys — `map`, `sort`, `slice`,
+`flatMap` — had since been added to the stream-methods registry, so they lower fine in a
+`$out` chain and their entries could never fire. Dead weight advertising a workaround for
+something that already works. Removed; `reduce` and `flat` stay, being the two that
+genuinely have no chain form. The table's doc comment now states the invariant (an entry
+here means the registry does *not* carry the method), so the next method to land in the
+registry gets its entry pulled at the same time.
+
+Two neighbouring fixes fell out of reading the message this table feeds. The generic
+fallback hint offered `$sort({ … })` / `$skip(N)` / `$limit(N)` as its examples — all
+three now have working chain spellings, so it was steering users away from the shorter
+form; it now points at the stage-call escape hatch generically. And the throw site had no
+`didYouMean` tail, though it rejects a name from a closed set, which the root
+[CLAUDE.md](CLAUDE.md) requires: `$$$.c = $$.mpa(d => d.x)` now answers *Did you mean
+'.map()'?* instead of only naming the workaround.
+
+The spec's "Adding more chain methods" section was stale in the same way — it sketched
+per-method branches in `lowerChainMethod` for methods that had already landed via the
+registry. It now states the actual rule: a new chain method goes in the shared registry
+and `$out` picks it up for free.
+
+---
+
 ## 2026-08-09 — feat: `$$.reject(...)` works in a `$out` write chain
 
 `$$$.<coll> = $$.reject(<predicate>)` now lowers, emitting the same negated

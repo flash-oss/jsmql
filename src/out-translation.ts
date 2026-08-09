@@ -17,7 +17,8 @@ import {
   type SubPipelineLowerer,
   type SlotAllocator,
 } from "./lookup-translation.ts";
-import { lookupStreamMethod } from "./stream-methods.ts";
+import { lookupStreamMethod, streamMethodNames } from "./stream-methods.ts";
+import { didYouMean } from "./levenshtein.ts";
 import { checkStageLinkPlacement, isStageLink, stageLinkBlock, stageLinkBody } from "./stage-link.ts";
 
 // ── Detection ─────────────────────────────────────────────────────────────────
@@ -300,27 +301,32 @@ function lowerChainMethod(
     const result = def.lower(call.args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
     return { stages: result.stages };
   }
-  // Method not in the stream-methods registry either. Mention the stage-call
-  // alternative so the user has an immediate workaround.
+  // Method in neither the stage-link form nor the stream-methods registry. Suggest a
+  // near-miss name, then point at the stage-call escape hatch as the workaround.
+  const suggestion = didYouMean(call.method, ["filter", "reject", ...streamMethodNames()], (s) => `.${s}()`);
   const equivalent = STAGE_EQUIVALENT_HINT[call.method];
   const hint =
     equivalent !== undefined
       ? ` Use '${equivalent}' as a separate stage before the '$out' instead.`
-      : ` Add the equivalent stage call (e.g. '$sort({ … })', '$skip(N)', '$limit(N)') before the '$out' instead.`;
-  throw new CodegenError(`'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${hint}`, call.pos);
+      : ` Add the equivalent stage call before the '$out' — either chained ('$$.$<stage>({ … })') or as its own statement.`;
+  throw new CodegenError(
+    `'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${suggestion}${hint}`,
+    call.pos,
+  );
 }
 
 /** Where a `$out` write chain's predicate sits, for the shared gate's messages. */
 const OUT_PREDICATE_POSITION = "in a '$out' write chain";
 
-const STAGE_EQUIVALENT_HINT: Record<string, string> = {
-  map: "$project({...}) or $addFields({...})",
-  sort: "$sort({ field: 1 | -1 })",
-  slice: "$skip(N); $limit(M)",
-  reduce: "$group({ ... })",
-  flatMap: "$unwind",
-  flat: "$unwind",
-};
+/**
+ * Stage equivalents for JS methods a user might reasonably reach for that a stream
+ * chain deliberately does NOT carry. Only reached when `lookupStreamMethod` returns
+ * null, so a method that IS in the registry must never appear here — it would be
+ * dead weight suggesting a workaround for something that already works. (`.map`,
+ * `.sort`, `.slice` and `.flatMap` sat here for exactly that reason until the
+ * registry grew to cover them.)
+ */
+const STAGE_EQUIVALENT_HINT: Record<string, string> = { reduce: "$group({ ... })", flat: "$unwind" };
 
 /**
  * `$$.filter(<predicate>)` / `$$.reject(<predicate>)` → `[{ $match: <translated> }]`.

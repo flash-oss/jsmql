@@ -119,10 +119,27 @@ describe("$out — LHS shape errors", () => {
 
 describe("$out — RHS shape errors", () => {
   it("unrecognised chain method (not in the stream-methods registry) names the workaround", () => {
-    // `.map` / `.filter` / `.slice` / `.toSorted` / `.toReversed` / `.flatMap` /
-    // `.concat` all flow through the stream-methods registry now (Wave 4 #11).
-    // Methods OUTSIDE the registry still get the "use a separate stage" hint.
+    // A chain method resolves through the stream-methods registry (plus `.filter` /
+    // `.reject` and the stage-link form). Only a name in NONE of those reaches the
+    // "use a separate stage" hint.
     expect(() => jsmql("$$$.coll = $$.unknownMethod();")).toThrow(/isn't a recognised chain method for a '\$out' RHS/);
+  });
+
+  it("suggests a near-miss chain method name", () => {
+    expect(() => jsmql("$$$.coll = $$.mpa(d => d.x);")).toThrow(/Did you mean '\.map\(\)'\?/);
+    expect(() => jsmql("$$$.coll = $$.fliter({ a: 1 });")).toThrow(/Did you mean '\.filter\(\)'\?/);
+    // Nothing close enough — no suggestion, just the workaround.
+    expect(() => jsmql("$$$.coll = $$.wibble();")).toThrow(/RHS\. Add the equivalent stage call/);
+  });
+
+  // `STAGE_EQUIVALENT_HINT` only fires for a method the registry does NOT carry, so a
+  // registered one listed there would be dead weight — suggesting a workaround for
+  // something that already works. These are the two that genuinely have no chain form.
+  it("names the stage equivalent for a JS method a stream chain deliberately lacks", () => {
+    expect(() => jsmql("$$$.coll = $$.reduce((a, d) => a + d.n, 0);")).toThrow(
+      /Use '\$group\(\{ \.\.\. \}\)' as a separate stage/,
+    );
+    expect(() => jsmql("$$$.coll = $$.flat();")).toThrow(/Use '\$unwind' as a separate stage/);
   });
 
   it("RHS not rooted at $$ throws with the supported shapes", () => {

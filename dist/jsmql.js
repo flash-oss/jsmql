@@ -14223,19 +14223,16 @@ function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
     const result = def.lower(call.args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
     return { stages: result.stages };
   }
+  const suggestion = didYouMean(call.method, ["filter", "reject", ...streamMethodNames()], (s) => `.${s}()`);
   const equivalent = STAGE_EQUIVALENT_HINT[call.method];
-  const hint = equivalent !== void 0 ? ` Use '${equivalent}' as a separate stage before the '$out' instead.` : ` Add the equivalent stage call (e.g. '$sort({ \u2026 })', '$skip(N)', '$limit(N)') before the '$out' instead.`;
-  throw new CodegenError(`'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${hint}`, call.pos);
+  const hint = equivalent !== void 0 ? ` Use '${equivalent}' as a separate stage before the '$out' instead.` : ` Add the equivalent stage call before the '$out' \u2014 either chained ('$$.$<stage>({ \u2026 })') or as its own statement.`;
+  throw new CodegenError(
+    `'$$.${call.method}(...)' isn't a recognised chain method for a '$out' RHS.${suggestion}${hint}`,
+    call.pos
+  );
 }
 var OUT_PREDICATE_POSITION = "in a '$out' write chain";
-var STAGE_EQUIVALENT_HINT = {
-  map: "$project({...}) or $addFields({...})",
-  sort: "$sort({ field: 1 | -1 })",
-  slice: "$skip(N); $limit(M)",
-  reduce: "$group({ ... })",
-  flatMap: "$unwind",
-  flat: "$unwind"
-};
+var STAGE_EQUIVALENT_HINT = { reduce: "$group({ ... })", flat: "$unwind" };
 function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
   const method = call.method;
   if (call.args.length !== 1) {
