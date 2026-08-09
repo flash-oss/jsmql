@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-09 — docs: remove the phantom `v1` marker, including from user-facing errors
+
+The pre-1.0 rule in [CLAUDE.md](CLAUDE.md) bans `v1`/`v2` markers outright — they imply
+released versions that don't exist — but twenty-odd had accumulated, and seven of them
+were in **error messages users actually read**. `$$.reduce(...)` answered *"v1 supports
+only these reducer shapes"* and `.slice(n, 5)` said *"aren't supported on streams in
+v1"*, from a package at `0.1.8` where no v1 has ever shipped. A reader can only conclude
+they're on some old version and that upgrading would help; there is nothing to upgrade
+to. Now: *"supports these reducer shapes"*, *"aren't supported on streams"* — the
+constraint stated without the phantom timeline.
+
+The same marker was in [docs/LANGUAGE.md](docs/LANGUAGE.md), four specs, and a batch of
+test names and assertions. **Every behavioural claim carried by those sentences was
+re-verified against the CLI first and all of them were still true** — spread-form array
+reducers (`[...acc, d.x]`), complex `.flatMap` arrow bodies, and bare foreign-param refs
+are all still rejected. So this is purely a wording change: nothing about what jsmql
+accepts moved. `test/deferred-allowlist.txt` picks up the two reworded "out of scope"
+phrases it pins, per the STALE-ALLOWLIST gate.
+
+Found while fixing the same class of rot in the `$out` spec (see the entry below): prose
+that pins a *status snapshot* rather than stating the rule. A version marker is the worst
+kind, because it rots without anyone touching it — the code moves on and the sentence
+keeps asserting a release boundary that never existed. Where a real constraint remains,
+the sentence now states the constraint; where it was history, it belongs in this file.
+
+---
+
 ## 2026-08-09 — refactor: drop the unreachable half of `STAGE_EQUIVALENT_HINT`
 
 `STAGE_EQUIVALENT_HINT` in [src/out-translation.ts](src/out-translation.ts) maps a

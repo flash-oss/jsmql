@@ -149,7 +149,7 @@ pushes work on every version that supports `$unionWith` (4.4+).
 - **Custom let-substitution.** Atlas's `$lookup.let` doesn't apply to
   `$unionWith`, but a future jsmql release could synthesise the same effect
   via a `$set` stage *before* the push and a `$match` against that captured
-  value inside the sub-pipeline. Out of scope for v1 — the explicit "no
+  value inside the sub-pipeline. Out of scope — the explicit "no
   correlation" error is the documented contract.
 - **Cross-database unions are rejected at compile time.** A cross-database
   `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`

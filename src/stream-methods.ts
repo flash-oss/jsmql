@@ -132,7 +132,7 @@ const SLICE: StreamMethodDef = {
       }
       if (arg.type !== "NumberLiteral") {
         throw new CodegenError(
-          `.slice(start[, end]) requires non-negative integer literals; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams in v1 — write the literal in source.`,
+          `.slice(start[, end]) requires non-negative integer literals; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams — write the literal in source.`,
           arg.pos,
         );
       }
@@ -1907,7 +1907,7 @@ function detectScalarReduceWrap(docEl: ObjectLiteralNode): ReduceWrapEntry[] | n
     const accumulator = classifyReduceBody(body, accParam, dParam);
     if (accumulator === null) {
       throw new CodegenError(
-        `$$.reduce((${accParam}, ${dParam}) => …) v1 supports only these reducer shapes: ` +
+        `$$.reduce((${accParam}, ${dParam}) => …) supports these reducer shapes: ` +
           `'${accParam} + ${dParam}.<field>' (→ $sum), '${accParam} + 1' (→ $sum: 1, count), ` +
           `'Math.max(${accParam}, ${dParam}.<field>)' (→ $max), 'Math.min(${accParam}, ${dParam}.<field>)' (→ $min). ` +
           `Other shapes aren't supported yet — write the $group stage by hand.`,
@@ -1962,7 +1962,7 @@ function classifyObjectReducer(
       const sp = entry.argument;
       if (sp.type !== "ParamRef" || sp.name !== accParam) {
         throw new CodegenError(
-          `Object-reducer body may only spread the accumulator parameter ('...${accParam}'). Spreads of other expressions aren't supported in v1.`,
+          `Object-reducer body may only spread the accumulator parameter ('...${accParam}'). Spreads of other expressions aren't supported.`,
           entry.pos,
         );
       }
@@ -1971,7 +1971,7 @@ function classifyObjectReducer(
     seenNamedEntry = true;
     if (entry.key.kind !== "static") {
       throw new CodegenError(
-        `Object-reducer body entry must have a static key. Computed keys ('[expr]: …') aren't supported in v1.`,
+        `Object-reducer body entry must have a static key. Computed keys ('[expr]: …') aren't supported.`,
         entry.pos,
       );
     }
@@ -1988,7 +1988,7 @@ function classifyObjectReducer(
   for (const entry of init.entries) {
     if (entry.type !== "KeyValueEntry") {
       throw new CodegenError(
-        `The init object passed to $$.reduce must be a literal '{ <key>: <init>, ... }' — spreads aren't supported in v1.`,
+        `The init object passed to $$.reduce must be a literal '{ <key>: <init>, ... }' — spreads aren't supported.`,
         entry.pos,
       );
     }
@@ -2026,7 +2026,7 @@ function classifyObjectReducer(
     );
     if (accumulator === null) {
       throw new CodegenError(
-        `Object-reducer entry '${entry.key}: …' — v1 supports only: ` +
+        `Object-reducer entry '${entry.key}: …' — supported shapes: ` +
           `'${accParam}.${entry.key} + ${dParam}.<field>' (→ $sum), '${accParam}.${entry.key} + 1' (→ $sum: 1, count), ` +
           `'Math.max(${accParam}.${entry.key}, ${dParam}.<field>)' (→ $max), 'Math.min(${accParam}.${entry.key}, ${dParam}.<field>)' (→ $min). ` +
           `Each entry must reference '${accParam}.${entry.key}' as the accumulator side.`,
@@ -2315,7 +2315,7 @@ export function detectArrayReducerWrap(value: Expr): ArrayReducerWrap | null {
   const classified = classifyArrayReducerBody(body, accParam, dParam);
   if (classified === null) {
     throw new CodegenError(
-      `Array-returning reducer body — v1 supports only:\n` +
+      `Array-returning reducer body — supported shapes:\n` +
         `  • Unconditional map:  '(${accParam}, ${dParam}) => ${accParam}.concat(${dParam}.<field>)'  →  '$replaceWith: "$<field>"'\n` +
         `  • Filter + map:       '(${accParam}, ${dParam}) => (<cond> ? ${accParam}.concat(${dParam}.<field>) : ${accParam})'  →  '$match(<cond>) + $replaceWith: "$<field>"'\n` +
         `  • The '${dParam}' itself (bare param) instead of '${dParam}.<field>' projects the whole doc (no '$replaceWith').\n` +

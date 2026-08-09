@@ -229,7 +229,7 @@ the same key set as the body — extra or missing keys on either side throw an
 actionable error (in JS this would silently work but mean something
 different). Each entry's body must reference `acc.<sameKey>` as the
 accumulator side (`total: acc.count + d.amount` is rejected with a
-`'Each entry must reference acc.total'` hint, because that's the v1
+`'Each entry must reference acc.total'` hint, because that's the
 constraint that keeps the per-key lowering local).
 
 The `init` value is required for JS-faithfulness but unused in the MQL
@@ -316,7 +316,7 @@ representable in MQL accumulator semantics. The ternary's alternate
 branch must be bare `acc` (`<cond> ? <concat> : acc`); other alternates
 break the "this either adds an element or doesn't" pattern. Spread-form
 concat-equivalents (`[...acc, d.<x>]`, `acc.concat([d.<x>, d.<y>]`),
-multi-element wrappers) aren't recognised in v1 — write the explicit
+multi-element wrappers) aren't recognised — write the explicit
 single-arg `.concat(d.<x>)` shape.
 
 **Bracketed form is rejected.** `$$ = [$$.reduce(…, [])]` throws — a reducer

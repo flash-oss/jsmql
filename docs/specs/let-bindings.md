@@ -236,7 +236,7 @@ fresh-empty ctx means:
   `$unset: "__jsmql"` lives inside the sub-pipeline.
 
 This is conservative — a future version may relax the rule for non-`$facet`
-sub-pipelines where the outer document is in scope — but v1 keeps the
+sub-pipelines where the outer document is in scope — but the current rule keeps the
 semantics predictable and the error path well-defined.
 
 ## Output stability
@@ -262,12 +262,12 @@ into an internal `__jsmql.tmp.<N>` slot first; the let machinery then
 materialises `__jsmql.var.<name>` from that slot in the standard way. See
 [`lookup-stage.md`](./lookup-stage.md) for the chained-terminal lowering table.
 
-## Deferred (not in v1)
+## Deferred
 
 - **`$let`-as-optimisation.** When a let is read in exactly one downstream
   expression and no reshape stage intervenes, the compiler could emit a
   single MongoDB `$let` wrapping that expression instead of `$addFields`/
-  `$unset`. Worthwhile for index-preserving `$match`es; not v1.
+  `$unset`. Worthwhile for index-preserving `$match`es; not done.
 - **Multi-binding `let a = …, b = …;` [DEF-010].** Comma-separated bindings inside one
   `let`. Doesn't compose well with the existing `,`-as-update op-separator
   rule; punt to a follow-up that picks a clear disambiguation.

@@ -59,7 +59,7 @@ src/stream-methods.ts::future work — needs object-returning reducer patterns
 # Spec-section headers (categorical — their child bullets carry the tags)
 # -----------------------------------------------------------------------------
 docs/specs/stream-methods.md::## Out of scope
-docs/specs/union-stage.md::Out of scope for v1
+docs/specs/union-stage.md::Out of scope — the explicit
 docs/specs/context-references.md::## Future work
 docs/specs/aggregation-stages.md::## Out of scope (future work)
 docs/specs/match-query-translation.md::## Out of scope — rejected as bad DX
@@ -77,7 +77,7 @@ src/lookup-translation.ts::Bare lambda parameter '${path.param}' from an enclosi
 src/lookup-translation.ts::Bare `o` alone is not yet supported (no $$ROOT lowering)
 test/lookup.test.ts::Bare lambda parameter 'o' in a \$lookup predicate is not yet supported
 test/lookup.test.ts::Bare lambda parameter 'a' in a \$lookup predicate is not yet supported
-test/lookup.test.ts::out of scope for v1
+test/lookup.test.ts::out of scope.
 
 # -----------------------------------------------------------------------------
 # Stale doc references (fork landed the feature but didn't clean up wording).

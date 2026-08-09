@@ -10466,7 +10466,7 @@ var SLICE = {
       }
       if (arg.type !== "NumberLiteral") {
         throw new CodegenError(
-          `.slice(start[, end]) requires non-negative integer literals; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams in v1 \u2014 write the literal in source.`,
+          `.slice(start[, end]) requires non-negative integer literals; got '${arg.type}'. Computed or dynamic arguments aren't supported on streams \u2014 write the literal in source.`,
           arg.pos
         );
       }
@@ -11534,7 +11534,7 @@ function detectScalarReduceWrap(docEl) {
     const accumulator = classifyReduceBody(body, accParam, dParam);
     if (accumulator === null) {
       throw new CodegenError(
-        `$$.reduce((${accParam}, ${dParam}) => \u2026) v1 supports only these reducer shapes: '${accParam} + ${dParam}.<field>' (\u2192 $sum), '${accParam} + 1' (\u2192 $sum: 1, count), 'Math.max(${accParam}, ${dParam}.<field>)' (\u2192 $max), 'Math.min(${accParam}, ${dParam}.<field>)' (\u2192 $min). Other shapes aren't supported yet \u2014 write the $group stage by hand.`,
+        `$$.reduce((${accParam}, ${dParam}) => \u2026) supports these reducer shapes: '${accParam} + ${dParam}.<field>' (\u2192 $sum), '${accParam} + 1' (\u2192 $sum: 1, count), 'Math.max(${accParam}, ${dParam}.<field>)' (\u2192 $max), 'Math.min(${accParam}, ${dParam}.<field>)' (\u2192 $min). Other shapes aren't supported yet \u2014 write the $group stage by hand.`,
         body.pos ?? ev.pos
       );
     }
@@ -11576,7 +11576,7 @@ function classifyObjectReducer(reduceCall, body, init, accParam, dParam) {
       const sp = entry.argument;
       if (sp.type !== "ParamRef" || sp.name !== accParam) {
         throw new CodegenError(
-          `Object-reducer body may only spread the accumulator parameter ('...${accParam}'). Spreads of other expressions aren't supported in v1.`,
+          `Object-reducer body may only spread the accumulator parameter ('...${accParam}'). Spreads of other expressions aren't supported.`,
           entry.pos
         );
       }
@@ -11585,7 +11585,7 @@ function classifyObjectReducer(reduceCall, body, init, accParam, dParam) {
     seenNamedEntry = true;
     if (entry.key.kind !== "static") {
       throw new CodegenError(
-        `Object-reducer body entry must have a static key. Computed keys ('[expr]: \u2026') aren't supported in v1.`,
+        `Object-reducer body entry must have a static key. Computed keys ('[expr]: \u2026') aren't supported.`,
         entry.pos
       );
     }
@@ -11601,7 +11601,7 @@ function classifyObjectReducer(reduceCall, body, init, accParam, dParam) {
   for (const entry of init.entries) {
     if (entry.type !== "KeyValueEntry") {
       throw new CodegenError(
-        `The init object passed to $$.reduce must be a literal '{ <key>: <init>, ... }' \u2014 spreads aren't supported in v1.`,
+        `The init object passed to $$.reduce must be a literal '{ <key>: <init>, ... }' \u2014 spreads aren't supported.`,
         entry.pos
       );
     }
@@ -11631,7 +11631,7 @@ function classifyObjectReducer(reduceCall, body, init, accParam, dParam) {
     );
     if (accumulator === null) {
       throw new CodegenError(
-        `Object-reducer entry '${entry.key}: \u2026' \u2014 v1 supports only: '${accParam}.${entry.key} + ${dParam}.<field>' (\u2192 $sum), '${accParam}.${entry.key} + 1' (\u2192 $sum: 1, count), 'Math.max(${accParam}.${entry.key}, ${dParam}.<field>)' (\u2192 $max), 'Math.min(${accParam}.${entry.key}, ${dParam}.<field>)' (\u2192 $min). Each entry must reference '${accParam}.${entry.key}' as the accumulator side.`,
+        `Object-reducer entry '${entry.key}: \u2026' \u2014 supported shapes: '${accParam}.${entry.key} + ${dParam}.<field>' (\u2192 $sum), '${accParam}.${entry.key} + 1' (\u2192 $sum: 1, count), 'Math.max(${accParam}.${entry.key}, ${dParam}.<field>)' (\u2192 $max), 'Math.min(${accParam}.${entry.key}, ${dParam}.<field>)' (\u2192 $min). Each entry must reference '${accParam}.${entry.key}' as the accumulator side.`,
         entry.value.pos ?? entry.pos
       );
     }
@@ -11765,7 +11765,7 @@ function detectArrayReducerWrap(value) {
   const classified = classifyArrayReducerBody(body, accParam, dParam);
   if (classified === null) {
     throw new CodegenError(
-      `Array-returning reducer body \u2014 v1 supports only:
+      `Array-returning reducer body \u2014 supported shapes:
   \u2022 Unconditional map:  '(${accParam}, ${dParam}) => ${accParam}.concat(${dParam}.<field>)'  \u2192  '$replaceWith: "$<field>"'
   \u2022 Filter + map:       '(${accParam}, ${dParam}) => (<cond> ? ${accParam}.concat(${dParam}.<field>) : ${accParam})'  \u2192  '$match(<cond>) + $replaceWith: "$<field>"'
   \u2022 The '${dParam}' itself (bare param) instead of '${dParam}.<field>' projects the whole doc (no '$replaceWith').

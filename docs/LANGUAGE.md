@@ -2776,7 +2776,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
-| `.flatMap(<key>)` | One field key — the array field to flatten | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected for v1 |
+| `.flatMap(<key>)` | One field key — the array field to flatten | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected |
 | `.groupBy(<key>)` / `.groupBy({ _id, … })` | One field key, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
 | `.countBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
 | `.keyBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
@@ -2947,7 +2947,7 @@ jsmql(`$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), []);`)
 // → [{ $replaceWith: "$contactDetails" }]
 ```
 
-This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) + `$replaceWith` (when the projection is a field path on `d`). Equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer — pick whichever reads better at the call site. Init must be `[]`; the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers) aren't recognised in v1.
+This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) + `$replaceWith` (when the projection is a field path on `d`). Equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer — pick whichever reads better at the call site. Init must be `[]`; the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers) aren't recognised.
 
 Wrapping it in `[ ]` (`$$ = [$$.reduce(…, [])]`) is **rejected** — that would make a stream whose single document is itself an array. (The scalar and object reducer wraps above keep their `[ ]` because those reducers return a single document, so `[ <doc> ]` is a legitimate one-document stream literal.)
 

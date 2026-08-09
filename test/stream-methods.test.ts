@@ -1092,9 +1092,9 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary vi
     );
   });
 
-  it("unrecognised reducer body inside the wrap is rejected with the v1-shapes list", () => {
+  it("unrecognised reducer body inside the wrap is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = [{ total: $$.reduce((acc, d) => acc * d.x, 1) }];")).toThrow(
-      /v1 supports only these reducer shapes.*\$sum.*\$max.*\$min/s,
+      /supports these reducer shapes.*\$sum.*\$max.*\$min/s,
     );
   });
 });
@@ -1162,7 +1162,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
     );
   });
 
-  it("spread after named entries is rejected (position matters in v1)", () => {
+  it("spread after named entries is rejected (position matters)", () => {
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1, ...acc }), { count: 0 })];")).toThrow(
       /spread must be the first entry/,
     );
@@ -1171,7 +1171,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
   it("entry referencing acc.<otherKey> instead of acc.<sameKey> is rejected", () => {
     // `total: acc.count + d.amount` references acc.count, not acc.total — a
     // semantic mismatch that JS would silently accept but mean something
-    // different from the user's intent. The v1-shapes message names the
+    // different from the user's intent. The supported-shapes message names the
     // expected accumulator side.
     expect(() =>
       jsmql(
@@ -1180,9 +1180,9 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
     ).toThrow(/Each entry must reference 'acc\.total' as the accumulator side/);
   });
 
-  it("unrecognised body-entry shape is rejected with the v1-shapes list", () => {
+  it("unrecognised body-entry shape is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ total: acc.total * d.x }), { total: 1 })];")).toThrow(
-      /v1 supports only.*\$sum.*\$max.*\$min/s,
+      /supported shapes:.*\$sum.*\$max.*\$min/s,
     );
   });
 });
@@ -1372,19 +1372,19 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 
   it("body alternate must be bare `acc` — `cond ? concat : <other>` is rejected", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => (d.active ? acc.concat(d.contactDetails) : []), []);")).toThrow(
-      /Array-returning reducer body.*v1 supports only/s,
+      /Array-returning reducer body.*supported shapes/s,
     );
   });
 
-  it("non-concat body is rejected with the v1-shapes list", () => {
+  it("non-concat body is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.push(d.contactDetails), []);")).toThrow(
       /Array-returning reducer body.*\.concat\(/s,
     );
   });
 
-  it("concat with multi-element wrapper is rejected (v1 wants a bare path or `d`)", () => {
+  it("concat with multi-element wrapper is rejected (a bare path or `d` is what is supported)", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat([d.x, d.y]), []);")).toThrow(
-      /Array-returning reducer body.*v1 supports only/s,
+      /Array-returning reducer body.*supported shapes/s,
     );
   });
 

@@ -466,7 +466,7 @@ describe("$$$.coll.find/filter — error cases", () => {
   });
 
   it("bare foreign param (`o` alone) inside a richer predicate is rejected", () => {
-    // `o` alone would need $$ROOT semantics — out of scope for v1.
+    // `o` alone would need $$ROOT semantics — out of scope.
     expect(() => jsmql("$.users = $$$.users.filter(o => o);")).toThrow(
       /Bare lambda parameter 'o' in a \$lookup predicate is not yet supported/,
     );
