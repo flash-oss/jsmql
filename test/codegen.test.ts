@@ -6380,7 +6380,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     });
     it("wrong method on $$ surfaces the stream-method registry error, noting .push", () => {
       expect(() => jsmql("$$.pop({a:1})")).toThrow(
-        /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.push\(\.\.\.\)' appends documents as a statement/,
+        /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
       );
     });
   });

@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-02 — fix: an error never recommends syntax that doesn't work where you are
+
+```
+$ = { k: $$.push({a:1}) };
+// before: '.push(...)' is not a chainable stream method on '$$'. Did you mean '.push'?
+//         … ('.push(...)' appends documents as a statement → $unionWith.)
+```
+
+Two separate faults in one line. `closestNameTo` could return the very name it
+was given, because a candidate set may legitimately contain a name that is valid
+in a *different* position. It now skips an exact match, which fixes every
+`didYouMean` call site at once. Second, `.push` was in the chain-error candidate
+set at all, so a near-miss like `.pop` was answered with `.push` — also not a
+chain method. The set now holds chain methods only, and `.pop` suggests `.drop`.
+
+`.push` gets its own message naming the spelling that actually works mid-chain:
+
+```js
+$$ = $$.concat({ a: 1 });   // → [{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]
+```
+
+The trailing append note is now position-aware. A `$facet` branch has no
+statement position, so offering `$$.push(...)` there was a dead end:
+
+```
+$$ = $$.push({a:1});         → … ('$$.push(...)' does work as a top-level statement of its own.)
+$ = { k: $$.push({a:1}) };   → … (the statement form isn't available inside a 'facet' sub-pipeline.)
+```
+
+`unknownStreamMethod` takes the container to do that, threaded from
+`applyStreamMethods`.
+
+---
+
 ## 2026-08-09 — docs: the project reads as a finished product; history lives only here
 
 New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":

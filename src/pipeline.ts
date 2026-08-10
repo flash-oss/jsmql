@@ -1116,6 +1116,7 @@ function applyStreamMethods(
   allocSlot: SlotAllocator,
   rhs: Expr,
   validator: PipelineValidator = makePipelineValidator("top"),
+  container: ContainerKind = "top",
 ): { clearLets: boolean; clearedBy: string } {
   let clearLets = false;
   // Registry methods have always reported `$unionWith` as the clearing stage;
@@ -1160,7 +1161,7 @@ function applyStreamMethods(
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
-      throw unknownStreamMethod(m, "$$");
+      throw unknownStreamMethod(m, "$$", container);
     }
     def.validate(m.args, m.pos);
     const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
@@ -1479,7 +1480,7 @@ function lowerLookupPivot(
   return { stages: [lookupStage, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }
 
-function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError {
+function unknownStreamMethod(m: MethodCallNode, receiver: string, container: ContainerKind = "top"): CodegenError {
   const fromTheEnd = fromTheEndRejection(m.method, receiver, m.pos);
   if (fromTheEnd !== null) return fromTheEnd;
   // Methods that return a single element in JS — deliberately rejected because
@@ -1526,14 +1527,33 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string): CodegenError 
       m.pos,
     );
   }
-  const names = streamMethodNames();
-  // The bare `$$` stream also accepts `.push(...)` as a statement-level method
-  // (→ `$unionWith`); it isn't a chain method, but naming it in the suggestion
-  // set catches `.pop` / `.shift` mix-ups that a JS dev reaches for.
+  // `.push(...)` appends documents, but only as a top-level STATEMENT. In a
+  // chain the working spelling is `.concat(...)`, which emits the very same
+  // `$unionWith` and is valid in every container — a `$facet` branch has no
+  // statement position at all, so pointing there would be a dead end.
   const isStream = receiver === "$$";
-  const hint = didYouMean(m.method, isStream ? ["filter", "push", ...names] : ["filter", ...names], (s) => `.${s}`);
+  if (isStream && m.method === "push") {
+    const statementNote =
+      container === "top"
+        ? ` ('$$.push(...)' does work as a top-level statement of its own.)`
+        : ` (the statement form '$$.push(...)' isn't available inside a '${container}' sub-pipeline.)`;
+    return new CodegenError(
+      `'.push(...)' isn't a chain method. To append documents mid-chain use '.concat(...)', which emits the same ` +
+        `'$unionWith' — e.g. '$$.filter(<pred>).concat({ … })'.${statementNote}`,
+      m.pos,
+    );
+  }
+  const names = streamMethodNames();
+  // Suggest only names that actually work HERE — `.push` is deliberately absent.
+  const hint = didYouMean(m.method, ["filter", ...names], (s) => `.${s}`);
   const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
-  const pushNote = isStream ? ` ('.push(...)' appends documents as a statement → $unionWith.)` : "";
+  // Name only the append routes that work HERE: `.concat(...)` always, and the
+  // `$$.push(...)` statement only where a statement position exists.
+  const pushNote = !isStream
+    ? ""
+    : container === "top"
+      ? ` (To append documents: '.concat(...)' mid-chain, or '$$.push(...)' as a statement of its own.)`
+      : ` (To append documents mid-chain, use '.concat(...)'.)`;
   return new CodegenError(
     `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} ` +
       `Chainable methods — any may head OR extend the chain: '.filter', '.reject', ${list}.${pushNote}`,
@@ -2332,6 +2352,7 @@ function tryLowerAssignSugar(
           allocSlot,
           branchRhs,
           makePipelineValidator("facet"),
+          "facet",
         );
         return branch;
       };
