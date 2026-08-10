@@ -54,7 +54,7 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 | `$$$$.dw.archive = $$;` | `[{ $out: { db: "dw", coll: "archive" } }]` |
 | `$$$$["dw"]["archive"] = $$;` | `[{ $out: { db: "dw", coll: "archive" } }]` |
 | `$$$$.dw.archive = $$.filter(u => !u.active);` | `[{ $match: <translated body> }, { $out: { db: "dw", coll: "archive" } }]` |
-| `$$$.top10 = $$.filter(o => { $sort({ score: -1 }); $limit(10); });` | `[{ $sort: { score: -1 } }, { $limit: 10 }, { $out: "top10" }]` (block-body sub-pipeline) |
+| `$$$.top10 = $$.$sort({ score: -1 }).$limit(10);` | `[{ $sort: { score: -1 } }, { $limit: 10 }, { $out: "top10" }]` (chained stages) |
 | `$match(<pred>); $$$.coll = $$;` | `[{ $match: <pred> }, { $out: "coll" }]` (preceding stages compose normally) |
 
 ## Detection

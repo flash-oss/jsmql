@@ -729,18 +729,25 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     });
   });
 
-  // A statement-block `.map(d => { stmt; …; return <ret> })` on a stream lowers
-  // through the SAME engine `.filter` uses (`extractLetsFromPipeline` →
-  // `lowerBlock`); the trailing `return` is the ONLY difference, appended as the
-  // root-replace stage `$ = <ret>` (→ `$replaceWith`). So the block gets the full
-  // pipeline vocabulary — `assert(...)`, `$match(...)`, `<coll>.length`, nested
-  // `$$$.<coll>` lookups. All shapes below were verified end-to-end on a live mongod.
-  describe(".map(d => { … }) — statement-block body (assert / $match / return)", () => {
-    it("lookup chain: assert + return lowers to a $match guard + $replaceWith inside $lookup.pipeline", () => {
-      expect(
+  // `.map` is a per-document reshape, so its `{ … }` body is JavaScript: bindings
+  // plus the `return` whose value becomes each output document. Pipeline stages —
+  // `assert(...)`, `$match(...)`, `<coll>.length` — belong to `.aggregate((o) => { … })`
+  // against a foreign collection, or to statements on the current stream, with the
+  // reshape written as the root-replace `$ = <expr>`. That is the same lowering the
+  // block form had, so each pair below emits identical MQL (all verified on a live
+  // mongod); the `.map` half of each pair is now rejected.
+  describe("a pipeline stage in a `.map` block is rejected, and where it goes instead", () => {
+    it("foreign chain: `.aggregate` runs the guard + reshape inside $lookup.pipeline", () => {
+      expect(() =>
         jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {
           assert(o.total > 0, "bad order");
           return { id: o._id, t: o.total };
+        });`),
+      ).toThrow(/`assert\(\.\.\.\)` is a pipeline stage, not part of a callback/);
+      expect(
+        jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
+          assert(o.total > 0, "bad order");
+          $ = { id: o._id, t: o.total };
         });`),
       ).toEqual([
         {
@@ -769,17 +776,21 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       ]);
     });
 
-    it("top-level `$$` stream: a `$match(...)` statement + return", () => {
-      expect(jsmql(`$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });`)).toEqual([
+    it("current stream: the stage is a statement and the reshape is `$ = <expr>`", () => {
+      expect(() => jsmql(`$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });`)).toThrow(
+        /`\$match\(\.\.\.\)` is a pipeline stage, not part of a callback — chain them as stage calls/,
+      );
+      expect(jsmql(`$match($.active === true); $ = { id: $._id };`)).toEqual([
         { $match: { active: true } },
         { $replaceWith: { id: "$_id" } },
       ]);
     });
 
-    it("3rd-arg `coll.length` is available inside the block (e.g. in an assert)", () => {
-      expect(
+    it("current stream: the sub-stream count is `$$.length`", () => {
+      expect(() =>
         jsmql(`$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, "empty"); return { id: d._id }; });`),
-      ).toEqual([
+      ).toThrow(/`assert\(\.\.\.\)` is a pipeline stage, not part of a callback/);
+      expect(jsmql(`assert($$.length > 0, "empty"); $ = { id: $._id };`)).toEqual([
         { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
         {
           $match: {
@@ -795,8 +806,8 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       ]);
     });
 
-    it("a block `.map` with no `return` is rejected with an actionable message", () => {
-      expect(() => jsmql(`$$ = $$.map(d => { assert(d.total > 0, "x"); });`)).toThrow(/must end with 'return <expr>'/);
+    it("a stage-free `.map` block still has to end with `return`", () => {
+      expect(() => jsmql(`$$ = $$.map(d => { const t = d.total; });`)).toThrow(/must end with 'return <expr>'/);
     });
 
     it("`$.<field>` inside a TOP-LEVEL `$$` block `.map` body is rejected — must use the lambda param", () => {
@@ -807,13 +818,13 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       );
     });
 
-    it("inside a lookup pivot, a `$.<field>` (root) read in a `.map` block IS captured into the $lookup.let", () => {
-      // The orders lookup correlates on `$._id`; the `.map` block's `$.minTotal`
+    it("inside a lookup pivot, a `$.<field>` (root) read in an `.aggregate` block IS captured into the $lookup.let", () => {
+      // The orders lookup correlates on `$._id`; the `.aggregate` block's `$.minTotal`
       // (the root user doc) is hoisted into the SAME `$lookup.let` as `jsmql_f0_minTotal`.
       expect(
-        jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {
+        jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
           assert(o.total > $.minTotal, "below min");
-          return { id: o._id };
+          $ = { id: o._id };
         });`),
       ).toEqual([
         {

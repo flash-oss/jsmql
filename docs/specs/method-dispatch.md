@@ -229,7 +229,21 @@ One `$let` per decl (rather than a single shared `vars` block) is required becau
 
 The consumer sites use two helpers: `genLambdaBody(lambda, ctx)` (generates the body — expression or expr-block) and `lambdaResult(lambda)` (the expression whose value the lambda yields — the bare body or the block's `ret` — used for static type inference: `jsBoolIfNeeded` on predicate methods, the object/array narrowing in `.reduce`, the string check in `Object.groupBy`). For a predicate method the `jsBoolIfNeeded` truthiness wrap is applied around the whole `$let` (which evaluates to `ret`), so `arr.filter(x => { const ok = x.active; return ok; })` keeps JS truthy/falsy semantics.
 
-**Disambiguation (JS-faithful).** `=> {` always opens a block; an object return needs `=> ({ … })`. `parseExprBlockBody` requires the block to be `(const|let <name> = <expr>;)* return <expr>;` — a bare `=> { k: v }` is a labeled-statement block in JS, so jsmql rejects it (no `return`) and points at `=> ({ k: v })`. Re-declaring a name in one block, or a block with no `return`, are rejected with actionable errors. The stream-rooted callback positions (`STREAM_BLOCK_METHODS` on a `$$$.<coll>` chain or `$$`) keep their statement-block grammar via a `blockKind: "pipeline" | "expr"` flag threaded from the method-call dispatch (`"expr"` is the default everywhere else). `.toSorted`/`.sort` key functions still reject any block body — their structural path needs a bare `x => x.field` expression.
+**Disambiguation (JS-faithful).** `=> {` always opens a block; an object return needs `=> ({ … })`. `parseExprBlockBody` requires the block to be `(const|let <name> = <expr>;)* return <expr>;` — a bare `=> { k: v }` is a labeled-statement block in JS, so jsmql rejects it (no `return`) and points at `=> ({ k: v })`. Re-declaring a name in one block, or a block with no `return`, are rejected with actionable errors. The stream-rooted callback positions (`STREAM_BLOCK_METHODS` on a `$$$.<coll>` chain or `$$`) parse with the statement-block grammar via a `blockKind: "pipeline" | "expr"` flag threaded from the method-call dispatch (`"expr"` is the default everywhere else). `.toSorted`/`.sort` key functions still reject any block body — their structural path needs a bare `x => x.field` expression.
+
+### Callback block bodies
+
+A `{ … }` body on a JavaScript or lodash method is **JavaScript**: `const`/`let` bindings plus one `return <expr>`. Pipeline stages belong to `.aggregate(pipeline)` alone. [`src/callback-block.ts`](../../src/callback-block.ts) owns the rule, and every callback position routes through it:
+
+| Position | Entry point |
+|---|---|
+| `$$$.<coll>.find/filter(pred)` (head) | `detectLookupCall` folds a stage-free block; `validateLookupShape` / `translatePredicate` throw |
+| `$$$.<coll>` chain `.filter`/`.reject` | `chainFilterLambda`, plus `buildPipelineFormPredicate` for the chain head |
+| `$$.filter`/`.reject` (`$$ =`, `$facet`, `$out`) | `requireStreamPredicate` |
+| stream `.map` | `MAP.validate` → `requireStageFreeCallback` |
+| any callback consumed as a VALUE | `requireLambda` (codegen.ts) |
+
+Two helpers, one message shape. `requireStageFreeCallback` throws when a block holds a statement that is not a `LetDecl`, naming the offending statement (`` `$sort(...)` ``, `` `$.x = …` ``, `` `delete $.y` ``, `` `assert(...)` ``) and the rewrite that works in **this** position — `.aggregate((o) => { … })` for a `$$$.<coll>` receiver, the chained-stage spelling (`$$.$match({ … })`) for a `$$` one, and "nowhere at all" in a value position. `callbackBlockToValue` adds the normalisation: `{ return E }` becomes the expression `E`, `{ const a = …; return E }` becomes an `ExprBlock` (→ `$let`), and a block with no `return` is rejected. `tryCallbackBlockToValue` is the non-throwing half, for detection sites that must stay side-effect-free.
 
 ### Mutators at statement position
 

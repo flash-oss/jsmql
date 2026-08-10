@@ -110,6 +110,7 @@ src/
   out-translation.ts           `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out`. See docs/specs/out-stage.md.
   system-stage-translation.ts  `$$.indexStats()` / `$$$$.currentOp(…)` / … → diagnostic / system source stages. See docs/specs/system-stages.md.
   stream-methods.ts            Registry of chainable array-shaped methods on a `$$ = …` RHS (plus the `.reduce` wrap forms). See docs/specs/stream-methods.md.
+  callback-block.ts            The callback-block rule: a `{ … }` body on a JavaScript/lodash method is JavaScript; pipeline stages belong to `.aggregate(pipeline)` alone. See docs/specs/method-dispatch.md § Callback block bodies.
   stage-link.ts                Chained stage calls (`<stream>.$match(…)`): name/arity resolution + sub-pipeline placement rules, shared by pipeline.ts and lookup-translation.ts. See docs/specs/aggregation-stages.md.
   stage-validation.ts          Per-stage body-shape validation (literal-gated) + `$match` placement rules. See docs/specs/pipeline-validation.md.
   literal-gate.ts              Shared literal-gating helpers (litNumber/objectInfo/requireObjectBody/checkEnum/checkIntBound/…) used by both validators. See docs/specs/pipeline-validation.md § literal-gating invariant.

@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-10 — feat!: pipeline stages belong to `.aggregate(pipeline)` alone
+
+```
+$.recentOrders = $$$.orders.filter(o => { $match(o.userId === $._id); $sort({createdAt:-1}); $limit(5); });
+// before: a $lookup with that sub-pipeline
+// now:    `.filter(o => { … })` takes a JavaScript callback, so its block body holds `const`/`let`
+//         bindings and one `return <expr>`. `$match(...)` is a pipeline stage, not part of a callback
+//         — write `$$$.orders.aggregate((o) => { $match(...); $sort(...); ... })`, which runs those
+//         statements as the sub-pipeline.
+```
+
+A `{ … }` body on a JavaScript or lodash method is now **JavaScript**: `const`/`let` bindings plus one `return <expr>`. Stages live in `.aggregate(pipeline)` and nowhere else. Two spellings for one lowering is fine; two *meanings* for one method is not — `.filter` meant "keep matching documents" in the expression form and "run this sub-pipeline" in the block form, so the same method name selected a different language depending on the body shape. The split now follows the method: `.find`/`.filter`/`.reject` are element predicates, `.map` is a per-document reshape, `.aggregate` is the pipeline. Nothing is lost — every rejected form has an exact `.aggregate` equivalent, with a `.map`'s `return <expr>` becoming the root-replace statement `$ = <expr>` (the same `$replaceWith`).
+
+The rule lives in one new leaf module, [src/callback-block.ts](src/callback-block.ts), and every callback position routes through it: `detectLookupCall` / `validateLookupShape` / `translatePredicate` / `buildPipelineFormPredicate` / `chainFilterLambda` (the `$$$.<coll>` family), `requireStreamPredicate` (the four `$$` containers), `MAP.validate`, and `requireLambda` for a callback consumed as a value. The parser keeps handing those methods the sub-pipeline block grammar on purpose — parsing the statements is what lets the rejection name the offending one (`` `$sort(...)` ``, `` `$.x = …` ``, `` `delete $.y` ``, `` `assert(...)` ``) and the rewrite that works in **this** container: `.aggregate((o) => { … })` for a `$$$.<coll>` receiver, the chained-stage spelling (`$$.$match({ … })`) for a `$$` one, and "nowhere at all" in a value position. A grammar that stopped at the first `$` could only say "unexpected token". `StreamMethodDef.validate` and `requireStreamPredicate` gained a `stageRewrite` parameter so each caller supplies its own position-accurate sentence, per the rule that [an error never recommends syntax that doesn't work where you are](#2026-08-02--fix-an-error-never-recommends-syntax-that-doesnt-work-where-you-are).
+
+Two things fall out. **A stage-free block now means what JavaScript means.** `.filter(o => { return o.userId === $._id; })` used to compile to `{ $lookup: { from, pipeline: [], as } }` — the predicate silently dropped, every foreign document matched. It folds back to the expression it returns, so it emits the indexed `localField`/`foreignField` form, identical to `.filter(o => o.userId === $._id)`. **`.aggregate` is now a `$$.push(...)` union source**, closing DEF-034: removing `.filter(block)` would otherwise have left a multi-stage `$unionWith` unspellable, and an uncorrelated aggregate maps onto `$unionWith.pipeline` exactly. A correlated one stays rejected — `$unionWith` has no `let` slot — and the message points at the field-assignment form, which does. Verified on a live mongod ([test/integration.test.ts](test/integration.test.ts)). `.find`/`.filter` also stopped disagreeing about `(element, index, array)`: both accept the JavaScript signature positionally and reject a *read* of either param, since a predicate has no index and no sub-stream yet.
+
+---
+
 ## 2026-08-02 — fix: an error never recommends syntax that doesn't work where you are
 
 ```

@@ -1437,13 +1437,15 @@ export class Parser {
           memberName = member.value;
         }
         if (this.lexer.peek().type === TokenType.LParen) {
-          // Method call: left.member(args). A `=> { … }` callback body is a
-          // *sub-pipeline* block (`;`-separated stages + an optional terminal
-          // `return <expr>` — parseCallbackBlock) when the method is a
-          // stream/lookup sub-pipeline method (`.find` / `.filter` / `.map`) on
-          // a STREAM-rooted receiver: `$$$.<coll>` / `$$$$.<db>.<coll>` (→
-          // `$lookup` sub-pipeline), `$$` (→ `$facet` / stream chain), or a
-          // chain off any of those (`$$$.<coll>.filter(p).map(d => { … })`).
+          // Method call: left.member(args). A `=> { … }` callback body is parsed
+          // with the *sub-pipeline* block grammar (`;`-separated stages + an
+          // optional terminal `return <expr>` — parseCallbackBlock) when the
+          // method is in `STREAM_BLOCK_METHODS` and the receiver is STREAM-rooted:
+          // `$$$.<coll>` / `$$$$.<db>.<coll>` (→ `$lookup` sub-pipeline), `$$` (→
+          // `$facet` / stream chain), or a chain off any of those
+          // (`$$$.<coll>.filter(p).aggregate(d => { … })`). Only `.aggregate` keeps
+          // the stages; the JavaScript methods share the grammar so the rejection
+          // in `src/callback-block.ts` can name the stage the developer wrote.
           // See docs/specs/lookup-stage.md, replace-root-stage.md,
           // stream-methods.md.
           //   Everywhere else — notably in-document array methods rooted at a
@@ -1557,11 +1559,10 @@ export class Parser {
   /**
    * Parse an argument that might be a lambda expression.
    * Checks for lambda patterns before falling back to parseExpression().
-   * `blockKind` selects what a `=> { … }` body means: `"pipeline"` (only inside
-   * `$$$.<coll>.find/filter(...)` and `$$.filter(...)`) parses a statement block
-   * → `Pipeline`; `"expr"` (the default everywhere else) parses an
-   * expression-block → `ExprBlock`. JS-faithful: `=> {` always opens a block;
-   * an object return needs `=> ({ … })`.
+   * `blockKind` selects what a `=> { … }` body means: `"pipeline"` (a callback on a
+   * stream root — see `STREAM_BLOCK_METHODS`) parses a statement block → `Pipeline`;
+   * `"expr"` (the default everywhere else) parses an expression-block → `ExprBlock`.
+   * JS-faithful: `=> {` always opens a block; an object return needs `=> ({ … })`.
    */
   private parseArgOrLambda(blockKind: "pipeline" | "expr" = "expr"): Expr {
     // x => expr  (unparenthesized single param)
@@ -2593,25 +2594,32 @@ export class Parser {
  * complaining the target wasn't a field path.
  */
 /**
- * Methods whose `=> { … }` callback body is parsed as a sub-pipeline block
- * (`parseCallbackBlock`) — but only when the receiver is stream-rooted (see
- * `isStreamRooted`). `.find` / `.filter` are the lookup heads; `.aggregate` is
- * the full-sub-pipeline head/chain method (its block is a pipeline, no `return`);
- * `.map` is the reshaping chain method (`return <expr>` → `$replaceWith`). Other
- * chain methods (`.toSorted`, `.reduce`, `.slice`, …) take expression-shaped
- * callbacks, not statement blocks, so they stay out of this set.
+ * Methods whose `=> { … }` callback body is parsed with the sub-pipeline block
+ * grammar (`parseCallbackBlock`) — but only when the receiver is stream-rooted (see
+ * `isStreamRooted`). `.aggregate` is the one method whose block IS a pipeline (each
+ * statement a stage, no `return`).
+ *
+ * The four JavaScript/lodash methods share the grammar without sharing the meaning:
+ * `.find` / `.filter` / `.reject` are predicates and `.map` is a per-document
+ * reshape, so their blocks are JavaScript (`const`/`let` plus one `return <expr>`)
+ * and a stage inside one is rejected downstream by `src/callback-block.ts`. Parsing
+ * their statements anyway is what lets that rejection name the stage the developer
+ * wrote and the rewrite that works in the surrounding container. Other chain methods
+ * (`.toSorted`, `.reduce`, `.slice`, …) take expression-shaped callbacks, so a
+ * `=> { … }` there keeps its expression-block meaning.
  */
-const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "map", "aggregate"]);
+const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "reject", "map", "aggregate"]);
 
 /**
  * Walk a receiver chain back to its root and report whether the root is a
  * stream source: a context-ref prefix `$$$` (`DatabaseRef`, same database),
  * `$$$$` (`ClusterRef`, cross-database), or `$$` (`CollectionRef`, the current
- * stream). Used by `parsePostfix` (with `STREAM_BLOCK_METHODS`) to decide
- * whether a `.find` / `.filter` / `.map` method call accepts the sub-pipeline
- * block grammar (block-body lambda → `$lookup` sub-pipeline / `$facet` / stream
- * chain), as opposed to the expression-block grammar used by in-document array
- * methods (`$.items.map(d => { … })`, rooted at a `FieldRef`).
+ * stream). Used by `parsePostfix` (with `STREAM_BLOCK_METHODS`) to decide whether a
+ * method call parses its callback with the sub-pipeline block grammar, as opposed to
+ * the expression-block grammar used by in-document array methods
+ * (`$.items.map(d => { … })`, rooted at a `FieldRef`). Only `.aggregate` *keeps* a
+ * pipeline block; for the JavaScript methods the grammar is shared so the stage
+ * rejection can name what the developer wrote (see `src/callback-block.ts`).
  *
  * The chain may include any number of `MemberAccess`, `IndexAccess`, and
  * `MethodCall` hops — so `$$$.users`, `$$$["users"]`, `$$$$.myDb.myColl`, and a

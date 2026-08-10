@@ -587,18 +587,18 @@ describe("alternative bracketed array form", { features: ["Pipelines"] }, () => 
   });
 });
 
-describe("orders summary via $facet (`$ = { k: $$.filter(...) }`)", { features: ["Pipelines"] }, () => {
+describe("orders summary via $facet (`$ = { k: <$$ chain> }`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Three named sub-pipelines run side-by-side against the same input
-    // stream. `$$.filter(o => ...)` is the facet entry surface: the lambda
-    // param is each input document. Expression bodies lower to `$match`;
-    // block bodies lower to their own stage list.
+    // stream. Each branch is a `$$` chain: `$$.filter(o => …)` for a predicate
+    // (the lambda param is each input document, and it lowers to `$match`), or
+    // chained stage calls for a branch that needs several stages.
     expect(
       jsmql(`$match($.status === "shipped");
 $ = {
-  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  topByScore: $$.$sort({ score: -1 }).$limit(10),
   recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
-  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`),
     ).toEqual([
       { $match: { status: "shipped" } },
@@ -2112,7 +2112,7 @@ describe("user-with-orders join via $$$ lookup", { features: ["Pipelines"] }, ()
     expect(
       jsmql`
 $match($.active === true);
-$.recentOrders = $$$.orders.filter(o => {
+$.recentOrders = $$$.orders.aggregate(o => {
   $match(o.userId === $._id);
   $sort({ createdAt: -1 });
   $limit(5);
@@ -2162,7 +2162,7 @@ describe(
       expect(
         jsmql`
 $match($.active === true);
-$.recentOrders = $$$.orders.filter(o => {
+$.recentOrders = $$$.orders.aggregate(o => {
   $match(o.userId === $._id);
   $sort({ createdAt: -1 });
   $limit(5);
@@ -3097,8 +3097,8 @@ $.recentCoPurchaseOrders = $$$.orders
 
 describe("Cross-level references across three nested lookup levels", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
-    // The hardest cross-level case: a statement-block `.map` nested inside another
-    // statement-block `.map`, whose asserts reach across THREE scopes —
+    // The hardest cross-level case: an `.aggregate` sub-pipeline nested inside
+    // another, whose asserts reach across THREE scopes —
     //   • `shpmntsColl.length` — this shipment sub-stream (own 3rd-arg handle)
     //   • `ordersColl.length`  — the parent order sub-stream (an ANCESTOR handle)
     //   • `o._id`              — the parent order doc (an enclosing foreign param)
@@ -3109,13 +3109,13 @@ describe("Cross-level references across three nested lookup levels", { features:
     // data correct; `userId: $._id` resolves to the root user at every order).
     expect(
       jsmql(`
-$$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
-  const shipments = $$$.shipments.filter({ orderId: o._id }).map((s, k, shpmntsColl) => {
+$$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
+  const shipments = $$$.shipments.filter({ orderId: o._id }).aggregate((s, k, shpmntsColl) => {
     assert(shpmntsColl.length > 2, \`order \${o._id} for user \${$._id} has too few shipments\`);
     assert(shpmntsColl.length < ordersColl.length, "fewer shipments than orders");
-    return { id: s._id, weight: s.weight };
+    $ = { id: s._id, weight: s.weight };
   });
-  return { orderId: o._id, shipments };
+  $ = { orderId: o._id, shipments };
 });
       `),
     ).toEqual([

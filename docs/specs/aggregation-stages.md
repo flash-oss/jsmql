@@ -74,7 +74,7 @@ Name resolution, arity, and the sub-pipeline placement rules live in one leaf mo
 [src/stage-link.ts](../../src/stage-link.ts), so all three containers share the wording.
 Placement is validated per container from the same declarative `forbiddenIn` / `position`
 data the statement path reads — so `.$out(…)` inside a `$lookup` chain is rejected. (The
-`.aggregate((o) => { … })` block body still lacks that container check — see DEF-024.)
+`.aggregate((o) => { … })` block still lacks that container check — see DEF-024.)
 
 **Correlation.** Inside a foreign sub-pipeline `$.` means the *outer* document and hoists
 into `$lookup.let`. That works in every aggregation-**expression** slot:
