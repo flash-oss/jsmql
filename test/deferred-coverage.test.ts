@@ -200,10 +200,9 @@ describe("deferred-tracking drift protection", () => {
 
   it("UNIQUE-ID GATE: no two §A rows share a DEF-NNN id", () => {
     // Two features under one id makes every `[DEF-NNN]` tag ambiguous — a reader
-    // following the tag lands on whichever row happens to come first. It also hides
-    // from the other gates: `rows` is a Map, so the duplicate overwrites and both
-    // forward and reverse still find a match. DEF-034 was shared by two unrelated
-    // items this way until 2026-08-01.
+    // following the tag lands on whichever row happens to come first. This gate is
+    // the only one that catches it: `rows` is a Map, so the duplicate overwrites
+    // and both the forward and reverse gates still find their match.
     const { idsInOrder } = parseDeferred();
     const seen = new Set<string>();
     const dupes = idsInOrder.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
