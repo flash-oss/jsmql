@@ -58,8 +58,10 @@ import {
   stageForbiddenInAnySubPipeline,
   stageMustBeFirst,
   stageMustBeLast,
+  type StageDef,
 } from "./stages.ts";
 import {
+  forbiddenInAnySubPipelineMessage,
   forbiddenInContextMessage,
   isStageLink,
   mustBeFirstLiteralMessage,
@@ -335,6 +337,55 @@ function containerKindFor(stageName: string): "facet" | "lookup" | "unionWith" {
 }
 
 /**
+ * HR3 backstop: no sub-pipeline slot of an assembled pipeline may hold a stage
+ * MongoDB forbids in every container (`$out` / `$merge` → Location51047).
+ *
+ * The `GenerateCtx.inSubPipeline` guard in `generateStageBody` is the primary
+ * check and the one with the precise position, but it reads a flag the lowering
+ * path must set, so it only protects paths that set it. This check reads the
+ * *emitted stages* instead. Every route into a sub-pipeline slot ends here —
+ * literal array, sugar, block body, stage link, or a container added later that
+ * builds its ctx some other way — so the invariant holds without each new path
+ * having to opt in. Both checks read the same two registry fields:
+ * `subPipelineFields` names the slots, `forbiddenIn` says what may not sit in
+ * one. Exported for the test that locks this in.
+ *
+ * `pos` is the enclosing pipeline's position — the offending stage's own offset
+ * is gone by assembly time. The primary guard reports that finer position first
+ * for every path that sets the flag.
+ */
+export function assertNoWriteStageInSubPipeline(
+  stages: readonly unknown[],
+  pos: number,
+  insideSubPipeline: boolean,
+): void {
+  for (const stage of stages) {
+    if (typeof stage !== "object" || stage === null) continue;
+    for (const [name, body] of Object.entries(stage as Record<string, unknown>)) {
+      const def = lookupStage(name);
+      if (def === undefined) continue;
+      if (insideSubPipeline && stageForbiddenInAnySubPipeline(def)) {
+        throw new CodegenError(forbiddenInAnySubPipelineMessage(name), pos);
+      }
+      // Anything below a sub-pipeline slot is itself inside a sub-pipeline.
+      for (const nested of subPipelineSlotsOf(def, body)) {
+        assertNoWriteStageInSubPipeline(nested, pos, true);
+      }
+    }
+  }
+}
+
+/** The sub-pipeline arrays inside one emitted stage body, per its registry slots. */
+function subPipelineSlotsOf(def: StageDef, body: unknown): readonly unknown[][] {
+  if (typeof body !== "object" || body === null) return [];
+  // `"*"` ($facet): every branch of the body object is a sub-pipeline.
+  const values = def.subPipelineFields.includes("*")
+    ? Object.values(body as Record<string, unknown>)
+    : def.subPipelineFields.map((field) => (body as Record<string, unknown>)[field]);
+  return values.filter((value): value is unknown[] => Array.isArray(value));
+}
+
+/**
  * Statement-position `Object.assign(target, ...sources)` — JavaScript's
  * *mutating* merge: it writes the merged object back into `target` and returns
  * it. jsmql mirrors that at pipeline-statement position:
@@ -526,6 +577,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
     out.push({ $unset: JSMQL_NS });
   }
+  assertNoWriteStageInSubPipeline(out, ast.pos, false);
   return out;
 }
 
@@ -652,6 +704,7 @@ export function generateImplicitPipeline(
   if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
     out.push({ $unset: JSMQL_NS });
   }
+  assertNoWriteStageInSubPipeline(out, p.pos, container !== "top");
   return out;
 }
 
@@ -1867,14 +1920,13 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
   // block-body lambda (`.aggregate((o) => { $out(…); })`), which has no
   // unambiguous container name (DEF-024) but is unambiguously *a* sub-pipeline.
   // Registry-derived, so a future all-container stage is picked up for free.
-  if (ctx.inSubPipeline === true) {
+  // First of two checks, and the one that reports the offending stage's own
+  // position; `assertNoWriteStageInSubPipeline` re-checks the assembled output
+  // for any path that reaches a sub-pipeline slot without setting the flag.
+  if (ctx.inSubPipeline) {
     const def = lookupStage(stageName);
     if (def !== undefined && stageForbiddenInAnySubPipeline(def)) {
-      throw new CodegenError(
-        `'${stageName}' is not allowed inside a sub-pipeline — MongoDB only accepts it as the last stage of a ` +
-          `top-level pipeline. Move it to the outer pipeline.`,
-        body.pos,
-      );
+      throw new CodegenError(forbiddenInAnySubPipelineMessage(stageName), body.pos);
     }
   }
   // Body-shape validation (literal-gated; see stage-validation.ts). Runs for
@@ -2100,6 +2152,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   });
   flushUpdateOps();
   if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  assertNoWriteStageInSubPipeline(out, ast.pos, container !== "top");
   return out;
 }
 

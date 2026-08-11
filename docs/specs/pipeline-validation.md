@@ -174,15 +174,29 @@ GeoJSON shape (only presence of `near` is required).
 ## Write stages: forbidden in every sub-pipeline
 
 `$out` and `$merge` are the only stages the registry forbids in **all three** containers,
-which makes them decidable without knowing which container you are in. `generateStageBody`
-rejects such a stage whenever `GenerateCtx.inSubPipeline` is set — a flag both
-`freshSubPipelineCtx` and `freshFacetCtx` stamp on — so a block-body lambda
-(`.aggregate((o) => { $out(…); })`, a `.filter` predicate block, a `$facet` branch block)
-is covered even though the loop-position validator can't label its container. Membership
-is read from `forbiddenIn` via `stageForbiddenInAnySubPipeline`, so a future all-container
-stage is picked up with no code change. mongod rejects these with Location51047; HR3 says
-jsmql must not emit them. Where the container *is* known, the named message
-("inside a '$lookup' sub-pipeline") wins — it runs first, in the loop validator.
+which makes them decidable without a container label. Membership comes from `forbiddenIn`
+via `stageForbiddenInAnySubPipeline`, so a future all-container stage is picked up with no
+code change. mongod rejects these with Location51047; HR3 says jsmql must not emit them.
+
+Two checks enforce the rule, on opposite sides of lowering:
+
+1. **Source side — `generateStageBody`** rejects such a stage whenever
+   `GenerateCtx.inSubPipeline` is set. That covers a block-body lambda
+   (`.aggregate((o) => { $out(…); })`, a `.filter` predicate block, a `$facet` branch block)
+   even though the loop-position validator cannot label its container. This check knows the
+   offending stage's own position, so it is the one users normally see.
+2. **Output side — `assertNoWriteStageInSubPipeline`** walks the assembled stage array at
+   each pipeline entry point and rejects a forbidden stage in any sub-pipeline slot
+   (`subPipelineFields`, plus the `"*"` sentinel for `$facet`). It reads the emitted
+   document, not a ctx flag, so a path that reaches a sub-pipeline slot without the flag is
+   still rejected — and a container added later inherits the rule.
+
+Check 1 stays because check 2 can only name the enclosing pipeline. `test/error-pos.test.ts`
+pins the finer position, so a lowering path that drops the flag fails the suite even though
+the rejection itself survives. `GenerateCtx.inSubPipeline` is a **required** field for the
+same reason: a ctx built from scratch must declare which side of the boundary it starts on.
+Where the container *is* known, the named message ("inside a '$lookup' sub-pipeline") wins —
+it runs first, in the loop validator.
 
 ## The local-`$$` predicate gate
 
@@ -216,12 +230,13 @@ name, which must never be named back at the user as if it were writable.
 
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays
 (`{ $facet: { … } }`, `{ $lookup: { pipeline: […] } }`,
-`{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`.
-A literal write/source stage written inside a **sugar predicate block-body**
-lambda (`$$$.c.filter(o => { … })`) still gets must-first / must-last validation
-but not the container ban, because the shared `lowerBlock` lowerer runs
-`generateImplicitPipeline` with `container: "top"`. Threading the container
-through `lowerBlock` is deferred to a follow-up `[DEF-024]` — `lowerBlock` is
-used pervasively for predicate→`$match` translation where a fixed container
-would mislabel messages; the literal-array path covers the common case and this
-gap never produces a false positive.
+`{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`, and the
+all-container write stages are enforced everywhere (previous section). What remains is the
+stage that just **one** container forbids — a diagnostic, `forbiddenIn: ["facet"]` — inside a
+**sugar predicate block-body** lambda (`$$$.c.filter(o => { … })`). Such a stage still gets
+must-first / must-last validation but not the container ban, because the shared `lowerBlock`
+lowerer runs `generateImplicitPipeline` with `container: "top"`. A container label there needs
+per-call-site threading, deferred to `[DEF-024]` — `lowerBlock` also serves
+predicate→`$match` translation, which emits top-level stages, so one fixed label would
+mislabel those. The literal-array path covers the common case and this gap never produces a
+false positive.

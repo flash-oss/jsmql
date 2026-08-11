@@ -10,6 +10,44 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-10 — refactor: the sub-pipeline write-stage ban no longer depends on the path that lowered it
+
+HR3 says jsmql never emits a `$out` / `$merge` inside a sub-pipeline, because mongod
+rejects one with Location51047. The check read `GenerateCtx.inSubPipeline`, a flag two
+factories set ([`freshSubPipelineCtx`](src/codegen.ts) and `freshFacetCtx`). That made
+the rule contingent on how a container built its ctx: a sub-pipeline path added later,
+or one that reuses the outer ctx instead of a fresh one, would emit the invalid stage
+and no test would notice. The invariant is HR3-level, so it must not rest on each
+author's memory.
+
+[`assertNoWriteStageInSubPipeline`](src/pipeline.ts) now re-checks the **assembled
+output** at every pipeline entry point: it walks the emitted stages, descends into each
+sub-pipeline slot the registry declares (`subPipelineFields`, plus the `"*"` sentinel
+for `$facet`), and rejects a stage that `forbiddenIn` bans from every container. It
+reads the emitted document rather than a ctx flag, so every route into a slot — literal
+array, sugar, block body, stage link, or a container written next year — is covered by
+construction. The ctx-flag guard stays in front of it because it alone knows the
+offending stage's own position; the backstop can only name the enclosing pipeline. That
+split is deliberate and testable: with the flag deliberately broken, users still get
+the correct message, and [test/error-pos.test.ts](test/error-pos.test.ts) fails on the
+coarser position — so a path that drops the flag shows up as a suite failure instead of
+silence. The alternative considered was to fold `inSubPipeline` into the existing
+`ContainerKind` parameter; rejected because a block body has no container name to give
+(DEF-024) and its `container: "top"` value is load-bearing for `topLevelStream` and the
+`$match` placement rules, so the two facts are genuinely separate.
+
+`GenerateCtx.inSubPipeline` became a **required** field in the same pass, which is what
+makes a new fresh-ctx factory a compile error rather than a silent gap. Making it
+required surfaced three ctxs that rebuild their fields one by one and had already
+dropped the flag (`extendCtx` and the two `.reduce`-family remap ctxs in
+[src/codegen.ts](src/codegen.ts)); none could reach stage lowering, so no emitted MQL
+changed, but all three now carry it. DEF-024 stays open, narrowed to what actually
+remains: a diagnostic stage that only *one* container forbids, inside a block body. The
+row's own `$merge` example was stale — that stage is now blocked everywhere — so it now
+names a single-container stage instead.
+
+---
+
 ## 2026-08-02 — fix: an error never recommends syntax that doesn't work where you are
 
 ```

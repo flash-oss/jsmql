@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { assertNoWriteStageInSubPipeline } from "../src/pipeline.ts";
 
 describe("pipeline detection", () => {
   it("compiles a single-stage pipeline as an array", () => {
@@ -1306,6 +1307,7 @@ describe("write stages are forbidden in every sub-pipeline", () => {
     ["a foreign .aggregate(...) block ($merge)", '$.t = $$$.orders.aggregate(o => { $merge({ into: "m" }); });'],
     ["a lookup predicate block-body", '$.t = $$$.orders.filter(o => { $out("archive"); return o.a; });'],
     ["a $facet branch block-body", '$ = { k: $$.filter(d => { $out("archive"); return d.a; }) };'],
+    ["a $unionWith sugar predicate block-body", '$$.push(...$$$.orders.filter(o => { $out("x"); return o.a; }));'],
   ];
   for (const [label, src] of cases) {
     it(`rejects a write stage inside ${label}`, () => {
@@ -1313,18 +1315,78 @@ describe("write stages are forbidden in every sub-pipeline", () => {
     });
   }
 
-  // A named container keeps its more specific message.
-  it("keeps the container-specific wording where the container is known", () => {
-    expect(() => jsmql('$.t = $$$.orders.$out("archive");')).toThrow(
-      /'\$out' is not allowed inside a '\$lookup' sub-pipeline/,
-    );
-  });
+  // A named container keeps its more specific message — one per container kind,
+  // so all three literal sub-pipeline slots stay covered.
+  const named: [string, string, RegExp][] = [
+    ["$lookup", '$lookup({ from: "o", as: "r", pipeline: [ { $out: "x" } ] });', /inside a '\$lookup' sub-pipeline/],
+    ["$unionWith", '$unionWith({ coll: "o", pipeline: [ { $out: "x" } ] });', /inside a '\$unionWith' sub-pipeline/],
+    ["$facet", '$facet({ a: [ { $out: "x" } ] });', /inside a '\$facet' sub-pipeline/],
+    ["a stage link", '$.t = $$$.orders.$out("archive");', /inside a '\$lookup' sub-pipeline/],
+  ];
+  for (const [label, src, message] of named) {
+    it(`keeps the container-specific wording for ${label}`, () => {
+      expect(() => jsmql(src)).toThrow(message);
+    });
+  }
 
   // …and the top-level write stage still works.
   it("still allows a top-level $out", () => {
     expect(jsmql("$$$.archive = $$;")).toEqual([{ $out: "archive" }]);
     expect(jsmql('$out("archive");')).toEqual([{ $out: "archive" }]);
   });
+
+  // A write stage after a stage that OWNS a sub-pipeline is still top-level.
+  it("allows a write stage following a sub-pipeline-bearing stage", () => {
+    expect(jsmql('$facet({ a: [ { $sortByCount: "$x" } ] }); $$$.archive = $$;')).toEqual([
+      { $facet: { a: [{ $sortByCount: "$x" }] } },
+      { $out: "archive" },
+    ]);
+  });
+});
+
+// The guard above reads `GenerateCtx.inSubPipeline`, which a lowering path has to
+// set. `assertNoWriteStageInSubPipeline` re-checks the assembled stages instead,
+// so a container that reaches a sub-pipeline slot without setting that flag is
+// still rejected. These cases drive it directly with the stage arrays such a path
+// would produce — the ctx-flag guard cannot be reached that way.
+describe("the emitted-output backstop rejects a write stage in any sub-pipeline slot", () => {
+  const rejected: [string, unknown[]][] = [
+    ["$lookup.pipeline", [{ $lookup: { from: "o", as: "r", pipeline: [{ $out: "x" }] } }]],
+    ["$unionWith.pipeline", [{ $unionWith: { coll: "o", pipeline: [{ $merge: { into: "m" } }] } }]],
+    ["a $facet branch (the '*' slot sentinel)", [{ $facet: { a: [{ $match: { x: 1 } }], b: [{ $out: "x" }] } }]],
+    [
+      "a slot nested two containers deep",
+      [{ $unionWith: { coll: "o", pipeline: [{ $lookup: { from: "p", as: "r", pipeline: [{ $out: "x" }] } }] } }],
+    ],
+  ];
+  for (const [label, stages] of rejected) {
+    it(`rejects a write stage in ${label}`, () => {
+      expect(() => assertNoWriteStageInSubPipeline(stages, 0, false)).toThrow(/is not allowed inside a sub-pipeline/);
+    });
+  }
+
+  it("rejects a write stage at the top of an array that IS a sub-pipeline body", () => {
+    expect(() => assertNoWriteStageInSubPipeline([{ $out: "x" }], 0, true)).toThrow(
+      /is not allowed inside a sub-pipeline/,
+    );
+  });
+
+  const accepted: [string, unknown[]][] = [
+    ["a top-level write stage", [{ $match: { a: 1 } }, { $out: "x" }]],
+    ["a write stage after a $facet", [{ $facet: { a: [{ $match: { x: 1 } }] } }, { $out: "x" }]],
+    ["a populated sub-pipeline with no write stage", [{ $lookup: { from: "o", as: "r", pipeline: [{ $limit: 1 }] } }]],
+    // Only the slots `subPipelineFields` declares are sub-pipelines. A `pipeline`
+    // key in an ordinary stage body is user data, and `$documents` holds literal
+    // documents — neither may be walked as stages.
+    ["a `pipeline` key in a non-container stage body", [{ $set: { pipeline: [{ $out: "x" }] } }]],
+    ["$documents holding a document that looks like a stage", [{ $documents: [{ $out: 1 }] }]],
+    ["an unknown (passthrough) stage name", [{ $futureStage: { pipeline: [{ $out: "x" }] } }]],
+  ];
+  for (const [label, stages] of accepted) {
+    it(`accepts ${label}`, () => {
+      expect(() => assertNoWriteStageInSubPipeline(stages, 0, false)).not.toThrow();
+    });
+  }
 });
 
 // A foreign chain produces a value, so a bare statement has nowhere to put it.
