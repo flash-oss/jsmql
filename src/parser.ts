@@ -1451,9 +1451,12 @@ export class Parser {
           //   *expression* block (`{ const a = …; return <expr>; }`) lowered to
           //   nested `$let`; see docs/specs/method-dispatch.md. JS-faithful:
           //   `=> {` always opens a block; an object return needs `=> ({ … })`.
-          const blockKind: "pipeline" | "expr" =
-            STREAM_BLOCK_METHODS.has(memberName) && isStreamRooted(left) ? "pipeline" : "expr";
-          const args = this.parseMethodCallArgs(blockKind);
+          const streamRooted = isStreamRooted(left);
+          const args = this.parseMethodCallArgs({
+            kind: STREAM_BLOCK_METHODS.has(memberName) && streamRooted ? "pipeline" : "expr",
+            method: memberName,
+            streamRooted,
+          });
           left = {
             type: "MethodCall",
             object: left,
@@ -1531,9 +1534,9 @@ export class Parser {
   }
 
   /** Parse method call argument list: "(" [argOrLambda ("," argOrLambda)* ","?] ")" */
-  private parseMethodCallArgs(blockKind: "pipeline" | "expr" = "expr"): CallArg[] {
+  private parseMethodCallArgs(blockCtx: BlockArgCtx = EXPR_BLOCK_ARG): CallArg[] {
     this.lexer.expect(TokenType.LParen);
-    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg(blockKind));
+    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg(blockCtx));
     this.lexer.expect(TokenType.RParen);
     return args;
   }
@@ -1544,33 +1547,33 @@ export class Parser {
    *   - lambda forms (x => ..., (x) => ..., (x, y) => ...)
    *   - any expression
    */
-  private parseCallArg(blockKind: "pipeline" | "expr" = "expr"): CallArg {
+  private parseCallArg(blockCtx: BlockArgCtx = EXPR_BLOCK_ARG): CallArg {
     if (this.lexer.peek().type === TokenType.Spread) {
       const spreadTok = this.lexer.next();
       const argument = this.parseExpression();
       const spread: SpreadElement = { type: "SpreadElement", argument, pos: spreadTok.pos };
       return spread;
     }
-    return this.parseArgOrLambda(blockKind);
+    return this.parseArgOrLambda(blockCtx);
   }
 
   /**
    * Parse an argument that might be a lambda expression.
    * Checks for lambda patterns before falling back to parseExpression().
-   * `blockKind` selects what a `=> { … }` body means: `"pipeline"` (only inside
+   * `blockCtx.kind` selects what a `=> { … }` body means: `"pipeline"` (only inside
    * `$$$.<coll>.find/filter(...)` and `$$.filter(...)`) parses a statement block
    * → `Pipeline`; `"expr"` (the default everywhere else) parses an
    * expression-block → `ExprBlock`. JS-faithful: `=> {` always opens a block;
    * an object return needs `=> ({ … })`.
    */
-  private parseArgOrLambda(blockKind: "pipeline" | "expr" = "expr"): Expr {
+  private parseArgOrLambda(blockCtx: BlockArgCtx = EXPR_BLOCK_ARG): Expr {
     // x => expr  (unparenthesized single param)
     if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
-      return this.parseLambdaUnparen(blockKind);
+      return this.parseLambdaUnparen(blockCtx);
     }
     // (x) => expr  or  (x, y) => expr  or  () => expr
     if (this.isLambdaStart()) {
-      return this.parseLambdaParen(blockKind);
+      return this.parseLambdaParen(blockCtx);
     }
     return this.parseExpression();
   }
@@ -1871,15 +1874,15 @@ export class Parser {
   }
 
   /** Parse "x => expr" — single unparenthesized parameter */
-  private parseLambdaUnparen(blockKind: "pipeline" | "expr" = "expr"): Expr {
+  private parseLambdaUnparen(blockCtx: BlockArgCtx = EXPR_BLOCK_ARG): Expr {
     const paramTok = this.lexer.next(); // consume Ident
     this.lexer.next(); // consume =>
     if (this.lexer.peek().type === TokenType.LBrace) {
-      if (blockKind === "pipeline") {
+      if (blockCtx.kind === "pipeline") {
         const { block, ret } = this.parseCallbackBlock();
         return { type: "Lambda", params: [paramTok.value], block, ret, pos: paramTok.pos };
       }
-      const exprBlock = this.parseExprBlockBody();
+      const exprBlock = this.parseExprBlockBody(blockCtx);
       return { type: "Lambda", params: [paramTok.value], exprBlock, pos: paramTok.pos };
     }
     const body = this.parseExpression();
@@ -1901,16 +1904,16 @@ export class Parser {
   }
 
   /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
-  private parseLambdaParen(blockKind: "pipeline" | "expr" = "expr"): Expr {
+  private parseLambdaParen(blockCtx: BlockArgCtx = EXPR_BLOCK_ARG): Expr {
     const lparen = this.lexer.peek(); // `(` — captured for `pos`
     const params = this.parseParenParamNames();
     this.lexer.expect(TokenType.Arrow);
     if (this.lexer.peek().type === TokenType.LBrace) {
-      if (blockKind === "pipeline") {
+      if (blockCtx.kind === "pipeline") {
         const { block, ret } = this.parseCallbackBlock();
         return { type: "Lambda", params, block, ret, pos: lparen.pos };
       }
-      const exprBlock = this.parseExprBlockBody();
+      const exprBlock = this.parseExprBlockBody(blockCtx);
       return { type: "Lambda", params, exprBlock, pos: lparen.pos };
     }
     const body = this.parseExpression();
@@ -2041,6 +2044,40 @@ export class Parser {
   }
 
   /**
+   * Build the error for a `=> { $stage(...); … }` sub-pipeline block written at a
+   * call site that only takes an expression block. Two distinct mistakes reach
+   * here, and each gets its own fix:
+   *
+   *   - **The method name is wrong.** The receiver IS a stream, so the block
+   *     grammar was available — the method just isn't one that takes a
+   *     sub-pipeline. `.aggregat(o => { $group(…); })` used to demand a `return`,
+   *     which sent the user hunting a phantom syntax error instead of a typo.
+   *     `didYouMean` over `STREAM_BLOCK_METHODS` names the intended method.
+   *   - **The receiver isn't a stream.** `$.items.map(d => { $group(…); })` — an
+   *     in-document array has no pipeline to run stages in, whatever the method.
+   */
+  private subPipelineBlockError(blockCtx: BlockArgCtx, pos: number): ParseError {
+    const { method, streamRooted } = blockCtx;
+    const call = method === undefined ? "this callback" : `'.${method}(...)'`;
+    const lead =
+      `Unexpected stage call at position ${pos}: a \`=> { $stage(...); ... }\` block is a sub-pipeline, ` +
+      `but ${call} doesn't take one.`;
+    if (streamRooted === true && method !== undefined) {
+      return new ParseError(
+        `${lead}${didYouMean(method, [...STREAM_BLOCK_METHODS], (s) => `.${s}`)} ` +
+          `Only a stream method that accepts a sub-pipeline runs stage calls in its block; ` +
+          `for a per-document expression, end the block with \`return <expr>\`.`,
+        pos,
+      );
+    }
+    return new ParseError(
+      `${lead} Stage calls need a stream receiver — '$$' or '$$$.<coll>' — not an in-document value. ` +
+        `Chain the stages on the stream itself, or end this block with \`return <expr>\` to compute a value.`,
+      pos,
+    );
+  }
+
+  /**
    * Parse the expression-block body of an arrow:
    * `{ (const|let <name> = <expr>;)* return <expr>; }`. Codegen lowers it to a
    * right-folded nest of `$let`. This is the JS-faithful meaning of `=> { … }`
@@ -2048,7 +2085,7 @@ export class Parser {
    * `parseCallbackBlock`); an object return must be written `=> ({ … })`.
    * See docs/specs/method-dispatch.md.
    */
-  private parseExprBlockBody(): ExprBlock {
+  private parseExprBlockBody(blockCtx: BlockArgCtx = EXPR_BLOCK_ARG): ExprBlock {
     const open = this.lexer.next(); // consume `{`
     const decls: LetDecl[] = [];
     while (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
@@ -2077,6 +2114,11 @@ export class Parser {
     }
     const ret = this.lexer.peek();
     if (ret.type !== TokenType.Return) {
+      // A `$`-prefixed name here means the block holds stage calls, so the user
+      // meant a sub-pipeline — not an expression block that forgot its `return`.
+      // Say which of the two things is actually wrong instead of demanding a
+      // `return` they never wanted.
+      if (ret.type === TokenType.Dollar) throw this.subPipelineBlockError(blockCtx, ret.pos);
       throw new ParseError(
         `A block body must end with a \`return <expr>\` statement at position ${ret.pos}, got ${formatActualToken(ret)}. ` +
           `Write \`x => { const a = …; return <expr>; }\` / \`function f(x) { return <expr>; }\`, ` +
@@ -2602,6 +2644,20 @@ export class Parser {
  * callbacks, not statement blocks, so they stay out of this set.
  */
 const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "map", "aggregate"]);
+
+/**
+ * What a `=> { … }` argument body means at a call site, plus the receiver context
+ * `parseExprBlockBody` needs to diagnose a **near-miss**: a block of `$stage(...)`
+ * calls written where only an expression block is legal. Knowing the method name
+ * and whether its receiver was stream-rooted is what turns the generic
+ * "must end with `return`" into a message that names the actual mistake — a
+ * misspelled block method (`.aggregat`) or a stream-only block on an in-document
+ * array. `method` / `streamRooted` are absent at non-method call sites.
+ */
+type BlockArgCtx = { kind: "pipeline" | "expr"; method?: string; streamRooted?: boolean };
+
+/** The default: a `=> { … }` body is an expression block, no receiver context. */
+const EXPR_BLOCK_ARG: BlockArgCtx = { kind: "expr" };
 
 /**
  * Walk a receiver chain back to its root and report whether the root is a

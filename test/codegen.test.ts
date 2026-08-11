@@ -2875,6 +2875,63 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     });
   });
 
+  // A `=> { $stage(...); ... }` block is a SUB-PIPELINE, legal only as the argument
+  // to a stream method that takes one. Written anywhere else it used to demand a
+  // `return` the user never wanted — sending them after a phantom syntax error
+  // instead of the real mistake (a misspelled method, or a non-stream receiver).
+  describe("a stage-call block outside a sub-pipeline position names the real mistake", () => {
+    it("a misspelled block method on a stream receiver suggests the intended one", () => {
+      for (const [typo, meant] of [
+        ["aggregat", "aggregate"],
+        ["mapp", "map"],
+        ["filte", "filter"],
+      ]) {
+        const err = `$.r = $$$.orders.${typo}((o) => { $limit(2); });`;
+        expect(() => jsmql(err)).toThrow(
+          /Unexpected stage call at position \d+: a `=> \{ \$stage\(\.\.\.\); \.\.\. \}` block/,
+        );
+        expect(() => jsmql(err)).toThrow(new RegExp(`doesn't take one\\. Did you mean '\\.${meant}'\\?`));
+      }
+    });
+
+    it("a stream method that simply takes no sub-pipeline gets the same lead, no suggestion", () => {
+      expect(() => jsmql("$.r = $$$.orders.sortBy((o) => { $limit(2); });")).toThrow(
+        /Unexpected stage call at position \d+:.*but '\.sortBy\(\.\.\.\)' doesn't take one\. Only a stream method/s,
+      );
+    });
+
+    it("an in-document array receiver is told stages need a stream", () => {
+      for (const src of [
+        "$.r = $.items.map((d) => { $limit(2); });",
+        "$.r = $.items.aggregate((o) => { $limit(2); });",
+      ]) {
+        expect(() => jsmql(src)).toThrow(
+          /Stage calls need a stream receiver — '\$\$' or '\$\$\$\.<coll>' — not an in-document value/,
+        );
+      }
+    });
+
+    it("carries a .pos pointing at the stage call", () => {
+      const res = jsmql.validate("$.r = $$$.orders.aggregat((o) => { $limit(2); });");
+      expect(res.valid).toBe(false);
+      expect(res.errors[0].pos).toBe("$.r = $$$.orders.aggregat((o) => { ".length);
+    });
+
+    it("a genuine missing `return` (no stage calls) keeps the original message", () => {
+      expect(() => jsmql.expr("$.items.map((d) => { const a = d.v; })")).toThrow(/must end with a `return <expr>`/);
+      expect(() => jsmql.expr("$.items.map((d) => { d.v; })")).toThrow(/must end with a `return <expr>`/);
+    });
+
+    it("the valid spellings still compile", () => {
+      expect(jsmql("$.r = $$$.orders.aggregate((o) => { $limit(2); });")).toEqual([
+        { $lookup: { from: "orders", pipeline: [{ $limit: 2 }], as: "r" } },
+      ]);
+      expect(jsmql.expr("$.items.map((d) => { const a = d.v; return a; })")).toEqual({
+        $map: { input: "$items", as: "d", in: { $let: { vars: { a: "$$d.v" }, in: "$$a" } } },
+      });
+    });
+  });
+
   it("JS-faithful: a bare-brace object body is a block (object return needs parens)", () => {
     // `x => { k: x }` is a labeled-statement block in JS, not an object — jsmql
     // rejects it (no `return`); the object form is `x => ({ k: x })`.

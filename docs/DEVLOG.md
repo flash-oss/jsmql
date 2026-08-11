@@ -42,6 +42,33 @@ source never asked. See [docs/specs/method-dispatch.md](specs/method-dispatch.md
 
 ---
 
+## 2026-08-11 — fix(parser): a misplaced stage block reports the real mistake, not a missing `return`
+
+`$$$.orders.aggregat((o) => { $limit(2); })` — one letter short of `.aggregate` — used to
+fail with *"A block body must end with a `return <expr>` statement"*. The block grammar is
+chosen by name: only a method in `STREAM_BLOCK_METHODS` on a stream-rooted receiver parses
+its `=> { … }` as a sub-pipeline, so any other name falls to the expression-block parser,
+which duly demanded the `return` the user never wanted. The reported error was three steps
+away from the typo that caused it, and the same trap caught `.mapp`, `.filte`, and every
+other near-miss.
+
+`parseExprBlockBody` now checks for a `$` token at its missing-`return` position — a `$`
+there means the block holds stage calls, so the sub-pipeline was the intent — and
+`subPipelineBlockError` names which of two things is actually wrong. A stream-rooted
+receiver means the method name is the error, so the message carries a `didYouMean` over the
+block methods (`Did you mean '.aggregate'?`). A non-stream receiver means the receiver is
+the error, so it says stage calls need `$$` or `$$$.<coll>`, which is also the honest answer
+for `$.items.map(d => { $group(…); })` on an in-document array. A block with no stage call
+keeps the original message untouched.
+
+Carrying that diagnosis needed the receiver's identity at the point of failure, so the
+`blockKind: "pipeline" | "expr"` flag threaded through the five arg-parsing methods becomes
+a `BlockArgCtx` object holding the kind plus the `method` name and `streamRooted` flag.
+Widening the existing parameter beats adding a second one threaded alongside it. See
+[src/parser.ts](../src/parser.ts) and [docs/specs/grammar.md](specs/grammar.md).
+
+---
+
 ## 2026-08-09 — docs: the project reads as a finished product; history lives only here
 
 New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":
