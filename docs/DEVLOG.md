@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-11 — fix: a pipeline stage name is rejected where a value is expected
+
+```
+$.x = $limit(5);
+// before: [{"$set":{"x":{"$limit":5}}}]   →  mongod: Unrecognized expression '$limit'
+// now:    '$limit' is a pipeline stage, not an expression — MongoDB has no '$limit'
+//         expression operator … Write it as a pipeline statement ('$limit(…);') or as a
+//         chain link ('$$.$limit(…)'). For the value-position equivalent, use '$slice(…)'.
+```
+
+All 44 stage-only names were accepted in value position and emitted MQL the server refuses. The rule this closes is the other half of the one the callback-block work stated: **stages are statements, operators are expressions — the name decides which, not the position.** That change stopped a statement appearing inside an expression-shaped callback; this one stops a statement *name* being used as an expression, anywhere.
+
+`rejectStageInValuePosition` lives in [src/operator-validation.ts](src/operator-validation.ts) — the value-position pre-flight validator — and runs ahead of the unknown-operator passthrough, since it is the one check that must fire for a name `OPERATORS` does not hold. It belongs there rather than in codegen for two reasons: `stages.ts` is a pure leaf so there is no cycle, and codegen must not branch on stage names. The test is the registry intersection (`name ∈ STAGES && name ∉ OPERATORS`), which is what keeps three things working without a list to maintain — `$count` (a stage *and* an accumulator), an unknown name (HR2), and a raw `{ $limit: 5 }` object literal (the developer's own document, which the never-guard-raw-MQL rule protects).
+
+This is inside the pre-flight validators' narrow exemption, not a violation of it: the exemption covers shapes **universally** invalid on every deployment, and no deployment has a `$limit` expression operator — unlike the cross-database `$lookup` namespace, which Atlas Data Federation does accept and which jsmql must therefore pass through.
+
+One test changed rather than being added to. `jsmql.expr("$match($.a === 0)")` asserted `{ $match: { $eq: ["$a", 0] } }`, described as useful for a hand-written sub-pipeline literal. mongod refuses that document in *both* readings — there is no `$match` expression operator, and as a stage body a bare `$eq` is "unknown top level operator" — so the suite was endorsing an invalid shape, which `test/CLAUDE.md` forbids. `jsmql.pipeline("$match($.a === 0)")` → `[{ $match: { a: 0 } }]` is where a stage document comes from, and `jsmql.expr("$.a === 0")` where the expression does.
+
+---
+
 ## 2026-08-11 — fix: the callback-block rule reaches `.takeWhile` / `.dropWhile` / `.flatMap`
 
 ```

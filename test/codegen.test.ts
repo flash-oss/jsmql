@@ -6332,11 +6332,16 @@ describe("jsmql.expr()", () => {
     expect(jsmql.expr`$.region === ${region}`).toEqual({ $eq: ["$region", "AU"] });
   });
 
-  it("a stage call without `;` here does NOT trip the Filter-only guard", () => {
-    // The guard lives in `generateFilter`, which `jsmql.expr` doesn't go
-    // through — so `$match(...)` in expression mode lowers like any other
-    // operator call (useful inside a hand-written sub-pipeline literal).
-    expect(jsmql.expr("$match($.a === 0)")).toEqual({ $match: { $eq: ["$a", 0] } });
+  it("a stage name is rejected here — `jsmql.expr` yields an expression, not a stage", () => {
+    // It used to emit `{ $match: { $eq: ["$a", 0] } }`, which mongod refuses in BOTH
+    // readings: there is no `$match` expression operator, and as a stage body a bare
+    // `$eq` is "unknown top level operator". The stage document comes from
+    // `jsmql.pipeline` instead, and the expression from `jsmql.expr` on the predicate.
+    expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
+      /'\$match' is a pipeline stage, not an expression.*For the value-position equivalent, use '\$filter\(…\)'/s,
+    );
+    expect(jsmql.pipeline("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
+    expect(jsmql.expr("$.a === 0")).toEqual({ $eq: ["$a", 0] });
   });
 
   it("rejects wrong-typed input with a TypeError naming the entry point", () => {
