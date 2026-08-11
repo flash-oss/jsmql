@@ -515,6 +515,95 @@ $ = { byRegion };`,
     expect(await counts("$$$.orders.filter({ userId: $._id })")).toEqual(expected);
   });
 
+  // A lodash stream chain that feeds `.aggregate((o) => { … })` — bound the
+  // foreign scan with `.sort().take()`, group inside the block, then rank the
+  // groups with more lodash. Every link lands in the one `$lookup.pipeline`, so
+  // the server does the whole job; nothing materialises into an array first.
+  it("pipeline: lodash chain then .aggregate ranks groups server-side", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+const byRegion = $$$.orders.sort({ total: -1 }).take(20)
+  .aggregate((o) => { $group({ _id: o.region, revenue: $sum(o.total) }); })
+  .sort({ revenue: -1 }).take(3);
+$ = { byRegion };`,
+    );
+    expect(rows).toEqual([
+      {
+        byRegion: [
+          { _id: "AU", revenue: 3204 },
+          { _id: "US", revenue: 3070 },
+        ],
+      },
+    ]);
+  });
+
+  // The correlated form: `.filter` pins the foreign set to the outer user (via
+  // `$lookup.let`), `.sort().take(2)` keeps only their two newest orders, and the
+  // `.aggregate` block groups those. Per-user counts are what prove the `let`
+  // correlation survives the lodash links — a broken one returns every order.
+  it("pipeline: correlated lodash chain into .aggregate keeps the let binding", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($.status === "active");
+$.recent = $$$.orders.filter(o => o.userId === $._id).sort({ placedAt: -1 }).take(2)
+  .aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); }).sort({ _id: 1 });
+$ = { user: $._id, recent: $.recent };`,
+    );
+    expect(
+      (rows as { user: unknown; recent: unknown }[])
+        .map((r) => ({ user: String(r.user), recent: r.recent }))
+        .sort((a, b) => (a.user < b.user ? -1 : 1)),
+    ).toEqual([
+      { user: ID.user(1).toHexString(), recent: [{ _id: "shipped", n: 2 }] },
+      {
+        user: ID.user(2).toHexString(),
+        recent: [
+          { _id: "pending", n: 1 },
+          { _id: "shipped", n: 1 },
+        ],
+      },
+      {
+        user: ID.user(3).toHexString(),
+        recent: [
+          { _id: "cancelled", n: 1 },
+          { _id: "shipped", n: 1 },
+        ],
+      },
+      { user: ID.user(5).toHexString(), recent: [{ _id: "shipped", n: 2 }] },
+      {
+        user: ID.user(6).toHexString(),
+        recent: [
+          { _id: "pending", n: 1 },
+          { _id: "shipped", n: 1 },
+        ],
+      },
+      { user: ID.user(8).toHexString(), recent: [{ _id: "shipped", n: 2 }] },
+    ]);
+  });
+
+  // `.aggregate` at the HEAD with a lodash tail. `.pick` is the case a green
+  // `toEqual` could never have caught: while the head form fell back to value
+  // mode it read `$getField` off the result ARRAY and every row came back `{}`,
+  // and the `.omit` sibling made mongod refuse the pipeline outright.
+  it("pipeline: .aggregate head with a lodash tail projects real documents", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+const shops = $$$.orders.aggregate((o) => { $group({ _id: o.shopId, n: $sum(1) }); })
+  .sort({ n: -1 }).pick(["_id", "n"]);
+$ = { shops };`,
+    );
+    expect(rows).toEqual([
+      {
+        shops: [
+          { _id: "shop_au", n: 12 },
+          { _id: "shop_us", n: 8 },
+        ],
+      },
+    ]);
+  });
+
   // A positional single-array-argument operator (`$size`/`$first`/`$last`/
   // `$reverseArray`) SPLICES a bare array operand into an argument list, so every
   // one of these emitted MQL the server refused outright — `[10,20,30].length` was
@@ -532,4 +621,15 @@ $ = { n: [10, 20, 30].length, rev: [10, 20, 30].toReversed(), h: [10, 20, 30].he
     expect(rows).toEqual([{ n: 3, rev: [30, 20, 10], h: 10, l: 30, one: 1, nested: [2, 1] }]);
   });
 
+  // `.flatMap` lowers to `$unwind`, so the `.aggregate` block that follows sees
+  // one document per order line — the sum proves the unwind ran before the group.
+  it("pipeline: .flatMap then .aggregate sums across unwound lines", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+const lines = $$$.orders.flatMap(o => o.items).aggregate((o) => { $group({ _id: null, qty: $sum(o.items.qty) }); });
+$ = { lines };`,
+    );
+    expect(rows).toEqual([{ lines: [{ _id: null, qty: 55 }] }]);
+  });
 });

@@ -69,6 +69,40 @@ Widening the existing parameter beats adding a second one threaded alongside it.
 
 ---
 
+## 2026-08-11 — fix(lookup): an `.aggregate` head peels its chain instead of falling back to value mode
+
+`$$$.<coll>.aggregate(A).<lodashMethod>(...)` now lowers through the chain assembler,
+so it emits the same `$lookup.pipeline` that `$$$.<coll>.<lodashMethod>(...).aggregate(A)`
+already did. [tryExtractChainedLookup](../src/lookup-translation.ts) used to bail on any
+non-`.filter` head, which lumped `.aggregate` in with `.find` and sent the whole chain to
+value mode over the result array. One branch decided the emitted shape, and the head
+position — not the meaning — picked it.
+
+Two of the fallbacks produced wrong output rather than merely bulky output, because a
+receiver-family method has no meaning on the result *array*: `.pick([…])` read `$getField`
+off the array and returned `{}` for every row, and `.omit([…])` emitted an
+`$objectToArray` over an array that mongod refuses outright (`$objectToArray requires a
+document input, found: array`) — an HR3 breach hiding behind a green suite. The rest drifted
+silently: `.take` became `$slice` instead of `$limit`, `.groupBy`/`.uniqBy`/`.flatMap`
+became large value-mode expressions instead of `$group`/`$unwind`, and `.sort`, `.$sort`
+and a second `.aggregate` were rejected with errors about array mutation and unknown
+methods. Adding one preceding `.sort()` fixed all of them, which is the tell. `.aggregate`
+is a registered stream method, so routing a head `.aggregate` into the stream-head branch
+needs no new seeding path — its own `lower` contributes the block's stages. Only `.find`
+keeps dedicated handling; its result is a single document, not a stream.
+
+This is the same rule [pipelineLookupBody](../src/lookup-translation.ts) already enforces
+for the `let` clause: the shape is a function of the query, never of which emission site
+ran. The surface that prompted the audit — `.aggregate()` *after* a lodash chain — turned
+out correct but wholly untested, so [test/lookup.test.ts](../test/lookup.test.ts) gains a
+describe block over both chain directions (argument forms, correlation, terminals, and
+head-vs-link error parity), and [test/integration.test.ts](../test/integration.test.ts)
+gains four cases that assert returned documents on the live fixture. The `.pick` case is
+one a `toEqual` could never have caught. See
+[docs/specs/lookup-stage.md](specs/lookup-stage.md).
+
+---
+
 ## 2026-08-09 — docs: the project reads as a finished product; history lives only here
 
 New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":

@@ -1331,6 +1331,255 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
   });
 });
 
+describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a sub-pipeline", () => {
+  // `.aggregate` is a registered stream method, so it composes with the lodash
+  // chain in BOTH directions: lodash stages before it, lodash stages after it,
+  // all peeled into the one `$lookup.pipeline` in source order.
+  const chainLookup = (pipeline: object[], as = "__jsmql.tmp.1", field = "r") => [
+    { $lookup: { from: "orders", pipeline, as } },
+    { $set: { [field]: `$${as}` } },
+    { $unset: "__jsmql" },
+  ];
+
+  it("sort + take then .aggregate — lodash stages lead, aggregate stages follow", () => {
+    expect(
+      jsmql(
+        "$.top = $$$.orders.sort({ createdAt: -1 }).take(1000).aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); });",
+      ),
+    ).toEqual(
+      chainLookup(
+        [{ $sort: { createdAt: -1 } }, { $limit: 1000 }, { $group: { _id: "$status", n: { $sum: 1 } } }],
+        "__jsmql.tmp.1",
+        "top",
+      ),
+    );
+  });
+
+  it("comparator .toSorted then .aggregate", () => {
+    expect(
+      jsmql("$.r = $$$.orders.toSorted((a, b) => a.total - b.total).aggregate((o) => { $group({ _id: o.status }); });"),
+    ).toEqual(chainLookup([{ $sort: { total: 1 } }, { $group: { _id: "$status" } }]));
+  });
+
+  it("the stage-array argument form works after a lodash chain too", () => {
+    expect(jsmql('$.r = $$$.orders.sortBy("total").drop(2).aggregate([{ $group: { _id: "$status" } }]);')).toEqual(
+      chainLookup([{ $sort: { total: 1 } }, { $skip: 2 }, { $group: { _id: "$status" } }]),
+    );
+  });
+
+  it("a document-reshaping lodash method (.flatMap → $unwind) then .aggregate", () => {
+    expect(
+      jsmql("$.r = $$$.orders.flatMap(o => o.items).aggregate((o) => { $group({ _id: null, n: $sum(1) }); });"),
+    ).toEqual(chainLookup([{ $unwind: "$items" }, { $group: { _id: null, n: { $sum: 1 } } }]));
+  });
+
+  it("lodash methods AFTER .aggregate keep extending the same sub-pipeline", () => {
+    expect(
+      jsmql(
+        "$.r = $$$.orders.sort({ t: -1 }).aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); }).sort({ n: -1 }).take(3);",
+      ),
+    ).toEqual(
+      chainLookup([
+        { $sort: { t: -1 } },
+        { $group: { _id: "$status", n: { $sum: 1 } } },
+        { $sort: { n: -1 } },
+        { $limit: 3 },
+      ]),
+    );
+  });
+
+  it("a stage-link may head the chain ahead of .aggregate", () => {
+    expect(
+      jsmql("$.r = $$$.orders.$match({ total: { $gt: 0 } }).aggregate((o) => { $group({ _id: o.status }); });"),
+    ).toEqual(chainLookup([{ $match: { total: { $gt: 0 } } }, { $group: { _id: "$status" } }]));
+  });
+
+  it("a correlating .filter ahead of the lodash chain hoists into $lookup.let", () => {
+    expect(
+      jsmql(
+        "$.r = $$$.orders.filter(o => o.userId === $._id).sort({ t: -1 }).take(2).aggregate((o) => { $group({ _id: o.status }); });",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $sort: { t: -1 } },
+            { $limit: 2 },
+            { $group: { _id: "$status" } },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { r: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("an outer `$.` ref inside the .aggregate block hoists into $lookup.let", () => {
+    expect(
+      jsmql(
+        "$.r = $$$.orders.sort({ t: -1 }).take(5).aggregate((o) => { $match(o.userId === $._id); $group({ _id: o.status }); });",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $sort: { t: -1 } },
+            { $limit: 5 },
+            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $group: { _id: "$status" } },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { r: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("the 3rd 'collection' param binds the sub-stream count after a lodash chain", () => {
+    expect(
+      jsmql(
+        "$.r = $$$.orders.sort({ t: -1 }).take(3).aggregate((o, _i, coll) => { $addFields({ n: coll.length }); });",
+      ),
+    ).toEqual(
+      chainLookup([
+        { $sort: { t: -1 } },
+        { $limit: 3 },
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        { $addFields: { n: "$__jsmql.length" } },
+        { $unset: "__jsmql" },
+      ]),
+    );
+  });
+
+  it("`$$ =` source-switch: the whole chain becomes the $unionWith sub-pipeline", () => {
+    expect(jsmql("$$ = $$$.orders.sort({ t: -1 }).take(3).aggregate((o) => { $group({ _id: o.status }); });")).toEqual([
+      { $match: { $expr: false } },
+      {
+        $unionWith: { coll: "orders", pipeline: [{ $sort: { t: -1 } }, { $limit: 3 }, { $group: { _id: "$status" } }] },
+      },
+    ]);
+  });
+
+  it("a chained terminal reads the aggregate result as a value (.length / .map)", () => {
+    expect(jsmql("$.n = $$$.orders.sort({ t: -1 }).aggregate((o) => { $group({ _id: o.status }); }).length;")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [{ $sort: { t: -1 } }, { $group: { _id: "$status" } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      {
+        $set: {
+          n: {
+            $cond: {
+              if: { $isArray: "$__jsmql.tmp.1" },
+              then: { $size: "$__jsmql.tmp.1" },
+              else: { $strLenCP: { $ifNull: ["$__jsmql.tmp.1", ""] } },
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    expect(
+      jsmql("$.ids = $$$.orders.sort({ t: -1 }).aggregate((o) => { $group({ _id: o.status }); }).map(g => g._id);"),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [{ $sort: { t: -1 } }, { $group: { _id: "$status" } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { ids: { $map: { input: "$__jsmql.tmp.1", as: "g", in: "$$g._id" } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // An `.aggregate` HEAD peels its chain exactly like a `.filter` / lodash head.
+  // Gating the peel on the head method made the emitted shape depend on which
+  // emission site ran: `.pick` read `$getField` off the result ARRAY (returning
+  // `{}`), and `.omit`'s `$objectToArray` over an array was rejected outright by
+  // mongod — while one preceding `.sort()` lowered both to a clean `$project`.
+  describe("an .aggregate head lowers the same as an .aggregate link", () => {
+    it(".take peels to $limit in the sub-pipeline, not $slice on the result", () => {
+      expect(jsmql("$.r = $$$.orders.aggregate((o) => { $sort({ total: -1 }); }).take(5);")).toEqual(
+        chainLookup([{ $sort: { total: -1 } }, { $limit: 5 }]),
+      );
+    });
+
+    it(".pick / .omit peel to $project (they need a document receiver, not the array)", () => {
+      expect(jsmql('$.r = $$$.orders.aggregate((o) => { $sort({ total: -1 }); }).pick(["status"]);')).toEqual(
+        chainLookup([{ $sort: { total: -1 } }, { $project: { status: 1, _id: 0 } }]),
+      );
+      expect(jsmql('$.r = $$$.orders.aggregate((o) => { $sort({ total: -1 }); }).omit(["total"]);')).toEqual(
+        chainLookup([{ $sort: { total: -1 } }, { $project: { total: 0 } }]),
+      );
+    });
+
+    it(".sort after an .aggregate head is a stream sort, not the array-mutating one", () => {
+      expect(
+        jsmql("$.r = $$$.orders.aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); }).sort({ n: -1 });"),
+      ).toEqual(chainLookup([{ $group: { _id: "$status", n: { $sum: 1 } } }, { $sort: { n: -1 } }]));
+    });
+
+    it("a second .aggregate appends its stages instead of reporting an unknown method", () => {
+      expect(
+        jsmql("$.r = $$$.orders.aggregate((o) => { $limit(3); }).aggregate((o) => { $group({ _id: o.status }); });"),
+      ).toEqual(chainLookup([{ $limit: 3 }, { $group: { _id: "$status" } }]));
+    });
+
+    it("head and link forms agree stage-for-stage on the shared tail", () => {
+      const head = jsmql('$.r = $$$.orders.aggregate((o) => { $sort({ total: -1 }); }).take(2).uniqBy("status");');
+      const link = jsmql('$.r = $$$.orders.sort({ total: -1 }).aggregate((o) => { $limit(2); }).uniqBy("status");');
+      expect(head).toEqual(link);
+    });
+  });
+
+  // Argument-shape and param errors must read the same whether `.aggregate` sits
+  // at the head or after a lodash chain — the two call positions share
+  // `validateAggregateArg` / `validateAggregateParams` precisely so they can't drift.
+  describe("argument errors match the head form's wording", () => {
+    const pairs: [string, string, RegExp][] = [
+      ["expression body", "(o) => o.total", /\.aggregate\(pipeline\) needs a block body/],
+      ["trailing return", "(o) => { $limit(2); return o.total; }", /doesn't take a `return`/],
+      ["empty stage array", "[]", /an empty pipeline has nothing to run/],
+      ["4 params", "(a, b, c, d) => { $limit(1); }", /takes at most 3 parameters, got 4/],
+      ["index param used", "(o, i) => { $addFields({ k: i }); }", /has no meaning inside '\.aggregate\(/],
+      [
+        "coll param beyond .length",
+        "(o, _i, c) => { $addFields({ k: c.total }); }",
+        /only 'c\.length' \(the sub-stream count\) is available/,
+      ],
+    ];
+    for (const [label, arg, re] of pairs) {
+      it(`${label} — rejected at both call positions`, () => {
+        expect(() => jsmql(`$.r = $$$.orders.aggregate(${arg});`)).toThrow(re);
+        expect(() => jsmql(`$.r = $$$.orders.sort({ t: 1 }).aggregate(${arg});`)).toThrow(re);
+      });
+    }
+
+    it("both positions carry a real .pos for tooling", () => {
+      for (const src of [
+        "$.r = $$$.orders.aggregate((o) => o.total);",
+        "$.r = $$$.orders.sort({ t: 1 }).aggregate((o) => o.total);",
+      ]) {
+        const res = jsmql.validate(src);
+        expect(res.valid).toBe(false);
+        expect(res.errors[0].pos).toBeGreaterThan(0);
+      }
+    });
+  });
+});
+
 describe("$$$.coll.aggregate — error cases", () => {
   it("expression-body arrow is rejected (needs block or array)", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate(o => o.v);")).toThrow(/\.aggregate\(pipeline\) needs a block body/);

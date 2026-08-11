@@ -2684,37 +2684,38 @@ function tryExtractChainedLookup(
   // Resolve the foreign target and the first method index to peel:
   //   - `.filter(<pred>)` head → seed the sub-pipeline from the predicate (the head
   //     becomes the leading `$match`); peel from methods[1].
-  //   - a stream-method / `.reject` head (no `.find`/`.filter`/`.aggregate`) → seed
-  //     EMPTY and peel from methods[0]. This is the "any lodash method may start the
-  //     chain" surface (`$$$.coll.toSorted(k).take(n)…`), lowering to the lean
-  //     `.aggregate`-style `$lookup` (no `let` when uncorrelated).
-  // `.find` / `.aggregate` heads keep their existing dedicated handling.
+  //   - a stream-method / `.reject` / `.aggregate` head → seed EMPTY and peel from
+  //     methods[0]. This is the "any lodash method may start the chain" surface
+  //     (`$$$.coll.toSorted(k).take(n)…`), lowering to the lean `$lookup` (no `let`
+  //     when uncorrelated). `.aggregate` belongs here because it IS a registered
+  //     stream method — its own `lower` contributes the block's stages, so a head
+  //     `.aggregate` peels exactly like a chained one.
+  // `.find` heads keep their existing dedicated handling.
   let target: { db?: string; collection: string; pos: number };
   let start: number;
   const seedLetVars: Record<string, string> = {};
   const seedPipeline: object[] = [];
-  if (direct !== null) {
-    if (direct.method !== "filter") {
-      // `.find(<pred>)` yields a single matched DOCUMENT. Chaining an array/string/
-      // number/date method on it can never make sense — reject with a message that
-      // points at `.filter(...)` (run over all matches) or a field read. Object
-      // methods (`.pick`/`.omit`/…) and field access ARE valid on a document, so they
-      // fall through to the existing materialise-then-value-mode path (`return null`).
-      if (direct.method === "find" && methods.length > 1) {
-        const next = methods[1];
-        const fam = requiredReceiverFamily(next.method);
-        if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
-          throw new CodegenError(
-            `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. ` +
-              `Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, ` +
-              `or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
-            next.pos,
-          );
-        }
+  if (direct !== null && direct.method === "find") {
+    // `.find(<pred>)` yields a single matched DOCUMENT. Chaining an array/string/
+    // number/date method on it can never make sense — reject with a message that
+    // points at `.filter(...)` (run over all matches) or a field read. Object
+    // methods (`.pick`/`.omit`/…) and field access ARE valid on a document, so they
+    // fall through to the existing materialise-then-value-mode path (`return null`).
+    if (methods.length > 1) {
+      const next = methods[1];
+      const fam = requiredReceiverFamily(next.method);
+      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+        throw new CodegenError(
+          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. ` +
+            `Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, ` +
+            `or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+          next.pos,
+        );
       }
-      // `.aggregate` head + chain → value-mode / AGGREGATE-registry path.
-      return null;
     }
+    return null;
+  }
+  if (direct !== null && direct.method === "filter") {
     // `.filter` head — a lone `.filter` is a DIRECT lookup handled before this walker,
     // so require at least one chained method.
     if (methods.length < 2) return null;
@@ -2724,7 +2725,10 @@ function tryExtractChainedLookup(
     target = { db: direct.db, collection: direct.collection, pos: direct.pos };
     start = 1;
   } else {
-    // Stream-method / `.reject` head (`.toSorted`/`.take`/`.map`/`.reject`/…).
+    // Stream-method / `.reject` / `.aggregate` head (`.toSorted`/`.take`/`.map`/…).
+    // A lone `.aggregate` is a DIRECT lookup handled before this walker, so it only
+    // reaches here with at least one chained method to peel.
+    if (direct !== null && methods.length < 2) return null;
     const t = extractLookupTarget(cur, outerCtx);
     if (t === null) return null;
     if (!isPeelableChainMethod(head.method)) return null;

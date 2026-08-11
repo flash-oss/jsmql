@@ -653,12 +653,21 @@ $.monthlyTotals = $$$.orders.aggregate((o) => {
 //     as: "monthlyTotals" } }]
 ```
 
-`.aggregate` also **chains after `.filter`** — the filter correlates, the aggregate reshapes:
+`.aggregate` is **a link like any other**, so it composes with the rest of the chain in
+both directions — a `.filter` before it correlates, a lodash method before it bounds the
+scan, and a lodash method after it ranks the groups. Everything lands in the one
+`$lookup.pipeline` in source order:
 
 ```js
 $.byMonth = $$$.orders.filter(o => o.userId === $._id).aggregate((o) => {
   $group({ _id: { $month: o.createdAt }, total: $sum(o.amount) });
 });
+
+// Cap the scan first, group, then keep the top 3 groups — one $lookup, no
+// intermediate array: [$sort, $limit, $group, $sort, $limit]
+$.topRegions = $$$.orders.sort({ createdAt: -1 }).take(1000)
+  .aggregate((o) => { $group({ _id: o.region, revenue: $sum(o.total) }); })
+  .sort({ revenue: -1 }).take(3);
 ```
 
 The same `(element, index, collection)` params as `.filter`/`.map` apply (the index is positional-only; `coll.length` is the sub-stream count). How it differs from a block-body `.filter`: `.aggregate` is the pipeline-oriented spelling (reshape / roll up, and the array-paste form), while `.find`/`.filter` are the element-predicate spellings. Running `.aggregate(...)` on the current stream (`$$.aggregate(...)`) is rejected — just write the stages directly; it only earns its keep against a foreign collection.
