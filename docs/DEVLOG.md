@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-11 — fix: `$$.aggregate(...)` works in every container a `$$` chain reaches
+
+```
+$ = { byStatus: $$.aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); }) };
+// before: .aggregate(...) runs a sub-pipeline against a FOREIGN collection … To add
+//         stages to the CURRENT stream, write them directly.
+// now:    [{ $facet: { byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }] } }]
+```
+
+`applyStreamMethods` rejected `.aggregate` on `$$` as "a redundant spelling of writing the stages directly". That reasoning holds at a statement position and fails in a `$facet` branch, where a branch *is* a sub-pipeline and there is nothing to write directly instead — the error sent the developer to a spelling their container could not use. The rejection was also already inconsistent: an `$out` RHS accepted `$$.aggregate(...)` and always had, because that path dispatches through the stream-method registry rather than through the rejecting branch. Deleting the special case makes all four `$$` positions agree — `$facet` branch, `$$ =` stream, `$out` RHS, bare statement — and costs nothing, since two spellings of one lowering is a trade jsmql already accepts.
+
+Also fixed alongside: a `$.<field>` read inside `$$.aggregate` was rejected by a message naming `.map(d => …)` — the shared `rejectLocalDocRef` defaults its method to `"map"`, and `.aggregate` never passed its own. It now names `.aggregate` and interpolates the developer's parameter, so the example reads `'o.x'` rather than a generic `d`.
+
+---
+
 ## 2026-08-11 — fix: a pipeline stage name is rejected where a value is expected
 
 ```

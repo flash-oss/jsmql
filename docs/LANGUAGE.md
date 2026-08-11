@@ -647,7 +647,7 @@ $.byMonth = $$$.orders.filter(o => o.userId === $._id).aggregate((o) => {
 });
 ```
 
-`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept (the index is positional-only). It is the pipeline-oriented spelling — reshape, roll up, paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. Running `.aggregate(...)` on the current stream (`$$.aggregate(...)`) is rejected — write those stages directly, or chain them (`$$.$sort({ … }).$limit(10)`); `.aggregate` only earns its keep against a foreign collection.
+`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept (the index is positional-only). It is the pipeline-oriented spelling — reshape, roll up, paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` works on the current stream too (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly or chaining them (`$$.$sort({ … }).$limit(10)`) does. It earns its keep there in a [`$facet` branch](#facet-via---key--chain-), which *is* a sub-pipeline and so has no "write them directly" alternative.
 
 **The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.length` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
 
