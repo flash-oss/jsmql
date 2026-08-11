@@ -8,6 +8,7 @@
 // docs/specs/replace-root-stage.md).
 
 import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
+import { STREAM_STAGE_REWRITE } from "./callback-block.ts";
 import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import {
   localRefInPredicateMessage,
@@ -17,7 +18,7 @@ import {
   type SubPipelineLowerer,
   type SlotAllocator,
 } from "./lookup-translation.ts";
-import { lookupStreamMethod, streamMethodNames } from "./stream-methods.ts";
+import { prepareStreamArgs, lookupStreamMethod, streamMethodNames } from "./stream-methods.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { checkStageLinkPlacement, isStageLink, stageLinkBlock, stageLinkBody } from "./stage-link.ts";
 
@@ -295,10 +296,10 @@ function lowerChainMethod(
   }
   const def = lookupStreamMethod(call.method);
   if (def !== null) {
-    def.validate(call.args, call.pos);
+    const args = prepareStreamArgs(def, call.args, call.pos, STREAM_STAGE_REWRITE);
     // `inSubPipeline = false` — `$out` chains live at the outer pipeline level,
     // not inside a `$unionWith.pipeline` body.
-    const result = def.lower(call.args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
+    const result = def.lower(args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
     return { stages: result.stages };
   }
   // Method in neither the stage-link form nor the stream-methods registry. Suggest a
@@ -356,14 +357,14 @@ function lowerFilterAsMatch(
     );
   }
   const predicate = requireStreamPredicate(call.args[0], { method, position: OUT_PREDICATE_POSITION, pos: call.pos });
-  // `.reject` negates the same predicate `.filter` would have matched. A block body
+  // `.reject` negates the same predicate `.filter` would have matched. A `$let` body
   // has no single expression to invert, so that combination is rejected rather than
   // silently dropping the negation.
   const arg = method === "reject" ? negateStreamPredicate(predicate) : predicate;
   if (arg === null) {
     throw new CodegenError(
       `'$$.reject(<predicate>)' ${OUT_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
-        `a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
+        `a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
         `or use a block-bodied '$$.filter' with the inverted condition.`,
       predicate.pos,
     );
@@ -382,7 +383,7 @@ function lowerFilterAsMatch(
     },
     missingBody: () => {
       throw new CodegenError(
-        `'$$.${method}(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
+        `'$$.${method}(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
         arg.pos,
       );
     },

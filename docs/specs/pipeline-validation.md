@@ -204,9 +204,9 @@ it runs first, in the loop validator.
 beside the predicate lowering it feeds) is the **single** entry point for the argument of a
 local `$$.filter(…)` / `$$.reject(…)`. It normalises every predicate spelling — arrow,
 block body returning the predicate, matches-object, field name, `["field", value]` pair —
-into the single-parameter arrow the lowering consumes, and enforces that arity. (The block
-spelling is canonicalised by `canonicalPredicateLambda`; see
-[lookup-stage.md](lookup-stage.md) § Canonical predicate form.) It is the local-stream counterpart to what
+into the single-parameter arrow the lowering consumes, and enforces that arity. (A block body
+is folded to its value form by `callbackBlockToValue`; see
+[method-dispatch.md](method-dispatch.md) § Callback block bodies.) It is the local-stream counterpart to what
 `detectLookupCall` + `validateLookupShape` already do for the foreign `$$$.<coll>.filter(…)`
 side.
 
@@ -234,10 +234,10 @@ Forbidden-in-context is enforced for **literal** sub-pipeline arrays
 (`{ $facet: { … } }`, `{ $lookup: { pipeline: […] } }`,
 `{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`, and the
 all-container write stages are enforced everywhere (previous section). What remains is the
-stage that just **one** container forbids — a diagnostic, `forbiddenIn: ["facet"]` — inside a
-**sugar predicate block-body** lambda (`$$$.c.filter(o => { … })`). Such a stage still gets
-must-first / must-last validation but not the container ban, because the shared `lowerBlock`
-lowerer runs `generateImplicitPipeline` with `container: "top"`. A container label there needs
+stage that just **one** container forbids — a diagnostic, `forbiddenIn: ["facet"]` — inside an
+**`.aggregate` block** (`$$$.c.aggregate(o => { … })`). Such a stage still gets must-first /
+must-last validation but not the container ban, because the shared `lowerBlock` lowerer runs
+`generateImplicitPipeline` with `container: "top"`. A container label there needs
 per-call-site threading, deferred to `[DEF-024]` — `lowerBlock` also serves
 predicate→`$match` translation, which emits top-level stages, so one fixed label would
 mislabel those. The literal-array path covers the common case and this gap never produces a

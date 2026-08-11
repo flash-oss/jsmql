@@ -25,6 +25,14 @@ import type {
 } from "./ast.ts";
 import { someArg, someExpr, someStmt } from "./ast-walk.ts";
 import {
+  aggregateRewrite,
+  callbackBlockToValue,
+  requireStageFreeCallback,
+  STREAM_STAGE_REWRITE,
+  tryCallbackBlockToValue,
+  type StageRewrite,
+} from "./callback-block.ts";
+import {
   CodegenError,
   EMPTY_CTX,
   generateWithCtx,
@@ -41,6 +49,7 @@ import { didYouMean } from "./levenshtein.ts";
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
 import {
+  prepareStreamArgs,
   fromTheEndRejection,
   lookupStreamMethod,
   streamMethodNames,
@@ -88,7 +97,7 @@ export type EnclosingLookupContext = {
   /**
    * The live `LetAllocator` of each enclosing lookup, indexed by scope depth
    * (`parentAllocators[L]` = the lookup at depth L). Threaded ONLY through the
-   * block-body path (where enclosing refs survive as `ParamRef`s, so their
+   * `.aggregate`-block path (where enclosing refs survive as `ParamRef`s, so their
    * scope level is recoverable). A reference to scope level K — root (`$.x`,
    * K = −1), an ancestor foreign param (`outer.x`, K = that param's level), or
    * an ancestor handle — is captured ONCE at the level-(K+1) allocator (its
@@ -100,10 +109,10 @@ export type EnclosingLookupContext = {
    */
   parentAllocators?: ReadonlyArray<LetAllocator>;
   /**
-   * Sub-stream length handles (3rd `.map`/`.filter` param) bound by the enclosing
+   * Sub-stream length handles (3rd `.aggregate` param) bound by the enclosing
    * lookups: handle name → the scope depth where it is defined. Lets a nested
-   * block-body `.map`/`.filter` capture an ancestor `<handle>.length` into its own
-   * `$lookup.let`. Block-body path only.
+   * `.aggregate` block capture an ancestor `<handle>.length` into its own
+   * `$lookup.let`. `.aggregate`-block path only.
    */
   parentHandles?: ReadonlyMap<string, number>;
 };
@@ -282,12 +291,23 @@ export type LookupCall = {
   method: "find" | "filter" | "aggregate";
   /**
    * The lambda that becomes the `$lookup.pipeline`. For `.find`/`.filter` it's
-   * the predicate arrow (expression-body OR block-body). For `.aggregate` it's
-   * the block-body arrow; a stage-array literal argument is normalised to a
-   * synthetic zero-parameter block lambda by `aggregateArgToLambda`.
+   * the predicate — always in value form, since a `{ … }` predicate body is folded
+   * back to the expression it returns. For `.aggregate` it's the block-body arrow;
+   * a stage-array literal argument is normalised to a synthetic zero-parameter
+   * block lambda by `aggregateArgToLambda`.
    */
   lambda: Lambda;
 };
+
+/**
+ * Spell a detected lookup call's receiver the way the developer wrote it — the
+ * concrete `$$$.orders` / `$$$$.reporting.orders`, not the `$$$.<coll>` placeholder
+ * `classifyLookupReceiver` yields from an unresolved chain. Used wherever an error
+ * offers a rewrite on the same receiver.
+ */
+export function formatLookupReceiver(call: { db?: string; collection: string }): string {
+  return call.db !== undefined ? `$$$$.${call.db}.${call.collection}` : `$$$.${call.collection}`;
+}
 
 /** One step of static (dot, string-bracket, or bound-param-bracket) member access on a receiver. */
 type StaticAccess = { name: string; object: Expr };
@@ -439,15 +459,17 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
   // materialisation, cross-DB gate) treats every spelling identically.
   // A malformed argument (expression-body arrow, spread-bearing array, empty
   // matcher) returns null here; `validateLookupShape` surfaces the actionable error.
-  // A predicate written `o => { return X; }` normalises to `o => X` here, so it
-  // reaches `tryBasicForm` and takes the indexed `localField`/`foreignField` route
-  // the expression spelling gets. `.aggregate` is exempt: its `return` reshapes the
-  // document (`$replaceWith`), so the block is the meaning there, not a predicate.
+  //
+  // `.find`/`.filter` take a JavaScript predicate, so a `{ … }` body is a JS value
+  // block: `tryCallbackBlockToValue` folds it back to the expression it returns, and
+  // a stage-bearing block passes through untouched for `validateLookupShape` /
+  // `translatePredicate` to reject (detection stays side-effect-free — this function
+  // also runs from the mode-gate and position probes).
   const lambda =
     method === "aggregate"
       ? aggregateArgToLambda(arg)
       : arg.type === "Lambda"
-        ? canonicalPredicateLambda(arg)
+        ? tryCallbackBlockToValue(arg)
         : predicateArgToLambda(arg, method);
   if (lambda === null) return null;
   return { pos: target.pos, callPos: expr.pos, db: target.db, collection: target.collection, method, lambda };
@@ -544,7 +566,21 @@ const FOREIGN_SHORTHAND_PARAM = exprVar("item");
  * lower a matches-object through the raw-query path (emitting `{ a: { $add: … } }`,
  * which mongod rejects) while `$out` rejected the same spelling outright.
  */
-export function requireStreamPredicate(arg: CallArg, opts: { method: string; position: string; pos: number }): Lambda {
+export function requireStreamPredicate(
+  arg: CallArg,
+  opts: {
+    method: string;
+    position: string;
+    pos: number;
+    /**
+     * Where pipeline stages go in THIS position, for the callback-block rejection.
+     * Defaults to the chained-stage spelling, right for every `$$`-rooted container;
+     * a `$$$.<coll>`-rooted chain (the `$$ = $$$.<coll>.…` source switch) passes
+     * `aggregateRewrite(<receiver>)` instead.
+     */
+    rewrite?: StageRewrite;
+  },
+): Lambda {
   const { method, position } = opts;
   const spell = `'$$.${method}(<predicate>)' ${position}`;
   // A real arrow passes through; every other spelling desugars. `shorthandToLambda`
@@ -571,7 +607,8 @@ export function requireStreamPredicate(arg: CallArg, opts: { method: string; pos
       lambda.pos,
     );
   }
-  return canonicalPredicateLambda(lambda);
+  // A predicate's `{ … }` body is a JavaScript value block.
+  return callbackBlockToValue(lambda, { method, rewrite: opts.rewrite ?? STREAM_STAGE_REWRITE });
 }
 
 /**
@@ -611,86 +648,18 @@ export function localRefInPredicateMessage(opts: {
  * Negate a normalised predicate lambda — the `.reject` half of the `.filter`/
  * `.reject` pair. Lives beside the gate so every container negates identically:
  * `o => !(<body>)`, which lowers to `$match: { $expr: { $not: … } }` (no query-form
- * De Morgan, which jsmql rejects project-wide).
- *
- * A block body whose only content is `return X` counts as the expression form,
- * because in JavaScript it IS the same function. Returns null for a block that
- * holds real statements — a stage or a binding leaves no single expression to
- * invert, and `.filter(o => !(…))` is the spelling for that.
+ * De Morgan, which jsmql rejects project-wide). Returns null for a block body,
+ * which has no single expression to negate.
  */
 export function negateStreamPredicate(lambda: Lambda): Lambda | null {
-  const body = canonicalPredicateLambda(lambda).body;
-  if (body === undefined) return null;
+  if (lambda.body === undefined) return null;
   const pos = lambda.pos;
-  return { type: "Lambda", params: lambda.params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
-}
-
-/**
- * Put a predicate lambda in canonical form, so a terminal `return` never goes
- * unread. In JavaScript `o => { …; return X; }` filters by X — the return IS the
- * predicate — and `o => { return X; }` is the very same function as `o => X`. Two
- * spellings of one function must emit one shape, so:
- *
- *   - **`{ return X; }` alone** → the expression lambda `o => X`. It then reaches
- *     the same basic-form detection (`tryBasicForm`, the indexed
- *     `localField`/`foreignField` route), the same translation, and the same
- *     `.reject` negation the expression spelling gets.
- *   - **statements + `return X`** → the block, with `X` appended as a synthetic
- *     `$match(X)` statement. There the block is the meaning, and as a statement the
- *     return rides the caller's own parameter rewrite (`extractLetsFromPipeline`,
- *     which hoists `o.<field>` and captures an outer `$.<field>` into `$lookup.let`)
- *     plus the ordinary `$match` lowering — so there is no second predicate path to
- *     drift from the first.
- *   - **anything else** → unchanged.
- *
- * `.map`'s counterpart is `lowerCallbackBlock`'s `terminalRet`, appended as the
- * root-replace `$ = <ret>`; `.aggregate` keeps its block, whose `return` reshapes
- * the document rather than filtering it.
- *
- * Idempotent, and cheap on the common path (an expression body returns at once), so
- * **every** entry point that receives a predicate lambda calls it — the gates
- * (`requireStreamPredicate`, `chainFilterLambda`, `detectLookupCall`), the two
- * lowering sinks (`translatePredicate`, `buildPipelineFormPredicate`), and the
- * correlation probe (`predicateReferencesOuterDoc`). A predicate that reaches a
- * lowering by some other route is canonicalised there rather than silently losing
- * its return.
- */
-export function canonicalPredicateLambda(lambda: Lambda): Lambda {
-  const sole = soleReturnExpr(lambda);
-  if (sole !== undefined) return { type: "Lambda", params: lambda.params, body: sole, pos: lambda.pos };
-  if (lambda.ret === undefined || lambda.block === undefined) return lambda;
-  const ret = lambda.ret;
-  // Same shape a hand-written `$match(<body>);` statement parses to (see
-  // `stageLinkBlock`), so it lowers through the ordinary stage path.
-  const matchStmt: Expr = {
-    type: "OperatorCall",
-    name: "$match",
-    style: ret.type === "ObjectLiteral" ? "object" : "positional",
-    args: [ret],
-    pos: ret.pos,
-  };
   return {
     type: "Lambda",
     params: lambda.params,
-    block: { type: "Pipeline", stmts: [...lambda.block.stmts, matchStmt], pos: lambda.block.pos },
-    pos: lambda.pos,
+    body: { type: "UnaryExpr", op: "!", operand: lambda.body, pos },
+    pos,
   };
-}
-
-/**
- * The `X` of a body that is nothing but `return X;`. Predicate positions parse a
- * block two ways — as a callback block of statements (`.filter`, which allows
- * stages) or as an expression block (`.reject`, which does not) — so both shapes
- * are checked. Undefined once the body holds a statement or a binding.
- */
-function soleReturnExpr(lambda: Lambda): Expr | undefined {
-  if (lambda.block !== undefined && lambda.ret !== undefined) {
-    return lambda.block.stmts.length === 0 ? lambda.ret : undefined;
-  }
-  if (lambda.exprBlock !== undefined) {
-    return lambda.exprBlock.decls.length === 0 ? lambda.exprBlock.ret : undefined;
-  }
-  return undefined;
 }
 
 /**
@@ -846,11 +815,28 @@ function walkArgsContainLookup(args: CallArg[], ctx: GenerateCtx): boolean {
  * generic codegen one.
  */
 function classifyLookupReceiver(receiver: Expr): { spelling: string } | null {
+  // Names are collected outermost-first, so they read back reversed. A hop whose
+  // name isn't a compile-time string (`$$$[someVar]`) leaves `names` empty and the
+  // spelling falls back to the placeholder — an error must never quote a receiver
+  // the developer did not write.
+  const names: string[] = [];
   let node: Expr = receiver;
+  let resolved = true;
   for (;;) {
-    if (node.type === "DatabaseRef") return { spelling: "$$$.<coll>" };
-    if (node.type === "ClusterRef") return { spelling: "$$$$.<db>.<coll>" };
-    if (node.type === "MemberAccess" || node.type === "IndexAccess") {
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef") {
+      const placeholder = node.type === "DatabaseRef" ? "$$$.<coll>" : "$$$$.<db>.<coll>";
+      const root = node.type === "DatabaseRef" ? "$$$" : "$$$$";
+      const spelling = resolved && names.length > 0 ? [root, ...names.reverse()].join(".") : placeholder;
+      return { spelling };
+    }
+    if (node.type === "MemberAccess") {
+      names.push(node.member);
+      node = node.object;
+      continue;
+    }
+    if (node.type === "IndexAccess") {
+      if (node.index.type === "StringLiteral") names.push(node.index.value);
+      else resolved = false;
       node = node.object;
       continue;
     }
@@ -916,32 +902,31 @@ export function validateLookupShape(expr: Expr): void {
       "pos" in arg ? arg.pos : expr.pos,
     );
   }
+  // A JavaScript predicate's `{ … }` body is a JS value block, never a sub-pipeline.
+  // Called for its throws only — `detectLookupCall` owns the normalisation, so that
+  // every consumer sees the folded lambda whether or not it came through here.
+  callbackBlockToValue(arg, { method: expr.method, rewrite: aggregateRewrite(spell) });
   if (arg.params.length !== 1) {
-    // `.find` keeps the single-param rule; only `.filter` accepts up to 3
-    // (element, index, collection).
-    if (expr.method !== "filter" || arg.params.length > 3) {
+    // `(element, index, array)` is the JavaScript signature both `.find` and
+    // `.filter` take, so the extra params may be PRESENT (`(s, _i, _coll) => …` is
+    // valid JS and compiles) — they just have nothing to hold: a predicate runs per
+    // candidate document, so there is no index and the filtered sub-stream doesn't
+    // exist yet. A *used* one is rejected and pointed at `.aggregate`, whose 3rd
+    // param IS the sub-stream count handle.
+    if (arg.params.length > 3) {
       throw new CodegenError(
-        `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
+        `.${expr.method}(predicate) takes at most 3 parameters '(element, index, array)', got ${arg.params.length}.`,
         arg.pos,
       );
     }
-    // Block-body `.filter`: the 3rd is the post-filter sub-stream handle (only
-    // `.length`) and the index is positional-only. Detailed checks run in
-    // buildBlockBodyPredicate.
-    if (arg.block === undefined && arg.body !== undefined) {
-      // Expression-body predicate: the filtered sub-stream doesn't exist yet
-      // while the predicate runs, so the extra params may be PRESENT (it's valid
-      // JS — `(s, _i, _coll) => …`) but must be UNUSED. A *used* index/array
-      // param redirects to the block-body form.
-      for (let p = 1; p < arg.params.length; p++) {
-        if (someExpr(arg.body, (e) => e.type === "ParamRef" && e.name === arg.params[p])) {
-          throw new CodegenError(
-            `'${arg.params[p]}' (the ${p === 1 ? "index" : "array"} parameter) has no meaning on a '.filter' predicate — ` +
-              `the filtered sub-stream doesn't exist yet while the predicate runs. For its post-filter count, use a block body and the 3rd param, ` +
-              `e.g. \`.filter((${arg.params[0]}, _i, coll) => { $match(...); assert(coll.length > 0, "…"); })\`.`,
-            arg.pos,
-          );
-        }
+    for (let p = 1; p < arg.params.length; p++) {
+      if (someExpr(arg, (e) => e.type === "ParamRef" && e.name === arg.params[p])) {
+        throw new CodegenError(
+          `'${arg.params[p]}' (the ${p === 1 ? "index" : "array"} parameter) has no meaning on a '.${expr.method}' predicate — ` +
+            `the filtered sub-stream doesn't exist yet while the predicate runs. For its count, use \`.aggregate\` and its 3rd param, ` +
+            `e.g. \`${spell}.aggregate((${arg.params[0]}, _i, coll) => { $match(...); assert(coll.length > 0, "…"); })\`.`,
+          arg.pos,
+        );
       }
     }
   }
@@ -1143,7 +1128,7 @@ export function createSlotAllocator(): SlotAllocator {
 type ClassifiedPath =
   | { kind: "local"; segments: string[] }
   | { kind: "foreign"; segments: string[] }
-  // A path rooted at an ENCLOSING lookup's foreign param (block-body path only,
+  // A path rooted at an ENCLOSING lookup's foreign param (`.aggregate`-block path only,
   // where these survive as `ParamRef`s). `level` is the scope depth of that
   // param (its index in `enclosingParams`); the resolver captures it at the
   // level-(`level`+1) allocator. See `LetAllocator.allocateAncestorForeign`.
@@ -1250,14 +1235,11 @@ export function translatePredicate(
   enclosingArg?: EnclosingLookupContext,
 ): BasicFormPredicate | PipelineFormPredicate {
   // When the caller (pipeline.ts dispatch) passes no explicit enclosing, fall
-  // back to the ctx carrier — set by an outer block-body lookup so a nested
+  // back to the ctx carrier — set by an outer `.aggregate` block so a nested
   // lookup reached through `lowerBlock` knows it is nested. See
-  // docs/specs/lookup-stage.md § Block-body nested lookups.
+  // docs/specs/lookup-stage.md § Nested lookups inside an `.aggregate` block.
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
-  // Canonical first: callers that hand-roll a `LookupCall` (the `$$ =` pivot builds
-  // one from the raw chain method) never passed through a gate, so this is where a
-  // terminal `return` is guaranteed to be read.
-  const lambda = canonicalPredicateLambda(call.lambda);
+  const { lambda } = call;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
 
@@ -1322,14 +1304,20 @@ export function translatePredicate(
     return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
 
-  // ── Block body ─────────────────────────────────────────────────────
+  // ── Block body: `.aggregate`'s sub-pipeline ────────────────────────
   if (lambda.block !== undefined) {
+    // Stages belong to `.aggregate(pipeline)` alone. `validateLookupShape` normally
+    // rejects a `.find`/`.filter` block first; this is the lowering-level guarantee
+    // that no path can reach the sub-pipeline engine through a JavaScript callback.
+    if (call.method !== "aggregate") {
+      requireStageFreeCallback(lambda, { method: call.method, rewrite: aggregateRewrite(formatLookupReceiver(call)) });
+    }
     const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock, enclosing);
     return { kind: "pipeline", letVars, pipeline };
   }
 
   throw new CodegenError(
-    `.${call.method}(predicate) predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
+    `.${call.method}(predicate) predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
     lambda.pos,
   );
 }
@@ -1341,9 +1329,10 @@ function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): Gener
 }
 
 /**
- * Lower a block-body predicate (`o => { $match(...); $sort(...); ... }`) into a
- * `$lookup.pipeline` stage list. Shared by `translatePredicate` and
- * `buildPipelineFormPredicate` — the full multi-stage sub-pipeline surface.
+ * Lower an `.aggregate` block (`o => { $match(...); $sort(...); ... }`) into a
+ * `$lookup.pipeline` stage list — the full multi-stage sub-pipeline surface. A
+ * JavaScript callback never reaches here: `.find`/`.filter`/`.map` blocks are folded
+ * to their value form (or rejected) by `src/callback-block.ts` first.
  *
  * Mirrors the expression-body path's two-step nesting:
  *   1. Rewrite refs to ENCLOSING foreign params into local `FieldRef`s so this
@@ -1363,63 +1352,24 @@ function buildBlockBodyPredicate(
   lowerBlock: SubPipelineLowerer,
   enclosing: EnclosingLookupContext,
 ): { letVars: Record<string, string>; pipeline: object[] } {
-  // Caller guarantees a CANONICAL block lambda (`canonicalPredicateLambda`), so a
-  // terminal `return` is already a `$match` statement here and the parameter checks
-  // below see it like any other.
-  const block = lambda.block as Pipeline;
-  const foreignParam = lambda.params[0];
-  // 2nd/3rd params on a block-body `.filter` — (element, index, collection).
-  // The index has no per-doc meaning on a stream; the collection is the
-  // post-filter sub-stream and only `<coll>.length` (its count) is available.
-  const indexParam = lambda.params.length >= 2 ? lambda.params[1] : undefined;
+  // `(element, index, collection)`: the index has no per-doc meaning on a stream,
+  // and only `<coll>.length` (the sub-stream count) is available. One check, shared
+  // with the head/chain validators, so the wording can't drift between them.
+  validateAggregateParams(lambda);
   const collParam = lambda.params.length === 3 ? lambda.params[2] : undefined;
-  const blockUses = (pred: (e: Expr) => boolean): boolean => block.stmts.some((s) => someStmt(s, pred));
-
-  if (indexParam !== undefined && blockUses((e) => e.type === "ParamRef" && e.name === indexParam)) {
-    throw new CodegenError(
-      `'${indexParam}' (the 2nd, index parameter) has no meaning inside a '.filter((${foreignParam}, ${indexParam}, …) => …)' block — MongoDB streams have no per-doc index. ` +
-        `Keep it unused (e.g. '(${foreignParam}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
-      lambda.pos,
-    );
-  }
-  if (collParam !== undefined) {
-    let total = 0;
-    let lengthUses = 0;
-    blockUses((e) => {
-      if (e.type === "ParamRef" && e.name === collParam) total++;
-      if (
-        e.type === "MemberAccess" &&
-        e.member === "length" &&
-        e.object.type === "ParamRef" &&
-        e.object.name === collParam
-      ) {
-        lengthUses++;
-      }
-      return false; // visit all
-    });
-    if (total > lengthUses) {
-      throw new CodegenError(
-        `In '.filter((${foreignParam}, _i, ${collParam}) => { … })', only '${collParam}.length' (the post-filter sub-stream count) is available — ` +
-          `there's no materialised array to index or iterate inside the lookup pipeline.`,
-        lambda.pos,
-      );
-    }
-  }
-
   return lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock, enclosing, { collParam });
 }
 
 /**
- * Shared sub-pipeline lowerer for a callback statement-block body — the single
- * engine behind a block-body `.filter` predicate (`buildBlockBodyPredicate`)
- * AND a statement-block `.map` chain method (`stream-methods.ts`). The ONLY
- * difference between them is the `opts.terminalRet`: `.map` passes its `return`
- * expression, appended as the root-replace statement `$ = <ret>` (a synthetic
- * `UpdateFilter` that `lowerBlock` turns into `$replaceWith`); `.filter` passes
- * none. Everything else — cross-level capture, the 3rd-param length handle,
- * nested-lookup enclosing — is identical, so the two stay in lock-step.
+ * Shared sub-pipeline lowerer for an `.aggregate` block — the single engine behind
+ * the head form (`buildBlockBodyPredicate`) AND the chained form (the `AGGREGATE`
+ * stream method in `stream-methods.ts`). The ONLY difference between them is the
+ * `opts.terminalRet`: a root-replace terminal (`$ = <expr>`, a synthetic
+ * `UpdateFilter` that `lowerBlock` turns into `$replaceWith`). Everything else —
+ * cross-level capture, the 3rd-param length handle, nested-lookup enclosing — is
+ * identical, so the two stay in lock-step.
  *
- * Cross-level capture (block-body only — see `EnclosingLookupContext`): a fresh
+ * Cross-level capture (see `EnclosingLookupContext`): a fresh
  * `LetAllocator` is seeded with this scope's depth, the enclosing foreign params,
  * and the enclosing allocators, so `transformExpr` resolves a root read (`$.x`)
  * or an ancestor-foreign read (`outer.x`) to its correct ancestor level instead
@@ -1495,14 +1445,17 @@ export function lowerCallbackBlock(
  * supplied `lowerBlock` for the full sub-pipeline shape.
  */
 export function buildPipelineFormPredicate(
-  lambdaArg: Lambda,
+  lambda: Lambda,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
   enclosingArg?: EnclosingLookupContext,
+  predicate: { method: string; receiver: string } = { method: "filter", receiver: "$$$.<coll>" },
 ): { letVars: Record<string, string>; pipelineBody: object[] } {
-  // Canonical first, for the same reason `translatePredicate` does it — this is a
-  // lowering sink reachable from callers that build their own predicate lambda.
-  const lambda = canonicalPredicateLambda(lambdaArg);
+  // Every caller arrives with a PREDICATE lambda — a `.filter` / `.reject` head or
+  // chain link — so its `{ … }` body is JavaScript, never a sub-pipeline. The chain
+  // head reaches here straight from `detectLookupCall` (which normalises but never
+  // throws), so this is where a stage-bearing head block is caught.
+  lambda = callbackBlockToValue(lambda, { method: predicate.method, rewrite: aggregateRewrite(predicate.receiver) });
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
@@ -1554,14 +1507,15 @@ export function buildPipelineFormPredicate(
  * any `$.<field>` paths OR outer-let references in the body that would be
  * hoisted into `$lookup.let` vars, this returns true.
  */
-export function predicateReferencesOuterDoc(lambdaArg: Lambda, outerCtx: GenerateCtx): boolean {
-  if (lambdaArg.params.length !== 1) return false;
-  const foreignParam = lambdaArg.params[0];
+export function predicateReferencesOuterDoc(rawLambda: Lambda, outerCtx: GenerateCtx): boolean {
+  if (rawLambda.params.length !== 1) return false;
+  // Fold a callback block to its value form first, as `detectLookupCall` does. The
+  // probe must see what the lowering sees: a `$.<field>` read inside
+  // `.filter(o => { return o.uid === $._id; })` correlates the chain exactly as the
+  // expression spelling does. The non-throwing half keeps this a detection site.
+  const lambda = tryCallbackBlockToValue(rawLambda);
+  const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
-  // Canonical, so a terminal `return` counts: an outer-doc ref there correlates the
-  // predicate exactly as one in a statement does, and the wrong answer here picks a
-  // lowering with no `let` slot to carry the correlation.
-  const lambda = canonicalPredicateLambda(lambdaArg);
   if (lambda.body !== undefined) {
     const { letVars } = extractLetsFromExpr(lambda.body, foreignParam, outerLets);
     return Object.keys(letVars).length > 0;
@@ -1628,7 +1582,7 @@ type LetAllocator = {
   depth: number;
   /** Foreign-param names of the enclosing lookups, indexed by their scope
    * depth (`enclosingParams[L]` = the param of the lookup at depth L). Only
-   * populated in the block-body path; see `EnclosingLookupContext.parentAllocators`. */
+   * populated in the `.aggregate`-block path; see `EnclosingLookupContext.parentAllocators`. */
   enclosingParams: readonly string[];
   /** Live allocator of each enclosing lookup, indexed by depth. */
   parents: readonly LetAllocator[];
@@ -1649,7 +1603,7 @@ type LetAllocator = {
    */
   allocateForOuterLet: (segments: string[], fieldPath: string) => string;
   /**
-   * A ROOT-document read (`$.x`) seen inside a nested lookup (block-body path).
+   * A ROOT-document read (`$.x`) seen inside a nested lookup (`.aggregate`-block path).
    * The root doc is the top-level pipeline's current doc; the outermost lookup
    * (depth 0) is the level whose `$lookup.let` evaluates against it, so the
    * capture lands in `parents[0]` (or this allocator at depth 0) as
@@ -1657,7 +1611,7 @@ type LetAllocator = {
    * `$$jsmql_f0_x` via `$$` propagation. */
   allocateRootField: (segments: string[]) => string;
   /**
-   * A read of an ENCLOSING foreign param at scope level K (`outer.x`, block-body
+   * A read of an ENCLOSING foreign param at scope level K (`outer.x`, `.aggregate`-block
    * path). Captured at the level-(K+1) lookup (whose `let` evaluates against
    * level-K's documents) as `jsmql_f<K+1>_x = "$x"`; for the immediate parent
    * (K = depth−1) that target is THIS allocator (unchanged from before). */
@@ -1799,20 +1753,24 @@ export function matchStagesFromTranslation(t: MatchTranslation, subCtx: Generate
 }
 
 /**
- * Lower a single-parameter predicate lambda — the foreign/current document is
- * the param — into sub-pipeline stages. Shared by the `$unionWith`, `$facet`,
- * and `$out` translators, which differ only in (a) the message thrown when the
- * predicate references the *local* doc (`$.<field>`, which would need a `let`
- * slot the target stage lacks) and (b) which fresh sub-pipeline ctx they build.
- * Both are injected; the expr-body / block-body / missing-body skeleton and the
- * `$match` emission are identical and live here.
+ * Lower a single-parameter lambda — the foreign/current document is the param —
+ * into sub-pipeline stages. Shared by the `$unionWith`, `$facet`, and `$out`
+ * translators, which differ only in (a) the message thrown when the lambda
+ * references the *local* doc (`$.<field>`, which would need a `let` slot the
+ * target stage lacks) and (b) which fresh sub-pipeline ctx they build. Both are
+ * injected; the expression-body / block / missing-body skeleton and the `$match`
+ * emission are identical and live here.
+ *
+ * An expression body is a predicate (→ one `$match`). A **block** reaches here only
+ * from an `.aggregate(pipeline)` union source — a predicate's block body is folded to
+ * its value form long before this, by `requireStreamPredicate` / `detectLookupCall`.
  *
  * The caller validates the lambda's parameter count first (with its own
  * stage-specific message) — this helper assumes `lambda.params[0]` is the
  * document parameter.
  */
 export function lowerLambdaPredicate(
-  lambdaArg: Lambda,
+  lambda: Lambda,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
   opts: {
@@ -1821,10 +1779,6 @@ export function lowerLambdaPredicate(
     missingBody: () => never;
   },
 ): object[] {
-  // Canonical before the shape test: `o => { return X; }` takes the expression
-  // branch below (identical to `o => X`), and a block that keeps its statements
-  // carries the `return` as a trailing `$match`.
-  const lambda = canonicalPredicateLambda(lambdaArg);
   const param = lambda.params[0];
 
   // Expression body → query-language translation + `$match`.
@@ -1977,7 +1931,7 @@ function transformExpr(
           expr.pos,
         );
       }
-      // `$.x` is a ROOT-document read. In the block-body path inside a nested
+      // `$.x` is a ROOT-document read. In the `.aggregate`-block path inside a nested
       // lookup (enclosingParams non-empty), capture it at the outermost lookup
       // (`allocateRootField` → `jsmql_f0_x`) so it resolves to the root doc, not
       // this level's input. At the top level / expression-body path it stays a
@@ -2631,7 +2585,7 @@ function isCollapsingTerminal(m: MethodCall): boolean {
  * `buildPipelineFormPredicate`, which lowers it to a `$lookup.pipeline` `$match`
  * and hoists any `$.<field>` correlation into the `$lookup.let`.
  */
-function chainFilterLambda(m: MethodCall): Lambda {
+function chainFilterLambda(m: MethodCall, receiver: string): Lambda {
   const rejectHint =
     m.method === "reject" ? `, a matches-object ('{ active: true }'), a field name, or a ["field", value] pair` : "";
   if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
@@ -2639,7 +2593,9 @@ function chainFilterLambda(m: MethodCall): Lambda {
   }
   const arg = m.args[0];
   const raw = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
-  const base = raw === null ? null : canonicalPredicateLambda(raw);
+  // A predicate's `{ … }` body is a JavaScript value block, never a sub-pipeline.
+  const base =
+    raw === null ? null : callbackBlockToValue(raw, { method: m.method, rewrite: aggregateRewrite(receiver) });
   if (base === null || base.params.length !== 1) {
     throw new CodegenError(
       `.${m.method}(<predicate>) takes a single-parameter arrow ('o => …')${rejectHint}.`,
@@ -2647,13 +2603,15 @@ function chainFilterLambda(m: MethodCall): Lambda {
     );
   }
   if (m.method === "reject") {
-    // The shared negation, so the foreign half and the local `$$.reject` half
-    // accept exactly the same predicate shapes.
-    const negated = negateStreamPredicate(base);
-    if (negated === null) {
+    if (base.body === undefined) {
       throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => …').`, base.pos);
     }
-    return negated;
+    return {
+      type: "Lambda",
+      params: base.params,
+      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
+      pos: base.pos,
+    };
   }
   return base;
 }
@@ -2666,12 +2624,16 @@ function chainFilterLambda(m: MethodCall): Lambda {
  */
 function lowerForeignChainFilter(
   m: MethodCall,
+  receiver: string,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
   enclosing: EnclosingLookupContext,
 ): { letVars: Record<string, string>; stages: object[] } {
-  const lambda = chainFilterLambda(m);
-  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock, enclosing);
+  const lambda = chainFilterLambda(m, receiver);
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock, enclosing, {
+    method: m.method,
+    receiver,
+  });
   return { letVars, stages: pipelineBody };
 }
 
@@ -2696,6 +2658,7 @@ export function peelForeignChain(
   innerCtx: GenerateCtx,
   pipelineBody: object[],
   letVars: Record<string, string>,
+  receiver: string,
 ): void {
   // Temp-field cleanup runs once after the whole chain — see StreamMethodResult.
   const cleanup: object[] = [];
@@ -2720,18 +2683,18 @@ export function peelForeignChain(
       continue;
     }
     if (m.method === "filter" || m.method === "reject") {
-      const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock, enclosing);
+      const { letVars: fLets, stages } = lowerForeignChainFilter(m, receiver, outerCtx, lowerBlock, enclosing);
       Object.assign(letVars, fLets);
       pipelineBody.push(...stages);
       continue;
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) continue; // caller pre-validated the chain; defensive no-op
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(receiver));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
     pipelineBody.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
-    // A block-body `.map` may capture cross-level reads into THIS lookup's let.
+    // A chained `.aggregate` may capture cross-level reads into THIS lookup's let.
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
   }
   pipelineBody.push(...cleanup);
@@ -2806,7 +2769,10 @@ function tryExtractChainedLookup(
     // `.filter` head — a lone `.filter` is a DIRECT lookup handled before this walker,
     // so require at least one chained method.
     if (methods.length < 2) return null;
-    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock, enclosing);
+    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock, enclosing, {
+      method: direct.method,
+      receiver: formatLookupReceiver(direct),
+    });
     Object.assign(seedLetVars, seed.letVars);
     seedPipeline.push(...seed.pipelineBody);
     target = { db: direct.db, collection: direct.collection, pos: direct.pos };
@@ -2890,6 +2856,7 @@ function tryExtractChainedLookup(
     innerCtx,
     pipelineBody,
     letVars,
+    formatLookupReceiver(target),
   );
 
   // Build the $lookup stage. `as` is an internal slot; the surrounding

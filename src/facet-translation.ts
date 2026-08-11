@@ -1,14 +1,14 @@
-// Facet translation: lowers `$ = { k1: $$.filter(p1), k2: $$.filter(p2), … }`
-// into a `$facet` aggregation stage.
+// Facet translation: lowers `$ = { k1: <$$ chain>, k2: <$$ chain>, … }` into a
+// `$facet` aggregation stage.
 //
-// The user pattern: an object-literal RHS of `$ = …` where every value is a
-// `$$.filter(<predicate>)` call. Each entry's predicate lambda becomes the
-// sub-pipeline body for that facet key:
+// The user pattern: an object-literal RHS of `$ = …` where every value is a `$$`
+// chain — a `$$.filter(<predicate>)`, chained stage calls, or a mix. Each entry
+// becomes the sub-pipeline body for that facet key:
 //
 //   $ = {
-//     topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+//     topByScore: $$.$sort({ score: -1 }).$limit(10),
 //     recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
-//     byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+//     byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 //   };
 //
 //   → [{ $facet: {
@@ -52,11 +52,11 @@ export type FacetEntry = { key: string; pos: number } & (
 export type FacetChainLowerer = (methods: MethodCallNode[], outerCtx: GenerateCtx, rhs: Expr) => object[];
 
 /**
- * Recognise an object-literal RHS where every value is a `$$.filter(<lambda>)`.
- * Returns the parsed facets, or `null` when no entry has the filter shape (so
+ * Recognise an object-literal RHS where every value is a `$$` chain.
+ * Returns the parsed facets, or `null` when no entry has a branch shape (so
  * the caller falls back to `$replaceWith`).
  *
- * If *any* entry is a `$$.filter(...)` but others are not, throws a precise
+ * If *any* entry is a `$$` chain but others are not, throws a precise
  * mixed-shape error — the user clearly meant a facet, so silently falling
  * through to `$replaceWith` would surface a confusing "$$ is statement-only"
  * downstream.
@@ -79,7 +79,7 @@ export function detectFacetShape(value: Expr): FacetEntry[] | null {
   for (const entry of value.entries) {
     if (entry.type !== "KeyValueEntry") {
       throw new CodegenError(
-        `\`$ = { ... }\` $facet pattern: spread entries are not allowed. Every value must be \`$$.filter(<predicate>)\`.`,
+        `\`$ = { ... }\` $facet pattern: spread entries are not allowed. Every value must be a \`$$\` chain.`,
         entry.pos,
       );
     }
@@ -124,9 +124,8 @@ function asFacetBranch(
 }
 
 /**
- * Lower the detected facets to a single `$facet` stage. Each entry's lambda
- * becomes one sub-pipeline (one `$match` for expression-body predicates;
- * the block's stages for block-body predicates).
+ * Lower the detected facets to a single `$facet` stage. Each entry becomes one
+ * sub-pipeline — a `$match` for a predicate branch, the chain's stages otherwise.
  */
 export function lowerFacet(
   facets: FacetEntry[],
@@ -166,12 +165,16 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
   // Arity via the shared gate, so all three `$$.filter` positions reject the same
   // shapes with the same wording. (`asFacetBranch` only routes arrows here; the other
   // predicate spellings reach the chain lowerer, which calls the same gate.)
-  requireStreamPredicate(lambda, { method: "filter", position: FACET_PREDICATE_POSITION, pos: lambda.pos });
+  const predicate = requireStreamPredicate(lambda, {
+    method: "filter",
+    position: FACET_PREDICATE_POSITION,
+    pos: lambda.pos,
+  });
   // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). Inside
   // a facet sub-pipeline the lambda param IS the current document, so a
   // `$.<field>` reference (captured as a non-empty `letVars`) is rejected in
   // favour of the param spelling.
-  return lowerLambdaPredicate(lambda, outerCtx, lowerBlock, {
+  return lowerLambdaPredicate(predicate, outerCtx, lowerBlock, {
     freshCtx: freshFacetCtx,
     onLocalRef: rejectLocalRef,
     missingBody: () => {

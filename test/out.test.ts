@@ -64,7 +64,7 @@ describe("$out — RHS chain: $$.filter(<predicate>) → $match + $out", () => {
   });
 
   it("block-body filter passes through stage statements verbatim, then appends $out", () => {
-    expect(jsmql("$$$.top10 = $$.filter(o => { $sort({ score: -1 }); $limit(10); });")).toEqual([
+    expect(jsmql("$$$.top10 = $$.aggregate(o => { $sort({ score: -1 }); $limit(10); });")).toEqual([
       { $sort: { score: -1 } },
       { $limit: 10 },
       { $out: "top10" },

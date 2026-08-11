@@ -481,18 +481,24 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     ]);
   });
 
-  it("block-body predicate becomes the block's stages", () => {
-    expect(jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toEqual([
+  it("a chained-stage branch becomes the branch's stages", () => {
+    expect(jsmql(`$ = { topByScore: $$.$sort({ score: -1 }).$limit(10) };`)).toEqual([
       { $facet: { topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }] } },
     ]);
+  });
+
+  it("a `.filter` branch takes a JavaScript predicate — a stage in its block is rejected", () => {
+    expect(() => jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toThrow(
+      /`\$sort\(\.\.\.\)` is a pipeline stage, not part of a callback — chain them as stage calls/,
+    );
   });
 
   it("multi-facet pipeline with mixed predicate shapes", () => {
     expect(
       jsmql(`$ = {
-        topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+        topByScore: $$.$sort({ score: -1 }).$limit(10),
         recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
-        byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); })
+        byStatus:   $$.$group({ _id: $.status, n: $sum(1) })
       };`),
     ).toEqual([
       {
@@ -511,8 +517,8 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     ]);
   });
 
-  it("uses lambda-param references for foreign fields (basic shape)", () => {
-    expect(jsmql(`$ = { byCat: $$.filter(o => { $group({ _id: o.category }); }) };`)).toEqual([
+  it("a chained `$group` branch reads the branch document with `$.<field>`", () => {
+    expect(jsmql(`$ = { byCat: $$.$group({ _id: $.category }) };`)).toEqual([
       { $facet: { byCat: [{ $group: { _id: "$category" } }] } },
     ]);
   });
@@ -597,7 +603,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   it("block-body predicate in source-switch becomes the block's stages", () => {
     expect(
-      jsmql(`$$ = $$$.transactions.filter(t => { $match(t.amount > 100); $sort({ amount: -1 }); $limit(5); });`),
+      jsmql(`$$ = $$$.transactions.aggregate(t => { $match(t.amount > 100); $sort({ amount: -1 }); $limit(5); });`),
     ).toEqual([
       { $match: { $expr: false } },
       {
@@ -1305,9 +1311,6 @@ describe("write stages are forbidden in every sub-pipeline", () => {
   const cases: [string, string][] = [
     ["a foreign .aggregate(...) block", '$.t = $$$.orders.aggregate(o => { $out("archive"); });'],
     ["a foreign .aggregate(...) block ($merge)", '$.t = $$$.orders.aggregate(o => { $merge({ into: "m" }); });'],
-    ["a lookup predicate block-body", '$.t = $$$.orders.filter(o => { $out("archive"); return o.a; });'],
-    ["a $facet branch block-body", '$ = { k: $$.filter(d => { $out("archive"); return d.a; }) };'],
-    ["a $unionWith sugar predicate block-body", '$$.push(...$$$.orders.filter(o => { $out("x"); return o.a; }));'],
   ];
   for (const [label, src] of cases) {
     it(`rejects a write stage inside ${label}`, () => {
@@ -1316,12 +1319,13 @@ describe("write stages are forbidden in every sub-pipeline", () => {
   }
 
   // A named container keeps its more specific message — one per container kind,
-  // so all three literal sub-pipeline slots stay covered.
+  // so all three literal sub-pipeline slots and both stage-link containers stay covered.
   const named: [string, string, RegExp][] = [
     ["$lookup", '$lookup({ from: "o", as: "r", pipeline: [ { $out: "x" } ] });', /inside a '\$lookup' sub-pipeline/],
     ["$unionWith", '$unionWith({ coll: "o", pipeline: [ { $out: "x" } ] });', /inside a '\$unionWith' sub-pipeline/],
     ["$facet", '$facet({ a: [ { $out: "x" } ] });', /inside a '\$facet' sub-pipeline/],
-    ["a stage link", '$.t = $$$.orders.$out("archive");', /inside a '\$lookup' sub-pipeline/],
+    ["a $lookup stage link", '$.t = $$$.orders.$out("archive");', /inside a '\$lookup' sub-pipeline/],
+    ["a $facet stage link", '$ = { k: $$.$out("archive") };', /inside a '\$facet' sub-pipeline/],
   ];
   for (const [label, src, message] of named) {
     it(`keeps the container-specific wording for ${label}`, () => {
@@ -1496,87 +1500,5 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
       expect(() => jsmql(source("$$.filter({ a: $.b })"))).toThrow(/Rewrite it as an arrow/);
       expect(() => jsmql(source("$$.filter({ a: $.b })"))).not.toThrow(/jsmqlItem/);
     }
-  });
-});
-
-// A predicate's terminal `return <expr>` is the predicate. In JavaScript
-// `o => { return X; }` IS `o => X`, so no container may read one and not the other:
-// a dropped return leaves a filter that matches everything, which is valid MQL and
-// therefore silent. The block form and the expression form are compared directly
-// rather than against literal MQL, so the pair cannot drift apart later.
-describe("a block-body predicate's `return` is never dropped", () => {
-  // Every container that takes a predicate, as a source-building function.
-  const CONTAINERS: [string, (predicate: string) => string][] = [
-    ["`$$ =` stream", (p) => `$$ = $$.${p};`],
-    ["`$facet` branch", (p) => `$ = { k: $$.${p} };`],
-    ["`$out` write chain", (p) => `$$$.arch = $$.${p};`],
-    ["foreign lookup (value position)", (p) => `$.t = $$$.orders.${p};`],
-    ["foreign lookup (chained)", (p) => `$.t = $$$.orders.${p}.take(2);`],
-    ["`$unionWith` sugar", (p) => `$$.push(...$$$.orders.${p});`],
-    ["`$$ =` source switch", (p) => `$$ = $$$.orders.${p};`],
-  ];
-
-  // `.reject` is the negated half of the same pair and must keep step with `.filter`.
-  const PREDICATES: [string, string, string][] = [
-    ["filter, uncorrelated", "filter(o => { return o.a > 1; })", "filter(o => o.a > 1)"],
-    ["filter, correlated on the outer doc", "filter(o => { return o.uid === $._id; })", "filter(o => o.uid === $._id)"],
-    ["reject", "reject(o => { return o.a > 1; })", "reject(o => o.a > 1)"],
-  ];
-
-  // The emitted MQL, or the error — the two spellings must be indistinguishable
-  // either way. Comparing outcomes rather than only successes lets the table stay
-  // full: a container that rejects a predicate (a local `$$.filter` correlating on
-  // `$.<field>`, say) has to reject BOTH spellings with the same message, which is
-  // as much a part of the parity as the emitted stages.
-  const outcomeOf = (source: string): string => {
-    try {
-      return JSON.stringify(jsmql(source));
-    } catch (e) {
-      return `throws: ${(e as Error).message}`;
-    }
-  };
-
-  for (const [container, source] of CONTAINERS) {
-    for (const [label, blockForm, exprForm] of PREDICATES) {
-      it(`${container}: ${label} matches the expression spelling`, () => {
-        expect(outcomeOf(source(blockForm))).toBe(outcomeOf(source(exprForm)));
-      });
-    }
-  }
-
-  // A correlated return has to be SEEN to pick the lowering that can carry the
-  // correlation — a `$lookup` with a `let` slot, never a flat uncorrelated scan.
-  it("a correlated return still reaches the indexed lookup form", () => {
-    expect(jsmql("$.t = $$$.orders.filter(o => { return o.uid === $._id; });")).toEqual([
-      { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "t" } },
-    ]);
-  });
-
-  // Statements AND a return: the block keeps its stages and the return joins them
-  // as a trailing `$match`. Verified against a live mongod — with docs
-  // [{a:5,b:1},{a:5,b:2},{a:0,b:1}] the pipeline returns only {a:5,b:1}.
-  it("keeps both the block's stages and the return", () => {
-    expect(jsmql("$$ = $$.filter(o => { $match({ b: 1 }); return o.a > 1; });")).toEqual([
-      { $match: { b: 1 } },
-      { $match: { a: { $gt: 1 } } },
-    ]);
-  });
-
-  // A `const` in the block materialises as its binding stage, and the return reads
-  // it back through the namespace slot like any other pipeline-scoped binding.
-  it("lets the return read a binding declared in the block", () => {
-    expect(jsmql("$$ = $$.filter(o => { const min = 1; return o.a > min; });")).toEqual([
-      { $set: { "__jsmql.var.min": 1 } },
-      { $match: { $expr: { $gt: ["$a", "$__jsmql.var.min"] } } },
-      { $unset: "__jsmql" },
-    ]);
-  });
-
-  // `.reject` negates a single expression. A block that holds real statements has
-  // none to invert, so it keeps its actionable error rather than guessing.
-  it("still rejects a `.reject` block that has no single expression to negate", () => {
-    expect(() => jsmql("$$ = $$.reject(o => { const min = 1; return o.a > min; });")).toThrow(
-      /no single expression to negate/,
-    );
   });
 });

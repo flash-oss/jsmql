@@ -187,7 +187,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
   it("a `function` declaration with local bindings used as a query predicate is rejected with guidance", () => {
     expect(() =>
       jsmql("const r = $$$.tags.find(function (t) { const a = t.score; return a > 5 }); $ = { r };"),
-    ).toThrow(/block body with local `const`\/`let` bindings/);
+    ).toThrow(/predicate has local `const`\/`let` bindings/);
   });
 
   it("re-declaring a function in the same pipeline is rejected", () => {
@@ -231,18 +231,19 @@ describe("reusable functions — validate() carries a meaningful .pos", () => {
 });
 
 describe("reusable functions — review-driven hardening", () => {
-  it("a function declared in a $lookup block lambda closes over the foreign param", () => {
+  it("a function declared in an .aggregate block lambda closes over the foreign param", () => {
     // `u.age` inside the function body must hoist to "$age" in the $lookup
     // sub-pipeline, exactly like a `let` would (the function is a named IIFE).
-    expect(jsmql("$.user = $$$.users.find(u => { const score = () => u.age * 2; $match(score() > 100); });")).toEqual([
+    expect(
+      jsmql("$.users = $$$.users.aggregate(u => { const score = () => u.age * 2; $match(score() > 100); });"),
+    ).toEqual([
       {
         $lookup: {
           from: "users",
           pipeline: [{ $match: { $expr: { $gt: [{ $let: { vars: {}, in: { $multiply: ["$age", 2] } } }, 100] } } }],
-          as: "user",
+          as: "users",
         },
       },
-      { $set: { user: { $first: "$user" } } },
     ]);
   });
 

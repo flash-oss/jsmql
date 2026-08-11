@@ -29,7 +29,7 @@ describe("$$.push — .filter spread (pipeline-form $unionWith)", () => {
   it("block-body filter passes through stage statements verbatim", () => {
     expect(
       jsmql(
-        "$$.push(...$$$.archive_users.filter(o => { $match(o.tier === 'gold'); $sort({ joined: -1 }); $limit(100); }))",
+        "$$.push(...$$$.archive_users.aggregate(o => { $match(o.tier === 'gold'); $sort({ joined: -1 }); $limit(100); }))",
       ),
     ).toEqual([
       {
@@ -163,9 +163,9 @@ describe("$$.push — error cases", () => {
     );
   });
 
-  it("push inside a lookup block-body → reject with hoist hint", () => {
-    expect(() => jsmql("$.users = $$$.users.filter(u => { $$.push(...$$$.archive); })")).toThrow(
-      /'\$\$\.push\(\.\.\.\)' inside a lookup's block-body lambda is not supported/,
+  it("push inside a lookup `.aggregate` block → reject with hoist hint", () => {
+    expect(() => jsmql("$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })")).toThrow(
+      /'\$\$\.push\(\.\.\.\)' inside a lookup's '\.aggregate' block is not supported/,
     );
   });
 

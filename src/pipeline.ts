@@ -50,6 +50,12 @@ import {
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr, someElement, someStmt } from "./ast-walk.ts";
+import {
+  aggregateRewrite,
+  STREAM_STAGE_REWRITE,
+  tryCallbackBlockToValue,
+  type StageRewrite,
+} from "./callback-block.ts";
 import { JSMQL_NS, bindingSlot, exprVar, isCorrelationVar, streamLengthStage } from "./namespace.ts";
 import {
   lookupStage,
@@ -70,6 +76,7 @@ import {
 } from "./stage-link.ts";
 import { translateMatchBody, mergeTranslatedQuery } from "./match-translation.ts";
 import {
+  formatLookupReceiver,
   argsReadRootStreamLength,
   captureRootStreamLength,
   EMPTY_ENCLOSING,
@@ -105,6 +112,7 @@ import {
   type SystemStageCall,
 } from "./system-stage-translation.ts";
 import {
+  prepareStreamArgs,
   collectStreamChain,
   detectArrayReducerWrap,
   detectDictBuildWrap,
@@ -610,7 +618,7 @@ export function generateImplicitPipeline(
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking(startCtx.slotAllocator);
-  // Sub-stream length handles in scope (a block-body `.filter`/`.map` 3rd param,
+  // Sub-stream length handles in scope (an `.aggregate`/`.map` 3rd param,
   // bound by buildBlockBodyPredicate). Their `.length` materialises a
   // `$setWindowFields` `$count` in THIS pipeline, exactly like `$$.length`.
   const handleNames: ReadonlySet<string> = new Set(ctx.substreamLengthHandles?.keys() ?? []);
@@ -627,7 +635,7 @@ export function generateImplicitPipeline(
   p.stmts.forEach((rawStmt, i) => {
     validator.checkBeforeElement(rawStmt.pos);
     // Stream length: `$$.length` (top-level), or a bound sub-stream handle's
-    // `.length` (inside a block-body lookup, where `container === "top"` via
+    // `.length` (inside a lookup sub-pipeline, where `container === "top"` via
     // `lowerBlock`). Materialise the `$setWindowFields` ahead of the using stage.
     if ((container === "top" || handleNames.size > 0) && containsStreamLength(rawStmt, handleNames)) {
       ensureStreamLength();
@@ -1216,8 +1224,8 @@ function applyStreamMethods(
     if (def === null) {
       throw unknownStreamMethod(m, "$$", container);
     }
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
+    const args = prepareStreamArgs(def, m.args, m.pos, STREAM_STAGE_REWRITE);
+    const result = def.lower(args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     target.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
@@ -1240,6 +1248,7 @@ function lowerStreamFilterArg(
   lowerBlockFn: SubPipelineLowerer,
   rhs: Expr,
   isHead: boolean,
+  rewrite: StageRewrite = STREAM_STAGE_REWRITE,
 ): object[] {
   if (m.args.length !== 1) {
     if (isHead) rejectInvalidReplaceStream(rhs, ctx);
@@ -1249,7 +1258,7 @@ function lowerStreamFilterArg(
     );
   }
   return lowerStreamFilterPredicate(
-    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos }),
+    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos, rewrite }),
     ctx,
     lowerBlockFn,
   );
@@ -1265,7 +1274,12 @@ const STREAM_PREDICATE_POSITION = "on the RHS of '$$ = …'";
  * The negated arrow lowers to `$match: { $expr: { $not: … } }` — no query-form
  * De Morgan (which jsmql rejects project-wide).
  */
-function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: SubPipelineLowerer): object[] {
+function lowerStreamReject(
+  m: MethodCallNode,
+  ctx: GenerateCtx,
+  lowerBlockFn: SubPipelineLowerer,
+  rewrite: StageRewrite = STREAM_STAGE_REWRITE,
+): object[] {
   if (m.args.length !== 1) {
     throw new CodegenError(
       `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
@@ -1281,7 +1295,7 @@ function lowerStreamReject(m: MethodCallNode, ctx: GenerateCtx, lowerBlockFn: Su
   if (negated === null) {
     throw new CodegenError(
       `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
-        `a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
+        `a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
         `or use a block-bodied '$$.filter' with the inverted condition.`,
       lambda.pos,
     );
@@ -1361,6 +1375,9 @@ function lowerChainOnCollection(
   // the `$unionWith` source-switch and the `$lookup` pivot (mongod Location40228:
   // "'replacement document' must evaluate to an object"). Reject up front, covering
   // both families, with the two valid alternatives.
+  // This chain is rooted at a FOREIGN collection, so stages in a callback belong to
+  // `.aggregate` on that collection — not to the current-stream chained-stage form.
+  const foreignRewrite = aggregateRewrite(formatLookupReceiver(target));
   const collapsingMap = methods.find(isValueCollapsingMap);
   if (collapsingMap !== undefined) {
     throw new CodegenError(
@@ -1400,19 +1417,19 @@ function lowerChainOnCollection(
       continue;
     }
     if (m.method === "filter") {
-      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
+      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite));
       continue;
     }
     if (m.method === "reject") {
-      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn));
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite));
       continue;
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
     }
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(formatLookupReceiver(target)));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
     inner.push(...result.stages);
   }
   const from = requireSameDbColl(target.db, target.collection, target.pos);
@@ -1491,7 +1508,11 @@ function lowerLookupPivot(
       db: target.db,
       collection: target.collection,
       method: "filter",
-      lambda: methods[0].args[0] as LambdaNode,
+      // This call is built here, not by `detectLookupCall`, so it must apply
+      // detection's own callback-block fold. Without it a `{ return <pred> }` block
+      // reaches `translatePredicate` as a stage-free block and lowers to an empty
+      // sub-pipeline — a lookup that matches every foreign document.
+      lambda: tryCallbackBlockToValue(methods[0].args[0] as LambdaNode),
     };
     const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
     if (pred.kind === "basic") {
@@ -1527,6 +1548,7 @@ function lowerLookupPivot(
       innerCtx,
       pipelineBody,
       letVars,
+      formatLookupReceiver(target),
     );
     lookupStage = { $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) };
   }
@@ -1663,7 +1685,7 @@ function lowerStreamFilterPredicate(
     onLocalRef: rejectLocalRefInStreamFilter,
     missingBody: () => {
       throw new CodegenError(
-        `'.filter(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
+        `'.filter(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
         lambda.pos,
       );
     },
@@ -1917,7 +1939,7 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
   // HR3: a write stage inside ANY sub-pipeline is rejected by mongod
   // (Location51047), so jsmql must never emit one. The loop-position validator
   // covers the containers it can label; this covers the rest — notably a
-  // block-body lambda (`.aggregate((o) => { $out(…); })`), which has no
+  // `.aggregate` block (`.aggregate((o) => { $out(…); })`), which has no
   // unambiguous container name (DEF-024) but is unambiguously *a* sub-pipeline.
   // Registry-derived, so a future all-container stage is picked up for free.
   // First of two checks, and the one that reports the offending stage's own
@@ -2087,9 +2109,9 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   if (ast.type !== "ArrayLiteral") {
     internalError("generatePipelineWithCtx expects an ArrayLiteral AST");
   }
-  // Nested lookups inside both expression-body and block-body predicates are
+  // Nested lookups inside a predicate and inside an `.aggregate` block are
   // materialised by `extractLookupCalls` with an `EnclosingLookupContext`
-  // thread-through (see lookup-translation.ts; the block-body path supplies the
+  // thread-through (see lookup-translation.ts; the `.aggregate` path supplies the
   // context via `GenerateCtx.enclosingLookup`). `$facet`/`$unionWith`
   // sub-pipelines also walk through this path, caught at the per-statement level
   // when `extractLookupCalls` runs over each stage body.
@@ -2251,9 +2273,9 @@ function formatStageList(): string {
 // ── Lookup integration ────────────────────────────────────────────────────────
 
 /**
- * Lower a Pipeline AST (a block-body lambda body, normalised by the parser) to a
+ * Lower a Pipeline AST (a callback block body, normalised by the parser) to a
  * stage array. Provided to lookup-translation as its SubPipelineLowerer so the
- * `$lookup.pipeline` body for a block-body lambda uses the same `;`-separated
+ * `$lookup.pipeline` body for an `.aggregate` block uses the same `;`-separated
  * semantics as a top-level pipeline. `extractLookupCalls` itself rejects nested
  * `$$$.<coll>.find/filter(...)` inside this block via `rejectNestedLookup`, so
  * by the time `lowerBlock` runs the block is free of nested lookups and can be
@@ -2271,7 +2293,7 @@ const lowerBlock: SubPipelineLowerer = (block, ctx) => {
         : detectUnionPush(stmt as Expr);
     if (innerPush !== null) {
       throw new CodegenError(
-        `'$$.push(...)' inside a lookup's block-body lambda is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. ` +
+        `'$$.push(...)' inside a lookup's '.aggregate' block is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. ` +
           `Hoist the push to a sibling stage in the outer pipeline.`,
         innerPush.pos,
       );
