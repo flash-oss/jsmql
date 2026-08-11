@@ -587,18 +587,19 @@ describe("alternative bracketed array form", { features: ["Pipelines"] }, () => 
   });
 });
 
-describe("orders summary via $facet (`$ = { k: $$.filter(...) }`)", { features: ["Pipelines"] }, () => {
+describe("orders summary via $facet (`$ = { k: $$.<chain> }`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
-    // Three named sub-pipelines run side-by-side against the same input
-    // stream. `$$.filter(o => ...)` is the facet entry surface: the lambda
-    // param is each input document. Expression bodies lower to `$match`;
-    // block bodies lower to their own stage list.
+    // Three named sub-pipelines run side-by-side against the same input stream.
+    // Every value is an ordinary `$$` chain, so a branch takes the whole stream
+    // vocabulary: lodash methods (`.toSorted`/`.take`), stage links (`.$group`),
+    // and `.filter(<arrow>)` — whose lambda param is each input document — all
+    // compose the same way they do on a top-level `$$ = $$.<chain>`.
     expect(
       jsmql(`$match($.status === "shipped");
 $ = {
-  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  topByScore: $$.toSorted({ score: -1 }).take(10),
   recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
-  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`),
     ).toEqual([
       { $match: { status: "shipped" } },
@@ -2117,7 +2118,7 @@ $.recentOrders = $$$.orders.filter(o => {
   $sort({ createdAt: -1 });
   $limit(5);
 });
-let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
+let nOrders = $$$.orders.filter({ userId: $._id }).length;
 $project({ name: 1, recentOrders: 1, nOrders });
       `,
     ).toEqual([
@@ -2223,7 +2224,7 @@ $match($.active === true);
 $$.push(
   { _id: "system", name: "System", role: "synthetic" },
   { _id: "anon",   name: "Anonymous", role: "synthetic" },
-  ...$$$.archive_users.filter(u => u.deleted === true)
+  ...$$$.archive_users.filter({ deleted: true })
 );
 $sort({ name: 1 });
 $limit(50);
@@ -2284,7 +2285,7 @@ describe("archive expired users via $out (inline filter)", { features: ["Pipelin
     "the whole pipeline is one $$$$.<db>.<coll> = $$.filter(...) statement",
     { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
     () => {
-      expect(jsmql(`$$$$.dw.archive = $$.filter(u => u.status === "expired");`)).toEqual([
+      expect(jsmql(`$$$$.dw.archive = $$.filter({ status: "expired" });`)).toEqual([
         { $match: { status: "expired" } },
         { $out: { db: "dw", coll: "archive" } },
       ]);
@@ -2695,7 +2696,7 @@ $$ = $$$.users.filter({ active: true }).map(u => ({
   name:      u.name,
   email:     u.contactDetails.email,
   signupAt:  u.createdAt,
-  lastOrder: $$$.orders.find(o => o.userId === u._id)
+  lastOrder: $$$.orders.find({ userId: u._id })
 }));
           `,
         ).toEqual([
@@ -3010,7 +3011,7 @@ describe("Per-user order report with counts at three nesting levels", { features
 $match($.createdAt >= new Date(2026, 1, 1));
 $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
   return {
-    totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,
+    totalShipments: $$$.shipments.filter({ orderId: o._id }).length,
     totalOrders: ordersColl.length,
     totalUsers: $$.length,
   };
@@ -3287,7 +3288,7 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
 
 // A device's uptime run: from a sensor's readings in time order, keep the leading
 // stretch before the first bad reading, and report how long it lasted. `.takeWhile`
-// is the whole point here — `.filter(r => r.status === "ok")` would silently include
+// is the whole point here — `.filter({ status: "ok" })` would silently include
 // every later good reading after the fault, inflating the run.
 // Verified against a live mongod.
 describe("sensor uptime run before the first fault", { features: ["Pipelines"] }, () => {
@@ -3295,7 +3296,7 @@ describe("sensor uptime run before the first fault", { features: ["Pipelines"] }
     expect(
       jsmql(`
 $match($.deviceId === "dev-7");
-$$.toSorted({ readAt: 1 }).takeWhile(r => r.status === "ok");
+$$.toSorted({ readAt: 1 }).takeWhile({ status: "ok" });
 $group({ _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } });
         `),
     ).toEqual([

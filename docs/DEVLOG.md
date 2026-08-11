@@ -10,7 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-09 — docs: the project reads as a finished product; history lives only here
+## 2026-08-11 — test: the showcase reaches for the shortest spelling that still reads
+
+Seven chains in [test/realistic.test.ts](../test/realistic.test.ts) now use the
+shorthand spelling, and every one of them emits MQL **byte-identical** to what the
+test already asserted — not a single expected value moved. That is the point: the
+file is what a new user reads first (README points at it, the playground extracts
+its examples), so when two spellings compile to the same document the showcase
+should carry the shorter one.
+
+The `$facet` example is the visible change. Its three branches were
+`$$.filter(o => { $sort(…); $limit(…); })`-style block bodies because that was the
+only thing a branch accepted; a branch now takes any `$$` chain, so they read
+`$$.toSorted({ score: -1 }).take(10)` and `$$.$group({ _id: $.status, n: $sum(1) })`
+— one lodash chain and one stage link, with `.filter(<arrow>)` kept on the third
+because `>=` has no matches-object form. The README's facet block follows, and its
+claim that "every value a `$$.filter(...)`" is corrected to "every value a `$$`
+chain". The other six are matches-object predicates in the places that only
+recently started accepting them — an `$out` write chain, a `$$.push` spread, a
+`.find` inside a `.map`, and two `.length` counts — plus one `.takeWhile`.
+
+Two rewrites were tested and **rejected** for making the output worse, both the
+same shape: `$.f = $$$.coll.filter(o => { <stages> })` writes straight into
+`as: "f"`, while the equivalent lodash/stage-link chain routes through
+`__jsmql.tmp.N` and pays a `$set` plus the trailing `$unset`. Until an assignment
+whose chain needs no post-lookup value work can claim the `as` slot directly, the
+block body is the leaner spelling and the showcase keeps it — at
+`$.recentOrders = …` and at the `.aggregate((o) => { … })` customer report.
 
 New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":
 **every file says what jsmql *is*; only this file says how it got here.** The repository

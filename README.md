@@ -113,11 +113,11 @@ jsmql(`$match($.profile != null); $ = $.profile; $ = { ...$, score: $.points * 1
 //     { "$replaceWith": { "$mergeObjects": ["$$ROOT", { "score": { "$multiply": ["$points", 1.1] } }] } }
 //   ]
 
-// Multi-facet aggregation — every value a `$$.filter(...)` lowers to one $facet stage
+// Multi-facet aggregation — every value a `$$` chain, all lowered into one $facet stage
 jsmql(`$ = {
-  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  topByScore: $$.toSorted({ score: -1 }).take(10),
   recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
-  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); })
+  byStatus:   $$.$group({ _id: $.status, n: $sum(1) })
 }`);
 // → [{ "$facet": {
 //       "topByScore": [{ "$sort": { "score": -1 } }, { "$limit": 10 }],
