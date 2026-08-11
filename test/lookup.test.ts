@@ -1665,6 +1665,138 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 
+  // `.aggregate` needs a document STREAM. On a receiver the chain already reduced
+  // to a value it used to reach value-mode codegen, where it isn't a JavaScript
+  // method — so the user got a bare "Unknown method '.aggregate()'" and no way
+  // forward, while the sibling `.find()` case had a tailored message all along.
+  describe("on a receiver the chain already collapsed to a value", () => {
+    const collapsed = [
+      ["head()", ".head()"],
+      ["size()", ".size()"],
+      ["last()", ".last()"],
+      ["nth(1)", ".nth(...)"],
+      ["sum()", ".sum()"],
+      ["maxBy('total')", ".maxBy(...)"],
+      ["every(o => o.v > 0)", ".every(...)"],
+      ["reduce((a, o) => a + o.v, 0)", ".reduce(...)"],
+      ["at(0)", ".at(...)"],
+    ];
+    for (const [link, spelling] of collapsed) {
+      it(`.${link} names the offending link and the rewrite`, () => {
+        const spelled = spelling.replace(/[.()[\]]/g, "\\$&");
+        expect(() => jsmql(`$.x = $$$.orders.${link}.aggregate((o) => { $limit(1); });`)).toThrow(
+          new RegExp(`\\.aggregate\\(\\) on a ${spelled} result is not meaningful`),
+        );
+        // The rewrite it suggests must name the real collection and be writable.
+        expect(() => jsmql(`$.x = $$$.orders.${link}.aggregate((o) => { $limit(1); });`)).toThrow(
+          /Move \.aggregate\(\.\.\.\) ahead of it \('\$\$\$\.orders\.aggregate\(\(o\) => \{ \.\.\. \}\)/,
+        );
+      });
+    }
+
+    it("a field read (.length / .<field>) and an index are named the same way", () => {
+      expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0).length.aggregate((o) => { $limit(1); });")).toThrow(
+        /\.aggregate\(\) on a \.length result is not meaningful — \.length reads a value off the result/,
+      );
+      expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0)[0].aggregate((o) => { $limit(1); });")).toThrow(
+        /\.aggregate\(\) on a \[0\] result is not meaningful — \[0\] reads one element/,
+      );
+    });
+
+    it("the suggested collection spelling follows a cross-database receiver", () => {
+      expect(() => jsmql("$.x = $$$$.dw.orders.head().aggregate((o) => { $limit(1); });")).toThrow(
+        /Move \.aggregate\(\.\.\.\) ahead of it \('\$\$\$\$\.dw\.orders\.aggregate\(/,
+      );
+    });
+
+    it("a still-a-stream chain is untouched, at any depth", () => {
+      expect(() =>
+        jsmql("$.x = $$$.orders.filter(o => o.v > 0).sort({ t: 1 }).aggregate((o) => { $limit(1); });"),
+      ).not.toThrow();
+      // A value terminal AFTER the aggregate is the valid direction.
+      expect(() => jsmql("$.x = $$$.orders.aggregate((o) => { $limit(3); }).head();")).not.toThrow();
+    });
+
+    it("carries a .pos for tooling", () => {
+      const res = jsmql.validate("$.x = $$$.orders.head().aggregate((o) => { $limit(1); });");
+      expect(res.valid).toBe(false);
+      expect(res.errors[0].pos).toBeGreaterThan(0);
+    });
+  });
+
+  // A `$$$.<coll>` stream is a stream of DOCUMENTS, so an element-returning value
+  // terminal on it always yields a document — and `$map` / `$filter` / `$slice` /
+  // `$trim` over a document is a shape mongod refuses at execution time. Emitting
+  // it broke HR3; these are the shapes that used to reach the server and fail.
+  describe("an array/string method after a document-returning value terminal", () => {
+    const terminals = ["head()", "first()", "last()", "nth(1)", "min()", "max()", 'minBy("total")', 'maxBy("total")'];
+    const followers = [
+      "map(x => x)",
+      "filter(x => x)",
+      "take(2)",
+      "join(',')",
+      "toReversed()",
+      "toUpperCase()",
+      "trim()",
+    ];
+
+    for (const t of terminals) {
+      it(`.${t} rejects a following array/string method`, () => {
+        for (const f of followers) {
+          expect(() => jsmql(`$.x = $$$.orders.${t}.${f};`)).toThrow(
+            /returns a single document, but '\.\w+\(\.\.\.\)' needs (an array|a string)/,
+          );
+        }
+      });
+    }
+
+    it("names the terminal, the collection, and both ways out", () => {
+      expect(() => jsmql("$.x = $$$.orders.head().map(x => x);")).toThrow(
+        /'\$\$\$\.orders\.head\(\)' returns a single document, but '\.map\(\.\.\.\)' needs an array\. /,
+      );
+      expect(() => jsmql("$.x = $$$.orders.head().map(x => x);")).toThrow(
+        /Move '\.map\(\.\.\.\)' ahead of \.head\(\) \('\$\$\$\.orders\.map\(\.\.\.\)\.head\(\)'\), or read a field of the document \('\$\$\$\.orders\.head\(\)\.<field>'\)/,
+      );
+    });
+
+    // `.slice` accepts string OR array, so `requiredReceiverFamily` returns null to
+    // avoid false positives on real dual uses. A document is neither, so here the
+    // dual family is a certainty — this closes that gap for `.find` too.
+    it("the dual string|array methods are caught as well", () => {
+      expect(() => jsmql('$.x = $$$.orders.minBy("total").slice(0, 2);')).toThrow(/needs an array or a string/);
+      expect(() => jsmql("$.x = $$$.orders.find(o => o.v > 0).slice(0, 2);")).toThrow(
+        /'\$\$\$\.orders\.find\(<pred>\)' returns a single matched document, but '\.slice\(\.\.\.\)' needs an array or a string/,
+      );
+    });
+
+    it("object-family methods and field reads on the document still work", () => {
+      expect(() => jsmql('$.x = $$$.orders.head().pick(["status"]);')).not.toThrow();
+      expect(() => jsmql("$.x = $$$.orders.head().status;")).not.toThrow();
+    });
+
+    it("a terminal that returns a NUMBER keeps the generic receiver-family message", () => {
+      // `.size`/`.sum` have an invariant `returns: "number"`, so the generic check
+      // already owns them — this gate must not restate it in different words.
+      expect(() => jsmql("$.x = $$$.orders.size().map(x => x);")).toThrow(
+        /'\.map\(\.\.\.\)' expects an array receiver, but '\.size\(\.\.\.\)' returns a number/,
+      );
+      expect(() => jsmql("$.x = $$$.orders.size().round();")).not.toThrow();
+    });
+
+    it("an in-document array is untouched — only a $$$.<coll> chain proves the element type", () => {
+      // `[1,2].head()` is a number, not a document, so this gate must not fire.
+      expect(jsmql.expr("[1, 2].head().round()")).toEqual({ $round: [{ $first: [[1, 2]] }, 0] });
+      expect(jsmql.expr("[[1, 2], [3]].head().toReversed()")).toEqual({ $reverseArray: { $first: [[[1, 2], [3]]] } });
+    });
+
+    it("carries a .pos at the offending method", () => {
+      const src = "$.x = $$$.orders.head().map(x => x);";
+      const res = jsmql.validate(src);
+      expect(res.valid).toBe(false);
+      expect(res.errors[0].pos).toBe(src.indexOf(".map") + 1);
+    });
+  });
+
   it("$$ = source-switch rejects an outer-doc $. reference (no let slot)", () => {
     expect(() =>
       jsmql('$$ = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$s" }); });'),

@@ -42,6 +42,34 @@ source never asked. See [docs/specs/method-dispatch.md](specs/method-dispatch.md
 
 ---
 
+## 2026-08-11 — fix(lookup): an array or string method after a document-returning value terminal
+
+`$$$.orders.head().map(x => x)` emitted `{ $map: { input: { $first: … } } }` — `$map` over a
+single document, which mongod refuses (*"input to $map must be an array not object"*).
+`.take`, `.slice`, `.join`, `.toReversed`, `.toUpperCase` and `.trim` failed the same way,
+across every element-returning terminal (`.head`, `.first`, `.last`, `.nth`, `.min`, `.max`,
+`.minBy`, `.maxBy`): 67 of a 200-shape probe matrix reached the server and failed.
+
+The generic chain type-check already owns this class, but it could not fire here.
+`certainReceiverType` reads the receiver method's invariant `returns`, and these terminals
+deliberately have none — `[1, 2].head()` is a number while `[{}, {}].head()` is a document,
+so the registry cannot commit. Inside a `$$$.<coll>` chain it *is* known, because a
+collection stream is a stream of documents; that is the fact the lookup layer can supply and
+the registry cannot. `rejectDocumentTerminalMethod` uses it, deriving the
+document-producing set as `VALUE_TERMINAL_METHODS` ∩ `returnsReceiverElement` rather than
+listing it — which is what keeps `.sample` and `.groupBy` (same registry shape, but stream
+methods) and the reducer-typed `.reduce` out of it automatically.
+
+The violating-method test is the new `documentReceiverViolation`, shared with the existing
+`.find(<pred>)` gate. Sharing it closes a gap on that older path too: the dual
+`string | array` methods return `null` from `requiredReceiverFamily` — correctly, since
+guessing between the two would cause false positives — but a document is *neither*, so
+`.find(pred).slice(0, 2)` was a certain error that used to slip through. A receiver that
+isn't `$$$.<coll>`-rooted is untouched, so an in-document `$.nums.head()` keeps the generic
+paths. See [src/lookup-translation.ts](../src/lookup-translation.ts).
+
+---
+
 ## 2026-08-11 — fix(parser): a misplaced stage block reports the real mistake, not a missing `return`
 
 `$$$.orders.aggregat((o) => { $limit(2); })` — one letter short of `.aggregate` — used to
@@ -66,6 +94,30 @@ Carrying that diagnosis needed the receiver's identity at the point of failure, 
 a `BlockArgCtx` object holding the kind plus the `method` name and `streamRooted` flag.
 Widening the existing parameter beats adding a second one threaded alongside it. See
 [src/parser.ts](../src/parser.ts) and [docs/specs/grammar.md](specs/grammar.md).
+
+---
+
+## 2026-08-11 — fix(lookup): `.aggregate()` on a collapsed chain says how to fix it
+
+`$$$.orders.head().aggregate((o) => { $limit(1); })` reported `Unknown method
+'.aggregate()'.` — a dead end, and a bare one: `didYouMean` had nothing to offer because
+`.aggregate` is a stream method, not a JavaScript one, so it isn't in the value-mode
+registry the suggestion list comes from. Nineteen spellings reached that message
+(`.head`/`.size`/`.sum`/`.every`/… plus `.length` and a plain field read), while the
+sibling `.find(pred).aggregate(...)` had a tailored message all along.
+
+`rejectAggregateOnCollapsedChain` walks the receiver chain toward its `$$$.<coll>` head and
+rejects when the outermost non-peelable hop already reduced the stream to a value, naming
+that hop and the rewrite: *".aggregate() on a .head() result is not meaningful — .head()
+returns a single value, not a collection to aggregate. Move .aggregate(...) ahead of it
+('$$$.orders.aggregate((o) => { ... }).head()'), or drop .head() to aggregate the whole
+stream."* The opening matches the `.find` message so the two read as siblings, but `.find`
+keeps its own fix — it takes a *predicate*, so the user wants `.filter(pred).aggregate(...)`
+rather than a reordered chain. Testing the lookup target before consuming a hop is what
+keeps the collection access itself from being mistaken for a field read, and a receiver that
+isn't `$$$.<coll>`-rooted is left to the generic paths, so an in-document
+`$.items.head().aggregate(...)` is unaffected. See
+[src/lookup-translation.ts](../src/lookup-translation.ts).
 
 ---
 

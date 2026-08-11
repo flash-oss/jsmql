@@ -1037,6 +1037,36 @@ export const RECEIVER_NOUN: Record<string, string> = {
   object: "an object (a document)",
 };
 
+/**
+ * Does `method` return an ELEMENT of its array receiver, rather than a value of
+ * some fixed type? These carry no invariant `returns` in `METHODS` on purpose —
+ * `[1, 2].head()` is a number while `[{}, {}].head()` is a document, so the
+ * generic type inference can't commit. A caller that *knows* its receiver is a
+ * stream of documents (a `$$$.<coll>` chain) can commit, which is what lets
+ * `lookup-translation.ts` reject a string/array method after one.
+ */
+export function returnsReceiverElement(method: string): boolean {
+  const meta = METHODS[method];
+  return meta !== undefined && meta.optional === "array" && meta.returns === undefined;
+}
+
+/**
+ * The receiver noun `method` demands when it cannot possibly run on a DOCUMENT,
+ * or null when a document is fine (object-family and universal methods).
+ *
+ * Beyond the four single families this also catches the **dual** `string | array`
+ * methods (`.slice`, …). `requiredReceiverFamily` returns null for those — it
+ * can't tell which of the two is meant, and guessing would cause false positives
+ * on legitimate uses. A document is *neither*, so here the dual family is still a
+ * certainty, not a guess.
+ */
+export function documentReceiverViolation(method: string): string | null {
+  const fam = requiredReceiverFamily(method);
+  if (fam === "string" || fam === "array" || fam === "number" || fam === "date") return RECEIVER_NOUN[fam];
+  if (METHODS[method]?.optional === "either") return "an array or a string";
+  return null;
+}
+
 function receiverPhrase(o: Expr): string {
   return o.type === "MethodCall" ? `'.${o.method}(...)'` : "the value before it";
 }

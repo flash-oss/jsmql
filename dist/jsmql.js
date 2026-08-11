@@ -2048,8 +2048,12 @@ var Parser = class {
           memberName = member.value;
         }
         if (this.lexer.peek().type === TokenType.LParen) {
-          const blockKind = STREAM_BLOCK_METHODS.has(memberName) && isStreamRooted(left) ? "pipeline" : "expr";
-          const args = this.parseMethodCallArgs(blockKind);
+          const streamRooted = isStreamRooted(left);
+          const args = this.parseMethodCallArgs({
+            kind: STREAM_BLOCK_METHODS.has(memberName) && streamRooted ? "pipeline" : "expr",
+            method: memberName,
+            streamRooted
+          });
           left = {
             type: "MethodCall",
             object: left,
@@ -2122,9 +2126,9 @@ var Parser = class {
     }
   }
   /** Parse method call argument list: "(" [argOrLambda ("," argOrLambda)* ","?] ")" */
-  parseMethodCallArgs(blockKind = "expr") {
+  parseMethodCallArgs(blockCtx = EXPR_BLOCK_ARG) {
     this.lexer.expect(TokenType.LParen);
-    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg(blockKind));
+    const args = this.parseDelimitedList(TokenType.RParen, () => this.parseCallArg(blockCtx));
     this.lexer.expect(TokenType.RParen);
     return args;
   }
@@ -2134,30 +2138,30 @@ var Parser = class {
    *   - lambda forms (x => ..., (x) => ..., (x, y) => ...)
    *   - any expression
    */
-  parseCallArg(blockKind = "expr") {
+  parseCallArg(blockCtx = EXPR_BLOCK_ARG) {
     if (this.lexer.peek().type === TokenType.Spread) {
       const spreadTok = this.lexer.next();
       const argument = this.parseExpression();
       const spread = { type: "SpreadElement", argument, pos: spreadTok.pos };
       return spread;
     }
-    return this.parseArgOrLambda(blockKind);
+    return this.parseArgOrLambda(blockCtx);
   }
   /**
    * Parse an argument that might be a lambda expression.
    * Checks for lambda patterns before falling back to parseExpression().
-   * `blockKind` selects what a `=> { … }` body means: `"pipeline"` (only inside
+   * `blockCtx.kind` selects what a `=> { … }` body means: `"pipeline"` (only inside
    * `$$$.<coll>.find/filter(...)` and `$$.filter(...)`) parses a statement block
    * → `Pipeline`; `"expr"` (the default everywhere else) parses an
    * expression-block → `ExprBlock`. JS-faithful: `=> {` always opens a block;
    * an object return needs `=> ({ … })`.
    */
-  parseArgOrLambda(blockKind = "expr") {
+  parseArgOrLambda(blockCtx = EXPR_BLOCK_ARG) {
     if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
-      return this.parseLambdaUnparen(blockKind);
+      return this.parseLambdaUnparen(blockCtx);
     }
     if (this.isLambdaStart()) {
-      return this.parseLambdaParen(blockKind);
+      return this.parseLambdaParen(blockCtx);
     }
     return this.parseExpression();
   }
@@ -2401,15 +2405,15 @@ var Parser = class {
     return false;
   }
   /** Parse "x => expr" — single unparenthesized parameter */
-  parseLambdaUnparen(blockKind = "expr") {
+  parseLambdaUnparen(blockCtx = EXPR_BLOCK_ARG) {
     const paramTok = this.lexer.next();
     this.lexer.next();
     if (this.lexer.peek().type === TokenType.LBrace) {
-      if (blockKind === "pipeline") {
+      if (blockCtx.kind === "pipeline") {
         const { block, ret } = this.parseCallbackBlock();
         return { type: "Lambda", params: [paramTok.value], block, ret, pos: paramTok.pos };
       }
-      const exprBlock = this.parseExprBlockBody();
+      const exprBlock = this.parseExprBlockBody(blockCtx);
       return { type: "Lambda", params: [paramTok.value], exprBlock, pos: paramTok.pos };
     }
     const body = this.parseExpression();
@@ -2429,16 +2433,16 @@ var Parser = class {
     return params;
   }
   /** Parse "(x) => expr" or "(x, y) => expr" or "() => expr" */
-  parseLambdaParen(blockKind = "expr") {
+  parseLambdaParen(blockCtx = EXPR_BLOCK_ARG) {
     const lparen = this.lexer.peek();
     const params = this.parseParenParamNames();
     this.lexer.expect(TokenType.Arrow);
     if (this.lexer.peek().type === TokenType.LBrace) {
-      if (blockKind === "pipeline") {
+      if (blockCtx.kind === "pipeline") {
         const { block, ret } = this.parseCallbackBlock();
         return { type: "Lambda", params, block, ret, pos: lparen.pos };
       }
-      const exprBlock = this.parseExprBlockBody();
+      const exprBlock = this.parseExprBlockBody(blockCtx);
       return { type: "Lambda", params, exprBlock, pos: lparen.pos };
     }
     const body = this.parseExpression();
@@ -2554,6 +2558,34 @@ var Parser = class {
     return { block: { type: "Pipeline", stmts, pos: openBrace.pos }, ret };
   }
   /**
+   * Build the error for a `=> { $stage(...); … }` sub-pipeline block written at a
+   * call site that only takes an expression block. Two distinct mistakes reach
+   * here, and each gets its own fix:
+   *
+   *   - **The method name is wrong.** The receiver IS a stream, so the block
+   *     grammar was available — the method just isn't one that takes a
+   *     sub-pipeline. `.aggregat(o => { $group(…); })` used to demand a `return`,
+   *     which sent the user hunting a phantom syntax error instead of a typo.
+   *     `didYouMean` over `STREAM_BLOCK_METHODS` names the intended method.
+   *   - **The receiver isn't a stream.** `$.items.map(d => { $group(…); })` — an
+   *     in-document array has no pipeline to run stages in, whatever the method.
+   */
+  subPipelineBlockError(blockCtx, pos) {
+    const { method, streamRooted } = blockCtx;
+    const call = method === void 0 ? "this callback" : `'.${method}(...)'`;
+    const lead = `Unexpected stage call at position ${pos}: a \`=> { $stage(...); ... }\` block is a sub-pipeline, but ${call} doesn't take one.`;
+    if (streamRooted === true && method !== void 0) {
+      return new ParseError(
+        `${lead}${didYouMean(method, [...STREAM_BLOCK_METHODS], (s) => `.${s}`)} Only a stream method that accepts a sub-pipeline runs stage calls in its block; for a per-document expression, end the block with \`return <expr>\`.`,
+        pos
+      );
+    }
+    return new ParseError(
+      `${lead} Stage calls need a stream receiver \u2014 '$$' or '$$$.<coll>' \u2014 not an in-document value. Chain the stages on the stream itself, or end this block with \`return <expr>\` to compute a value.`,
+      pos
+    );
+  }
+  /**
    * Parse the expression-block body of an arrow:
    * `{ (const|let <name> = <expr>;)* return <expr>; }`. Codegen lowers it to a
    * right-folded nest of `$let`. This is the JS-faithful meaning of `=> { … }`
@@ -2561,7 +2593,7 @@ var Parser = class {
    * `parseCallbackBlock`); an object return must be written `=> ({ … })`.
    * See docs/specs/method-dispatch.md.
    */
-  parseExprBlockBody() {
+  parseExprBlockBody(blockCtx = EXPR_BLOCK_ARG) {
     const open = this.lexer.next();
     const decls = [];
     while (this.lexer.peek().type === TokenType.Let || this.lexer.peek().type === TokenType.Const) {
@@ -2584,6 +2616,7 @@ var Parser = class {
     }
     const ret = this.lexer.peek();
     if (ret.type !== TokenType.Return) {
+      if (ret.type === TokenType.Dollar) throw this.subPipelineBlockError(blockCtx, ret.pos);
       throw new ParseError(
         `A block body must end with a \`return <expr>\` statement at position ${ret.pos}, got ${formatActualToken(ret)}. Write \`x => { const a = \u2026; return <expr>; }\` / \`function f(x) { return <expr>; }\`, or \`x => (<expr>)\` to return an object/expression directly.`,
         ret.pos
@@ -3017,6 +3050,7 @@ var Parser = class {
   }
 };
 var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set(["find", "filter", "map", "aggregate"]);
+var EXPR_BLOCK_ARG = { kind: "expr" };
 function isStreamRooted(expr) {
   let node = expr;
   for (; ; ) {
@@ -5693,6 +5727,33 @@ var ARRAY_OUTPUT_OPS = /* @__PURE__ */ new Set([
   "$objectToArray"
 ]);
 var ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
+function isArrayOfArrays(expr) {
+  if (expr.type === "ArrayLiteral") {
+    if (expr.elements.length === 0) return false;
+    return expr.elements.every((el) => {
+      switch (el.type) {
+        // Not a plain element — the shape is unknown, so don't guess.
+        case "SpreadElement":
+        case "AssignExpr":
+        case "DeleteStmt":
+        case "LetDecl":
+        case "FuncDecl":
+          return false;
+        default:
+          return isArrayProducing(el);
+      }
+    });
+  }
+  return expr.type === "MethodCall" && expr.method === "partition";
+}
+function rejectNestedArrayStringify(object, method, callPos) {
+  if (!isArrayOfArrays(object)) return;
+  const recv = object.type === "MethodCall" ? `'.${object.method}(...)'` : "this array literal";
+  throw new CodegenError(
+    `.${method}() can't stringify an array of arrays \u2014 ${recv} holds arrays, and MongoDB has no recursive string conversion (JavaScript's nested '[[1,2],[3]].${method}()' has no MQL equivalent). Flatten first ('.flat().${method}()'), or map each inner array to a string ('.map(a => a.${method}()).${method}()').`,
+    callPos
+  );
+}
 function isArrayProducing(expr) {
   switch (expr.type) {
     case "ArrayLiteral":
@@ -5860,6 +5921,16 @@ var RECEIVER_NOUN = {
   date: "a date",
   object: "an object (a document)"
 };
+function returnsReceiverElement(method) {
+  const meta = METHODS[method];
+  return meta !== void 0 && meta.optional === "array" && meta.returns === void 0;
+}
+function documentReceiverViolation(method) {
+  const fam = requiredReceiverFamily(method);
+  if (fam === "string" || fam === "array" || fam === "number" || fam === "date") return RECEIVER_NOUN[fam];
+  if (METHODS[method]?.optional === "either") return "an array or a string";
+  return null;
+}
 function receiverPhrase(o) {
   return o.type === "MethodCall" ? `'.${o.method}(...)'` : "the value before it";
 }
@@ -6294,13 +6365,13 @@ function generateLengthAccess(object, optional, ctx) {
   }
   if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
     const v = _generate(object, ctx);
-    return { $size: optional ? wrapIfNull(v, []) : v };
+    return sizeOf(optional ? wrapIfNull(v, []) : v);
   }
   const rawObj = _generate(object, ctx);
   if (isStringProducing(object)) return strLenOf(rawObj);
-  if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
+  if (isArrayProducing(object)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
   const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
-  return cond({ $isArray: obj2 }, { $size: obj2 }, strLenOf(obj2));
+  return cond({ $isArray: obj2 }, sizeOf(obj2), strLenOf(obj2));
 }
 function generateStreamLength(ctx, pos) {
   if (!ctx.pipelineContext) {
@@ -6623,6 +6694,13 @@ function generateObjectLiteral(entries, ctx, _pos) {
 function arrayToObjectOfLiteralPairs(pairs) {
   return { $arrayToObject: [pairs] };
 }
+function singleArrayArg(operand) {
+  return Array.isArray(operand) ? [operand] : operand;
+}
+var sizeOf = (a) => ({ $size: singleArrayArg(a) });
+var firstOf = (a) => ({ $first: singleArrayArg(a) });
+var lastOf = (a) => ({ $last: singleArrayArg(a) });
+var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
 function generateComputedKeyObject(entries, ctx) {
   const pairs = entries.map((entry) => {
     const k = entry.key.kind === "static" ? entry.key.name : _generate(entry.key.expr, ctx);
@@ -7242,7 +7320,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "toReversed": {
       checkArity(method, { sig: "", none: true }, args.length, callPos);
-      return { $reverseArray: genObj };
+      return reverseArrayOf(genObj);
     }
     case "toSorted": {
       if (args.length === 0) {
@@ -7393,7 +7471,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
-          input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+          input: { $zip: { inputs: [{ $range: [0, sizeOf(genObj)] }, genObj] } },
           initialValue: -1,
           in: { $let: { vars, in: cond(test, { $arrayElemAt: ["$$this", 0] }, "$$value") } }
         }
@@ -7413,6 +7491,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
       checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
+      rejectNestedArrayStringify(object, "join", callPos);
       const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
       return {
         $reduce: {
@@ -7429,6 +7508,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "toString": {
       checkArity("toString", { sig: "", none: true }, args.length, callPos);
       if (isArrayProducing(object)) {
+        rejectNestedArrayStringify(object, "toString", callPos);
         return {
           $reduce: {
             input: genObj,
@@ -7572,10 +7652,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       } : baseBody;
       let input = genObj;
       if (has3) {
-        input = { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } };
+        input = { $zip: { inputs: [{ $range: [0, sizeOf(genObj)] }, genObj] } };
       }
       if (method === "reduceRight") {
-        input = { $reverseArray: input };
+        input = reverseArrayOf(input);
       }
       return { $reduce: { input, initialValue: _generate(exprArgs[1], ctx), in: inExpr } };
     }
@@ -7800,11 +7880,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       }
       const [vI, i] = internalVar(ctx, "i");
       return {
-        $map: {
-          input: { $range: [0, { $size: genObj }, size.value] },
-          as: vI,
-          in: { $slice: [genObj, i, size.value] }
-        }
+        $map: { input: { $range: [0, sizeOf(genObj), size.value] }, as: vI, in: { $slice: [genObj, i, size.value] } }
       };
     }
     // ── lodash positional / slicing (array → element or sub-array) ──────────────
@@ -7845,11 +7921,11 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "head":
     case "first": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      return { $first: genObj };
+      return firstOf(genObj);
     }
     case "last": {
       checkArity("last", { sig: "", none: true }, exprArgsOnly(args, "last").length, callPos);
-      return { $last: genObj };
+      return lastOf(genObj);
     }
     case "nth": {
       const exprArgs = exprArgsOnly(args, "nth");
@@ -7858,9 +7934,9 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "size": {
       checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
-      if (isArrayProducing(object)) return { $size: genObj };
-      if (isObjectProducing(object)) return { $size: { $objectToArray: genObj } };
-      return cond({ $isArray: genObj }, { $size: genObj }, { $size: { $objectToArray: genObj } });
+      if (isArrayProducing(object)) return sizeOf(genObj);
+      if (isObjectProducing(object)) return sizeOf({ $objectToArray: genObj });
+      return cond({ $isArray: genObj }, sizeOf(genObj), sizeOf({ $objectToArray: genObj }));
     }
     case "takeWhile":
     case "dropWhile":
@@ -7872,7 +7948,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const drop2 = method === "dropWhile" || method === "dropRightWhile";
       const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
       if (!fromRight) return takeDropWhile(genObj, pred, drop2, ctx);
-      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop2, ctx) };
+      return reverseArrayOf(takeDropWhile(reverseArrayOf(genObj), pred, drop2, ctx));
     }
     case "sample": {
       checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
@@ -8011,7 +8087,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return {
         $arrayToObject: {
           $map: {
-            input: { $range: [0, { $size: genObj }] },
+            input: { $range: [0, sizeOf(genObj)] },
             as: vI,
             in: { k: { $toString: { $arrayElemAt: [genObj, i] } }, v: { $arrayElemAt: [values, i] } }
           }
@@ -8057,7 +8133,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       return {
         $let: {
           vars,
-          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: vI, in: inExpr } }
+          in: { $map: { input: { $range: [0, { $max: refs.map((r) => sizeOf(r)) }] }, as: vI, in: inExpr } }
         }
       };
     }
@@ -8314,7 +8390,7 @@ function arrayIterInput(lambda, genObj, ctx, method, inputExpr) {
   }
   const [vPair, pair] = internalVar(bodyCtx, "pair");
   return {
-    input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+    input: { $zip: { inputs: [{ $range: [0, sizeOf(genObj)] }, genObj] } },
     asName: vPair,
     bodyCtx,
     paired: true,
@@ -8570,17 +8646,17 @@ function buildFillRhs(object, args, pos) {
     const unusedAndV = { type: "Lambda", params: [exprVar("fillUnused")], body: v, pos };
     return { type: "MethodCall", object, method: "map", args: [unusedAndV], pos };
   }
-  const sizeOf = () => mkOpCall("$size", [object], pos);
+  const sizeOf2 = () => mkOpCall("$size", [object], pos);
   const normalize = (e, defaultIfUndef) => {
     if (e === void 0) return defaultIfUndef();
     if (e.type === "NumberLiteral" && e.value >= 0) return e;
     const isNeg = { type: "BinaryExpr", op: "<", left: e, right: zero, pos };
-    const fromTail = { type: "BinaryExpr", op: "+", left: sizeOf(), right: e, pos };
+    const fromTail = { type: "BinaryExpr", op: "+", left: sizeOf2(), right: e, pos };
     const clamped = mkOpCall("$max", [zero, fromTail], pos);
     return { type: "TernaryExpr", condition: isNeg, consequent: clamped, alternate: e, pos };
   };
   const s0Init = normalize(startArg, () => zero);
-  const e0Init = normalize(endArg, () => sizeOf());
+  const e0Init = normalize(endArg, () => sizeOf2());
   const sRef = { type: "ParamRef", name: exprVar("fillStart"), pos };
   const eRef = { type: "ParamRef", name: exprVar("fillEnd"), pos };
   const xRef = { type: "ParamRef", name: exprVar("fillEl"), pos };
@@ -13159,7 +13235,9 @@ function extractLookupCalls(exprArg, outerCtx, allocSlot, lowerBlock2, enclosing
         expr.pos
       );
     }
+    rejectAggregateOnCollapsedChain(expr, outerCtx);
   }
+  rejectDocumentTerminalMethod(expr, outerCtx);
   const direct = detectLookupCall(expr, outerCtx);
   if (direct !== null) {
     const slot = allocSlot();
@@ -13273,6 +13351,61 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
 function isPeelableChainMethod(name) {
   return lookupStreamMethod(name) !== null || name === "filter" || name === "reject" || name.startsWith("$");
 }
+function rejectDocumentTerminalMethod(expr, ctx) {
+  if (expr.type !== "MethodCall") return;
+  const next = expr;
+  const recv = next.object;
+  if (recv.type !== "MethodCall") return;
+  if (!VALUE_TERMINAL_METHODS.has(recv.method) || !returnsReceiverElement(recv.method)) return;
+  const needs = documentReceiverViolation(next.method);
+  if (needs === null) return;
+  let cur = recv.object;
+  let target = extractLookupTarget(cur, ctx);
+  while (target === null) {
+    if (cur.type === "MethodCall" || cur.type === "MemberAccess" || cur.type === "IndexAccess") cur = cur.object;
+    else return;
+    target = extractLookupTarget(cur, ctx);
+  }
+  const spell = target.db === void 0 ? `$$$.${target.collection}` : `$$$$.${target.db}.${target.collection}`;
+  const terminal = `.${recv.method}(${recv.args.length > 0 ? "..." : ""})`;
+  throw new CodegenError(
+    `'${spell}${terminal}' returns a single document, but '.${next.method}(...)' needs ${needs}. Move '.${next.method}(...)' ahead of ${terminal} ('${spell}.${next.method}(...)${terminal}'), or read a field of the document ('${spell}${terminal}.<field>').`,
+    next.pos
+  );
+}
+function rejectAggregateOnCollapsedChain(expr, ctx) {
+  let cur = expr.object;
+  let collapsedBy = null;
+  let target = extractLookupTarget(cur, ctx);
+  while (target === null) {
+    if (cur.type === "MethodCall") {
+      if (collapsedBy === null && !isPeelableChainMethod(cur.method)) {
+        const call = `.${cur.method}(${cur.args.length > 0 ? "..." : ""})`;
+        collapsedBy = { spelling: call, produces: "returns a single value" };
+      }
+      cur = cur.object;
+    } else if (cur.type === "MemberAccess") {
+      if (collapsedBy === null) collapsedBy = { spelling: `.${cur.member}`, produces: "reads a value off the result" };
+      cur = cur.object;
+    } else if (cur.type === "IndexAccess") {
+      if (collapsedBy === null) {
+        const idx = cur.index.type === "NumberLiteral" ? String(cur.index.value) : "i";
+        collapsedBy = { spelling: `[${idx}]`, produces: "reads one element" };
+      }
+      cur = cur.object;
+    } else {
+      return;
+    }
+    target = extractLookupTarget(cur, ctx);
+  }
+  if (collapsedBy === null) return;
+  const spell = target.db === void 0 ? `$$$.${target.collection}` : `$$$$.${target.db}.${target.collection}`;
+  const { spelling, produces } = collapsedBy;
+  throw new CodegenError(
+    `.aggregate() on a ${spelling} result is not meaningful \u2014 ${spelling} ${produces}, not a collection to aggregate. Move .aggregate(...) ahead of it ('${spell}.aggregate((o) => { ... })${spelling}'), or drop ${spelling} to aggregate the whole stream.`,
+    expr.pos
+  );
+}
 function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
   if (expr.type !== "MethodCall") return null;
   const methods = [];
@@ -13289,20 +13422,20 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   let start;
   const seedLetVars = {};
   const seedPipeline = [];
-  if (direct !== null) {
-    if (direct.method !== "filter") {
-      if (direct.method === "find" && methods.length > 1) {
-        const next = methods[1];
-        const fam = requiredReceiverFamily(next.method);
-        if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
-          throw new CodegenError(
-            `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
-            next.pos
-          );
-        }
+  if (direct !== null && direct.method === "find") {
+    if (methods.length > 1) {
+      const next = methods[1];
+      const needs = documentReceiverViolation(next.method);
+      if (needs !== null) {
+        throw new CodegenError(
+          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${needs}. Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
+          next.pos
+        );
       }
-      return null;
     }
+    return null;
+  }
+  if (direct !== null && direct.method === "filter") {
     if (methods.length < 2) return null;
     const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
     Object.assign(seedLetVars, seed.letVars);
@@ -13310,6 +13443,7 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     target = { db: direct.db, collection: direct.collection, pos: direct.pos };
     start = 1;
   } else {
+    if (direct !== null && methods.length < 2) return null;
     const t = extractLookupTarget(cur, outerCtx);
     if (t === null) return null;
     if (!isPeelableChainMethod(head.method)) return null;

@@ -26,12 +26,14 @@ import type {
 import { someArg, someExpr, someStmt } from "./ast-walk.ts";
 import {
   CodegenError,
+  documentReceiverViolation,
   EMPTY_CTX,
   generateWithCtx,
   freshSubPipelineCtx,
   type GenerateCtx,
   RECEIVER_NOUN,
   requiredReceiverFamily,
+  returnsReceiverElement,
   shorthandToLambda,
 } from "./codegen.ts";
 import { translateMatchBody, mergeTranslatedQuery, type MatchTranslation } from "./match-translation.ts";
@@ -2396,7 +2398,9 @@ export function extractLookupCalls(
         expr.pos,
       );
     }
+    rejectAggregateOnCollapsedChain(expr, outerCtx);
   }
+  rejectDocumentTerminalMethod(expr, outerCtx);
   // Direct lookup as the whole expression
   const direct = detectLookupCall(expr, outerCtx);
   if (direct !== null) {
@@ -2661,6 +2665,101 @@ function isPeelableChainMethod(name: string): boolean {
   return lookupStreamMethod(name) !== null || name === "filter" || name === "reject" || name.startsWith("$");
 }
 
+/**
+ * Reject a string/array/number/date method applied to a value terminal that
+ * returned a single DOCUMENT — `$$$.orders.head().map(…)`, `.minBy("t").slice(…)`,
+ * `.last().toUpperCase()`. A `$$$.<coll>` stream is a stream of documents, so an
+ * element-returning terminal on it always yields a document; `$map` / `$filter` /
+ * `$slice` / `$trim` over one is a shape mongod refuses at execution time
+ * (`input to $map must be an array not object`), so emitting it breaks HR3.
+ *
+ * The document-producing set is *derived*, not listed: a value terminal
+ * (`VALUE_TERMINAL_METHODS`) whose `METHODS` entry returns its receiver's element
+ * (`returnsReceiverElement`). That intersection is what keeps the stream methods
+ * with the same registry shape (`.sample`, `.groupBy`) and the reducer-typed
+ * `.reduce` out of it. The `.find(pred)` head is gated separately in
+ * `tryExtractChainedLookup`, where the advice differs (`.filter` over all matches).
+ */
+function rejectDocumentTerminalMethod(expr: Expr, ctx: GenerateCtx): void {
+  if (expr.type !== "MethodCall") return;
+  const next = expr; // the method being applied TO the terminal
+  const recv = next.object;
+  if (recv.type !== "MethodCall") return;
+  if (!VALUE_TERMINAL_METHODS.has(recv.method) || !returnsReceiverElement(recv.method)) return;
+  const needs = documentReceiverViolation(next.method);
+  if (needs === null) return;
+  // Only a `$$$.<coll>`-rooted chain proves the element is a document; an
+  // in-document array (`$.nums.head().toFixed(2)`) keeps the generic paths.
+  let cur: Expr = recv.object;
+  let target = extractLookupTarget(cur, ctx);
+  while (target === null) {
+    if (cur.type === "MethodCall" || cur.type === "MemberAccess" || cur.type === "IndexAccess") cur = cur.object;
+    else return;
+    target = extractLookupTarget(cur, ctx);
+  }
+  const spell = target.db === undefined ? `$$$.${target.collection}` : `$$$$.${target.db}.${target.collection}`;
+  const terminal = `.${recv.method}(${recv.args.length > 0 ? "..." : ""})`;
+  throw new CodegenError(
+    `'${spell}${terminal}' returns a single document, but '.${next.method}(...)' needs ${needs}. ` +
+      `Move '.${next.method}(...)' ahead of ${terminal} ('${spell}.${next.method}(...)${terminal}'), ` +
+      `or read a field of the document ('${spell}${terminal}.<field>').`,
+    next.pos,
+  );
+}
+
+/**
+ * Reject `.aggregate(...)` whose receiver the chain has already reduced to a
+ * single value — a value terminal (`.head()` / `.size()` / `.sum()` / …), a field
+ * read (`.length`, `.<field>`), or an index (`[0]`). `.aggregate` needs a document
+ * STREAM to run a sub-pipeline over; on a value it reaches value-mode codegen,
+ * where it isn't a JavaScript method and surfaces as a bare "Unknown method
+ * '.aggregate()'" — a dead end. The `.find(pred)` head has its own message
+ * (caller-side, above) because its fix differs: `.find` takes a predicate, so the
+ * user wants `.filter(pred).aggregate(...)`, not a reordered chain.
+ *
+ * Only fires on a `$$$.<coll>`-rooted chain; a plain in-document array
+ * (`$.items.head().aggregate(...)`) keeps the generic unknown-method path.
+ */
+function rejectAggregateOnCollapsedChain(expr: MethodCall, ctx: GenerateCtx): void {
+  // Walk toward the `$$$.<coll>` head, remembering the OUTERMOST hop that ends the
+  // stream. Testing the target first keeps the collection hop itself unconsumed.
+  let cur: Expr = expr.object;
+  let collapsedBy: { spelling: string; produces: string } | null = null;
+  let target = extractLookupTarget(cur, ctx);
+  while (target === null) {
+    if (cur.type === "MethodCall") {
+      if (collapsedBy === null && !isPeelableChainMethod(cur.method)) {
+        // Keep the arity visible so the suggested rewrite stays writable —
+        // `.every(...)` never means the arg-less `.every()`.
+        const call = `.${cur.method}(${cur.args.length > 0 ? "..." : ""})`;
+        collapsedBy = { spelling: call, produces: "returns a single value" };
+      }
+      cur = cur.object;
+    } else if (cur.type === "MemberAccess") {
+      if (collapsedBy === null) collapsedBy = { spelling: `.${cur.member}`, produces: "reads a value off the result" };
+      cur = cur.object;
+    } else if (cur.type === "IndexAccess") {
+      if (collapsedBy === null) {
+        const idx = cur.index.type === "NumberLiteral" ? String(cur.index.value) : "i";
+        collapsedBy = { spelling: `[${idx}]`, produces: "reads one element" };
+      }
+      cur = cur.object;
+    } else {
+      return; // not a `$$$.<coll>` chain — leave it to the generic paths
+    }
+    target = extractLookupTarget(cur, ctx);
+  }
+  if (collapsedBy === null) return; // every link kept the receiver a stream
+  const spell = target.db === undefined ? `$$$.${target.collection}` : `$$$$.${target.db}.${target.collection}`;
+  const { spelling, produces } = collapsedBy;
+  throw new CodegenError(
+    `.aggregate() on a ${spelling} result is not meaningful — ${spelling} ${produces}, not a collection to aggregate. ` +
+      `Move .aggregate(...) ahead of it ('${spell}.aggregate((o) => { ... })${spelling}'), ` +
+      `or drop ${spelling} to aggregate the whole stream.`,
+    expr.pos,
+  );
+}
+
 function tryExtractChainedLookup(
   expr: Expr,
   outerCtx: GenerateCtx,
@@ -2703,10 +2802,10 @@ function tryExtractChainedLookup(
     // fall through to the existing materialise-then-value-mode path (`return null`).
     if (methods.length > 1) {
       const next = methods[1];
-      const fam = requiredReceiverFamily(next.method);
-      if (fam === "string" || fam === "array" || fam === "number" || fam === "date") {
+      const needs = documentReceiverViolation(next.method);
+      if (needs !== null) {
         throw new CodegenError(
-          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${RECEIVER_NOUN[fam]}. ` +
+          `'$$$.${direct.collection}.find(<pred>)' returns a single matched document, but '.${next.method}(...)' needs ${needs}. ` +
             `Use '$$$.${direct.collection}.filter(<pred>).${next.method}(...)' to run it over all matches, ` +
             `or read a field of the matched document ('$$$.${direct.collection}.find(<pred>).<field>').`,
           next.pos,
