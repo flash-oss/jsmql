@@ -206,7 +206,15 @@ local `$$.filter(…)` / `$$.reject(…)`. It normalises every predicate spellin
 block body returning the predicate, matches-object, field name, `["field", value]` pair —
 into the single-parameter arrow the lowering consumes, and enforces that arity. (A block body
 is folded to its value form by `callbackBlockToValue`; see
-[method-dispatch.md](method-dispatch.md) § Callback block bodies.) It is the local-stream counterpart to what
+[method-dispatch.md](method-dispatch.md) § Callback block bodies.)
+
+**Every message names the receiver as written.** The gate takes a `receiver` option —
+`$$` by default, `$$$.<coll>` / `$$$$.<db>.<coll>` from the `$$ = $$$.<coll>.…` source
+switch, which lowers its `.filter`/`.reject` through the same helpers the local chain
+uses. This is not cosmetic. The arity message tells the developer what to write, and
+`$$.filter(o => …)` reads the CURRENT stream, so a `$$$.orders.filter` author who follows
+that advice silently changes which collection the query reads. `localRefInPredicateMessage`
+takes the same option for the same reason. It is the local-stream counterpart to what
 `detectLookupCall` + `validateLookupShape` already do for the foreign `$$$.<coll>.filter(…)`
 side.
 

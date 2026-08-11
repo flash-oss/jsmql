@@ -1249,18 +1249,26 @@ function lowerStreamFilterArg(
   rhs: Expr,
   isHead: boolean,
   rewrite: StageRewrite = STREAM_STAGE_REWRITE,
+  receiver: string = "$$",
 ): object[] {
   if (m.args.length !== 1) {
     if (isHead) rejectInvalidReplaceStream(rhs, ctx);
     throw new CodegenError(
-      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      `'${receiver}.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos,
     );
   }
   return lowerStreamFilterPredicate(
-    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos, rewrite }),
+    requireStreamPredicate(m.args[0], {
+      method: "filter",
+      position: STREAM_PREDICATE_POSITION,
+      pos: m.pos,
+      rewrite,
+      receiver,
+    }),
     ctx,
     lowerBlockFn,
+    receiver,
   );
 }
 
@@ -1279,10 +1287,11 @@ function lowerStreamReject(
   ctx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
   rewrite: StageRewrite = STREAM_STAGE_REWRITE,
+  receiver: string = "$$",
 ): object[] {
   if (m.args.length !== 1) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      `'${receiver}.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos,
     );
   }
@@ -1290,17 +1299,19 @@ function lowerStreamReject(
     method: "reject",
     position: STREAM_PREDICATE_POSITION,
     pos: m.pos,
+    rewrite,
+    receiver,
   });
   const negated = negateStreamPredicate(lambda);
   if (negated === null) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
-        `a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
-        `or use a block-bodied '$$.filter' with the inverted condition.`,
+      `'${receiver}.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
+        `a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '${receiver}.filter(o => !(…))', ` +
+        `or use a block-bodied '${receiver}.filter' with the inverted condition.`,
       lambda.pos,
     );
   }
-  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
+  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn, receiver);
 }
 
 /**
@@ -1417,11 +1428,13 @@ function lowerChainOnCollection(
       continue;
     }
     if (m.method === "filter") {
-      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite));
+      inner.push(
+        ...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite, formatLookupReceiver(target)),
+      );
       continue;
     }
     if (m.method === "reject") {
-      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite));
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite, formatLookupReceiver(target)));
       continue;
     }
     const def = lookupStreamMethod(m.method);
@@ -1669,10 +1682,11 @@ function lowerStreamFilterPredicate(
   lambda: LambdaNode,
   predicateCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
+  receiver: string = "$$",
 ): object[] {
   if (lambda.params.length !== 1) {
     throw new CodegenError(
-      `'.filter(<predicate>)' on the RHS of '$$ = …' must take exactly one parameter — write '.filter(o => …)' (the param name is your choice). The param represents each document.`,
+      `'${receiver}.filter(<predicate>)' on the RHS of '$$ = …' must take exactly one parameter — write '${receiver}.filter(o => …)' (the param name is your choice). The param represents each document.`,
       lambda.pos,
     );
   }
@@ -1682,19 +1696,24 @@ function lowerStreamFilterPredicate(
   // lambda parameter IS the document being matched.
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
-    onLocalRef: rejectLocalRefInStreamFilter,
+    onLocalRef: (letVars, param, pos) => rejectLocalRefInStreamFilter(letVars, param, pos, receiver),
     missingBody: () => {
       throw new CodegenError(
-        `'.filter(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
+        `'${receiver}.filter(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
         lambda.pos,
       );
     },
   });
 }
 
-function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: string, pos: number): never {
+function rejectLocalRefInStreamFilter(
+  letVars: Record<string, string>,
+  param: string,
+  pos: number,
+  receiver: string,
+): never {
   throw new CodegenError(
-    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION }),
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION, receiver }),
     pos,
   );
 }

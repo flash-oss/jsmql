@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-10 — fix: a predicate error names the receiver the developer wrote
+
+```
+$$ = $$$.orders.filter((a, b) => a > b);
+// before: '$$.filter(<predicate>)' … must take exactly one parameter — write '$$.filter(o => …)'
+// now:    '$$$.orders.filter(<predicate>)' … — write '$$$.orders.filter(o => …)'
+```
+
+The `$$ = $$$.<coll>.…` source switch lowers its `.filter` / `.reject` through the same
+helpers the local `$$` chain uses, and those helpers spelled the receiver `$$`. The
+arity message is the harmful one: it tells the developer what to write, and
+`$$.filter(o => …)` reads the CURRENT stream. A developer who followed that advice
+changed which collection the query reads and got no warning.
+
+`requireStreamPredicate` and `localRefInPredicateMessage` now take a `receiver` option
+(`$$` by default), and the two source-switch call sites pass `formatLookupReceiver(target)`
+— the same spelling master already threads into the callback-block rewrite hint. The
+cross-database spelling `$$$$.<db>.<coll>` comes through the same path.
+
+`.reject` also never passed the callback-block `rewrite` hint to the gate, so a stage
+inside a `$$ = $$$.<coll>.reject(o => { … })` block offered the chained-stage rewrite
+that suits a `$$` chain. It now passes both the hint and the receiver, so the pair stays
+in step.
+
+---
+
 ## 2026-08-11 — fix: the callback-block rule reaches `.takeWhile` / `.dropWhile` / `.flatMap`
 
 ```

@@ -579,10 +579,20 @@ export function requireStreamPredicate(
      * `aggregateRewrite(<receiver>)` instead.
      */
     rewrite?: StageRewrite;
+    /**
+     * How the developer spelled the receiver — `$$` for a local stream chain,
+     * `$$$.<coll>` / `$$$$.<db>.<coll>` for a `$$ = $$$.<coll>.…` source switch.
+     * Every message reads it, so the advice names the chain the developer wrote. It
+     * is not cosmetic: telling the author of `$$$.orders.filter(…)` to "write
+     * `$$.filter(o => …)`" points at the CURRENT stream, so following the advice
+     * silently changes which collection the query reads.
+     */
+    receiver?: string;
   },
 ): Lambda {
   const { method, position } = opts;
-  const spell = `'$$.${method}(<predicate>)' ${position}`;
+  const receiver = opts.receiver ?? "$$";
+  const spell = `'${receiver}.${method}(<predicate>)' ${position}`;
   // A real arrow passes through; every other spelling desugars. `shorthandToLambda`
   // is the THROWING form on purpose — this is a lowering site, not a detection one,
   // so a malformed shorthand (`{}`, a computed key, a bad pair) must surface its own
@@ -602,7 +612,7 @@ export function requireStreamPredicate(
   }
   if (lambda.params.length !== 1) {
     throw new CodegenError(
-      `${spell} must take exactly one parameter — write '$$.${method}(o => …)' (the param name is ` +
+      `${spell} must take exactly one parameter — write '${receiver}.${method}(o => …)' (the param name is ` +
         `your choice). The param represents each document. Got ${lambda.params.length}.`,
       lambda.pos,
     );
@@ -627,15 +637,18 @@ export function localRefInPredicateMessage(opts: {
   param: string;
   method: string;
   position: string;
+  /** The receiver as written — see `requireStreamPredicate`'s `receiver`. */
+  receiver?: string;
 }): string {
   const { param, method, position } = opts;
+  const receiver = opts.receiver ?? "$$";
   const samplePath = Object.values(opts.letVars)[0].replace(/^\$+/, ""); // "$createdAt" → "createdAt"
-  const head = `'$.<field>' inside '$$.${method}(<predicate>)' ${position} is not supported`;
+  const head = `'$.<field>' inside '${receiver}.${method}(<predicate>)' ${position} is not supported`;
   if (param === FOREIGN_SHORTHAND_PARAM) {
     return (
       `${head} — a matches-object / field-name predicate has no parameter to reference the current ` +
       `document with. Rewrite it as an arrow and use that parameter, e.g. ` +
-      `'$$.${method}(o => … o.${samplePath} …)'.`
+      `'${receiver}.${method}(o => … o.${samplePath} …)'.`
     );
   }
   return (

@@ -1502,3 +1502,37 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
     }
   });
 });
+
+// A predicate error names the receiver the developer wrote. The `$$ = $$$.<coll>.…`
+// source switch lowers its `.filter`/`.reject` through the same helpers the local
+// `$$` chain uses, so the messages used to say `$$.filter` for a `$$$.<coll>.filter`
+// call. That is not only cosmetic: the arity message tells the developer what to
+// write, and `$$.filter(o => …)` reads the CURRENT stream, so following the advice
+// changes which collection the query reads.
+describe("a predicate error names the receiver as written", () => {
+  const RECEIVERS: [string, string][] = [
+    ["$$", "$$"],
+    ["$$$.orders", "$$$.orders"],
+    ["$$$$.shop.orders", "$$$$.shop.orders"],
+  ];
+  for (const [label, receiver] of RECEIVERS) {
+    it(`${label}: the vocabulary message names it`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.filter(123);`)).toThrow(`'${receiver}.filter(<predicate>)'`);
+    });
+
+    it(`${label}: the arity message advises a spelling that keeps the same source`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.filter((a, b) => a > b);`)).toThrow(`write '${receiver}.filter(o => …)'`);
+    });
+
+    it(`${label}: .reject keeps step with .filter`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.reject(123);`)).toThrow(`'${receiver}.reject(<predicate>)'`);
+    });
+  }
+
+  // A non-head `.filter` reaches the argument-count message rather than the gate.
+  it("names the receiver in the argument-count message too", () => {
+    expect(() => jsmql("$$ = $$$.orders.take(2).filter(o => o.a, 2);")).toThrow(
+      "'$$$.orders.filter(<predicate>)' takes exactly one predicate argument, got 2.",
+    );
+  });
+});
