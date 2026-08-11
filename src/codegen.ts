@@ -1476,6 +1476,17 @@ export function generateWithCtx(expr: Expr, ctx: GenerateCtx): unknown {
   return _generate(expr, ctx);
 }
 
+/**
+ * Generate an `ExprBlock` (`{ (const|let … ;)* return <expr>; }`) as a value — the
+ * right-folded nest of `$let` a block-bodied arrow means. Exported for the predicate
+ * translators, which lower a block-bodied predicate into `$match: { $expr: … }` and
+ * must not re-implement the folding, shadowing, and re-declaration rules
+ * [generateExprBlock] already owns.
+ */
+export function generateExprBlockWithCtx(block: ExprBlock, ctx: GenerateCtx): unknown {
+  return generateExprBlock(block, ctx);
+}
+
 // ── Core generator ────────────────────────────────────────────────────────────
 
 function _generate(expr: Expr, ctx: GenerateCtx): unknown {

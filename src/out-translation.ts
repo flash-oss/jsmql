@@ -9,7 +9,7 @@
 
 import type { Expr, AssignExpr, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
 import { STREAM_STAGE_REWRITE } from "./callback-block.ts";
-import { CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
+import { internalError, CodegenError, freshSubPipelineCtx, type GenerateCtx } from "./codegen.ts";
 import {
   localRefInPredicateMessage,
   lowerLambdaPredicate,
@@ -381,12 +381,7 @@ function lowerFilterAsMatch(
         pos,
       );
     },
-    missingBody: () => {
-      throw new CodegenError(
-        `'$$.${method}(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
-        arg.pos,
-      );
-    },
+    missingBody: () => internalError(`'$$.${method}(<predicate>)' lambda has no body, block, or exprBlock`, arg.pos),
   });
 }
 

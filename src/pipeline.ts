@@ -1210,16 +1210,12 @@ function applyStreamMethods(
       target.push(...lowerStreamReject(m, ctx, lowerBlockFn));
       continue;
     }
-    if (m.method === "aggregate") {
-      // `.aggregate(...)` on the CURRENT stream would just inline its stages —
-      // a redundant spelling of writing them directly. It only earns its keep
-      // against a FOREIGN collection (where it lowers to `$lookup`/`$unionWith`).
-      throw new CodegenError(
-        `.aggregate(...) runs a sub-pipeline against a FOREIGN collection — write '$$$.<coll>.aggregate((o) => { ... })' ` +
-          `(optionally after '.filter(...)'). To add stages to the CURRENT stream, write them directly (e.g. '$group(...); $sort(...);').`,
-        m.pos,
-      );
-    }
+    // `.aggregate(...)` needs no special case here: on the CURRENT stream it appends
+    // its block's stages to the chain, which is what the registry method already does.
+    // It used to be rejected as "a redundant spelling of writing them directly" — true
+    // at a statement position, but false in a `$facet` branch, where a branch IS a
+    // sub-pipeline and there is no direct spelling to write instead. Two spellings of
+    // one lowering cost nothing; a container where the only spelling is refused does.
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$", container);
@@ -1697,12 +1693,7 @@ function lowerStreamFilterPredicate(
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
     onLocalRef: (letVars, param, pos) => rejectLocalRefInStreamFilter(letVars, param, pos, receiver),
-    missingBody: () => {
-      throw new CodegenError(
-        `'${receiver}.filter(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
-        lambda.pos,
-      );
-    },
+    missingBody: () => internalError("'.filter(<predicate>)' lambda has no body, block, or exprBlock", lambda.pos),
   });
 }
 

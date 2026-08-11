@@ -11,6 +11,7 @@
 // are owned by docs/specs/lookup-stage.md.
 
 import type {
+  ExprBlock,
   Expr,
   Pipeline,
   PipelineStmt,
@@ -33,6 +34,8 @@ import {
   type StageRewrite,
 } from "./callback-block.ts";
 import {
+  generateExprBlockWithCtx,
+  internalError,
   CodegenError,
   EMPTY_CTX,
   generateWithCtx,
@@ -132,6 +135,17 @@ export const EMPTY_ENCLOSING: EnclosingLookupContext = { foreignParams: [], inSc
  * `buildPipelineFormPredicate` invocation that wasn't preceded by an
  * outer-level extraction.
  */
+/** The `ExprBlock` sibling of `rewriteEnclosingForeignParams`, applied per initialiser and to the `return`. */
+function rewriteEnclosingForeignParamsInBlock(block: ExprBlock, params: ReadonlyArray<string>): ExprBlock {
+  if (params.length === 0) return block;
+  return {
+    type: "ExprBlock",
+    decls: block.decls.map((d) => ({ ...d, value: rewriteEnclosingForeignParams(d.value, params) })),
+    ret: rewriteEnclosingForeignParams(block.ret, params),
+    pos: block.pos,
+  };
+}
+
 function rewriteEnclosingForeignParams(expr: Expr, params: ReadonlyArray<string>): Expr {
   if (params.length === 0) return expr;
   const paramSet = new Set(params);
@@ -661,12 +675,27 @@ export function localRefInPredicateMessage(opts: {
  * Negate a normalised predicate lambda — the `.reject` half of the `.filter`/
  * `.reject` pair. Lives beside the gate so every container negates identically:
  * `o => !(<body>)`, which lowers to `$match: { $expr: { $not: … } }` (no query-form
- * De Morgan, which jsmql rejects project-wide). Returns null for a block body,
- * which has no single expression to negate.
+ * De Morgan, which jsmql rejects project-wide). A `const`/`let` block negates its
+ * `return` and keeps the bindings, since those compute values rather than decide the
+ * match. Returns null only for a statement block, which has no single expression.
  */
 export function negateStreamPredicate(lambda: Lambda): Lambda | null {
-  if (lambda.body === undefined) return null;
   const pos = lambda.pos;
+  if (lambda.exprBlock !== undefined) {
+    const block = lambda.exprBlock;
+    return {
+      type: "Lambda",
+      params: lambda.params,
+      exprBlock: {
+        type: "ExprBlock",
+        decls: block.decls,
+        ret: { type: "UnaryExpr", op: "!", operand: block.ret, pos: block.ret.pos },
+        pos: block.pos,
+      },
+      pos,
+    };
+  }
+  if (lambda.body === undefined) return null;
   return {
     type: "Lambda",
     params: lambda.params,
@@ -1329,10 +1358,28 @@ export function translatePredicate(
     return { kind: "pipeline", letVars, pipeline };
   }
 
-  throw new CodegenError(
-    `.${call.method}(predicate) predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
-    lambda.pos,
-  );
+  // ── Block body with `const`/`let` bindings (an `ExprBlock`) ────────
+  // The whole predicate is one `$let` expression, so there is no query form to
+  // translate — it rides in `$expr` entire. Bindings still see the same auto-`let`
+  // hoisting as an expression body: a `$.<field>` read in an initialiser or in the
+  // `return` becomes a `$lookup.let` var.
+  if (lambda.exprBlock !== undefined) {
+    const preRewritten = rewriteEnclosingForeignParamsInBlock(lambda.exprBlock, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExprBlock(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length,
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return {
+      kind: "pipeline",
+      letVars,
+      pipeline: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }],
+    };
+  }
+
+  return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
 }
 
 function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): GenerateCtx {
@@ -1501,10 +1548,20 @@ export function buildPipelineFormPredicate(
     const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock, enclosing);
     return { letVars, pipelineBody: pipeline };
   }
-  throw new CodegenError(
-    `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
-    lambda.pos,
-  );
+  // `const`/`let` bindings → one `$let` expression, so the whole predicate rides in
+  // `$expr` (see `translatePredicate`'s matching branch).
+  if (lambda.exprBlock !== undefined) {
+    const preRewritten = rewriteEnclosingForeignParamsInBlock(lambda.exprBlock, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExprBlock(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length,
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
+  }
+  return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
 
 /**
@@ -1741,6 +1798,28 @@ export function extractLetsFromExpr(
   return { rewritten, letVars: allocator.letVars() };
 }
 
+/**
+ * The `ExprBlock` sibling of `extractLetsFromExpr`: rewrite each `const`/`let`
+ * initialiser and the `return` expression, so `<foreignParam>.<field>` becomes a bare
+ * field path and a `$.<field>` read hoists into the `$lookup.let`. A declaration NAME
+ * is left alone — it is a `$let` variable, not a document path, and `transformExpr`
+ * only classifies paths rooted at the foreign param or `$`.
+ */
+export function extractLetsFromExprBlock(
+  block: ExprBlock,
+  foreignParam: string,
+  outerLets?: ReadonlyMap<string, string>,
+  depth: number = 0,
+): { rewritten: ExprBlock; letVars: Record<string, string> } {
+  const allocator = createLetAllocator(depth);
+  const decls: LetDecl[] = block.decls.map((d) => ({
+    ...d,
+    value: transformExpr(d.value, foreignParam, allocator, outerLets),
+  }));
+  const ret = transformExpr(block.ret, foreignParam, allocator, outerLets);
+  return { rewritten: { type: "ExprBlock", decls, ret, pos: block.pos }, letVars: allocator.letVars() };
+}
+
 export function extractLetsFromPipeline(
   block: Pipeline,
   foreignParam: string,
@@ -1774,9 +1853,11 @@ export function matchStagesFromTranslation(t: MatchTranslation, subCtx: Generate
  * injected; the expression-body / block / missing-body skeleton and the `$match`
  * emission are identical and live here.
  *
- * An expression body is a predicate (→ one `$match`). A **block** reaches here only
- * from an `.aggregate(pipeline)` union source — a predicate's block body is folded to
- * its value form long before this, by `requireStreamPredicate` / `detectLookupCall`.
+ * An expression body is a predicate (→ one `$match`), and so is an `ExprBlock` — the
+ * `const`/`let` form, which becomes one `$let` and therefore rides in `$expr` entire.
+ * A **statement block** reaches here only from an `.aggregate(pipeline)` union source;
+ * a predicate's block body is folded to its value form long before this, by
+ * `requireStreamPredicate` / `detectLookupCall`.
  *
  * The caller validates the lambda's parameter count first (with its own
  * stage-specific message) — this helper assumes `lambda.params[0]` is the
@@ -1809,6 +1890,15 @@ export function lowerLambdaPredicate(
     if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
     const subCtx = opts.freshCtx(outerCtx);
     return lowerBlock(rewritten, subCtx);
+  }
+
+  // `const`/`let` bindings → one `$let` expression, so the predicate rides in `$expr`
+  // entire: nothing inside a `$let` has a query form to translate.
+  if (lambda.exprBlock !== undefined) {
+    const { rewritten, letVars } = extractLetsFromExprBlock(lambda.exprBlock, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    return [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }];
   }
 
   return opts.missingBody();
@@ -2616,15 +2706,11 @@ function chainFilterLambda(m: MethodCall, receiver: string): Lambda {
     );
   }
   if (m.method === "reject") {
-    if (base.body === undefined) {
+    const negated = negateStreamPredicate(base);
+    if (negated === null) {
       throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => …').`, base.pos);
     }
-    return {
-      type: "Lambda",
-      params: base.params,
-      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
-      pos: base.pos,
-    };
+    return negated;
   }
   return base;
 }

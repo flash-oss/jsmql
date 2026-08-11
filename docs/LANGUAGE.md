@@ -647,7 +647,7 @@ $.byMonth = $$$.orders.filter(o => o.userId === $._id).aggregate((o) => {
 });
 ```
 
-`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept (the index is positional-only). It is the pipeline-oriented spelling — reshape, roll up, paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. Running `.aggregate(...)` on the current stream (`$$.aggregate(...)`) is rejected — write those stages directly, or chain them (`$$.$sort({ … }).$limit(10)`); `.aggregate` only earns its keep against a foreign collection.
+`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept (the index is positional-only). It is the pipeline-oriented spelling — reshape, roll up, paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` works on the current stream too (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly or chaining them (`$$.$sort({ … }).$limit(10)`) does. It earns its keep there in a [`$facet` branch](#facet-via---key--chain-), which *is* a sub-pipeline and so has no "write them directly" alternative.
 
 **The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.length` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
 
@@ -1765,7 +1765,19 @@ $.legs.map(leg => {
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
-Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works in `.map`, `.filter`, `.reduce`, `.flatMap`, `.find`/`.some`/`.every`, the `$let(vars, fn)` form, IIFEs, `Object.groupBy`, and `Array.from`.
+Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE, `Object.groupBy`, `Array.from` — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
+
+```js
+$.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
+// → [{ $lookup: {
+//      from: "orders",
+//      let: { jsmql_f0_minTotal: "$minTotal" },
+//      pipeline: [{ $match: { $expr:
+//        { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } } }],
+//      as: "recent" } }]
+```
+
+A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr` rather than being translated to indexable query syntax — worth knowing when the predicate is the one an index would serve. Everything else behaves as it does anywhere else: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while keeping the bindings.
 
 > **⚠️ JavaScript gotcha — `=> {` is always a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error (it has no `return`) — jsmql points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
 

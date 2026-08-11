@@ -24,6 +24,7 @@ import { closestNameTo, didYouMean } from "./levenshtein.ts";
 import { arrayElements, checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
 import type { ArgRules, ArgType, EnumRef } from "./operators.ts";
 import { lookupOperator } from "./operators.ts";
+import { STAGES } from "./stages.ts";
 
 // Shared, closed enum sets resolved by name from an operator's `enums` rule.
 // timeUnit is case-SENSITIVE lowercase (mongod rejects "Day"); weekday is
@@ -229,6 +230,50 @@ function operandExprs(args: CallArg[]): Expr[] {
 }
 
 /**
+ * The expression operator that does the analogous job for a stage a developer
+ * reached for in value position. Only the handful with a real counterpart — most
+ * stages reshape a document *stream*, which no expression can do, and for those the
+ * message stops at "move it to a statement" rather than inventing an alternative.
+ */
+const EXPRESSION_ANALOGUE: Record<string, string> = {
+  $sort: "$sortArray",
+  $limit: "$slice",
+  $skip: "$slice",
+  $match: "$filter",
+  $redact: "$filter",
+  $set: "$mergeObjects",
+  $addFields: "$mergeObjects",
+  $unset: "$unsetField",
+  $project: "$getField",
+  $unionWith: "$concatArrays",
+};
+
+/**
+ * Reject a **pipeline stage** name used where a value is expected. A stage is a
+ * statement, so `{ $limit: … }` in an expression slot is not merely unusual — no
+ * MongoDB deployment has a `$limit` *expression* operator, and the server answers
+ * `Unrecognized expression '$limit'`. That universality is what puts this inside the
+ * pre-flight validators' remit (see src/CLAUDE.md § "Never guard raw MQL"): it can
+ * never reject a shape some deployment accepts.
+ *
+ * Registry-driven, so nothing here is a hand-maintained list: a name is rejected
+ * only when it is in `STAGES` and NOT in `OPERATORS`. `$count` — the one name that
+ * is both a stage and an accumulator — therefore passes, and HR2 forward-compat is
+ * untouched because an unknown name is in neither registry.
+ */
+function rejectStageInValuePosition(name: string, pos: number): void {
+  if (!(name in STAGES) || lookupOperator(name) !== undefined) return;
+  const analogue = EXPRESSION_ANALOGUE[name];
+  throw new CodegenError(
+    `'${name}' is a pipeline stage, not an expression — MongoDB has no '${name}' expression operator, so ` +
+      `'{ ${name}: … }' in a value position is rejected by the server. Write it as a pipeline statement ` +
+      `('${name}(…);') or as a chain link ('$$.${name}(…)').` +
+      (analogue === undefined ? "" : ` For the value-position equivalent, use '${analogue}(…)'.`),
+    pos,
+  );
+}
+
+/**
  * Validate an operator call's arguments against its shape + `args` rules.
  * No-op for unknown operators (forward-compat passthrough) and for any rule the
  * operator doesn't declare. Throws a `CodegenError` (with the offending node's
@@ -241,6 +286,7 @@ export function validateOperatorArgs(
   pos: number,
   ctx: GenerateCtx,
 ): void {
+  rejectStageInValuePosition(name, pos);
   const def = lookupOperator(name);
   if (def === undefined) return; // unknown operator — codegen passes it through
 

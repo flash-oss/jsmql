@@ -10,29 +10,58 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-10 — fix: a predicate error names the receiver the developer wrote
+## 2026-08-11 — feat: `const`/`let` bindings work in every predicate position
 
 ```
-$$ = $$$.orders.filter((a, b) => a > b);
-// before: '$$.filter(<predicate>)' … must take exactly one parameter — write '$$.filter(o => …)'
-// now:    '$$$.orders.filter(<predicate>)' … — write '$$$.orders.filter(o => …)'
+$.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
+// before: predicate has local `const`/`let` bindings, which isn't supported in this
+//         position … fold any bindings into <expr>.
+// now:    $match: { $expr: { $let: { vars: { t: "$total" },
+//                                   in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } }
 ```
 
-The `$$ = $$$.<coll>.…` source switch lowers its `.filter` / `.reject` through the same
-helpers the local `$$` chain uses, and those helpers spelled the receiver `$$`. The
-arity message is the harmful one: it tells the developer what to write, and
-`$$.filter(o => …)` reads the CURRENT stream. A developer who followed that advice
-changed which collection the query reads and got no warning.
+A block-bodied arrow with bindings worked everywhere a lambda produced a *value* — an in-document array method, `$let(vars, fn)`, an IIFE, `Object.groupBy` — and was refused in every *predicate* position, told to "fold any bindings into `<expr>`". Nothing forced that: `$match: { $expr: { $let: … } }` is ordinary MQL, and every one of the six positions now runs it (verified on a live mongod). An arrow should be as featureful as the language can make it, and a rejection whose only justification is that nobody wired the branch is a limit, not a design.
 
-`requireStreamPredicate` and `localRefInPredicateMessage` now take a `receiver` option
-(`$$` by default), and the two source-switch call sites pass `formatLookupReceiver(target)`
-— the same spelling master already threads into the callback-block rewrite hint. The
-cross-database spelling `$$$$.<db>.<coll>` comes through the same path.
+Three branches, one shape. `translatePredicate` and `buildPipelineFormPredicate` (the `$$$.<coll>` head and chain) and `lowerLambdaPredicate` (the four `$$` containers) each gained an `ExprBlock` case that emits the `$let` as the whole `$expr` — whole, because nothing inside a `$let` has a query-document form to translate, which is the one behaviour worth knowing: a predicate written this way is not the indexable query shape an expression body would produce. `extractLetsFromExprBlock` in [src/lookup-translation.ts](src/lookup-translation.ts) is the third sibling of `extractLetsFromExpr` / `extractLetsFromPipeline` and rewrites each initialiser and the `return`, so foreign paths resolve and a `$.<field>` read still hoists into the `$lookup.let`. Generation goes through a new `generateExprBlockWithCtx` export rather than a re-implementation, so the const-folding, shadowing, and re-declaration rules [generateExprBlock](src/codegen.ts) already owns keep applying.
 
-`.reject` also never passed the callback-block `rewrite` hint to the gate, so a stage
-inside a `$$ = $$$.<coll>.reject(o => { … })` block offered the chained-stage rewrite
-that suits a `$$` chain. It now passes both the hint and the receiver, so the pair stays
-in step.
+`negateStreamPredicate` learned the form too: it negates the `return` and keeps the bindings, since bindings compute values while only the returned expression decides the match. That is what makes `.reject` work, and it let the foreign-chain `.reject` normaliser drop its own hand-rolled negation and call the shared helper.
+
+The three `missingBody` hooks that carried the old rejection are now unreachable — a `Lambda` holds exactly one of `body` / `block` / `exprBlock`, and all three have a branch — so they became `internalError` calls, which is what an invariant the parser upholds should read as.
+
+---
+
+## 2026-08-11 — fix: `$$.aggregate(...)` works in every container a `$$` chain reaches
+
+```
+$ = { byStatus: $$.aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); }) };
+// before: .aggregate(...) runs a sub-pipeline against a FOREIGN collection … To add
+//         stages to the CURRENT stream, write them directly.
+// now:    [{ $facet: { byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }] } }]
+```
+
+`applyStreamMethods` rejected `.aggregate` on `$$` as "a redundant spelling of writing the stages directly". That reasoning holds at a statement position and fails in a `$facet` branch, where a branch *is* a sub-pipeline and there is nothing to write directly instead — the error sent the developer to a spelling their container could not use. The rejection was also already inconsistent: an `$out` RHS accepted `$$.aggregate(...)` and always had, because that path dispatches through the stream-method registry rather than through the rejecting branch. Deleting the special case makes all four `$$` positions agree — `$facet` branch, `$$ =` stream, `$out` RHS, bare statement — and costs nothing, since two spellings of one lowering is a trade jsmql already accepts.
+
+Also fixed alongside: a `$.<field>` read inside `$$.aggregate` was rejected by a message naming `.map(d => …)` — the shared `rejectLocalDocRef` defaults its method to `"map"`, and `.aggregate` never passed its own. It now names `.aggregate` and interpolates the developer's parameter, so the example reads `'o.x'` rather than a generic `d`.
+
+---
+
+## 2026-08-11 — fix: a pipeline stage name is rejected where a value is expected
+
+```
+$.x = $limit(5);
+// before: [{"$set":{"x":{"$limit":5}}}]   →  mongod: Unrecognized expression '$limit'
+// now:    '$limit' is a pipeline stage, not an expression — MongoDB has no '$limit'
+//         expression operator … Write it as a pipeline statement ('$limit(…);') or as a
+//         chain link ('$$.$limit(…)'). For the value-position equivalent, use '$slice(…)'.
+```
+
+All 44 stage-only names were accepted in value position and emitted MQL the server refuses. The rule this closes is the other half of the one the callback-block work stated: **stages are statements, operators are expressions — the name decides which, not the position.** That change stopped a statement appearing inside an expression-shaped callback; this one stops a statement *name* being used as an expression, anywhere.
+
+`rejectStageInValuePosition` lives in [src/operator-validation.ts](src/operator-validation.ts) — the value-position pre-flight validator — and runs ahead of the unknown-operator passthrough, since it is the one check that must fire for a name `OPERATORS` does not hold. It belongs there rather than in codegen for two reasons: `stages.ts` is a pure leaf so there is no cycle, and codegen must not branch on stage names. The test is the registry intersection (`name ∈ STAGES && name ∉ OPERATORS`), which is what keeps three things working without a list to maintain — `$count` (a stage *and* an accumulator), an unknown name (HR2), and a raw `{ $limit: 5 }` object literal (the developer's own document, which the never-guard-raw-MQL rule protects).
+
+This is inside the pre-flight validators' narrow exemption, not a violation of it: the exemption covers shapes **universally** invalid on every deployment, and no deployment has a `$limit` expression operator — unlike the cross-database `$lookup` namespace, which Atlas Data Federation does accept and which jsmql must therefore pass through.
+
+One test changed rather than being added to. `jsmql.expr("$match($.a === 0)")` asserted `{ $match: { $eq: ["$a", 0] } }`, described as useful for a hand-written sub-pipeline literal. mongod refuses that document in *both* readings — there is no `$match` expression operator, and as a stage body a bare `$eq` is "unknown top level operator" — so the suite was endorsing an invalid shape, which `test/CLAUDE.md` forbids. `jsmql.pipeline("$match($.a === 0)")` → `[{ $match: { a: 0 } }]` is where a stage document comes from, and `jsmql.expr("$.a === 0")` where the expression does.
 
 ---
 
@@ -53,6 +82,88 @@ One behaviour change falls out: `.flatMap(d => { return d.items; })` used to be 
 
 ---
 
+## 2026-08-11 — test: an equality narrow is spelled `$$.filter({ field: value })`
+
+Fifteen leading `$match($.field === value)` statements in
+[test/realistic.test.ts](../test/realistic.test.ts) — the collaborative-filtering
+example at the top of the file among them — are now `$$.filter({ field: value })`.
+Same stage out (`{ $match: { field: value } }`, byte-identical; no expected value
+in the file moved), fewer things to read: no `$.` prefix on each field and no
+`===` to parse, and for a multi-field narrow the object is shorter outright.
+
+It also makes the file speak one dialect. `.filter({ … })` is already how a
+predicate is written on a `$lookup` chain, a `$facet` branch, an `$out` write
+chain, and a `$$ = $$.filter(…)` narrow, so a reader met a different spelling only
+at the top-level statement — the position they read first.
+
+The rule applied, now recorded in the comment on the `$$ = $$.filter(...)` case,
+is that this is a **plain-equality** rewrite. A matches-object compares every key
+with `$eq`, so a predicate carrying a range or a null test keeps `$match(<expr>)`
+— `$match($.placedAt >= a && $.placedAt < b)` reads better than any lambda that
+means the same thing, and 13 sites keep it for exactly that reason. Three of those
+are inside a lambda block body, where `$$` is the enclosing stream rather than the
+sub-pipeline, so the rewrite would not have been equivalent at all.
+
+---
+
+## 2026-08-11 — test: the `$out` write chain gets its showcase examples
+
+The `$out` RHS became a full container — stream methods, stage links, `.reject` —
+but [test/realistic.test.ts](../test/realistic.test.ts) still showed only the two
+oldest spellings: a bare `$$` write and a single `.filter(...)`. A reader of the
+showcase would have concluded the RHS takes a predicate and nothing else. Four
+cases close that.
+
+The materialised view is the one worth reading first, because it is the job `$out`
+exists for and it needs the whole container at once:
+`$$$$.reporting.daily_revenue = $$.filter({…}).$group({…}).$sort({…})` — a lodash
+predicate and two stage links, one statement, destination on the left and
+transformation on the right. `$group`/`$sort` have no JavaScript spelling, so
+before stage links this shape could not be written as a chain at all. The other
+three cover `.reject(<matches>)` as the inverse filter, a `.toSorted`/`.take`/`.map`
+export that also pins the short `$out: "<coll>"` string form the same-database LHS
+emits, and a `kind: "err"` guard for a `.$out(...)` link inside a chain whose LHS is
+already the write.
+
+All three write shapes were run against a live mongod, into scratch databases
+dropped either side, and the documents that landed were checked — not just the
+emitted MQL (HR3). That run also surfaced the footgun now called out in the export
+case: a `.map` reshape that omits `_id` makes the server mint a fresh one per
+written document, so the export silently stops being joinable back to its source
+unless the body carries `_id` through.
+
+---
+
+## 2026-08-11 — test: the showcase reaches for the shortest spelling that still reads
+
+Seven chains in [test/realistic.test.ts](../test/realistic.test.ts) now use the
+shorthand spelling, and every one of them emits MQL **byte-identical** to what the
+test already asserted — not a single expected value moved. That is the point: the
+file is what a new user reads first (README points at it, the playground extracts
+its examples), so when two spellings compile to the same document the showcase
+should carry the shorter one.
+
+The `$facet` example is the visible change. Its three branches were
+`$$.filter(o => { $sort(…); $limit(…); })`-style block bodies because that was the
+only thing a branch accepted; a branch now takes any `$$` chain, so they read
+`$$.toSorted({ score: -1 }).take(10)` and `$$.$group({ _id: $.status, n: $sum(1) })`
+— one lodash chain and one stage link, with `.filter(<arrow>)` kept on the third
+because `>=` has no matches-object form. The README's facet block follows, and its
+claim that "every value a `$$.filter(...)`" is corrected to "every value a `$$`
+chain". The other six are matches-object predicates in the places that only
+recently started accepting them — an `$out` write chain, a `$$.push` spread, a
+`.find` inside a `.map`, and two `.length` counts — plus one `.takeWhile`.
+
+Two rewrites were tested and **rejected** for making the output worse, both the
+same shape: `$.f = $$$.coll.filter(o => { <stages> })` writes straight into
+`as: "f"`, while the equivalent lodash/stage-link chain routes through
+`__jsmql.tmp.N` and pays a `$set` plus the trailing `$unset`. Until an assignment
+whose chain needs no post-lookup value work can claim the `as` slot directly, the
+block body is the leaner spelling and the showcase keeps it — at
+`$.recentOrders = …` and at the `.aggregate((o) => { … })` customer report.
+
+---
+
 ## 2026-08-10 — feat!: pipeline stages belong to `.aggregate(pipeline)` alone
 
 ```
@@ -69,38 +180,6 @@ A `{ … }` body on a JavaScript or lodash method is now **JavaScript**: `const`
 The rule lives in one new leaf module, [src/callback-block.ts](src/callback-block.ts), and every callback position routes through it: `detectLookupCall` / `validateLookupShape` / `translatePredicate` / `buildPipelineFormPredicate` / `chainFilterLambda` (the `$$$.<coll>` family), `requireStreamPredicate` (the four `$$` containers), `MAP.validate`, and `requireLambda` for a callback consumed as a value. The parser keeps handing those methods the sub-pipeline block grammar on purpose — parsing the statements is what lets the rejection name the offending one (`` `$sort(...)` ``, `` `$.x = …` ``, `` `delete $.y` ``, `` `assert(...)` ``) and the rewrite that works in **this** container: `.aggregate((o) => { … })` for a `$$$.<coll>` receiver, the chained-stage spelling (`$$.$match({ … })`) for a `$$` one, and "nowhere at all" in a value position. A grammar that stopped at the first `$` could only say "unexpected token". `StreamMethodDef.validate` and `requireStreamPredicate` gained a `stageRewrite` parameter so each caller supplies its own position-accurate sentence, per the rule that [an error never recommends syntax that doesn't work where you are](#2026-08-02--fix-an-error-never-recommends-syntax-that-doesnt-work-where-you-are).
 
 Two things fall out. **A stage-free block now means what JavaScript means.** `.filter(o => { return o.userId === $._id; })` used to compile to `{ $lookup: { from, pipeline: [], as } }` — the predicate silently dropped, every foreign document matched. It folds back to the expression it returns, so it emits the indexed `localField`/`foreignField` form, identical to `.filter(o => o.userId === $._id)`. **`.aggregate` is now a `$$.push(...)` union source**, closing DEF-034: removing `.filter(block)` would otherwise have left a multi-stage `$unionWith` unspellable, and an uncorrelated aggregate maps onto `$unionWith.pipeline` exactly. A correlated one stays rejected — `$unionWith` has no `let` slot — and the message points at the field-assignment form, which does. Verified on a live mongod ([test/integration.test.ts](test/integration.test.ts)). `.find`/`.filter` also stopped disagreeing about `(element, index, array)`: both accept the JavaScript signature positionally and reject a *read* of either param, since a predicate has no index and no sub-stream yet.
-
----
-
-## 2026-08-10 — fix: the `$$ =` source switch folds a callback block before it classifies
-
-This supersedes "fix: a block-body predicate's `return` is the predicate" below.
-That entry describes `canonicalPredicateLambda`, which no longer exists. The
-callback-block rule — see "feat!: pipeline stages belong to `.aggregate(pipeline)`
-alone" — covers the same ground and covers it better: a stage-free block folds to its
-value form in one place, and a stage-bearing predicate block is now rejected outright
-instead of lowered as a sub-pipeline.
-
-Two sites still read a predicate before the fold ran, and both are in the `$$ =`
-source switch:
-
-- `predicateReferencesOuterDoc`, the probe that chooses between the flat `$unionWith`
-  and the correlated `$lookup` pivot. It saw the raw block, found no `$.<field>`, and
-  routed a correlated predicate to the uncorrelated lowering. That lowering then
-  rejected the predicate with a message naming `$$.filter` — the wrong receiver for a
-  `$$$.<coll>.filter` chain.
-- `lowerLookupPivot`, which builds its own `LookupCall` rather than take one from
-  `detectLookupCall`. It lowered `{ return <pred> }` to an **empty** sub-pipeline.
-
-The second one is the dangerous shape: a `$lookup` with `pipeline: []` matches every
-foreign document, so the query runs and returns wrong data. Both sites now call
-`tryCallbackBlockToValue`, the non-throwing half of the fold, because a classifier must
-stay side-effect-free.
-
-The general rule this adds to the callback-block contract: a site that **classifies** a
-predicate folds first, not only a site that lowers it. The regression tests compare each
-block spelling against its expression spelling, and one test pins the emitted
-sub-pipeline, because two equally broken forms compare equal to each other.
 
 ---
 
@@ -139,6 +218,64 @@ block form against the expression form *outcome for outcome* across all seven co
 rather than against literal MQL, so the pair cannot drift apart; with the fix reverted, 26
 of them fail. Emitted shapes were run against a live mongod (a `$match({b:1})` +
 `return o.a > 1` block returns only the doc satisfying both).
+
+---
+
+## 2026-08-10 — fix: a predicate error names the receiver the developer wrote
+
+```
+$$ = $$$.orders.filter((a, b) => a > b);
+// before: '$$.filter(<predicate>)' … must take exactly one parameter — write '$$.filter(o => …)'
+// now:    '$$$.orders.filter(<predicate>)' … — write '$$$.orders.filter(o => …)'
+```
+
+The `$$ = $$$.<coll>.…` source switch lowers its `.filter` / `.reject` through the same
+helpers the local `$$` chain uses, and those helpers spelled the receiver `$$`. The
+arity message is the harmful one: it tells the developer what to write, and
+`$$.filter(o => …)` reads the CURRENT stream. A developer who followed that advice
+changed which collection the query reads and got no warning.
+
+`requireStreamPredicate` and `localRefInPredicateMessage` now take a `receiver` option
+(`$$` by default), and the two source-switch call sites pass `formatLookupReceiver(target)`
+— the same spelling master already threads into the callback-block rewrite hint. The
+cross-database spelling `$$$$.<db>.<coll>` comes through the same path.
+
+`.reject` also never passed the callback-block `rewrite` hint to the gate, so a stage
+inside a `$$ = $$$.<coll>.reject(o => { … })` block offered the chained-stage rewrite
+that suits a `$$` chain. It now passes both the hint and the receiver, so the pair stays
+in step.
+
+---
+
+## 2026-08-10 — fix: the `$$ =` source switch folds a callback block before it classifies
+
+This supersedes "fix: a block-body predicate's `return` is the predicate" below.
+That entry describes `canonicalPredicateLambda`, which no longer exists. The
+callback-block rule — see "feat!: pipeline stages belong to `.aggregate(pipeline)`
+alone" — covers the same ground and covers it better: a stage-free block folds to its
+value form in one place, and a stage-bearing predicate block is now rejected outright
+instead of lowered as a sub-pipeline.
+
+Two sites still read a predicate before the fold ran, and both are in the `$$ =`
+source switch:
+
+- `predicateReferencesOuterDoc`, the probe that chooses between the flat `$unionWith`
+  and the correlated `$lookup` pivot. It saw the raw block, found no `$.<field>`, and
+  routed a correlated predicate to the uncorrelated lowering. That lowering then
+  rejected the predicate with a message naming `$$.filter` — the wrong receiver for a
+  `$$$.<coll>.filter` chain.
+- `lowerLookupPivot`, which builds its own `LookupCall` rather than take one from
+  `detectLookupCall`. It lowered `{ return <pred> }` to an **empty** sub-pipeline.
+
+The second one is the dangerous shape: a `$lookup` with `pipeline: []` matches every
+foreign document, so the query runs and returns wrong data. Both sites now call
+`tryCallbackBlockToValue`, the non-throwing half of the fold, because a classifier must
+stay side-effect-free.
+
+The general rule this adds to the callback-block contract: a site that **classifies** a
+predicate folds first, not only a site that lowers it. The regression tests compare each
+block spelling against its expression spelling, and one test pins the emitted
+sub-pipeline, because two equally broken forms compare equal to each other.
 
 ---
 

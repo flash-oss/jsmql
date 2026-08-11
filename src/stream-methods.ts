@@ -793,7 +793,7 @@ function rejectLocalDocRef(
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.${method}(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(${param} => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos,
   );
 }
@@ -1008,10 +1008,10 @@ const MAP: StreamMethodDef = {
 //
 // Shape + param validation is shared with the head form via `validateAggregateArg`
 // (lookup-translation.ts); lowering reuses the same `lowerCallbackBlock` engine
-// `.filter`/`.map` use, so cross-level `$lookup.let` capture works. Chaining
-// `.aggregate` onto the CURRENT stream (`$$.aggregate(...)`) is rejected in
-// `applyStreamMethods` — there it would be a redundant spelling of writing the
-// stages directly; `.aggregate` only earns its keep against a foreign collection.
+// `.map` uses, so cross-level `$lookup.let` capture works. On the CURRENT stream
+// (`$$.aggregate(...)`) the block's statements are just the chain's stages — the
+// `$facet` branch is where that earns its keep, a branch being a sub-pipeline with
+// no "write them directly" alternative to redirect to.
 const AGGREGATE: StreamMethodDef = {
   name: "aggregate",
   // The one method whose block statements ARE the sub-pipeline.
@@ -1054,7 +1054,7 @@ const AGGREGATE: StreamMethodDef = {
     const collLengthUsed = collName !== undefined && classifyCollParam(lambda);
     const block = lambda.block as Pipeline;
     const { rewritten, letVars } = extractLetsFromPipeline(block, param ?? "", ctx.pipelineLets);
-    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc);
+    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc, "aggregate");
     const blockCtx: GenerateCtx =
       collName !== undefined && collLengthUsed
         ? {

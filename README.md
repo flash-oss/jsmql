@@ -115,7 +115,7 @@ jsmql(`$match($.profile != null); $ = $.profile; $ = { ...$, score: $.points * 1
 
 // Multi-facet aggregation — every value a `$$` chain lowers to one $facet stage
 jsmql(`$ = {
-  topByScore: $$.$sort({ score: -1 }).$limit(10),
+  topByScore: $$.toSorted({ score: -1 }).take(10),
   recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) })
 }`);

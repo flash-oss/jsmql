@@ -184,10 +184,18 @@ describe("reusable functions — rejections (actionable errors)", () => {
     expect(() => jsmql("function foo(a) { return a }")).toThrow(/only valid inside a pipeline/);
   });
 
-  it("a `function` declaration with local bindings used as a query predicate is rejected with guidance", () => {
-    expect(() =>
-      jsmql("const r = $$$.tags.find(function (t) { const a = t.score; return a > 5 }); $ = { r };"),
-    ).toThrow(/predicate has local `const`\/`let` bindings/);
+  it("a `function` predicate's local bindings become the `$let` its `$expr` rides in", () => {
+    expect(jsmql("const r = $$$.tags.find(function (t) { const a = t.score; return a > 5 }); $ = { r };")).toEqual([
+      {
+        $lookup: {
+          from: "tags",
+          pipeline: [{ $match: { $expr: { $let: { vars: { a: "$score" }, in: { $gt: ["$$a", 5] } } } } }],
+          as: "__jsmql.var.r",
+        },
+      },
+      { $set: { "__jsmql.var.r": { $first: "$__jsmql.var.r" } } },
+      { $replaceWith: { r: "$__jsmql.var.r" } },
+    ]);
   });
 
   it("re-declaring a function in the same pipeline is rejected", () => {

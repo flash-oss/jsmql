@@ -1,6 +1,7 @@
 node_modules/
 dist/*
 !dist/jsmql.js
+tmp/
 vendor/mql-specifications/
 .idea/
 .claude/worktrees/

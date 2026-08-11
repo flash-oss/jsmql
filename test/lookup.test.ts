@@ -1382,9 +1382,27 @@ describe("$$$.coll.aggregate — error cases", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate([]);")).toThrow(/an empty pipeline has nothing to run/);
   });
 
-  it("$$.aggregate (current stream) redirects to the foreign form", () => {
-    expect(() => jsmql('$$.aggregate((o) => { $group({ _id: "$s" }); });')).toThrow(
-      /\.aggregate\(\.\.\.\) runs a sub-pipeline against a FOREIGN collection/,
+  it("$$.aggregate (current stream) appends its stages to the chain, in every container", () => {
+    // On `$$` the block's statements are simply the chain's stages. A `$facet` branch
+    // is the container that needs it: a branch IS a sub-pipeline, so there is no
+    // "write them directly" spelling to redirect to.
+    expect(jsmql("$$.aggregate((o) => { $group({ _id: o.s }); });")).toEqual([{ $group: { _id: "$s" } }]);
+    expect(jsmql("$$ = $$.aggregate((o) => { $match(o.a === 1); $limit(3); });")).toEqual([
+      { $match: { a: 1 } },
+      { $limit: 3 },
+    ]);
+    expect(jsmql("$ = { byStatus: $$.aggregate((o) => { $group({ _id: o.s, n: $sum(1) }); }) };")).toEqual([
+      { $facet: { byStatus: [{ $group: { _id: "$s", n: { $sum: 1 } } }] } },
+    ]);
+    expect(jsmql("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toEqual([
+      { $match: { a: 1 } },
+      { $out: "dest" },
+    ]);
+  });
+
+  it("a `$.<field>` read inside `$$.aggregate` names `.aggregate`, not `.map`", () => {
+    expect(() => jsmql("$$$.dest = $$.aggregate(o => { $match($.x === 1); });")).toThrow(
+      /'\$\.<field>' inside '\.aggregate\(o => …\)' isn't supported/,
     );
   });
 
