@@ -10,7 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-11 — test: the showcase reaches for the shortest spelling that still reads
+## 2026-08-11 — test: the `$out` write chain gets its showcase examples
+
+The `$out` RHS became a full container — stream methods, stage links, `.reject` —
+but [test/realistic.test.ts](../test/realistic.test.ts) still showed only the two
+oldest spellings: a bare `$$` write and a single `.filter(...)`. A reader of the
+showcase would have concluded the RHS takes a predicate and nothing else. Four
+cases close that.
+
+The materialised view is the one worth reading first, because it is the job `$out`
+exists for and it needs the whole container at once:
+`$$$$.reporting.daily_revenue = $$.filter({…}).$group({…}).$sort({…})` — a lodash
+predicate and two stage links, one statement, destination on the left and
+transformation on the right. `$group`/`$sort` have no JavaScript spelling, so
+before stage links this shape could not be written as a chain at all. The other
+three cover `.reject(<matches>)` as the inverse filter, a `.toSorted`/`.take`/`.map`
+export that also pins the short `$out: "<coll>"` string form the same-database LHS
+emits, and a `kind: "err"` guard for a `.$out(...)` link inside a chain whose LHS is
+already the write.
+
+All three write shapes were run against a live mongod, into scratch databases
+dropped either side, and the documents that landed were checked — not just the
+emitted MQL (HR3). That run also surfaced the footgun now called out in the export
+case: a `.map` reshape that omits `_id` makes the server mint a fresh one per
+written document, so the export silently stops being joinable back to its source
+unless the body carries `_id` through.
 
 Seven chains in [test/realistic.test.ts](../test/realistic.test.ts) now use the
 shorthand spelling, and every one of them emits MQL **byte-identical** to what the

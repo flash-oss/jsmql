@@ -2293,6 +2293,99 @@ describe("archive expired users via $out (inline filter)", { features: ["Pipelin
   );
 });
 
+// A `$out` RHS is a full stream chain, not just a `.filter(...)`: every method
+// and stage link lowers to a top-level stage that runs *before* the write. So a
+// nightly materialised view — the classic `$out` job — is one statement whose
+// LHS names the destination and whose RHS reads as the transformation.
+// `$group` / `$sort` have no JavaScript spelling, so they arrive as stage links.
+// Verified on a live mongod: the rollup lands in `reporting.daily_revenue`,
+// one document per day, newest first, cancelled orders excluded.
+describe("rebuild the daily-revenue materialised view via $out (write chain)", { features: ["Pipelines"] }, () => {
+  it(
+    "the write chain mixes a lodash predicate with `$group` / `$sort` stage links",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      expect(
+        jsmql(`
+$$$$.reporting.daily_revenue = $$
+  .filter({ status: "shipped" })
+  .$group({ _id: { $dateTrunc: { date: "$placedAt", unit: "day" } }, revenue: $sum("$total"), orders: $sum(1) })
+  .$sort({ _id: -1 });
+      `),
+      ).toEqual([
+        { $match: { status: "shipped" } },
+        {
+          $group: {
+            _id: { $dateTrunc: { date: "$placedAt", unit: "day" } },
+            revenue: { $sum: "$total" },
+            orders: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: -1 } },
+        { $out: { db: "reporting", coll: "daily_revenue" } },
+      ]);
+    },
+  );
+});
+
+describe("quarantine invalid orders via $out (`.reject`)", { features: ["Pipelines"] }, () => {
+  it(
+    "`.reject(<matches>)` is the inverse filter — everything that does NOT match is written",
+    { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // Sweep the bad rows into a quarantine collection for a human to look at.
+      // Saying "not valid" with `.reject({ valid: true })` beats spelling the
+      // negation by hand; it lowers to the negated `$expr` form (jsmql never
+      // emits a query-form De Morgan). Verified on a live mongod — only the
+      // `valid: false` order lands in `quarantine.bad_orders`.
+      expect(jsmql(`$$$$.quarantine.bad_orders = $$.reject({ valid: true });`)).toEqual([
+        { $match: { $expr: { $not: { $eq: ["$valid", true] } } } },
+        { $out: { db: "quarantine", coll: "bad_orders" } },
+      ]);
+    },
+  );
+});
+
+describe("export the top-100 customers to a same-database collection", { features: ["Pipelines"] }, () => {
+  it(
+    "a lodash sort/cap plus a `.map` reshape, all before the write",
+    { kind: "pipeline", usage: "db.customers.aggregate(jsmql(...))" },
+    () => {
+      // The same-database `$$$.<coll> = …` form emits the short `$out: "<coll>"`
+      // string (the cross-database form needs the `{ db, coll }` document). Note
+      // the reshape drops `_id`: MongoDB then mints a fresh one per written
+      // document, so add `_id: c._id` to the `.map` body when the export needs to
+      // stay joinable back to `customers`. Verified on a live mongod.
+      expect(
+        jsmql(`
+$$$.top_customers = $$
+  .toSorted({ lifetimeSpend: -1 })
+  .take(100)
+  .map(c => ({ userId: c._id, spend: c.lifetimeSpend }));
+      `),
+      ).toEqual([
+        { $sort: { lifetimeSpend: -1 } },
+        { $limit: 100 },
+        { $replaceWith: { userId: "$_id", spend: "$lifetimeSpend" } },
+        { $out: "top_customers" },
+      ]);
+    },
+  );
+});
+
+describe("a second write stage in a $out chain is rejected", { features: ["Pipelines"] }, () => {
+  it(
+    "the `$out` the LHS already implies must be the last stage — nothing may follow it",
+    { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
+    () => {
+      // Easy slip when fanning one pipeline out to two destinations: the LHS
+      // assignment IS the write, so a `.$out(...)` link inside the chain would be
+      // a second one. jsmql catches it where the server would.
+      expect(() => jsmql(`$$$.archive = $$.$out("other");`)).toThrow(/'\$out' must be the last stage in a pipeline/);
+    },
+  );
+});
+
 // ── Stream-method chains on the RHS of `$$ = …` ──────────────────────────────
 //
 // Chainable JS array-method vocabulary that extends a `$$ = $$.<chain>;` (or
