@@ -61,6 +61,7 @@ import {
   stageMustBeLast,
 } from "./stages.ts";
 import {
+  mustBeLastMessage,
   forbiddenInContextMessage,
   isStageLink,
   mustBeFirstLiteralMessage,
@@ -1341,7 +1342,7 @@ function lowerChainOnCollection(
   const switchDesc =
     target.db !== undefined ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
   const innerCtx: GenerateCtx = {
-    ...freshSubPipelineCtx(outerCtx),
+    ...freshSubPipelineCtx(outerCtx, "unionWith"),
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) },
   };
   const inner: object[] = [];
@@ -1465,7 +1466,7 @@ function lowerLookupPivot(
     const pipelineBody: object[] = [];
     const usesRootLen = methods.some((m) => argsReadRootStreamLength(m.args));
     const innerCtx: GenerateCtx = {
-      ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
+      ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx, "lookup")),
       pipelineLets: outerCtx.pipelineLets,
       // "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes through
       // `lowerCallbackBlock` and captures cross-level reads into THIS lookup's `let`.
@@ -1865,20 +1866,36 @@ function findQuerySlotCorrelation(node: Expr): string | null {
 }
 
 function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
-  // HR3: a write stage inside ANY sub-pipeline is rejected by mongod
-  // (Location51047), so jsmql must never emit one. The loop-position validator
-  // covers the containers it can label; this covers the rest — notably a
-  // `.aggregate` block (`.aggregate((o) => { $out(…); })`), which has no
-  // unambiguous container name (DEF-024) but is unambiguously *a* sub-pipeline.
-  // Registry-derived, so a future all-container stage is picked up for free.
+  // HR3: a stage the server refuses inside a sub-pipeline must never be emitted
+  // there. Two checks, both registry-derived so a new stage is covered for free:
+  // when `GenerateCtx.subPipelineContainer` names the container, judge against it
+  // (the only way to catch a stage forbidden in just one, e.g. `$collStats` in
+  // `$facet`); otherwise fall back to "forbidden in every container", which needs no
+  // label and still stops `$out`/`$merge` (mongod Location51047) anywhere.
   if (ctx.inSubPipeline === true) {
     const def = lookupStage(stageName);
+    const container = ctx.subPipelineContainer;
+    if (def !== undefined && container !== undefined && stageForbiddenIn(def, container)) {
+      // The container is known, so judge against it by name — this is the only check
+      // that catches a stage forbidden in ONE container, and it reuses the exact
+      // wording `checkStageLinkPlacement` produces for the chain-link spelling.
+      throw new CodegenError(forbiddenInContextMessage(stageName, container), body.pos);
+    }
     if (def !== undefined && stageForbiddenInAnySubPipeline(def)) {
       throw new CodegenError(
         `'${stageName}' is not allowed inside a sub-pipeline — MongoDB only accepts it as the last stage of a ` +
           `top-level pipeline. Move it to the outer pipeline.`,
         body.pos,
       );
+    }
+  }
+  // These stages precede a terminal write stage (the `$out` write chain's RHS), so a
+  // must-be-last stage here would emit a second one. Same rule the stage-link
+  // spelling gets from `checkStageLinkPlacement`, same wording.
+  if (ctx.beforeTerminalStage === true) {
+    const def = lookupStage(stageName);
+    if (def !== undefined && stageMustBeLast(def)) {
+      throw new CodegenError(mustBeLastMessage(stageName), body.pos);
     }
   }
   // Body-shape validation (literal-gated; see stage-validation.ts). Runs for
@@ -1958,7 +1975,8 @@ function generateBodyObject(
     if (isPipelineSlot && isPipelineAst(entry.value)) {
       // Sub-pipelines run in a fresh scope. Outer lets do not cross; function-
       // form parameter bindings do (they're compile-time constants).
-      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx), containerKindFor(stageName));
+      const container = containerKindFor(stageName);
+      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx, container), container);
       continue;
     }
     // Accumulator-context gate.

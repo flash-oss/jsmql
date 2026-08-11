@@ -217,11 +217,20 @@ name, which must never be named back at the user as if it were writable.
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays
 (`{ $facet: { … } }`, `{ $lookup: { pipeline: […] } }`,
 `{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`.
-A literal write/source stage written inside an **`.aggregate` block**
-lambda (`$$$.c.filter(o => { … })`) still gets must-first / must-last validation
-but not the container ban, because the shared `lowerBlock` lowerer runs
-`generateImplicitPipeline` with `container: "top"`. Threading the container
-through `lowerBlock` is deferred to a follow-up `[DEF-024]` — `lowerBlock` is
-used pervasively for predicate→`$match` translation where a fixed container
-would mislabel messages; the literal-array path covers the common case and this
-gap never produces a false positive.
+A stage written inside an **`.aggregate` block** gets the same container ban, from
+`GenerateCtx.subPipelineContainer` rather than from the assembly loop. The container
+travels on the *ctx* because `lowerBlock` is one shared lowerer: binding a fixed
+container to it would mislabel the lowerings that emit TOP-LEVEL stages (an `$out`
+write chain's predicate), so instead each ctx builder stamps what it knows —
+`freshSubPipelineCtx(outer, container)` and `freshFacetCtx` — and `generateStageBody`
+judges against the label when there is one. That is what catches a stage forbidden in
+a *single* container (`$collStats`, `forbiddenIn: ["facet"]`), which no container-less
+check can decide, and it yields the identical `forbiddenInContextMessage` the
+chained-stage spelling produces. The all-container check stays as the fallback for any
+position that leaves the label unset.
+
+`GenerateCtx.beforeTerminalStage` is the sibling rule for the one place stages land at
+the top level with a terminal stage appended after them: the `$out` write chain's RHS.
+A must-be-last stage there would emit two terminal stages ("$out can only be the final
+stage"), so it is rejected with the same `mustBeLastMessage` the stage-link spelling
+gets from `checkStageLinkPlacement`.

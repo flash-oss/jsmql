@@ -78,6 +78,14 @@ export function mustBeFirstLiteralMessage(stageName: string): string {
   );
 }
 
+/** Message for a must-be-last stage with something after it. */
+export function mustBeLastMessage(stageName: string): string {
+  return (
+    `'${stageName}' must be the last stage in a pipeline. ` +
+    `Move it to the end of the chain, or remove the links after it.`
+  );
+}
+
 /** Message for a stage used inside a sub-pipeline container that forbids it. */
 export function forbiddenInContextMessage(stageName: string, container: "facet" | "lookup" | "unionWith"): string {
   const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
@@ -109,10 +117,7 @@ export function checkStageLinkPlacement(
     throw new CodegenError(mustBeFirstLiteralMessage(name), pos);
   }
   if (stageMustBeLast(def) && !isLastInContainer) {
-    throw new CodegenError(
-      `'${name}' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.`,
-      pos,
-    );
+    throw new CodegenError(mustBeLastMessage(name), pos);
   }
 }
 

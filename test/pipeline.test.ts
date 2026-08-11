@@ -1299,32 +1299,67 @@ describe("chained stage calls on the current stream", () => {
   });
 });
 
-// HR3: `$out` / `$merge` are rejected by mongod in ANY sub-pipeline
-// (Location51047), so jsmql must never emit one there. The loop-position
-// validator covers the containers it can name; a block-body lambda has no
-// unambiguous container (DEF-024) but is unambiguously *a* sub-pipeline, so the
-// check keys on that instead. Derived from `forbiddenIn` in the registry — a
-// stage forbidden in facet AND lookup AND unionWith is forbidden everywhere but
-// the top level.
-describe("write stages are forbidden in every sub-pipeline", () => {
-  const cases: [string, string][] = [
-    ["a foreign .aggregate(...) block", '$.t = $$$.orders.aggregate(o => { $out("archive"); });'],
-    ["a foreign .aggregate(...) block ($merge)", '$.t = $$$.orders.aggregate(o => { $merge({ into: "m" }); });'],
+// HR3: mongod rejects `$out` / `$merge` in ANY sub-pipeline (Location51047), and
+// each diagnostic stage in exactly one container. Both come from `forbiddenIn` in the
+// registry, judged against `GenerateCtx.subPipelineContainer` — the container the ctx
+// builders stamp on — so a stage written inside an `.aggregate` block is named as
+// precisely as the chained-stage spelling is.
+describe("stages forbidden in a sub-pipeline name the container they are in", () => {
+  // Every container, in both spellings: the `.aggregate` block and the stage link.
+  const containers: [string, string, string][] = [
+    ["$lookup", '$.t = $$$.orders.aggregate(o => { $out("archive"); });', '$.t = $$$.orders.$out("archive");'],
+    ["$facet", '$ = { k: $$.aggregate(o => { $out("archive"); }) };', '$ = { k: $$.$out("archive") };'],
+    // `$$.push(...)`'s spread has no stage-link form, so the source-switch spelling
+    // stands in for the link half — the same `$unionWith.pipeline`.
+    ["$unionWith", '$$.push(...$$$.o.aggregate(o => { $out("archive"); }));', '$$ = $$$.o.$out("archive");'],
   ];
-  for (const [label, src] of cases) {
-    it(`rejects a write stage inside ${label}`, () => {
-      expect(() => jsmql(src)).toThrow(/is not allowed inside a sub-pipeline/);
+  for (const [container, block, link] of containers) {
+    it(`names '${container}' for both the block and the stage-link spelling`, () => {
+      const message = new RegExp(`'\\$out' is not allowed inside a '\\${container}' sub-pipeline`);
+      expect(() => jsmql(block)).toThrow(message);
+      expect(() => jsmql(link)).toThrow(message);
     });
   }
 
-  // A named container keeps its more specific message.
-  it("keeps the container-specific wording where the container is known", () => {
-    expect(() => jsmql('$.t = $$$.orders.$out("archive");')).toThrow(
+  it("covers $merge and a literal sub-pipeline array too", () => {
+    expect(() => jsmql('$.t = $$$.orders.aggregate(o => { $merge({ into: "m" }); });')).toThrow(
+      /'\$merge' is not allowed inside a '\$lookup' sub-pipeline/,
+    );
+    expect(() => jsmql('$lookup({ from: "c", pipeline: [ $out("a") ], as: "x" });')).toThrow(
       /'\$out' is not allowed inside a '\$lookup' sub-pipeline/,
     );
-    expect(() => jsmql('$ = { k: $$.$out("archive") };')).toThrow(
-      /'\$out' is not allowed inside a '\$facet' sub-pipeline/,
+  });
+
+  // A stage forbidden in ONE container only — the half a container-less check can't
+  // decide, since it is legitimate in the other two.
+  it("rejects a one-container stage in that container, and allows it in the others", () => {
+    expect(() => jsmql("$ = { k: $$.aggregate(o => { $collStats({}); }) };")).toThrow(
+      /'\$collStats' is not allowed inside a '\$facet' sub-pipeline/,
     );
+    expect(() => jsmql("$ = { k: $$.aggregate(o => { $facet({ inner: [{ $limit: 1 }] }); }) };")).toThrow(
+      /'\$facet' is not allowed inside a '\$facet' sub-pipeline/,
+    );
+    // mongod accepts `$collStats` as the first stage of a `$lookup.pipeline`.
+    expect(jsmql("$.t = $$$.orders.aggregate(o => { $collStats({}); });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $collStats: {} }], as: "t" } },
+    ]);
+  });
+
+  // The `$out` write chain's stages land at the TOP level with the `$out` appended
+  // after them, so a write stage there emits two terminal stages.
+  it("rejects a second write stage in an `$out` write chain", () => {
+    expect(() => jsmql('$$$.dest = $$.aggregate(o => { $out("x"); });')).toThrow(
+      /'\$out' must be the last stage in a pipeline/,
+    );
+    expect(() => jsmql('$$$.dest = $$.aggregate(o => { $merge({ into: "m" }); });')).toThrow(
+      /'\$merge' must be the last stage in a pipeline/,
+    );
+    // …while the ordinary write chain is untouched.
+    expect(jsmql("$$$.dest = $$.aggregate(o => { $match(o.a === 1); $sort({ b: 1 }); });")).toEqual([
+      { $match: { a: 1 } },
+      { $sort: { b: 1 } },
+      { $out: "dest" },
+    ]);
   });
 
   // …and the top-level write stage still works.

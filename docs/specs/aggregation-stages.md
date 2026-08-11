@@ -73,8 +73,10 @@ $$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
 Name resolution, arity, and the sub-pipeline placement rules live in one leaf module,
 [src/stage-link.ts](../../src/stage-link.ts), so all three containers share the wording.
 Placement is validated per container from the same declarative `forbiddenIn` / `position`
-data the statement path reads — so `.$out(…)` inside a `$lookup` chain is rejected. (The
-`.aggregate((o) => { … })` block still lacks that container check — see DEF-024.)
+data the statement path reads — so `.$out(…)` inside a `$lookup` chain is rejected. An
+`.aggregate((o) => { … })` block gets the identical check and wording, via
+`GenerateCtx.subPipelineContainer`; see
+[pipeline-validation.md](pipeline-validation.md).
 
 **Correlation.** Inside a foreign sub-pipeline `$.` means the *outer* document and hoists
 into `$lookup.let`. That works in every aggregation-**expression** slot:

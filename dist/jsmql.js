@@ -5742,10 +5742,11 @@ function clearCtxLets(ctx, droppedByStage) {
 function ctxHasLets(ctx) {
   return (ctx.pipelineLets?.size ?? 0) > 0;
 }
-function freshSubPipelineCtx(outer) {
+function freshSubPipelineCtx(outer, container) {
   return {
     lambdaParams: /* @__PURE__ */ new Set(),
     inSubPipeline: true,
+    ...container !== void 0 && { subPipelineContainer: container },
     bindings: outer.bindings,
     pipelineContext: outer.pipelineContext,
     // The slot allocator is a pipeline-global resource (gensym counter for
@@ -5760,6 +5761,7 @@ function freshFacetCtx(outer) {
   return {
     lambdaParams: /* @__PURE__ */ new Set(),
     inSubPipeline: true,
+    subPipelineContainer: "facet",
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
@@ -9806,6 +9808,9 @@ function formatUnknownStageLink(name) {
 function mustBeFirstLiteralMessage(stageName) {
   return `'${stageName}' must be the first stage in a pipeline \u2014 it produces the pipeline's source documents, so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`;
 }
+function mustBeLastMessage(stageName) {
+  return `'${stageName}' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.`;
+}
 function forbiddenInContextMessage(stageName, container) {
   const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
   return `'${stageName}' is not allowed inside a '${owner}' sub-pipeline. Move it to the outer (top-level) pipeline.`;
@@ -9820,10 +9825,7 @@ function checkStageLinkPlacement(name, pos, indexInContainer, isLastInContainer,
     throw new CodegenError(mustBeFirstLiteralMessage(name), pos);
   }
   if (stageMustBeLast(def) && !isLastInContainer) {
-    throw new CodegenError(
-      `'${name}' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.`,
-      pos
-    );
+    throw new CodegenError(mustBeLastMessage(name), pos);
   }
 }
 function stageLinkBlockLambda(m, body) {
@@ -10506,7 +10508,7 @@ function translateUnionPredicate(call, outerCtx, lowerBlock2) {
     );
   }
   return lowerLambdaPredicate(call.lambda, outerCtx, lowerBlock2, {
-    freshCtx: freshSubPipelineCtx,
+    freshCtx: (outer) => freshSubPipelineCtx(outer, "unionWith"),
     onLocalRef: () => {
       throw new CodegenError(correlatedPushPredicateMessage(call), call.lambda.pos);
     },
@@ -12627,7 +12629,7 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
   return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
 }
 function makeSubPipelineCtx(outerCtx, letVarNames) {
-  const fresh = freshSubPipelineCtx(outerCtx);
+  const fresh = freshSubPipelineCtx(outerCtx, "lookup");
   if (letVarNames.length === 0) return fresh;
   return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
 }
@@ -13490,7 +13492,12 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   const pipelineBody = [...seedPipeline];
   const usesRootLen = methods.slice(start, chainEnd).some((m) => m.args.some((a) => someArg(a, isRootStreamLengthNode)));
   const innerCtx = {
-    ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
+    ...captureRootStreamLength(
+      usesRootLen,
+      enclosing.foreignParams.length,
+      letVars,
+      freshSubPipelineCtx(outerCtx, "lookup")
+    ),
     enclosingLookup: enclosing,
     pipelineLets: outerCtx.pipelineLets
   };
@@ -14339,7 +14346,7 @@ function findContextRefLeaf(node) {
 function lowerOutChain(rhs, outerCtx, lowerBlock2, allocSlot) {
   if (rhs.type === "CollectionRef") return [];
   if (rhs.type === "MethodCall") {
-    return walkChain(rhs, outerCtx, lowerBlock2, allocSlot);
+    return walkChain(rhs, { ...outerCtx, beforeTerminalStage: true }, lowerBlock2, allocSlot);
   }
   throw new CodegenError(
     `The right-hand side of '$$$.<coll> = \u2026' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.`,
@@ -15160,7 +15167,7 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
   }
   const switchDesc = target.db !== void 0 ? `$$ = $$$$.${target.db}.${target.collection}` : `$$ = $$$.${target.collection}`;
   const innerCtx = {
-    ...freshSubPipelineCtx(outerCtx),
+    ...freshSubPipelineCtx(outerCtx, "unionWith"),
     sourceSwitch: { desc: switchDesc, letNames: new Set(outerCtx.pipelineLets?.keys() ?? []) }
   };
   const inner = [];
@@ -15228,7 +15235,7 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
     const pipelineBody = [];
     const usesRootLen = methods.some((m) => argsReadRootStreamLength(m.args));
     const innerCtx = {
-      ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx)),
+      ...captureRootStreamLength(usesRootLen, 0, letVars, freshSubPipelineCtx(outerCtx, "lookup")),
       pipelineLets: outerCtx.pipelineLets,
       // "inside a correlated `$lookup`" (depth 0) so a chain `.map` routes through
       // `lowerCallbackBlock` and captures cross-level reads into THIS lookup's `let`.
@@ -15477,11 +15484,21 @@ function findQuerySlotCorrelation(node) {
 function generateStageBody(stageName, body, ctx) {
   if (ctx.inSubPipeline === true) {
     const def = lookupStage(stageName);
+    const container = ctx.subPipelineContainer;
+    if (def !== void 0 && container !== void 0 && stageForbiddenIn(def, container)) {
+      throw new CodegenError(forbiddenInContextMessage(stageName, container), body.pos);
+    }
     if (def !== void 0 && stageForbiddenInAnySubPipeline(def)) {
       throw new CodegenError(
         `'${stageName}' is not allowed inside a sub-pipeline \u2014 MongoDB only accepts it as the last stage of a top-level pipeline. Move it to the outer pipeline.`,
         body.pos
       );
+    }
+  }
+  if (ctx.beforeTerminalStage === true) {
+    const def = lookupStage(stageName);
+    if (def !== void 0 && stageMustBeLast(def)) {
+      throw new CodegenError(mustBeLastMessage(stageName), body.pos);
     }
   }
   validateStageBody(stageName, body);
@@ -15519,7 +15536,8 @@ function generateBodyObject(body, stageName, ctx) {
     const key = entry.key.name;
     const isPipelineSlot = allValuesArePipelines || pipelineSlot.has(key);
     if (isPipelineSlot && isPipelineAst(entry.value)) {
-      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx), containerKindFor(stageName));
+      const container = containerKindFor(stageName);
+      out[key] = generatePipelineWithCtx(entry.value, freshSubPipelineCtx(ctx, container), container);
       continue;
     }
     const nestedScope = NESTED_ACCUMULATOR_OUTPUT[stageName];

@@ -1370,7 +1370,7 @@ export function translatePredicate(
 }
 
 function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): GenerateCtx {
-  const fresh = freshSubPipelineCtx(outerCtx);
+  const fresh = freshSubPipelineCtx(outerCtx, "lookup");
   if (letVarNames.length === 0) return fresh;
   return { ...fresh, lambdaParams: new Set([...fresh.lambdaParams, ...letVarNames]) };
 }
@@ -2922,7 +2922,12 @@ function tryExtractChainedLookup(
   // `.map` can capture an outer-`let` reference (rewritten to its `$$`-var
   // before codegen, so no raw read leaks as a sub-pipeline field).
   const innerCtx: GenerateCtx = {
-    ...captureRootStreamLength(usesRootLen, enclosing.foreignParams.length, letVars, freshSubPipelineCtx(outerCtx)),
+    ...captureRootStreamLength(
+      usesRootLen,
+      enclosing.foreignParams.length,
+      letVars,
+      freshSubPipelineCtx(outerCtx, "lookup"),
+    ),
     enclosingLookup: enclosing,
     pipelineLets: outerCtx.pipelineLets,
   };
