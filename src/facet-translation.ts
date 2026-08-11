@@ -25,7 +25,7 @@
 // document — there's no separate outer-doc concept.
 
 import type { Expr } from "./ast.ts";
-import { CodegenError, freshFacetCtx, type GenerateCtx } from "./codegen.ts";
+import { internalError, CodegenError, freshFacetCtx, type GenerateCtx } from "./codegen.ts";
 import {
   localRefInPredicateMessage,
   lowerLambdaPredicate,
@@ -177,12 +177,7 @@ function lowerFacetEntry(lambda: LambdaNode, outerCtx: GenerateCtx, lowerBlock: 
   return lowerLambdaPredicate(predicate, outerCtx, lowerBlock, {
     freshCtx: freshFacetCtx,
     onLocalRef: rejectLocalRef,
-    missingBody: () => {
-      throw new CodegenError(
-        `\`$$.filter(p)\` predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
-        lambda.pos,
-      );
-    },
+    missingBody: () => internalError("`$$.filter(p)` lambda has no body, block, or exprBlock", lambda.pos),
   });
 }
 

@@ -216,6 +216,16 @@ Per-method shape under the paired form:
 
 ### Block-body arrows (→ nested `$let`)
 
+Predicate positions take this form too. `lowerLambdaPredicate` and
+`translatePredicate` / `buildPipelineFormPredicate` each carry an `ExprBlock` branch
+that emits `$match: { $expr: <the $let> }` — the whole predicate, since nothing inside
+a `$let` has a query-document form to translate. `extractLetsFromExprBlock` (the
+sibling of `extractLetsFromExpr` / `extractLetsFromPipeline`) rewrites each initialiser
+and the `return`, so foreign paths resolve and a `$.<field>` read hoists into the
+`$lookup.let`; `generateExprBlockWithCtx` does the generating, so the folding,
+shadowing, and re-declaration rules are not re-implemented. `negateStreamPredicate`
+negates the `return` and keeps the bindings, which is what makes `.reject` work.
+
 A lambda body may be an **expression block** — `(x) => { const a = …; const b = f(a); return g(a, b); }` — anywhere a lambda is accepted as a value: the array methods above, `$let(vars, fn)`, the IIFE `(…)=>…)(…)` form, `Object.groupBy`, and `Array.from`'s map function. The parser represents it as an `ExprBlock` AST node (`{ decls: LetDecl[]; ret: Expr }`) on the `Lambda` — distinct from the lookup-callback `block: Pipeline` (whose statements are stages/update ops, lowered to a `$lookup` sub-pipeline).
 
 `generateExprBlock` (`codegen.ts`) lowers a **non-constant** declaration to a `$let` binding; a declaration whose initialiser is a **compile-time constant** folds instead (its value inlined, no `$let` — see [const-folding.md](const-folding.md)). The runtime bindings form a **right-folded nest of `$let`** — one binding per non-folded declaration, in source order:

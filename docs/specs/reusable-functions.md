@@ -194,7 +194,7 @@ call sites, exactly as for a hand-written IIFE.
 | Function used as a value | ``'double' is a reusable function — call it with 'double(...)' …`` ([DEF-032]) |
 | `function` body without `return` | ``A block body must end with a `return <expr>` statement …`` |
 | Generator `function*` | ``jsmql does not support generator functions (`function*`) …`` |
-| `function` predicate with local bindings | ``predicate has local `const`/`let` bindings, which isn't supported in this position …`` |
+| `function` predicate with local bindings | *accepted* — the bindings become the `$let` the predicate's `$expr` rides in |
 | Re-declaration / name clash | ``Function `f` is already declared earlier in this pipeline …`` |
 | Nested declaration in an arrow body | ``Reusable functions must be declared at the top level of a pipeline …`` |
 | Declaration with no pipeline | ``A reusable function declaration (…) is only valid inside a pipeline …`` |

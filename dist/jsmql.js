@@ -3016,7 +3016,16 @@ var Parser = class {
     return { type: "KeyValueEntry", key, value, pos: tok.pos };
   }
 };
-var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set(["find", "filter", "reject", "map", "aggregate"]);
+var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set([
+  "find",
+  "filter",
+  "reject",
+  "takeWhile",
+  "dropWhile",
+  "map",
+  "flatMap",
+  "aggregate"
+]);
 function isStreamRooted(expr) {
   let node = expr;
   for (; ; ) {
@@ -3915,6 +3924,229 @@ function checkIntBound(stage, body, opts) {
   }
 }
 
+// src/stages.ts
+var STAGES = {
+  $addFields: {
+    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    subPipelineFields: []
+  },
+  $bucket: {
+    description: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
+    subPipelineFields: []
+  },
+  $bucketAuto: {
+    description: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
+    subPipelineFields: []
+  },
+  $changeStream: {
+    description: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
+    subPipelineFields: [],
+    position: "first"
+  },
+  $changeStreamSplitLargeEvent: {
+    description: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
+    subPipelineFields: [],
+    position: "last"
+  },
+  $collStats: {
+    description: "Returns statistics regarding a collection or view.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true },
+    forbiddenIn: ["facet"]
+  },
+  $count: {
+    description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
+    subPipelineFields: []
+  },
+  $currentOp: {
+    description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
+    subPipelineFields: [],
+    // Server/deployment-level: must be run on the admin database
+    // (`db.getSiblingDB("admin").aggregate(...)`), not the current database.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $densify: {
+    description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
+    subPipelineFields: []
+  },
+  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [], position: "first" },
+  $facet: {
+    description: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    // Every value in the body object is itself a sub-pipeline.
+    subPipelineFields: ["*"],
+    // $facet cannot be nested inside another $facet.
+    forbiddenIn: ["facet"]
+  },
+  $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
+  $geoNear: {
+    description: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
+    subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"]
+  },
+  $graphLookup: {
+    description: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
+    subPipelineFields: []
+  },
+  $group: {
+    description: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
+    subPipelineFields: []
+  },
+  $indexStats: {
+    description: "Returns statistics regarding the use of each index for the collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"]
+  },
+  $limit: {
+    description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
+    subPipelineFields: []
+  },
+  $listLocalSessions: {
+    description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
+    subPipelineFields: [],
+    // Server-level: run on the admin database (`db.aggregate(...)`).
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $listSampledQueries: {
+    description: "Lists sampled queries for all collections or a specific collection.",
+    subPipelineFields: [],
+    // Cluster-level: run on the admin database.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $listSearchIndexes: {
+    description: "Returns information about existing Atlas Search indexes on a specified collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true }
+  },
+  $listSessions: {
+    description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
+    subPipelineFields: [],
+    // Cluster-level: reads the cluster-wide config.system.sessions collection.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $lookup: {
+    description: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
+    subPipelineFields: ["pipeline"]
+  },
+  $match: {
+    description: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
+    subPipelineFields: []
+  },
+  $merge: {
+    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"]
+  },
+  $out: {
+    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"]
+  },
+  $planCacheStats: {
+    description: "Returns plan cache information for a collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"]
+  },
+  $project: {
+    description: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    subPipelineFields: []
+  },
+  $rankFusion: {
+    description: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    subPipelineFields: []
+  },
+  $redact: {
+    description: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
+    subPipelineFields: []
+  },
+  $replaceRoot: {
+    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    subPipelineFields: []
+  },
+  $replaceWith: {
+    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    subPipelineFields: []
+  },
+  $sample: { description: "Randomly selects the specified number of documents from its input.", subPipelineFields: [] },
+  $scoreFusion: {
+    description: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    subPipelineFields: []
+  },
+  $search: {
+    description: "Performs a full-text search of the field or fields in an Atlas collection.",
+    subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"]
+  },
+  $searchMeta: {
+    description: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
+    subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"]
+  },
+  $set: {
+    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    subPipelineFields: []
+  },
+  $setWindowFields: {
+    description: "Groups documents into windows and applies one or more operators to the documents in each window.",
+    subPipelineFields: []
+  },
+  $shardedDataDistribution: {
+    description: "Provides data and size distribution information on sharded collections.",
+    subPipelineFields: [],
+    diagnostic: { scope: "cluster", options: false }
+  },
+  $skip: {
+    description: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
+    subPipelineFields: []
+  },
+  $sort: {
+    description: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
+    subPipelineFields: []
+  },
+  $sortByCount: {
+    description: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
+    subPipelineFields: []
+  },
+  $unionWith: {
+    description: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
+    subPipelineFields: ["pipeline"]
+  },
+  $unset: { description: "Removes or excludes fields from documents.", subPipelineFields: [] },
+  $unwind: {
+    description: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
+    subPipelineFields: []
+  },
+  $vectorSearch: {
+    description: "Performs an ANN or ENN search on a vector in the specified field.",
+    subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"]
+  }
+};
+function lookupStage(name) {
+  return Object.prototype.hasOwnProperty.call(STAGES, name) ? STAGES[name] : void 0;
+}
+function stageMustBeFirst(def) {
+  return def.position === "first" || def.diagnostic !== void 0;
+}
+function stageMustBeLast(def) {
+  return def.position === "last";
+}
+function stageForbiddenInAnySubPipeline(def) {
+  return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");
+}
+function stageForbiddenIn(def, container) {
+  return def.forbiddenIn?.includes(container) ?? false;
+}
+
 // src/operator-validation.ts
 var TIME_UNIT = [
   "year",
@@ -4081,7 +4313,28 @@ function operandExprs(args) {
   }
   return args;
 }
+var EXPRESSION_ANALOGUE = {
+  $sort: "$sortArray",
+  $limit: "$slice",
+  $skip: "$slice",
+  $match: "$filter",
+  $redact: "$filter",
+  $set: "$mergeObjects",
+  $addFields: "$mergeObjects",
+  $unset: "$unsetField",
+  $project: "$getField",
+  $unionWith: "$concatArrays"
+};
+function rejectStageInValuePosition(name, pos) {
+  if (!(name in STAGES) || lookupOperator(name) !== void 0) return;
+  const analogue = EXPRESSION_ANALOGUE[name];
+  throw new CodegenError(
+    `'${name}' is a pipeline stage, not an expression \u2014 MongoDB has no '${name}' expression operator, so '{ ${name}: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('${name}(\u2026);') or as a chain link ('$$.${name}(\u2026)').` + (analogue === void 0 ? "" : ` For the value-position equivalent, use '${analogue}(\u2026)'.`),
+    pos
+  );
+}
 function validateOperatorArgs(name, style, args, pos, ctx) {
+  rejectStageInValuePosition(name, pos);
   const def = lookupOperator(name);
   if (def === void 0) return;
   if (def.shape.kind === "none") {
@@ -6141,6 +6394,9 @@ function isOpaqueBsonValue(value) {
 }
 function generateWithCtx(expr, ctx) {
   return _generate(expr, ctx);
+}
+function generateExprBlockWithCtx(block, ctx) {
+  return generateExprBlock(block, ctx);
 }
 function _generate(expr, ctx) {
   return _generateBody(expr, ctx);
@@ -9517,229 +9773,6 @@ function pathsCollide(a, b) {
   return false;
 }
 
-// src/stages.ts
-var STAGES = {
-  $addFields: {
-    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    subPipelineFields: []
-  },
-  $bucket: {
-    description: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
-    subPipelineFields: []
-  },
-  $bucketAuto: {
-    description: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
-    subPipelineFields: []
-  },
-  $changeStream: {
-    description: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
-    subPipelineFields: [],
-    position: "first"
-  },
-  $changeStreamSplitLargeEvent: {
-    description: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
-    subPipelineFields: [],
-    position: "last"
-  },
-  $collStats: {
-    description: "Returns statistics regarding a collection or view.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: true },
-    forbiddenIn: ["facet"]
-  },
-  $count: {
-    description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
-    subPipelineFields: []
-  },
-  $currentOp: {
-    description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
-    subPipelineFields: [],
-    // Server/deployment-level: must be run on the admin database
-    // (`db.getSiblingDB("admin").aggregate(...)`), not the current database.
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $densify: {
-    description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
-    subPipelineFields: []
-  },
-  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [], position: "first" },
-  $facet: {
-    description: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
-    // Every value in the body object is itself a sub-pipeline.
-    subPipelineFields: ["*"],
-    // $facet cannot be nested inside another $facet.
-    forbiddenIn: ["facet"]
-  },
-  $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
-  $geoNear: {
-    description: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
-    subPipelineFields: [],
-    position: "first",
-    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
-    forbiddenIn: ["facet"]
-  },
-  $graphLookup: {
-    description: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
-    subPipelineFields: []
-  },
-  $group: {
-    description: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
-    subPipelineFields: []
-  },
-  $indexStats: {
-    description: "Returns statistics regarding the use of each index for the collection.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: false },
-    forbiddenIn: ["facet"]
-  },
-  $limit: {
-    description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
-    subPipelineFields: []
-  },
-  $listLocalSessions: {
-    description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
-    subPipelineFields: [],
-    // Server-level: run on the admin database (`db.aggregate(...)`).
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $listSampledQueries: {
-    description: "Lists sampled queries for all collections or a specific collection.",
-    subPipelineFields: [],
-    // Cluster-level: run on the admin database.
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $listSearchIndexes: {
-    description: "Returns information about existing Atlas Search indexes on a specified collection.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: true }
-  },
-  $listSessions: {
-    description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
-    subPipelineFields: [],
-    // Cluster-level: reads the cluster-wide config.system.sessions collection.
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $lookup: {
-    description: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
-    subPipelineFields: ["pipeline"]
-  },
-  $match: {
-    description: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
-    subPipelineFields: []
-  },
-  $merge: {
-    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
-    subPipelineFields: [],
-    position: "last",
-    forbiddenIn: ["facet", "lookup", "unionWith"]
-  },
-  $out: {
-    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
-    subPipelineFields: [],
-    position: "last",
-    forbiddenIn: ["facet", "lookup", "unionWith"]
-  },
-  $planCacheStats: {
-    description: "Returns plan cache information for a collection.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: false },
-    forbiddenIn: ["facet"]
-  },
-  $project: {
-    description: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
-    subPipelineFields: []
-  },
-  $rankFusion: {
-    description: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
-    subPipelineFields: []
-  },
-  $redact: {
-    description: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
-    subPipelineFields: []
-  },
-  $replaceRoot: {
-    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
-    subPipelineFields: []
-  },
-  $replaceWith: {
-    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
-    subPipelineFields: []
-  },
-  $sample: { description: "Randomly selects the specified number of documents from its input.", subPipelineFields: [] },
-  $scoreFusion: {
-    description: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
-    subPipelineFields: []
-  },
-  $search: {
-    description: "Performs a full-text search of the field or fields in an Atlas collection.",
-    subPipelineFields: [],
-    position: "first",
-    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
-    forbiddenIn: ["facet"]
-  },
-  $searchMeta: {
-    description: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
-    subPipelineFields: [],
-    position: "first",
-    forbiddenIn: ["facet"]
-  },
-  $set: {
-    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    subPipelineFields: []
-  },
-  $setWindowFields: {
-    description: "Groups documents into windows and applies one or more operators to the documents in each window.",
-    subPipelineFields: []
-  },
-  $shardedDataDistribution: {
-    description: "Provides data and size distribution information on sharded collections.",
-    subPipelineFields: [],
-    diagnostic: { scope: "cluster", options: false }
-  },
-  $skip: {
-    description: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
-    subPipelineFields: []
-  },
-  $sort: {
-    description: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
-    subPipelineFields: []
-  },
-  $sortByCount: {
-    description: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
-    subPipelineFields: []
-  },
-  $unionWith: {
-    description: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
-    subPipelineFields: ["pipeline"]
-  },
-  $unset: { description: "Removes or excludes fields from documents.", subPipelineFields: [] },
-  $unwind: {
-    description: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
-    subPipelineFields: []
-  },
-  $vectorSearch: {
-    description: "Performs an ANN or ENN search on a vector in the specified field.",
-    subPipelineFields: [],
-    position: "first",
-    forbiddenIn: ["facet"]
-  }
-};
-function lookupStage(name) {
-  return Object.prototype.hasOwnProperty.call(STAGES, name) ? STAGES[name] : void 0;
-}
-function stageMustBeFirst(def) {
-  return def.position === "first" || def.diagnostic !== void 0;
-}
-function stageMustBeLast(def) {
-  return def.position === "last";
-}
-function stageForbiddenInAnySubPipeline(def) {
-  return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");
-}
-function stageForbiddenIn(def, container) {
-  return def.forbiddenIn?.includes(container) ?? false;
-}
-
 // src/stage-link.ts
 function isStageLink(m) {
   return m.method.startsWith("$");
@@ -10508,6 +10541,13 @@ function rejectNonDocumentArg(arg) {
 
 // src/stream-methods.ts
 var STREAM_SHORTHAND_PARAM = exprVar("el");
+function prepareStreamArgs(def, args, callPos, stageRewrite) {
+  const prepared = def.callback === "pipeline" ? args : args.map(
+    (a) => a.type === "Lambda" ? callbackBlockToValue(a, { method: def.name, rewrite: stageRewrite }) : a
+  );
+  def.validate(prepared, callPos, stageRewrite);
+  return prepared;
+}
 var SLICE = {
   name: "slice",
   validate(args, callPos) {
@@ -10867,7 +10907,7 @@ function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc, method = "map"
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.${method}(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(${param} => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos
   );
 }
@@ -10882,6 +10922,8 @@ function rejectNonDocumentMapBody(body) {
 }
 var MAP = {
   name: "map",
+  // Reads its own block: the trailing `return` becomes a `$replaceWith` stage.
+  callback: "pipeline",
   validate(args, callPos, stageRewrite) {
     if (args.length !== 1) {
       throw new CodegenError(
@@ -10985,6 +11027,8 @@ var MAP = {
 };
 var AGGREGATE = {
   name: "aggregate",
+  // The one method whose block statements ARE the sub-pipeline.
+  callback: "pipeline",
   validate(args, callPos) {
     if (args.length !== 1) {
       throw new CodegenError(
@@ -11009,7 +11053,7 @@ var AGGREGATE = {
     const collLengthUsed = collName !== void 0 && classifyCollParam(lambda);
     const block = lambda.block;
     const { rewritten, letVars } = extractLetsFromPipeline(block, param ?? "", ctx.pipelineLets);
-    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc);
+    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc, "aggregate");
     const blockCtx = collName !== void 0 && collLengthUsed ? {
       ...ctx,
       slotAllocator: allocSlot,
@@ -11925,6 +11969,15 @@ function collectStreamChain(expr) {
 
 // src/lookup-translation.ts
 var EMPTY_ENCLOSING = { foreignParams: [], inScopeLetNames: /* @__PURE__ */ new Set() };
+function rewriteEnclosingForeignParamsInBlock(block, params) {
+  if (params.length === 0) return block;
+  return {
+    type: "ExprBlock",
+    decls: block.decls.map((d) => ({ ...d, value: rewriteEnclosingForeignParams(d.value, params) })),
+    ret: rewriteEnclosingForeignParams(block.ret, params),
+    pos: block.pos
+  };
+}
 function rewriteEnclosingForeignParams(expr, params) {
   if (params.length === 0) return expr;
   const paramSet = new Set(params);
@@ -12156,8 +12209,22 @@ function localRefInPredicateMessage(opts) {
   return `${head} \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference the current document. Inside this predicate, the lambda's parameter \`${param}\` IS the current document.`;
 }
 function negateStreamPredicate(lambda) {
-  if (lambda.body === void 0) return null;
   const pos = lambda.pos;
+  if (lambda.exprBlock !== void 0) {
+    const block = lambda.exprBlock;
+    return {
+      type: "Lambda",
+      params: lambda.params,
+      exprBlock: {
+        type: "ExprBlock",
+        decls: block.decls,
+        ret: { type: "UnaryExpr", op: "!", operand: block.ret, pos: block.ret.pos },
+        pos: block.pos
+      },
+      pos
+    };
+  }
+  if (lambda.body === void 0) return null;
   return {
     type: "Lambda",
     params: lambda.params,
@@ -12542,10 +12609,22 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
     const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing);
     return { kind: "pipeline", letVars, pipeline };
   }
-  throw new CodegenError(
-    `.${call.method}(predicate) predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-    lambda.pos
-  );
+  if (lambda.exprBlock !== void 0) {
+    const preRewritten = rewriteEnclosingForeignParamsInBlock(lambda.exprBlock, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExprBlock(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return {
+      kind: "pipeline",
+      letVars,
+      pipeline: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }]
+    };
+  }
+  return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
 }
 function makeSubPipelineCtx(outerCtx, letVarNames) {
   const fresh = freshSubPipelineCtx(outerCtx);
@@ -12633,10 +12712,18 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg,
     const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing);
     return { letVars, pipelineBody: pipeline };
   }
-  throw new CodegenError(
-    `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-    lambda.pos
-  );
+  if (lambda.exprBlock !== void 0) {
+    const preRewritten = rewriteEnclosingForeignParamsInBlock(lambda.exprBlock, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExprBlock(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
+  }
+  return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
 function predicateReferencesOuterDoc(lambda, outerCtx) {
   if (lambda.params.length !== 1) return false;
@@ -12756,6 +12843,15 @@ function extractLetsFromExpr(body, foreignParam, outerLets, depth = 0) {
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
+function extractLetsFromExprBlock(block, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
+  const decls = block.decls.map((d) => ({
+    ...d,
+    value: transformExpr(d.value, foreignParam, allocator, outerLets)
+  }));
+  const ret = transformExpr(block.ret, foreignParam, allocator, outerLets);
+  return { rewritten: { type: "ExprBlock", decls, ret, pos: block.pos }, letVars: allocator.letVars() };
+}
 function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0, allocator = createLetAllocator(depth)) {
   const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
@@ -12778,6 +12874,12 @@ function lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, opts) {
     if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
     const subCtx = opts.freshCtx(outerCtx);
     return lowerBlock2(rewritten, subCtx);
+  }
+  if (lambda.exprBlock !== void 0) {
+    const { rewritten, letVars } = extractLetsFromExprBlock(lambda.exprBlock, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    return [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }];
   }
   return opts.missingBody();
 }
@@ -13268,15 +13370,11 @@ function chainFilterLambda(m, receiver) {
     );
   }
   if (m.method === "reject") {
-    if (base.body === void 0) {
+    const negated = negateStreamPredicate(base);
+    if (negated === null) {
       throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => \u2026').`, base.pos);
     }
-    return {
-      type: "Lambda",
-      params: base.params,
-      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
-      pos: base.pos
-    };
+    return negated;
   }
   return base;
 }
@@ -13314,8 +13412,8 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) continue;
-    def.validate(m.args, m.pos, aggregateRewrite(receiver));
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(receiver));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
     pipelineBody.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
@@ -13710,12 +13808,7 @@ function lowerFacetEntry(lambda, outerCtx, lowerBlock2) {
   return lowerLambdaPredicate(predicate, outerCtx, lowerBlock2, {
     freshCtx: freshFacetCtx,
     onLocalRef: rejectLocalRef,
-    missingBody: () => {
-      throw new CodegenError(
-        `\`$$.filter(p)\` predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-        lambda.pos
-      );
-    }
+    missingBody: () => internalError("`$$.filter(p)` lambda has no body, block, or exprBlock", lambda.pos)
   });
 }
 function rejectLocalRef(letVars, param, pos) {
@@ -14279,8 +14372,8 @@ function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
   }
   const def = lookupStreamMethod(call.method);
   if (def !== null) {
-    def.validate(call.args, call.pos, STREAM_STAGE_REWRITE);
-    const result = def.lower(call.args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
+    const args = prepareStreamArgs(def, call.args, call.pos, STREAM_STAGE_REWRITE);
+    const result = def.lower(args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
     return { stages: result.stages };
   }
   const suggestion = didYouMean(call.method, ["filter", "reject", ...streamMethodNames()], (s) => `.${s}()`);
@@ -14317,12 +14410,7 @@ function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
         pos
       );
     },
-    missingBody: () => {
-      throw new CodegenError(
-        `'$$.${method}(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-        arg.pos
-      );
-    }
+    missingBody: () => internalError(`'$$.${method}(<predicate>)' lambda has no body, block, or exprBlock`, arg.pos)
   });
 }
 function lowerOut(op, target, outerCtx, lowerBlock2, allocSlot) {
@@ -14999,18 +15087,12 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
       target.push(...lowerStreamReject(m, ctx, lowerBlockFn));
       continue;
     }
-    if (m.method === "aggregate") {
-      throw new CodegenError(
-        `.aggregate(...) runs a sub-pipeline against a FOREIGN collection \u2014 write '$$$.<coll>.aggregate((o) => { ... })' (optionally after '.filter(...)'). To add stages to the CURRENT stream, write them directly (e.g. '$group(...); $sort(...);').`,
-        m.pos
-      );
-    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$", container);
     }
-    def.validate(m.args, m.pos, STREAM_STAGE_REWRITE);
-    const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
+    const args = prepareStreamArgs(def, m.args, m.pos, STREAM_STAGE_REWRITE);
+    const result = def.lower(args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     target.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
@@ -15101,8 +15183,8 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
     }
-    def.validate(m.args, m.pos, aggregateRewrite(formatLookupReceiver(target)));
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(formatLookupReceiver(target)));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
     inner.push(...result.stages);
   }
   const from = requireSameDbColl(target.db, target.collection, target.pos);
@@ -15236,12 +15318,7 @@ function lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlockFn) {
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
     onLocalRef: rejectLocalRefInStreamFilter,
-    missingBody: () => {
-      throw new CodegenError(
-        `'.filter(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-        lambda.pos
-      );
-    }
+    missingBody: () => internalError("'.filter(<predicate>)' lambda has no body, block, or exprBlock", lambda.pos)
   });
 }
 function rejectLocalRefInStreamFilter(letVars, param, pos) {

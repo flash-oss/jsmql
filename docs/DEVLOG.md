@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-11 — feat: `const`/`let` bindings work in every predicate position
+
+```
+$.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
+// before: predicate has local `const`/`let` bindings, which isn't supported in this
+//         position … fold any bindings into <expr>.
+// now:    $match: { $expr: { $let: { vars: { t: "$total" },
+//                                   in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } }
+```
+
+A block-bodied arrow with bindings worked everywhere a lambda produced a *value* — an in-document array method, `$let(vars, fn)`, an IIFE, `Object.groupBy` — and was refused in every *predicate* position, told to "fold any bindings into `<expr>`". Nothing forced that: `$match: { $expr: { $let: … } }` is ordinary MQL, and every one of the six positions now runs it (verified on a live mongod). An arrow should be as featureful as the language can make it, and a rejection whose only justification is that nobody wired the branch is a limit, not a design.
+
+Three branches, one shape. `translatePredicate` and `buildPipelineFormPredicate` (the `$$$.<coll>` head and chain) and `lowerLambdaPredicate` (the four `$$` containers) each gained an `ExprBlock` case that emits the `$let` as the whole `$expr` — whole, because nothing inside a `$let` has a query-document form to translate, which is the one behaviour worth knowing: a predicate written this way is not the indexable query shape an expression body would produce. `extractLetsFromExprBlock` in [src/lookup-translation.ts](src/lookup-translation.ts) is the third sibling of `extractLetsFromExpr` / `extractLetsFromPipeline` and rewrites each initialiser and the `return`, so foreign paths resolve and a `$.<field>` read still hoists into the `$lookup.let`. Generation goes through a new `generateExprBlockWithCtx` export rather than a re-implementation, so the const-folding, shadowing, and re-declaration rules [generateExprBlock](src/codegen.ts) already owns keep applying.
+
+`negateStreamPredicate` learned the form too: it negates the `return` and keeps the bindings, since bindings compute values while only the returned expression decides the match. That is what makes `.reject` work, and it let the foreign-chain `.reject` normaliser drop its own hand-rolled negation and call the shared helper.
+
+The three `missingBody` hooks that carried the old rejection are now unreachable — a `Lambda` holds exactly one of `body` / `block` / `exprBlock`, and all three have a branch — so they became `internalError` calls, which is what an invariant the parser upholds should read as.
+
+---
+
 ## 2026-08-11 — fix: `$$.aggregate(...)` works in every container a `$$` chain reaches
 
 ```

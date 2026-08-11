@@ -1765,7 +1765,19 @@ $.legs.map(leg => {
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
-Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works in `.map`, `.filter`, `.reduce`, `.flatMap`, `.find`/`.some`/`.every`, the `$let(vars, fn)` form, IIFEs, `Object.groupBy`, and `Array.from`.
+Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE, `Object.groupBy`, `Array.from` — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
+
+```js
+$.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
+// → [{ $lookup: {
+//      from: "orders",
+//      let: { jsmql_f0_minTotal: "$minTotal" },
+//      pipeline: [{ $match: { $expr:
+//        { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } } }],
+//      as: "recent" } }]
+```
+
+A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr` rather than being translated to indexable query syntax — worth knowing when the predicate is the one an index would serve. Everything else behaves as it does anywhere else: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while keeping the bindings.
 
 > **⚠️ JavaScript gotcha — `=> {` is always a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error (it has no `return`) — jsmql points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
 

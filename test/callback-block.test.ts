@@ -118,12 +118,18 @@ describe("a stage-free callback block is the JavaScript value form", () => {
     );
   });
 
-  it("`const`/`let` bindings in a predicate block still need folding into the expression", () => {
-    // A predicate position lowers one expression, so the `$let` an `ExprBlock`
-    // needs has nowhere to go — the same limitation `function (x) { const … }` hits.
-    expect(() => jsmql(`$.r = $$$.orders.filter(o => { const t = o.total; return t > 5; });`)).toThrow(
-      /predicate has local `const`\/`let` bindings, which isn't supported in this position/,
-    );
+  it("`const`/`let` bindings become the `$let` the predicate's `$expr` rides in", () => {
+    // A `$let` has no query form, so the whole predicate goes to `$expr` — but the
+    // bindings work, and a `$.<field>` read still hoists into the `$lookup.let`.
+    expect(jsmql(`$.r = $$$.orders.filter(o => { const t = o.total; return t > 5; });`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [{ $match: { $expr: { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } } } }],
+          as: "r",
+        },
+      },
+    ]);
   });
 });
 
@@ -144,5 +150,100 @@ describe("in-document array callbacks are untouched", () => {
 
   it("`{ return <expr> }` collapses to the bare expression", () => {
     expect(jsmql(`$.r = $.items.filter(d => { return d > 1; });`)).toEqual(jsmql(`$.r = $.items.filter(d => d > 1);`));
+  });
+});
+
+// A `const`/`let` block predicate is a `$let` expression. A `$let` has no query form,
+// so the whole predicate rides in `$expr` — but every predicate position accepts it,
+// and the bindings behave exactly as they do in any other block-bodied arrow.
+describe("`const`/`let` bindings work in every predicate position", () => {
+  const LET = { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } };
+  const cases: [string, string, unknown][] = [
+    [
+      "lookup head .filter",
+      `$.r = $$$.o.filter(d => { const t = d.total; return t > 5; });`,
+      [{ $lookup: { from: "o", pipeline: [{ $match: { $expr: LET } }], as: "r" } }],
+    ],
+    [
+      "foreign chain .filter",
+      `$$ = $$$.o.toSorted("t").filter(d => { const t = d.total; return t > 5; });`,
+      [
+        { $match: { $expr: false } },
+        { $unionWith: { coll: "o", pipeline: [{ $sort: { t: 1 } }, { $match: { $expr: LET } }] } },
+      ],
+    ],
+    ["$$ = narrow", `$$ = $$.filter(d => { const t = d.total; return t > 5; });`, [{ $match: { $expr: LET } }]],
+    [
+      "$facet branch",
+      `$ = { big: $$.filter(d => { const t = d.total; return t > 5; }) };`,
+      [{ $facet: { big: [{ $match: { $expr: LET } }] } }],
+    ],
+    [
+      "$out RHS",
+      `$$$.dest = $$.filter(d => { const t = d.total; return t > 5; });`,
+      [{ $match: { $expr: LET } }, { $out: "dest" }],
+    ],
+    [
+      "union spread",
+      `$$.push(...$$$.o.filter(d => { const t = d.total; return t > 5; }));`,
+      [{ $unionWith: { coll: "o", pipeline: [{ $match: { $expr: LET } }] } }],
+    ],
+  ];
+  for (const [label, src, expected] of cases) {
+    it(`works in ${label}`, () => {
+      expect(jsmql(src)).toEqual(expected);
+    });
+  }
+
+  it("`.reject` negates the `return` and keeps the bindings", () => {
+    // The bindings compute values; only the returned expression decides the match.
+    expect(jsmql(`$$ = $$.reject(d => { const t = d.total; return t > 5; });`)).toEqual([
+      { $match: { $expr: { $let: { vars: { t: "$total" }, in: { $not: { $gt: ["$$t", 5] } } } } } },
+    ]);
+  });
+
+  it("sequential bindings nest, so a later one can read an earlier one", () => {
+    expect(jsmql(`$.r = $$$.o.filter(d => { const t = d.total; const n = t * 2; return n > 5; });`)).toEqual([
+      {
+        $lookup: {
+          from: "o",
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $let: {
+                    vars: { t: "$total" },
+                    in: { $let: { vars: { n: { $multiply: ["$$t", 2] } }, in: { $gt: ["$$n", 5] } } },
+                  },
+                },
+              },
+            },
+          ],
+          as: "r",
+        },
+      },
+    ]);
+  });
+
+  it("a `$.<field>` read inside the block still hoists into the `$lookup.let`", () => {
+    expect(jsmql(`$.r = $$$.o.filter(d => { const t = d.total; return t > $.minTotal; });`)).toEqual([
+      {
+        $lookup: {
+          from: "o",
+          let: { jsmql_f0_minTotal: "$minTotal" },
+          pipeline: [
+            { $match: { $expr: { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } } },
+          ],
+          as: "r",
+        },
+      },
+    ]);
+  });
+
+  it("a container with no `let` slot still rejects a `$.<field>` read", () => {
+    // The binding is fine; reading the OUTER document from a `$facet` branch is not.
+    expect(() => jsmql(`$ = { big: $$.filter(d => { const t = $.total; return t > 5; }) };`)).toThrow(
+      /'\$\.<field>' inside '\$\$\.filter\(<predicate>\)'/,
+    );
   });
 });

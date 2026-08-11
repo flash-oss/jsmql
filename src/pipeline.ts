@@ -1617,12 +1617,7 @@ function lowerStreamFilterPredicate(
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
     onLocalRef: rejectLocalRefInStreamFilter,
-    missingBody: () => {
-      throw new CodegenError(
-        `'.filter(<predicate>)' predicate has local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression — \`function (x) { return <expr> }\` / \`(x) => <expr>\` — and fold any bindings into <expr>.`,
-        lambda.pos,
-      );
-    },
+    missingBody: () => internalError("'.filter(<predicate>)' lambda has no body, block, or exprBlock", lambda.pos),
   });
 }
 
