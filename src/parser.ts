@@ -2599,16 +2599,28 @@ export class Parser {
  * `isStreamRooted`). `.aggregate` is the one method whose block IS a pipeline (each
  * statement a stage, no `return`).
  *
- * The four JavaScript/lodash methods share the grammar without sharing the meaning:
- * `.find` / `.filter` / `.reject` are predicates and `.map` is a per-document
- * reshape, so their blocks are JavaScript (`const`/`let` plus one `return <expr>`)
- * and a stage inside one is rejected downstream by `src/callback-block.ts`. Parsing
- * their statements anyway is what lets that rejection name the stage the developer
- * wrote and the rewrite that works in the surrounding container. Other chain methods
- * (`.toSorted`, `.reduce`, `.slice`, …) take expression-shaped callbacks, so a
+ * The JavaScript/lodash methods share the grammar without sharing the meaning:
+ * `.find` / `.filter` / `.reject` / `.takeWhile` / `.dropWhile` are predicates,
+ * `.map` / `.flatMap` are per-document transforms, so their blocks are JavaScript
+ * (`const`/`let` plus one `return <expr>`) and a stage inside one is rejected
+ * downstream by `src/callback-block.ts`. Parsing their statements anyway is what lets
+ * that rejection name the stage the developer wrote and the rewrite that works in the
+ * surrounding container; a grammar that stopped at the first `$` could only say
+ * "unexpected token". Membership is therefore about which callbacks a developer might
+ * plausibly reach for a pipeline in — the key-function methods (`.toSorted`,
+ * `.uniqBy`, `.groupBy`, …) take a field expression, not a body of work, so a
  * `=> { … }` there keeps its expression-block meaning.
  */
-const STREAM_BLOCK_METHODS = new Set<string>(["find", "filter", "reject", "map", "aggregate"]);
+const STREAM_BLOCK_METHODS = new Set<string>([
+  "find",
+  "filter",
+  "reject",
+  "takeWhile",
+  "dropWhile",
+  "map",
+  "flatMap",
+  "aggregate",
+]);
 
 /**
  * Walk a receiver chain back to its root and report whether the root is a

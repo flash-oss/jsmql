@@ -49,6 +49,7 @@ import { didYouMean } from "./levenshtein.ts";
 // from this module, and lookupStreamMethod is a runtime function (not consumed
 // at this module's top level), so ESM's late-binding handles it cleanly.
 import {
+  prepareStreamArgs,
   fromTheEndRejection,
   lookupStreamMethod,
   streamMethodNames,
@@ -2684,8 +2685,8 @@ export function peelForeignChain(
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) continue; // caller pre-validated the chain; defensive no-op
-    def.validate(m.args, m.pos, aggregateRewrite(receiver));
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(receiver));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlock, pipelineBody, allocSlot, true);
     pipelineBody.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     // A chained `.aggregate` may capture cross-level reads into THIS lookup's let.

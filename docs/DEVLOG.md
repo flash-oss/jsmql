@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-11 — fix: the callback-block rule reaches `.takeWhile` / `.dropWhile` / `.flatMap`
+
+```
+$$ = $$.toSorted("t").takeWhile(d => { $match(d.a === 1); });
+// before: A block body must end with a `return <expr>` statement at position 39, got '$'.
+// now:    `.takeWhile(d => { … })` takes a JavaScript callback … `$match(...)` is a pipeline
+//         stage, not part of a callback — chain them as stage calls instead — `$$.$match({ … })`.
+```
+
+Stages were already rejected in these three — but by the generic expression-block parser, which stops at the first `$` and so can neither name the statement nor point anywhere. They are the direct twins of the methods that got the real message: two predicates alongside `.filter`, one per-document transform alongside `.map`. Consistency in the *message* is what the rule is for, so `STREAM_BLOCK_METHODS` now covers them and [src/callback-block.ts](src/callback-block.ts) does the rejecting. The key-function methods (`.toSorted`, `.uniqBy`, `.groupBy`, …) stay out deliberately: they take a field expression, not a body of work, so a `$match(...)` there is a typo rather than a misplaced pipeline, and widening the grammar for them would be behaviour risk with no reader to serve.
+
+The plumbing is one new seam rather than three edits. `prepareStreamArgs` in [src/stream-methods.ts](src/stream-methods.ts) is what every chain container now calls in place of `def.validate`: it folds a stage-free block back to its value form, then validates. Folding **before** validating is the part that matters — each method keeps its own shape error, so `.flatMap` still says it needs `d => d.<path>` and never learns that a block body exists. `StreamMethodDef.callback: "pipeline"` opts a method out of the fold; only `.map` and `.aggregate` set it, because they read the block themselves. Any future member of `STREAM_BLOCK_METHODS` inherits the rule without touching its validator.
+
+One behaviour change falls out: `.flatMap(d => { return d.items; })` used to be rejected outright ("requires an expression body, not a block") while the identical JavaScript `d => d.items` compiled. It now emits the same `{ $unwind: "$items" }`, verified on a live mongod along with the `.takeWhile` / `.dropWhile` block forms. Every other accepting case is byte-identical to before.
+
+---
+
 ## 2026-08-10 — feat!: pipeline stages belong to `.aggregate(pipeline)` alone
 
 ```

@@ -105,6 +105,7 @@ import {
   type SystemStageCall,
 } from "./system-stage-translation.ts";
 import {
+  prepareStreamArgs,
   collectStreamChain,
   detectArrayReducerWrap,
   detectDictBuildWrap,
@@ -1165,8 +1166,8 @@ function applyStreamMethods(
     if (def === null) {
       throw unknownStreamMethod(m, "$$", container);
     }
-    def.validate(m.args, m.pos, STREAM_STAGE_REWRITE);
-    const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
+    const args = prepareStreamArgs(def, m.args, m.pos, STREAM_STAGE_REWRITE);
+    const result = def.lower(args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     target.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
@@ -1369,8 +1370,8 @@ function lowerChainOnCollection(
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
     }
-    def.validate(m.args, m.pos, aggregateRewrite(formatLookupReceiver(target)));
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(formatLookupReceiver(target)));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
     inner.push(...result.stages);
   }
   const from = requireSameDbColl(target.db, target.collection, target.pos);

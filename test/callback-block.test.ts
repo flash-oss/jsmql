@@ -23,6 +23,9 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     ],
     ["$$ = foreign pivot .filter", `$$ = $$$.orders.filter(o => { $match(o.a === 1); });`],
     ["union spread", `$$.push(...$$$.other.filter(o => { $match(o.x === 1); }));`],
+    ["foreign chain .takeWhile", `$.r = $$$.orders.toSorted("t").takeWhile(o => { $match(o.a === 1); });`],
+    ["foreign chain .dropWhile", `$.r = $$$.orders.toSorted("t").dropWhile(o => { $match(o.a === 1); });`],
+    ["foreign chain .flatMap", `$.r = $$$.orders.filter(o => o.a === 1).flatMap(o => { $match(o.a === 1); });`],
   ];
   for (const [label, src] of foreign) {
     it(`${label} → points at .aggregate on the same collection`, () => {
@@ -36,6 +39,9 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     ["$$ = reshape .map", `$$ = $$.map(o => { $sort({ a: 1 }); return { b: o.x }; });`],
     ["$facet branch", `$ = { a: $$.filter(o => { $match(o.x === 1); $count("n"); }) };`],
     ["$out RHS", `$$$.dest = $$.filter(o => { $match(o.x === 1); });`],
+    ["$$ = .takeWhile", `$$ = $$.toSorted("t").takeWhile(o => { $match(o.a === 1); });`],
+    ["$$ = .dropWhile", `$$ = $$.toSorted("t").dropWhile(o => { $match(o.a === 1); });`],
+    ["$$ = .flatMap", `$$ = $$.flatMap(o => { $match(o.a === 1); });`],
   ];
   for (const [label, src] of stream) {
     it(`${label} → points at the chained-stage spelling`, () => {
@@ -91,6 +97,19 @@ describe("a stage-free callback block is the JavaScript value form", () => {
 
   it("`{ return <expr> }` on a stream `.map` is the reshape", () => {
     expect(jsmql(`$$ = $$.map(o => { return { b: o.x }; });`)).toEqual([{ $replaceWith: { b: "$x" } }]);
+  });
+
+  it("`{ return <expr> }` on the predicate/transform chain methods is the expression", () => {
+    // `.takeWhile`/`.dropWhile` already accepted this shape; `.flatMap` used to
+    // reject any block, which made `d => { return d.items; }` an error while the
+    // identical JavaScript `d => d.items` compiled.
+    for (const [block, expr] of [
+      [`$$ = $$.toSorted("t").takeWhile(d => { return d.a > 1; });`, `$$ = $$.toSorted("t").takeWhile(d => d.a > 1);`],
+      [`$$ = $$.toSorted("t").dropWhile(d => { return d.a > 1; });`, `$$ = $$.toSorted("t").dropWhile(d => d.a > 1);`],
+      [`$$ = $$.flatMap(d => { return d.items; });`, `$$ = $$.flatMap(d => d.items);`],
+    ]) {
+      expect(jsmql(block)).toEqual(jsmql(expr));
+    }
   });
 
   it("a block with no `return` has no value to use", () => {

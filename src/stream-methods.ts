@@ -9,7 +9,7 @@
 
 import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
-import { requireStageFreeCallback, type StageRewrite } from "./callback-block.ts";
+import { callbackBlockToValue, requireStageFreeCallback, type StageRewrite } from "./callback-block.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx, shorthandToLambda, stringKeyExpr } from "./codegen.ts";
 import {
   aggregateArgToLambda,
@@ -72,6 +72,36 @@ export type StreamMethodResult = {
   extraLetVars?: Record<string, string>;
 };
 
+/**
+ * Prepare a registry method's arguments, then validate them — the single entry point
+ * every chain container uses in place of calling `def.validate` directly.
+ *
+ * A `{ … }` callback body on a JavaScript or lodash method is JavaScript, so unless
+ * the method opts out (`callback: "pipeline"`) a stage-free block folds back to the
+ * value form here — `{ return E }` becomes the expression `E`, `{ const a = …; return E }`
+ * an `ExprBlock` — and a stage-bearing one is rejected naming the offending statement
+ * and `stageRewrite`. Folding BEFORE `validate` is what keeps each method's own
+ * shape errors intact: `.flatMap` may go on saying it needs `d => d.<path>` without
+ * ever learning that a block body exists.
+ *
+ * Returns the args to pass to `lower` — the same array when nothing folded.
+ */
+export function prepareStreamArgs(
+  def: StreamMethodDef,
+  args: readonly CallArg[],
+  callPos: number,
+  stageRewrite: StageRewrite,
+): readonly CallArg[] {
+  const prepared =
+    def.callback === "pipeline"
+      ? args
+      : args.map((a) =>
+          a.type === "Lambda" ? callbackBlockToValue(a, { method: def.name, rewrite: stageRewrite }) : a,
+        );
+  def.validate(prepared, callPos, stageRewrite);
+  return prepared;
+}
+
 export type StreamMethodDef = {
   /** JS method name (e.g. "slice"). */
   name: string;
@@ -82,11 +112,23 @@ export type StreamMethodDef = {
    *
    * `stageRewrite` is the caller's position-accurate answer to "where do pipeline
    * stages go here" — `aggregateRewrite('$$$.orders')` on a foreign chain,
-   * `STREAM_STAGE_REWRITE` on the current stream. A method whose callback takes a
-   * block body (`.map`) needs it to reject a stage without recommending a spelling
-   * its container can't use; every other method ignores the parameter.
+   * `STREAM_STAGE_REWRITE` on the current stream. A method that reads its own block
+   * body (`.map`) needs it to reject a stage without recommending a spelling its
+   * container can't use; every other method ignores the parameter.
    */
   validate: (args: readonly CallArg[], callPos: number, stageRewrite: StageRewrite) => void;
+  /**
+   * How this method consumes a `=> { … }` callback body. `"value"` — the default —
+   * means the body is JavaScript, so `prepareStreamArgs` folds a stage-free block
+   * back to the expression it returns before `validate`/`lower` run: the method only
+   * ever sees an expression or an `ExprBlock`, exactly as before the block grammar
+   * reached it. `"pipeline"` opts out for the two methods that read the block
+   * themselves — `.aggregate` (its statements ARE the sub-pipeline) and `.map`
+   * (whose `return` is a `$replaceWith` reshape). Only a method in the parser's
+   * `STREAM_BLOCK_METHODS` can ever receive a block, so the field is inert
+   * elsewhere.
+   */
+  callback?: "value" | "pipeline";
   /**
    * Produce the stages this method contributes.
    *
@@ -791,6 +833,8 @@ function rejectNonDocumentMapBody(body: Expr): void {
 
 const MAP: StreamMethodDef = {
   name: "map",
+  // Reads its own block: the trailing `return` becomes a `$replaceWith` stage.
+  callback: "pipeline",
   validate(args, callPos, stageRewrite) {
     if (args.length !== 1) {
       throw new CodegenError(
@@ -970,6 +1014,8 @@ const MAP: StreamMethodDef = {
 // stages directly; `.aggregate` only earns its keep against a foreign collection.
 const AGGREGATE: StreamMethodDef = {
   name: "aggregate",
+  // The one method whose block statements ARE the sub-pipeline.
+  callback: "pipeline",
   validate(args, callPos) {
     if (args.length !== 1) {
       throw new CodegenError(

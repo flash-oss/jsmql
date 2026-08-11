@@ -18,7 +18,7 @@ import {
   type SubPipelineLowerer,
   type SlotAllocator,
 } from "./lookup-translation.ts";
-import { lookupStreamMethod, streamMethodNames } from "./stream-methods.ts";
+import { prepareStreamArgs, lookupStreamMethod, streamMethodNames } from "./stream-methods.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { checkStageLinkPlacement, isStageLink, stageLinkBlock, stageLinkBody } from "./stage-link.ts";
 
@@ -296,10 +296,10 @@ function lowerChainMethod(
   }
   const def = lookupStreamMethod(call.method);
   if (def !== null) {
-    def.validate(call.args, call.pos, STREAM_STAGE_REWRITE);
+    const args = prepareStreamArgs(def, call.args, call.pos, STREAM_STAGE_REWRITE);
     // `inSubPipeline = false` — `$out` chains live at the outer pipeline level,
     // not inside a `$unionWith.pipeline` body.
-    const result = def.lower(call.args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
+    const result = def.lower(args, outerCtx, call.pos, lowerBlock, prevStages, allocSlot, false);
     return { stages: result.stages };
   }
   // Method in neither the stage-link form nor the stream-methods registry. Suggest a
