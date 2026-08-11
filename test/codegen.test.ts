@@ -1626,9 +1626,12 @@ describe("lambda element-type inference (array-method param typed from a provabl
   it("only the element param is typed — the index param is a number and keeps the guard", () => {
     // `(element, index)`: `element` is string, `index` is a number, so `$.m[i]`
     // must NOT collapse to $getField.
+    // `$size: [["a","b"]]` — the literal receiver is wrapped one level so MongoDB
+    // reads it as $size's single argument. Bare (`$size: ["a","b"]`) it is spliced
+    // into two arguments and the server rejects the pipeline.
     expect(jsmql.expr('["a", "b"].map((k, i) => $.m[i])')).toEqual({
       $map: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: ["a", "b"] }] }, ["a", "b"]] } },
+        input: { $zip: { inputs: [{ $range: [0, { $size: [["a", "b"]] }] }, ["a", "b"]] } },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -2798,6 +2801,78 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
   it("rejects a block with no `return`", () => {
     expect(() => jsmql.expr("$.items.map(x => { const a = 1; })")).toThrow(/must end with a `return <expr>`/);
+  });
+
+  // MongoDB SPLICES a bare array in a positional single-array-argument slot:
+  // `{ $size: [1, 2] }` is read as two arguments ("takes exactly 1 arguments. 2
+  // were passed in"), and the one-element `{ $size: [1] }` unwraps to the scalar
+  // ("must be an array, but was of type: int"). So every one of these emitted MQL
+  // the server refused. One extra level is unwrapped exactly once, back to the
+  // operand we meant. Verified against a live mongod.
+  describe("a literal-array receiver is wrapped for single-array-argument operators", () => {
+    const wrapped: [string, string, unknown][] = [
+      [".length", "[1, 2].length", { $size: [[1, 2]] }],
+      [".size()", "[1, 2].size()", { $size: [[1, 2]] }],
+      [".toReversed()", "[1, 2].toReversed()", { $reverseArray: [[1, 2]] }],
+      [".head()", "[1, 2].head()", { $first: [[1, 2]] }],
+      [".first()", "[1, 2].first()", { $first: [[1, 2]] }],
+      [".last()", "[1, 2].last()", { $last: [[1, 2]] }],
+      // A single-element literal is the sharper case: unwrapped it becomes a scalar.
+      ["1-element .length", "[1].length", { $size: [[1]] }],
+      ["string elements", '["a", "b"].toReversed()', { $reverseArray: [["a", "b"]] }],
+    ];
+    for (const [label, src, expected] of wrapped) {
+      it(`${label} wraps the literal`, () => {
+        expect(jsmql.expr(src)).toEqual(expected);
+      });
+    }
+
+    it("a non-literal receiver is left alone — the wrap is only for literals", () => {
+      // A field path / $$var / operator document is already unambiguous, so adding
+      // a level would change what the operator reads.
+      expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
+      expect(jsmql.expr("$.items.map(a => a).toReversed()")).toEqual({
+        $reverseArray: { $map: { input: "$items", as: "a", in: "$$a" } },
+      });
+    });
+
+    it("object-form operators keep the receiver unwrapped (no splicing there)", () => {
+      // `input:` is a named value slot, not an argument list — wrapping would break it.
+      expect(jsmql.expr("[1, 2].map(a => a)")).toEqual({ $map: { input: [1, 2], as: "a", in: "$$a" } });
+      expect(jsmql.expr("[1, 2].filter(a => a)")).toMatchObject({ $filter: { input: [1, 2], as: "a" } });
+    });
+  });
+
+  // JS stringifies nested arrays recursively (`[[1,2],[3]].join(",") === "1,2,3"`).
+  // MQL expressions can't recurse, so the emitted `$toString` of an inner array is
+  // an execution-time failure. Reject where the shape is provable rather than emit
+  // it (HR3) or silently flatten one level (a different answer than was asked for).
+  describe("stringifying an array of arrays is rejected, not mis-emitted", () => {
+    it("a literal of literals is rejected by .join() and .toString()", () => {
+      expect(() => jsmql.expr('[[1, 2], [3]].join(",")')).toThrow(
+        /\.join\(\) can't stringify an array of arrays — this array literal holds arrays/,
+      );
+      expect(() => jsmql.expr("[[1, 2], [3]].toString()")).toThrow(/\.toString\(\) can't stringify an array of arrays/);
+    });
+
+    it("the message offers both ways out", () => {
+      expect(() => jsmql.expr('[[1, 2], [3]].join(",")')).toThrow(
+        /Flatten first \('\.flat\(\)\.join\(\)'\), or map each inner array to a string/,
+      );
+    });
+
+    it(".partition() is the other provable shape", () => {
+      expect(() => jsmql('$.r = $$$.orders.partition(o => o.v > 0).join(",");')).toThrow(
+        /\.join\(\) can't stringify an array of arrays — '\.partition\(\.\.\.\)' holds arrays/,
+      );
+    });
+
+    it("a flat literal, an unknown receiver, and .flat() first all still compile", () => {
+      expect(jsmql.expr('[1, 2].join(",")')).toMatchObject({ $reduce: { input: [1, 2] } });
+      // Unknown element type — literal-gating says don't guess.
+      expect(() => jsmql.expr('$.items.join(",")')).not.toThrow();
+      expect(() => jsmql.expr('[[1, 2], [3]].flat().join(",")')).not.toThrow();
+    });
   });
 
   it("JS-faithful: a bare-brace object body is a block (object return needs parens)", () => {

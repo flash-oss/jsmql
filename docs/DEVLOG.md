@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-11 — fix(codegen): a literal array reaching a positional single-array-argument operator
+
+`$.r = [1, 2].length;` emitted `{ $size: [1, 2] }`, which MongoDB refuses: the operand
+slot of `$size` / `$first` / `$last` / `$reverseArray` is **positional**, so a bare array
+there is spliced into an argument list — *"$size takes exactly 1 arguments. 2 were passed
+in"*. The one-element `[7].length` was worse: `{ $size: [7] }` unwraps to the scalar and
+fails with *"must be an array, but was of type: int"*. A two-token expression emitted MQL
+that could not run, and the test suite was endorsing it — one case asserted
+`{ $size: ["a", "b"] }` as expected output, exactly the failure mode
+[test/CLAUDE.md](../test/CLAUDE.md) warns about. That expectation is corrected here.
+
+This is the trap `arrayToObjectOfLiteralPairs` already documents for `$arrayToObject`,
+so the remedy is the same: one extra level, `{ $size: [[1, 2]] }`, which the server unwraps
+exactly once back to the intended operand. Rather than patch the twenty-odd emission sites
+and rely on future vigilance, the four operators now have constructors — `sizeOf`,
+`firstOf`, `lastOf`, `reverseArrayOf` — over a shared `singleArrayArg` that wraps only when
+the operand really is a JS array. A field path, a `$$var`, or a nested operator document is
+already unambiguous and passes through, so the constructors are safe everywhere and a new
+call site can't reintroduce the bug. Object-**form** operators (`$map`/`$filter`/`$reduce`)
+keep their receiver unwrapped: `input:` is a named value slot with no argument list to
+splice into.
+
+While fixing that, `.join()` / `.toString()` on an array OF arrays turned out to be
+unfixable rather than wrong: JS recurses (`[[1,2],[3]].join(",")` is `"1,2,3"`) and MQL
+expressions cannot, so the emitted per-element `$toString` fails on an inner array.
+`rejectNestedArrayStringify` now rejects it with both ways out (flatten first, or map each
+inner array to a string), gated to the two provable shapes — an array literal of arrays,
+and `.partition(pred)`. Flattening one level silently would have answered a question the
+source never asked. See [docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-08-09 — docs: the project reads as a finished product; history lives only here
 
 New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":

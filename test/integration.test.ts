@@ -514,4 +514,22 @@ $ = { byRegion };`,
     expect(await counts("$$$.orders.$match({ userId: $._id })")).toEqual(expected);
     expect(await counts("$$$.orders.filter({ userId: $._id })")).toEqual(expected);
   });
+
+  // A positional single-array-argument operator (`$size`/`$first`/`$last`/
+  // `$reverseArray`) SPLICES a bare array operand into an argument list, so every
+  // one of these emitted MQL the server refused outright — `[10,20,30].length` was
+  // "$size takes exactly 1 arguments. 2 were passed in", and the one-element
+  // `[7].length` was "must be an array, but was of type: int". Nothing but a real
+  // run catches this: the emitted document looks perfectly reasonable.
+  it("pipeline: single-array-argument operators over a literal array match JS", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+$ = { n: [10, 20, 30].length, rev: [10, 20, 30].toReversed(), h: [10, 20, 30].head(),
+      l: [10, 20, 30].last(), one: [7].length, nested: [[1, 2], [3]].head().toReversed() };`,
+    );
+    // Values are exactly what JavaScript returns for the same expressions.
+    expect(rows).toEqual([{ n: 3, rev: [30, 20, 10], h: 10, l: 30, one: 1, nested: [2, 1] }]);
+  });
+
 });

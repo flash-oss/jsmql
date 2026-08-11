@@ -725,6 +725,58 @@ const ARRAY_OUTPUT_OPS = new Set([
 // Method names that always return an array — derived from METHODS.
 const ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
 
+/**
+ * Is every element of `expr` provably an array — i.e. is it an array OF arrays?
+ *
+ * Only two shapes are certain: an array literal whose every element is itself an
+ * array, and `.partition(pred)` (whose result is always the two-bucket
+ * `[[…matched], […rest]]`). Everything else returns false, per the literal-gating
+ * rule: an unknown receiver must not be guessed at.
+ *
+ * `.join()` / `.toString()` need this because JS stringifies nested arrays
+ * recursively (`[[1,2],[3]].join(",") === "1,2,3"`) and MQL has no recursion —
+ * `$toString` of an array is an execution-time failure, so the honest answer is a
+ * compile-time rejection wherever we can prove the shape.
+ */
+function isArrayOfArrays(expr: Expr): boolean {
+  if (expr.type === "ArrayLiteral") {
+    if (expr.elements.length === 0) return false;
+    return expr.elements.every((el) => {
+      switch (el.type) {
+        // Not a plain element — the shape is unknown, so don't guess.
+        case "SpreadElement":
+        case "AssignExpr":
+        case "DeleteStmt":
+        case "LetDecl":
+        case "FuncDecl":
+          return false;
+        default:
+          return isArrayProducing(el);
+      }
+    });
+  }
+  return expr.type === "MethodCall" && expr.method === "partition";
+}
+
+/**
+ * Reject `.join()` / `.toString()` on a provable array OF arrays. JS stringifies
+ * nested arrays recursively; MQL expressions have no recursion, so the emitted
+ * `$toString` of an element would fail at execution time ("Unsupported conversion
+ * from array to string"). Emitting that would break HR3, and quietly flattening one
+ * level would answer a different question than the source asked — so say what the
+ * user must decide. Fires only on the two provable shapes (`isArrayOfArrays`).
+ */
+function rejectNestedArrayStringify(object: Expr, method: string, callPos: number): void {
+  if (!isArrayOfArrays(object)) return;
+  const recv = object.type === "MethodCall" ? `'.${object.method}(...)'` : "this array literal";
+  throw new CodegenError(
+    `.${method}() can't stringify an array of arrays — ${recv} holds arrays, and MongoDB has no recursive ` +
+      `string conversion (JavaScript's nested '[[1,2],[3]].${method}()' has no MQL equivalent). ` +
+      `Flatten first ('.flat().${method}()'), or map each inner array to a string ('.map(a => a.${method}()).${method}()').`,
+    callPos,
+  );
+}
+
 function isArrayProducing(expr: Expr): boolean {
   switch (expr.type) {
     case "ArrayLiteral":
@@ -1917,16 +1969,16 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
   // a clean `$size`, not the runtime `$isArray` guard used for unknown receivers.
   if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
     const v = _generate(object, ctx);
-    return { $size: optional ? wrapIfNull(v, []) : v };
+    return sizeOf(optional ? wrapIfNull(v, []) : v);
   }
   const rawObj = _generate(object, ctx);
   if (isStringProducing(object)) return strLenOf(rawObj);
-  if (isArrayProducing(object)) return { $size: optional ? wrapIfNull(rawObj, []) : rawObj };
+  if (isArrayProducing(object)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
   const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
   // Only the string branch needs coercing: an absent field is already routed to
   // `$size([])` by the `[]` neutral when the chain is optional, and reaches the
   // else branch (where `$strLenCP` would abort) when it isn't.
-  return cond({ $isArray: obj }, { $size: obj }, strLenOf(obj));
+  return cond({ $isArray: obj }, sizeOf(obj), strLenOf(obj));
 }
 
 /**
@@ -2487,6 +2539,30 @@ function generateObjectLiteral(entries: ObjectEntry[], ctx: GenerateCtx, _pos: n
 function arrayToObjectOfLiteralPairs(pairs: unknown): Record<string, unknown> {
   return { $arrayToObject: [pairs] };
 }
+
+/**
+ * Wrap the operand of a **positional single-array-argument** operator (`$size`,
+ * `$first`, `$last`, `$reverseArray`) so a *literal* array can't be read as the
+ * argument LIST. MongoDB splices a bare array there: `{ $size: [1, 2] }` is two
+ * arguments ("takes exactly 1 arguments. 2 were passed in") and the one-element
+ * `{ $size: [1] }` unwraps to the scalar ("must be an array, but was of type:
+ * int") — so `[1, 2].length` emitted invalid MQL. One extra level,
+ * `{ $size: [[1, 2]] }`, is unwrapped exactly once back to the intended operand.
+ *
+ * Every other operand — a field path, a `$$var`, a nested operator document — is
+ * already unambiguous and passes through untouched, so the four constructors below
+ * are safe to use at every site. Same trap and same remedy as
+ * `arrayToObjectOfLiteralPairs`. Applies only to jsmql's own lowering; a raw
+ * `$op($size, …)` stays a faithful passthrough (HR2).
+ */
+function singleArrayArg(operand: unknown): unknown {
+  return Array.isArray(operand) ? [operand] : operand;
+}
+
+const sizeOf = (a: unknown): Record<string, unknown> => ({ $size: singleArrayArg(a) });
+const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
+const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
+const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });
 
 function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): unknown {
   // Emit `$arrayToObject`'s `{ k, v }` object-pair form rather than the `[k, v]`
@@ -3430,7 +3506,7 @@ function generateMethodCall(
     }
     case "toReversed": {
       checkArity(method, { sig: "", none: true }, args.length, callPos);
-      return { $reverseArray: genObj };
+      return reverseArrayOf(genObj);
     }
     case "toSorted": {
       if (args.length === 0) {
@@ -3597,7 +3673,7 @@ function generateMethodCall(
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
-          input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+          input: { $zip: { inputs: [{ $range: [0, sizeOf(genObj)] }, genObj] } },
           initialValue: -1,
           in: { $let: { vars, in: cond(test, { $arrayElemAt: ["$$this", 0] }, "$$value") } },
         },
@@ -3619,6 +3695,7 @@ function generateMethodCall(
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
       checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
+      rejectNestedArrayStringify(object, "join", callPos);
       const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
       // Reduce: concatenate elements with the separator, omitting it for the first element.
       // The accumulator carries the running string; an empty start lets us detect "first".
@@ -3640,6 +3717,7 @@ function generateMethodCall(
       // this is a no-op. For other scalars MongoDB's $toString covers it
       // (numbers, dates → ISO string, booleans, ObjectId, etc.).
       if (isArrayProducing(object)) {
+        rejectNestedArrayStringify(object, "toString", callPos);
         return {
           $reduce: {
             input: genObj,
@@ -3815,10 +3893,10 @@ function generateMethodCall(
       // still reflects the original array position (matching JS).
       let input: unknown = genObj;
       if (has3) {
-        input = { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } };
+        input = { $zip: { inputs: [{ $range: [0, sizeOf(genObj)] }, genObj] } };
       }
       if (method === "reduceRight") {
-        input = { $reverseArray: input };
+        input = reverseArrayOf(input);
       }
       return { $reduce: { input, initialValue: _generate(exprArgs[1], ctx), in: inExpr } };
     }
@@ -4064,11 +4142,7 @@ function generateMethodCall(
       }
       const [vI, i] = internalVar(ctx, "i");
       return {
-        $map: {
-          input: { $range: [0, { $size: genObj }, size.value] },
-          as: vI,
-          in: { $slice: [genObj, i, size.value] },
-        },
+        $map: { input: { $range: [0, sizeOf(genObj), size.value] }, as: vI, in: { $slice: [genObj, i, size.value] } },
       };
     }
     // ── lodash positional / slicing (array → element or sub-array) ──────────────
@@ -4116,11 +4190,11 @@ function generateMethodCall(
     case "head":
     case "first": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      return { $first: genObj };
+      return firstOf(genObj);
     }
     case "last": {
       checkArity("last", { sig: "", none: true }, exprArgsOnly(args, "last").length, callPos);
-      return { $last: genObj };
+      return lastOf(genObj);
     }
     case "nth": {
       const exprArgs = exprArgsOnly(args, "nth");
@@ -4132,9 +4206,9 @@ function generateMethodCall(
       checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
       // lodash size counts array elements OR object keys. Arrays → $size; objects →
       // key count via $objectToArray. Strings should use `.length` (see docs).
-      if (isArrayProducing(object)) return { $size: genObj };
-      if (isObjectProducing(object)) return { $size: { $objectToArray: genObj } };
-      return cond({ $isArray: genObj }, { $size: genObj }, { $size: { $objectToArray: genObj } });
+      if (isArrayProducing(object)) return sizeOf(genObj);
+      if (isObjectProducing(object)) return sizeOf({ $objectToArray: genObj });
+      return cond({ $isArray: genObj }, sizeOf(genObj), sizeOf({ $objectToArray: genObj }));
     }
     case "takeWhile":
     case "dropWhile":
@@ -4147,7 +4221,7 @@ function generateMethodCall(
       const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
       // From the right = do the left-side scan on the reversed array, then reverse back.
       if (!fromRight) return takeDropWhile(genObj, pred, drop, ctx);
-      return { $reverseArray: takeDropWhile({ $reverseArray: genObj }, pred, drop, ctx) };
+      return reverseArrayOf(takeDropWhile(reverseArrayOf(genObj), pred, drop, ctx));
     }
     case "sample": {
       // A random element: $arrayElemAt at floor($rand * size). Non-deterministic at
@@ -4306,7 +4380,7 @@ function generateMethodCall(
       return {
         $arrayToObject: {
           $map: {
-            input: { $range: [0, { $size: genObj }] },
+            input: { $range: [0, sizeOf(genObj)] },
             as: vI,
             in: { k: { $toString: { $arrayElemAt: [genObj, i] } }, v: { $arrayElemAt: [values, i] } },
           },
@@ -4355,7 +4429,7 @@ function generateMethodCall(
       return {
         $let: {
           vars,
-          in: { $map: { input: { $range: [0, { $max: refs.map((r) => ({ $size: r })) }] }, as: vI, in: inExpr } },
+          in: { $map: { input: { $range: [0, { $max: refs.map((r) => sizeOf(r)) }] }, as: vI, in: inExpr } },
         },
       };
     }
@@ -4681,7 +4755,7 @@ function arrayIterInput(
 
   const [vPair, pair] = internalVar(bodyCtx, "pair");
   return {
-    input: { $zip: { inputs: [{ $range: [0, { $size: genObj }] }, genObj] } },
+    input: { $zip: { inputs: [{ $range: [0, sizeOf(genObj)] }, genObj] } },
     asName: vPair,
     bodyCtx,
     paired: true,

@@ -155,8 +155,10 @@ would not want to.
 | `.concat(...args)` *(known array receiver)* | `{ $concatArrays: [expr, ...args] }` |
 | `.concat(...args)` *(known string receiver)* | `{ $concat: [expr, ...args] }` |
 | `.includes/.indexOf/.concat` *(unknown receiver)* | runtime `$cond` on `$isArray` between the array and string forms (see below) |
-| `.join(sep?)` | `$reduce` over the array, prepending `sep` for non-first elements |
-| `.toString()` *(known array)* | same `$reduce` as `.join(",")`. Known string receiver: no-op. Unknown: `{ $toString: expr }`. |
+| `.join(sep?)` | `$reduce` over the array, prepending `sep` for non-first elements. Rejected on a **provable array of arrays** — see below. |
+| `.toString()` *(known array)* | same `$reduce` as `.join(",")`. Known string receiver: no-op. Unknown: `{ $toString: expr }`. Same array-of-arrays rejection. |
+
+**Array of arrays is rejected, not mis-emitted** (`rejectNestedArrayStringify`). JS stringifies nested arrays recursively (`[[1,2],[3]].join(",") === "1,2,3"`), and MQL expressions have no recursion — the per-element `$toString` of an inner array fails at execution time ("Unsupported conversion from array to string"). Emitting it would break HR3, and silently flattening one level would answer a question the source didn't ask, so the error names both ways out (`.flat().join()`, or map each inner array to a string). `isArrayOfArrays` fires only on the two **provable** shapes — an array literal whose every element is array-producing, and `.partition(pred)` (always the two-bucket `[[…], […]]`). An unknown receiver still emits, per the literal-gating rule.
 | `.flat()` / `.flat(1)` | `$reduce` with `$concatArrays` |
 
 ### Array methods (with lambda)
@@ -383,6 +385,12 @@ In codegen, when `.match(pattern)` receives a `RegexLiteral` arg, the pattern an
 - otherwise → runtime `$cond` on `$isArray`
 
 The check happens before `asFieldPath()` in the `MemberAccess` codegen case, so even `$.name.length` maps to a runtime-dispatch `$cond` rather than the field path `"$name.length"`.
+
+### Positional single-array-argument operators — `singleArrayArg`
+
+`$size` / `$first` / `$last` / `$reverseArray` take their one array operand **positionally**, and MongoDB splices a bare array there into an argument list: `{ $size: [1, 2] }` is two arguments ("takes exactly 1 arguments. 2 were passed in") and the one-element `{ $size: [1] }` unwraps to the scalar ("must be an array, but was of type: int"). So a *literal*-array receiver must be wrapped one level — `{ $size: [[1, 2]] }` — which the server unwraps exactly once back to the intended operand. Same trap and same remedy as `arrayToObjectOfLiteralPairs` (§ Object literals).
+
+Emit these four through the `sizeOf` / `firstOf` / `lastOf` / `reverseArrayOf` constructors, never a bare `{ $size: … }` object literal: `singleArrayArg` wraps only when the operand really is a JS array, so a field path, a `$$var`, or a nested operator document passes through untouched and the constructors are safe at every site. Making the wrap structural is what keeps a new call site from reintroducing the bug. Object-**form** operators (`$map`/`$filter`/`$reduce`, whose `input:` is a named value slot) must NOT be wrapped — there is no argument list to splice into. This governs jsmql's own lowering only; a raw `$op($size, …)` stays a faithful passthrough (HR2).
 
 ## Type-aware dispatch for `.includes` / `.indexOf` / `.concat`
 
