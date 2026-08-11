@@ -11,6 +11,7 @@ import { CodegenError, EMPTY_CTX, freshSubPipelineCtx, generateWithCtx, type Gen
 import {
   detectLookupCall,
   extractLookupTarget,
+  formatLookupReceiver,
   lowerLambdaPredicate,
   requireSameDbColl,
   validateLookupShape,
@@ -195,14 +196,12 @@ export function lowerUnionPush(call: UnionPushCall, outerCtx: GenerateCtx, lower
     // `.find(pred)` without spread → append a single doc.
     const lookupCall = detectLookupCall(arg, outerCtx);
     if (lookupCall !== null) {
-      if (lookupCall.method === "aggregate") {
-        throw aggregateInUnionError(lookupCall, arg.pos);
-      }
-      if (lookupCall.method === "filter") {
-        const recv = formatReceiver(lookupCall);
+      if (lookupCall.method === "filter" || lookupCall.method === "aggregate") {
+        const recv = formatLookupReceiver(lookupCall);
+        const shape = lookupCall.method === "filter" ? "filter(pred)" : "aggregate(pipeline)";
         throw new CodegenError(
-          `$$.push(...) was given \`${recv}.filter(pred)\` without \`...\` — that would push the whole array as a single document. ` +
-            `Use \`$$.push(...${recv}.filter(pred))\` to append every matching document, ` +
+          `$$.push(...) was given \`${recv}.${shape}\` without \`...\` — that would push the whole array as a single document. ` +
+            `Use \`$$.push(...${recv}.${shape})\` to append every matching document, ` +
             `or switch to \`.find(pred)\` if you meant the first match.`,
           arg.pos,
         );
@@ -235,7 +234,7 @@ function lowerSpreadArg(arg: SpreadElement, outerCtx: GenerateCtx, lowerBlock: S
   if (inner.type === "MethodCall" && inner.method === "find" && inner.object.type !== "FieldRef") {
     const lookup = detectLookupCall(inner, outerCtx);
     if (lookup !== null) {
-      const recv = formatReceiver(lookup);
+      const recv = formatLookupReceiver(lookup);
       throw new CodegenError(
         `$$.push(...arg) was given \`...${recv}.find(pred)\` — \`.find\` returns a single document, not an array, so spreading isn't meaningful (JS would \`TypeError\`). ` +
           `Drop the \`...\` to append the matched document, or switch to \`...${recv}.filter(pred)\` to append every match.`,
@@ -243,15 +242,13 @@ function lowerSpreadArg(arg: SpreadElement, outerCtx: GenerateCtx, lowerBlock: S
       );
     }
   }
-  // `.aggregate(...)` result union isn't supported yet — `$unionWith` has no
-  // `let` slot, so a correlated aggregate can't thread the outer doc in. [DEF-034]
-  const aggLookup = detectLookupCall(inner, outerCtx);
-  if (aggLookup !== null && aggLookup.method === "aggregate") {
-    throw aggregateInUnionError(aggLookup, inner.pos);
-  }
-  // `.filter(pred)` → pipeline-form `$unionWith`.
+  // `.filter(pred)` / `.aggregate(pipeline)` → pipeline-form `$unionWith`. Both
+  // reach the same builder: a predicate is one `$match`, a pipeline is its stages.
+  // `$unionWith` has no `let` slot, so a predicate or a stage that reads the LOCAL
+  // document is rejected (`correlatedPushPredicateMessage`) — the union sub-pipeline
+  // sees foreign fields only.
   const lookup = detectLookupCall(inner, outerCtx);
-  if (lookup !== null && lookup.method === "filter") {
+  if (lookup !== null && (lookup.method === "filter" || lookup.method === "aggregate")) {
     validateLookupShape(inner);
     return buildUnionWith(lookup, outerCtx, lowerBlock, /* limitOne */ false);
   }
@@ -289,8 +286,8 @@ function buildUnionWith(
   if (limitOne) pipeline.push({ $limit: 1 });
   const from = requireSameDbColl(call.db, call.collection, call.pos);
   if (pipeline.length === 0) {
-    // Vacuous predicate (e.g. a block body with no stages) collapses to short
-    // form. Only reachable for `.filter` with an empty block body — `.find`
+    // Vacuous predicate (e.g. `u => true`) collapses to short form.
+    // Only reachable for `.filter`/`.aggregate` — `.find`
     // always emits at least the `$limit: 1` we just pushed.
     return { $unionWith: from };
   }
@@ -316,6 +313,20 @@ function buildUnionWith(
  *      translated half. Untranslatable residuals still ride in `$expr`.
  */
 function translateUnionPredicate(call: LookupCall, outerCtx: GenerateCtx, lowerBlock: SubPipelineLowerer): object[] {
+  // The 3rd 'collection' param is a `$lookup.pipeline`-only handle: its count is
+  // materialised by a `$setWindowFields` the lookup assembler stamps, and a
+  // `$unionWith` sub-pipeline has no such step. Reject it here rather than let the
+  // param leak out as an "unknown identifier".
+  if (call.lambda.params.length === 3) {
+    const collParam = call.lambda.params[2];
+    throw new CodegenError(
+      `'${collParam}' (the 3rd, sub-stream count parameter) isn't available inside a \`$$.push(...)\` union — ` +
+        `\`$unionWith\` runs its sub-pipeline standalone, with nothing to count against. Count it explicitly with ` +
+        `\`$setWindowFields({ output: { n: { $count: {} } } })\` inside the pipeline and read \`$.n\`, or assign to a ` +
+        `field instead (\`$.<field> = ${formatLookupReceiver(call)}.aggregate((o, _i, ${collParam}) => { … })\`).`,
+      call.lambda.pos,
+    );
+  }
   // Shared expr-or-block predicate lowering (see `lowerLambdaPredicate`). The
   // foreign-doc paths are rewritten to bare `FieldRef`s, then expression bodies
   // run through the same translator `$match` uses; the sub-pipeline gets a fresh
@@ -336,11 +347,14 @@ function translateUnionPredicate(call: LookupCall, outerCtx: GenerateCtx, lowerB
 }
 
 function correlatedPushPredicateMessage(call: LookupCall): string {
-  const recv = formatReceiver(call);
+  const recv = formatLookupReceiver(call);
+  const arg = call.method === "aggregate" ? "pipeline" : "pred";
+  const what = call.method === "aggregate" ? "sub-pipeline reads" : "predicate references";
   return (
-    `$$.push(...${recv}.${call.method}(pred)) — predicate references the local document (\`$.<field>\`), ` +
+    `$$.push(...${recv}.${call.method}(${arg})) — ${what} the local document (\`$.<field>\`), ` +
     `but MongoDB's \`$unionWith\` has no \`let\` slot. The union sub-pipeline can only reference foreign-document fields. ` +
-    `Move the local-doc filter to a \`$match(...)\` stage before \`$$.push(...)\`.`
+    `Move the local-doc filter to a \`$match(...)\` stage before \`$$.push(...)\`, or assign the result to a field ` +
+    `instead (\`$.<field> = ${recv}.${call.method}(${arg})\`), where a \`$lookup.let\` can carry the correlation.`
   );
 }
 
@@ -361,24 +375,4 @@ function rejectNonDocumentArg(arg: Expr): never {
       `or a spread of \`$$$.<coll>[.filter(pred)]\`.${hint}`,
     (arg as { pos?: number }).pos ?? 0,
   );
-}
-
-/**
- * `.aggregate(...)` used as a `$$.push(...)` / `.concat(...)` union source isn't
- * supported yet [DEF-034]: a `$unionWith` sub-pipeline has no `let` slot, so a
- * correlated `.aggregate` can't thread the outer document in, and the uncorrelated
- * case needs its own design pass. Points at the supported field-assignment form.
- */
-function aggregateInUnionError(call: LookupCall, pos: number): CodegenError {
-  const recv = formatReceiver(call);
-  return new CodegenError(
-    `\`${recv}.aggregate(...)\` can't be unioned into the stream with \`$$.push(...)\` / \`.concat(...)\` yet — ` +
-      `MongoDB's \`$unionWith\` has no \`let\` slot to correlate an aggregate sub-pipeline. ` +
-      `Assign the aggregate to a field instead: \`$.<field> = ${recv}.aggregate((o) => { ... })\`.`,
-    pos,
-  );
-}
-
-function formatReceiver(call: LookupCall): string {
-  return call.db !== undefined ? `$$$$.${call.db}.${call.collection}` : `$$$.${call.collection}`;
 }

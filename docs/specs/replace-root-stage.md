@@ -108,9 +108,9 @@ inside `lowerReplaceRoot`'s callers:
 
 ```
 $ = {
-  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  topByScore: $$.$sort({ score: -1 }).$limit(10),
   recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
-  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };
 // → [{ $facet: {
 //       topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
@@ -137,7 +137,7 @@ Spread entries (`...rest`) and computed keys are also rejected in strict mode.
 
 **Reshape-clearing.** `$facet` is in `RESHAPE_CLEARING_STAGES` — its output is `{ facetName: […], … }`, completely replacing the input doc. The interception in `pipeline.ts` calls `clearCtxLets(ctx, "$facet")` after emission so a subsequent let reference produces the precise "can't be read after `$facet`" error.
 
-**Parser tweak.** Block-body lambdas (`o => { stmts; }`) inside method calls were previously allowed only when the receiver chain was rooted at `$$$` / `$$$$` (lookup). The new facet form needs block bodies for `$$.filter(...)` too, so the gate in `parsePostfix` now also allows `left.type === "CollectionRef"` for `.filter`. No new tokens or AST nodes — block-body parsing was already implemented, just gated by receiver shape.
+**Parser gate.** The sub-pipeline block grammar in `parsePostfix` is enabled by receiver shape: `left` walks back to a `DatabaseRef` / `ClusterRef` (lookup) or a `CollectionRef` (the current stream), so a `$$`-rooted callback is parsed with it too. That is what lets the callback-block rule reject a stage in a `$$.filter(...)` branch by name rather than as an unexpected token.
 
 **Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is valid — it lowers to `$match` as stream-chain sugar for `$$ = $$.filter(...)` (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains)). What triggers `$facet` is the `$ = { key: $$.filter(p), … }` object form; the difference is the assignment target (`$ =` vs a bare statement).
 

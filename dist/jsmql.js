@@ -888,6 +888,7 @@ function levenshtein(a, b) {
 function closestNameTo(name, candidates) {
   let best = null;
   for (const candidate of candidates) {
+    if (candidate === name) continue;
     const d = levenshtein(name, candidate);
     if (best === null || d < best.dist) best = { name: candidate, dist: d };
   }
@@ -2150,11 +2151,12 @@ var Parser = class {
   /**
    * Parse an argument that might be a lambda expression.
    * Checks for lambda patterns before falling back to parseExpression().
-   * `blockCtx.kind` selects what a `=> { … }` body means: `"pipeline"` (only inside
-   * `$$$.<coll>.find/filter(...)` and `$$.filter(...)`) parses a statement block
-   * → `Pipeline`; `"expr"` (the default everywhere else) parses an
-   * expression-block → `ExprBlock`. JS-faithful: `=> {` always opens a block;
-   * an object return needs `=> ({ … })`.
+   * `blockCtx.kind` selects what a `=> { … }` body means: `"pipeline"` (a callback on
+   * a stream root — see `STREAM_BLOCK_METHODS`) parses a statement block → `Pipeline`;
+   * `"expr"` (the default everywhere else) parses an expression-block → `ExprBlock`.
+   * JS-faithful: `=> {` always opens a block; an object return needs `=> ({ … })`.
+   * The rest of `blockCtx` carries the receiver so an `"expr"`-kind block that turns
+   * out to hold stages can name the real mistake (`subPipelineBlockError`).
    */
   parseArgOrLambda(blockCtx = EXPR_BLOCK_ARG) {
     if (this.lexer.peek().type === TokenType.Ident && this.lexer.lookahead(1).type === TokenType.Arrow) {
@@ -2562,26 +2564,32 @@ var Parser = class {
    * call site that only takes an expression block. Two distinct mistakes reach
    * here, and each gets its own fix:
    *
-   *   - **The method name is wrong.** The receiver IS a stream, so the block
-   *     grammar was available — the method just isn't one that takes a
-   *     sub-pipeline. `.aggregat(o => { $group(…); })` used to demand a `return`,
-   *     which sent the user hunting a phantom syntax error instead of a typo.
-   *     `didYouMean` over `STREAM_BLOCK_METHODS` names the intended method.
+   *   - **The method name isn't one the grammar knows.** The receiver IS a stream, so
+   *     a block holding stages was plausible — `.aggregat(o => { $group(…); })` used
+   *     to demand a `return`, sending the user after a phantom syntax error instead of
+   *     a typo. `didYouMean` over `STREAM_BLOCK_METHODS` names the method they meant.
    *   - **The receiver isn't a stream.** `$.items.map(d => { $group(…); })` — an
    *     in-document array has no pipeline to run stages in, whatever the method.
+   *
+   * A recognised method with a stage in its block never reaches here: the parser hands
+   * it the pipeline grammar, and `src/callback-block.ts` owns that rejection with a
+   * container-accurate rewrite. So this message states the same rule that module does —
+   * stages belong to `.aggregate(pipeline)` alone — rather than implying the suggested
+   * method would accept the block as written.
    */
   subPipelineBlockError(blockCtx, pos) {
     const { method, streamRooted } = blockCtx;
     const call = method === void 0 ? "this callback" : `'.${method}(...)'`;
     const lead = `Unexpected stage call at position ${pos}: a \`=> { $stage(...); ... }\` block is a sub-pipeline, but ${call} doesn't take one.`;
+    const jsCallbackRule = "Pipeline stages belong to `.aggregate(pipeline)` alone; every other callback's block body is JavaScript \u2014 `const`/`let` bindings and one `return <expr>`.";
     if (streamRooted === true && method !== void 0) {
       return new ParseError(
-        `${lead}${didYouMean(method, [...STREAM_BLOCK_METHODS], (s) => `.${s}`)} Only a stream method that accepts a sub-pipeline runs stage calls in its block; for a per-document expression, end the block with \`return <expr>\`.`,
+        `${lead}${didYouMean(method, [...STREAM_BLOCK_METHODS], (s) => `.${s}`)} ${jsCallbackRule}`,
         pos
       );
     }
     return new ParseError(
-      `${lead} Stage calls need a stream receiver \u2014 '$$' or '$$$.<coll>' \u2014 not an in-document value. Chain the stages on the stream itself, or end this block with \`return <expr>\` to compute a value.`,
+      `${lead} Stage calls need a stream receiver \u2014 '$$' or '$$$.<coll>' \u2014 not an in-document value. ${jsCallbackRule}`,
       pos
     );
   }
@@ -3049,7 +3057,16 @@ var Parser = class {
     return { type: "KeyValueEntry", key, value, pos: tok.pos };
   }
 };
-var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set(["find", "filter", "map", "aggregate"]);
+var STREAM_BLOCK_METHODS = /* @__PURE__ */ new Set([
+  "find",
+  "filter",
+  "reject",
+  "takeWhile",
+  "dropWhile",
+  "map",
+  "flatMap",
+  "aggregate"
+]);
 var EXPR_BLOCK_ARG = { kind: "expr" };
 function isStreamRooted(expr) {
   let node = expr;
@@ -3949,6 +3966,229 @@ function checkIntBound(stage, body, opts) {
   }
 }
 
+// src/stages.ts
+var STAGES = {
+  $addFields: {
+    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    subPipelineFields: []
+  },
+  $bucket: {
+    description: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
+    subPipelineFields: []
+  },
+  $bucketAuto: {
+    description: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
+    subPipelineFields: []
+  },
+  $changeStream: {
+    description: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
+    subPipelineFields: [],
+    position: "first"
+  },
+  $changeStreamSplitLargeEvent: {
+    description: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
+    subPipelineFields: [],
+    position: "last"
+  },
+  $collStats: {
+    description: "Returns statistics regarding a collection or view.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true },
+    forbiddenIn: ["facet"]
+  },
+  $count: {
+    description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
+    subPipelineFields: []
+  },
+  $currentOp: {
+    description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
+    subPipelineFields: [],
+    // Server/deployment-level: must be run on the admin database
+    // (`db.getSiblingDB("admin").aggregate(...)`), not the current database.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $densify: {
+    description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
+    subPipelineFields: []
+  },
+  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [], position: "first" },
+  $facet: {
+    description: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    // Every value in the body object is itself a sub-pipeline.
+    subPipelineFields: ["*"],
+    // $facet cannot be nested inside another $facet.
+    forbiddenIn: ["facet"]
+  },
+  $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
+  $geoNear: {
+    description: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
+    subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"]
+  },
+  $graphLookup: {
+    description: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
+    subPipelineFields: []
+  },
+  $group: {
+    description: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
+    subPipelineFields: []
+  },
+  $indexStats: {
+    description: "Returns statistics regarding the use of each index for the collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"]
+  },
+  $limit: {
+    description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
+    subPipelineFields: []
+  },
+  $listLocalSessions: {
+    description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
+    subPipelineFields: [],
+    // Server-level: run on the admin database (`db.aggregate(...)`).
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $listSampledQueries: {
+    description: "Lists sampled queries for all collections or a specific collection.",
+    subPipelineFields: [],
+    // Cluster-level: run on the admin database.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $listSearchIndexes: {
+    description: "Returns information about existing Atlas Search indexes on a specified collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: true }
+  },
+  $listSessions: {
+    description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
+    subPipelineFields: [],
+    // Cluster-level: reads the cluster-wide config.system.sessions collection.
+    diagnostic: { scope: "cluster", options: true }
+  },
+  $lookup: {
+    description: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
+    subPipelineFields: ["pipeline"]
+  },
+  $match: {
+    description: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
+    subPipelineFields: []
+  },
+  $merge: {
+    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"]
+  },
+  $out: {
+    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    subPipelineFields: [],
+    position: "last",
+    forbiddenIn: ["facet", "lookup", "unionWith"]
+  },
+  $planCacheStats: {
+    description: "Returns plan cache information for a collection.",
+    subPipelineFields: [],
+    diagnostic: { scope: "collection", options: false },
+    forbiddenIn: ["facet"]
+  },
+  $project: {
+    description: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    subPipelineFields: []
+  },
+  $rankFusion: {
+    description: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    subPipelineFields: []
+  },
+  $redact: {
+    description: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
+    subPipelineFields: []
+  },
+  $replaceRoot: {
+    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    subPipelineFields: []
+  },
+  $replaceWith: {
+    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    subPipelineFields: []
+  },
+  $sample: { description: "Randomly selects the specified number of documents from its input.", subPipelineFields: [] },
+  $scoreFusion: {
+    description: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    subPipelineFields: []
+  },
+  $search: {
+    description: "Performs a full-text search of the field or fields in an Atlas collection.",
+    subPipelineFields: [],
+    position: "first",
+    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
+    forbiddenIn: ["facet"]
+  },
+  $searchMeta: {
+    description: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
+    subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"]
+  },
+  $set: {
+    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    subPipelineFields: []
+  },
+  $setWindowFields: {
+    description: "Groups documents into windows and applies one or more operators to the documents in each window.",
+    subPipelineFields: []
+  },
+  $shardedDataDistribution: {
+    description: "Provides data and size distribution information on sharded collections.",
+    subPipelineFields: [],
+    diagnostic: { scope: "cluster", options: false }
+  },
+  $skip: {
+    description: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
+    subPipelineFields: []
+  },
+  $sort: {
+    description: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
+    subPipelineFields: []
+  },
+  $sortByCount: {
+    description: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
+    subPipelineFields: []
+  },
+  $unionWith: {
+    description: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
+    subPipelineFields: ["pipeline"]
+  },
+  $unset: { description: "Removes or excludes fields from documents.", subPipelineFields: [] },
+  $unwind: {
+    description: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
+    subPipelineFields: []
+  },
+  $vectorSearch: {
+    description: "Performs an ANN or ENN search on a vector in the specified field.",
+    subPipelineFields: [],
+    position: "first",
+    forbiddenIn: ["facet"]
+  }
+};
+function lookupStage(name) {
+  return Object.prototype.hasOwnProperty.call(STAGES, name) ? STAGES[name] : void 0;
+}
+function stageMustBeFirst(def) {
+  return def.position === "first" || def.diagnostic !== void 0;
+}
+function stageMustBeLast(def) {
+  return def.position === "last";
+}
+function stageForbiddenInAnySubPipeline(def) {
+  return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");
+}
+function stageForbiddenIn(def, container) {
+  return def.forbiddenIn?.includes(container) ?? false;
+}
+
 // src/operator-validation.ts
 var TIME_UNIT = [
   "year",
@@ -4115,7 +4355,28 @@ function operandExprs(args) {
   }
   return args;
 }
+var EXPRESSION_ANALOGUE = {
+  $sort: "$sortArray",
+  $limit: "$slice",
+  $skip: "$slice",
+  $match: "$filter",
+  $redact: "$filter",
+  $set: "$mergeObjects",
+  $addFields: "$mergeObjects",
+  $unset: "$unsetField",
+  $project: "$getField",
+  $unionWith: "$concatArrays"
+};
+function rejectStageInValuePosition(name, pos) {
+  if (!(name in STAGES) || lookupOperator(name) !== void 0) return;
+  const analogue = EXPRESSION_ANALOGUE[name];
+  throw new CodegenError(
+    `'${name}' is a pipeline stage, not an expression \u2014 MongoDB has no '${name}' expression operator, so '{ ${name}: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('${name}(\u2026);') or as a chain link ('$$.${name}(\u2026)').` + (analogue === void 0 ? "" : ` For the value-position equivalent, use '${analogue}(\u2026)'.`),
+    pos
+  );
+}
 function validateOperatorArgs(name, style, args, pos, ctx) {
+  rejectStageInValuePosition(name, pos);
   const def = lookupOperator(name);
   if (def === void 0) return;
   if (def.shape.kind === "none") {
@@ -4216,6 +4477,67 @@ function validateObjectKeys(name, shapeKeys, rules, style, args, pos) {
       if (v !== void 0) checkArgType(name, key, v, t);
     }
   }
+}
+
+// src/callback-block.ts
+function aggregateRewrite(spell) {
+  return `write \`${spell}.aggregate((o) => { $match(...); $sort(...); ... })\`, which runs those statements as the sub-pipeline`;
+}
+var STREAM_STAGE_REWRITE = "chain them as stage calls instead \u2014 `$$.$match({ \u2026 }).$sort({ \u2026 })`";
+function requireStageFreeCallback(lambda, opts) {
+  if (lambda.block === void 0) return;
+  const stage = lambda.block.stmts.find((s) => s.type !== "LetDecl");
+  if (stage === void 0) return;
+  const param = lambda.params[0] ?? "o";
+  throw new CodegenError(
+    `\`.${opts.method}(${param} => { \u2026 })\` takes a JavaScript callback, so its block body holds \`const\`/\`let\` bindings and one \`return <expr>\`. ${describeStmt(stage)} is a pipeline stage, not part of a callback \u2014 ${opts.rewrite}.`,
+    stage.pos
+  );
+}
+function callbackBlockToValue(lambda, opts) {
+  requireStageFreeCallback(lambda, opts);
+  const block = lambda.block;
+  if (block === void 0) return lambda;
+  const param = lambda.params[0] ?? "o";
+  if (lambda.ret === void 0) {
+    throw new CodegenError(
+      `\`.${opts.method}(${param} => { \u2026 })\` must end with \`return <expr>\` \u2014 a block body that returns nothing has no value to use. Write \`.${opts.method}(${param} => <expr>)\`, or \`{ const a = \u2026; return <expr>; }\` to bind first.`,
+      block.pos
+    );
+  }
+  return tryCallbackBlockToValue(lambda);
+}
+function tryCallbackBlockToValue(lambda) {
+  const block = lambda.block;
+  if (block === void 0 || lambda.ret === void 0) return lambda;
+  if (!block.stmts.every((s) => s.type === "LetDecl")) return lambda;
+  if (block.stmts.length === 0) {
+    return { type: "Lambda", params: lambda.params, body: lambda.ret, pos: lambda.pos };
+  }
+  return {
+    type: "Lambda",
+    params: lambda.params,
+    exprBlock: { type: "ExprBlock", decls: block.stmts, ret: lambda.ret, pos: block.pos },
+    pos: lambda.pos
+  };
+}
+function describeStmt(stmt) {
+  if (stmt.type === "FuncDecl") return `\`function ${stmt.name}(\u2026) { \u2026 }\``;
+  if (stmt.type === "UpdateFilter") {
+    const op = stmt.ops[0];
+    const target = op === void 0 ? void 0 : fieldPath(op.target);
+    if (op !== void 0 && op.type === "DeleteStmt") {
+      return target === void 0 ? "`delete`" : `\`delete $.${target}\``;
+    }
+    return target === void 0 ? "an assignment" : `\`$.${target} = \u2026\``;
+  }
+  if (stmt.type === "OperatorCall") return `\`${stmt.name}(...)\``;
+  if (stmt.type === "CallExpression" && stmt.callee.type === "ParamRef") return `\`${stmt.callee.name}(...)\``;
+  if (stmt.type === "MethodCall") return `\`.${stmt.method}(...)\``;
+  return "that statement";
+}
+function fieldPath(target) {
+  return target.type === "FieldRef" ? target.path : void 0;
 }
 
 // src/ast-walk.ts
@@ -5439,9 +5761,9 @@ function elementTypedCtx(ctx, params, inputExpr) {
   if (elementType) bindingTypes.set(params[0], elementType);
   return { ...base, bindingTypes };
 }
-function extendCtxLets(ctx, name, fieldPath, kind = "let", type) {
+function extendCtxLets(ctx, name, fieldPath2, kind = "let", type) {
   const next = new Map(ctx.pipelineLets ?? []);
-  next.set(name, fieldPath);
+  next.set(name, fieldPath2);
   let bindingTypes = ctx.bindingTypes;
   if (kind === "const" && type) {
     const bt = new Map(ctx.bindingTypes ?? []);
@@ -6151,6 +6473,9 @@ function isOpaqueBsonValue(value) {
 }
 function generateWithCtx(expr, ctx) {
   return _generate(expr, ctx);
+}
+function generateExprBlockWithCtx(block, ctx) {
+  return generateExprBlock(block, ctx);
 }
 function _generate(expr, ctx) {
   return _generateBody(expr, ctx);
@@ -8797,11 +9122,11 @@ function requireLambda(args, method, callerPos, ctx) {
     );
   }
   if (first.block !== void 0) {
-    const keepIt = method === "map" ? "`return` a document instead of a scalar (a document `.map` stays a '$replaceWith' stage), or move the stages into a heading `.filter(o => { \u2026 })` / `.aggregate((o) => { \u2026 })`" : "move the stages into a heading `.filter(o => { \u2026 })` / `.aggregate((o) => { \u2026 })`";
-    throw new CodegenError(
-      `.${method}() can't take a statement-block body (a sub-pipeline of stages) in this position \u2014 the chain is consumed as a value here, so it lowers to an array operator, which takes an expression and has nowhere to run stages. Keep it a sub-pipeline: ${keepIt}. Or make the callback a value: an expression \`x => x > 0\`, or a value-returning block \`x => { const y = \u2026; return y; }\`.`,
-      first.pos
-    );
+    const keepIt = method === "map" ? "keep it a sub-pipeline by moving the stages into a heading `.aggregate((o) => { \u2026 })`, or `return` a document instead of a scalar (a document `.map` stays a '$replaceWith' stage)" : "keep it a sub-pipeline by moving the stages into a heading `.aggregate((o) => { \u2026 })`";
+    return callbackBlockToValue(first, {
+      method,
+      rewrite: `the chain is consumed as a value here, so it lowers to an array operator with nowhere to run stages \u2014 ${keepIt}`
+    });
   }
   return first;
 }
@@ -9532,229 +9857,6 @@ function pathsCollide(a, b) {
   return false;
 }
 
-// src/stages.ts
-var STAGES = {
-  $addFields: {
-    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    subPipelineFields: []
-  },
-  $bucket: {
-    description: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
-    subPipelineFields: []
-  },
-  $bucketAuto: {
-    description: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
-    subPipelineFields: []
-  },
-  $changeStream: {
-    description: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
-    subPipelineFields: [],
-    position: "first"
-  },
-  $changeStreamSplitLargeEvent: {
-    description: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
-    subPipelineFields: [],
-    position: "last"
-  },
-  $collStats: {
-    description: "Returns statistics regarding a collection or view.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: true },
-    forbiddenIn: ["facet"]
-  },
-  $count: {
-    description: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
-    subPipelineFields: []
-  },
-  $currentOp: {
-    description: "Returns information on active and/or dormant operations for the MongoDB deployment.",
-    subPipelineFields: [],
-    // Server/deployment-level: must be run on the admin database
-    // (`db.getSiblingDB("admin").aggregate(...)`), not the current database.
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $densify: {
-    description: "Creates new documents in a sequence of documents where certain values in a field are missing.",
-    subPipelineFields: []
-  },
-  $documents: { description: "Returns literal documents from input values.", subPipelineFields: [], position: "first" },
-  $facet: {
-    description: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
-    // Every value in the body object is itself a sub-pipeline.
-    subPipelineFields: ["*"],
-    // $facet cannot be nested inside another $facet.
-    forbiddenIn: ["facet"]
-  },
-  $fill: { description: "Populates null and missing field values within documents.", subPipelineFields: [] },
-  $geoNear: {
-    description: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
-    subPipelineFields: [],
-    position: "first",
-    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
-    forbiddenIn: ["facet"]
-  },
-  $graphLookup: {
-    description: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
-    subPipelineFields: []
-  },
-  $group: {
-    description: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
-    subPipelineFields: []
-  },
-  $indexStats: {
-    description: "Returns statistics regarding the use of each index for the collection.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: false },
-    forbiddenIn: ["facet"]
-  },
-  $limit: {
-    description: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
-    subPipelineFields: []
-  },
-  $listLocalSessions: {
-    description: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
-    subPipelineFields: [],
-    // Server-level: run on the admin database (`db.aggregate(...)`).
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $listSampledQueries: {
-    description: "Lists sampled queries for all collections or a specific collection.",
-    subPipelineFields: [],
-    // Cluster-level: run on the admin database.
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $listSearchIndexes: {
-    description: "Returns information about existing Atlas Search indexes on a specified collection.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: true }
-  },
-  $listSessions: {
-    description: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
-    subPipelineFields: [],
-    // Cluster-level: reads the cluster-wide config.system.sessions collection.
-    diagnostic: { scope: "cluster", options: true }
-  },
-  $lookup: {
-    description: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
-    subPipelineFields: ["pipeline"]
-  },
-  $match: {
-    description: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
-    subPipelineFields: []
-  },
-  $merge: {
-    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
-    subPipelineFields: [],
-    position: "last",
-    forbiddenIn: ["facet", "lookup", "unionWith"]
-  },
-  $out: {
-    description: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
-    subPipelineFields: [],
-    position: "last",
-    forbiddenIn: ["facet", "lookup", "unionWith"]
-  },
-  $planCacheStats: {
-    description: "Returns plan cache information for a collection.",
-    subPipelineFields: [],
-    diagnostic: { scope: "collection", options: false },
-    forbiddenIn: ["facet"]
-  },
-  $project: {
-    description: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
-    subPipelineFields: []
-  },
-  $rankFusion: {
-    description: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
-    subPipelineFields: []
-  },
-  $redact: {
-    description: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
-    subPipelineFields: []
-  },
-  $replaceRoot: {
-    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
-    subPipelineFields: []
-  },
-  $replaceWith: {
-    description: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
-    subPipelineFields: []
-  },
-  $sample: { description: "Randomly selects the specified number of documents from its input.", subPipelineFields: [] },
-  $scoreFusion: {
-    description: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
-    subPipelineFields: []
-  },
-  $search: {
-    description: "Performs a full-text search of the field or fields in an Atlas collection.",
-    subPipelineFields: [],
-    position: "first",
-    // Allowed as the first stage of a $lookup/$unionWith sub-pipeline, so only facet is banned.
-    forbiddenIn: ["facet"]
-  },
-  $searchMeta: {
-    description: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
-    subPipelineFields: [],
-    position: "first",
-    forbiddenIn: ["facet"]
-  },
-  $set: {
-    description: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    subPipelineFields: []
-  },
-  $setWindowFields: {
-    description: "Groups documents into windows and applies one or more operators to the documents in each window.",
-    subPipelineFields: []
-  },
-  $shardedDataDistribution: {
-    description: "Provides data and size distribution information on sharded collections.",
-    subPipelineFields: [],
-    diagnostic: { scope: "cluster", options: false }
-  },
-  $skip: {
-    description: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
-    subPipelineFields: []
-  },
-  $sort: {
-    description: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
-    subPipelineFields: []
-  },
-  $sortByCount: {
-    description: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
-    subPipelineFields: []
-  },
-  $unionWith: {
-    description: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
-    subPipelineFields: ["pipeline"]
-  },
-  $unset: { description: "Removes or excludes fields from documents.", subPipelineFields: [] },
-  $unwind: {
-    description: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
-    subPipelineFields: []
-  },
-  $vectorSearch: {
-    description: "Performs an ANN or ENN search on a vector in the specified field.",
-    subPipelineFields: [],
-    position: "first",
-    forbiddenIn: ["facet"]
-  }
-};
-function lookupStage(name) {
-  return Object.prototype.hasOwnProperty.call(STAGES, name) ? STAGES[name] : void 0;
-}
-function stageMustBeFirst(def) {
-  return def.position === "first" || def.diagnostic !== void 0;
-}
-function stageMustBeLast(def) {
-  return def.position === "last";
-}
-function stageForbiddenInAnySubPipeline(def) {
-  return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");
-}
-function stageForbiddenIn(def, container) {
-  return def.forbiddenIn?.includes(container) ?? false;
-}
-
 // src/stage-link.ts
 function isStageLink(m) {
   return m.method.startsWith("$");
@@ -10408,13 +10510,11 @@ function lowerUnionPush(call, outerCtx, lowerBlock2) {
     }
     const lookupCall = detectLookupCall(arg, outerCtx);
     if (lookupCall !== null) {
-      if (lookupCall.method === "aggregate") {
-        throw aggregateInUnionError(lookupCall, arg.pos);
-      }
-      if (lookupCall.method === "filter") {
-        const recv = formatReceiver(lookupCall);
+      if (lookupCall.method === "filter" || lookupCall.method === "aggregate") {
+        const recv = formatLookupReceiver(lookupCall);
+        const shape = lookupCall.method === "filter" ? "filter(pred)" : "aggregate(pipeline)";
         throw new CodegenError(
-          `$$.push(...) was given \`${recv}.filter(pred)\` without \`...\` \u2014 that would push the whole array as a single document. Use \`$$.push(...${recv}.filter(pred))\` to append every matching document, or switch to \`.find(pred)\` if you meant the first match.`,
+          `$$.push(...) was given \`${recv}.${shape}\` without \`...\` \u2014 that would push the whole array as a single document. Use \`$$.push(...${recv}.${shape})\` to append every matching document, or switch to \`.find(pred)\` if you meant the first match.`,
           arg.pos
         );
       }
@@ -10433,19 +10533,15 @@ function lowerSpreadArg(arg, outerCtx, lowerBlock2) {
   if (inner.type === "MethodCall" && inner.method === "find" && inner.object.type !== "FieldRef") {
     const lookup2 = detectLookupCall(inner, outerCtx);
     if (lookup2 !== null) {
-      const recv = formatReceiver(lookup2);
+      const recv = formatLookupReceiver(lookup2);
       throw new CodegenError(
         `$$.push(...arg) was given \`...${recv}.find(pred)\` \u2014 \`.find\` returns a single document, not an array, so spreading isn't meaningful (JS would \`TypeError\`). Drop the \`...\` to append the matched document, or switch to \`...${recv}.filter(pred)\` to append every match.`,
         inner.pos
       );
     }
   }
-  const aggLookup = detectLookupCall(inner, outerCtx);
-  if (aggLookup !== null && aggLookup.method === "aggregate") {
-    throw aggregateInUnionError(aggLookup, inner.pos);
-  }
   const lookup = detectLookupCall(inner, outerCtx);
-  if (lookup !== null && lookup.method === "filter") {
+  if (lookup !== null && (lookup.method === "filter" || lookup.method === "aggregate")) {
     validateLookupShape(inner);
     return buildUnionWith(
       lookup,
@@ -10486,6 +10582,13 @@ function buildUnionWith(call, outerCtx, lowerBlock2, limitOne) {
   return { $unionWith: { coll: from, pipeline } };
 }
 function translateUnionPredicate(call, outerCtx, lowerBlock2) {
+  if (call.lambda.params.length === 3) {
+    const collParam = call.lambda.params[2];
+    throw new CodegenError(
+      `'${collParam}' (the 3rd, sub-stream count parameter) isn't available inside a \`$$.push(...)\` union \u2014 \`$unionWith\` runs its sub-pipeline standalone, with nothing to count against. Count it explicitly with \`$setWindowFields({ output: { n: { $count: {} } } })\` inside the pipeline and read \`$.n\`, or assign to a field instead (\`$.<field> = ${formatLookupReceiver(call)}.aggregate((o, _i, ${collParam}) => { \u2026 })\`).`,
+      call.lambda.pos
+    );
+  }
   return lowerLambdaPredicate(call.lambda, outerCtx, lowerBlock2, {
     freshCtx: freshSubPipelineCtx,
     onLocalRef: () => {
@@ -10500,8 +10603,10 @@ function translateUnionPredicate(call, outerCtx, lowerBlock2) {
   });
 }
 function correlatedPushPredicateMessage(call) {
-  const recv = formatReceiver(call);
-  return `$$.push(...${recv}.${call.method}(pred)) \u2014 predicate references the local document (\`$.<field>\`), but MongoDB's \`$unionWith\` has no \`let\` slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a \`$match(...)\` stage before \`$$.push(...)\`.`;
+  const recv = formatLookupReceiver(call);
+  const arg = call.method === "aggregate" ? "pipeline" : "pred";
+  const what = call.method === "aggregate" ? "sub-pipeline reads" : "predicate references";
+  return `$$.push(...${recv}.${call.method}(${arg})) \u2014 ${what} the local document (\`$.<field>\`), but MongoDB's \`$unionWith\` has no \`let\` slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a \`$match(...)\` stage before \`$$.push(...)\`, or assign the result to a field instead (\`$.<field> = ${recv}.${call.method}(${arg})\`), where a \`$lookup.let\` can carry the correlation.`;
 }
 function rejectNonDocumentArg(arg) {
   let hint = "";
@@ -10517,19 +10622,16 @@ function rejectNonDocumentArg(arg) {
     arg.pos ?? 0
   );
 }
-function aggregateInUnionError(call, pos) {
-  const recv = formatReceiver(call);
-  return new CodegenError(
-    `\`${recv}.aggregate(...)\` can't be unioned into the stream with \`$$.push(...)\` / \`.concat(...)\` yet \u2014 MongoDB's \`$unionWith\` has no \`let\` slot to correlate an aggregate sub-pipeline. Assign the aggregate to a field instead: \`$.<field> = ${recv}.aggregate((o) => { ... })\`.`,
-    pos
-  );
-}
-function formatReceiver(call) {
-  return call.db !== void 0 ? `$$$$.${call.db}.${call.collection}` : `$$$.${call.collection}`;
-}
 
 // src/stream-methods.ts
 var STREAM_SHORTHAND_PARAM = exprVar("el");
+function prepareStreamArgs(def, args, callPos, stageRewrite) {
+  const prepared = def.callback === "pipeline" ? args : args.map(
+    (a) => a.type === "Lambda" ? callbackBlockToValue(a, { method: def.name, rewrite: stageRewrite }) : a
+  );
+  def.validate(prepared, callPos, stageRewrite);
+  return prepared;
+}
 var SLICE = {
   name: "slice",
   validate(args, callPos) {
@@ -10889,7 +10991,7 @@ function rejectLocalDocRef(letVars, param, pos, sourceSwitchDesc, method = "map"
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.${method}(d => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(${param} => \u2026)' isn't supported \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos
   );
 }
@@ -10904,7 +11006,9 @@ function rejectNonDocumentMapBody(body) {
 }
 var MAP = {
   name: "map",
-  validate(args, callPos) {
+  // Reads its own block: the trailing `return` becomes a `$replaceWith` stage.
+  callback: "pipeline",
+  validate(args, callPos, stageRewrite) {
     if (args.length !== 1) {
       throw new CodegenError(
         `.map(d => <expr>) takes exactly one argument (a single-parameter arrow), got ${args.length}.`,
@@ -10928,6 +11032,7 @@ var MAP = {
         arg.pos
       );
     }
+    requireStageFreeCallback(arg, { method: "map", rewrite: stageRewrite });
     if (arg.block !== void 0 && arg.ret === void 0) {
       throw new CodegenError(
         `.map(${arg.params[0]} => { \u2026 }) must end with 'return <expr>' \u2014 the returned value becomes each output document.`,
@@ -11006,6 +11111,8 @@ var MAP = {
 };
 var AGGREGATE = {
   name: "aggregate",
+  // The one method whose block statements ARE the sub-pipeline.
+  callback: "pipeline",
   validate(args, callPos) {
     if (args.length !== 1) {
       throw new CodegenError(
@@ -11030,7 +11137,7 @@ var AGGREGATE = {
     const collLengthUsed = collName !== void 0 && classifyCollParam(lambda);
     const block = lambda.block;
     const { rewritten, letVars } = extractLetsFromPipeline(block, param ?? "", ctx.pipelineLets);
-    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc);
+    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc, "aggregate");
     const blockCtx = collName !== void 0 && collLengthUsed ? {
       ...ctx,
       slotAllocator: allocSlot,
@@ -11946,6 +12053,15 @@ function collectStreamChain(expr) {
 
 // src/lookup-translation.ts
 var EMPTY_ENCLOSING = { foreignParams: [], inScopeLetNames: /* @__PURE__ */ new Set() };
+function rewriteEnclosingForeignParamsInBlock(block, params) {
+  if (params.length === 0) return block;
+  return {
+    type: "ExprBlock",
+    decls: block.decls.map((d) => ({ ...d, value: rewriteEnclosingForeignParams(d.value, params) })),
+    ret: rewriteEnclosingForeignParams(block.ret, params),
+    pos: block.pos
+  };
+}
 function rewriteEnclosingForeignParams(expr, params) {
   if (params.length === 0) return expr;
   const paramSet = new Set(params);
@@ -12067,6 +12183,9 @@ function matchEnclosingParamPath(node, params) {
   }
   return null;
 }
+function formatLookupReceiver(call) {
+  return call.db !== void 0 ? `$$$$.${call.db}.${call.collection}` : `$$$.${call.collection}`;
+}
 function staticAccess(node, ctx) {
   if (node.type === "MemberAccess") return { name: node.member, object: node.object };
   if (node.type === "IndexAccess") {
@@ -12116,7 +12235,7 @@ function detectLookupCall(expr, ctx) {
   if (target === null) return null;
   if (expr.args.length !== 1) return null;
   const arg = expr.args[0];
-  const lambda = method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? arg : predicateArgToLambda(arg, method);
+  const lambda = method === "aggregate" ? aggregateArgToLambda(arg) : arg.type === "Lambda" ? tryCallbackBlockToValue(arg) : predicateArgToLambda(arg, method);
   if (lambda === null) return null;
   return { pos: target.pos, callPos: expr.pos, db: target.db, collection: target.collection, method, lambda };
 }
@@ -12162,7 +12281,7 @@ function requireStreamPredicate(arg, opts) {
       lambda.pos
     );
   }
-  return lambda;
+  return callbackBlockToValue(lambda, { method, rewrite: opts.rewrite ?? STREAM_STAGE_REWRITE });
 }
 function localRefInPredicateMessage(opts) {
   const { param, method, position } = opts;
@@ -12174,8 +12293,22 @@ function localRefInPredicateMessage(opts) {
   return `${head} \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference the current document. Inside this predicate, the lambda's parameter \`${param}\` IS the current document.`;
 }
 function negateStreamPredicate(lambda) {
-  if (lambda.body === void 0) return null;
   const pos = lambda.pos;
+  if (lambda.exprBlock !== void 0) {
+    const block = lambda.exprBlock;
+    return {
+      type: "Lambda",
+      params: lambda.params,
+      exprBlock: {
+        type: "ExprBlock",
+        decls: block.decls,
+        ret: { type: "UnaryExpr", op: "!", operand: block.ret, pos: block.ret.pos },
+        pos: block.pos
+      },
+      pos
+    };
+  }
+  if (lambda.body === void 0) return null;
   return {
     type: "Lambda",
     params: lambda.params,
@@ -12282,11 +12415,24 @@ function walkArgsContainLookup(args, ctx) {
   return false;
 }
 function classifyLookupReceiver(receiver) {
+  const names = [];
   let node = receiver;
+  let resolved = true;
   for (; ; ) {
-    if (node.type === "DatabaseRef") return { spelling: "$$$.<coll>" };
-    if (node.type === "ClusterRef") return { spelling: "$$$$.<db>.<coll>" };
-    if (node.type === "MemberAccess" || node.type === "IndexAccess") {
+    if (node.type === "DatabaseRef" || node.type === "ClusterRef") {
+      const placeholder = node.type === "DatabaseRef" ? "$$$.<coll>" : "$$$$.<db>.<coll>";
+      const root = node.type === "DatabaseRef" ? "$$$" : "$$$$";
+      const spelling = resolved && names.length > 0 ? [root, ...names.reverse()].join(".") : placeholder;
+      return { spelling };
+    }
+    if (node.type === "MemberAccess") {
+      names.push(node.member);
+      node = node.object;
+      continue;
+    }
+    if (node.type === "IndexAccess") {
+      if (node.index.type === "StringLiteral") names.push(node.index.value);
+      else resolved = false;
       node = node.object;
       continue;
     }
@@ -12328,21 +12474,20 @@ function validateLookupShape(expr) {
       "pos" in arg ? arg.pos : expr.pos
     );
   }
+  callbackBlockToValue(arg, { method: expr.method, rewrite: aggregateRewrite(spell) });
   if (arg.params.length !== 1) {
-    if (expr.method !== "filter" || arg.params.length > 3) {
+    if (arg.params.length > 3) {
       throw new CodegenError(
-        `.${expr.method}(predicate) takes a single-parameter arrow (the foreign document), got ${arg.params.length}.`,
+        `.${expr.method}(predicate) takes at most 3 parameters '(element, index, array)', got ${arg.params.length}.`,
         arg.pos
       );
     }
-    if (arg.block === void 0 && arg.body !== void 0) {
-      for (let p = 1; p < arg.params.length; p++) {
-        if (someExpr(arg.body, (e) => e.type === "ParamRef" && e.name === arg.params[p])) {
-          throw new CodegenError(
-            `'${arg.params[p]}' (the ${p === 1 ? "index" : "array"} parameter) has no meaning on a '.filter' predicate \u2014 the filtered sub-stream doesn't exist yet while the predicate runs. For its post-filter count, use a block body and the 3rd param, e.g. \`.filter((${arg.params[0]}, _i, coll) => { $match(...); assert(coll.length > 0, "\u2026"); })\`.`,
-            arg.pos
-          );
-        }
+    for (let p = 1; p < arg.params.length; p++) {
+      if (someExpr(arg, (e) => e.type === "ParamRef" && e.name === arg.params[p])) {
+        throw new CodegenError(
+          `'${arg.params[p]}' (the ${p === 1 ? "index" : "array"} parameter) has no meaning on a '.${expr.method}' predicate \u2014 the filtered sub-stream doesn't exist yet while the predicate runs. For its count, use \`.aggregate\` and its 3rd param, e.g. \`${spell}.aggregate((${arg.params[0]}, _i, coll) => { $match(...); assert(coll.length > 0, "\u2026"); })\`.`,
+          arg.pos
+        );
       }
     }
   }
@@ -12463,9 +12608,9 @@ function classifyPath(expr, foreignParam, outerLets, enclosingParams = []) {
     const level = enclosingParams.indexOf(expr.name);
     if (level !== -1) return { kind: "ancestorForeign", level, segments: [] };
     if (outerLets !== void 0 && outerLets.has(expr.name)) {
-      const fieldPath = outerLets.get(expr.name);
-      if (fieldPath !== void 0) {
-        return { kind: "outerLet", segments: [expr.name], fieldPath };
+      const fieldPath2 = outerLets.get(expr.name);
+      if (fieldPath2 !== void 0) {
+        return { kind: "outerLet", segments: [expr.name], fieldPath: fieldPath2 };
       }
     }
     return null;
@@ -12542,13 +12687,28 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
     return { kind: "pipeline", letVars, pipeline: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
   if (lambda.block !== void 0) {
+    if (call.method !== "aggregate") {
+      requireStageFreeCallback(lambda, { method: call.method, rewrite: aggregateRewrite(formatLookupReceiver(call)) });
+    }
     const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing);
     return { kind: "pipeline", letVars, pipeline };
   }
-  throw new CodegenError(
-    `.${call.method}(predicate) predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-    lambda.pos
-  );
+  if (lambda.exprBlock !== void 0) {
+    const preRewritten = rewriteEnclosingForeignParamsInBlock(lambda.exprBlock, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExprBlock(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return {
+      kind: "pipeline",
+      letVars,
+      pipeline: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }]
+    };
+  }
+  return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
 }
 function makeSubPipelineCtx(outerCtx, letVarNames) {
   const fresh = freshSubPipelineCtx(outerCtx);
@@ -12556,34 +12716,8 @@ function makeSubPipelineCtx(outerCtx, letVarNames) {
   return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
 }
 function buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing) {
-  const block = lambda.block;
-  const foreignParam = lambda.params[0];
-  const indexParam = lambda.params.length >= 2 ? lambda.params[1] : void 0;
+  validateAggregateParams(lambda);
   const collParam = lambda.params.length === 3 ? lambda.params[2] : void 0;
-  const blockUses = (pred) => block.stmts.some((s) => someStmt(s, pred));
-  if (indexParam !== void 0 && blockUses((e) => e.type === "ParamRef" && e.name === indexParam)) {
-    throw new CodegenError(
-      `'${indexParam}' (the 2nd, index parameter) has no meaning inside a '.filter((${foreignParam}, ${indexParam}, \u2026) => \u2026)' block \u2014 MongoDB streams have no per-doc index. Keep it unused (e.g. '(${foreignParam}, _${indexParam}, coll)') only to reach the 3rd 'collection' parameter.`,
-      lambda.pos
-    );
-  }
-  if (collParam !== void 0) {
-    let total = 0;
-    let lengthUses = 0;
-    blockUses((e) => {
-      if (e.type === "ParamRef" && e.name === collParam) total++;
-      if (e.type === "MemberAccess" && e.member === "length" && e.object.type === "ParamRef" && e.object.name === collParam) {
-        lengthUses++;
-      }
-      return false;
-    });
-    if (total > lengthUses) {
-      throw new CodegenError(
-        `In '.filter((${foreignParam}, _i, ${collParam}) => { \u2026 })', only '${collParam}.length' (the post-filter sub-stream count) is available \u2014 there's no materialised array to index or iterate inside the lookup pipeline.`,
-        lambda.pos
-      );
-    }
-  }
   return lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock2, enclosing, { collParam });
 }
 function lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock2, enclosing, opts = {}) {
@@ -12629,7 +12763,8 @@ function lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock2, enclosing,
   };
   return { letVars, pipeline: lowerBlock2(rewritten, subCtx) };
 }
-function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg) {
+function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg, predicate = { method: "filter", receiver: "$$$.<coll>" }) {
+  lambda = callbackBlockToValue(lambda, { method: predicate.method, rewrite: aggregateRewrite(predicate.receiver) });
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
@@ -12661,10 +12796,18 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg)
     const { letVars, pipeline } = buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing);
     return { letVars, pipelineBody: pipeline };
   }
-  throw new CodegenError(
-    `Predicate predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-    lambda.pos
-  );
+  if (lambda.exprBlock !== void 0) {
+    const preRewritten = rewriteEnclosingForeignParamsInBlock(lambda.exprBlock, enclosing.foreignParams);
+    const { rewritten, letVars } = extractLetsFromExprBlock(
+      preRewritten,
+      foreignParam,
+      outerLets,
+      enclosing.foreignParams.length
+    );
+    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
+  }
+  return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
 function predicateReferencesOuterDoc(lambda, outerCtx) {
   if (lambda.params.length !== 1) return false;
@@ -12735,14 +12878,14 @@ function createLetAllocator(depth, parents = [], enclosingParams = [], enclosing
       out[name] = `$${dotted}`;
       return name;
     },
-    allocateForOuterLet(segments, fieldPath) {
-      const existing = byPath.get(fieldPath);
+    allocateForOuterLet(segments, fieldPath2) {
+      const existing = byPath.get(fieldPath2);
       if (existing !== void 0) return existing;
       const base = letBindingVar(segments[segments.length - 1], depth);
       const name = uniqueName(base);
       used.add(name);
-      byPath.set(fieldPath, name);
-      out[name] = `$${fieldPath}`;
+      byPath.set(fieldPath2, name);
+      out[name] = `$${fieldPath2}`;
       return name;
     },
     // A reference to scope level L is captured at the allocator owning that
@@ -12784,6 +12927,15 @@ function extractLetsFromExpr(body, foreignParam, outerLets, depth = 0) {
   const rewritten = transformExpr(body, foreignParam, allocator, outerLets);
   return { rewritten, letVars: allocator.letVars() };
 }
+function extractLetsFromExprBlock(block, foreignParam, outerLets, depth = 0) {
+  const allocator = createLetAllocator(depth);
+  const decls = block.decls.map((d) => ({
+    ...d,
+    value: transformExpr(d.value, foreignParam, allocator, outerLets)
+  }));
+  const ret = transformExpr(block.ret, foreignParam, allocator, outerLets);
+  return { rewritten: { type: "ExprBlock", decls, ret, pos: block.pos }, letVars: allocator.letVars() };
+}
 function extractLetsFromPipeline(block, foreignParam, outerLets, depth = 0, allocator = createLetAllocator(depth)) {
   const stmts = block.stmts.map((s) => transformStmt(s, foreignParam, allocator, outerLets));
   return { rewritten: { type: "Pipeline", stmts, pos: block.pos }, letVars: allocator.letVars() };
@@ -12806,6 +12958,12 @@ function lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, opts) {
     if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
     const subCtx = opts.freshCtx(outerCtx);
     return lowerBlock2(rewritten, subCtx);
+  }
+  if (lambda.exprBlock !== void 0) {
+    const { rewritten, letVars } = extractLetsFromExprBlock(lambda.exprBlock, param);
+    if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
+    const subCtx = opts.freshCtx(outerCtx);
+    return [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }];
   }
   return opts.missingBody();
 }
@@ -13283,13 +13441,14 @@ function isCollapsingTerminal(m) {
   if (m.method === "groupBy") return m.args.length === 1 && m.args[0].type !== "ObjectLiteral";
   return false;
 }
-function chainFilterLambda(m) {
+function chainFilterLambda(m, receiver) {
   const rejectHint = m.method === "reject" ? `, a matches-object ('{ active: true }'), a field name, or a ["field", value] pair` : "";
   if (m.args.length !== 1 || m.args[0].type === "SpreadElement") {
     throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => \u2026')${rejectHint}.`, m.pos);
   }
   const arg = m.args[0];
-  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
+  const raw = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
+  const base = raw === null ? null : callbackBlockToValue(raw, { method: m.method, rewrite: aggregateRewrite(receiver) });
   if (base === null || base.params.length !== 1) {
     throw new CodegenError(
       `.${m.method}(<predicate>) takes a single-parameter arrow ('o => \u2026')${rejectHint}.`,
@@ -13297,24 +13456,23 @@ function chainFilterLambda(m) {
     );
   }
   if (m.method === "reject") {
-    if (base.body === void 0) {
+    const negated = negateStreamPredicate(base);
+    if (negated === null) {
       throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => \u2026').`, base.pos);
     }
-    return {
-      type: "Lambda",
-      params: base.params,
-      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
-      pos: base.pos
-    };
+    return negated;
   }
   return base;
 }
-function lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing) {
-  const lambda = chainFilterLambda(m);
-  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing);
+function lowerForeignChainFilter(m, receiver, outerCtx, lowerBlock2, enclosing) {
+  const lambda = chainFilterLambda(m, receiver);
+  const { letVars, pipelineBody } = buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosing, {
+    method: m.method,
+    receiver
+  });
   return { letVars, stages: pipelineBody };
 }
-function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, allocSlot, enclosing, innerCtx, pipelineBody, letVars) {
+function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, allocSlot, enclosing, innerCtx, pipelineBody, letVars, receiver) {
   const cleanup = [];
   for (let i = start; i < chainEnd; i++) {
     const m = methods[i];
@@ -13333,15 +13491,15 @@ function peelForeignChain(methods, start, chainEnd, outerCtx, lowerBlock2, alloc
       continue;
     }
     if (m.method === "filter" || m.method === "reject") {
-      const { letVars: fLets, stages } = lowerForeignChainFilter(m, outerCtx, lowerBlock2, enclosing);
+      const { letVars: fLets, stages } = lowerForeignChainFilter(m, receiver, outerCtx, lowerBlock2, enclosing);
       Object.assign(letVars, fLets);
       pipelineBody.push(...stages);
       continue;
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) continue;
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(receiver));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlock2, pipelineBody, allocSlot, true);
     pipelineBody.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.extraLetVars) Object.assign(letVars, result.extraLetVars);
@@ -13437,7 +13595,10 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   }
   if (direct !== null && direct.method === "filter") {
     if (methods.length < 2) return null;
-    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing);
+    const seed = buildPipelineFormPredicate(direct.lambda, outerCtx, lowerBlock2, enclosing, {
+      method: direct.method,
+      receiver: formatLookupReceiver(direct)
+    });
     Object.assign(seedLetVars, seed.letVars);
     seedPipeline.push(...seed.pipelineBody);
     target = { db: direct.db, collection: direct.collection, pos: direct.pos };
@@ -13485,7 +13646,8 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
     enclosing,
     innerCtx,
     pipelineBody,
-    letVars
+    letVars,
+    formatLookupReceiver(target)
   );
   const slot = allocSlot();
   const from = requireSameDbColl(target.db, target.collection, target.pos);
@@ -13734,7 +13896,7 @@ function detectFacetShape(value) {
   for (const entry of value.entries) {
     if (entry.type !== "KeyValueEntry") {
       throw new CodegenError(
-        `\`$ = { ... }\` $facet pattern: spread entries are not allowed. Every value must be \`$$.filter(<predicate>)\`.`,
+        `\`$ = { ... }\` $facet pattern: spread entries are not allowed. Every value must be a \`$$\` chain.`,
         entry.pos
       );
     }
@@ -13780,16 +13942,15 @@ function lowerFacet(facets, outerCtx, lowerBlock2, lowerChain, rhs) {
   return [{ $facet: body }];
 }
 function lowerFacetEntry(lambda, outerCtx, lowerBlock2) {
-  requireStreamPredicate(lambda, { method: "filter", position: FACET_PREDICATE_POSITION, pos: lambda.pos });
-  return lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, {
+  const predicate = requireStreamPredicate(lambda, {
+    method: "filter",
+    position: FACET_PREDICATE_POSITION,
+    pos: lambda.pos
+  });
+  return lowerLambdaPredicate(predicate, outerCtx, lowerBlock2, {
     freshCtx: freshFacetCtx,
     onLocalRef: rejectLocalRef,
-    missingBody: () => {
-      throw new CodegenError(
-        `\`$$.filter(p)\` predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-        lambda.pos
-      );
-    }
+    missingBody: () => internalError("`$$.filter(p)` lambda has no body, block, or exprBlock", lambda.pos)
   });
 }
 function rejectLocalRef(letVars, param, pos) {
@@ -14353,8 +14514,8 @@ function lowerChainMethod(call, outerCtx, lowerBlock2, prevStages, allocSlot) {
   }
   const def = lookupStreamMethod(call.method);
   if (def !== null) {
-    def.validate(call.args, call.pos);
-    const result = def.lower(call.args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
+    const args = prepareStreamArgs(def, call.args, call.pos, STREAM_STAGE_REWRITE);
+    const result = def.lower(args, outerCtx, call.pos, lowerBlock2, prevStages, allocSlot, false);
     return { stages: result.stages };
   }
   const suggestion = didYouMean(call.method, ["filter", "reject", ...streamMethodNames()], (s) => `.${s}()`);
@@ -14379,7 +14540,7 @@ function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
   const arg = method === "reject" ? negateStreamPredicate(predicate) : predicate;
   if (arg === null) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' ${OUT_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
+      `'$$.reject(<predicate>)' ${OUT_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
       predicate.pos
     );
   }
@@ -14391,12 +14552,7 @@ function lowerFilterAsMatch(call, outerCtx, lowerBlock2) {
         pos
       );
     },
-    missingBody: () => {
-      throw new CodegenError(
-        `'$$.${method}(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-        arg.pos
-      );
-    }
+    missingBody: () => internalError(`'$$.${method}(<predicate>)' lambda has no body, block, or exprBlock`, arg.pos)
   });
 }
 function lowerOut(op, target, outerCtx, lowerBlock2, allocSlot) {
@@ -14871,11 +15027,11 @@ function lowerLetDecl(decl, ctx) {
       decl.pos
     );
   }
-  const fieldPath = bindingSlot(decl.name);
+  const fieldPath2 = bindingSlot(decl.name);
   const value = generateWithCtx(decl.value, ctx);
   return {
-    set: { $set: { [fieldPath]: value } },
-    ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind, staticBindingType(decl.value))
+    set: { $set: { [fieldPath2]: value } },
+    ctx: extendCtxLets(ctx, decl.name, fieldPath2, decl.kind, staticBindingType(decl.value))
   };
 }
 function isReplaceRootAssign(op) {
@@ -15050,7 +15206,7 @@ function lowerChainOnStream(methods, outerCtx, lowerBlockFn, allocSlot, rhs) {
   const { clearLets } = applyStreamMethods(methods, stages, outerCtx, lowerBlockFn, allocSlot, rhs);
   return { stages, clearLets };
 }
-function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, validator = makePipelineValidator("top")) {
+function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, validator = makePipelineValidator("top"), container = "top") {
   let clearLets = false;
   let clearedBy = "$unionWith";
   const cleanup = [];
@@ -15073,18 +15229,12 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
       target.push(...lowerStreamReject(m, ctx, lowerBlockFn));
       continue;
     }
-    if (m.method === "aggregate") {
-      throw new CodegenError(
-        `.aggregate(...) runs a sub-pipeline against a FOREIGN collection \u2014 write '$$$.<coll>.aggregate((o) => { ... })' (optionally after '.filter(...)'). To add stages to the CURRENT stream, write them directly (e.g. '$group(...); $sort(...);').`,
-        m.pos
-      );
-    }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
-      throw unknownStreamMethod(m, "$$");
+      throw unknownStreamMethod(m, "$$", container);
     }
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
+    const args = prepareStreamArgs(def, m.args, m.pos, STREAM_STAGE_REWRITE);
+    const result = def.lower(args, ctx, m.pos, lowerBlockFn, target, allocSlot, false);
     target.push(...result.stages);
     if (result.cleanupStages) cleanup.push(...result.cleanupStages);
     if (result.clearLets) clearLets = true;
@@ -15092,7 +15242,7 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
   target.push(...cleanup);
   return { clearLets, clearedBy };
 }
-function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {
+function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead, rewrite = STREAM_STAGE_REWRITE) {
   if (m.args.length !== 1) {
     if (isHead) rejectInvalidReplaceStream(rhs, ctx);
     throw new CodegenError(
@@ -15101,13 +15251,13 @@ function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead) {
     );
   }
   return lowerStreamFilterPredicate(
-    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos }),
+    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos, rewrite }),
     ctx,
     lowerBlockFn
   );
 }
 var STREAM_PREDICATE_POSITION = "on the RHS of '$$ = \u2026'";
-function lowerStreamReject(m, ctx, lowerBlockFn) {
+function lowerStreamReject(m, ctx, lowerBlockFn, rewrite = STREAM_STAGE_REWRITE) {
   if (m.args.length !== 1) {
     throw new CodegenError(
       `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
@@ -15122,7 +15272,7 @@ function lowerStreamReject(m, ctx, lowerBlockFn) {
   const negated = negateStreamPredicate(lambda);
   if (negated === null) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a block body has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
+      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
       lambda.pos
     );
   }
@@ -15139,6 +15289,7 @@ function chainHasCorrelatingFilter(methods, outerCtx) {
   return false;
 }
 function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSlot, rhs) {
+  const foreignRewrite = aggregateRewrite(formatLookupReceiver(target));
   const collapsingMap = methods.find(isValueCollapsingMap);
   if (collapsingMap !== void 0) {
     throw new CodegenError(
@@ -15163,19 +15314,19 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
       continue;
     }
     if (m.method === "filter") {
-      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0));
+      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite));
       continue;
     }
     if (m.method === "reject") {
-      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn));
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite));
       continue;
     }
     const def = lookupStreamMethod(m.method);
     if (def === null) {
       throw unknownStreamMethod(m, "$$$.<coll>");
     }
-    def.validate(m.args, m.pos);
-    const result = def.lower(m.args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
+    const args = prepareStreamArgs(def, m.args, m.pos, aggregateRewrite(formatLookupReceiver(target)));
+    const result = def.lower(args, innerCtx, m.pos, lowerBlockFn, inner, allocSlot, true);
     inner.push(...result.stages);
   }
   const from = requireSameDbColl(target.db, target.collection, target.pos);
@@ -15235,13 +15386,14 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
       EMPTY_ENCLOSING,
       innerCtx,
       pipelineBody,
-      letVars
+      letVars,
+      formatLookupReceiver(target)
     );
     lookupStage2 = { $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) };
   }
   return { stages: [lookupStage2, { $unwind: `$${slot}` }, { $replaceWith: `$${slot}` }], clearLets: true };
 }
-function unknownStreamMethod(m, receiver) {
+function unknownStreamMethod(m, receiver, container = "top") {
   const fromTheEnd = fromTheEndRejection(m.method, receiver, m.pos);
   if (fromTheEnd !== null) return fromTheEnd;
   if (m.method === "find" || m.method === "findLast" || m.method === "at") {
@@ -15270,11 +15422,18 @@ Pick the wrap shape that matches what your reducer would return in plain JS.`,
       m.pos
     );
   }
-  const names = streamMethodNames();
   const isStream = receiver === "$$";
-  const hint = didYouMean(m.method, isStream ? ["filter", "push", ...names] : ["filter", ...names], (s) => `.${s}`);
+  if (isStream && m.method === "push") {
+    const statementNote = container === "top" ? ` ('$$.push(...)' does work as a top-level statement of its own.)` : ` (the statement form '$$.push(...)' isn't available inside a '${container}' sub-pipeline.)`;
+    return new CodegenError(
+      `'.push(...)' isn't a chain method. To append documents mid-chain use '.concat(...)', which emits the same '$unionWith' \u2014 e.g. '$$.filter(<pred>).concat({ \u2026 })'.${statementNote}`,
+      m.pos
+    );
+  }
+  const names = streamMethodNames();
+  const hint = didYouMean(m.method, ["filter", ...names], (s) => `.${s}`);
   const list = names.length > 0 ? names.map((n) => `.${n}`).join(", ") : "(none yet)";
-  const pushNote = isStream ? ` ('.push(...)' appends documents as a statement \u2192 $unionWith.)` : "";
+  const pushNote = !isStream ? "" : container === "top" ? ` (To append documents: '.concat(...)' mid-chain, or '$$.push(...)' as a statement of its own.)` : ` (To append documents mid-chain, use '.concat(...)'.)`;
   return new CodegenError(
     `'.${m.method}(...)' is not a chainable stream method on '${receiver}'.${hint} Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', ${list}.${pushNote}`,
     m.pos
@@ -15301,12 +15460,7 @@ function lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlockFn) {
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
     onLocalRef: rejectLocalRefInStreamFilter,
-    missingBody: () => {
-      throw new CodegenError(
-        `'.filter(<predicate>)' predicate has a block body with local \`const\`/\`let\` bindings, which isn't supported in this position. Write the predicate as a single expression \u2014 \`function (x) { return <expr> }\` / \`(x) => <expr>\` \u2014 and fold any bindings into <expr>.`,
-        lambda.pos
-      );
-    }
+    missingBody: () => internalError("'.filter(<predicate>)' lambda has no body, block, or exprBlock", lambda.pos)
   });
 }
 function rejectLocalRefInStreamFilter(letVars, param, pos) {
@@ -15649,7 +15803,7 @@ var lowerBlock = (block, ctx) => {
     const innerPush = stmt.type === "LetDecl" || stmt.type === "FuncDecl" || stmt.type === "UpdateFilter" ? null : detectUnionPush(stmt);
     if (innerPush !== null) {
       throw new CodegenError(
-        `'$$.push(...)' inside a lookup's block-body lambda is not supported \u2014 $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.`,
+        `'$$.push(...)' inside a lookup's '.aggregate' block is not supported \u2014 $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.`,
         innerPush.pos
       );
     }
@@ -15715,7 +15869,8 @@ function tryLowerAssignSugar(op, ctx, out, flush, allocSlot, lowerBlockFn, isFir
           lowerBlockFn,
           allocSlot,
           branchRhs,
-          makePipelineValidator("facet")
+          makePipelineValidator("facet"),
+          "facet"
         );
         return branch;
       };

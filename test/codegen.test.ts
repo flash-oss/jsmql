@@ -2894,10 +2894,25 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       }
     });
 
-    it("a stream method that simply takes no sub-pipeline gets the same lead, no suggestion", () => {
+    it("a key-function method gets the same lead and no suggestion", () => {
       expect(() => jsmql("$.r = $$$.orders.sortBy((o) => { $limit(2); });")).toThrow(
-        /Unexpected stage call at position \d+:.*but '\.sortBy\(\.\.\.\)' doesn't take one\. Only a stream method/s,
+        /Unexpected stage call at position \d+:.*but '\.sortBy\(\.\.\.\)' doesn't take one\. Pipeline stages belong/s,
       );
+    });
+
+    // The suggestion names the method the developer meant, but must not imply that
+    // method would accept the block as written: only `.aggregate` takes a pipeline,
+    // so the rule is stated either way (see src/callback-block.ts).
+    it("states the callback rule rather than promising the suggested method takes stages", () => {
+      for (const src of [
+        "$.r = $$$.orders.aggregat((o) => { $limit(2); });",
+        "$.r = $$$.orders.filte((o) => { $limit(2); });",
+        "$.r = $.items.map((d) => { $limit(2); });",
+      ]) {
+        expect(() => jsmql(src)).toThrow(
+          /Pipeline stages belong to `\.aggregate\(pipeline\)` alone; every other callback's block body is JavaScript/,
+        );
+      }
     });
 
     it("an in-document array receiver is told stages need a stream", () => {
@@ -6464,11 +6479,16 @@ describe("jsmql.expr()", () => {
     expect(jsmql.expr`$.region === ${region}`).toEqual({ $eq: ["$region", "AU"] });
   });
 
-  it("a stage call without `;` here does NOT trip the Filter-only guard", () => {
-    // The guard lives in `generateFilter`, which `jsmql.expr` doesn't go
-    // through — so `$match(...)` in expression mode lowers like any other
-    // operator call (useful inside a hand-written sub-pipeline literal).
-    expect(jsmql.expr("$match($.a === 0)")).toEqual({ $match: { $eq: ["$a", 0] } });
+  it("a stage name is rejected here — `jsmql.expr` yields an expression, not a stage", () => {
+    // It used to emit `{ $match: { $eq: ["$a", 0] } }`, which mongod refuses in BOTH
+    // readings: there is no `$match` expression operator, and as a stage body a bare
+    // `$eq` is "unknown top level operator". The stage document comes from
+    // `jsmql.pipeline` instead, and the expression from `jsmql.expr` on the predicate.
+    expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
+      /'\$match' is a pipeline stage, not an expression.*For the value-position equivalent, use '\$filter\(…\)'/s,
+    );
+    expect(jsmql.pipeline("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
+    expect(jsmql.expr("$.a === 0")).toEqual({ $eq: ["$a", 0] });
   });
 
   it("rejects wrong-typed input with a TypeError naming the entry point", () => {
@@ -6512,7 +6532,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     });
     it("wrong method on $$ surfaces the stream-method registry error, noting .push", () => {
       expect(() => jsmql("$$.pop({a:1})")).toThrow(
-        /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.push\(\.\.\.\)' appends documents as a statement/,
+        /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
       );
     });
   });

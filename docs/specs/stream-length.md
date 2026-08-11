@@ -111,8 +111,8 @@ streams have no per-doc index; it may be present-but-unused only to reach the 3r
 param). Both rejections are permanent (no DEF row): there is no HR3-safe stream
 index, and the array-form is reached via the materialised path instead.
 
-**Block-body `.filter`.** The same 3rd-arg handle works in a block-body lookup
-filter — `$.orders = $$$.orders.filter((o, _i, coll) => { $match(o.userId === $._id); assert(coll.length > 0, "…"); })`.
+**Inside a lookup sub-pipeline.** The same 3rd-arg handle works in an `.aggregate`
+block — `$.orders = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); assert(coll.length > 0, "…"); })`.
 There the block lowers to the `$lookup.pipeline` (via `lowerBlock` →
 `generateImplicitPipeline`, which already runs the materialiser since `lowerBlock`
 uses `container: "top"`), `buildBlockBodyPredicate` binds `coll` via

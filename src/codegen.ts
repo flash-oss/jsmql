@@ -1,6 +1,7 @@
 import { lookupOperator } from "./operators.ts";
 import { checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
 import { checkEnum } from "./literal-gate.ts";
+import { callbackBlockToValue } from "./callback-block.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
@@ -89,7 +90,7 @@ export type GenerateCtx = {
   lambdaParams: ReadonlySet<string>;
   /**
    * True inside ANY sub-pipeline body (`$lookup.pipeline`, `$unionWith.pipeline`,
-   * a `$facet` branch) — including a block-body lambda, which the loop-position
+   * a `$facet` branch) — including an `.aggregate` block, which the loop-position
    * validator can't label with a specific container (see DEF-024). Stages the
    * registry forbids in *every* container ($out / $merge) are rejected on this
    * flag alone, so no sub-pipeline can emit one (HR3).
@@ -267,7 +268,7 @@ export type GenerateCtx = {
    */
   expandingFns?: ReadonlySet<string>;
   /**
-   * Set while lowering a `$lookup` sub-pipeline **block body**, so a nested
+   * Set while lowering a `$lookup` sub-pipeline **`.aggregate` block**, so a nested
    * `$$$.<coll>.find/filter(...)` appearing as a statement (or inside a stage
    * body) within that block knows its enclosing-lookup context — the same
    * `foreignParams` / `inScopeLetNames` the expression-body path threads
@@ -1548,6 +1549,17 @@ export function generate(expr: Expr): unknown {
 /** Generate an expression with an explicit context (e.g. pipeline-let bindings). */
 export function generateWithCtx(expr: Expr, ctx: GenerateCtx): unknown {
   return _generate(expr, ctx);
+}
+
+/**
+ * Generate an `ExprBlock` (`{ (const|let … ;)* return <expr>; }`) as a value — the
+ * right-folded nest of `$let` a block-bodied arrow means. Exported for the predicate
+ * translators, which lower a block-bodied predicate into `$match: { $expr: … }` and
+ * must not re-implement the folding, shadowing, and re-declaration rules
+ * [generateExprBlock] already owns.
+ */
+export function generateExprBlockWithCtx(block: ExprBlock, ctx: GenerateCtx): unknown {
+  return generateExprBlock(block, ctx);
 }
 
 // ── Core generator ────────────────────────────────────────────────────────────
@@ -5451,19 +5463,21 @@ function requireLambda(
     );
   }
   if (first.block !== undefined) {
-    // A statement block only ever parses on a stream-rooted callback, so
-    // reaching here means the chain that carried it is being consumed as a
-    // VALUE (`.map` returning a scalar, a chained `.find`) and lowers to an
-    // array operator — which has no stage position to run the block in. Say
-    // that, rather than claiming the block form belongs to some other method.
+    // A statement block only ever parses on a stream-rooted callback. A stage-free
+    // one is the JavaScript value form in disguise, so it folds (`{ return E }` → `E`).
+    // Reaching the throw inside means the block holds STAGES *and* the chain that
+    // carried it is being consumed as a VALUE (`.map` returning a scalar, a chained
+    // `.find`), lowering to an array operator — which takes an expression and has no
+    // stage position at all. The rewrite names that, rather than a heading method the
+    // developer would then have to guess at.
     const keepIt =
       method === "map"
-        ? "`return` a document instead of a scalar (a document `.map` stays a '$replaceWith' stage), or move the stages into a heading `.filter(o => { … })` / `.aggregate((o) => { … })`"
-        : "move the stages into a heading `.filter(o => { … })` / `.aggregate((o) => { … })`";
-    throw new CodegenError(
-      `.${method}() can't take a statement-block body (a sub-pipeline of stages) in this position — the chain is consumed as a value here, so it lowers to an array operator, which takes an expression and has nowhere to run stages. Keep it a sub-pipeline: ${keepIt}. Or make the callback a value: an expression \`x => x > 0\`, or a value-returning block \`x => { const y = …; return y; }\`.`,
-      first.pos,
-    );
+        ? "keep it a sub-pipeline by moving the stages into a heading `.aggregate((o) => { … })`, or `return` a document instead of a scalar (a document `.map` stays a '$replaceWith' stage)"
+        : "keep it a sub-pipeline by moving the stages into a heading `.aggregate((o) => { … })`";
+    return callbackBlockToValue(first, {
+      method,
+      rewrite: `the chain is consumed as a value here, so it lowers to an array operator with nowhere to run stages — ${keepIt}`,
+    });
   }
   return first as { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number };
 }
@@ -6426,7 +6440,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
       // A coalesced update-op RHS may embed a lambda — e.g.
       // `$.x = $.items.map(i => { const y = i * 2; return y; })`. Walk both the
       // expression body and the expr-block (decl initialisers + return). The
-      // statement-block (`block`) form only appears inside lookup callbacks,
+      // statement-block (`block`) form only appears inside an `.aggregate` callback,
       // which are intercepted before this walker runs.
       if (expr.body !== undefined) collectReadsInto(expr.body, out);
       if (expr.exprBlock !== undefined) {

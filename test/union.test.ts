@@ -29,7 +29,7 @@ describe("$$.push — .filter spread (pipeline-form $unionWith)", () => {
   it("block-body filter passes through stage statements verbatim", () => {
     expect(
       jsmql(
-        "$$.push(...$$$.archive_users.filter(o => { $match(o.tier === 'gold'); $sort({ joined: -1 }); $limit(100); }))",
+        "$$.push(...$$$.archive_users.aggregate(o => { $match(o.tier === 'gold'); $sort({ joined: -1 }); $limit(100); }))",
       ),
     ).toEqual([
       {
@@ -153,7 +153,7 @@ describe("$$.push — error cases", () => {
 
   it("wrong method on $$ → stream-method registry error that still names .push", () => {
     expect(() => jsmql('$$.pop("x")')).toThrow(
-      /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.push\(\.\.\.\)' appends documents as a statement/,
+      /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
     );
   });
 
@@ -163,9 +163,9 @@ describe("$$.push — error cases", () => {
     );
   });
 
-  it("push inside a lookup block-body → reject with hoist hint", () => {
-    expect(() => jsmql("$.users = $$$.users.filter(u => { $$.push(...$$$.archive); })")).toThrow(
-      /'\$\$\.push\(\.\.\.\)' inside a lookup's block-body lambda is not supported/,
+  it("push inside a lookup `.aggregate` block → reject with hoist hint", () => {
+    expect(() => jsmql("$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })")).toThrow(
+      /'\$\$\.push\(\.\.\.\)' inside a lookup's '\.aggregate' block is not supported/,
     );
   });
 
@@ -210,5 +210,40 @@ describe("$$.push — error positions", () => {
       // the exact byte; just that it points into the arg, not at index 0.
       expect(err.pos).toBeGreaterThan(8);
     }
+  });
+});
+
+// An error must never recommend syntax that doesn't work at the position the
+// user is writing in. Two ways that used to happen on a `$$` chain.
+describe("chain errors only ever name syntax that works here", () => {
+  it("never suggests the exact name the user typed", () => {
+    const msg = (() => {
+      try {
+        jsmql("$ = { k: $$.push({ a: 1 }) };");
+        return "";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    })();
+    expect(msg).not.toMatch(/Did you mean '\.push'/);
+  });
+
+  it("points a chained .push at .concat, which emits the same $unionWith", () => {
+    expect(() => jsmql("$$ = $$.push({ a: 1 });")).toThrow(/use '\.concat\(\.\.\.\)'/);
+    expect(jsmql("$$ = $$.concat({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
+  });
+
+  // A `$facet` branch has no statement position, so the statement form must not
+  // be offered there — but it must still be offered where it does work.
+  it("offers the statement form only where a statement position exists", () => {
+    expect(() => jsmql("$$ = $$.push({ a: 1 });")).toThrow(/'\$\$\.push\(\.\.\.\)' does work as a top-level statement/);
+    expect(() => jsmql("$ = { k: $$.push({ a: 1 }) };")).toThrow(
+      /the statement form '\$\$\.push\(\.\.\.\)' isn't available inside a 'facet' sub-pipeline/,
+    );
+  });
+
+  // `.pop` used to be answered with `.push`, which isn't a chain method either.
+  it("suggests a real chain method for a near-miss", () => {
+    expect(() => jsmql("$$ = $$.pop();")).toThrow(/Did you mean '\.drop'\?/);
   });
 });

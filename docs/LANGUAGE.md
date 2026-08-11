@@ -607,26 +607,12 @@ $.user = $$$.users.find(u => u._id === $.userId && u.active);
 //   ]
 ```
 
-**Block-body lambdas — full sub-pipeline.** When the predicate is a block-body arrow (`o => { stmt; stmt; }`), each statement becomes one stage in the `$lookup.pipeline` body. `$match`, `$sort`, `$limit`, `$project`, etc. all work; outer-doc `$.x` references auto-hoist into the lookup's `let` clause:
+**`.find` / `.filter` take a JavaScript predicate.** Their callback is JavaScript, so a `{ … }` body holds `const`/`let` bindings and one `return <expr>` — `o => { return o.active; }` means exactly what `o => o.active` means. A **pipeline stage** inside one is rejected, because a predicate says which documents to keep, not what stages to run:
 
 ```js
-$.recentOrders = $$$.orders.filter(o => {
-  $match(o.userId === $._id);
-  $sort({ createdAt: -1 });
-  $limit(10);
-});
-// → [{
-//     $lookup: {
-//       from: "orders",
-//       let: { jsmql_f0__id: "$_id" },
-//       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-//         { $sort: { createdAt: -1 } },
-//         { $limit: 10 }
-//       ],
-//       as: "recentOrders"
-//     }
-//   }]
+$.recentOrders = $$$.orders.filter(o => { $match(o.userId === $._id); $sort({ createdAt: -1 }); });
+// ✗ `$match(...)` is a pipeline stage, not part of a callback —
+//   write `$$$.orders.aggregate((o) => { $match(...); $sort(...); ... })`
 ```
 
 **`.aggregate(pipeline)` — a full sub-pipeline (grouping, top-N, reshaping).** When you need more than "keep matching docs" — a `$group`, a `$sort`+`$limit` top-N, a `$bucket`, a window stage — reach for `.aggregate()`, named after the driver's own `db.coll.aggregate(pipeline)`. It runs an arbitrary sub-pipeline against the foreign collection and lowers to `$lookup`. The argument is a **block-body arrow** `(o) => { $stage(...); ... }` (each statement is a stage — no `return`) or a **stage-array literal** `[{ $stage: ... }, ...]`. Inside, `o.<field>` is the foreign document's field and `$.<field>` is the outer document (auto-hoisted into `let`, exactly as `.filter`):
@@ -670,18 +656,18 @@ $.topRegions = $$$.orders.sort({ createdAt: -1 }).take(1000)
   .sort({ revenue: -1 }).take(3);
 ```
 
-The same `(element, index, collection)` params as `.filter`/`.map` apply (the index is positional-only; `coll.length` is the sub-stream count). How it differs from a block-body `.filter`: `.aggregate` is the pipeline-oriented spelling (reshape / roll up, and the array-paste form), while `.find`/`.filter` are the element-predicate spellings. Running `.aggregate(...)` on the current stream (`$$.aggregate(...)`) is rejected — just write the stages directly; it only earns its keep against a foreign collection.
+`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept (the index is positional-only). It is the pipeline-oriented spelling — reshape, roll up, paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` works on the current stream too (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly or chaining them (`$$.$sort({ … }).$limit(10)`) does. It earns its keep there in a [`$facet` branch](#facet-via---key--chain-), which *is* a sub-pipeline and so has no "write them directly" alternative.
 
-**The sub-stream count inside a block (`(o, _i, coll) => …`).** A block-body `.filter` may take a 3rd param naming the **post-filter sub-stream**; `coll.length` is how many documents matched, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
+**The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.length` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
 
 ```js
-$.orders = $$$.orders.filter((o, _i, coll) => {
+$.orders = $$$.orders.aggregate((o, _i, coll) => {
   $match(o.userId === $._id);
   assert(coll.length > 0, "User without orders is impossible");
 });
 ```
 
-Only `coll.length` is available (a stream has no array to index/iterate), and the index (2nd) param may be present but never *used* (no per-doc stream index). **Caveat — empty sub-stream:** an in-block `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there's no document for it to reject — the result is just `orders: []`, the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
+Only `coll.length` is available (a stream has no array to index/iterate), and the index (2nd) param may be present but never *used* (no per-doc stream index). **Caveat — empty sub-stream:** an in-pipeline `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there's no document for it to reject — the result is just `orders: []`, the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
 
 **Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot, emits the chained transform as a follow-up `$set`, and substitutes a FieldRef into the parent expression. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
 
@@ -723,7 +709,7 @@ $$ = $$$.orders.head();   // throws — a value can't be the new stream; use `.t
 $$$.orders.head();        // throws — a bare value isn't a pipeline stage; assign it
 ```
 
-**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`. A **block-body** value-extractor (`.map(x => { return <expr>; })`, or with `const`/`let` bindings) behaves identically to the expression form — a stage-less block is just the arrow in disguise (`x => { const y = …; return y; }` → a `$let`). Only a block that contains real sub-pipeline **stages** and returns a non-document is rejected (you can't value-extract through a `$match`/`$sort` reshape):
+**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`. A **block-body** value-extractor (`.map(x => { return <expr>; })`, or with `const`/`let` bindings) behaves identically to the expression form — a `{ … }` callback body is just the arrow in disguise (`x => { const y = …; return y; }` → a `$let`):
 
 ```js
 $.recentOrders = $$$.orders
@@ -756,29 +742,29 @@ $.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flat
 // → $lookup (pipeline: [$match]) + $set { productIds: uniq(flatten($map(result, "productIds"))) }
 ```
 
-The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith` (a following `.take` etc. lowers to `$limit` there); a **block-body** `.map(x => { … ; return <ret> })` likewise stays in the sub-pipeline. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
+The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith` (a following `.take` etc. lowers to `$limit` there); a `.map(x => { … ; return ({ … }) })` block returning one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
-**`.map(d => { … ; return <ret> })` — statement-block body.** A stream `.map` may take a statement block ending in `return`, exactly like a block-body `.filter` — same `;`-separated statement vocabulary (`assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups). The only difference from `.filter` is the trailing `return`: its value becomes each output document (a `$replaceWith`). This is the idiomatic way to validate or reshape with intermediate steps:
+**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript; a stage inside it is rejected. To run stages *and* reshape, use `.aggregate` and write the reshape as the root-replace statement `$ = <expr>` (which is the same `$replaceWith` a `.map` emits). The block then has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups:
 
 ```js
-$.orders = $$$.orders.filter(o => o.userId === $._id).map(o => {
+$.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
   assert(o.total > 0, "order total must be positive");
-  return { id: o._id, total: o.total };
+  $ = { id: o._id, total: o.total };
 });
 // → the orders $lookup.pipeline gains, after the filter's $match:
 //     { $match: { $expr: { $convert: { input: true, to: { $cond: [{ $gt: ["$total", 0] }, "bool", "jsmql assertion failed: order total must be positive"] } } } } },
 //     { $replaceWith: { id: "$_id", total: "$total" } }
 ```
 
-As in an expression-body `.map`, the lambda parameter *is* the current document (`o.total` → `$total`); a `$.<field>` reference is rejected with the "use the lambda parameter" hint, and a block without a `return` is rejected (a `.map` must produce a value).
+As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$total`), and a `$.<field>` reference reads the *outer* document (auto-hoisted into `let`).
 
 **Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
 
 **Caveats:**
-- **Nested lookups work at any depth, in both expression-body and block-body predicates.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Expression-body example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Block-body example: `$.users = $$$.users.filter(u => { $match(u.active); $.orders = $$$.orders.filter(o => o.userId === u._id); })`.
-  - **Cross-level references resolve correctly at any depth (block-body / statement-block `.map`).** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.map`/`.filter` param), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one `.map` can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).map(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.map(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via--expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
+- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); $.orders = $$$.orders.filter(o => o.userId === u._id); })`.
+  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via--expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — also planned (see `$$$` schema-threading work).
-- **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. Use the block-body form with `$sort` + `$limit(1)` if you need deterministic single-doc selection.
+- **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. For deterministic single-doc selection use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
 
 ### Cross-database reads: not supported
@@ -848,8 +834,8 @@ $$.push(...$$$$.archive_db.users.filter(u => u.deleted));
 // → ❌ CodegenError: Cross-database reads aren't supported … write '$$$.users'
 //    (See "Cross-database reads: not supported" above.)
 
-// 7. Block-body filter — full sub-pipeline.
-$$.push(...$$$.archive_users.filter(u => {
+// 7. Aggregate source — a full sub-pipeline (uncorrelated: `$unionWith` has no `let`).
+$$.push(...$$$.archive_users.aggregate(u => {
   $match(u.tier === "gold");
   $sort({ joined: -1 });
   $limit(100);
@@ -883,7 +869,7 @@ Each rule is enforced at compile time with a targeted error:
 
 **Statement-only.** `$$.push(...)` must appear as a top-level Pipeline statement. `let x = $$.push(...)`, `$.x = $$.push(...)`, or any other read of the result is rejected with the statement-only error. Filter / `jsmql.expr` / `jsmql.update` reject the syntax wholesale — collection union is Pipeline-only.
 
-**Nested.** `$$.push(...)` inside another lookup's block body or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`) is rejected with a hoist-to-outer hint — the stages it would emit can't land inside the inner pipeline without changing what gets unioned.
+**Nested.** `$$.push(...)` inside a lookup's `.aggregate` block or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`) is rejected with a hoist-to-outer hint — the stages it would emit can't land inside the inner pipeline without changing what gets unioned.
 
 ### `assert`: fail the pipeline when an invariant breaks
 
@@ -987,7 +973,7 @@ To count an **inner** sub-stream (not the root), use the 3rd callback param —
 lookups* above). `$$.length` = root; `coll.length` = that sub-stream.
 
 **Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
-count. Inside a top-level `$lookup` (predicate, block body, or `.map` chain)
+count. Inside a top-level `$lookup` (predicate, `.aggregate` block, or `.map` chain)
 `$$.length` works via the `$lookup.let` capture above; still **not** supported
 inside a `$facet`/`$unionWith` sub-pipeline, a *deeper* nested lookup, or a
 reusable function body `[DEF-033]` (compute it at the top level and carry the
@@ -1017,8 +1003,8 @@ jsmql('$$$$.dw.archive = $$.filter({ status: "expired" });')
 jsmql('$$$["my-archive.v2"] = $$;')
 // → [{ $out: "my-archive.v2" }]
 
-// 5. Block-body filter — full sub-pipeline lands before the $out.
-jsmql("$$$.top10 = $$.filter(o => { $sort({ score: -1 }); $limit(10); });")
+// 5. Chained stages — a full sub-pipeline lands before the $out.
+jsmql("$$$.top10 = $$.$sort({ score: -1 }).$limit(10);")
 // → [{ $sort: { score: -1 } }, { $limit: 10 }, { $out: "top10" }]
 
 // 6. Composes with preceding stages.
@@ -1040,7 +1026,7 @@ Bracket and dotted segments mix freely (`$$$$.dw["archive"]` is equivalent to `$
 | Method | Stage | Notes |
 |---|---|---|
 | bare `$$` | (none) | Writes the current stream unchanged. |
-| `$$.filter(<predicate>)` | `$match` | Same index-friendly translator `$match` uses, and the same predicate spellings as everywhere else. Expression body → query syntax + `$expr` residual; block body → full sub-pipeline. |
+| `$$.filter(<predicate>)` | `$match` | Same index-friendly translator `$match` uses, and the same predicate spellings as everywhere else — query syntax with any residual in `$expr`. For several stages, chain them instead (`$$.$match({ … }).$sort({ … })`). |
 | `$$.reject(<predicate>)` | `$match` | `.filter` negated — `$match: { $expr: { $not: … } }`, same as in a `$$ =` chain. |
 | `$$.<streamMethod>(…)` | that method's stage(s) | Any chainable stream method (e.g. `.take(n)`, `.toSorted(…)`) — see [Stream methods chained after the RHS](#stream-methods-chained-after-the-rhs) for the vocabulary. |
 | `$$.$<stage>(…)` | that stage | A chained stage call (e.g. `$$.$sort({ … })`). A `$out` chain runs at the outer pipeline level, so this is an ordinary top-level stage placed before the write. |
@@ -1788,7 +1774,19 @@ $.legs.map(leg => {
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
-Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works in `.map`, `.filter`, `.reduce`, `.flatMap`, `.find`/`.some`/`.every`, the `$let(vars, fn)` form, IIFEs, `Object.groupBy`, and `Array.from`.
+Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE, `Object.groupBy`, `Array.from` — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
+
+```js
+$.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
+// → [{ $lookup: {
+//      from: "orders",
+//      let: { jsmql_f0_minTotal: "$minTotal" },
+//      pipeline: [{ $match: { $expr:
+//        { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } } }],
+//      as: "recent" } }]
+```
+
+A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr` rather than being translated to indexable query syntax — worth knowing when the predicate is the one an index would serve. Everything else behaves as it does anywhere else: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while keeping the bindings.
 
 > **⚠️ JavaScript gotcha — `=> {` is always a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error (it has no `return`) — jsmql points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
 
@@ -2606,15 +2604,15 @@ jsmql("$ = $.items.filter(x => x.qty > 0);")
 
 This is the idiomatic way to conditionally drop documents. (To empty the *whole* stream unconditionally, that's a different operation — `$$ = []`.)
 
-#### `$facet` via `$ = { key: $$.filter(p), … }`
+#### `$facet` via `$ = { key: <$$ chain>, … }`
 
-When every value of the object literal is a `$$.filter(<lambda>)` call, the same `$ = { … }` surface lowers to a `$facet` stage instead — each named filter becomes its own sub-pipeline running against the parent's input docs:
+When every value of the object literal is a `$$` chain, the same `$ = { … }` surface lowers to a `$facet` stage instead — each named branch becomes its own sub-pipeline running against the parent's input docs. A branch is a `$$.filter(<predicate>)`, a chain of stage calls, or any mix:
 
 ```js
 jsmql(`$ = {
-  topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+  topByScore: $$.$sort({ score: -1 }).$limit(10),
   recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
-  byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); }),
+  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`)
 // → [{ $facet: {
 //       topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
@@ -2776,7 +2774,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.map(d => <expr>)` / `.map("field")` | Single-param expression-body arrow (the param is the current document — write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`; the shorthand → `$replaceWith: "$field"`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
 | `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (`\|\|` for compound). `.sort` and `.toSorted` are equivalent on a stream | `$sort: { … }`. Zero-arg is rejected (streams have no natural document ordering) |
 | `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` is ascending by one/more keys; `.orderBy` takes parallel keys + directions (`1`/`-1`/`"asc"`/`"desc"`), **or** a `{ field: dir }` object with the directions inline (like `.sort({…})`) | `$sort: { … }`. `.sortBy({…})` is rejected (an object is a lodash matches-shorthand, not a direction — it points at `.orderBy({…})`) |
-| `.filter(<predicate>)` | An arrow (`o => …`, expression or block body), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. The spellings are interchangeable — and interchangeable in *every* position a `$$` predicate may sit (see the note below) | `$match` — the index-friendly translator `$match` uses. Expression body → query syntax with any residual in `$expr`; block body → the block's stages |
+| `.filter(<predicate>)` | An arrow (`o => …`), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. The spellings are interchangeable — and interchangeable in *every* position a `$$` predicate may sit (see the note below) | `$match` — the index-friendly translator `$match` uses, as query syntax with any residual in `$expr` |
 | `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
 | `.pick([fields])` / `.omit([fields])` | The lodash object methods, per document. `.pick` keeps only the named fields (`_id` dropped unless named); `.omit` drops the named fields | `$project` (inclusion / exclusion) |
 | `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | The leading run where the predicate holds (`takeWhile`), or everything from the first failure on (`dropWhile`). Same predicate spellings as `.filter`. **A sort must come first** — any spelling (`.sort` / `.toSorted` / `.sortBy` / `.orderBy` / `.$sort({…})`); with none it is rejected, never defaulted to `_id` | `$setWindowFields` carrying a running "has it failed yet" flag, then `$match` on that flag (`0` keeps, `1` drops). The two are exact complements |

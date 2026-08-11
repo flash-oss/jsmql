@@ -9,6 +9,7 @@
 
 import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
+import { callbackBlockToValue, requireStageFreeCallback, type StageRewrite } from "./callback-block.ts";
 import { CodegenError, generateWithCtx, type GenerateCtx, shorthandToLambda, stringKeyExpr } from "./codegen.ts";
 import {
   aggregateArgToLambda,
@@ -62,7 +63,7 @@ export type StreamMethodResult = {
   cleanupStages?: object[];
   /**
    * `$lookup.let` correlation vars this method's body captured that must be
-   * merged into the ENCLOSING lookup's `let` clause. Set by a statement-block
+   * merged into the ENCLOSING lookup's `let` clause. Set by a chained
    * `.map` whose body reads cross-level values (`$.<field>`, an enclosing
    * foreign param, …) — those are hoisted into the lookup the chain is
    * extending. The chain assembler (`tryExtractChainedLookup` / the pivot)
@@ -71,6 +72,36 @@ export type StreamMethodResult = {
   extraLetVars?: Record<string, string>;
 };
 
+/**
+ * Prepare a registry method's arguments, then validate them — the single entry point
+ * every chain container uses in place of calling `def.validate` directly.
+ *
+ * A `{ … }` callback body on a JavaScript or lodash method is JavaScript, so unless
+ * the method opts out (`callback: "pipeline"`) a stage-free block folds back to the
+ * value form here — `{ return E }` becomes the expression `E`, `{ const a = …; return E }`
+ * an `ExprBlock` — and a stage-bearing one is rejected naming the offending statement
+ * and `stageRewrite`. Folding BEFORE `validate` is what keeps each method's own
+ * shape errors intact: `.flatMap` may go on saying it needs `d => d.<path>` without
+ * ever learning that a block body exists.
+ *
+ * Returns the args to pass to `lower` — the same array when nothing folded.
+ */
+export function prepareStreamArgs(
+  def: StreamMethodDef,
+  args: readonly CallArg[],
+  callPos: number,
+  stageRewrite: StageRewrite,
+): readonly CallArg[] {
+  const prepared =
+    def.callback === "pipeline"
+      ? args
+      : args.map((a) =>
+          a.type === "Lambda" ? callbackBlockToValue(a, { method: def.name, rewrite: stageRewrite }) : a,
+        );
+  def.validate(prepared, callPos, stageRewrite);
+  return prepared;
+}
+
 export type StreamMethodDef = {
   /** JS method name (e.g. "slice"). */
   name: string;
@@ -78,8 +109,26 @@ export type StreamMethodDef = {
    * Validate the call's arg shape. Throw `CodegenError` (with `.pos`) for
    * any rejection branch. Called before `lower`; lowering may assume the
    * args have the shape the validator accepts.
+   *
+   * `stageRewrite` is the caller's position-accurate answer to "where do pipeline
+   * stages go here" — `aggregateRewrite('$$$.orders')` on a foreign chain,
+   * `STREAM_STAGE_REWRITE` on the current stream. A method that reads its own block
+   * body (`.map`) needs it to reject a stage without recommending a spelling its
+   * container can't use; every other method ignores the parameter.
    */
-  validate: (args: readonly CallArg[], callPos: number) => void;
+  validate: (args: readonly CallArg[], callPos: number, stageRewrite: StageRewrite) => void;
+  /**
+   * How this method consumes a `=> { … }` callback body. `"value"` — the default —
+   * means the body is JavaScript, so `prepareStreamArgs` folds a stage-free block
+   * back to the expression it returns before `validate`/`lower` run: the method only
+   * ever sees an expression or an `ExprBlock`, exactly as before the block grammar
+   * reached it. `"pipeline"` opts out for the two methods that read the block
+   * themselves — `.aggregate` (its statements ARE the sub-pipeline) and `.map`
+   * (whose `return` is a `$replaceWith` reshape). Only a method in the parser's
+   * `STREAM_BLOCK_METHODS` can ever receive a block, so the field is inert
+   * elsewhere.
+   */
+  callback?: "value" | "pipeline";
   /**
    * Produce the stages this method contributes.
    *
@@ -638,7 +687,7 @@ const CONCAT: StreamMethodDef = {
 // body (`d => X`) is used directly; an `exprBlock` body (only the `function`
 // form reaches here now — `.map(function (d) { const a = …; return … })`) yields
 // its `ret` when there are no bindings, else is rejected with a redirect. The
-// statement-block arrow form (`d => { stmt; …; return X }`) is parsed as a
+// callback block form (`d => { stmt; …; return X }`) is parsed as a
 // pipeline block (`lambda.block` + `lambda.ret`) and handled by MAP.lower's
 // dedicated block path — it never reaches here (callers guard on `lambda.block`).
 // `method` names the caller, because the `$group`-keyed methods reuse this for their
@@ -744,7 +793,7 @@ function rejectLocalDocRef(
     );
   }
   throw new CodegenError(
-    `'$.<field>' inside '.${method}(d => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
+    `'$.<field>' inside '.${method}(${param} => …)' isn't supported — use the lambda parameter (e.g. '${param}.${samplePath}') to reference each input document. Inside this callback, the lambda parameter IS the current document.`,
     pos,
   );
 }
@@ -784,7 +833,9 @@ function rejectNonDocumentMapBody(body: Expr): void {
 
 const MAP: StreamMethodDef = {
   name: "map",
-  validate(args, callPos) {
+  // Reads its own block: the trailing `return` becomes a `$replaceWith` stage.
+  callback: "pipeline",
+  validate(args, callPos, stageRewrite) {
     if (args.length !== 1) {
       throw new CodegenError(
         `.map(d => <expr>) takes exactly one argument (a single-parameter arrow), got ${args.length}.`,
@@ -814,8 +865,11 @@ const MAP: StreamMethodDef = {
         arg.pos,
       );
     }
-    // A statement-block body (`d => { stmt; …; return <expr> }`) must end in a
-    // `return` — the returned value becomes each output document.
+    // `.map` is a per-document reshape, so its `{ … }` body is a JavaScript block:
+    // bindings plus the `return` whose value becomes each output document. A stage
+    // inside it belongs to `.aggregate(pipeline)` — checked before the `return` rule
+    // so a stage-only block names the stage rather than the missing `return`.
+    requireStageFreeCallback(arg, { method: "map", rewrite: stageRewrite });
     if (arg.block !== undefined && arg.ret === undefined) {
       throw new CodegenError(
         `.map(${arg.params[0]} => { … }) must end with 'return <expr>' — the returned value becomes each output document.`,
@@ -840,7 +894,7 @@ const MAP: StreamMethodDef = {
     // chain / a `$.field = $$$.<coll>…` assignment) ───────────────────────────
     // Gated on `ctx.enclosingLookup` (set by the lookup assemblers, NOT by a flat
     // `$unionWith` source-switch). BOTH an expression body (`d => X`) and a
-    // statement block (`d => { …; return X }`) lower through the SAME
+    // stage-free block (`d => { …; return X }`) lower through the SAME
     // `lowerCallbackBlock` engine `.filter` uses — an expression body is just
     // `d => { return X }`. So every form gets the full cross-level capture into the
     // enclosing `$lookup.let`: a root read (`$.x` / `$$.length`), an enclosing
@@ -853,7 +907,7 @@ const MAP: StreamMethodDef = {
     if (ctx.enclosingLookup !== undefined) {
       const ret = lambda.block !== undefined ? (lambda.ret as Expr) : mapBodyExpr(lambda);
       // An expression-body ret becomes `$ = <ret>`; a provably non-document one is
-      // rejected here (a block-body ret routes through `lowerCallbackBlock`'s own
+      // rejected here (a block ret routes through `lowerCallbackBlock`'s own
       // `$ = <expr>` guard, same as the top-level block path).
       if (lambda.block === undefined) rejectNonDocumentMapBody(ret);
       if (containsUnionPush(ret)) {
@@ -884,7 +938,7 @@ const MAP: StreamMethodDef = {
     // ── Top-level `$$` stream (no enclosing `$lookup.let`) ────────────────────
     // Bind the 3rd 'collection' param to the current stream's materialised count
     // (`$__jsmql.length`); the `$setWindowFields` `$count` that stamps it is emitted
-    // by `lowerBlock` (block body) or prepended below (expr body), ahead of the read.
+    // by `lowerBlock` (block form) or prepended below (expression body), ahead of the read.
     const bodyCtx: GenerateCtx =
       collName !== undefined && collLengthUsed
         ? {
@@ -954,12 +1008,14 @@ const MAP: StreamMethodDef = {
 //
 // Shape + param validation is shared with the head form via `validateAggregateArg`
 // (lookup-translation.ts); lowering reuses the same `lowerCallbackBlock` engine
-// `.filter`/`.map` use, so cross-level `$lookup.let` capture works. Chaining
-// `.aggregate` onto the CURRENT stream (`$$.aggregate(...)`) is rejected in
-// `applyStreamMethods` — there it would be a redundant spelling of writing the
-// stages directly; `.aggregate` only earns its keep against a foreign collection.
+// `.map` uses, so cross-level `$lookup.let` capture works. On the CURRENT stream
+// (`$$.aggregate(...)`) the block's statements are just the chain's stages — the
+// `$facet` branch is where that earns its keep, a branch being a sub-pipeline with
+// no "write them directly" alternative to redirect to.
 const AGGREGATE: StreamMethodDef = {
   name: "aggregate",
+  // The one method whose block statements ARE the sub-pipeline.
+  callback: "pipeline",
   validate(args, callPos) {
     if (args.length !== 1) {
       throw new CodegenError(
@@ -998,7 +1054,7 @@ const AGGREGATE: StreamMethodDef = {
     const collLengthUsed = collName !== undefined && classifyCollParam(lambda);
     const block = lambda.block as Pipeline;
     const { rewritten, letVars } = extractLetsFromPipeline(block, param ?? "", ctx.pipelineLets);
-    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc);
+    rejectLocalDocRef(letVars, param ?? "o", lambda.pos, ctx.sourceSwitch?.desc, "aggregate");
     const blockCtx: GenerateCtx =
       collName !== undefined && collLengthUsed
         ? {

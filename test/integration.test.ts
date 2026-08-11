@@ -271,6 +271,25 @@ $limit(3);`,
     ]);
   });
 
+  // `$$.push(...$$$.<coll>.aggregate(...))` — an uncorrelated foreign sub-pipeline
+  // unioned into the stream. The shipment counts per carrier are appended after the
+  // one summary row the outer pipeline produces, proving `$unionWith.pipeline` really
+  // ran the grouped aggregate (not merely that jsmql emitted it).
+  it("pipeline: an aggregate sub-pipeline unioned into the stream via $$.push", async () => {
+    const rows = await aggregate(
+      "shipments",
+      `$group({ _id: null, total: $sum(1) });
+$$.push(...$$$.shipments.aggregate(s => { $group({ _id: s.carrier, n: $sum(1) }); $sort({ _id: 1 }); }));`,
+    );
+    expect(rows).toEqual([
+      { _id: null, total: 15 },
+      { _id: "DHL", n: 3 },
+      { _id: "FedEx", n: 5 },
+      { _id: "UPS", n: 5 },
+      { _id: "USPS", n: 2 },
+    ]);
+  });
+
   // Group by a COMPUTED key: the email domain via `.split("@").at(1).toLowerCase()`
   // (the string-method chain from realistic.test.ts "email domain"), run as a
   // real $group _id expression.
@@ -330,7 +349,7 @@ $sort({ _id: 1 });`,
     const rows = await aggregate(
       "users",
       `$match($.active === true);
-$.recentOrders = $$$.orders.filter(o => {
+$.recentOrders = $$$.orders.aggregate(o => {
   $match(o.userId === $._id);
   $sort({ placedAt: -1 });
   $limit(5);
