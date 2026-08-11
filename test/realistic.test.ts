@@ -55,12 +55,16 @@ assert($$.length === 1, "More than one user with such ID found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
-  .toSorted({ createdAt: -1 }).take(10)
-  .map("productIds").flatten().uniq();
+  .toSorted({ createdAt: -1 })
+  .take(10)
+  .map("productIds")
+  .flatten()
+  .uniq();
 
 const candidateProductIdCounts = $$$.orders
   .filter(o => o.productIds.some(p => myProductIds.includes(p)))
-  .toSorted({ createdAt: -1 }).take(100) // co-purchase orders, recent, capped
+  .toSorted({ createdAt: -1 })
+  .take(100) // co-purchase orders, recent, capped
   .map("productIds").flatten()
   .filter(p => !myProductIds.includes(p))
   .countBy(); // { ID: count } map
