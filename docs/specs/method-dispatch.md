@@ -255,6 +255,18 @@ A `{ … }` body on a JavaScript or lodash method is **JavaScript**: `const`/`le
 | any registry method (`.takeWhile`, `.dropWhile`, `.flatMap`, …) | `prepareStreamArgs` — folds, then calls the method's own `validate` |
 | stream `.map` | `MAP.validate` → `requireStageFreeCallback` (it opts out of the fold with `callback: "pipeline"`) |
 | any callback consumed as a VALUE | `requireLambda` (codegen.ts) |
+| `$$ = $$$.<coll>.…` routing | `predicateReferencesOuterDoc` (the correlation probe) and `lowerLookupPivot`'s own `LookupCall`, both via `tryCallbackBlockToValue` |
+
+**A site that *classifies* a predicate has to fold first, not only a site that lowers it.**
+The `$$ =` source switch reads the predicate twice before any lowering runs: once to choose
+between the flat `$unionWith` and the correlated `$lookup` pivot, and once more in the
+`LookupCall` the pivot builds for itself instead of taking one from `detectLookupCall`. A
+classifier that sees the raw block sees no `$.<field>`, so it routes a correlated predicate
+to the uncorrelated lowering, which then rejects it with a message naming the wrong
+receiver; a pivot that skips the fold lowers a stage-free block to an **empty**
+sub-pipeline, and a lookup that matches every foreign document is valid MQL — nothing
+fails. Both use `tryCallbackBlockToValue`, the non-throwing half, because a classifier must
+stay side-effect-free; the matching validator still owns the message.
 
 `prepareStreamArgs` (`stream-methods.ts`) is what every chain container calls in place of `def.validate`, so a method added to `STREAM_BLOCK_METHODS` gets the rule without touching its own validator. It folds **before** validating, which keeps each method's own shape error intact — `.flatMap` goes on saying it needs `d => d.<path>` without ever learning that a block body exists. `StreamMethodDef.callback: "pipeline"` opts a method out of the fold; only `.map` and `.aggregate` set it, because they read the block themselves.
 

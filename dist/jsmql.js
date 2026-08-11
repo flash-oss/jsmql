@@ -5728,10 +5728,11 @@ var UnknownIdentifierError = class extends CodegenError {
     this.identifier = identifier;
   }
 };
-var EMPTY_CTX = { lambdaParams: /* @__PURE__ */ new Set() };
+var EMPTY_CTX = { lambdaParams: /* @__PURE__ */ new Set(), inSubPipeline: false };
 function extendCtx(ctx, params) {
   return {
     lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, ...params]),
+    inSubPipeline: ctx.inSubPipeline,
     reduceRemap: ctx.reduceRemap,
     pipelineLets: ctx.pipelineLets,
     pipelineConstNames: ctx.pipelineConstNames,
@@ -7955,6 +7956,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const has3 = lambda.params.length === 3;
       const reduceCtx = {
         lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, ...lambda.params]),
+        inSubPipeline: ctx.inSubPipeline,
         reduceRemap: has3 ? /* @__PURE__ */ new Map([[lambda.params[0], "value"]]) : /* @__PURE__ */ new Map([
           [lambda.params[0], "value"],
           [lambda.params[1], "this"]
@@ -9366,6 +9368,7 @@ function generateObjectCall(method, args, ctx, pos) {
       }
       const keyCtx = {
         lambdaParams: /* @__PURE__ */ new Set([...ctx.lambdaParams, lambda.params[0]]),
+        inSubPipeline: ctx.inSubPipeline,
         reduceRemap: /* @__PURE__ */ new Map([[lambda.params[0], "this"]]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,
@@ -9889,6 +9892,9 @@ function formatUnknownStageLink(name) {
 }
 function mustBeFirstLiteralMessage(stageName) {
   return `'${stageName}' must be the first stage in a pipeline \u2014 it produces the pipeline's source documents, so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.`;
+}
+function forbiddenInAnySubPipelineMessage(stageName) {
+  return `'${stageName}' is not allowed inside a sub-pipeline \u2014 MongoDB only accepts it as the last stage of a top-level pipeline. Move it to the outer pipeline.`;
 }
 function forbiddenInContextMessage(stageName, container) {
   const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";
@@ -12267,7 +12273,8 @@ function tryShorthandToLambda(arg, method, param) {
 var FOREIGN_SHORTHAND_PARAM = exprVar("item");
 function requireStreamPredicate(arg, opts) {
   const { method, position } = opts;
-  const spell = `'$$.${method}(<predicate>)' ${position}`;
+  const receiver = opts.receiver ?? "$$";
+  const spell = `'${receiver}.${method}(<predicate>)' ${position}`;
   const lambda = arg.type === "Lambda" ? arg : arg.type === "SpreadElement" ? null : shorthandToLambda(arg, method, FOREIGN_SHORTHAND_PARAM);
   if (lambda === null) {
     throw new CodegenError(
@@ -12277,7 +12284,7 @@ function requireStreamPredicate(arg, opts) {
   }
   if (lambda.params.length !== 1) {
     throw new CodegenError(
-      `${spell} must take exactly one parameter \u2014 write '$$.${method}(o => \u2026)' (the param name is your choice). The param represents each document. Got ${lambda.params.length}.`,
+      `${spell} must take exactly one parameter \u2014 write '${receiver}.${method}(o => \u2026)' (the param name is your choice). The param represents each document. Got ${lambda.params.length}.`,
       lambda.pos
     );
   }
@@ -12285,10 +12292,11 @@ function requireStreamPredicate(arg, opts) {
 }
 function localRefInPredicateMessage(opts) {
   const { param, method, position } = opts;
+  const receiver = opts.receiver ?? "$$";
   const samplePath = Object.values(opts.letVars)[0].replace(/^\$+/, "");
-  const head = `'$.<field>' inside '$$.${method}(<predicate>)' ${position} is not supported`;
+  const head = `'$.<field>' inside '${receiver}.${method}(<predicate>)' ${position} is not supported`;
   if (param === FOREIGN_SHORTHAND_PARAM) {
-    return `${head} \u2014 a matches-object / field-name predicate has no parameter to reference the current document with. Rewrite it as an arrow and use that parameter, e.g. '$$.${method}(o => \u2026 o.${samplePath} \u2026)'.`;
+    return `${head} \u2014 a matches-object / field-name predicate has no parameter to reference the current document with. Rewrite it as an arrow and use that parameter, e.g. '${receiver}.${method}(o => \u2026 o.${samplePath} \u2026)'.`;
   }
   return `${head} \u2014 use the lambda parameter (e.g. '${param}.${samplePath}') to reference the current document. Inside this predicate, the lambda's parameter \`${param}\` IS the current document.`;
 }
@@ -12809,8 +12817,9 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg,
   }
   return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
-function predicateReferencesOuterDoc(lambda, outerCtx) {
-  if (lambda.params.length !== 1) return false;
+function predicateReferencesOuterDoc(rawLambda, outerCtx) {
+  if (rawLambda.params.length !== 1) return false;
+  const lambda = tryCallbackBlockToValue(rawLambda);
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
   if (lambda.body !== void 0) {
@@ -14784,6 +14793,26 @@ function containerKindFor(stageName) {
   if (stageName === "$unionWith") return "unionWith";
   return "lookup";
 }
+function assertNoWriteStageInSubPipeline(stages, pos, insideSubPipeline) {
+  for (const stage of stages) {
+    if (typeof stage !== "object" || stage === null) continue;
+    for (const [name, body] of Object.entries(stage)) {
+      const def = lookupStage(name);
+      if (def === void 0) continue;
+      if (insideSubPipeline && stageForbiddenInAnySubPipeline(def)) {
+        throw new CodegenError(forbiddenInAnySubPipelineMessage(name), pos);
+      }
+      for (const nested of subPipelineSlotsOf(def, body)) {
+        assertNoWriteStageInSubPipeline(nested, pos, true);
+      }
+    }
+  }
+}
+function subPipelineSlotsOf(def, body) {
+  if (typeof body !== "object" || body === null) return [];
+  const values = def.subPipelineFields.includes("*") ? Object.values(body) : def.subPipelineFields.map((field) => body[field]);
+  return values.filter((value) => Array.isArray(value));
+}
 function classifyObjectAssignStmt(node, ctx) {
   if (node.type !== "ObjectCall" || node.method !== "assign") return null;
   const target = node.args.length === 0 ? null : node.args[0];
@@ -14901,6 +14930,7 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
   if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
     out.push({ $unset: JSMQL_NS });
   }
+  assertNoWriteStageInSubPipeline(out, ast.pos, false);
   return out;
 }
 function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
@@ -14979,6 +15009,7 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
     out.push({ $unset: JSMQL_NS });
   }
+  assertNoWriteStageInSubPipeline(out, p.pos, container !== "top");
   return out;
 }
 function lowerFuncDecl(decl, ctx) {
@@ -15242,41 +15273,50 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
   target.push(...cleanup);
   return { clearLets, clearedBy };
 }
-function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead, rewrite = STREAM_STAGE_REWRITE) {
+function lowerStreamFilterArg(m, ctx, lowerBlockFn, rhs, isHead, rewrite = STREAM_STAGE_REWRITE, receiver = "$$") {
   if (m.args.length !== 1) {
     if (isHead) rejectInvalidReplaceStream(rhs, ctx);
     throw new CodegenError(
-      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      `'${receiver}.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos
     );
   }
   return lowerStreamFilterPredicate(
-    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos, rewrite }),
+    requireStreamPredicate(m.args[0], {
+      method: "filter",
+      position: STREAM_PREDICATE_POSITION,
+      pos: m.pos,
+      rewrite,
+      receiver
+    }),
     ctx,
-    lowerBlockFn
+    lowerBlockFn,
+    receiver
   );
 }
 var STREAM_PREDICATE_POSITION = "on the RHS of '$$ = \u2026'";
-function lowerStreamReject(m, ctx, lowerBlockFn, rewrite = STREAM_STAGE_REWRITE) {
+function lowerStreamReject(m, ctx, lowerBlockFn, rewrite = STREAM_STAGE_REWRITE, receiver = "$$") {
   if (m.args.length !== 1) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      `'${receiver}.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos
     );
   }
   const lambda = requireStreamPredicate(m.args[0], {
     method: "reject",
     position: STREAM_PREDICATE_POSITION,
-    pos: m.pos
+    pos: m.pos,
+    rewrite,
+    receiver
   });
   const negated = negateStreamPredicate(lambda);
   if (negated === null) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(\u2026))', or use a block-bodied '$$.filter' with the inverted condition.`,
+      `'${receiver}.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => \u2026') \u2014 a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '${receiver}.filter(o => !(\u2026))', or use a block-bodied '${receiver}.filter' with the inverted condition.`,
       lambda.pos
     );
   }
-  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
+  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn, receiver);
 }
 function chainHasCorrelatingFilter(methods, outerCtx) {
   for (const m of methods) {
@@ -15314,11 +15354,13 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
       continue;
     }
     if (m.method === "filter") {
-      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite));
+      inner.push(
+        ...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite, formatLookupReceiver(target))
+      );
       continue;
     }
     if (m.method === "reject") {
-      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite));
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite, formatLookupReceiver(target)));
       continue;
     }
     const def = lookupStreamMethod(m.method);
@@ -15357,7 +15399,11 @@ function lowerLookupPivot(methods, target, outerCtx, lowerBlockFn, allocSlot) {
       db: target.db,
       collection: target.collection,
       method: "filter",
-      lambda: methods[0].args[0]
+      // This call is built here, not by `detectLookupCall`, so it must apply
+      // detection's own callback-block fold. Without it a `{ return <pred> }` block
+      // reaches `translatePredicate` as a stage-free block and lowers to an empty
+      // sub-pipeline — a lookup that matches every foreign document.
+      lambda: tryCallbackBlockToValue(methods[0].args[0])
     };
     const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
     if (pred.kind === "basic") {
@@ -15450,22 +15496,22 @@ function lowerArrayReducerWrap(wrap, outerCtx, lowerBlockFn) {
   }
   return stages;
 }
-function lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlockFn) {
+function lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlockFn, receiver = "$$") {
   if (lambda.params.length !== 1) {
     throw new CodegenError(
-      `'.filter(<predicate>)' on the RHS of '$$ = \u2026' must take exactly one parameter \u2014 write '.filter(o => \u2026)' (the param name is your choice). The param represents each document.`,
+      `'${receiver}.filter(<predicate>)' on the RHS of '$$ = \u2026' must take exactly one parameter \u2014 write '${receiver}.filter(o => \u2026)' (the param name is your choice). The param represents each document.`,
       lambda.pos
     );
   }
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
-    onLocalRef: rejectLocalRefInStreamFilter,
+    onLocalRef: (letVars, param, pos) => rejectLocalRefInStreamFilter(letVars, param, pos, receiver),
     missingBody: () => internalError("'.filter(<predicate>)' lambda has no body, block, or exprBlock", lambda.pos)
   });
 }
-function rejectLocalRefInStreamFilter(letVars, param, pos) {
+function rejectLocalRefInStreamFilter(letVars, param, pos, receiver) {
   throw new CodegenError(
-    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION }),
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION, receiver }),
     pos
   );
 }
@@ -15617,13 +15663,10 @@ function findQuerySlotCorrelation(node) {
   return found;
 }
 function generateStageBody(stageName, body, ctx) {
-  if (ctx.inSubPipeline === true) {
+  if (ctx.inSubPipeline) {
     const def = lookupStage(stageName);
     if (def !== void 0 && stageForbiddenInAnySubPipeline(def)) {
-      throw new CodegenError(
-        `'${stageName}' is not allowed inside a sub-pipeline \u2014 MongoDB only accepts it as the last stage of a top-level pipeline. Move it to the outer pipeline.`,
-        body.pos
-      );
+      throw new CodegenError(forbiddenInAnySubPipelineMessage(stageName), body.pos);
     }
   }
   validateStageBody(stageName, body);
@@ -15752,6 +15795,7 @@ function generatePipelineWithCtx(ast, startCtx, container) {
   });
   flushUpdateOps();
   if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  assertNoWriteStageInSubPipeline(out, ast.pos, container !== "top");
   return out;
 }
 function formatNotAStageError(el, index) {

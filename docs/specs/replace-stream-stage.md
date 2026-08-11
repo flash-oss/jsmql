@@ -100,7 +100,7 @@ the inner `$match` stage list. Same algorithm as the facet form
   - `param.x` rewrites to `FieldRef("x")` (lowers to `"$x"` per JS-faithful field-ref codegen).
   - Any path rooted at `$` produces a `letVars` entry; we reject those — the lambda param IS the document, so use the param.
   - The rewritten body runs through `translateMatchBody` (same engine `$match` uses), producing index-friendly query syntax for the translatable half and `$expr` for the residual.
-- **Block body** runs through `extractLetsFromPipeline(block, param)` with the same path-rewriting / `$.<field>`-rejection rules, then `lowerBlock(rewritten, predicateCtx)` emits the block's stages verbatim.
+- **Block body** runs through `extractLetsFromPipeline(block, param)` with the same path-rewriting / `$.<field>`-rejection rules, then `lowerBlock(rewritten, predicateCtx)` emits the block's stages verbatim. A terminal `return <expr>` is not a value here — it is the predicate, folded in as a trailing `$match` by `canonicalPredicateLambda` (and a block that is *only* a return takes the expression path above, since it is the same JavaScript function). See [lookup-stage.md](./lookup-stage.md) § Canonical predicate form.
 
 ### Why the caller picks the ctx
 

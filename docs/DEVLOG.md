@@ -10,34 +10,6 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-11 — fix(parser): the misplaced-stage-block message states the `.aggregate`-only rule
-
-Reconciling [fix(parser): a misplaced stage block reports the real mistake, not a
-missing `return`](#2026-08-11--fixparser-a-misplaced-stage-block-reports-the-real-mistake-not-a-missing-return)
-with [feat!: pipeline stages belong to `.aggregate(pipeline)` alone](#2026-08-10--feat-pipeline-stages-belong-to-aggregatepipeline-alone),
-which landed in parallel. That message's tail read "Only a stream method that accepts
-a sub-pipeline runs stage calls in its block" — true when written, false afterwards:
-`.find` / `.filter` / `.reject` / `.map` / `.flatMap` / `.takeWhile` / `.dropWhile`
-now get the block grammar so their statements *parse*, but a stage inside one is
-rejected by [`src/callback-block.ts`](../src/callback-block.ts). Left alone, a
-`.filte(o => { $match(…) })` typo would have been answered with "Did you mean
-'.filter'?" plus a sentence implying `.filter` would then take the block — the exact
-"never recommend syntax that doesn't work where you are" failure.
-
-The suggestion still names the method the developer meant, because that is the
-mistake they made; the tail now states the rule instead — pipeline stages belong to
-`.aggregate(pipeline)` alone, every other callback's block body is JavaScript. The two
-sites stay complementary rather than overlapping: `callback-block.ts` owns a stage in
-a callback the parser *did* hand the pipeline grammar, with a container-accurate
-rewrite, while `subPipelineBlockError` owns the cases that never reach it — an
-unrecognised method name, and a non-stream receiver.
-
-Also dropped a `docs/specs/lookup-stage.md` bullet still listing `$$.aggregate(...)`
-as rejected; [stream-methods.md](specs/stream-methods.md) owns that behaviour now that
-it works in every container a `$$` chain reaches.
-
----
-
 ## 2026-08-11 — feat: `const`/`let` bindings work in every predicate position
 
 ```
@@ -255,6 +227,34 @@ Widening the existing parameter beats adding a second one threaded alongside it.
 
 ---
 
+## 2026-08-11 — fix(parser): the misplaced-stage-block message states the `.aggregate`-only rule
+
+Reconciling [fix(parser): a misplaced stage block reports the real mistake, not a
+missing `return`](#2026-08-11--fixparser-a-misplaced-stage-block-reports-the-real-mistake-not-a-missing-return)
+with [feat!: pipeline stages belong to `.aggregate(pipeline)` alone](#2026-08-10--feat-pipeline-stages-belong-to-aggregatepipeline-alone),
+which landed in parallel. That message's tail read "Only a stream method that accepts
+a sub-pipeline runs stage calls in its block" — true when written, false afterwards:
+`.find` / `.filter` / `.reject` / `.map` / `.flatMap` / `.takeWhile` / `.dropWhile`
+now get the block grammar so their statements *parse*, but a stage inside one is
+rejected by [`src/callback-block.ts`](../src/callback-block.ts). Left alone, a
+`.filte(o => { $match(…) })` typo would have been answered with "Did you mean
+'.filter'?" plus a sentence implying `.filter` would then take the block — the exact
+"never recommend syntax that doesn't work where you are" failure.
+
+The suggestion still names the method the developer meant, because that is the
+mistake they made; the tail now states the rule instead — pipeline stages belong to
+`.aggregate(pipeline)` alone, every other callback's block body is JavaScript. The two
+sites stay complementary rather than overlapping: `callback-block.ts` owns a stage in
+a callback the parser *did* hand the pipeline grammar, with a container-accurate
+rewrite, while `subPipelineBlockError` owns the cases that never reach it — an
+unrecognised method name, and a non-stream receiver.
+
+Also dropped a `docs/specs/lookup-stage.md` bullet still listing `$$.aggregate(...)`
+as rejected; [stream-methods.md](specs/stream-methods.md) owns that behaviour now that
+it works in every container a `$$` chain reaches.
+
+---
+
 ## 2026-08-11 — test: an equality narrow is spelled `$$.filter({ field: value })`
 
 Fifteen leading `$match($.field === value)` statements in
@@ -353,6 +353,140 @@ A `{ … }` body on a JavaScript or lodash method is now **JavaScript**: `const`
 The rule lives in one new leaf module, [src/callback-block.ts](src/callback-block.ts), and every callback position routes through it: `detectLookupCall` / `validateLookupShape` / `translatePredicate` / `buildPipelineFormPredicate` / `chainFilterLambda` (the `$$$.<coll>` family), `requireStreamPredicate` (the four `$$` containers), `MAP.validate`, and `requireLambda` for a callback consumed as a value. The parser keeps handing those methods the sub-pipeline block grammar on purpose — parsing the statements is what lets the rejection name the offending one (`` `$sort(...)` ``, `` `$.x = …` ``, `` `delete $.y` ``, `` `assert(...)` ``) and the rewrite that works in **this** container: `.aggregate((o) => { … })` for a `$$$.<coll>` receiver, the chained-stage spelling (`$$.$match({ … })`) for a `$$` one, and "nowhere at all" in a value position. A grammar that stopped at the first `$` could only say "unexpected token". `StreamMethodDef.validate` and `requireStreamPredicate` gained a `stageRewrite` parameter so each caller supplies its own position-accurate sentence, per the rule that [an error never recommends syntax that doesn't work where you are](#2026-08-02--fix-an-error-never-recommends-syntax-that-doesnt-work-where-you-are).
 
 Two things fall out. **A stage-free block now means what JavaScript means.** `.filter(o => { return o.userId === $._id; })` used to compile to `{ $lookup: { from, pipeline: [], as } }` — the predicate silently dropped, every foreign document matched. It folds back to the expression it returns, so it emits the indexed `localField`/`foreignField` form, identical to `.filter(o => o.userId === $._id)`. **`.aggregate` is now a `$$.push(...)` union source**, closing DEF-034: removing `.filter(block)` would otherwise have left a multi-stage `$unionWith` unspellable, and an uncorrelated aggregate maps onto `$unionWith.pipeline` exactly. A correlated one stays rejected — `$unionWith` has no `let` slot — and the message points at the field-assignment form, which does. Verified on a live mongod ([test/integration.test.ts](test/integration.test.ts)). `.find`/`.filter` also stopped disagreeing about `(element, index, array)`: both accept the JavaScript signature positionally and reject a *read* of either param, since a predicate has no index and no sub-stream yet.
+
+---
+
+## 2026-08-10 — fix: a block-body predicate's `return` is the predicate, not dead code
+
+`$$ = $$.filter(o => { return o.a > 1; })` emitted `[]` — a pipeline that filters
+nothing. Every predicate container dropped a block body's terminal `return`: the parser
+splits it into `Lambda.ret` (so `.map` can lower it to `$replaceWith`), and the predicate
+paths read only `lambda.block`. The failure was silent in the worst way, because `[]` is
+valid MQL and a filter that matches everything looks like a working query. Three shapes
+were affected — `{ return X; }` lost the predicate outright, `{ const a = …; return X; }`
+emitted the binding stage and then ignored it, and `{ $match(q); return X; }` kept `q`
+and dropped `X`.
+
+The rule now is the JavaScript one: `o => { return X; }` IS `o => X`, so the two
+spellings must emit one shape. [`canonicalPredicateLambda`](src/lookup-translation.ts)
+canonicalises a predicate lambda before anything reads it — a stage-less block becomes
+the expression lambda (which also earns it the indexed `localField`/`foreignField` route
+that only the arrow spelling used to reach), and a block that keeps its statements gets
+the return appended as a synthetic `$match(X)` statement. Folding it in as a *statement*
+rather than lowering it separately is what keeps the two spellings from drifting again:
+the return then rides the same parameter rewrite (an outer `$.<field>` still captures
+into `$lookup.let`) and the same `$match` translation the expression body gets, so there
+is no second predicate path to maintain. A `const` in the block now works too — it
+materialises as its binding stage and the appended `$match` reads it back.
+
+Canonicalisation runs at **every** entry point that receives a predicate lambda, not just
+the two gates, because the `$$ =` pivot hand-rolls a `LookupCall` from the raw chain
+method and so passes no gate — that bypass was why the correlated source-switch form
+still differed after the gates were fixed. `.reject` was the symmetric half: it refused
+every block body ("no single expression to negate"), which was right for a block of
+statements and wrong for `{ return X; }`, and the foreign side hand-rolled its own copy
+of the negation. Both now share `negateStreamPredicate`, and a block that genuinely has
+no single expression to invert keeps the actionable error. The new tests compare the
+block form against the expression form *outcome for outcome* across all seven containers
+rather than against literal MQL, so the pair cannot drift apart; with the fix reverted, 26
+of them fail. Emitted shapes were run against a live mongod (a `$match({b:1})` +
+`return o.a > 1` block returns only the doc satisfying both).
+
+---
+
+## 2026-08-10 — fix: a predicate error names the receiver the developer wrote
+
+```
+$$ = $$$.orders.filter((a, b) => a > b);
+// before: '$$.filter(<predicate>)' … must take exactly one parameter — write '$$.filter(o => …)'
+// now:    '$$$.orders.filter(<predicate>)' … — write '$$$.orders.filter(o => …)'
+```
+
+The `$$ = $$$.<coll>.…` source switch lowers its `.filter` / `.reject` through the same
+helpers the local `$$` chain uses, and those helpers spelled the receiver `$$`. The
+arity message is the harmful one: it tells the developer what to write, and
+`$$.filter(o => …)` reads the CURRENT stream. A developer who followed that advice
+changed which collection the query reads and got no warning.
+
+`requireStreamPredicate` and `localRefInPredicateMessage` now take a `receiver` option
+(`$$` by default), and the two source-switch call sites pass `formatLookupReceiver(target)`
+— the same spelling master already threads into the callback-block rewrite hint. The
+cross-database spelling `$$$$.<db>.<coll>` comes through the same path.
+
+`.reject` also never passed the callback-block `rewrite` hint to the gate, so a stage
+inside a `$$ = $$$.<coll>.reject(o => { … })` block offered the chained-stage rewrite
+that suits a `$$` chain. It now passes both the hint and the receiver, so the pair stays
+in step.
+
+---
+
+## 2026-08-10 — fix: the `$$ =` source switch folds a callback block before it classifies
+
+This supersedes "fix: a block-body predicate's `return` is the predicate" below.
+That entry describes `canonicalPredicateLambda`, which no longer exists. The
+callback-block rule — see "feat!: pipeline stages belong to `.aggregate(pipeline)`
+alone" — covers the same ground and covers it better: a stage-free block folds to its
+value form in one place, and a stage-bearing predicate block is now rejected outright
+instead of lowered as a sub-pipeline.
+
+Two sites still read a predicate before the fold ran, and both are in the `$$ =`
+source switch:
+
+- `predicateReferencesOuterDoc`, the probe that chooses between the flat `$unionWith`
+  and the correlated `$lookup` pivot. It saw the raw block, found no `$.<field>`, and
+  routed a correlated predicate to the uncorrelated lowering. That lowering then
+  rejected the predicate with a message naming `$$.filter` — the wrong receiver for a
+  `$$$.<coll>.filter` chain.
+- `lowerLookupPivot`, which builds its own `LookupCall` rather than take one from
+  `detectLookupCall`. It lowered `{ return <pred> }` to an **empty** sub-pipeline.
+
+The second one is the dangerous shape: a `$lookup` with `pipeline: []` matches every
+foreign document, so the query runs and returns wrong data. Both sites now call
+`tryCallbackBlockToValue`, the non-throwing half of the fold, because a classifier must
+stay side-effect-free.
+
+The general rule this adds to the callback-block contract: a site that **classifies** a
+predicate folds first, not only a site that lowers it. The regression tests compare each
+block spelling against its expression spelling, and one test pins the emitted
+sub-pipeline, because two equally broken forms compare equal to each other.
+
+---
+
+## 2026-08-10 — refactor: the sub-pipeline write-stage ban no longer depends on the path that lowered it
+
+HR3 says jsmql never emits a `$out` / `$merge` inside a sub-pipeline, because mongod
+rejects one with Location51047. The check read `GenerateCtx.inSubPipeline`, a flag two
+factories set ([`freshSubPipelineCtx`](src/codegen.ts) and `freshFacetCtx`). That made
+the rule contingent on how a container built its ctx: a sub-pipeline path added later,
+or one that reuses the outer ctx instead of a fresh one, would emit the invalid stage
+and no test would notice. The invariant is HR3-level, so it must not rest on each
+author's memory.
+
+[`assertNoWriteStageInSubPipeline`](src/pipeline.ts) now re-checks the **assembled
+output** at every pipeline entry point: it walks the emitted stages, descends into each
+sub-pipeline slot the registry declares (`subPipelineFields`, plus the `"*"` sentinel
+for `$facet`), and rejects a stage that `forbiddenIn` bans from every container. It
+reads the emitted document rather than a ctx flag, so every route into a slot — literal
+array, sugar, block body, stage link, or a container written next year — is covered by
+construction. The ctx-flag guard stays in front of it because it alone knows the
+offending stage's own position; the backstop can only name the enclosing pipeline. That
+split is deliberate and testable: with the flag deliberately broken, users still get
+the correct message, and [test/error-pos.test.ts](test/error-pos.test.ts) fails on the
+coarser position — so a path that drops the flag shows up as a suite failure instead of
+silence. The alternative considered was to fold `inSubPipeline` into the existing
+`ContainerKind` parameter; rejected because a block body has no container name to give
+(DEF-024) and its `container: "top"` value is load-bearing for `topLevelStream` and the
+`$match` placement rules, so the two facts are genuinely separate.
+
+`GenerateCtx.inSubPipeline` became a **required** field in the same pass, which is what
+makes a new fresh-ctx factory a compile error rather than a silent gap. Making it
+required surfaced three ctxs that rebuild their fields one by one and had already
+dropped the flag (`extendCtx` and the two `.reduce`-family remap ctxs in
+[src/codegen.ts](src/codegen.ts)); none could reach stage lowering, so no emitted MQL
+changed, but all three now carry it. DEF-024 stays open, narrowed to what actually
+remains: a diagnostic stage that only *one* container forbids, inside a block body. The
+row's own `$merge` example was stale — that stage is now blocked everywhere — so it now
+names a single-container stage instead.
 
 ---
 

@@ -153,6 +153,47 @@ describe("in-document array callbacks are untouched", () => {
   });
 });
 
+// The `$$ =` source switch reaches a lookup by two steps that both classify the
+// predicate before the lowering folds it: `chainHasCorrelatingFilter` decides whether
+// the chain correlates, and `lowerLookupPivot` builds its own `LookupCall` instead of
+// taking one from `detectLookupCall`. Both must apply the fold, or a `{ return <pred> }`
+// block picks the wrong lowering and then loses the predicate — an empty sub-pipeline
+// that matches every foreign document, which is valid MQL and therefore silent.
+describe("the `$$ =` source switch folds a callback block before it classifies", () => {
+  const PAIRS: [string, string, string][] = [
+    [
+      "a correlated predicate still reaches the indexed lookup",
+      "$$ = $$$.orders.filter(o => { return o.uid === $._id; });",
+      "$$ = $$$.orders.filter(o => o.uid === $._id);",
+    ],
+    [
+      "an uncorrelated predicate still reaches the flat union",
+      "$$ = $$$.orders.filter(o => { return o.a > 1; });",
+      "$$ = $$$.orders.filter(o => o.a > 1);",
+    ],
+    [
+      "a correlated predicate behind a stream head still pivots",
+      '$$ = $$$.orders.toSorted("x").filter(o => { return o.a === $.b; });',
+      '$$ = $$$.orders.toSorted("x").filter(o => o.a === $.b);',
+    ],
+  ];
+  for (const [label, blockForm, exprForm] of PAIRS) {
+    it(label, () => {
+      expect(jsmql(blockForm)).toEqual(jsmql(exprForm));
+    });
+  }
+
+  // The predicate must survive, not just the routing: an empty `pipeline` here would
+  // pass an equality check against another broken form but match every document.
+  it("keeps the predicate in the emitted sub-pipeline", () => {
+    expect(jsmql("$$ = $$$.orders.filter(o => { return o.uid === $._id; });")).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "__jsmql.tmp.1" } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+});
+
 // A `const`/`let` block predicate is a `$let` expression. A `$let` has no query form,
 // so the whole predicate rides in `$expr` — but every predicate position accepts it,
 // and the bindings behave exactly as they do in any other block-bodied arrow.

@@ -78,6 +78,21 @@ export function mustBeFirstLiteralMessage(stageName: string): string {
   );
 }
 
+/**
+ * Message for a stage no sub-pipeline container accepts. Container-free by
+ * design: the stage is illegal in every container, so the wording holds wherever
+ * the sub-pipeline was written — including a block body, which has no container
+ * name to quote (DEF-024). Shared by the two checks that raise it (the ctx-flag
+ * guard and the emitted-output backstop, both in pipeline.ts) so their wording
+ * cannot drift.
+ */
+export function forbiddenInAnySubPipelineMessage(stageName: string): string {
+  return (
+    `'${stageName}' is not allowed inside a sub-pipeline — MongoDB only accepts it as the last stage of a ` +
+    `top-level pipeline. Move it to the outer pipeline.`
+  );
+}
+
 /** Message for a stage used inside a sub-pipeline container that forbids it. */
 export function forbiddenInContextMessage(stageName: string, container: "facet" | "lookup" | "unionWith"): string {
   const owner = container === "facet" ? "$facet" : container === "lookup" ? "$lookup" : "$unionWith";

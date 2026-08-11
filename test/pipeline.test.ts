@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { assertNoWriteStageInSubPipeline } from "../src/pipeline.ts";
 
 describe("pipeline detection", () => {
   it("compiles a single-stage pipeline as an array", () => {
@@ -1317,21 +1318,79 @@ describe("write stages are forbidden in every sub-pipeline", () => {
     });
   }
 
-  // A named container keeps its more specific message.
-  it("keeps the container-specific wording where the container is known", () => {
-    expect(() => jsmql('$.t = $$$.orders.$out("archive");')).toThrow(
-      /'\$out' is not allowed inside a '\$lookup' sub-pipeline/,
-    );
-    expect(() => jsmql('$ = { k: $$.$out("archive") };')).toThrow(
-      /'\$out' is not allowed inside a '\$facet' sub-pipeline/,
-    );
-  });
+  // A named container keeps its more specific message — one per container kind,
+  // so all three literal sub-pipeline slots and both stage-link containers stay covered.
+  const named: [string, string, RegExp][] = [
+    ["$lookup", '$lookup({ from: "o", as: "r", pipeline: [ { $out: "x" } ] });', /inside a '\$lookup' sub-pipeline/],
+    ["$unionWith", '$unionWith({ coll: "o", pipeline: [ { $out: "x" } ] });', /inside a '\$unionWith' sub-pipeline/],
+    ["$facet", '$facet({ a: [ { $out: "x" } ] });', /inside a '\$facet' sub-pipeline/],
+    ["a $lookup stage link", '$.t = $$$.orders.$out("archive");', /inside a '\$lookup' sub-pipeline/],
+    ["a $facet stage link", '$ = { k: $$.$out("archive") };', /inside a '\$facet' sub-pipeline/],
+  ];
+  for (const [label, src, message] of named) {
+    it(`keeps the container-specific wording for ${label}`, () => {
+      expect(() => jsmql(src)).toThrow(message);
+    });
+  }
 
   // …and the top-level write stage still works.
   it("still allows a top-level $out", () => {
     expect(jsmql("$$$.archive = $$;")).toEqual([{ $out: "archive" }]);
     expect(jsmql('$out("archive");')).toEqual([{ $out: "archive" }]);
   });
+
+  // A write stage after a stage that OWNS a sub-pipeline is still top-level.
+  it("allows a write stage following a sub-pipeline-bearing stage", () => {
+    expect(jsmql('$facet({ a: [ { $sortByCount: "$x" } ] }); $$$.archive = $$;')).toEqual([
+      { $facet: { a: [{ $sortByCount: "$x" }] } },
+      { $out: "archive" },
+    ]);
+  });
+});
+
+// The guard above reads `GenerateCtx.inSubPipeline`, which a lowering path has to
+// set. `assertNoWriteStageInSubPipeline` re-checks the assembled stages instead,
+// so a container that reaches a sub-pipeline slot without setting that flag is
+// still rejected. These cases drive it directly with the stage arrays such a path
+// would produce — the ctx-flag guard cannot be reached that way.
+describe("the emitted-output backstop rejects a write stage in any sub-pipeline slot", () => {
+  const rejected: [string, unknown[]][] = [
+    ["$lookup.pipeline", [{ $lookup: { from: "o", as: "r", pipeline: [{ $out: "x" }] } }]],
+    ["$unionWith.pipeline", [{ $unionWith: { coll: "o", pipeline: [{ $merge: { into: "m" } }] } }]],
+    ["a $facet branch (the '*' slot sentinel)", [{ $facet: { a: [{ $match: { x: 1 } }], b: [{ $out: "x" }] } }]],
+    [
+      "a slot nested two containers deep",
+      [{ $unionWith: { coll: "o", pipeline: [{ $lookup: { from: "p", as: "r", pipeline: [{ $out: "x" }] } }] } }],
+    ],
+  ];
+  for (const [label, stages] of rejected) {
+    it(`rejects a write stage in ${label}`, () => {
+      expect(() => assertNoWriteStageInSubPipeline(stages, 0, false)).toThrow(/is not allowed inside a sub-pipeline/);
+    });
+  }
+
+  it("rejects a write stage at the top of an array that IS a sub-pipeline body", () => {
+    expect(() => assertNoWriteStageInSubPipeline([{ $out: "x" }], 0, true)).toThrow(
+      /is not allowed inside a sub-pipeline/,
+    );
+  });
+
+  const accepted: [string, unknown[]][] = [
+    ["a top-level write stage", [{ $match: { a: 1 } }, { $out: "x" }]],
+    ["a write stage after a $facet", [{ $facet: { a: [{ $match: { x: 1 } }] } }, { $out: "x" }]],
+    ["a populated sub-pipeline with no write stage", [{ $lookup: { from: "o", as: "r", pipeline: [{ $limit: 1 }] } }]],
+    // Only the slots `subPipelineFields` declares are sub-pipelines. A `pipeline`
+    // key in an ordinary stage body is user data, and `$documents` holds literal
+    // documents — neither may be walked as stages.
+    ["a `pipeline` key in a non-container stage body", [{ $set: { pipeline: [{ $out: "x" }] } }]],
+    ["$documents holding a document that looks like a stage", [{ $documents: [{ $out: 1 }] }]],
+    ["an unknown (passthrough) stage name", [{ $futureStage: { pipeline: [{ $out: "x" }] } }]],
+  ];
+  for (const [label, stages] of accepted) {
+    it(`accepts ${label}`, () => {
+      expect(() => assertNoWriteStageInSubPipeline(stages, 0, false)).not.toThrow();
+    });
+  }
 });
 
 // A foreign chain produces a value, so a bare statement has nowhere to put it.
@@ -1402,6 +1461,8 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
   // Each spelling means exactly `o => o.a === 1`, so each must emit exactly `$match: { a: 1 }`.
   const SPELLINGS = [
     ["arrow", "$$.filter(o => o.a === 1)"],
+    // The same JavaScript function as the arrow above, so it must lower identically.
+    ["block body returning the predicate", "$$.filter(o => { return o.a === 1; })"],
     ["matches-object", "$$.filter({ a: 1 })"],
     ['["field", value] pair', '$$.filter(["a", 1])'],
   ] as const;
@@ -1439,5 +1500,39 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
       expect(() => jsmql(source("$$.filter({ a: $.b })"))).toThrow(/Rewrite it as an arrow/);
       expect(() => jsmql(source("$$.filter({ a: $.b })"))).not.toThrow(/jsmqlItem/);
     }
+  });
+});
+
+// A predicate error names the receiver the developer wrote. The `$$ = $$$.<coll>.…`
+// source switch lowers its `.filter`/`.reject` through the same helpers the local
+// `$$` chain uses, so the messages used to say `$$.filter` for a `$$$.<coll>.filter`
+// call. That is not only cosmetic: the arity message tells the developer what to
+// write, and `$$.filter(o => …)` reads the CURRENT stream, so following the advice
+// changes which collection the query reads.
+describe("a predicate error names the receiver as written", () => {
+  const RECEIVERS: [string, string][] = [
+    ["$$", "$$"],
+    ["$$$.orders", "$$$.orders"],
+    ["$$$$.shop.orders", "$$$$.shop.orders"],
+  ];
+  for (const [label, receiver] of RECEIVERS) {
+    it(`${label}: the vocabulary message names it`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.filter(123);`)).toThrow(`'${receiver}.filter(<predicate>)'`);
+    });
+
+    it(`${label}: the arity message advises a spelling that keeps the same source`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.filter((a, b) => a > b);`)).toThrow(`write '${receiver}.filter(o => …)'`);
+    });
+
+    it(`${label}: .reject keeps step with .filter`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.reject(123);`)).toThrow(`'${receiver}.reject(<predicate>)'`);
+    });
+  }
+
+  // A non-head `.filter` reaches the argument-count message rather than the gate.
+  it("names the receiver in the argument-count message too", () => {
+    expect(() => jsmql("$$ = $$$.orders.take(2).filter(o => o.a, 2);")).toThrow(
+      "'$$$.orders.filter(<predicate>)' takes exactly one predicate argument, got 2.",
+    );
   });
 });
