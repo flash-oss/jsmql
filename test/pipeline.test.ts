@@ -480,18 +480,24 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     ]);
   });
 
-  it("block-body predicate becomes the block's stages", () => {
-    expect(jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toEqual([
+  it("a chained-stage branch becomes the branch's stages", () => {
+    expect(jsmql(`$ = { topByScore: $$.$sort({ score: -1 }).$limit(10) };`)).toEqual([
       { $facet: { topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }] } },
     ]);
+  });
+
+  it("a `.filter` branch takes a JavaScript predicate — a stage in its block is rejected", () => {
+    expect(() => jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toThrow(
+      /`\$sort\(\.\.\.\)` is a pipeline stage, not part of a callback — chain them as stage calls/,
+    );
   });
 
   it("multi-facet pipeline with mixed predicate shapes", () => {
     expect(
       jsmql(`$ = {
-        topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }),
+        topByScore: $$.$sort({ score: -1 }).$limit(10),
         recent:     $$.filter(o => o.createdAt >= "2026-01-01"),
-        byStatus:   $$.filter(o => { $group({ _id: o.status, n: $sum(1) }); })
+        byStatus:   $$.$group({ _id: $.status, n: $sum(1) })
       };`),
     ).toEqual([
       {
@@ -510,8 +516,8 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     ]);
   });
 
-  it("uses lambda-param references for foreign fields (basic shape)", () => {
-    expect(jsmql(`$ = { byCat: $$.filter(o => { $group({ _id: o.category }); }) };`)).toEqual([
+  it("a chained `$group` branch reads the branch document with `$.<field>`", () => {
+    expect(jsmql(`$ = { byCat: $$.$group({ _id: $.category }) };`)).toEqual([
       { $facet: { byCat: [{ $group: { _id: "$category" } }] } },
     ]);
   });
@@ -596,7 +602,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   it("block-body predicate in source-switch becomes the block's stages", () => {
     expect(
-      jsmql(`$$ = $$$.transactions.filter(t => { $match(t.amount > 100); $sort({ amount: -1 }); $limit(5); });`),
+      jsmql(`$$ = $$$.transactions.aggregate(t => { $match(t.amount > 100); $sort({ amount: -1 }); $limit(5); });`),
     ).toEqual([
       { $match: { $expr: false } },
       {
@@ -1304,8 +1310,6 @@ describe("write stages are forbidden in every sub-pipeline", () => {
   const cases: [string, string][] = [
     ["a foreign .aggregate(...) block", '$.t = $$$.orders.aggregate(o => { $out("archive"); });'],
     ["a foreign .aggregate(...) block ($merge)", '$.t = $$$.orders.aggregate(o => { $merge({ into: "m" }); });'],
-    ["a lookup predicate block-body", '$.t = $$$.orders.filter(o => { $out("archive"); return o.a; });'],
-    ["a $facet branch block-body", '$ = { k: $$.filter(d => { $out("archive"); return d.a; }) };'],
   ];
   for (const [label, src] of cases) {
     it(`rejects a write stage inside ${label}`, () => {
@@ -1317,6 +1321,9 @@ describe("write stages are forbidden in every sub-pipeline", () => {
   it("keeps the container-specific wording where the container is known", () => {
     expect(() => jsmql('$.t = $$$.orders.$out("archive");')).toThrow(
       /'\$out' is not allowed inside a '\$lookup' sub-pipeline/,
+    );
+    expect(() => jsmql('$ = { k: $$.$out("archive") };')).toThrow(
+      /'\$out' is not allowed inside a '\$facet' sub-pipeline/,
     );
   });
 

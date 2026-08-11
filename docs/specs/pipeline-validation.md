@@ -217,7 +217,7 @@ name, which must never be named back at the user as if it were writable.
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays
 (`{ $facet: { … } }`, `{ $lookup: { pipeline: […] } }`,
 `{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`.
-A literal write/source stage written inside a **sugar predicate block-body**
+A literal write/source stage written inside an **`.aggregate` block**
 lambda (`$$$.c.filter(o => { … })`) still gets must-first / must-last validation
 but not the container ban, because the shared `lowerBlock` lowerer runs
 `generateImplicitPipeline` with `container: "top"`. Threading the container

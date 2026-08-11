@@ -30,6 +30,11 @@ export function levenshtein(a: string, b: string): number {
 export function closestNameTo(name: string, candidates: Iterable<string>): string | null {
   let best: { name: string; dist: number } | null = null;
   for (const candidate of candidates) {
+    // Never echo the name the user typed. A candidate set can legitimately
+    // contain it (a name valid in a *different* position), and "Did you mean
+    // '.push'?" after "'.push(...)' is not a chainable stream method" is noise
+    // at best — at worst it recommends syntax that doesn't work here.
+    if (candidate === name) continue;
     const d = levenshtein(name, candidate);
     if (best === null || d < best.dist) best = { name: candidate, dist: d };
   }

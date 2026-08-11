@@ -164,7 +164,7 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
 describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
   it("block stages become the sub-pipeline body, with `$.x` refs hoisted into let", () => {
     const out = jsmql(`
-      $.recent = $$$.orders.filter(o => {
+      $.recent = $$$.orders.aggregate(o => {
         $match(o.userId === $._id);
         $sort({ createdAt: -1 });
         $limit(10);
@@ -186,15 +186,32 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
     ]);
   });
 
-  it("block body with .find still gets a $set { $first } follow-up", () => {
+  it("the first document of a sub-pipeline is `.aggregate(...).at(0)`", () => {
+    // `.find` is a JavaScript predicate, so the scalar-or-null unwrap it provides
+    // has no block form. Take the first result of a sub-pipeline explicitly.
     const out = jsmql(`
-      $.user = $$$.users.find(u => {
+      $.user = $$$.users.aggregate(u => {
         $match(u._id === $._id);
         $project({ name: 1, email: 1 });
-      });
+        $limit(1);
+      }).at(0);
     `);
-    expect((out as object[]).length).toBe(2);
-    expect((out as object[])[1]).toEqual({ $set: { user: { $first: "$user" } } });
+    expect(out).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$_id", "$$jsmql_f0__id"] } } },
+            { $project: { name: 1, email: 1 } },
+            { $limit: 1 },
+          ],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { user: { $arrayElemAt: ["$__jsmql.tmp.1", 0] } } },
+      { $unset: "__jsmql" },
+    ]);
   });
 });
 
@@ -206,7 +223,7 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
   it("assert(ordersColl.length > 0) materialises a $setWindowFields before the assert $match", () => {
     expect(
       jsmql(`
-        $.orders = $$$.orders.filter((o, i, ordersColl) => {
+        $.orders = $$$.orders.aggregate((o, i, ordersColl) => {
           $match(o.userId === $._id);
           assert(ordersColl.length > 0, "User without orders is impossible");
         });
@@ -251,8 +268,8 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
   it("a root `$.<field>` read inside a nested block-body lookup threads to the outermost let", () => {
     expect(
       jsmql(`
-        $.a = $$$.A.filter(a => {
-          $.c = $$$.C.filter(c => {
+        $.a = $$$.A.aggregate(a => {
+          $.c = $$$.C.aggregate(c => {
             $match(c.aId === a._id);
             assert(c.region === $.region, "region mismatch");
           });
@@ -300,19 +317,19 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
 
   it("rejects a USED index param in the block", () => {
     expect(() =>
-      jsmql(`$.x = $$$.orders.filter((o, i, c) => { $match(o.userId === $._id); assert(i > 0, "x"); });`),
+      jsmql(`$.x = $$$.orders.aggregate((o, i, c) => { $match(o.userId === $._id); assert(i > 0, "x"); });`),
     ).toThrow(/'i' \(the 2nd, index parameter\) has no meaning.*no per-doc index/);
   });
 
   it("rejects a non-`.length` use of the collection handle in the block", () => {
     expect(() =>
-      jsmql(`$.x = $$$.orders.filter((o, i, c) => { $match(o.userId === $._id); $.first = c[0]; });`),
-    ).toThrow(/only 'c\.length' \(the post-filter sub-stream count\) is available/);
+      jsmql(`$.x = $$$.orders.aggregate((o, i, c) => { $match(o.userId === $._id); $.first = c[0]; });`),
+    ).toThrow(/only 'c\.length' \(the sub-stream count\) is available/);
   });
 
-  it("an expression-body filter with 3 params is rejected with a block-body redirect", () => {
+  it("a 3-param `.filter` predicate is rejected with an `.aggregate` redirect", () => {
     expect(() => jsmql(`$.x = $$$.orders.filter((o, i, c) => c.length > 0);`)).toThrow(
-      /filtered sub-stream doesn't exist yet.*use a block body and the 3rd param/,
+      /filtered sub-stream doesn't exist yet.*use `\.aggregate` and its 3rd param/,
     );
   });
 });
@@ -387,7 +404,7 @@ describe("$$$.coll.find/filter — error cases", () => {
 
   it("wrong method on $$$.<coll> suggests .find / .filter / .aggregate via closestNameTo", () => {
     expect(() => jsmql("$.x = $$$.users.fnid(u => u._id === $._id);")).toThrow(
-      /'\$\$\$\.<coll>' supports \.find\(pred\), \.filter\(pred\), \.aggregate\(pipeline\), and the lodash stream methods .* not \.fnid\(\)\. Did you mean '\.find'\?/,
+      /'\$\$\$\.users' supports \.find\(pred\), \.filter\(pred\), \.aggregate\(pipeline\), and the lodash stream methods .* not \.fnid\(\)\. Did you mean '\.find'\?/,
     );
   });
 
@@ -405,9 +422,15 @@ describe("$$$.coll.find/filter — error cases", () => {
     expect(() => jsmql("$.x = $$$.users.find(123);")).toThrow(/requires an arrow predicate/);
   });
 
-  it("multi-param lambda is rejected (the foreign-doc is a single param)", () => {
-    expect(() => jsmql("$.x = $$$.users.find((u, i) => u._id === $.userId);")).toThrow(
-      /takes a single-parameter arrow \(the foreign document\), got 2/,
+  it("`(element, index, array)` params are accepted unused, rejected when read", () => {
+    // The JavaScript signature, on `.find` exactly as on `.filter`: present-but-unused
+    // compiles, a *read* of one is rejected (nothing to hold it in a predicate).
+    expect(() => jsmql("$.x = $$$.users.find((u, i) => u._id === $.userId);")).not.toThrow();
+    expect(() => jsmql("$.x = $$$.users.find((u, i) => i === 0);")).toThrow(
+      /'i' \(the index parameter\) has no meaning on a '\.find' predicate/,
+    );
+    expect(() => jsmql("$.x = $$$.users.find((u, i, c, d) => u.a);")).toThrow(
+      /takes at most 3 parameters '\(element, index, array\)', got 4/,
     );
   });
 
@@ -614,32 +637,34 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   // All three emitted shapes were run against a live mongod and join correctly.
 
   it("nested lookup as a STATEMENT inside a block body (as from the LHS field)", () => {
-    expect(jsmql("$.x = $$$.a.filter(a => { $match(a.active); $.bs = $$$.b.filter(b => b.aId === a._id); });")).toEqual(
-      [
-        {
-          $lookup: {
-            from: "a",
-            pipeline: [
-              { $match: { $expr: "$active" } },
-              {
-                $lookup: {
-                  from: "b",
-                  let: { jsmql_f1__id: "$_id" },
-                  pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$jsmql_f1__id"] } } }],
-                  as: "bs",
-                },
+    expect(
+      jsmql("$.x = $$$.a.aggregate(a => { $match(a.active); $.bs = $$$.b.filter(b => b.aId === a._id); });"),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "a",
+          pipeline: [
+            { $match: { $expr: "$active" } },
+            {
+              $lookup: {
+                from: "b",
+                let: { jsmql_f1__id: "$_id" },
+                pipeline: [{ $match: { $expr: { $eq: ["$aId", "$$jsmql_f1__id"] } } }],
+                as: "bs",
               },
-            ],
-            as: "x",
-          },
+            },
+          ],
+          as: "x",
         },
-      ],
-    );
+      },
+    ]);
   });
 
   it("block-in-block: the inner lookup's lambda also has a block body", () => {
     expect(
-      jsmql("$.x = $$$.a.filter(a => { $.bs = $$$.b.filter(b => { $match(b.aId === a._id); $sort({ _id: 1 }); }); });"),
+      jsmql(
+        "$.x = $$$.a.aggregate(a => { $.bs = $$$.b.aggregate(b => { $match(b.aId === a._id); $sort({ _id: 1 }); }); });",
+      ),
     ).toEqual([
       {
         $lookup: {
@@ -663,7 +688,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   it("nested lookup inside a STAGE-BODY expression of a block (.length materialises into a slot)", () => {
     expect(
       jsmql(
-        "$.x = $$$.users.filter(u => { $match($$$.orders.filter(o => o.uid === u._id).length > 0); $sort({ name: 1 }); });",
+        "$.x = $$$.users.aggregate(u => { $match($$$.orders.filter(o => o.uid === u._id).length > 0); $sort({ name: 1 }); });",
       ),
     ).toEqual([
       {
@@ -1132,28 +1157,27 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     ]);
   });
 
-  it("a block-body .map with REAL stages + a scalar return is still rejected (can't value-extract through stages)", () => {
-    // The rejection blames the POSITION (a value, so an array operator), not
-    // the method — `.map` does take a statement block wherever the chain stays
-    // a stage, and the scalar `return` is what collapsed it here. Both named
-    // rewrites compile (asserted below).
+  it("a stage in a value-position `.map` block names the value position, not just the method", () => {
+    // The stage rejection is the same rule everywhere, but the rewrite is
+    // position-accurate: consumed as a value, the chain lowers to an array operator
+    // with nowhere to run stages at all. Both named rewrites compile (asserted below).
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      /\.map\(\) can't take a statement-block body .* in this position — the chain is consumed as a value here/s,
+      /`\$sort\(\.\.\.\)` is a pipeline stage.*the chain is consumed as a value here/s,
     );
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
       /`return` a document instead of a scalar/,
     );
-    // Rewrite 1: return a document — the block stays a `$replaceWith` stage.
+    // Rewrite 1: stay a sub-pipeline and reshape with the root-replace `$ = <expr>`.
     expect(() =>
-      jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).map(o => { $sort({ x: -1 }); return { t: o.total }; });"),
+      jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).aggregate(o => { $sort({ x: -1 }); $ = { t: o.total }; });"),
     ).not.toThrow();
-    // Rewrite 2: move the stages into the heading `.filter` block.
-    expect(() => jsmql("$.x = $$$.orders.filter(o => { $sort({ x: -1 }); }).map(o => o.total);")).not.toThrow();
+    // Rewrite 2: move the stages into the heading `.aggregate` block.
+    expect(() => jsmql("$.x = $$$.orders.aggregate(o => { $sort({ x: -1 }); }).map(o => o.total);")).not.toThrow();
   });
 
   it("the same rejection on a chained `.find` doesn't offer the `.map`-only rewrite", () => {
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).toThrow(
-      /\.find\(\) can't take a statement-block body/,
+      /`\.find\(o => \{ … \}\)` takes a JavaScript callback/,
     );
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).not.toThrow(
       /`return` a document/,
@@ -1358,9 +1382,27 @@ describe("$$$.coll.aggregate — error cases", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate([]);")).toThrow(/an empty pipeline has nothing to run/);
   });
 
-  it("$$.aggregate (current stream) redirects to the foreign form", () => {
-    expect(() => jsmql('$$.aggregate((o) => { $group({ _id: "$s" }); });')).toThrow(
-      /\.aggregate\(\.\.\.\) runs a sub-pipeline against a FOREIGN collection/,
+  it("$$.aggregate (current stream) appends its stages to the chain, in every container", () => {
+    // On `$$` the block's statements are simply the chain's stages. A `$facet` branch
+    // is the container that needs it: a branch IS a sub-pipeline, so there is no
+    // "write them directly" spelling to redirect to.
+    expect(jsmql("$$.aggregate((o) => { $group({ _id: o.s }); });")).toEqual([{ $group: { _id: "$s" } }]);
+    expect(jsmql("$$ = $$.aggregate((o) => { $match(o.a === 1); $limit(3); });")).toEqual([
+      { $match: { a: 1 } },
+      { $limit: 3 },
+    ]);
+    expect(jsmql("$ = { byStatus: $$.aggregate((o) => { $group({ _id: o.s, n: $sum(1) }); }) };")).toEqual([
+      { $facet: { byStatus: [{ $group: { _id: "$s", n: { $sum: 1 } } }] } },
+    ]);
+    expect(jsmql("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toEqual([
+      { $match: { a: 1 } },
+      { $out: "dest" },
+    ]);
+  });
+
+  it("a `$.<field>` read inside `$$.aggregate` names `.aggregate`, not `.map`", () => {
+    expect(() => jsmql("$$$.dest = $$.aggregate(o => { $match($.x === 1); });")).toThrow(
+      /'\$\.<field>' inside '\.aggregate\(o => …\)' isn't supported/,
     );
   });
 
@@ -1370,9 +1412,15 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 
-  it("$$.push union of an aggregate result is deferred [DEF-034]", () => {
-    expect(() => jsmql('$$.push(...$$$.c.aggregate((o) => { $group({ _id: "$s" }); }));')).toThrow(
-      /can't be unioned into the stream with `\$\$\.push\(\.\.\.\)`/,
+  it("an uncorrelated aggregate is unioned into the stream as the $unionWith sub-pipeline", () => {
+    expect(jsmql("$$.push(...$$$.c.aggregate((o) => { $group({ _id: o.s }); }));")).toEqual([
+      { $unionWith: { coll: "c", pipeline: [{ $group: { _id: "$s" } }] } },
+    ]);
+  });
+
+  it("a CORRELATED aggregate can't be unioned — $unionWith has no `let` slot", () => {
+    expect(() => jsmql("$$.push(...$$$.c.aggregate((o) => { $match(o.uid === $._id); }));")).toThrow(
+      /`\$unionWith` has no `let` slot.*assign the result to a field instead/s,
     );
   });
 

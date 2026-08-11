@@ -246,3 +246,56 @@ describe("$match query-operator placement", () => {
     expect(jsmql("[ $sort({ x: 1 }), $match($.x > 1) ]")).toEqual([{ $sort: { x: 1 } }, { $match: { x: { $gt: 1 } } }]);
   });
 });
+
+// A stage is a STATEMENT. `{ $limit: … }` in an expression slot is not merely
+// unusual — no deployment has a `$limit` expression operator, and mongod answers
+// `Unrecognized expression '$limit'`. Universally invalid, so it belongs in the
+// pre-flight validators' remit (see src/CLAUDE.md § "Never guard raw MQL").
+describe("a pipeline stage name used where a value is expected", () => {
+  const rejected: [string, string, RegExp][] = [
+    ["an assignment RHS", "$.x = $limit(5);", /'\$limit' is a pipeline stage, not an expression/],
+    ["a `$ = { … }` value", "$ = { a: $sort({ b: 1 }) };", /'\$sort' is a pipeline stage/],
+    ["an arithmetic operand", '$.y = $out("c") + 1;', /'\$out' is a pipeline stage/],
+    ["a `$match` body", "$match($limit(3));", /'\$limit' is a pipeline stage/],
+    ["a callback body", "$.x = $.items.map(v => $unwind(v));", /'\$unwind' is a pipeline stage/],
+  ];
+  for (const [label, src, message] of rejected) {
+    it(`is rejected in ${label}`, () => {
+      expect(() => jsmql(src)).toThrow(message);
+    });
+  }
+
+  it("is rejected in `jsmql.expr`, which yields an expression and never a stage", () => {
+    // The bare `jsmql(...)` entry auto-wraps a lone stage call into a pipeline, so the
+    // same source is a legitimate statement there — only the expression entry rejects.
+    expect(() => jsmql.expr("$match($.a === 0)")).toThrow(/'\$match' is a pipeline stage/);
+    expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
+  });
+
+  it("names the value-position equivalent where one exists", () => {
+    expect(() => jsmql("$.x = $sort({ b: 1 });")).toThrow(/use '\$sortArray\(…\)'/);
+    expect(() => jsmql("$.x = $match($.a);")).toThrow(/use '\$filter\(…\)'/);
+    // Most stages reshape a document STREAM, which no expression can do — those stop
+    // at "write it as a statement" rather than inventing an alternative.
+    expect(() => jsmql("$.x = $unwind($.a);")).not.toThrow(/value-position equivalent/);
+  });
+
+  // The check is registry-driven: rejected only when the name is in STAGES and NOT in
+  // OPERATORS. These three fall outside that intersection and must keep working.
+  it("leaves `$count`, an unknown operator, and raw MQL alone", () => {
+    // `$count` is a stage AND an accumulator, so it is valid in a value slot.
+    expect(jsmql("$group({ _id: null, n: $count() });")).toEqual([{ $group: { _id: null, n: { $count: {} } } }]);
+    // HR2 forward-compat: an unknown name is in neither registry.
+    expect(jsmql("$.x = $someFutureOp($.a, 2);")).toEqual([{ $set: { x: { $someFutureOp: ["$a", 2] } } }]);
+    // Raw MQL the developer wrote verbatim stays unguarded — it is their document.
+    expect(jsmql("$.x = { $limit: 5 };")).toEqual([{ $set: { x: { $limit: 5 } } }]);
+  });
+
+  it("leaves every legitimate stage position alone", () => {
+    expect(jsmql("$limit(5);")).toEqual([{ $limit: 5 }]);
+    expect(jsmql("$$ = $$.$limit(5);")).toEqual([{ $limit: 5 }]);
+    expect(jsmql("$.r = $$$.o.aggregate(o => { $limit(5); });")).toEqual([
+      { $lookup: { from: "o", pipeline: [{ $limit: 5 }], as: "r" } },
+    ]);
+  });
+});

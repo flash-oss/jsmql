@@ -102,7 +102,7 @@ src/
                            rejects nested $$.push with a hoist hint, mirroring
                            the nested-lookup rule. The `lowerBlock`
                            SubPipelineLowerer rejects $$.push inside a
-                           block-body lookup callback.
+                           lookup `.aggregate` callback.
   codegen.ts               Updated. `CollectionRef` case message updated to
                            name the supported `.push(...)` shapes and the
                            statement-only constraint.
@@ -133,7 +133,7 @@ argument, the inline doc, or the entire push call as appropriate).
 | `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | `$$.push(...) argument must be a document literal ({…}), a $$$.<coll>.find(pred) scalar, or a spread of $$$.<coll>[.filter(pred)]. Got a number/string/null literal — collections only hold documents.` |
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (correlated) | `$$.push(...$$$.<coll>.filter(pred)) — predicate references the local document ($.<field>), but MongoDB's $unionWith has no let slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a $match(...) stage before $$.push(...).` |
 | `$$.push(...$$$$.<db>.<coll>[.filter(p)])` / `$$.push($$$$.<db>.<coll>.find(p))` (cross-database) | `Cross-database reads aren't supported: '$$$$.<db>.<coll>' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects … write '$$$.<coll>' (drop the '$$$$.<db>.' prefix) … (Cross-database WRITES still work: '$$$$.<db>.<coll> = $$' lowers to $out.)` — thrown at the shared `requireSameDbColl` choke point in `lookup-translation.ts`. |
-| `$$.push(...)` inside a lookup block-body | `'$$.push(...)' inside a lookup's block-body lambda is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.` |
+| `$$.push(...)` inside a lookup `.aggregate` block | `'$$.push(...)' inside a lookup's '.aggregate' block is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.` |
 | `$$.push(...)` inside a `$facet.*` / `$lookup.pipeline` / `$unionWith.pipeline` sub-pipeline | `'$$.push(...)' inside a sub-pipeline (…) is not supported — $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.` |
 | `jsmql.filter("$$.push(...)")` / `jsmql.expr(...)` | `<apiName>() does not allow '$$.push(...)' — collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.` |
 | `jsmql.update("$$.push(...)")` | `jsmql.update() does not allow '$$.push(...)' (collection union): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the union in a regular aggregation pipeline (jsmql.pipeline()) — '$unionWith' isn't allowed inside an update.` |

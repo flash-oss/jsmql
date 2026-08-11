@@ -32,6 +32,10 @@ means the same thing, and 13 sites keep it for exactly that reason. Three of tho
 are inside a lambda block body, where `$$` is the enclosing stream rather than the
 sub-pipeline, so the rewrite would not have been equivalent at all.
 
+---
+
+## 2026-08-11 — test: the `$out` write chain gets its showcase examples
+
 The `$out` RHS became a full container — stream methods, stage links, `.reject` —
 but [test/realistic.test.ts](../test/realistic.test.ts) still showed only the two
 oldest spellings: a bare `$$` write and a single `.filter(...)`. A reader of the
@@ -55,6 +59,10 @@ emitted MQL (HR3). That run also surfaced the footgun now called out in the expo
 case: a `.map` reshape that omits `_id` makes the server mint a fresh one per
 written document, so the export silently stops being joinable back to its source
 unless the body carries `_id` through.
+
+---
+
+## 2026-08-11 — test: the showcase reaches for the shortest spelling that still reads
 
 Seven chains in [test/realistic.test.ts](../test/realistic.test.ts) now use the
 shorthand spelling, and every one of them emits MQL **byte-identical** to what the
@@ -81,6 +89,135 @@ same shape: `$.f = $$$.coll.filter(o => { <stages> })` writes straight into
 whose chain needs no post-lookup value work can claim the `as` slot directly, the
 block body is the leaner spelling and the showcase keeps it — at
 `$.recentOrders = …` and at the `.aggregate((o) => { … })` customer report.
+
+---
+
+## 2026-08-11 — feat: `const`/`let` bindings work in every predicate position
+
+```
+$.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
+// before: predicate has local `const`/`let` bindings, which isn't supported in this
+//         position … fold any bindings into <expr>.
+// now:    $match: { $expr: { $let: { vars: { t: "$total" },
+//                                   in: { $gt: ["$$t", "$$jsmql_f0_minTotal"] } } } }
+```
+
+A block-bodied arrow with bindings worked everywhere a lambda produced a *value* — an in-document array method, `$let(vars, fn)`, an IIFE, `Object.groupBy` — and was refused in every *predicate* position, told to "fold any bindings into `<expr>`". Nothing forced that: `$match: { $expr: { $let: … } }` is ordinary MQL, and every one of the six positions now runs it (verified on a live mongod). An arrow should be as featureful as the language can make it, and a rejection whose only justification is that nobody wired the branch is a limit, not a design.
+
+Three branches, one shape. `translatePredicate` and `buildPipelineFormPredicate` (the `$$$.<coll>` head and chain) and `lowerLambdaPredicate` (the four `$$` containers) each gained an `ExprBlock` case that emits the `$let` as the whole `$expr` — whole, because nothing inside a `$let` has a query-document form to translate, which is the one behaviour worth knowing: a predicate written this way is not the indexable query shape an expression body would produce. `extractLetsFromExprBlock` in [src/lookup-translation.ts](src/lookup-translation.ts) is the third sibling of `extractLetsFromExpr` / `extractLetsFromPipeline` and rewrites each initialiser and the `return`, so foreign paths resolve and a `$.<field>` read still hoists into the `$lookup.let`. Generation goes through a new `generateExprBlockWithCtx` export rather than a re-implementation, so the const-folding, shadowing, and re-declaration rules [generateExprBlock](src/codegen.ts) already owns keep applying.
+
+`negateStreamPredicate` learned the form too: it negates the `return` and keeps the bindings, since bindings compute values while only the returned expression decides the match. That is what makes `.reject` work, and it let the foreign-chain `.reject` normaliser drop its own hand-rolled negation and call the shared helper.
+
+The three `missingBody` hooks that carried the old rejection are now unreachable — a `Lambda` holds exactly one of `body` / `block` / `exprBlock`, and all three have a branch — so they became `internalError` calls, which is what an invariant the parser upholds should read as.
+
+---
+
+## 2026-08-11 — fix: `$$.aggregate(...)` works in every container a `$$` chain reaches
+
+```
+$ = { byStatus: $$.aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); }) };
+// before: .aggregate(...) runs a sub-pipeline against a FOREIGN collection … To add
+//         stages to the CURRENT stream, write them directly.
+// now:    [{ $facet: { byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }] } }]
+```
+
+`applyStreamMethods` rejected `.aggregate` on `$$` as "a redundant spelling of writing the stages directly". That reasoning holds at a statement position and fails in a `$facet` branch, where a branch *is* a sub-pipeline and there is nothing to write directly instead — the error sent the developer to a spelling their container could not use. The rejection was also already inconsistent: an `$out` RHS accepted `$$.aggregate(...)` and always had, because that path dispatches through the stream-method registry rather than through the rejecting branch. Deleting the special case makes all four `$$` positions agree — `$facet` branch, `$$ =` stream, `$out` RHS, bare statement — and costs nothing, since two spellings of one lowering is a trade jsmql already accepts.
+
+Also fixed alongside: a `$.<field>` read inside `$$.aggregate` was rejected by a message naming `.map(d => …)` — the shared `rejectLocalDocRef` defaults its method to `"map"`, and `.aggregate` never passed its own. It now names `.aggregate` and interpolates the developer's parameter, so the example reads `'o.x'` rather than a generic `d`.
+
+---
+
+## 2026-08-11 — fix: a pipeline stage name is rejected where a value is expected
+
+```
+$.x = $limit(5);
+// before: [{"$set":{"x":{"$limit":5}}}]   →  mongod: Unrecognized expression '$limit'
+// now:    '$limit' is a pipeline stage, not an expression — MongoDB has no '$limit'
+//         expression operator … Write it as a pipeline statement ('$limit(…);') or as a
+//         chain link ('$$.$limit(…)'). For the value-position equivalent, use '$slice(…)'.
+```
+
+All 44 stage-only names were accepted in value position and emitted MQL the server refuses. The rule this closes is the other half of the one the callback-block work stated: **stages are statements, operators are expressions — the name decides which, not the position.** That change stopped a statement appearing inside an expression-shaped callback; this one stops a statement *name* being used as an expression, anywhere.
+
+`rejectStageInValuePosition` lives in [src/operator-validation.ts](src/operator-validation.ts) — the value-position pre-flight validator — and runs ahead of the unknown-operator passthrough, since it is the one check that must fire for a name `OPERATORS` does not hold. It belongs there rather than in codegen for two reasons: `stages.ts` is a pure leaf so there is no cycle, and codegen must not branch on stage names. The test is the registry intersection (`name ∈ STAGES && name ∉ OPERATORS`), which is what keeps three things working without a list to maintain — `$count` (a stage *and* an accumulator), an unknown name (HR2), and a raw `{ $limit: 5 }` object literal (the developer's own document, which the never-guard-raw-MQL rule protects).
+
+This is inside the pre-flight validators' narrow exemption, not a violation of it: the exemption covers shapes **universally** invalid on every deployment, and no deployment has a `$limit` expression operator — unlike the cross-database `$lookup` namespace, which Atlas Data Federation does accept and which jsmql must therefore pass through.
+
+One test changed rather than being added to. `jsmql.expr("$match($.a === 0)")` asserted `{ $match: { $eq: ["$a", 0] } }`, described as useful for a hand-written sub-pipeline literal. mongod refuses that document in *both* readings — there is no `$match` expression operator, and as a stage body a bare `$eq` is "unknown top level operator" — so the suite was endorsing an invalid shape, which `test/CLAUDE.md` forbids. `jsmql.pipeline("$match($.a === 0)")` → `[{ $match: { a: 0 } }]` is where a stage document comes from, and `jsmql.expr("$.a === 0")` where the expression does.
+
+---
+
+## 2026-08-11 — fix: the callback-block rule reaches `.takeWhile` / `.dropWhile` / `.flatMap`
+
+```
+$$ = $$.toSorted("t").takeWhile(d => { $match(d.a === 1); });
+// before: A block body must end with a `return <expr>` statement at position 39, got '$'.
+// now:    `.takeWhile(d => { … })` takes a JavaScript callback … `$match(...)` is a pipeline
+//         stage, not part of a callback — chain them as stage calls instead — `$$.$match({ … })`.
+```
+
+Stages were already rejected in these three — but by the generic expression-block parser, which stops at the first `$` and so can neither name the statement nor point anywhere. They are the direct twins of the methods that got the real message: two predicates alongside `.filter`, one per-document transform alongside `.map`. Consistency in the *message* is what the rule is for, so `STREAM_BLOCK_METHODS` now covers them and [src/callback-block.ts](src/callback-block.ts) does the rejecting. The key-function methods (`.toSorted`, `.uniqBy`, `.groupBy`, …) stay out deliberately: they take a field expression, not a body of work, so a `$match(...)` there is a typo rather than a misplaced pipeline, and widening the grammar for them would be behaviour risk with no reader to serve.
+
+The plumbing is one new seam rather than three edits. `prepareStreamArgs` in [src/stream-methods.ts](src/stream-methods.ts) is what every chain container now calls in place of `def.validate`: it folds a stage-free block back to its value form, then validates. Folding **before** validating is the part that matters — each method keeps its own shape error, so `.flatMap` still says it needs `d => d.<path>` and never learns that a block body exists. `StreamMethodDef.callback: "pipeline"` opts a method out of the fold; only `.map` and `.aggregate` set it, because they read the block themselves. Any future member of `STREAM_BLOCK_METHODS` inherits the rule without touching its validator.
+
+One behaviour change falls out: `.flatMap(d => { return d.items; })` used to be rejected outright ("requires an expression body, not a block") while the identical JavaScript `d => d.items` compiled. It now emits the same `{ $unwind: "$items" }`, verified on a live mongod along with the `.takeWhile` / `.dropWhile` block forms. Every other accepting case is byte-identical to before.
+
+---
+
+## 2026-08-10 — feat!: pipeline stages belong to `.aggregate(pipeline)` alone
+
+```
+$.recentOrders = $$$.orders.filter(o => { $match(o.userId === $._id); $sort({createdAt:-1}); $limit(5); });
+// before: a $lookup with that sub-pipeline
+// now:    `.filter(o => { … })` takes a JavaScript callback, so its block body holds `const`/`let`
+//         bindings and one `return <expr>`. `$match(...)` is a pipeline stage, not part of a callback
+//         — write `$$$.orders.aggregate((o) => { $match(...); $sort(...); ... })`, which runs those
+//         statements as the sub-pipeline.
+```
+
+A `{ … }` body on a JavaScript or lodash method is now **JavaScript**: `const`/`let` bindings plus one `return <expr>`. Stages live in `.aggregate(pipeline)` and nowhere else. Two spellings for one lowering is fine; two *meanings* for one method is not — `.filter` meant "keep matching documents" in the expression form and "run this sub-pipeline" in the block form, so the same method name selected a different language depending on the body shape. The split now follows the method: `.find`/`.filter`/`.reject` are element predicates, `.map` is a per-document reshape, `.aggregate` is the pipeline. Nothing is lost — every rejected form has an exact `.aggregate` equivalent, with a `.map`'s `return <expr>` becoming the root-replace statement `$ = <expr>` (the same `$replaceWith`).
+
+The rule lives in one new leaf module, [src/callback-block.ts](src/callback-block.ts), and every callback position routes through it: `detectLookupCall` / `validateLookupShape` / `translatePredicate` / `buildPipelineFormPredicate` / `chainFilterLambda` (the `$$$.<coll>` family), `requireStreamPredicate` (the four `$$` containers), `MAP.validate`, and `requireLambda` for a callback consumed as a value. The parser keeps handing those methods the sub-pipeline block grammar on purpose — parsing the statements is what lets the rejection name the offending one (`` `$sort(...)` ``, `` `$.x = …` ``, `` `delete $.y` ``, `` `assert(...)` ``) and the rewrite that works in **this** container: `.aggregate((o) => { … })` for a `$$$.<coll>` receiver, the chained-stage spelling (`$$.$match({ … })`) for a `$$` one, and "nowhere at all" in a value position. A grammar that stopped at the first `$` could only say "unexpected token". `StreamMethodDef.validate` and `requireStreamPredicate` gained a `stageRewrite` parameter so each caller supplies its own position-accurate sentence, per the rule that [an error never recommends syntax that doesn't work where you are](#2026-08-02--fix-an-error-never-recommends-syntax-that-doesnt-work-where-you-are).
+
+Two things fall out. **A stage-free block now means what JavaScript means.** `.filter(o => { return o.userId === $._id; })` used to compile to `{ $lookup: { from, pipeline: [], as } }` — the predicate silently dropped, every foreign document matched. It folds back to the expression it returns, so it emits the indexed `localField`/`foreignField` form, identical to `.filter(o => o.userId === $._id)`. **`.aggregate` is now a `$$.push(...)` union source**, closing DEF-034: removing `.filter(block)` would otherwise have left a multi-stage `$unionWith` unspellable, and an uncorrelated aggregate maps onto `$unionWith.pipeline` exactly. A correlated one stays rejected — `$unionWith` has no `let` slot — and the message points at the field-assignment form, which does. Verified on a live mongod ([test/integration.test.ts](test/integration.test.ts)). `.find`/`.filter` also stopped disagreeing about `(element, index, array)`: both accept the JavaScript signature positionally and reject a *read* of either param, since a predicate has no index and no sub-stream yet.
+
+---
+
+## 2026-08-02 — fix: an error never recommends syntax that doesn't work where you are
+
+```
+$ = { k: $$.push({a:1}) };
+// before: '.push(...)' is not a chainable stream method on '$$'. Did you mean '.push'?
+//         … ('.push(...)' appends documents as a statement → $unionWith.)
+```
+
+Two separate faults in one line. `closestNameTo` could return the very name it
+was given, because a candidate set may legitimately contain a name that is valid
+in a *different* position. It now skips an exact match, which fixes every
+`didYouMean` call site at once. Second, `.push` was in the chain-error candidate
+set at all, so a near-miss like `.pop` was answered with `.push` — also not a
+chain method. The set now holds chain methods only, and `.pop` suggests `.drop`.
+
+`.push` gets its own message naming the spelling that actually works mid-chain:
+
+```js
+$$ = $$.concat({ a: 1 });   // → [{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]
+```
+
+The trailing append note is now position-aware. A `$facet` branch has no
+statement position, so offering `$$.push(...)` there was a dead end:
+
+```
+$$ = $$.push({a:1});         → … ('$$.push(...)' does work as a top-level statement of its own.)
+$ = { k: $$.push({a:1}) };   → … (the statement form isn't available inside a 'facet' sub-pipeline.)
+```
+
+`unknownStreamMethod` takes the container to do that, threaded from
+`applyStreamMethods`.
+
+---
+
+## 2026-08-09 — docs: the project reads as a finished product; history lives only here
 
 New standing rule in [CLAUDE.md](CLAUDE.md) § "No development history outside DEVLOG":
 **every file says what jsmql *is*; only this file says how it got here.** The repository

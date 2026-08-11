@@ -45,6 +45,26 @@ JS-method family. Unknown-key suggestions use `didYouMean` from
 
 ## Checks (by operator shape / rule)
 
+### a pipeline stage name in value position
+
+`rejectStageInValuePosition(name, pos)` runs first, ahead of the unknown-operator
+passthrough, because it is the one check that fires for a name the operator registry
+does not hold. A **stage** is a statement, so `{ $limit: … }` in an expression slot
+has no reading a server accepts — mongod answers `Unrecognized expression '$limit'`.
+That universality is what keeps it inside this module's remit (see
+[`src/CLAUDE.md`](../../src/CLAUDE.md) § "Never guard raw MQL"): it can never reject a
+shape some deployment accepts, the way a cross-database `$lookup` namespace would be.
+
+The test is the registry intersection, so nothing here is a hand-maintained list: a
+name throws only when it is in `STAGES` **and** not in `OPERATORS`. Three things
+therefore keep working, each for its own reason — `$count` (a stage *and* an
+accumulator, so it is in both), an unknown name (HR2 forward-compat, in neither), and
+a raw `{ $limit: 5 }` object literal (the developer's own document, not a call jsmql
+minted). `EXPRESSION_ANALOGUE` adds the value-position counterpart to the message for
+the handful of stages that have one (`$sort` → `$sortArray`, `$match` → `$filter`, …);
+most stages reshape a document *stream*, which no expression can do, and for those the
+message stops at "write it as a statement" rather than inventing an alternative.
+
 ### `none`-shape arity — takes no arguments
 Shape-driven (no `args` rule needed). `$rand` / `$createObjectId` / `$count` /
 `$rank` / `$denseRank` / `$documentNumber` take zero arguments; codegen used to
