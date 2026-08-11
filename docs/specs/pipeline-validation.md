@@ -174,23 +174,47 @@ GeoJSON shape (only presence of `near` is required).
 ## Write stages: forbidden in every sub-pipeline
 
 `$out` and `$merge` are the only stages the registry forbids in **all three** containers,
-which makes them decidable without knowing which container you are in. `generateStageBody`
-rejects such a stage whenever `GenerateCtx.inSubPipeline` is set — a flag both
-`freshSubPipelineCtx` and `freshFacetCtx` stamp on — so a block-body lambda
-(`.aggregate((o) => { $out(…); })`, a `.filter` predicate block, a `$facet` branch block)
-is covered even though the loop-position validator can't label its container. Membership
-is read from `forbiddenIn` via `stageForbiddenInAnySubPipeline`, so a future all-container
-stage is picked up with no code change. mongod rejects these with Location51047; HR3 says
-jsmql must not emit them. Where the container *is* known, the named message
-("inside a '$lookup' sub-pipeline") wins — it runs first, in the loop validator.
+which makes them decidable without a container label. Membership comes from `forbiddenIn`
+via `stageForbiddenInAnySubPipeline`, so a future all-container stage is picked up with no
+code change. mongod rejects these with Location51047; HR3 says jsmql must not emit them.
+
+Two checks enforce the rule, on opposite sides of lowering:
+
+1. **Source side — `generateStageBody`** rejects such a stage whenever
+   `GenerateCtx.inSubPipeline` is set. That covers a block-body lambda
+   (`.aggregate((o) => { $out(…); })`, a `.filter` predicate block, a `$facet` branch block)
+   even though the loop-position validator cannot label its container. This check knows the
+   offending stage's own position, so it is the one users normally see.
+2. **Output side — `assertNoWriteStageInSubPipeline`** walks the assembled stage array at
+   each pipeline entry point and rejects a forbidden stage in any sub-pipeline slot
+   (`subPipelineFields`, plus the `"*"` sentinel for `$facet`). It reads the emitted
+   document, not a ctx flag, so a path that reaches a sub-pipeline slot without the flag is
+   still rejected — and a container added later inherits the rule.
+
+Check 1 stays because check 2 can only name the enclosing pipeline. `test/error-pos.test.ts`
+pins the finer position, so a lowering path that drops the flag fails the suite even though
+the rejection itself survives. `GenerateCtx.inSubPipeline` is a **required** field for the
+same reason: a ctx built from scratch must declare which side of the boundary it starts on.
+Where the container *is* known, the named message ("inside a '$lookup' sub-pipeline") wins —
+it runs first, in the loop validator.
 
 ## The local-`$$` predicate gate
 
 `requireStreamPredicate` (in [`src/lookup-translation.ts`](../../src/lookup-translation.ts),
 beside the predicate lowering it feeds) is the **single** entry point for the argument of a
 local `$$.filter(…)` / `$$.reject(…)`. It normalises every predicate spelling — arrow,
-matches-object, field name, `["field", value]` pair — into the single-parameter arrow the
-lowering consumes, and enforces that arity. It is the local-stream counterpart to what
+block body returning the predicate, matches-object, field name, `["field", value]` pair —
+into the single-parameter arrow the lowering consumes, and enforces that arity. (A block body
+is folded to its value form by `callbackBlockToValue`; see
+[method-dispatch.md](method-dispatch.md) § Callback block bodies.)
+
+**Every message names the receiver as written.** The gate takes a `receiver` option —
+`$$` by default, `$$$.<coll>` / `$$$$.<db>.<coll>` from the `$$ = $$$.<coll>.…` source
+switch, which lowers its `.filter`/`.reject` through the same helpers the local chain
+uses. This is not cosmetic. The arity message tells the developer what to write, and
+`$$.filter(o => …)` reads the CURRENT stream, so a `$$$.orders.filter` author who follows
+that advice silently changes which collection the query reads. `localRefInPredicateMessage`
+takes the same option for the same reason. It is the local-stream counterpart to what
 `detectLookupCall` + `validateLookupShape` already do for the foreign `$$$.<coll>.filter(…)`
 side.
 
@@ -216,21 +240,23 @@ name, which must never be named back at the user as if it were writable.
 
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays
 (`{ $facet: { … } }`, `{ $lookup: { pipeline: […] } }`,
-`{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`.
-A stage written inside an **`.aggregate` block** gets the same container ban, from
-`GenerateCtx.subPipelineContainer` rather than from the assembly loop. The container
-travels on the *ctx* because `lowerBlock` is one shared lowerer: binding a fixed
-container to it would mislabel the lowerings that emit TOP-LEVEL stages (an `$out`
-write chain's predicate), so instead each ctx builder stamps what it knows —
-`freshSubPipelineCtx(outer, container)` and `freshFacetCtx` — and `generateStageBody`
-judges against the label when there is one. That is what catches a stage forbidden in
-a *single* container (`$collStats`, `forbiddenIn: ["facet"]`), which no container-less
-check can decide, and it yields the identical `forbiddenInContextMessage` the
-chained-stage spelling produces. The all-container check stays as the fallback for any
-position that leaves the label unset.
+`{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`, and the
+all-container write stages are enforced everywhere (previous section). The stage that just
+**one** container forbids — a diagnostic, `forbiddenIn: ["facet"]` — is judged from
+`GenerateCtx.subPipelineContainer`, so an **`.aggregate` block** gets the same ban the
+assembly loop applies to a literal body.
 
-`GenerateCtx.beforeTerminalStage` is the sibling rule for the one place stages land at
-the top level with a terminal stage appended after them: the `$out` write chain's RHS.
-A must-be-last stage there would emit two terminal stages ("$out can only be the final
-stage"), so it is rejected with the same `mustBeLastMessage` the stage-link spelling
-gets from `checkStageLinkPlacement`.
+The container travels on the *ctx* rather than through `generateImplicitPipeline` because
+`lowerBlock` is one shared lowerer: binding a fixed container to it would mislabel the
+lowerings that emit TOP-LEVEL stages (an `$out` write chain's predicate). Instead each ctx
+builder stamps what it knows — `freshSubPipelineCtx(outer, container)` and `freshFacetCtx` —
+and `generateStageBody` judges against the label when there is one, yielding the identical
+`forbiddenInContextMessage` the chained-stage spelling produces. `subPipelineContainer` is
+optional where `inSubPipeline` is required: an unlabelled path loses message precision, never
+the HR3 guard, which the all-container check and `assertNoWriteStageInSubPipeline` still hold.
+
+`GenerateCtx.beforeTerminalStage` is the sibling rule for the one place stages land at the top
+level with a terminal stage appended after them: the `$out` write chain's RHS. A must-be-last
+stage there would emit two terminal stages ("$out can only be the final stage"), so it is
+rejected with the same `mustBeLastMessage` the stage-link spelling gets from
+`checkStageLinkPlacement`.

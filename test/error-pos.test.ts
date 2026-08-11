@@ -211,6 +211,22 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
       assertPosInRange(src, result.errors[0].pos);
       expect(src.slice(result.errors[0].pos)).toMatch(/^\$match/);
     });
+
+    // A write stage in a sub-pipeline is rejected twice over: the
+    // `GenerateCtx.inSubPipeline` guard reports the offending stage's own body,
+    // and `assertNoWriteStageInSubPipeline` re-checks the assembled stages but
+    // can only name the enclosing pipeline. Pinning the body position here is
+    // what makes a lowering path that never sets the flag show up as a failure —
+    // the rejection survives on the backstop, the precise position does not.
+    it("a write stage in a sub-pipeline points at the offending stage, not the pipeline", () => {
+      const src = '$.t = $$$.orders.aggregate(o => { $out("archive"); });';
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].code).toBe("CODEGEN_ERROR");
+      expect(result.errors[0].message).toMatch(/not allowed inside a '\$lookup' sub-pipeline/);
+      assertPosInRange(src, result.errors[0].pos);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^"archive"/);
+    });
   });
 
   describe("interpolation errors", () => {

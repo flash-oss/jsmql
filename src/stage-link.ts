@@ -78,11 +78,31 @@ export function mustBeFirstLiteralMessage(stageName: string): string {
   );
 }
 
-/** Message for a must-be-last stage with something after it. */
+/**
+ * Message for a must-be-last stage with something after it. Shared by
+ * `checkStageLinkPlacement` and the `GenerateCtx.beforeTerminalStage` guard, so the
+ * chain-link and block-body spellings of the same mistake read alike.
+ */
 export function mustBeLastMessage(stageName: string): string {
   return (
     `'${stageName}' must be the last stage in a pipeline. ` +
     `Move it to the end of the chain, or remove the links after it.`
+  );
+}
+
+/**
+ * Message for a stage no sub-pipeline container accepts. Container-free by design:
+ * the stage is illegal in every container, so the wording holds wherever the
+ * sub-pipeline was written, including a position that never labelled its container.
+ * Shared by the two checks that raise it (the ctx-flag guard and the emitted-output
+ * backstop, both in pipeline.ts) so their wording cannot drift. A stage forbidden in
+ * only ONE container gets `forbiddenInContextMessage` instead, from the container
+ * `GenerateCtx.subPipelineContainer` names.
+ */
+export function forbiddenInAnySubPipelineMessage(stageName: string): string {
+  return (
+    `'${stageName}' is not allowed inside a sub-pipeline — MongoDB only accepts it as the last stage of a ` +
+    `top-level pipeline. Move it to the outer pipeline.`
   );
 }
 

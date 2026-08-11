@@ -50,7 +50,12 @@ import {
 } from "./codegen.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr, someElement, someStmt } from "./ast-walk.ts";
-import { aggregateRewrite, STREAM_STAGE_REWRITE, type StageRewrite } from "./callback-block.ts";
+import {
+  aggregateRewrite,
+  STREAM_STAGE_REWRITE,
+  tryCallbackBlockToValue,
+  type StageRewrite,
+} from "./callback-block.ts";
 import { JSMQL_NS, bindingSlot, exprVar, isCorrelationVar, streamLengthStage } from "./namespace.ts";
 import {
   lookupStage,
@@ -59,8 +64,10 @@ import {
   stageForbiddenInAnySubPipeline,
   stageMustBeFirst,
   stageMustBeLast,
+  type StageDef,
 } from "./stages.ts";
 import {
+  forbiddenInAnySubPipelineMessage,
   mustBeLastMessage,
   forbiddenInContextMessage,
   isStageLink,
@@ -339,6 +346,55 @@ function containerKindFor(stageName: string): "facet" | "lookup" | "unionWith" {
 }
 
 /**
+ * HR3 backstop: no sub-pipeline slot of an assembled pipeline may hold a stage
+ * MongoDB forbids in every container (`$out` / `$merge` → Location51047).
+ *
+ * The `GenerateCtx.inSubPipeline` guard in `generateStageBody` is the primary
+ * check and the one with the precise position, but it reads a flag the lowering
+ * path must set, so it only protects paths that set it. This check reads the
+ * *emitted stages* instead. Every route into a sub-pipeline slot ends here —
+ * literal array, sugar, block body, stage link, or a container added later that
+ * builds its ctx some other way — so the invariant holds without each new path
+ * having to opt in. Both checks read the same two registry fields:
+ * `subPipelineFields` names the slots, `forbiddenIn` says what may not sit in
+ * one. Exported for the test that locks this in.
+ *
+ * `pos` is the enclosing pipeline's position — the offending stage's own offset
+ * is gone by assembly time. The primary guard reports that finer position first
+ * for every path that sets the flag.
+ */
+export function assertNoWriteStageInSubPipeline(
+  stages: readonly unknown[],
+  pos: number,
+  insideSubPipeline: boolean,
+): void {
+  for (const stage of stages) {
+    if (typeof stage !== "object" || stage === null) continue;
+    for (const [name, body] of Object.entries(stage as Record<string, unknown>)) {
+      const def = lookupStage(name);
+      if (def === undefined) continue;
+      if (insideSubPipeline && stageForbiddenInAnySubPipeline(def)) {
+        throw new CodegenError(forbiddenInAnySubPipelineMessage(name), pos);
+      }
+      // Anything below a sub-pipeline slot is itself inside a sub-pipeline.
+      for (const nested of subPipelineSlotsOf(def, body)) {
+        assertNoWriteStageInSubPipeline(nested, pos, true);
+      }
+    }
+  }
+}
+
+/** The sub-pipeline arrays inside one emitted stage body, per its registry slots. */
+function subPipelineSlotsOf(def: StageDef, body: unknown): readonly unknown[][] {
+  if (typeof body !== "object" || body === null) return [];
+  // `"*"` ($facet): every branch of the body object is a sub-pipeline.
+  const values = def.subPipelineFields.includes("*")
+    ? Object.values(body as Record<string, unknown>)
+    : def.subPipelineFields.map((field) => (body as Record<string, unknown>)[field]);
+  return values.filter((value): value is unknown[] => Array.isArray(value));
+}
+
+/**
  * Statement-position `Object.assign(target, ...sources)` — JavaScript's
  * *mutating* merge: it writes the merged object back into `target` and returns
  * it. jsmql mirrors that at pipeline-statement position:
@@ -530,6 +586,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
     out.push({ $unset: JSMQL_NS });
   }
+  assertNoWriteStageInSubPipeline(out, ast.pos, false);
   return out;
 }
 
@@ -656,6 +713,7 @@ export function generateImplicitPipeline(
   if ((everHadLet || tracking.used() || lengthSlotAt !== null) && !shouldSkipTrailingNamespaceUnset(out)) {
     out.push({ $unset: JSMQL_NS });
   }
+  assertNoWriteStageInSubPipeline(out, p.pos, container !== "top");
   return out;
 }
 
@@ -1188,18 +1246,26 @@ function lowerStreamFilterArg(
   rhs: Expr,
   isHead: boolean,
   rewrite: StageRewrite = STREAM_STAGE_REWRITE,
+  receiver: string = "$$",
 ): object[] {
   if (m.args.length !== 1) {
     if (isHead) rejectInvalidReplaceStream(rhs, ctx);
     throw new CodegenError(
-      `'$$.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      `'${receiver}.filter(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos,
     );
   }
   return lowerStreamFilterPredicate(
-    requireStreamPredicate(m.args[0], { method: "filter", position: STREAM_PREDICATE_POSITION, pos: m.pos, rewrite }),
+    requireStreamPredicate(m.args[0], {
+      method: "filter",
+      position: STREAM_PREDICATE_POSITION,
+      pos: m.pos,
+      rewrite,
+      receiver,
+    }),
     ctx,
     lowerBlockFn,
+    receiver,
   );
 }
 
@@ -1218,10 +1284,11 @@ function lowerStreamReject(
   ctx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
   rewrite: StageRewrite = STREAM_STAGE_REWRITE,
+  receiver: string = "$$",
 ): object[] {
   if (m.args.length !== 1) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
+      `'${receiver}.reject(<predicate>)' takes exactly one predicate argument, got ${m.args.length}.`,
       m.pos,
     );
   }
@@ -1229,17 +1296,19 @@ function lowerStreamReject(
     method: "reject",
     position: STREAM_PREDICATE_POSITION,
     pos: m.pos,
+    rewrite,
+    receiver,
   });
   const negated = negateStreamPredicate(lambda);
   if (negated === null) {
     throw new CodegenError(
-      `'$$.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
-        `a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '$$.filter(o => !(…))', ` +
-        `or use a block-bodied '$$.filter' with the inverted condition.`,
+      `'${receiver}.reject(<predicate>)' ${STREAM_PREDICATE_POSITION} takes a single-parameter expression arrow ('o => …') — ` +
+        `a body with local \`const\`/\`let\` bindings has no single expression to negate. Write the negation yourself with '${receiver}.filter(o => !(…))', ` +
+        `or use a block-bodied '${receiver}.filter' with the inverted condition.`,
       lambda.pos,
     );
   }
-  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn);
+  return lowerStreamFilterPredicate(negated, ctx, lowerBlockFn, receiver);
 }
 
 /**
@@ -1356,11 +1425,13 @@ function lowerChainOnCollection(
       continue;
     }
     if (m.method === "filter") {
-      inner.push(...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite));
+      inner.push(
+        ...lowerStreamFilterArg(m, innerCtx, lowerBlockFn, rhs, i === 0, foreignRewrite, formatLookupReceiver(target)),
+      );
       continue;
     }
     if (m.method === "reject") {
-      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite));
+      inner.push(...lowerStreamReject(m, innerCtx, lowerBlockFn, foreignRewrite, formatLookupReceiver(target)));
       continue;
     }
     const def = lookupStreamMethod(m.method);
@@ -1447,7 +1518,11 @@ function lowerLookupPivot(
       db: target.db,
       collection: target.collection,
       method: "filter",
-      lambda: methods[0].args[0] as LambdaNode,
+      // This call is built here, not by `detectLookupCall`, so it must apply
+      // detection's own callback-block fold. Without it a `{ return <pred> }` block
+      // reaches `translatePredicate` as a stage-free block and lowers to an empty
+      // sub-pipeline — a lookup that matches every foreign document.
+      lambda: tryCallbackBlockToValue(methods[0].args[0] as LambdaNode),
     };
     const pred = translatePredicate(fakeCall, outerCtx, lowerBlockFn);
     if (pred.kind === "basic") {
@@ -1604,10 +1679,11 @@ function lowerStreamFilterPredicate(
   lambda: LambdaNode,
   predicateCtx: GenerateCtx,
   lowerBlockFn: SubPipelineLowerer,
+  receiver: string = "$$",
 ): object[] {
   if (lambda.params.length !== 1) {
     throw new CodegenError(
-      `'.filter(<predicate>)' on the RHS of '$$ = …' must take exactly one parameter — write '.filter(o => …)' (the param name is your choice). The param represents each document.`,
+      `'${receiver}.filter(<predicate>)' on the RHS of '$$ = …' must take exactly one parameter — write '${receiver}.filter(o => …)' (the param name is your choice). The param represents each document.`,
       lambda.pos,
     );
   }
@@ -1617,14 +1693,19 @@ function lowerStreamFilterPredicate(
   // lambda parameter IS the document being matched.
   return lowerLambdaPredicate(lambda, predicateCtx, lowerBlockFn, {
     freshCtx: (ctx) => ctx,
-    onLocalRef: rejectLocalRefInStreamFilter,
+    onLocalRef: (letVars, param, pos) => rejectLocalRefInStreamFilter(letVars, param, pos, receiver),
     missingBody: () => internalError("'.filter(<predicate>)' lambda has no body, block, or exprBlock", lambda.pos),
   });
 }
 
-function rejectLocalRefInStreamFilter(letVars: Record<string, string>, param: string, pos: number): never {
+function rejectLocalRefInStreamFilter(
+  letVars: Record<string, string>,
+  param: string,
+  pos: number,
+  receiver: string,
+): never {
   throw new CodegenError(
-    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION }),
+    localRefInPredicateMessage({ letVars, param, method: "filter", position: STREAM_PREDICATE_POSITION, receiver }),
     pos,
   );
 }
@@ -1867,12 +1948,17 @@ function findQuerySlotCorrelation(node: Expr): string | null {
 
 function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unknown {
   // HR3: a stage the server refuses inside a sub-pipeline must never be emitted
-  // there. Two checks, both registry-derived so a new stage is covered for free:
-  // when `GenerateCtx.subPipelineContainer` names the container, judge against it
-  // (the only way to catch a stage forbidden in just one, e.g. `$collStats` in
-  // `$facet`); otherwise fall back to "forbidden in every container", which needs no
+  // there. Both branches below are registry-derived, so a new stage is covered for
+  // free. When `GenerateCtx.subPipelineContainer` names the container, judge against
+  // it — the only way to catch a stage forbidden in just ONE (`$collStats` in
+  // `$facet`), which is also the case the assembly-loop validator never sees inside a
+  // block body. Otherwise fall back to "forbidden in every container", which needs no
   // label and still stops `$out`/`$merge` (mongod Location51047) anywhere.
-  if (ctx.inSubPipeline === true) {
+  //
+  // This is the check that reports the offending stage's own position;
+  // `assertNoWriteStageInSubPipeline` re-checks the assembled output as a backstop for
+  // any path that reaches a sub-pipeline slot without setting the flag.
+  if (ctx.inSubPipeline) {
     const def = lookupStage(stageName);
     const container = ctx.subPipelineContainer;
     if (def !== undefined && container !== undefined && stageForbiddenIn(def, container)) {
@@ -1882,11 +1968,7 @@ function generateStageBody(stageName: string, body: Expr, ctx: GenerateCtx): unk
       throw new CodegenError(forbiddenInContextMessage(stageName, container), body.pos);
     }
     if (def !== undefined && stageForbiddenInAnySubPipeline(def)) {
-      throw new CodegenError(
-        `'${stageName}' is not allowed inside a sub-pipeline — MongoDB only accepts it as the last stage of a ` +
-          `top-level pipeline. Move it to the outer pipeline.`,
-        body.pos,
-      );
+      throw new CodegenError(forbiddenInAnySubPipelineMessage(stageName), body.pos);
     }
   }
   // These stages precede a terminal write stage (the `$out` write chain's RHS), so a
@@ -2122,6 +2204,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   });
   flushUpdateOps();
   if (everHadLet && !shouldSkipTrailingNamespaceUnset(out)) out.push({ $unset: JSMQL_NS });
+  assertNoWriteStageInSubPipeline(out, ast.pos, container !== "top");
   return out;
 }
 

@@ -94,8 +94,14 @@ export type GenerateCtx = {
    * in *every* container ($out / $merge) are rejected on this flag alone, so no
    * sub-pipeline can emit one (HR3) even where the container went unlabelled. See
    * `subPipelineContainer` for the per-container half.
+   *
+   * Required rather than optional: a ctx built from scratch has to say which side
+   * of the boundary it starts on, so a sub-pipeline path added later cannot drop
+   * the guard by leaving the field out. Derived ctxs inherit it through the
+   * `{ ...ctx }` spread. A path that states it *wrongly* still can't emit invalid
+   * MQL — `assertNoWriteStageInSubPipeline` re-checks the assembled stages.
    */
-  inSubPipeline?: boolean;
+  inSubPipeline: boolean;
   /**
    * WHICH sub-pipeline container we are inside, when it is known — the missing half
    * of `inSubPipeline`. A stage the registry forbids in *every* container needs no
@@ -107,7 +113,8 @@ export type GenerateCtx = {
    * `generateImplicitPipeline`, whose `lowerBlock` is shared with lowerings that emit
    * TOP-LEVEL stages (an `$out` write chain's predicate) and would be mislabelled by a
    * fixed container. Left undefined by those, which keeps them on the all-container
-   * check alone.
+   * check alone. Optional, unlike `inSubPipeline`: an unlabelled path loses only
+   * message precision, never the HR3 guard.
    */
   subPipelineContainer?: "facet" | "lookup" | "unionWith";
   /**
@@ -308,11 +315,12 @@ export type GenerateCtx = {
   enclosingLookup?: { foreignParams: ReadonlyArray<string>; inScopeLetNames: ReadonlySet<string> };
 };
 
-const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set() };
+const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set(), inSubPipeline: false };
 
 function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
   return {
     lambdaParams: new Set([...ctx.lambdaParams, ...params]),
+    inSubPipeline: ctx.inSubPipeline,
     reduceRemap: ctx.reduceRemap,
     pipelineLets: ctx.pipelineLets,
     pipelineConstNames: ctx.pipelineConstNames,
@@ -3824,6 +3832,7 @@ function generateMethodCall(
       // an (index, element) pair — body wraps in $let to expose both names.
       const reduceCtx: GenerateCtx = {
         lambdaParams: new Set([...ctx.lambdaParams, ...lambda.params]),
+        inSubPipeline: ctx.inSubPipeline,
         reduceRemap: has3
           ? new Map([[lambda.params[0], "value"]])
           : new Map([
@@ -5735,6 +5744,7 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
       // append the current element to the array under that key in the accumulator.
       const keyCtx: GenerateCtx = {
         lambdaParams: new Set([...ctx.lambdaParams, lambda.params[0]]),
+        inSubPipeline: ctx.inSubPipeline,
         reduceRemap: new Map([[lambda.params[0], "this"]]),
         pipelineLets: ctx.pipelineLets,
         droppedLets: ctx.droppedLets,

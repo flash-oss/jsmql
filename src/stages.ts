@@ -308,17 +308,18 @@ export function stageMustBeLast(def: StageDef): boolean {
   return def.position === "last";
 }
 
-/** Is this stage forbidden inside the given sub-pipeline container kind? */
 /**
  * Is `def` forbidden in EVERY sub-pipeline container? Such a stage ($out /
  * $merge) is illegal anywhere but the top-level pipeline, so it can be rejected
  * without knowing which container we're in — which is what lets block-body
- * sub-pipelines (`.aggregate((o) => { … })`) enforce it too.
+ * sub-pipelines (`.aggregate((o) => { … })`) enforce it too, and what the
+ * emitted-output backstop in pipeline.ts reads.
  */
 export function stageForbiddenInAnySubPipeline(def: StageDef): boolean {
   return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");
 }
 
+/** Is this stage forbidden inside the given sub-pipeline container kind? */
 export function stageForbiddenIn(def: StageDef, container: "facet" | "lookup" | "unionWith"): boolean {
   return def.forbiddenIn?.includes(container) ?? false;
 }
