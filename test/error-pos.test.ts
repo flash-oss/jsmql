@@ -223,7 +223,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
       const result = jsmql.validate(src);
       expect(result.valid).toBe(false);
       expect(result.errors[0].code).toBe("CODEGEN_ERROR");
-      expect(result.errors[0].message).toMatch(/not allowed inside a sub-pipeline/);
+      expect(result.errors[0].message).toMatch(/not allowed inside a '\$lookup' sub-pipeline/);
       assertPosInRange(src, result.errors[0].pos);
       expect(src.slice(result.errors[0].pos)).toMatch(/^"archive"/);
     });

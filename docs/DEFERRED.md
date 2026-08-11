@@ -177,19 +177,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M
 
-### DEF-024 — Forbidden-in-context inside an `.aggregate` block body
-
-- **What's blocked.** A literal *source/diagnostic* stage written inside an `.aggregate` block lambda — `$$$.c.aggregate(o => { { $collStats: {} }; })` — gets must-first / must-last validation but NOT the forbidden-in-`$lookup`/`$facet`/`$unionWith` ban. Literal sub-pipeline arrays (`{ $lookup: { pipeline: [...] } }`) ARE fully covered via `generatePipelineWithCtx(container)`.
-- **Target lowering.** No MQL change. Thread the container kind into `generateImplicitPipeline` when it runs as a block lowerer (`lowerBlock`), so block sub-pipelines enforce `forbiddenIn`.
-- **Why blocked.** `lowerBlock` is the shared `SubPipelineLowerer`, used pervasively for predicate→`$match` translation (which produces top-level `$match` stages, not a sub-pipeline) as well as true sub-pipeline bodies. Binding a fixed container to it would mislabel the predicate-translation cases. A clean fix needs per-call-site container threading across `lookup-translation.ts` / `union-translation.ts` / `facet-translation.ts` — the same shape of change the nested-lookup threading solves with a ctx carrier (`GenerateCtx.enclosingLookup`), so a `GenerateCtx.subPipelineContainer` carrier would close this analogously. Reachability of a literal write/source stage inside a block body is very low, and the gap never produces a false positive (at worst an imprecise must-last message or benign under-coverage).
-- **Attempted approaches.** Considered binding the container into a `lowerBlock` factory at each pipeline.ts call site; deferred because several sites (`lowerReplaceStream`, `lowerOut`, the chain lowerers) have no single unambiguous container and a wrong label is worse DX than the gap.
-- **Covered already.** Two of the three pieces hold. (1) Chained stage calls (`$$$.<coll>.$out(…)`) get the forbidden-in check directly: at each stage-link site the container is unambiguous, so `checkStageLinkPlacement` in `src/stage-link.ts` applies `forbiddenIn` / `position` without solving the general threading problem. (2) **Write stages are blocked in every sub-pipeline, block bodies included** — a stage the registry forbids in *all three* containers (`stageForbiddenInAnySubPipeline`) needs no container label, so `generateStageBody` rejects it on the `GenerateCtx.inSubPipeline` flag alone. That upholds HR3 (mongod rejects `$out`/`$merge` in a sub-pipeline with Location51047). The gap is only the **imprecise wording** for stages forbidden in *one* container (the diagnostics, `forbiddenIn: ["facet"]`) inside a block body: they emit rather than naming their container.
-- **Success criteria.** `$.x = $$$.c.aggregate(o => { { $collStats: {} }; })` throws the forbidden-in-`$lookup` error with a meaningful `.pos`. Tests in `test/stage-validation.test.ts` / `test/pipeline.test.ts`.
-- **Rejection site(s).** `docs/specs/pipeline-validation.md` § Known gap (tagged). `src/pipeline.ts` `generateImplicitPipeline` `container` param (forward-compatible hook, defaults `"top"`).
-- **Spec.** `docs/specs/pipeline-validation.md` § Known gap.
-- **Status.** open
-- **Effort.** M (container threading through `lowerBlock` + tests)
-
 ### DEF-031 — Function-aware Filters via textual inline
 
 - **What's blocked.** Using a reusable function inside a **bare Filter** (no `;`, e.g. `db.coll.find(jsmql("isAdult($)"))`). A function declaration needs a `;`, which flips the source into Pipeline mode, so a Filter can't currently declare or call one.

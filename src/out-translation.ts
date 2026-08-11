@@ -212,9 +212,11 @@ export function lowerOutChain(
   // Bare `$$` — no extra stages.
   if (rhs.type === "CollectionRef") return [];
 
-  // A method-call chain — walk it inside-out, then emit stages in source order.
+  // A method-call chain — walk it inside-out, then emit stages in source order. The
+  // `$out` is appended after everything the chain produces, so every stage in it is
+  // "before a terminal stage": a second write stage anywhere here is rejected.
   if (rhs.type === "MethodCall") {
-    return walkChain(rhs, outerCtx, lowerBlock, allocSlot);
+    return walkChain(rhs, { ...outerCtx, beforeTerminalStage: true }, lowerBlock, allocSlot);
   }
 
   // Anything else — the RHS isn't rooted at `$$`. Diagnose.

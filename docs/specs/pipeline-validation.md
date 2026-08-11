@@ -241,12 +241,22 @@ name, which must never be named back at the user as if it were writable.
 Forbidden-in-context is enforced for **literal** sub-pipeline arrays
 (`{ $facet: { … } }`, `{ $lookup: { pipeline: […] } }`,
 `{ $unionWith: { pipeline: […] } }`) via `generatePipelineWithCtx(container)`, and the
-all-container write stages are enforced everywhere (previous section). What remains is the
-stage that just **one** container forbids — a diagnostic, `forbiddenIn: ["facet"]` — inside an
-**`.aggregate` block** (`$$$.c.aggregate(o => { … })`). Such a stage still gets must-first /
-must-last validation but not the container ban, because the shared `lowerBlock` lowerer runs
-`generateImplicitPipeline` with `container: "top"`. A container label there needs
-per-call-site threading, deferred to `[DEF-024]` — `lowerBlock` also serves
-predicate→`$match` translation, which emits top-level stages, so one fixed label would
-mislabel those. The literal-array path covers the common case and this gap never produces a
-false positive.
+all-container write stages are enforced everywhere (previous section). The stage that just
+**one** container forbids — a diagnostic, `forbiddenIn: ["facet"]` — is judged from
+`GenerateCtx.subPipelineContainer`, so an **`.aggregate` block** gets the same ban the
+assembly loop applies to a literal body.
+
+The container travels on the *ctx* rather than through `generateImplicitPipeline` because
+`lowerBlock` is one shared lowerer: binding a fixed container to it would mislabel the
+lowerings that emit TOP-LEVEL stages (an `$out` write chain's predicate). Instead each ctx
+builder stamps what it knows — `freshSubPipelineCtx(outer, container)` and `freshFacetCtx` —
+and `generateStageBody` judges against the label when there is one, yielding the identical
+`forbiddenInContextMessage` the chained-stage spelling produces. `subPipelineContainer` is
+optional where `inSubPipeline` is required: an unlabelled path loses message precision, never
+the HR3 guard, which the all-container check and `assertNoWriteStageInSubPipeline` still hold.
+
+`GenerateCtx.beforeTerminalStage` is the sibling rule for the one place stages land at the top
+level with a terminal stage appended after them: the `$out` write chain's RHS. A must-be-last
+stage there would emit two terminal stages ("$out can only be the final stage"), so it is
+rejected with the same `mustBeLastMessage` the stage-link spelling gets from
+`checkStageLinkPlacement`.

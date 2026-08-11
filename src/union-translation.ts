@@ -333,7 +333,7 @@ function translateUnionPredicate(call: LookupCall, outerCtx: GenerateCtx, lowerB
   // ctx (outer lets don't cross the boundary). `$unionWith` has no `let` slot, so
   // a predicate that references the local doc (`$.<field>`) is rejected.
   return lowerLambdaPredicate(call.lambda, outerCtx, lowerBlock, {
-    freshCtx: freshSubPipelineCtx,
+    freshCtx: (outer) => freshSubPipelineCtx(outer, "unionWith"),
     onLocalRef: () => {
       throw new CodegenError(correlatedPushPredicateMessage(call), call.lambda.pos);
     },

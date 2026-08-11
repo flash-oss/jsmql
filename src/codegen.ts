@@ -90,10 +90,10 @@ export type GenerateCtx = {
   lambdaParams: ReadonlySet<string>;
   /**
    * True inside ANY sub-pipeline body (`$lookup.pipeline`, `$unionWith.pipeline`,
-   * a `$facet` branch) — including an `.aggregate` block, which the loop-position
-   * validator can't label with a specific container (see DEF-024). Stages the
-   * registry forbids in *every* container ($out / $merge) are rejected on this
-   * flag alone, so no sub-pipeline can emit one (HR3).
+   * a `$facet` branch), including an `.aggregate` block. Stages the registry forbids
+   * in *every* container ($out / $merge) are rejected on this flag alone, so no
+   * sub-pipeline can emit one (HR3) even where the container went unlabelled. See
+   * `subPipelineContainer` for the per-container half.
    *
    * Required rather than optional: a ctx built from scratch has to say which side
    * of the boundary it starts on, so a sub-pipeline path added later cannot drop
@@ -102,6 +102,31 @@ export type GenerateCtx = {
    * MQL — `assertNoWriteStageInSubPipeline` re-checks the assembled stages.
    */
   inSubPipeline: boolean;
+  /**
+   * WHICH sub-pipeline container we are inside, when it is known — the missing half
+   * of `inSubPipeline`. A stage the registry forbids in *every* container needs no
+   * label (that is what `inSubPipeline` alone catches); one forbidden in a *single*
+   * container (`$collStats`, `forbiddenIn: ["facet"]`) can only be judged against a
+   * name, and inside an `.aggregate` block the loop-position validator never sees the
+   * stage. Set by the ctx builders — `freshSubPipelineCtx(outer, container)` and
+   * `freshFacetCtx` — so it travels with the ctx rather than through
+   * `generateImplicitPipeline`, whose `lowerBlock` is shared with lowerings that emit
+   * TOP-LEVEL stages (an `$out` write chain's predicate) and would be mislabelled by a
+   * fixed container. Left undefined by those, which keeps them on the all-container
+   * check alone. Optional, unlike `inSubPipeline`: an unlabelled path loses only
+   * message precision, never the HR3 guard.
+   */
+  subPipelineContainer?: "facet" | "lookup" | "unionWith";
+  /**
+   * True while lowering stages that a must-be-last stage will FOLLOW — the `$out`
+   * write chain's RHS (`$$$.<coll> = $$.<chain>`), whose stages land at the outer
+   * pipeline level with the `$out` appended after them. A second write stage there
+   * emits two terminal stages, which mongod refuses ("$out can only be the final
+   * stage"). The stage-link spelling was already checked (`checkStageLinkPlacement`
+   * with `isLastInContainer: false`); this carries the same rule to a stage written
+   * inside an `.aggregate` block, which never reaches that call.
+   */
+  beforeTerminalStage?: boolean;
   reduceRemap?: ReadonlyMap<string, string>;
   /**
    * Pipeline-scoped `let` bindings in scope. Key is the user-facing name; value
@@ -389,10 +414,11 @@ export function ctxHasLets(ctx: GenerateCtx): boolean {
  * named functions (`functions`) do NOT cross — they are pipeline-scoped like
  * `let`s; a sub-pipeline declares and uses its own.
  */
-export function freshSubPipelineCtx(outer: GenerateCtx): GenerateCtx {
+export function freshSubPipelineCtx(outer: GenerateCtx, container?: "facet" | "lookup" | "unionWith"): GenerateCtx {
   return {
     lambdaParams: new Set(),
     inSubPipeline: true,
+    ...(container !== undefined && { subPipelineContainer: container }),
     bindings: outer.bindings,
     pipelineContext: outer.pipelineContext,
     // The slot allocator is a pipeline-global resource (gensym counter for
@@ -417,6 +443,7 @@ export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
   return {
     lambdaParams: new Set(),
     inSubPipeline: true,
+    subPipelineContainer: "facet",
     bindings: outer.bindings,
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,

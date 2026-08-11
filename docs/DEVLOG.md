@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-11 — fix: a forbidden stage inside an `.aggregate` block names its container (closes DEF-024)
+
+```
+$ = { k: $$.aggregate(o => { $collStats({}); }) };
+// before: [{ $facet: { k: [{ $collStats: {} }] } }]        ← emitted; mongod refuses it
+// now:    '$collStats' is not allowed inside a '$facet' sub-pipeline. Move it to the
+//         outer (top-level) pipeline.
+
+$.t = $$$.orders.aggregate(o => { $out("archive"); });
+// before: '$out' is not allowed inside a sub-pipeline — MongoDB only accepts it as …
+// now:    '$out' is not allowed inside a '$lookup' sub-pipeline. Move it to the outer …
+```
+
+Two halves, one carrier. A stage forbidden in *every* container (`$out`, `$merge`) needed no label and was already caught by `GenerateCtx.inSubPipeline`. A stage forbidden in a *single* one (`$collStats`, `$facet`, `$geoNear`, `$indexStats`, `$planCacheStats`, `$search`, `$searchMeta`, `$vectorSearch` — all `forbiddenIn: ["facet"]`) cannot be judged without a container name, and inside an `.aggregate` block the assembly-loop validator never sees the stage. So it emitted.
+
+DEF-024's blocker was that `lowerBlock` is one shared lowerer, used both for real sub-pipeline bodies and for lowerings that emit TOP-LEVEL stages, so binding a container to it would mislabel the second kind. The row itself named the answer — the carrier `GenerateCtx.enclosingLookup` already uses — and that is what shipped: `GenerateCtx.subPipelineContainer`, stamped by the ctx builders (`freshSubPipelineCtx(outer, container)`, `freshFacetCtx`) rather than threaded through `generateImplicitPipeline`. Every position that builds a sub-pipeline ctx now labels it, so all four containers report by name in *both* spellings, and `generateStageBody` reuses `forbiddenInContextMessage` — the same wording `checkStageLinkPlacement` produces for a chain link. The unlabelled all-container check stays as the fallback.
+
+Verified against the registry rather than assumed: mongod *does* accept `$collStats` as the first stage of a `$lookup.pipeline`, so `forbiddenIn: ["facet"]` is right and `$.t = $$$.orders.aggregate(o => { $collStats({}); })` still compiles. The check is only as strict as the registry.
+
+Probing the fix surfaced a second, pre-existing hole in the same family, closed here too. `$$$.dest = $$.aggregate(o => { $out("x"); })` emitted `[{ $out: "x" }, { $out: "dest" }]` — two terminal stages, which mongod refuses with "$out can only be the final stage". The `$out` write chain's stages land at the *top* level with its own `$out` appended after them, so the applicable rule is must-be-last, not forbidden-in-sub-pipeline; the stage-link spelling already got it from `checkStageLinkPlacement(…, isLastInContainer: false, "top")` and only the block spelling escaped. `GenerateCtx.beforeTerminalStage`, set for the whole write-chain RHS, carries the same rule with the same `mustBeLastMessage`.
+
+---
+
 ## 2026-08-11 — feat: `const`/`let` bindings work in every predicate position
 
 ```
