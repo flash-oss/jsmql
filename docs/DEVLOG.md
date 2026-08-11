@@ -10,7 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-08-11 — test: the `$out` write chain gets its showcase examples
+## 2026-08-11 — test: an equality narrow is spelled `$$.filter({ field: value })`
+
+Fifteen leading `$match($.field === value)` statements in
+[test/realistic.test.ts](../test/realistic.test.ts) — the collaborative-filtering
+example at the top of the file among them — are now `$$.filter({ field: value })`.
+Same stage out (`{ $match: { field: value } }`, byte-identical; no expected value
+in the file moved), fewer things to read: no `$.` prefix on each field and no
+`===` to parse, and for a multi-field narrow the object is shorter outright.
+
+It also makes the file speak one dialect. `.filter({ … })` is already how a
+predicate is written on a `$lookup` chain, a `$facet` branch, an `$out` write
+chain, and a `$$ = $$.filter(…)` narrow, so a reader met a different spelling only
+at the top-level statement — the position they read first.
+
+The rule applied, now recorded in the comment on the `$$ = $$.filter(...)` case,
+is that this is a **plain-equality** rewrite. A matches-object compares every key
+with `$eq`, so a predicate carrying a range or a null test keeps `$match(<expr>)`
+— `$match($.placedAt >= a && $.placedAt < b)` reads better than any lambda that
+means the same thing, and 13 sites keep it for exactly that reason. Three of those
+are inside a lambda block body, where `$$` is the enclosing stream rather than the
+sub-pipeline, so the rewrite would not have been equivalent at all.
 
 The `$out` RHS became a full container — stream methods, stage links, `.reject` —
 but [test/realistic.test.ts](../test/realistic.test.ts) still showed only the two

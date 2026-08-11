@@ -30,9 +30,9 @@ const truthy = (v: unknown) => ({
 // "Recommended products" for one user — the classic collaborative-filtering
 // query, in a handful of lines of JavaScript. It's the playground's default
 // example because it composes almost the whole language at once:
-//   1) narrow `users` to the logged-in user ($match) and assert exactly one
-//      matched — `$$.length` is the stream count ($setWindowFields), guarded by
-//      a $convert-error $match.
+//   1) narrow `users` to the logged-in user (`$$.filter({ … })` → $match) and
+//      assert exactly one matched — `$$.length` is the stream count
+//      ($setWindowFields), guarded by a $convert-error $match.
 //   2) that user's distinct, recently-bought product ids (correlated $lookup,
 //      then value-mode .map/.flatten/.uniq).
 //   3) products co-purchased by everyone who bought those, minus what the user
@@ -50,7 +50,7 @@ describe("recommended products (collaborative filtering)", { features: ["Pipelin
       expect(
         jsmql`
 const userId = 0x507f1f77bcf86cd799439011;
-$match($._id === userId);
+$$.filter({ _id: userId });
 assert($$.length === 1, "More than one user with such ID found");
 
 const myProductIds = $$$.orders
@@ -408,7 +408,7 @@ describe("regional revenue leaderboard (chained stage calls)", { features: ["Pip
     () => {
       expect(
         jsmql`
-$match($.status === "active");
+$$.filter({ status: "active" });
 const cohortRevenue = $$$.orders
   .$match({ status: "shipped" })
   .$group({ _id: "$region", revenue: $sum("$total"), orders: $sum(1) })
@@ -595,7 +595,7 @@ describe("orders summary via $facet (`$ = { k: $$.<chain> }`)", { features: ["Pi
     // and `.filter(<arrow>)` — whose lambda param is each input document — all
     // compose the same way they do on a top-level `$$ = $$.<chain>`.
     expect(
-      jsmql(`$match($.status === "shipped");
+      jsmql(`$$.filter({ status: "shipped" });
 $ = {
   topByScore: $$.toSorted({ score: -1 }).take(10),
   recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
@@ -639,10 +639,16 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
 describe("narrow the current stream (`$$ = $$.filter(...)`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" }, () => {
     // The symmetric form: source stays on `transactions`, the assignment
-    // narrows the stream. Equivalent to a bare `$match(...)` — the explicit
-    // `$$ = $$.filter(...)` form exists for symmetry with the source-switch
-    // case above, so the two can be swapped without changing the surrounding
-    // shape of the pipeline.
+    // narrows the stream. The explicit `$$ = $$.filter(...)` form exists for
+    // symmetry with the source-switch case above, so the two can be swapped
+    // without changing the surrounding shape of the pipeline.
+    //
+    // Narrowing has three spellings and they emit the identical `$match`:
+    // `$match(<expr>)`, the bare statement chain `$$.filter(<pred>)`, and this
+    // assignment form. Elsewhere in this file a plain equality narrow is written
+    // `$$.filter({ field: value })` — it says the same thing without the `$.`
+    // and `===` — while a predicate with a range or null test stays on
+    // `$match(<expr>)`, which reads better than a lambda for that.
     expect(jsmql`$$ = $$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01") }, client: 156 } },
     ]);
@@ -742,7 +748,7 @@ describe("derive subscription grace + reminder dates (`.plus` / `.minus`)", { fe
     // `.minus(amount, unit)` → $dateSubtract — the receiver is the start date.
     expect(
       jsmql`
-$match($.plan === "active");
+$$.filter({ plan: "active" });
 $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.expiresAt.minus(3, "day") };
       `,
     ).toEqual([
@@ -767,7 +773,7 @@ describe("explode order line-items into per-item documents (`$ = [...]` fan-out)
     // document becomes N output documents.
     expect(
       jsmql`
-$match($.status === "paid");
+$$.filter({ status: "paid" });
 $ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));
       `,
     ).toEqual([
@@ -2112,7 +2118,7 @@ describe("user-with-orders join via $$$ lookup", { features: ["Pipelines"] }, ()
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     expect(
       jsmql`
-$match($.active === true);
+$$.filter({ active: true });
 $.recentOrders = $$$.orders.filter(o => {
   $match(o.userId === $._id);
   $sort({ createdAt: -1 });
@@ -2162,7 +2168,7 @@ describe(
     it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
       expect(
         jsmql`
-$match($.active === true);
+$$.filter({ active: true });
 $.recentOrders = $$$.orders.filter(o => {
   $match(o.userId === $._id);
   $sort({ createdAt: -1 });
@@ -2220,7 +2226,7 @@ describe("union live + archive users with placeholders via $$.push", { features:
     () => {
       expect(
         jsmql`
-$match($.active === true);
+$$.filter({ active: true });
 $$.push(
   { _id: "system", name: "System", role: "synthetic" },
   { _id: "anon",   name: "Anonymous", role: "synthetic" },
@@ -2412,7 +2418,7 @@ describe("paginate shipped orders newest-first (`.toSorted` + `.slice`)", { feat
       // express a mid-stream offset.
       expect(
         jsmql`
-$match($.status === "shipped");
+$$.filter({ status: "shipped" });
 $$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
         `,
       ).toEqual([{ $match: { status: "shipped" } }, { $sort: { placedAt: -1 } }, { $skip: 25 }, { $limit: 25 }]);
@@ -2433,7 +2439,7 @@ describe("guard against corrupt data before aggregating (`assert`)", { features:
       // assertion passes the document through untouched.
       expect(
         jsmql`
-$match($.status === "paid");
+$$.filter({ status: "paid" });
 assert($.qty >= 0, "order qty must be non-negative");
 $.revenue = $.qty * $.unitPrice;
         `,
@@ -2474,7 +2480,7 @@ describe(
         // scratch field out of the result.
         expect(
           jsmql`
-$match($.inStock === true);
+$$.filter({ inStock: true });
 $.totalInStock = $$.length;
 $.sharePct = 100 / $$.length;
 assert($$.length <= 1000, "too many in-stock products to render");
@@ -2517,7 +2523,7 @@ describe("denormalise order line items for analytics (`.map`)", { features: ["Pi
       // current document, so `o.qty` rewrites to the bare field path `$qty`.
       expect(
         jsmql`
-$match($.shipped === true);
+$$.filter({ shipped: true });
 $$ = $$.map(o => ({
   orderId:  o._id,
   customer: o.userId,
@@ -2597,7 +2603,7 @@ describe("merge live transactions with the archive stream (`.concat`)", { featur
       // recent docs live in one collection and older docs in another.
       expect(
         jsmql`
-$match($.region === "AU");
+$$.filter({ region: "AU" });
 $$ = $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);
         `,
       ).toEqual([
@@ -3319,7 +3325,7 @@ describe(
       // refs auto-hoist into `$lookup.let` exactly as `.filter` does.
       expect(
         jsmql(`
-$match($.status === "active");
+$$.filter({ status: "active" });
 $.monthlySpend = $$$.orders.aggregate((o) => {
   $match(o.customerId === $._id);
   $group({ _id: { $month: o.placedAt }, spent: $sum(o.total) });
@@ -3388,7 +3394,7 @@ describe("sensor uptime run before the first fault", { features: ["Pipelines"] }
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.readings.aggregate(jsmql(...))" }, () => {
     expect(
       jsmql(`
-$match($.deviceId === "dev-7");
+$$.filter({ deviceId: "dev-7" });
 $$.toSorted({ readAt: 1 }).takeWhile({ status: "ok" });
 $group({ _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } });
         `),
