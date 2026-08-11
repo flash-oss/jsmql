@@ -10,6 +10,44 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-10 — fix: a block-body predicate's `return` is the predicate, not dead code
+
+`$$ = $$.filter(o => { return o.a > 1; })` emitted `[]` — a pipeline that filters
+nothing. Every predicate container dropped a block body's terminal `return`: the parser
+splits it into `Lambda.ret` (so `.map` can lower it to `$replaceWith`), and the predicate
+paths read only `lambda.block`. The failure was silent in the worst way, because `[]` is
+valid MQL and a filter that matches everything looks like a working query. Three shapes
+were affected — `{ return X; }` lost the predicate outright, `{ const a = …; return X; }`
+emitted the binding stage and then ignored it, and `{ $match(q); return X; }` kept `q`
+and dropped `X`.
+
+The rule now is the JavaScript one: `o => { return X; }` IS `o => X`, so the two
+spellings must emit one shape. [`canonicalPredicateLambda`](src/lookup-translation.ts)
+canonicalises a predicate lambda before anything reads it — a stage-less block becomes
+the expression lambda (which also earns it the indexed `localField`/`foreignField` route
+that only the arrow spelling used to reach), and a block that keeps its statements gets
+the return appended as a synthetic `$match(X)` statement. Folding it in as a *statement*
+rather than lowering it separately is what keeps the two spellings from drifting again:
+the return then rides the same parameter rewrite (an outer `$.<field>` still captures
+into `$lookup.let`) and the same `$match` translation the expression body gets, so there
+is no second predicate path to maintain. A `const` in the block now works too — it
+materialises as its binding stage and the appended `$match` reads it back.
+
+Canonicalisation runs at **every** entry point that receives a predicate lambda, not just
+the two gates, because the `$$ =` pivot hand-rolls a `LookupCall` from the raw chain
+method and so passes no gate — that bypass was why the correlated source-switch form
+still differed after the gates were fixed. `.reject` was the symmetric half: it refused
+every block body ("no single expression to negate"), which was right for a block of
+statements and wrong for `{ return X; }`, and the foreign side hand-rolled its own copy
+of the negation. Both now share `negateStreamPredicate`, and a block that genuinely has
+no single expression to invert keeps the actionable error. The new tests compare the
+block form against the expression form *outcome for outcome* across all seven containers
+rather than against literal MQL, so the pair cannot drift apart; with the fix reverted, 26
+of them fail. Emitted shapes were run against a live mongod (a `$match({b:1})` +
+`return o.a > 1` block returns only the doc satisfying both).
+
+---
+
 ## 2026-08-10 — refactor: the sub-pipeline write-stage ban no longer depends on the path that lowered it
 
 HR3 says jsmql never emits a `$out` / `$merge` inside a sub-pipeline, because mongod

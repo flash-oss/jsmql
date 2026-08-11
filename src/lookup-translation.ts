@@ -439,11 +439,15 @@ export function detectLookupCall(expr: Expr, ctx: GenerateCtx): LookupCall | nul
   // materialisation, cross-DB gate) treats every spelling identically.
   // A malformed argument (expression-body arrow, spread-bearing array, empty
   // matcher) returns null here; `validateLookupShape` surfaces the actionable error.
+  // A predicate written `o => { return X; }` normalises to `o => X` here, so it
+  // reaches `tryBasicForm` and takes the indexed `localField`/`foreignField` route
+  // the expression spelling gets. `.aggregate` is exempt: its `return` reshapes the
+  // document (`$replaceWith`), so the block is the meaning there, not a predicate.
   const lambda =
     method === "aggregate"
       ? aggregateArgToLambda(arg)
       : arg.type === "Lambda"
-        ? arg
+        ? canonicalPredicateLambda(arg)
         : predicateArgToLambda(arg, method);
   if (lambda === null) return null;
   return { pos: target.pos, callPos: expr.pos, db: target.db, collection: target.collection, method, lambda };
@@ -567,7 +571,7 @@ export function requireStreamPredicate(arg: CallArg, opts: { method: string; pos
       lambda.pos,
     );
   }
-  return lambda;
+  return canonicalPredicateLambda(lambda);
 }
 
 /**
@@ -607,18 +611,86 @@ export function localRefInPredicateMessage(opts: {
  * Negate a normalised predicate lambda — the `.reject` half of the `.filter`/
  * `.reject` pair. Lives beside the gate so every container negates identically:
  * `o => !(<body>)`, which lowers to `$match: { $expr: { $not: … } }` (no query-form
- * De Morgan, which jsmql rejects project-wide). Returns null for a block body,
- * which has no single expression to negate.
+ * De Morgan, which jsmql rejects project-wide).
+ *
+ * A block body whose only content is `return X` counts as the expression form,
+ * because in JavaScript it IS the same function. Returns null for a block that
+ * holds real statements — a stage or a binding leaves no single expression to
+ * invert, and `.filter(o => !(…))` is the spelling for that.
  */
 export function negateStreamPredicate(lambda: Lambda): Lambda | null {
-  if (lambda.body === undefined) return null;
+  const body = canonicalPredicateLambda(lambda).body;
+  if (body === undefined) return null;
   const pos = lambda.pos;
+  return { type: "Lambda", params: lambda.params, body: { type: "UnaryExpr", op: "!", operand: body, pos }, pos };
+}
+
+/**
+ * Put a predicate lambda in canonical form, so a terminal `return` never goes
+ * unread. In JavaScript `o => { …; return X; }` filters by X — the return IS the
+ * predicate — and `o => { return X; }` is the very same function as `o => X`. Two
+ * spellings of one function must emit one shape, so:
+ *
+ *   - **`{ return X; }` alone** → the expression lambda `o => X`. It then reaches
+ *     the same basic-form detection (`tryBasicForm`, the indexed
+ *     `localField`/`foreignField` route), the same translation, and the same
+ *     `.reject` negation the expression spelling gets.
+ *   - **statements + `return X`** → the block, with `X` appended as a synthetic
+ *     `$match(X)` statement. There the block is the meaning, and as a statement the
+ *     return rides the caller's own parameter rewrite (`extractLetsFromPipeline`,
+ *     which hoists `o.<field>` and captures an outer `$.<field>` into `$lookup.let`)
+ *     plus the ordinary `$match` lowering — so there is no second predicate path to
+ *     drift from the first.
+ *   - **anything else** → unchanged.
+ *
+ * `.map`'s counterpart is `lowerCallbackBlock`'s `terminalRet`, appended as the
+ * root-replace `$ = <ret>`; `.aggregate` keeps its block, whose `return` reshapes
+ * the document rather than filtering it.
+ *
+ * Idempotent, and cheap on the common path (an expression body returns at once), so
+ * **every** entry point that receives a predicate lambda calls it — the gates
+ * (`requireStreamPredicate`, `chainFilterLambda`, `detectLookupCall`), the two
+ * lowering sinks (`translatePredicate`, `buildPipelineFormPredicate`), and the
+ * correlation probe (`predicateReferencesOuterDoc`). A predicate that reaches a
+ * lowering by some other route is canonicalised there rather than silently losing
+ * its return.
+ */
+export function canonicalPredicateLambda(lambda: Lambda): Lambda {
+  const sole = soleReturnExpr(lambda);
+  if (sole !== undefined) return { type: "Lambda", params: lambda.params, body: sole, pos: lambda.pos };
+  if (lambda.ret === undefined || lambda.block === undefined) return lambda;
+  const ret = lambda.ret;
+  // Same shape a hand-written `$match(<body>);` statement parses to (see
+  // `stageLinkBlock`), so it lowers through the ordinary stage path.
+  const matchStmt: Expr = {
+    type: "OperatorCall",
+    name: "$match",
+    style: ret.type === "ObjectLiteral" ? "object" : "positional",
+    args: [ret],
+    pos: ret.pos,
+  };
   return {
     type: "Lambda",
     params: lambda.params,
-    body: { type: "UnaryExpr", op: "!", operand: lambda.body, pos },
-    pos,
+    block: { type: "Pipeline", stmts: [...lambda.block.stmts, matchStmt], pos: lambda.block.pos },
+    pos: lambda.pos,
   };
+}
+
+/**
+ * The `X` of a body that is nothing but `return X;`. Predicate positions parse a
+ * block two ways — as a callback block of statements (`.filter`, which allows
+ * stages) or as an expression block (`.reject`, which does not) — so both shapes
+ * are checked. Undefined once the body holds a statement or a binding.
+ */
+function soleReturnExpr(lambda: Lambda): Expr | undefined {
+  if (lambda.block !== undefined && lambda.ret !== undefined) {
+    return lambda.block.stmts.length === 0 ? lambda.ret : undefined;
+  }
+  if (lambda.exprBlock !== undefined) {
+    return lambda.exprBlock.decls.length === 0 ? lambda.exprBlock.ret : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -1182,7 +1254,10 @@ export function translatePredicate(
   // lookup reached through `lowerBlock` knows it is nested. See
   // docs/specs/lookup-stage.md § Block-body nested lookups.
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
-  const { lambda } = call;
+  // Canonical first: callers that hand-roll a `LookupCall` (the `$$ =` pivot builds
+  // one from the raw chain method) never passed through a gate, so this is where a
+  // terminal `return` is guaranteed to be read.
+  const lambda = canonicalPredicateLambda(call.lambda);
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
 
@@ -1288,7 +1363,10 @@ function buildBlockBodyPredicate(
   lowerBlock: SubPipelineLowerer,
   enclosing: EnclosingLookupContext,
 ): { letVars: Record<string, string>; pipeline: object[] } {
-  const block = lambda.block as Pipeline; // caller guarantees lambda.block !== undefined
+  // Caller guarantees a CANONICAL block lambda (`canonicalPredicateLambda`), so a
+  // terminal `return` is already a `$match` statement here and the parameter checks
+  // below see it like any other.
+  const block = lambda.block as Pipeline;
   const foreignParam = lambda.params[0];
   // 2nd/3rd params on a block-body `.filter` — (element, index, collection).
   // The index has no per-doc meaning on a stream; the collection is the
@@ -1417,11 +1495,14 @@ export function lowerCallbackBlock(
  * supplied `lowerBlock` for the full sub-pipeline shape.
  */
 export function buildPipelineFormPredicate(
-  lambda: Lambda,
+  lambdaArg: Lambda,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
   enclosingArg?: EnclosingLookupContext,
 ): { letVars: Record<string, string>; pipelineBody: object[] } {
+  // Canonical first, for the same reason `translatePredicate` does it — this is a
+  // lowering sink reachable from callers that build their own predicate lambda.
+  const lambda = canonicalPredicateLambda(lambdaArg);
   const enclosing = enclosingArg ?? outerCtx.enclosingLookup ?? EMPTY_ENCLOSING;
   const foreignParam = lambda.params[0];
   const outerLets = outerCtx.pipelineLets;
@@ -1473,10 +1554,14 @@ export function buildPipelineFormPredicate(
  * any `$.<field>` paths OR outer-let references in the body that would be
  * hoisted into `$lookup.let` vars, this returns true.
  */
-export function predicateReferencesOuterDoc(lambda: Lambda, outerCtx: GenerateCtx): boolean {
-  if (lambda.params.length !== 1) return false;
-  const foreignParam = lambda.params[0];
+export function predicateReferencesOuterDoc(lambdaArg: Lambda, outerCtx: GenerateCtx): boolean {
+  if (lambdaArg.params.length !== 1) return false;
+  const foreignParam = lambdaArg.params[0];
   const outerLets = outerCtx.pipelineLets;
+  // Canonical, so a terminal `return` counts: an outer-doc ref there correlates the
+  // predicate exactly as one in a statement does, and the wrong answer here picks a
+  // lowering with no `let` slot to carry the correlation.
+  const lambda = canonicalPredicateLambda(lambdaArg);
   if (lambda.body !== undefined) {
     const { letVars } = extractLetsFromExpr(lambda.body, foreignParam, outerLets);
     return Object.keys(letVars).length > 0;
@@ -1727,7 +1812,7 @@ export function matchStagesFromTranslation(t: MatchTranslation, subCtx: Generate
  * document parameter.
  */
 export function lowerLambdaPredicate(
-  lambda: Lambda,
+  lambdaArg: Lambda,
   outerCtx: GenerateCtx,
   lowerBlock: SubPipelineLowerer,
   opts: {
@@ -1736,6 +1821,10 @@ export function lowerLambdaPredicate(
     missingBody: () => never;
   },
 ): object[] {
+  // Canonical before the shape test: `o => { return X; }` takes the expression
+  // branch below (identical to `o => X`), and a block that keeps its statements
+  // carries the `return` as a trailing `$match`.
+  const lambda = canonicalPredicateLambda(lambdaArg);
   const param = lambda.params[0];
 
   // Expression body → query-language translation + `$match`.
@@ -2549,7 +2638,8 @@ function chainFilterLambda(m: MethodCall): Lambda {
     throw new CodegenError(`.${m.method}(<predicate>) takes a single arrow predicate ('o => …')${rejectHint}.`, m.pos);
   }
   const arg = m.args[0];
-  const base = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
+  const raw = arg.type === "Lambda" ? arg : shorthandToLambda(arg, m.method, FOREIGN_SHORTHAND_PARAM);
+  const base = raw === null ? null : canonicalPredicateLambda(raw);
   if (base === null || base.params.length !== 1) {
     throw new CodegenError(
       `.${m.method}(<predicate>) takes a single-parameter arrow ('o => …')${rejectHint}.`,
@@ -2557,15 +2647,13 @@ function chainFilterLambda(m: MethodCall): Lambda {
     );
   }
   if (m.method === "reject") {
-    if (base.body === undefined) {
+    // The shared negation, so the foreign half and the local `$$.reject` half
+    // accept exactly the same predicate shapes.
+    const negated = negateStreamPredicate(base);
+    if (negated === null) {
       throw new CodegenError(`.reject(<predicate>) takes a single-parameter expression arrow ('o => …').`, base.pos);
     }
-    return {
-      type: "Lambda",
-      params: base.params,
-      body: { type: "UnaryExpr", op: "!", operand: base.body, pos: base.pos },
-      pos: base.pos,
-    };
+    return negated;
   }
   return base;
 }

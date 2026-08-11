@@ -203,8 +203,10 @@ it runs first, in the loop validator.
 `requireStreamPredicate` (in [`src/lookup-translation.ts`](../../src/lookup-translation.ts),
 beside the predicate lowering it feeds) is the **single** entry point for the argument of a
 local `$$.filter(…)` / `$$.reject(…)`. It normalises every predicate spelling — arrow,
-matches-object, field name, `["field", value]` pair — into the single-parameter arrow the
-lowering consumes, and enforces that arity. It is the local-stream counterpart to what
+block body returning the predicate, matches-object, field name, `["field", value]` pair —
+into the single-parameter arrow the lowering consumes, and enforces that arity. (The block
+spelling is canonicalised by `canonicalPredicateLambda`; see
+[lookup-stage.md](lookup-stage.md) § Canonical predicate form.) It is the local-stream counterpart to what
 `detectLookupCall` + `validateLookupShape` already do for the foreign `$$$.<coll>.filter(…)`
 side.
 
