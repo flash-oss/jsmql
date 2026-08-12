@@ -308,7 +308,7 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = â€
 | Method | MQL output | Note |
 |---|---|---|
 | `.getFullYear()` | `{ $year: expr }` | |
-| `.getMonth()` | `{ $subtract: [{ $month: expr }, 1] }` | 0-based |
+| `.getMonth()` | `{ $month: expr }` | 1-based (January = 1) |
 | `.getDate()` | `{ $dayOfMonth: expr }` | |
 | `.getDay()` | `{ $subtract: [{ $dayOfWeek: expr }, 1] }` | 0-based, Sunday=0 |
 | `.getHours()` | `{ $hour: expr }` | |
@@ -316,7 +316,7 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = â€
 | `.getSeconds()` | `{ $second: expr }` | |
 | `.getMilliseconds()` | `{ $millisecond: expr }` | |
 | `.getUTCFullYear()` | `{ $year: { date: expr, timezone: "UTC" } }` | UTC-anchored |
-| `.getUTCMonth()` | `{ $subtract: [{ $month: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based |
+| `.getUTCMonth()` | `{ $month: { date: expr, timezone: "UTC" } }` | UTC, 1-based |
 | `.getUTCDate()` | `{ $dayOfMonth: { date: expr, timezone: "UTC" } }` | UTC |
 | `.getUTCDay()` | `{ $subtract: [{ $dayOfWeek: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based, Sunday=0 |
 | `.getUTCHours()` | `{ $hour: { date: expr, timezone: "UTC" } }` | UTC |
@@ -327,6 +327,8 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = â€
 | `.toISOString()` | `{ $dateToString: { date: expr, format: "%Y-%m-%dT%H:%M:%S.%LZ" } }` | |
 | `.plus(amount, unit[, tz])` | `{ $dateAdd: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
 | `.minus(amount, unit[, tz])` | `{ $dateSubtract: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
+
+**Month base.** `.getMonth()` / `.getUTCMonth()` pass MongoDB's 1-based `$month` through unchanged, so JSMQL has exactly one month base â€” the MQL one â€” across the getters, `$month`, and `$dateFromParts`. JavaScript's `Date.prototype.getMonth()` is 0-based, and this is the deliberate divergence. `.getDay()` / `.getUTCDay()` keep JS's 0-based weekday (Sunday = 0); the 0-based `new Date(y, m, d)` *input* side is unchanged too, so a getter â†’ constructor round trip needs the `- 1` written out.
 
 `.plus` / `.minus` take Temporal/Luxon's method name with Moment's `(amount, unit)` argument order â€” the receiver is the `startDate`, `amount` first, `unit` second, and an optional third `timezone`. Argument count is checked by `checkArity` (2 or 3 args); the literal slots are gated to the same shapes the `$dateAdd` / `$dateSubtract` operator path rejects, reusing its own helpers so both spellings error identically: `checkEnum` against `TIME_UNIT` (the shared time-unit enum in `operator-validation.ts`) for `unit`, and `checkArgType` for `amount` (`int-or-long`) and `timezone` (`string`). All three are literal-gated â€” a field-path or parameter in any slot passes through unchecked.
 

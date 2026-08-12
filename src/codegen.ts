@@ -3982,8 +3982,10 @@ function generateMethodCall(
     case "getFullYear":
       return { $year: genObj };
     case "getMonth":
-      // 0-based: MongoDB $month is 1-based
-      return { $subtract: [{ $month: genObj }, 1] };
+      // 1-based, matching MongoDB's $month (NOT JavaScript's 0-based getMonth) —
+      // one month base across the whole language, the same one `.set({ month })`
+      // and `$month` use. See docs/specs/method-dispatch.md § Date methods.
+      return { $month: genObj };
     case "getDate":
       return { $dayOfMonth: genObj };
     case "getDay":
@@ -4001,8 +4003,8 @@ function generateMethodCall(
     case "getUTCFullYear":
       return { $year: utcDate(genObj) };
     case "getUTCMonth":
-      // 0-based: MongoDB $month is 1-based
-      return { $subtract: [{ $month: utcDate(genObj) }, 1] };
+      // 1-based, like `.getMonth()` above.
+      return { $month: utcDate(genObj) };
     case "getUTCDate":
       return { $dayOfMonth: utcDate(genObj) };
     case "getUTCDay":

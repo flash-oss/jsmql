@@ -2075,7 +2075,7 @@ Call on any expression that produces a date:
 
 ```js
 $.createdAt.getFullYear()          // { $year: "$createdAt" }
-$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }  (0-indexed, JS-compatible)
+$.createdAt.getMonth()             // { $month: "$createdAt" }    (1-based: January = 1)
 $.createdAt.getDate()              // { $dayOfMonth: "$createdAt" }
 $.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }  (0=Sun, JS-compatible)
 $.createdAt.getHours()             // { $hour: "$createdAt" }
@@ -2090,7 +2090,7 @@ Each component getter has a `getUTC*` variant that reads the date in UTC instead
 
 ```js
 $.createdAt.getUTCFullYear()       // { $year: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCMonth()          // { $subtract: [{ $month: { date: "$createdAt", timezone: "UTC" } }, 1] }  (0-indexed)
+$.createdAt.getUTCMonth()          // { $month: { date: "$createdAt", timezone: "UTC" } }   (1-based)
 $.createdAt.getUTCDate()           // { $dayOfMonth: { date: "$createdAt", timezone: "UTC" } }
 $.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: { date: "$createdAt", timezone: "UTC" } }, 1] }  (0=Sun)
 $.createdAt.getUTCHours()          // { $hour: { date: "$createdAt", timezone: "UTC" } }
@@ -2110,7 +2110,9 @@ $.t.plus(2, "hour", "America/New_York")
 
 `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below); a literal typo is rejected with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer and a literal `timezone` must be a string — otherwise you get the same compile-time error the `$dateAdd(…)` operator form gives; a field path or parameter in either slot passes through unchecked. The method name follows Temporal/Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)` — `amount` first, `unit` second.
 
-**Note:** `getMonth()` / `getUTCMonth()` and `getDay()` / `getUTCDay()` are adjusted to match JavaScript's 0-based conventions. MongoDB's `$month` is 1-based; jsmql subtracts 1 automatically. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
+**Months are 1-based — January is `1`.** `getMonth()` / `getUTCMonth()` return MongoDB's `$month` unchanged, so the month base is the same in JSMQL as it is in the MQL you read back: the getters, `$month`, and `$dateFromParts` all count January as `1`. This is the one place a date getter deliberately diverges from JavaScript, whose `Date.prototype.getMonth()` is 0-based. `getDay()` / `getUTCDay()` stay 0-based (Sunday = 0) to match JS. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
+
+**Note:** the multi-argument `new Date(y, m, d, …)` constructor keeps JavaScript's 0-based month on the *input* side, so `new Date(2024, 0, 15)` is 15 January. A round trip through the getters therefore needs the adjustment written out: `new Date($.t.getFullYear(), $.t.getMonth() - 1, 1)`.
 
 **Note:** these methods require a date receiver, so a literal non-date is rejected at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings/numbers.
 

@@ -2266,8 +2266,8 @@ describe("date methods", () => {
   it("getFullYear", () => {
     expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
   });
-  it("getMonth (0-based)", () => {
-    expect(jsmql.expr("$.ts.getMonth()")).toEqual({ $subtract: [{ $month: "$ts" }, 1] });
+  it("getMonth (1-based, matching MongoDB's $month)", () => {
+    expect(jsmql.expr("$.ts.getMonth()")).toEqual({ $month: "$ts" });
   });
   it("getDate", () => {
     expect(jsmql.expr("$.ts.getDate()")).toEqual({ $dayOfMonth: "$ts" });
@@ -2354,7 +2354,7 @@ describe("date-method receiver type-check", () => {
   });
   it("no-ops on a field ref, new Date(…), or an HR1 $-string receiver (literal-gating)", () => {
     expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $month: { $toDate: "$x" } });
     expect(jsmql.expr('"$ts".getHours()')).toEqual({ $hour: "$ts" }); // HR1: a source "$ts" is the field ref $ts
   });
 });
@@ -2362,12 +2362,12 @@ describe("date-method receiver type-check", () => {
 describe("date methods (UTC variants)", () => {
   // Same operators as the local getters, anchored to UTC via `timezone: "UTC"`.
   // Verified against a live mongod (t = 2023-03-15T18:45:30.123Z, a Wednesday):
-  // → { y:2023, mo:2, d:15, dow:3, h:18, mi:45, s:30, ms:123 }.
+  // → { y:2023, mo:3, d:15, dow:3, h:18, mi:45, s:30, ms:123 }.
   it("getUTCFullYear", () => {
     expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({ $year: { date: "$ts", timezone: "UTC" } });
   });
-  it("getUTCMonth (0-based)", () => {
-    expect(jsmql.expr("$.ts.getUTCMonth()")).toEqual({ $subtract: [{ $month: { date: "$ts", timezone: "UTC" } }, 1] });
+  it("getUTCMonth (1-based, matching MongoDB's $month)", () => {
+    expect(jsmql.expr("$.ts.getUTCMonth()")).toEqual({ $month: { date: "$ts", timezone: "UTC" } });
   });
   it("getUTCDate", () => {
     expect(jsmql.expr("$.ts.getUTCDate()")).toEqual({ $dayOfMonth: { date: "$ts", timezone: "UTC" } });

@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat!: `getMonth()` / `getUTCMonth()` are 1-based
+
+```
+$.t.getMonth()
+// before: { $subtract: [{ $month: "$t" }, 1] }     ← 0-based, JS-compatible
+// now:    { $month: "$t" }                          ← 1-based, January = 1
+```
+
+One month base for the whole language, and it is MongoDB's. The 0-based getter matched
+`Date.prototype.getMonth()`, but it meant a developer reading the emitted MQL saw `$month`
+counting from 1 while the JSMQL that produced it counted from 0, and every date feature
+that names a month — `$month`, `$dateFromParts`, a `$group` on a month number — had to
+carry the same mental `± 1`. The divergence from JavaScript is now the deliberate one:
+JSMQL months are 1-based because MQL months are.
+
+Two sites unchanged, on purpose. `.getDay()` / `.getUTCDay()` keep JS's 0-based weekday
+(Sunday = 0) — MongoDB's `$dayOfWeek` is 1-based with Sunday = 1, so neither base is the
+MQL one and JS wins the tie. The multi-argument `new Date(y, m, d, …)` constructor also
+keeps its 0-based month *input*, so `new Date(2024, 0, 15)` still pastes in from
+JavaScript and means 15 January. The consequence is that a getter → constructor round
+trip needs the adjustment written out, `new Date($.t.getFullYear(), $.t.getMonth() - 1, 1)`,
+which [docs/LANGUAGE.md](LANGUAGE.md) now states next to the getter table.
+
+---
+
 ## 2026-08-11 — fix: a forbidden stage inside an `.aggregate` block names its container (closes DEF-024)
 
 ```
