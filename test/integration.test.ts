@@ -640,6 +640,77 @@ $ = { n: [10, 20, 30].length, rev: [10, 20, 30].toReversed(), h: [10, 20, 30].he
     expect(rows).toEqual([{ n: 3, rev: [30, 20, 10], h: 10, l: 30, one: 1, nested: [2, 1] }]);
   });
 
+  // A `toEqual` can't tell an index dispatch that *runs* from one the server
+  // refuses, and this family has three receiver types and two spellings. So run
+  // each one and compare against what JavaScript returns for the same expression.
+  // `tags` is `["vip", "beta"]`, `name` is the string "Ada Lovelace", `profile` is
+  // a document, and `nope` is absent.
+  it("pipeline: bracket index and .at() match JavaScript on arrays, strings, and documents", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+$ = { arrFirst: $.tags[0], arrLast: $.tags.at(-1),
+      strFirst: $.name[0], strAt: $.name.at(4), strLast: $.name.at(-1),
+      docKey: $.profile["verified"],
+      absent: $.nope.at(0) ?? "fallback", absentIdx: $.nope[0] ?? "fallback" };`,
+    );
+    expect(rows).toEqual([
+      {
+        arrFirst: "vip", // ["vip","beta"][0]
+        arrLast: "beta", // .at(-1)
+        strFirst: "A", // "Ada Lovelace"[0]  — was a server error before
+        strAt: "L", // .at(4) — A-d-a-space-L
+        strLast: "e", // .at(-1) on a string
+        docKey: true,
+        // A missing receiver stays MISSING through both spellings, so `??` fires.
+        absent: "fallback",
+        absentIdx: "fallback",
+      },
+    ]);
+  });
+
+  // `$getField.field` must evaluate to a String or mongod aborts the WHOLE command
+  // — and a missing key field reaches it as null, which is ordinary data, not an
+  // exotic case. So a computed key is coerced. `subscription` is a document with a
+  // `tier` field; `keyField` doesn't exist on any user, and `numKey` is a number.
+  it("pipeline: a computed bracket key survives a missing key field and a numeric one", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+const numKey = 0;
+$ = { byLiteral: $.subscription["tier"], byMissing: $.subscription[$.keyField] ?? "no-key",
+      byNumber: $.tags[numKey], digitKey: { 0: "zero", 1: "one" }[numKey] };`,
+    );
+    expect(rows).toEqual([
+      {
+        byLiteral: "premium",
+        // Before the coercion this aborted with "$getField requires 'field' to
+        // evaluate to type String, but got null".
+        byMissing: "no-key",
+        byNumber: "vip", // tags[0] — the array branch
+        // A numeric object KEY builds the field "0", as JavaScript does.
+        digitKey: "zero",
+      },
+    ]);
+  });
+
+  // A method chained onto a lookup reads jsmql's OWN materialised slot, which it
+  // knows holds the `$lookup.as` array — so the emitted MQL has no runtime type
+  // guard. Running it proves the compile-time shortcut picked the right branch.
+  it("pipeline: methods chained onto a materialised lookup slot return the right values", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+const mine = $$$.orders.filter(o => o.userId === $._id);
+$ = { n: mine.length, firstStatus: mine.at(0).status, lastStatus: mine.at(-1).status,
+      idxStatus: mine[0].status, tierCount: $$$.orders.filter(o => o.userId === $._id).countBy("status").size() };`,
+    );
+    expect(rows).toEqual([
+      // Ada has 3 orders and they all share one status, so countBy has 1 key.
+      { n: 3, firstStatus: "shipped", lastStatus: "shipped", idxStatus: "shipped", tierCount: 1 },
+    ]);
+  });
+
   // `.flatMap` lowers to `$unwind`, so the `.aggregate` block that follows sees
   // one document per order line — the sum proves the unwind ran before the group.
   it("pipeline: .flatMap then .aggregate sums across unwound lines", async () => {

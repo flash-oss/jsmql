@@ -2612,6 +2612,27 @@ export class Parser {
       return { type: "KeyValueEntry", key, value, pos: tok.pos };
     }
 
+    // A NUMERIC key (`{ 0: … }`, `{ 1.5: … }`, `{ 0x10: … }`) is valid JavaScript,
+    // where a property key is always coerced to a string — so `{ 0: 1 }` builds the
+    // field `"0"` and `{ 0x10: 1 }` builds `"16"` (the numeric VALUE, not the source
+    // text). This is the write-side counterpart of reading `doc[0]`.
+    if (tok.type === TokenType.Number) {
+      const literal = this.parseNumber();
+      if (literal.type !== "NumberLiteral") {
+        // A 24-hex `0x…` is an ObjectId in jsmql, and an ObjectId is not a field
+        // name. JS would read it as a precision-losing number, so neither reading
+        // is useful — name the spelling that works.
+        throw new ParseError(
+          `An ObjectId literal can't be an object key at position ${tok.pos} — a field name is a string. ` +
+            `Quote it (\`{ "${"hex" in literal ? literal.hex : ""}": … }\`) to use it as a field name.`,
+          tok.pos,
+        );
+      }
+      this.lexer.expect(TokenType.Colon);
+      const value = this.parseExpression();
+      const key: ObjectKey = { kind: "static", name: String(literal.value) };
+      return { type: "KeyValueEntry", key, value, pos: tok.pos };
+    }
     if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
       throw new ParseError(
         `Expected an object key, but found ${formatActualToken(tok)} at position ${tok.pos}. ` +

@@ -143,13 +143,11 @@ $ = candidateProductIds
                       $map: {
                         input: "$productIds",
                         as: "p",
-                        in: {
-                          $cond: {
-                            if: { $isArray: "$$jsmql_v0_myProductIds" },
-                            then: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
-                            else: { $gte: [{ $indexOfCP: ["$$jsmql_v0_myProductIds", "$$p"] }, 0] },
-                          },
-                        },
+                        // `myProductIds` is a `const` bound to `.uniq()` — provably an
+                        // array — and the `$lookup.let` var captures the whole binding,
+                        // so `.includes` is a plain `$in`: no `$isArray` guard, no dead
+                        // `$indexOfCP` string branch.
+                        in: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
                       },
                     },
                   },
@@ -187,15 +185,7 @@ $ = candidateProductIds
                                 },
                               },
                               as: "p",
-                              cond: {
-                                $not: {
-                                  $cond: {
-                                    if: { $isArray: "$__jsmql.var.myProductIds" },
-                                    then: { $in: ["$$p", "$__jsmql.var.myProductIds"] },
-                                    else: { $gte: [{ $indexOfCP: ["$__jsmql.var.myProductIds", "$$p"] }, 0] },
-                                  },
-                                },
-                              },
+                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
                             },
                           },
                           as: "jsmqlItem",
@@ -228,15 +218,7 @@ $ = candidateProductIds
                                 },
                               },
                               as: "p",
-                              cond: {
-                                $not: {
-                                  $cond: {
-                                    if: { $isArray: "$__jsmql.var.myProductIds" },
-                                    then: { $in: ["$$p", "$__jsmql.var.myProductIds"] },
-                                    else: { $gte: [{ $indexOfCP: ["$__jsmql.var.myProductIds", "$$p"] }, 0] },
-                                  },
-                                },
-                              },
+                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
                             },
                           },
                           as: "jsmqlItem",
@@ -286,7 +268,12 @@ $ = candidateProductIds
                             $cond: {
                               if: { $isArray: "$__jsmql.var.candidateProductIdCounts" },
                               then: { $arrayElemAt: ["$__jsmql.var.candidateProductIdCounts", "$$id"] },
-                              else: { $getField: { field: "$$id", input: "$__jsmql.var.candidateProductIdCounts" } },
+                              else: {
+                                $getField: {
+                                  field: { $toString: { $ifNull: ["$$id", ""] } },
+                                  input: "$__jsmql.var.candidateProductIdCounts",
+                                },
+                              },
                             },
                           },
                           name: {
@@ -502,7 +489,19 @@ $project({
                       [
                         {
                           k: "$$this",
-                          v: { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] },
+                          v: {
+                            $add: [
+                              {
+                                $ifNull: [
+                                  {
+                                    $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" },
+                                  },
+                                  0,
+                                ],
+                              },
+                              1,
+                            ],
+                          },
                         },
                       ],
                     ],
@@ -1200,7 +1199,7 @@ describe(
         $cond: {
           if: { $isArray: "$cart.field" },
           then: { $arrayElemAt: ["$cart.field", "$mainSide"] },
-          else: { $getField: { field: "$mainSide", input: "$cart.field" } },
+          else: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
         },
       });
     });
@@ -1784,8 +1783,30 @@ describe("full name with three-step ?? fallback chain", { features: ["Nullish co
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])" },
     () => {
+      // `.at()` reads from either end of an array OR a string in JS, and `$.aliases`
+      // is a bare field — no provable type — so the middle term dispatches at query
+      // time. Pin the type (a `const` with an array-producing initialiser, or a
+      // chained `.map`/`.uniq`) to get a bare `$arrayElemAt`.
       expect(jsmql.expr(`$.firstName ?? $.aliases.at(0) ?? "anonymous"`)).toEqual({
-        $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
+        $ifNull: [
+          "$firstName",
+          {
+            $cond: {
+              if: { $isArray: "$aliases" },
+              then: { $arrayElemAt: ["$aliases", 0] },
+              else: {
+                $cond: {
+                  if: { $eq: [{ $type: "$aliases" }, "string"] },
+                  then: { $substrCP: ["$aliases", 0, 1] },
+                  // Missing must stay MISSING, not become "" — otherwise it is not
+                  // null and the "anonymous" fallback below never fires.
+                  else: "$$REMOVE",
+                },
+              },
+            },
+          },
+          "anonymous",
+        ],
       });
     },
   );

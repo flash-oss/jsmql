@@ -3038,6 +3038,19 @@ var Parser = class {
       const key2 = { kind: "static", name: tok.value };
       return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
     }
+    if (tok.type === TokenType.Number) {
+      const literal = this.parseNumber();
+      if (literal.type !== "NumberLiteral") {
+        throw new ParseError(
+          `An ObjectId literal can't be an object key at position ${tok.pos} \u2014 a field name is a string. Quote it (\`{ "${"hex" in literal ? literal.hex : ""}": \u2026 }\`) to use it as a field name.`,
+          tok.pos
+        );
+      }
+      this.lexer.expect(TokenType.Colon);
+      const value2 = this.parseExpression();
+      const key2 = { kind: "static", name: String(literal.value) };
+      return { type: "KeyValueEntry", key: key2, value: value2, pos: tok.pos };
+    }
     if (tok.type !== TokenType.Ident && tok.type !== TokenType.String) {
       throw new ParseError(
         `Expected an object key, but found ${formatActualToken(tok)} at position ${tok.pos}. An object entry must be \`key: value\`, a shorthand \`key\`, or a spread \`...expr\`. To include fields conditionally, spread a ternary: \`{ ...base, ...(cond ? { \u2026 } : {}) }\`.`,
@@ -5739,6 +5752,7 @@ function extendCtx(ctx, params) {
     droppedLets: ctx.droppedLets,
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
+    slotTypes: ctx.slotTypes,
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
     topLevelStream: ctx.topLevelStream,
@@ -5797,7 +5811,10 @@ function freshSubPipelineCtx(outer, container) {
     // boundaries — a lookup materialised inside a `.map` block keeps allocating
     // from the enclosing chain's counter. Undefined unless an enclosing chain
     // set it, so ordinary sub-pipelines still start their own counter.
-    slotAllocator: outer.slotAllocator
+    slotAllocator: outer.slotAllocator,
+    // Same rationale as the allocator: the slot-type registry describes emitted
+    // stages, so it crosses sub-pipeline boundaries with the slots it describes.
+    slotTypes: outer.slotTypes
   };
 }
 function freshFacetCtx(outer) {
@@ -5809,6 +5826,7 @@ function freshFacetCtx(outer) {
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
     bindingTypes: outer.bindingTypes,
+    slotTypes: outer.slotTypes,
     pipelineContext: outer.pipelineContext,
     // Functions declared before the $facet are visible inside its branches,
     // mirroring the outer-lets rule above.
@@ -5868,7 +5886,9 @@ var METHODS = {
   indexOf: { returns: "number", optional: "either" },
   includes: { returns: "bool", optional: "either" },
   // ── Array ─────────────────────────────────────────────────────────────────
-  at: { optional: "array" },
+  // `.at` sits with `.slice`/`.concat`/`.indexOf`/`.includes` in the `"either"`
+  // family: JS has it on both `Array` and `String` (`"abc".at(-1) === "c"`).
+  at: { optional: "either" },
   slice: { optional: "either" },
   concat: { optional: "either" },
   reverse: { returns: "array", optional: "array" },
@@ -5972,7 +5992,8 @@ var METHODS = {
   head: { optional: "array" },
   first: { optional: "array" },
   last: { optional: "array" },
-  nth: { optional: "array" },
+  nth: { optional: "either" },
+  // dual-type, like `.at` — see generateIndexFromEitherEnd
   size: { returns: "number", optional: "array" },
   takeWhile: { returns: "array", optional: "array" },
   dropWhile: { returns: "array", optional: "array" },
@@ -6052,7 +6073,7 @@ var ARRAY_OUTPUT_OPS = /* @__PURE__ */ new Set([
   "$objectToArray"
 ]);
 var ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
-function isArrayOfArrays(expr) {
+function isArrayOfArrays(expr, ctx) {
   if (expr.type === "ArrayLiteral") {
     if (expr.elements.length === 0) return false;
     return expr.elements.every((el) => {
@@ -6065,42 +6086,50 @@ function isArrayOfArrays(expr) {
         case "FuncDecl":
           return false;
         default:
-          return isArrayProducing(el);
+          return isArrayProducing(el, ctx);
       }
     });
   }
   return expr.type === "MethodCall" && expr.method === "partition";
 }
-function rejectNestedArrayStringify(object, method, callPos) {
-  if (!isArrayOfArrays(object)) return;
+function rejectNestedArrayStringify(object, method, callPos, ctx) {
+  if (!isArrayOfArrays(object, ctx)) return;
   const recv = object.type === "MethodCall" ? `'.${object.method}(...)'` : "this array literal";
   throw new CodegenError(
     `.${method}() can't stringify an array of arrays \u2014 ${recv} holds arrays, and MongoDB has no recursive string conversion (JavaScript's nested '[[1,2],[3]].${method}()' has no MQL equivalent). Flatten first ('.flat().${method}()'), or map each inner array to a string ('.map(a => a.${method}()).${method}()').`,
     callPos
   );
 }
-function isArrayProducing(expr) {
+function bindingTypeOf(expr, ctx) {
+  if (expr.type === "ParamRef") return ctx?.bindingTypes?.get(expr.name);
+  if (expr.type === "FieldRef") return ctx?.slotTypes?.get(expr.path);
+  return void 0;
+}
+function noteSlotType(ctx, slot, type) {
+  if (type !== void 0) ctx.slotTypes?.set(slot, type);
+}
+function isArrayProducing(expr, ctx) {
   switch (expr.type) {
     case "ArrayLiteral":
       return true;
     case "OperatorCall":
       return ARRAY_OUTPUT_OPS.has(expr.name);
     case "MethodCall":
-      if (expr.method === "slice") return isArrayProducing(expr.object);
+      if (expr.method === "slice") return isArrayProducing(expr.object, ctx);
       return ARRAY_RETURNING_METHODS.has(expr.method);
     case "ObjectCall":
       return expr.method === "entries" || expr.method === "keys" || expr.method === "values";
     default:
-      return false;
+      return bindingTypeOf(expr, ctx) === "array";
   }
 }
-function isObjectProducing(expr) {
-  return expr.type === "ObjectLiteral";
+function isObjectProducing(expr, ctx) {
+  return expr.type === "ObjectLiteral" || bindingTypeOf(expr, ctx) === "object";
 }
-function staticBindingType(expr) {
-  if (isArrayProducing(expr)) return "array";
-  if (isObjectProducing(expr)) return "object";
-  if (isStringProducing(expr)) return "string";
+function staticBindingType(expr, ctx) {
+  if (isArrayProducing(expr, ctx)) return "array";
+  if (isObjectProducing(expr, ctx)) return "object";
+  if (isStringProducing(expr, ctx)) return "string";
   return void 0;
 }
 function arrayElementType(expr) {
@@ -6126,7 +6155,7 @@ function arrayElementType(expr) {
       return void 0;
   }
 }
-function isStringProducing(expr) {
+function isStringProducing(expr, ctx) {
   switch (expr.type) {
     case "StringLiteral":
       return true;
@@ -6135,7 +6164,7 @@ function isStringProducing(expr) {
     case "OperatorCall":
       return STRING_OUTPUT_OPS.has(expr.name);
     case "MethodCall":
-      if (expr.method === "slice") return isStringProducing(expr.object);
+      if (expr.method === "slice") return isStringProducing(expr.object, ctx);
       return STRING_RETURNING_METHODS.has(expr.method);
     case "TypeCast":
       return expr.cast === "String";
@@ -6145,11 +6174,11 @@ function isStringProducing(expr) {
       if (expr.op === "+") {
         const chain = [];
         collectExprChain("+", expr, chain);
-        return chain.some((e) => isStringProducing(e));
+        return chain.some((e) => isStringProducing(e, ctx));
       }
       return false;
     default:
-      return false;
+      return bindingTypeOf(expr, ctx) === "string";
   }
 }
 var BOOL_OUTPUT_OPS = /* @__PURE__ */ new Set([
@@ -6228,15 +6257,15 @@ function requiredReceiverFamily(method) {
   if (meta.optional === "array") return "array";
   return null;
 }
-function certainReceiverType(o) {
+function certainReceiverType(o, ctx) {
   if (isProvablyBool(o)) return "bool";
-  if (isArrayProducing(o)) return "array";
+  if (isArrayProducing(o, ctx)) return "array";
   if (o.type === "MethodCall") {
-    if (o.method === "slice") return certainReceiverType(o.object);
+    if (o.method === "slice") return certainReceiverType(o.object, ctx);
     const r = METHODS[o.method]?.returns;
     if (r === "string" || r === "number" || r === "object") return r;
   }
-  return null;
+  return bindingTypeOf(o, ctx) ?? null;
 }
 var RECEIVER_NOUN = {
   bool: "a boolean",
@@ -6248,8 +6277,10 @@ var RECEIVER_NOUN = {
 };
 function returnsReceiverElement(method) {
   const meta = METHODS[method];
-  return meta !== void 0 && meta.optional === "array" && meta.returns === void 0;
+  if (meta === void 0 || meta.returns !== void 0) return false;
+  return meta.optional === "array" || ELEMENT_READING_EITHER_METHODS.has(method);
 }
+var ELEMENT_READING_EITHER_METHODS = /* @__PURE__ */ new Set(["at", "nth"]);
 function documentReceiverViolation(method) {
   const fam = requiredReceiverFamily(method);
   if (fam === "string" || fam === "array" || fam === "number" || fam === "date") return RECEIVER_NOUN[fam];
@@ -6561,20 +6592,29 @@ function _generateBody(expr, ctx) {
       const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
-      const containerType = expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : void 0;
       const isBareRoot = expr.object.type === "FieldRef" && expr.object.path === "";
-      const known = isArrayProducing(expr.object) ? "array" : isObjectProducing(expr.object) || isBareRoot ? "object" : containerType === "array" || containerType === "object" ? containerType : void 0;
-      const keyIsString = isStringProducing(expr.index) || expr.index.type === "ParamRef" && ctx.bindingTypes?.get(expr.index.name) === "string";
-      if (known === "object" || keyIsString) {
+      const known = isArrayProducing(expr.object, ctx) ? "array" : isObjectProducing(expr.object, ctx) || isBareRoot ? "object" : isStringProducing(expr.object, ctx) ? "string" : void 0;
+      const keyIsString = isStringProducing(expr.index, ctx);
+      if (keyIsString) {
         const obj3 = optional ? wrapIfNull(rawObj, {}) : rawObj;
         return { $getField: { field: idx, input: obj3 } };
+      }
+      const literalIdx = literalIndexValue(expr.index);
+      if (literalIdx !== null) return generateNumericIndexAccess(literalIdx, known, rawObj, optional, expr.pos);
+      if (known === "object") {
+        const obj3 = optional ? wrapIfNull(rawObj, {}) : rawObj;
+        return { $getField: { field: coerceFieldKey(idx), input: obj3 } };
       }
       if (known === "array") {
         const obj3 = optional ? wrapIfNull(rawObj, []) : rawObj;
         return { $arrayElemAt: [obj3, idx] };
       }
       const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
-      return cond({ $isArray: obj2 }, { $arrayElemAt: [obj2, idx] }, { $getField: { field: idx, input: obj2 } });
+      return cond(
+        { $isArray: obj2 },
+        { $arrayElemAt: [obj2, idx] },
+        { $getField: { field: coerceFieldKey(idx), input: obj2 } }
+      );
     }
     case "RegexLiteral":
       throw new CodegenError(
@@ -6682,6 +6722,34 @@ function chainHasOptional(expr) {
   }
   return false;
 }
+function generateNumericIndexAccess(index, known, rawObj, optional, pos) {
+  if (index < 0) {
+    throw new CodegenError(
+      `Negative bracket index '[${index}]' isn't allowed \u2014 in JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end, which works on both arrays and strings.`,
+      pos
+    );
+  }
+  const charAt = (o) => ({ $substrCP: [o, index, 1] });
+  const fieldAt = (o) => ({ $getField: { field: String(index), input: o } });
+  if (known === "array") return { $arrayElemAt: [optional ? wrapIfNull(rawObj, []) : rawObj, index] };
+  if (known === "string") return charAt(optional ? wrapIfNull(rawObj, "") : rawObj);
+  if (known === "object") return fieldAt(optional ? wrapIfNull(rawObj, {}) : rawObj);
+  const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
+  return cond({ $isArray: obj2 }, { $arrayElemAt: [obj2, index] }, cond(isStringType(obj2), charAt(obj2), fieldAt(obj2)));
+}
+function isStringType(operand) {
+  return { $eq: [{ $type: operand }, "string"] };
+}
+function coerceFieldKey(idx) {
+  return { $toString: wrapIfNull(idx, "") };
+}
+function generateIndexFromEitherEnd(object, genObj, index, ctx) {
+  const charAt = () => ({ $substrCP: [genObj, index === void 0 ? 0 : normaliseSliceIndex(index, ctx, genObj), 1] });
+  const elemAt = () => ({ $arrayElemAt: [genObj, index === void 0 ? 0 : _generate(index, ctx)] });
+  if (isStringProducing(object, ctx)) return charAt();
+  if (isArrayProducing(object, ctx)) return elemAt();
+  return cond({ $isArray: genObj }, elemAt(), cond(isStringType(genObj), charAt(), "$$REMOVE"));
+}
 function wrapIfNull(value, fallback) {
   return { $ifNull: [value, fallback] };
 }
@@ -6691,13 +6759,9 @@ function generateLengthAccess(object, optional, ctx) {
     const handleSource = ctx.substreamLengthHandles?.get(object.name);
     if (handleSource !== void 0) return handleSource;
   }
-  if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
-    const v = _generate(object, ctx);
-    return sizeOf(optional ? wrapIfNull(v, []) : v);
-  }
   const rawObj = _generate(object, ctx);
-  if (isStringProducing(object)) return strLenOf(rawObj);
-  if (isArrayProducing(object)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
+  if (isStringProducing(object, ctx)) return strLenOf(rawObj);
+  if (isArrayProducing(object, ctx)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
   const obj2 = optional ? wrapIfNull(rawObj, []) : rawObj;
   return cond({ $isArray: obj2 }, sizeOf(obj2), strLenOf(obj2));
 }
@@ -6720,11 +6784,11 @@ function generateStreamLength(ctx, pos) {
 var OPTIONAL_STRING_METHODS = methodsWhere((m) => m.optional === "string");
 var OPTIONAL_ARRAY_METHODS = methodsWhere((m) => m.optional === "array");
 var OPTIONAL_EITHER_METHODS = methodsWhere((m) => m.optional === "either");
-function neutralForMethod(method, object) {
+function neutralForMethod(method, object, ctx) {
   if (OPTIONAL_STRING_METHODS.has(method)) return "";
   if (OPTIONAL_ARRAY_METHODS.has(method)) return [];
   if (OPTIONAL_EITHER_METHODS.has(method)) {
-    if (isStringProducing(object)) return "";
+    if (isStringProducing(object, ctx)) return "";
     return [];
   }
   return void 0;
@@ -6906,7 +6970,7 @@ function generateAdd(left, right, ctx) {
   const exprs = [];
   collectExprChain("+", left, exprs);
   exprs.push(right);
-  const isString = exprs.some((e) => isStringProducing(e));
+  const isString = exprs.some((e) => isStringProducing(e, ctx));
   if (isString) {
     return {
       $concat: exprs.map((e) => {
@@ -7229,7 +7293,7 @@ function generateTemplateLiteral(quasis, expressions, ctx) {
     const expr = expressions[i];
     const gen = _generate(expr, ctx);
     const wrappedGen = chainHasOptional(expr) ? wrapIfNull(gen, "") : gen;
-    parts.push(isStringProducing(expr) ? wrappedGen : { $toString: wrappedGen });
+    parts.push(isStringProducing(expr, ctx) ? wrappedGen : { $toString: wrappedGen });
   }
   const tail = quasis[expressions.length];
   if (tail !== "") parts.push(tail);
@@ -7428,12 +7492,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
   }
   const rawObj = _generate(object, ctx);
   const wrapReceiver = optional || chainHasOptional(object);
-  const neutral = wrapReceiver ? neutralForMethod(method, object) : void 0;
+  const neutral = wrapReceiver ? neutralForMethod(method, object, ctx) : void 0;
   const genObj = neutral !== void 0 ? wrapIfNull(rawObj, neutral) : rawObj;
   const receiverType = METHODS[method]?.receiver;
   if (receiverType !== void 0) checkArgType(`.${method}`, "", object, receiverType);
   if (method in METHODS) {
-    const recv = certainReceiverType(object);
+    const recv = certainReceiverType(object, ctx);
     if (recv !== null) rejectIncompatibleChain(recv, method, object);
   }
   switch (method) {
@@ -7508,10 +7572,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
       rejectPredicateOnValueSearch(exprArgs[0], "indexOf", "findIndex");
       const needle = _generate(exprArgs[0], ctx);
-      if (isArrayProducing(object)) {
+      if (isArrayProducing(object, ctx)) {
         return { $indexOfArray: [genObj, needle] };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return { $indexOfCP: [genObj, needle] };
       }
       return cond({ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] });
@@ -7519,7 +7583,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "lastIndexOf": {
       const exprArgs = exprArgsOnly(args, "lastIndexOf");
       checkArity("lastIndexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         throw new CodegenError(
           `.lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.`,
           callPos
@@ -7559,10 +7623,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
       rejectPredicateOnValueSearch(exprArgs[0], "includes", "some");
       const needle = _generate(exprArgs[0], ctx);
-      if (isArrayProducing(object)) {
+      if (isArrayProducing(object, ctx)) {
         return { $in: [needle, genObj] };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
       }
       return cond({ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] });
@@ -7637,13 +7701,13 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "at": {
       const exprArgs = exprArgsOnly(args, "at");
       checkArity("at", { sig: "index", exact: 1 }, exprArgs.length, callPos);
-      return { $arrayElemAt: [genObj, _generate(exprArgs[0], ctx)] };
+      return generateIndexFromEitherEnd(object, genObj, exprArgs[0], ctx);
     }
     case "slice": {
       const exprArgs = exprArgsOnly(args, "slice");
       checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
-      if (isStringProducing(object)) return sliceString(genObj, exprArgs, ctx);
-      if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
+      if (isStringProducing(object, ctx)) return sliceString(genObj, exprArgs, ctx);
+      if (isArrayProducing(object, ctx)) return sliceArray(genObj, exprArgs, ctx);
       return cond({ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx));
     }
     case "toReversed": {
@@ -7808,10 +7872,10 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "concat": {
       checkArity("concat", { sig: "...items", atLeast: 1 }, args.length, callPos);
       const tail = args.map((a) => a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx));
-      if (isArrayProducing(object)) {
+      if (isArrayProducing(object, ctx)) {
         return { $concatArrays: [genObj, ...tail] };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return { $concat: [genObj, ...tail] };
       }
       return cond({ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] });
@@ -7819,7 +7883,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
       checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
-      rejectNestedArrayStringify(object, "join", callPos);
+      rejectNestedArrayStringify(object, "join", callPos, ctx);
       const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
       return {
         $reduce: {
@@ -7835,8 +7899,8 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     }
     case "toString": {
       checkArity("toString", { sig: "", none: true }, args.length, callPos);
-      if (isArrayProducing(object)) {
-        rejectNestedArrayStringify(object, "toString", callPos);
+      if (isArrayProducing(object, ctx)) {
+        rejectNestedArrayStringify(object, "toString", callPos, ctx);
         return {
           $reduce: {
             input: genObj,
@@ -7849,7 +7913,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           }
         };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return genObj;
       }
       return { $toString: genObj };
@@ -8259,12 +8323,12 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "nth": {
       const exprArgs = exprArgsOnly(args, "nth");
       checkArity("nth", { sig: "[n=0]", allowed: [0, 1] }, exprArgs.length, callPos);
-      return { $arrayElemAt: [genObj, exprArgs[0] !== void 0 ? _generate(exprArgs[0], ctx) : 0] };
+      return generateIndexFromEitherEnd(object, genObj, exprArgs[0], ctx);
     }
     case "size": {
       checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
-      if (isArrayProducing(object)) return sizeOf(genObj);
-      if (isObjectProducing(object)) return sizeOf({ $objectToArray: genObj });
+      if (isArrayProducing(object, ctx)) return sizeOf(genObj);
+      if (isObjectProducing(object, ctx)) return sizeOf({ $objectToArray: genObj });
       return cond({ $isArray: genObj }, sizeOf(genObj), sizeOf({ $objectToArray: genObj }));
     }
     case "takeWhile":
@@ -12676,7 +12740,8 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
     );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
-      inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+      inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+      letVarTypes: correlatedBindingTypes(outerCtx, letVars, enclosing)
     };
     const localAllocSlot = createSlotAllocator();
     const { stages: nestedStages, rewritten: lookupFree } = extractLookupCalls(
@@ -12686,7 +12751,7 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
       lowerBlock2,
       innerEnclosing
     );
-    const subCtxBase = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtxBase = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     const subCtx = captureRootStreamLength(
       someExpr(lookupFree, isRootStreamLengthNode),
       enclosing.foreignParams.length,
@@ -12711,7 +12776,7 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
       outerLets,
       enclosing.foreignParams.length
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     return {
       kind: "pipeline",
       letVars,
@@ -12720,10 +12785,30 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
   }
   return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
 }
-function makeSubPipelineCtx(outerCtx, letVarNames) {
+function makeSubPipelineCtx(outerCtx, letVars, enclosing) {
   const fresh = freshSubPipelineCtx(outerCtx, "lookup");
-  if (letVarNames.length === 0) return fresh;
-  return { ...fresh, lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...letVarNames]) };
+  const names = [...Object.keys(letVars), ...enclosing.inScopeLetNames];
+  if (names.length === 0) return fresh;
+  const bindingTypes = correlatedBindingTypes(outerCtx, letVars, enclosing);
+  return {
+    ...fresh,
+    lambdaParams: /* @__PURE__ */ new Set([...fresh.lambdaParams, ...names]),
+    ...bindingTypes !== void 0 && { bindingTypes }
+  };
+}
+function correlatedBindingTypes(outerCtx, letVars, enclosing) {
+  const outerTypes = outerCtx.bindingTypes;
+  const out = new Map(enclosing.letVarTypes ?? []);
+  if (outerTypes !== void 0 && outerTypes.size > 0) {
+    const bindingByPath = /* @__PURE__ */ new Map();
+    for (const [name, path] of outerCtx.pipelineLets ?? []) bindingByPath.set(path, name);
+    for (const [letVar, value] of Object.entries(letVars)) {
+      const binding = bindingByPath.get(value.slice(1));
+      const t = binding === void 0 ? void 0 : outerTypes.get(binding);
+      if (t !== void 0) out.set(letVar, t);
+    }
+  }
+  return out.size > 0 ? out : void 0;
 }
 function buildBlockBodyPredicate(lambda, outerCtx, outerLets, lowerBlock2, enclosing) {
   validateAggregateParams(lambda);
@@ -12752,13 +12837,14 @@ function lowerCallbackBlock(lambda, outerCtx, outerLets, lowerBlock2, enclosing,
   const innerEnclosing = {
     foreignParams: [...enclosing.foreignParams, foreignParam],
     inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+    letVarTypes: correlatedBindingTypes(outerCtx, letVars, enclosing),
     parentAllocators: [...parents, allocator],
     // This level's 3rd-param handle becomes an ANCESTOR handle for nested lookups,
     // recorded at this scope's depth so they can capture its `.length`.
     parentHandles: opts.collParam !== void 0 ? new Map([...parentHandles, [opts.collParam, depth]]) : parentHandles
   };
   const subCtx = {
-    ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
+    ...makeSubPipelineCtx(outerCtx, letVars, enclosing),
     enclosingLookup: innerEnclosing,
     // `$$.length` (the ROOT stream count) captured by an enclosing chain stays
     // in scope inside this block — preserve the var `makeSubPipelineCtx`/
@@ -12788,7 +12874,8 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg,
     );
     const innerEnclosing = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
-      inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)])
+      inScopeLetNames: /* @__PURE__ */ new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+      letVarTypes: correlatedBindingTypes(outerCtx, letVars, enclosing)
     };
     const localAllocSlot = createSlotAllocator();
     const { stages: nestedStages, rewritten: lookupFree } = extractLookupCalls(
@@ -12798,7 +12885,7 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg,
       lowerBlock2,
       innerEnclosing
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
     return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
   }
@@ -12814,7 +12901,7 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg,
       outerLets,
       enclosing.foreignParams.length
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
   }
   return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
@@ -13322,6 +13409,9 @@ function lowerLookup(call, as, outerCtx, lowerBlock2, enclosingArg) {
   }
   return stages;
 }
+function lookupSlotType(call) {
+  return call.method === "find" ? void 0 : "array";
+}
 function pipelineLookupBody(from, letVars, pipeline, as) {
   return Object.keys(letVars).length === 0 ? { from, pipeline, as } : { from, let: letVars, pipeline, as };
 }
@@ -13411,6 +13501,7 @@ function extractLookupCalls(exprArg, outerCtx, allocSlot, lowerBlock2, enclosing
   if (direct !== null) {
     const slot = allocSlot();
     const stages = lowerLookup(direct, slot, outerCtx, lowerBlock2, enclosing);
+    noteSlotType(outerCtx, slot, lookupSlotType(direct));
     return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
   }
   const chained = tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosing);
@@ -13670,9 +13761,11 @@ function tryExtractChainedLookup(expr, outerCtx, allocSlot, lowerBlock2, enclosi
   const slotRef = { type: "FieldRef", path: slot, pos: expr.pos };
   const rewritten = terminalMap !== null ? { type: "MethodCall", object: slotRef, method: "map", args: [terminalMap], pos: expr.pos } : slotRef;
   const stages = [{ $lookup: pipelineLookupBody(from, letVars, pipelineBody, slot) }];
-  if (isCollapsingTerminal(methods[methods.length - 1])) {
+  const collapsed = isCollapsingTerminal(methods[methods.length - 1]);
+  if (collapsed) {
     stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
   }
+  noteSlotType(outerCtx, slot, collapsed ? "object" : "array");
   return { stages, rewritten };
 }
 function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = EMPTY_ENCLOSING) {
@@ -14847,7 +14940,12 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
   }
   const out = [];
   let updateBuffer = [];
-  let ctx = { ...startCtx, pipelineContext: true, topLevelStream: true };
+  let ctx = {
+    ...startCtx,
+    pipelineContext: true,
+    topLevelStream: true,
+    slotTypes: startCtx.slotTypes ?? /* @__PURE__ */ new Map()
+  };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
   const tracking = makeSlotTracking(startCtx.slotAllocator);
@@ -14918,7 +15016,7 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
         const slot = bindingSlot(el.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
-        ctx = extendCtxLets(ctx, el.name, slot);
+        ctx = extendCtxLets(ctx, el.name, slot, el.kind, lookupSlotType(direct));
         everHadLet = true;
         return;
       }
@@ -14942,7 +15040,12 @@ function generatePipeline(ast, startCtx = EMPTY_CTX) {
 }
 function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
   const out = [];
-  let ctx = { ...startCtx, pipelineContext: true, topLevelStream: container === "top" };
+  let ctx = {
+    ...startCtx,
+    pipelineContext: true,
+    topLevelStream: container === "top",
+    slotTypes: startCtx.slotTypes ?? /* @__PURE__ */ new Map()
+  };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking(startCtx.slotAllocator);
@@ -14989,7 +15092,7 @@ function generateImplicitPipeline(p, startCtx = EMPTY_CTX, container = "top") {
         const slot = bindingSlot(stmt.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
-        ctx = extendCtxLets(ctx, stmt.name, slot);
+        ctx = extendCtxLets(ctx, stmt.name, slot, stmt.kind, lookupSlotType(direct));
         everHadLet = true;
         return;
       }
@@ -15069,7 +15172,7 @@ function lowerLetDecl(decl, ctx) {
   const value = generateWithCtx(decl.value, ctx);
   return {
     set: { $set: { [fieldPath2]: value } },
-    ctx: extendCtxLets(ctx, decl.name, fieldPath2, decl.kind, staticBindingType(decl.value))
+    ctx: extendCtxLets(ctx, decl.name, fieldPath2, decl.kind, staticBindingType(decl.value, ctx))
   };
 }
 function isReplaceRootAssign(op) {
@@ -15777,7 +15880,7 @@ function generatePipelineWithCtx(ast, startCtx, container) {
   }
   const out = [];
   let updateBuffer = [];
-  let ctx = { ...startCtx, pipelineContext: true };
+  let ctx = { ...startCtx, pipelineContext: true, slotTypes: startCtx.slotTypes ?? /* @__PURE__ */ new Map() };
   let everHadLet = ctxHasLets(startCtx);
   const validator = makePipelineValidator(container);
   const flushUpdateOps = () => {

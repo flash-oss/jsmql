@@ -83,6 +83,7 @@ import {
   EMPTY_ENCLOSING,
   detectLookupCall,
   lowerLookup,
+  lookupSlotType,
   extractLookupCalls,
   createSlotAllocator,
   predicateReferencesOuterDoc,
@@ -481,7 +482,12 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
   // (field paths / wire syntax), never auto-wrapped in `$literal`. See
   // GenerateCtx.pipelineContext. `topLevelStream` gates `$$.length` to this
   // top-level pipeline (dropped by freshSubPipelineCtx for sub-pipelines).
-  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, topLevelStream: true };
+  let ctx: GenerateCtx = {
+    ...startCtx,
+    pipelineContext: true,
+    topLevelStream: true,
+    slotTypes: startCtx.slotTypes ?? new Map(),
+  };
   let everHadLet = false;
   const validator = makePipelineValidator("top");
   const tracking = makeSlotTracking(startCtx.slotAllocator);
@@ -567,7 +573,7 @@ export function generatePipeline(ast: Expr, startCtx: GenerateCtx = EMPTY_CTX): 
         const slot = bindingSlot(el.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
-        ctx = extendCtxLets(ctx, el.name, slot);
+        ctx = extendCtxLets(ctx, el.name, slot, el.kind, lookupSlotType(direct));
         everHadLet = true;
         return;
       }
@@ -615,7 +621,12 @@ export function generateImplicitPipeline(
   // `topLevelStream` gates `$$.length` — set ONLY at the top level; a
   // sub-pipeline (container !== "top") leaves it off so codegen rejects
   // `$$.length` there (it would mean the sub-stream — not supported, [DEF-033]).
-  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, topLevelStream: container === "top" };
+  let ctx: GenerateCtx = {
+    ...startCtx,
+    pipelineContext: true,
+    topLevelStream: container === "top",
+    slotTypes: startCtx.slotTypes ?? new Map(),
+  };
   let everHadLet = false;
   const validator = makePipelineValidator(container);
   const tracking = makeSlotTracking(startCtx.slotAllocator);
@@ -679,7 +690,7 @@ export function generateImplicitPipeline(
         const slot = bindingSlot(stmt.name);
         const stages = lowerLookup(direct, slot, ctx, lowerBlock);
         for (const s of stages) out.push(s);
-        ctx = extendCtxLets(ctx, stmt.name, slot);
+        ctx = extendCtxLets(ctx, stmt.name, slot, stmt.kind, lookupSlotType(direct));
         everHadLet = true;
         return;
       }
@@ -789,7 +800,7 @@ function lowerLetDecl(decl: LetDecl, ctx: GenerateCtx): LetLowering {
   const value = generateWithCtx(decl.value, ctx);
   return {
     set: { $set: { [fieldPath]: value } },
-    ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind, staticBindingType(decl.value)),
+    ctx: extendCtxLets(ctx, decl.name, fieldPath, decl.kind, staticBindingType(decl.value, ctx)),
   };
 }
 
@@ -2166,7 +2177,7 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   const out: unknown[] = [];
   let updateBuffer: UpdateOp[] = [];
   // Pipeline context: see GenerateCtx.pipelineContext (string literals pass through).
-  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true };
+  let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, slotTypes: startCtx.slotTypes ?? new Map() };
   let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
   const validator = makePipelineValidator(container);
 

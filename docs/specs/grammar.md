@@ -154,6 +154,10 @@ object_literal = "{" object_entries? "}"
 object_entries = object_entry ("," object_entry)* ","?
 object_entry   = "..." expression
                | (IDENT | STRING) ":" expression
+               | NUMBER ":" expression                       (* numeric key → its stringified VALUE:
+                                                                { 0: 1 } is the field "0", { 0x10: 1 } is "16",
+                                                                matching JS property-key coercion. A 24-hex
+                                                                ObjectId literal is rejected — not a field name. *)
                | "$" IDENT ":" expression                    (* dollar-prefixed key, e.g. { $match: ... } *)
                | "[" expression "]" ":" expression           (* computed key *)
                | IDENT                                       (* shorthand: name → name: name *)

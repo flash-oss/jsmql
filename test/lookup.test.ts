@@ -209,6 +209,8 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
           as: "__jsmql.tmp.1",
         },
       },
+      // `slotTypes` records that the slot holds the `$lookup.as` array, so `.at()`
+      // resolves at compile time instead of guarding over jsmql's own scratch.
       { $set: { user: { $arrayElemAt: ["$__jsmql.tmp.1", 0] } } },
       { $unset: "__jsmql" },
     ]);
@@ -1500,17 +1502,9 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
           as: "__jsmql.tmp.1",
         },
       },
-      {
-        $set: {
-          n: {
-            $cond: {
-              if: { $isArray: "$__jsmql.tmp.1" },
-              then: { $size: "$__jsmql.tmp.1" },
-              else: { $strLenCP: { $ifNull: ["$__jsmql.tmp.1", ""] } },
-            },
-          },
-        },
-      },
+      // The slot is jsmql's own `$lookup.as` array (`slotTypes` records it), so
+      // `.length` is a bare `$size` — no runtime type guard over our own scratch.
+      { $set: { n: { $size: "$__jsmql.tmp.1" } } },
       { $unset: "__jsmql" },
     ]);
     expect(

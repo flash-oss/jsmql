@@ -10,6 +10,86 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — fix: a computed `$getField` key is coerced, and the compiler's own slots carry their type
+
+```
+$set({ v: $.doc[$.k] });
+// before: { $getField: { field: "$k", input: "$doc" } }
+//         ← on any document where `k` is ABSENT, mongod kills the whole command:
+//           "$getField requires 'field' to evaluate to type String, but got null"
+// now:    { $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, … } }
+
+$.u = $$$.users.filter(u => u._id === $._id).at(0);
+// before: $cond on $isArray over `__jsmql.tmp.1` — a slot jsmql itself filled
+// now:    { $arrayElemAt: ["$__jsmql.tmp.1", 0] }
+
+$set({ v: { 0: 1, 0x10: 2 } });   // now the fields "0" and "16", as JavaScript builds them
+```
+
+Three findings from the bracket-index pass, each its own hole.
+
+**The String requirement isn't only about integer literals.** Stringifying an integer *key* fixed `$.name[0]`, but a key jsmql can't prove is a string hit the same wall — and the case that bites is not an exotic numeric key, it is a key field that is simply **absent**, which reaches `$getField` as null. `$.doc[$.k]` therefore aborted the entire command on ordinary data. `coerceFieldKey` emits `{ $toString: { $ifNull: [k, ""] } }`: `$toString` is the faithful lowering rather than a workaround (a JS property key is always coerced, so `obj[0]` *is* `obj["0"]`), and the `$ifNull` is the load-bearing half — `""` names a field no document has, so an absent key reads as missing, like `obj[undefined]` in JS. Provably-string keys skip it, so the coercion appears only where the type is genuinely open. It changed 15 expected outputs, which is the honest measure of how often that shape occurs — and of how often the abort was reachable.
+
+**jsmql didn't know its own slots.** A method chained onto a materialised lookup has a plain `__jsmql.tmp.<N>` field path as its receiver, which no structural predicate can type even though the compiler wrote it — so `$$$.users.filter(p).at(0)` guarded against `$isArray` over jsmql's own scratch, and `.includes` / `[n]` / `.size` did the same (that pair predates the `.at` dispatch). `GenerateCtx.slotTypes` closes it: `noteSlotType` records what a lowering wrote, `bindingTypeOf` reads it for a `FieldRef`. It is a **mutable** map shared by reference — deliberately, as the sibling of `slotAllocator` and pipeline-global for the same reason — which is what avoids threading a return value through `extractLookupCalls`' seventeen call sites and works through the update-op buffer, since every caller extracts and then generates under the same ctx object. Recorded only where the contents are certain: a `.filter`/`.aggregate` `$lookup.as` array, or the single object a collapsing terminal unwraps. `.find` / `.length` / `.reduce` record nothing and keep the conservative dispatch.
+
+**A numeric object key is valid JavaScript that jsmql rejected.** `({ 0: 1 })` parses in JS and builds the field `"0"`; jsmql said "Expected an object key". Now accepted, using the numeric *value* stringified — so `{ 0x10: 1 }` is `"16"`, matching JS rather than the source text. This is the write-side counterpart of reading `doc[0]`, and a user who can read one will reach for the other. A 24-hex `0x…` is an ObjectId in jsmql and an ObjectId is not a field name, so it is rejected as a key with a pointer at the quoted spelling.
+
+Two new [test/integration.test.ts](test/integration.test.ts) cases run all three against the live fixture — a missing key field, a numeric key, a digit-keyed object literal, and four methods chained onto a lookup slot — because a `toEqual` proves none of it. See [src/codegen.ts](src/codegen.ts), [src/parser.ts](src/parser.ts), [src/lookup-translation.ts](src/lookup-translation.ts), [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md), [docs/specs/grammar.md](docs/specs/grammar.md).
+
+---
+
+## 2026-08-12 — fix: `obj[<int>]` covers all three JavaScript readings; a negative bracket index is rejected
+
+```
+$set({ v: $.name[0] });
+// before: $cond: { if: { $isArray: "$name" }, then: { $arrayElemAt: ["$name", 0] },
+//                 else: { $getField: { field: 0, input: "$name" } } }
+//         ← mongod ABORTS on any non-array: "$getField requires 'field' to evaluate
+//           to type String, but got int". Only the array branch ever worked.
+// now:    array → $arrayElemAt, string → $substrCP (the character), else → $getField
+//         with the STRING "0". All three verified on a live server.
+
+$.items[-1]   // now a compile error naming `.at(-1)`
+"abc".at(-1)  // now works — was rejected as "expects an array receiver"
+```
+
+An integer bracket key has three live JavaScript meanings — an array position, a string character, and a document field whose name is that digit (`({ 0: "z" })[0] === "z"`, since a property key coerces to a string) — and each lowers to a different MongoDB operator. jsmql emitted a two-way array-or-object guard whose else-branch was **invalid MQL**: `$getField.field` must evaluate to a String, and passing the raw integer is an *executor*-time error, so the whole command died for every non-array receiver. Nine assertions across three test files were endorsing that shape. `generateNumericIndexAccess` now owns the case: one place, so the string branch and the negative-index rejection can't be forgotten at one of the call sites.
+
+Negative bracket indices are rejected for **every** receiver type. `arr[-1]` is `undefined` in JavaScript — only `.at(-1)` counts from the end — so all three candidate lowerings are wrong answers: `$arrayElemAt` would silently return the last element, `$substrCP` would be refused by the server, and `$getField` would read a field named `"-1"`. The error names `.at()` instead. Literal-gated, per the rule the rest of the compiler follows: a computed index (`arr[$.i]`) can't be proven either way, so it passes through and MongoDB decides.
+
+`.at()` became dual-type to make that redirect honest. JS has `String.prototype.at`, but jsmql's registry declared `.at` array-only, so `"abc".at(-1)` was rejected outright (and on a bare field it emitted `$arrayElemAt`, which mongod refuses on a string — the same HR3 class). It now sits in the `"either"` family with `.slice`/`.includes`/`.indexOf`/`.concat`. The two branches need *different* index expressions: `$arrayElemAt` takes a negative natively, while `$substrCP` refuses one ("the starting index must be nonnegative integer"), so the string side resolves the index against the length through `normaliseSliceIndex`.
+
+Its lodash spelling `.nth` had the identical hole and now shares the lowering (`generateIndexFromEitherEnd`): `_.nth("abc", 1)` is `"b"` in lodash, so array-only was wrong there too, and a bare `$arrayElemAt` aborted the query on a string. Moving both into the `"either"` family broke `returnsReceiverElement`, which derived "returns an element of its receiver" from `optional: "array"` — and that derivation can no longer work, because `.at`/`.nth` read one element while `.slice`/`.concat` return a container of the receiver's own type, yet all four now carry `optional: "either"` with no invariant `returns`. Hence the explicit `ELEMENT_READING_EITHER_METHODS`, which is what keeps `$$$.orders.nth(1).map(…)` rejected (a stream of documents means `.nth(1)` is a document).
+
+One subtlety only a live run caught. The first `.at()` dispatch treated "not an array" as "string", and `$substrCP` of a *missing* value is `""` — which is not null, so it poisoned an enclosing `??`: the `$.aliases.at(0) ?? "anonymous"` example in [test/realistic.test.ts](test/realistic.test.ts) returned `""` instead of the fallback. The `else` now tests `isStringType` explicitly and falls to `$$REMOVE`, because JS has no `.at()` on a number or a document and missing is how MQL spells an absent result. A new [test/integration.test.ts](test/integration.test.ts) case runs both spellings against arrays, strings, documents, and an absent field and compares each value with what JavaScript returns — a `toEqual` could not have caught either bug. Two documented divergences remain on string receivers, both from `$substrCP` clamping: an index past the end gives `""` and `.at(-99)` gives the first character, where JS gives `undefined` for both. See [src/codegen.ts](src/codegen.ts), [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md), [docs/LANGUAGE.md](docs/LANGUAGE.md).
+
+---
+
+## 2026-08-11 — fix: receiver-type dispatch reads `const` binding types, so a known array stops asking `$isArray`
+
+```
+const ids = $.tags.uniq();                                  // provably an array
+const hits = $$$.orders.filter(o => ids.includes(o.pid));
+// before: $cond: { if: { $isArray: "$$jsmql_v0_ids" },
+//                  then: { $in: ["$pid", "$$jsmql_v0_ids"] },
+//                  else: { $gte: [{ $indexOfCP: ["$$jsmql_v0_ids", "$pid"] }, 0] } }
+// now:    $in: ["$pid", "$$jsmql_v0_ids"]
+
+const a = $.tags.uniq(); $set({ s: a.toString() });
+// before: { $toString: "$__jsmql.var.a" }   ← mongod: "Unsupported conversion from array to string"
+// now:    the $reduce join form, matching JS `[…].toString()`
+```
+
+The compiler already recorded a `const`'s provable static type in `ctx.bindingTypes`, but only three sites read it (`IndexAccess`, `.length`, and the `.reduce` accumulator narrowing), each with its own bespoke `ParamRef` lookup. Every *other* receiver-type dispatch consulted the structural predicates alone, so a binding it had itself proven to be an array still got the runtime `$cond` on `$isArray` — a guard whose `$indexOfCP` string branch can never run. `.toString()` was worse than verbose: it fell through to `$toString` of an array, which mongod rejects outright, so this was a latent HR3 break hiding behind a green `toEqual`.
+
+The fix is one concept instead of N special cases: `bindingTypeOf(expr, ctx)` folded into `isArrayProducing` / `isStringProducing` / `isObjectProducing`, each now taking an optional trailing `ctx` — a binding of known type is exactly as provable as a literal or an invariant-`returns` chain. Threading `ctx` then upgrades every consumer at once (`.includes`, `.indexOf`, `.slice`, `.concat`, `.toString`, `.size`, `.length`, `IndexAccess`, string-context `+`, template interpolation, the optional-chain neutral, `isArrayOfArrays`, and `certainReceiverType` — so `const s = $.name.trim(); s.map(f)` is now a compile-time error rather than a server one), and it *deletes* the three bespoke lookups. Two `lambdaResult(lambda)` inference sites deliberately stay ctx-free: that expression comes from inside a lambda whose params shadow the outer scope, so the outer types don't apply to it. `let` remains untracked — it can be reassigned, so the conservative dispatch is the honest lowering there.
+
+Two gaps in the *producer* side went with it. A direct `$$$.<coll>` lookup binding called `extendCtxLets` without the declaration's `kind`, which both lost the type (`extendCtxLets` only records one for `const`, since a `let` can drift) and silently let a `const` be reassigned; passing `stmt.kind` with `lookupSlotType(direct)` fixes both — `.filter`/`.aggregate` keep the `$lookup.as` array, `.find` stays untyped because its `$first` yields `null` on no match. And a `$lookup.pipeline` had no way to know its correlation var *was* a captured binding: `correlatedBindingTypes` now derives that by joining `letVars` (var → outer field path) against `ctx.pipelineLets` (binding → field path) — two records that already existed, no new plumbing through the let-extractor — and seeds it as the sub-pipeline's `bindingTypes`. A sub-path capture (`user._id`) stays untyped on purpose: the type of `user` says nothing about the type of `user._id`. Nested lookups inherit through `EnclosingLookupContext.letVarTypes`, which is load-bearing rather than defensive — MQL `$$` vars are lexically scoped through sub-pipeline boundaries, so a deeper level reading an ancestor's var allocates no `let` of its own and would otherwise lose the type exactly where the var still resolves.
+
+Verified on a live mongod, not just by `toEqual`: the full co-purchase recommendation pipeline returns identical documents before and after (same semantics, leaner MQL), the depth-1 correlated `$in` runs and filters correctly, and the old array-`$toString` shape is confirmed server-rejected. See [src/codegen.ts](src/codegen.ts), [src/lookup-translation.ts](src/lookup-translation.ts), [src/pipeline.ts](src/pipeline.ts), [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md), [docs/specs/lookup-stage.md](docs/specs/lookup-stage.md), [docs/specs/let-bindings.md](docs/specs/let-bindings.md).
+
+---
+
 ## 2026-08-11 — fix: a forbidden stage inside an `.aggregate` block names its container (closes DEF-024)
 
 ```

@@ -441,19 +441,60 @@ $.items.map(x => x.id)[0]     // known array → { $arrayElemAt: [{ $map: ... },
 [1, 2, 3][$.idx]              // known array → { $arrayElemAt: [[1, 2, 3], "$idx"] }
 ```
 
-For a bare `$.field` indexed by a **non-string** key (a number, or a field whose type
-isn't known), jsmql can't tell at compile time whether you mean array indexing or object
-dynamic-key lookup, so it emits a runtime `$cond` on `$isArray` that picks the right form
-at query time:
+An **integer** key has three meanings in JavaScript, and each compiles to a different
+MongoDB operator: an array position, a string character, or a document field whose name
+is that digit (JS coerces a property key to a string, so `({ 0: "z" })[0] === "z"`). When
+the receiver's type is provable, jsmql emits just the one that applies:
+
+```js
+$.tags.uniq()[0]                    // known array  → { $arrayElemAt: [ …, 0] }
+$.name.trim()[0]                    // known string → { $substrCP: [ …, 0, 1] }   — the first character
+$[0]                                // the root is a document → { $getField: { field: "0", input: "$$ROOT" } }
+```
+
+For a bare `$.field` the type isn't knowable at compile time, so all three run at query
+time and the right one wins:
 
 ```js
 $.items[0]
 // → { $cond: {
 //       if: { $isArray: "$items" },
 //       then: { $arrayElemAt: ["$items", 0] },
-//       else: { $getField: { field: 0, input: "$items" } }
+//       else: { $cond: {
+//         if: { $eq: [{ $type: "$items" }, "string"] },
+//         then: { $substrCP: ["$items", 0, 1] },
+//         else: { $getField: { field: "0", input: "$items" } }
+//       } }
 //     } }
 ```
+
+**A numeric object key builds the stringified field name.** JavaScript coerces every
+property key to a string, so `{ 0: 1 }` is the field `"0"` and `{ 0x10: 1 }` is `"16"` —
+the numeric *value*, not the source text. jsmql matches that, which is the write-side
+counterpart of reading `doc[0]`:
+
+```js
+({ 0: 1, 1.5: 2, 0x10: 3 })         // → { "0": 1, "1.5": 2, "16": 3 }   — exactly what JS builds
+```
+
+A 24-hex `0x…` literal is an ObjectId in jsmql, and an ObjectId isn't a field name, so it
+is rejected as a key with a pointer at the quoted spelling.
+
+**A negative bracket index is rejected.** In JavaScript `arr[-1]` reads a property named
+`"-1"` — normally `undefined` — it does **not** count from the end. `.at(-1)` is the
+JavaScript way to do that, and it works on arrays and strings alike, so jsmql points you
+there instead of silently picking one of the three possible answers:
+
+```js
+$.items[-1]
+// error: Negative bracket index '[-1]' isn't allowed — in JavaScript that reads a
+//        property named "-1" (normally 'undefined'), not the element 1 from the end.
+//        Use '.at(-1)' to index from the end, which works on both arrays and strings.
+```
+
+The rejection is compile-time, so it only fires on an index jsmql can *see* is negative.
+A computed index (`$.items[$.i]`) is passed through as written; if it turns out negative at
+query time, MongoDB decides what happens (`$arrayElemAt` counts from the end).
 
 When the key is **provably a string** — a string literal, a `.toLowerCase()`-style
 string-returning expression, a `const k = "…"` binding, or **a lambda parameter iterating
@@ -470,9 +511,16 @@ $.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" },
 //             in: { $getField: { field: "$$party", input: "$cre.result" } } } }
 ```
 
+When the key is **not** provably a string, jsmql coerces it — `{ $toString: { $ifNull: [k, ""] } }`
+— because MongoDB's `$getField` requires a string field name and **aborts the whole query**
+on anything else. That includes a key field that is simply *absent* on some documents, which
+is ordinary data, so the coercion is what keeps `$.doc[$.k]` from killing the query; a
+missing key reads as missing, as `obj[undefined]` does in JavaScript. Stringifying also
+matches JS, where `obj[0]` *is* `obj["0"]`.
+
 The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `String.split(",")` and `Object.keys(o)` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
 
-If you want compact output for a *numeric* index, pin the type by chaining a type-fixing method (`.map(x => x)`, `.toReversed()`, etc.) or use the `.at(i)` method (always emits `$arrayElemAt`).
+If you want compact output for a *numeric* index, pin the type — bind the value to a `const` with a type-revealing initialiser, or chain a type-fixing method (`.map(x => x)`, `.toReversed()`, …).
 
 **Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.length` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — jsmql only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.length` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`.
 
@@ -1403,8 +1451,8 @@ Call methods on any expression that produces an array.
 ### Simple Methods
 
 ```js
-$.items.at(0)              // { $arrayElemAt: ["$items", 0] }
-$.items.at(-1)             // { $arrayElemAt: ["$items", -1] }  (last element)
+$.items.at(0)              // element/character at 0 — dispatches on receiver type (see below)
+$.items.at(-1)             // last element/character; the only way to index from the end
 [1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 2] }          (indices, end-exclusive — like JS)
 [1, 2, 3, 4].slice(1, 3)   // { $slice: [[1, 2, 3, 4], 1, 2] }    (index 1 up to 3 → 2 elements)
 $.items.slice(1, 3)        // runtime $cond on $isArray — array → $slice, string → $substrCP
@@ -1432,7 +1480,7 @@ $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
 
-**Type-aware dispatch.** `.includes()`, `.indexOf()`, and `.concat()` work on both strings and arrays:
+**Type-aware dispatch.** `.includes()`, `.indexOf()`, `.at()`, `.slice()`, `.concat()`, `.toString()`, `.size()`, and `.length` work on both strings and arrays:
 
 - **Statically known array** (array literal, `.split()`, `.map()`, `.filter()`, `Object.values()`, etc.) → emits the array form (`$in`, `$indexOfArray`, `$concatArrays`).
 - **Statically known string** (`.toLowerCase()`, `String(x)`, `+` in string context, template literal, etc.) → emits the string form (`$indexOfCP` / `$concat`).
@@ -1447,7 +1495,45 @@ $.tags.includes("active")
 //     } }
 ```
 
-If you know the type at design time and want compact output, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` for string, `$.tags.slice().includes(...)` for array), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
+If you know the type at design time and want compact output, bind the value to a `const` with a type-revealing initialiser, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` for string, `$.tags.slice().includes(...)` for array), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
+
+**A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" wherever the binding is read — including inside a `$lookup` predicate, where the binding is threaded in as a correlation variable:
+
+```js
+const ids = $.tags.uniq();          // provably an array
+const hits = $$$.orders.filter(o => ids.includes(o.pid));
+// → [
+//     { $set: { "__jsmql.var.ids": { $reduce: { … } } } },
+//     { $lookup: { from: "orders",
+//                  let: { jsmql_v0_ids: "$__jsmql.var.ids" },
+//                  pipeline: [{ $match: { $expr: { $in: ["$pid", "$$jsmql_v0_ids"] } } }],
+//                  as: "__jsmql.var.hits" } },
+//     { $unset: "__jsmql" }
+//   ]
+```
+
+Knowing the type also turns a genuine mistake into a compile-time error instead of a server one — `const s = $.name.trim(); s.map(f)` reports that `.map()` needs an array receiver.
+
+A `let` does **not** carry its type: it can be reassigned, so its type could change between the declaration and the read, and the runtime `$cond` stays. Use `const` when the value never changes — which is also what you'd write in JavaScript.
+
+**`.at(i)` is the from-the-end reader.** JavaScript has `.at()` on both `Array` and `String`
+(`"abc".at(-1) === "c"`), and it is the only spelling that accepts a negative index —
+brackets reject one. On an array it lowers to `$arrayElemAt` (which takes a negative index
+natively); on a string it lowers to `$substrCP`, which refuses a negative start, so the
+index is resolved against the length first:
+
+```js
+$.tags.uniq().at(-1)                // known array  → { $arrayElemAt: [ …, -1] }
+$.name.trim().at(-1)                // known string → { $substrCP: [ …, <len - 1>, 1] }
+$.aliases.at(0)                     // unknown → array position, else character, else missing
+```
+
+On an unknown receiver the third branch is *missing*, not `""` — so `.at()` on an absent
+field stays absent and `$.aliases.at(0) ?? "anonymous"` reaches its fallback.
+
+Two JavaScript divergences on **string** receivers, both from `$substrCP`'s clamping: an
+index past the end gives `""` where JS gives `undefined`, and `.at(-99)` on a short string
+gives the first character where JS gives `undefined`.
 
 **`.flat()` depth.** Only `flat()` and `flat(1)` are supported — MongoDB has no recursive flatten primitive, so deeper depths are rejected at compile time.
 
@@ -1663,7 +1749,7 @@ $.xs.takeRight(3) / .dropRight(3)            // last 3  / all but the last 3
 $.xs.head()  / .first()                      // first element  ($first)
 $.xs.last()                                  // last element   ($last)
 $.xs.tail()  / .initial()                    // all but the first / all but the last element
-$.xs.nth(2)  / .nth(-1)                       // element at index 2 / from the end   (n defaults to 0)
+$.xs.nth(2)  / .nth(-1)                       // lodash spelling of `.at(i)`, same dual-type dispatch (n defaults to 0)
 $.xs.size()                                  // element count (array) or key count (object) — strings use .length
 ```
 
@@ -4303,7 +4389,7 @@ null        = "null"
 A: Use `.length`: `$.items.length` works for both arrays and strings (jsmql dispatches by receiver type). The `$size()` escape hatch is also available if you want to force the array form: `$size($.items)`.
 
 **Q: How does `$.field.includes(x)` know whether to use `$in` or string-substring matching?**
-A: When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, etc. — jsmql emits the array form (`$in` / `$indexOfArray` / `$concatArrays`). When it is demonstrably a string — `.toLowerCase()`, `String(x)`, template literal, etc. — it emits the string form. For a bare field reference whose type can't be known at compile time, jsmql emits a runtime `$cond` on `$isArray` that picks the right form at query time. If you want compact output, hint by chaining a type-fixing method first (e.g. `$.items.slice().includes(target)` for array, `$.tags.toLowerCase().includes("x")` for string), or call the operator directly: `$in($.items, x)`.
+A: When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, a `const` bound to any of those, etc. — jsmql emits the array form (`$in` / `$indexOfArray` / `$concatArrays`). When it is demonstrably a string — `.toLowerCase()`, `String(x)`, template literal, etc. — it emits the string form. For a bare field reference whose type can't be known at compile time, jsmql emits a runtime `$cond` on `$isArray` that picks the right form at query time. If you want compact output, bind the value to a `const`, hint by chaining a type-fixing method first (e.g. `$.items.slice().includes(target)` for array, `$.tags.toLowerCase().includes("x")` for string), or call the operator directly: `$in($.items, x)`.
 
 **Q: Does `?.` actually short-circuit?**
 A: For field paths, MongoDB already returns `null`/missing when traversing through missing fields, so `$.a?.b?.c` and `$.a.b.c` produce the same MQL — `?.` is purely a JS-readability sugar.

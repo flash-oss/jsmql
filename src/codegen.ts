@@ -188,6 +188,24 @@ export type GenerateCtx = {
    */
   bindingTypes?: ReadonlyMap<string, "object" | "array" | "string">;
   /**
+   * Static type of the compiler's OWN materialised slots — the `__jsmql.tmp.<N>`
+   * field paths a lowering filled and whose contents it therefore knows (a
+   * `$lookup.as` array, a collapsed-terminal object). `bindingTypeOf` reads it for
+   * a `FieldRef`, which is what keeps a method chained onto a materialised lookup
+   * precise: `$$$.users.filter(p).at(0)` emits a bare `$arrayElemAt` rather than a
+   * runtime `$isArray` dispatch over a slot jsmql itself filled.
+   *
+   * Deliberately a MUTABLE map shared by reference — the sibling of
+   * `slotAllocator`, and pipeline-global for the same reason (it describes emitted
+   * stages, not per-document state). Lowering writes it via `noteSlotType` strictly
+   * before codegen reads it, including through the update-op buffer: every caller
+   * runs `extractLookupCalls` and then generates the rewritten expression under the
+   * same ctx object. Written only where the slot's contents are certain — an
+   * overwrite whose type isn't (`.length` → a count, `.reduce` → the accumulator)
+   * records nothing and keeps the conservative dispatch.
+   */
+  slotTypes?: Map<string, "object" | "array" | "string">;
+  /**
    * When true, suppress the auto-`$literal` wrap on `"$..."`-shaped string
    * literals. Set by the `$literal(...)` operator codegen on the recursive
    * call for its argument — the whole subtree is already inside a `$literal`
@@ -327,6 +345,7 @@ function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
     droppedLets: ctx.droppedLets,
     bindings: ctx.bindings,
     bindingTypes: ctx.bindingTypes,
+    slotTypes: ctx.slotTypes,
     insideLiteral: ctx.insideLiteral,
     pipelineContext: ctx.pipelineContext,
     topLevelStream: ctx.topLevelStream,
@@ -427,6 +446,9 @@ export function freshSubPipelineCtx(outer: GenerateCtx, container?: "facet" | "l
     // from the enclosing chain's counter. Undefined unless an enclosing chain
     // set it, so ordinary sub-pipelines still start their own counter.
     slotAllocator: outer.slotAllocator,
+    // Same rationale as the allocator: the slot-type registry describes emitted
+    // stages, so it crosses sub-pipeline boundaries with the slots it describes.
+    slotTypes: outer.slotTypes,
   };
 }
 
@@ -448,6 +470,7 @@ export function freshFacetCtx(outer: GenerateCtx): GenerateCtx {
     pipelineLets: outer.pipelineLets,
     pipelineConstNames: outer.pipelineConstNames,
     bindingTypes: outer.bindingTypes,
+    slotTypes: outer.slotTypes,
     pipelineContext: outer.pipelineContext,
     // Functions declared before the $facet are visible inside its branches,
     // mirroring the outer-lets rule above.
@@ -558,7 +581,9 @@ const METHODS: Record<string, MethodMeta> = {
   indexOf: { returns: "number", optional: "either" },
   includes: { returns: "bool", optional: "either" },
   // ── Array ─────────────────────────────────────────────────────────────────
-  at: { optional: "array" },
+  // `.at` sits with `.slice`/`.concat`/`.indexOf`/`.includes` in the `"either"`
+  // family: JS has it on both `Array` and `String` (`"abc".at(-1) === "c"`).
+  at: { optional: "either" },
   slice: { optional: "either" },
   concat: { optional: "either" },
   reverse: { returns: "array", optional: "array" }, // throws in expression position; metadata used by the statement-position rewrite
@@ -655,7 +680,7 @@ const METHODS: Record<string, MethodMeta> = {
   head: { optional: "array" },
   first: { optional: "array" },
   last: { optional: "array" },
-  nth: { optional: "array" },
+  nth: { optional: "either" }, // dual-type, like `.at` — see generateIndexFromEitherEnd
   size: { returns: "number", optional: "array" },
   takeWhile: { returns: "array", optional: "array" },
   dropWhile: { returns: "array", optional: "array" },
@@ -773,7 +798,7 @@ const ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
  * `$toString` of an array is an execution-time failure, so the honest answer is a
  * compile-time rejection wherever we can prove the shape.
  */
-function isArrayOfArrays(expr: Expr): boolean {
+function isArrayOfArrays(expr: Expr, ctx: GenerateCtx): boolean {
   if (expr.type === "ArrayLiteral") {
     if (expr.elements.length === 0) return false;
     return expr.elements.every((el) => {
@@ -786,7 +811,7 @@ function isArrayOfArrays(expr: Expr): boolean {
         case "FuncDecl":
           return false;
         default:
-          return isArrayProducing(el);
+          return isArrayProducing(el, ctx);
       }
     });
   }
@@ -801,8 +826,8 @@ function isArrayOfArrays(expr: Expr): boolean {
  * level would answer a different question than the source asked — so say what the
  * user must decide. Fires only on the two provable shapes (`isArrayOfArrays`).
  */
-function rejectNestedArrayStringify(object: Expr, method: string, callPos: number): void {
-  if (!isArrayOfArrays(object)) return;
+function rejectNestedArrayStringify(object: Expr, method: string, callPos: number, ctx: GenerateCtx): void {
+  if (!isArrayOfArrays(object, ctx)) return;
   const recv = object.type === "MethodCall" ? `'.${object.method}(...)'` : "this array literal";
   throw new CodegenError(
     `.${method}() can't stringify an array of arrays — ${recv} holds arrays, and MongoDB has no recursive ` +
@@ -812,7 +837,37 @@ function rejectNestedArrayStringify(object: Expr, method: string, callPos: numbe
   );
 }
 
-function isArrayProducing(expr: Expr): boolean {
+/**
+ * The three receiver-type predicates below take an optional `ctx` so a *binding*
+ * of known compound type counts as provable, exactly like a literal or an
+ * invariant-`returns` method chain. `ctx.bindingTypes` is the compiler's own
+ * record of what a name holds (a pipeline `const` with a provable initialiser, a
+ * `.reduce()` accumulator, a lambda's `arr` callback param, a `$lookup.let`
+ * correlation var capturing such a `const`) — see `GenerateCtx.bindingTypes`.
+ *
+ * Passing `ctx` is what turns `const ids = $.tags.uniq(); ids.includes(x)` into a
+ * plain `$in` instead of a runtime `$cond` on `$isArray` whose string branch can
+ * never run. Omit `ctx` only where none is in hand (`staticBindingType`, called
+ * from `pipeline.ts` on a raw AST) — the predicates then answer from structure
+ * alone, as they always have.
+ */
+function bindingTypeOf(expr: Expr, ctx: GenerateCtx | undefined): "object" | "array" | "string" | undefined {
+  if (expr.type === "ParamRef") return ctx?.bindingTypes?.get(expr.name);
+  // A field path the compiler itself materialised — see `slotTypes`.
+  if (expr.type === "FieldRef") return ctx?.slotTypes?.get(expr.path);
+  return undefined;
+}
+
+/**
+ * Record what a compiler-materialised slot holds, so a method chained onto it
+ * dispatches at compile time. Call it only where the slot's contents are certain;
+ * see `GenerateCtx.slotTypes`. A no-op outside a pipeline (no registry to write).
+ */
+export function noteSlotType(ctx: GenerateCtx, slot: string, type: "object" | "array" | "string" | undefined): void {
+  if (type !== undefined) ctx.slotTypes?.set(slot, type);
+}
+
+function isArrayProducing(expr: Expr, ctx?: GenerateCtx): boolean {
   switch (expr.type) {
     case "ArrayLiteral":
       return true;
@@ -820,28 +875,29 @@ function isArrayProducing(expr: Expr): boolean {
       return ARRAY_OUTPUT_OPS.has(expr.name);
     case "MethodCall":
       // `.slice` preserves receiver type — array→array, string→string.
-      if (expr.method === "slice") return isArrayProducing(expr.object);
+      if (expr.method === "slice") return isArrayProducing(expr.object, ctx);
       return ARRAY_RETURNING_METHODS.has(expr.method);
     case "ObjectCall":
       return expr.method === "entries" || expr.method === "keys" || expr.method === "values";
     default:
-      return false;
+      return bindingTypeOf(expr, ctx) === "array";
   }
 }
 
-function isObjectProducing(expr: Expr): boolean {
-  return expr.type === "ObjectLiteral";
+function isObjectProducing(expr: Expr, ctx?: GenerateCtx): boolean {
+  return expr.type === "ObjectLiteral" || bindingTypeOf(expr, ctx) === "object";
 }
 
 /**
  * The provable static type of an expression, or `undefined` when it can't be
- * pinned at compile time. Used by `pipeline.ts` to type `const` bindings so the
- * `IndexAccess` codegen can resolve `obj[k]` precisely (see `bindingTypes`).
+ * pinned at compile time. Used by `pipeline.ts` to type `const` bindings, which is
+ * what lets every receiver-type dispatch downstream resolve precisely rather than
+ * guarding at runtime (see `bindingTypes`).
  */
-export function staticBindingType(expr: Expr): "object" | "array" | "string" | undefined {
-  if (isArrayProducing(expr)) return "array";
-  if (isObjectProducing(expr)) return "object";
-  if (isStringProducing(expr)) return "string";
+export function staticBindingType(expr: Expr, ctx?: GenerateCtx): "object" | "array" | "string" | undefined {
+  if (isArrayProducing(expr, ctx)) return "array";
+  if (isObjectProducing(expr, ctx)) return "object";
+  if (isStringProducing(expr, ctx)) return "string";
   return undefined;
 }
 
@@ -888,7 +944,7 @@ function arrayElementType(expr: Expr): "object" | "array" | "string" | undefined
   }
 }
 
-function isStringProducing(expr: Expr): boolean {
+function isStringProducing(expr: Expr, ctx?: GenerateCtx): boolean {
   switch (expr.type) {
     case "StringLiteral":
       return true;
@@ -898,7 +954,7 @@ function isStringProducing(expr: Expr): boolean {
       return STRING_OUTPUT_OPS.has(expr.name);
     case "MethodCall":
       // `.slice` preserves receiver type — array→array, string→string.
-      if (expr.method === "slice") return isStringProducing(expr.object);
+      if (expr.method === "slice") return isStringProducing(expr.object, ctx);
       return STRING_RETURNING_METHODS.has(expr.method);
     case "TypeCast":
       return expr.cast === "String";
@@ -908,11 +964,11 @@ function isStringProducing(expr: Expr): boolean {
       if (expr.op === "+") {
         const chain: Expr[] = [];
         collectExprChain("+", expr, chain);
-        return chain.some((e) => isStringProducing(e));
+        return chain.some((e) => isStringProducing(e, ctx));
       }
       return false;
     default:
-      return false;
+      return bindingTypeOf(expr, ctx) === "string";
   }
 }
 
@@ -1050,17 +1106,18 @@ export function requiredReceiverFamily(method: string): ReceiverFamily | null {
 /** The provable, invariant type of a receiver expression, or null when uncertain.
  *  `bool`/`array` reuse the verified-sound isProvablyBool/isArrayProducing (which
  *  recurse through `.slice`/MethodCall and subsume literals + array-typed ops);
- *  `string`/`number`/`object` come from the receiver method's invariant `returns`.
+ *  `string`/`number`/`object` come from the receiver method's invariant `returns`,
+ *  and `object`/`string` also from a binding's recorded type (`bindingTypeOf`).
  *  Returns null for every unknown receiver — the literal-gating guarantee. */
-function certainReceiverType(o: Expr): "bool" | "array" | "string" | "number" | "object" | null {
+function certainReceiverType(o: Expr, ctx: GenerateCtx): "bool" | "array" | "string" | "number" | "object" | null {
   if (isProvablyBool(o)) return "bool";
-  if (isArrayProducing(o)) return "array";
+  if (isArrayProducing(o, ctx)) return "array";
   if (o.type === "MethodCall") {
-    if (o.method === "slice") return certainReceiverType(o.object); // .slice preserves receiver type
+    if (o.method === "slice") return certainReceiverType(o.object, ctx); // .slice preserves receiver type
     const r = METHODS[o.method]?.returns;
     if (r === "string" || r === "number" || r === "object") return r;
   }
-  return null;
+  return bindingTypeOf(o, ctx) ?? null;
 }
 
 export const RECEIVER_NOUN: Record<string, string> = {
@@ -1082,8 +1139,18 @@ export const RECEIVER_NOUN: Record<string, string> = {
  */
 export function returnsReceiverElement(method: string): boolean {
   const meta = METHODS[method];
-  return meta !== undefined && meta.optional === "array" && meta.returns === undefined;
+  if (meta === undefined || meta.returns !== undefined) return false;
+  return meta.optional === "array" || ELEMENT_READING_EITHER_METHODS.has(method);
 }
+
+// The `"either"` (array-or-string) methods that read ONE element rather than
+// returning a container of the receiver's own type. `optional` can't distinguish
+// them — `.at`/`.nth` and `.slice`/`.concat` all carry `optional: "either"` with no
+// invariant `returns` — but the difference is load-bearing: a `$$$.<coll>` stream
+// is a stream of documents, so `.at(0)` yields a document (and a following
+// array/string method must be rejected) while `.slice(0, 2)` still yields an array
+// (and a following `.map` is fine).
+const ELEMENT_READING_EITHER_METHODS = new Set(["at", "nth"]);
 
 /**
  * The receiver noun `method` demands when it cannot possibly run on a DOCUMENT,
@@ -1740,15 +1807,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
 
     case "IndexAccess": {
       // `obj[idx]` and `obj?.[idx]` produce the same AST shape; only the
-      // `optional` flag distinguishes them. Type-aware dispatch:
-      //   known array (structural OR binding-typed)  → $arrayElemAt
-      //   known object (binding-typed only)          → $getField
-      //   unknown                                    → runtime $cond between the two
-      // Binding-typed = the receiver is a `ParamRef` whose name lives in
-      // `ctx.bindingTypes` (populated today by `.reduce()` when initialValue
-      // and body agree on a compound type). The optional-chain `$ifNull`
-      // fallback matches the consumer: `[]` for array, `{}` for object so a
-      // missing path doesn't poison `$getField` with an array.
+      // `optional` flag distinguishes them. Dispatch is driven by the KEY first
+      // (a string key and an integer key mean different things in JS), then by
+      // the receiver type:
+      //   provably-string key → $getField                      (never an index)
+      //   integer-literal key → generateNumericIndexAccess     (all three readings)
+      //   otherwise: known array → $arrayElemAt, known object → $getField,
+      //              unknown → runtime $cond between the two
+      // "Known" spans structure and bindings alike — see `bindingTypeOf`. The
+      // optional-chain `$ifNull` fallback matches the consumer: `[]` for array,
+      // `{}` for object so a missing path doesn't poison `$getField` with an array.
       // Bracket access is *raw* data access — no compiler interpretation of the
       // key. Unlike dot `.length` (which folds to the string-or-array length
       // operator), `["length"]` just reads a property called "length". This
@@ -1766,7 +1834,6 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       const rawObj = _generate(expr.object, ctx);
       const idx = _generate(expr.index, ctx);
       const optional = expr.optional || chainHasOptional(expr.object);
-      const containerType = expr.object.type === "ParamRef" ? ctx.bindingTypes?.get(expr.object.name) : undefined;
       // A receiver that is provably never an array — the bare root document
       // (`$` → `$$ROOT`, always a BSON object) or an object literal — makes
       // `obj[k]` an unambiguous property getter for *any* key, so emit
@@ -1779,12 +1846,12 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       // string") on engines that don't prune the unreachable branch — a latent
       // HR3 violation that only surfaces on some servers.
       const isBareRoot = expr.object.type === "FieldRef" && expr.object.path === "";
-      const known: "object" | "array" | undefined = isArrayProducing(expr.object)
+      const known: "object" | "array" | "string" | undefined = isArrayProducing(expr.object, ctx)
         ? "array"
-        : isObjectProducing(expr.object) || isBareRoot
+        : isObjectProducing(expr.object, ctx) || isBareRoot
           ? "object"
-          : containerType === "array" || containerType === "object"
-            ? containerType
+          : isStringProducing(expr.object, ctx)
+            ? "string"
             : undefined;
       // A provably-string key can never be a numeric array index, so `obj[k]` is
       // unambiguously an object property getter — emit `$getField` directly and
@@ -1795,19 +1862,34 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       // `$getField` on an array input is accepted and yields missing — the
       // faithful, server-valid lowering (HR3). Covers a literal / `.toLowerCase()`-
       // style string key and a `const k = "…"` binding typed `"string"`.
-      const keyIsString =
-        isStringProducing(expr.index) ||
-        (expr.index.type === "ParamRef" && ctx.bindingTypes?.get(expr.index.name) === "string");
-      if (known === "object" || keyIsString) {
+      const keyIsString = isStringProducing(expr.index, ctx);
+      if (keyIsString) {
         const obj = optional ? wrapIfNull(rawObj, {}) : rawObj;
         return { $getField: { field: idx, input: obj } };
+      }
+      // A provably-INTEGER key means all three JS readings are live — an array
+      // position, a string character, or a document field whose name is that
+      // digit — and each lowers to a different operator. Handled together so the
+      // negative-index rejection and the string branch can't be forgotten at one
+      // of them. See § Numeric bracket keys in docs/specs/method-dispatch.md.
+      const literalIdx = literalIndexValue(expr.index);
+      if (literalIdx !== null) return generateNumericIndexAccess(literalIdx, known, rawObj, optional, expr.pos);
+      // Past this point the key is neither provably a string nor an integer
+      // literal, so every `$getField` it reaches needs the coercion (below).
+      if (known === "object") {
+        const obj = optional ? wrapIfNull(rawObj, {}) : rawObj;
+        return { $getField: { field: coerceFieldKey(idx), input: obj } };
       }
       if (known === "array") {
         const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
         return { $arrayElemAt: [obj, idx] };
       }
       const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-      return cond({ $isArray: obj }, { $arrayElemAt: [obj, idx] }, { $getField: { field: idx, input: obj } });
+      return cond(
+        { $isArray: obj },
+        { $arrayElemAt: [obj, idx] },
+        { $getField: { field: coerceFieldKey(idx), input: obj } },
+      );
     }
 
     case "RegexLiteral":
@@ -2015,6 +2097,105 @@ function chainHasOptional(expr: Expr): boolean {
   return false;
 }
 
+/**
+ * `obj[<integer literal>]` — the one bracket-key shape whose three JavaScript
+ * readings each lower to a different operator: an array position
+ * (`$arrayElemAt`), a string character (`$substrCP`), or a document field whose
+ * name happens to be that digit (`$getField`). All three are live, so an unknown
+ * receiver dispatches through all three at runtime.
+ *
+ * `$getField.field` **must** evaluate to a string — mongod refuses `field: 0`
+ * outright ("$getField requires 'field' to evaluate to type String, but got int")
+ * — so the digit is stringified here at compile time. That also matches JS, where
+ * a property key coerces to a string (`({ 0: "z" })[0] === "z"`).
+ *
+ * A NEGATIVE literal is rejected whatever the receiver: `arr[-1]` is `undefined`
+ * in JavaScript — only `.at(-1)` counts from the end — while `$arrayElemAt` would
+ * silently return the *last* element and `$substrCP` would be refused by the
+ * server. Naming `.at()` beats picking any of those three answers. A computed
+ * index (`arr[$.i]`) can't be proven either way and is left alone, per the
+ * literal-gating rule.
+ */
+function generateNumericIndexAccess(
+  index: number,
+  known: "object" | "array" | "string" | undefined,
+  rawObj: unknown,
+  optional: boolean,
+  pos: number,
+): unknown {
+  if (index < 0) {
+    throw new CodegenError(
+      `Negative bracket index '[${index}]' isn't allowed — in JavaScript that reads a property named "${index}" ` +
+        `(normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end, ` +
+        `which works on both arrays and strings.`,
+      pos,
+    );
+  }
+  const charAt = (o: unknown) => ({ $substrCP: [o, index, 1] });
+  const fieldAt = (o: unknown) => ({ $getField: { field: String(index), input: o } });
+  if (known === "array") return { $arrayElemAt: [optional ? wrapIfNull(rawObj, []) : rawObj, index] };
+  if (known === "string") return charAt(optional ? wrapIfNull(rawObj, "") : rawObj);
+  if (known === "object") return fieldAt(optional ? wrapIfNull(rawObj, {}) : rawObj);
+  // Unknown receiver. The `[]` optional-chain neutral suits all three branches:
+  // `$isArray([])` is true, so it takes the array branch and `$arrayElemAt([], n)`
+  // is missing — the same answer JS gives for `undefined?.[n]`.
+  const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
+  return cond({ $isArray: obj }, { $arrayElemAt: [obj, index] }, cond(isStringType(obj), charAt(obj), fieldAt(obj)));
+}
+
+/** Runtime "is this value a BSON string?", for a receiver whose type codegen can't prove. */
+function isStringType(operand: unknown): object {
+  return { $eq: [{ $type: operand }, "string"] };
+}
+
+/**
+ * Coerce a computed `$getField` key whose type codegen can't prove.
+ *
+ * `$getField.field` MUST evaluate to a String: mongod aborts the whole command on
+ * anything else ("requires 'field' to evaluate to type String, but got int"), and
+ * it is an execution-time error, so `$.doc[$.k]` died on every document where
+ * `$.k` held a number. Stringifying is also exactly what JavaScript does — a
+ * property key is always coerced, so `obj[0]` *is* `obj["0"]`.
+ *
+ * The `$ifNull` is load-bearing, not defensive: `$toString` of a missing or null
+ * key is null, which the server rejects the same way. `""` names a field no
+ * document has, so an absent key reads as missing — the sensible analogue of JS
+ * looking up the `"undefined"` property.
+ *
+ * Callers that can PROVE the key is a string skip this: `isStringProducing` keys
+ * pass through untouched, and an integer literal is folded to its string at
+ * compile time by `generateNumericIndexAccess`.
+ */
+function coerceFieldKey(idx: unknown): unknown {
+  return { $toString: wrapIfNull(idx, "") };
+}
+
+/**
+ * `.at(i)` and its lodash spelling `.nth(i)` — the read-from-either-end accessor,
+ * and the ONLY way to spell a negative index (brackets reject one, see
+ * `generateNumericIndexAccess`). Both work on arrays and strings in their source
+ * language (`"abc".at(-1) === "c"`; lodash's `_.nth("abc", 1) === "b"`), so both
+ * dispatch on receiver type. `index` is undefined for `.nth()`, which defaults to 0.
+ *
+ * The two branches need DIFFERENT index expressions: `$arrayElemAt` takes a
+ * negative index natively, while `$substrCP` refuses one outright ("the starting
+ * index must be nonnegative integer"), so the string side resolves it against the
+ * length via `normaliseSliceIndex` — the helper `.slice`/`.substr` share.
+ */
+function generateIndexFromEitherEnd(object: Expr, genObj: unknown, index: Expr | undefined, ctx: GenerateCtx): unknown {
+  const charAt = () => ({ $substrCP: [genObj, index === undefined ? 0 : normaliseSliceIndex(index, ctx, genObj), 1] });
+  const elemAt = () => ({ $arrayElemAt: [genObj, index === undefined ? 0 : _generate(index, ctx)] });
+  if (isStringProducing(object, ctx)) return charAt();
+  if (isArrayProducing(object, ctx)) return elemAt();
+  // Unknown receiver: test for a string explicitly rather than treating "not an
+  // array" as "string". `$substrCP` of a missing/null value is `""`, and `""` is
+  // not null — so the loose form poisons an enclosing `??` (`$.aliases.at(0) ??
+  // "anonymous"` yielded `""` instead of the fallback). Anything that is neither
+  // is `$$REMOVE`: neither language has this accessor on a number or a document,
+  // and missing is how MQL spells the absent result.
+  return cond({ $isArray: genObj }, elemAt(), cond(isStringType(genObj), charAt(), "$$REMOVE"));
+}
+
 function wrapIfNull(value: unknown, fallback: unknown): unknown {
   return { $ifNull: [value, fallback] };
 }
@@ -2040,16 +2221,9 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
     const handleSource = ctx.substreamLengthHandles?.get(object.name);
     if (handleSource !== undefined) return handleSource;
   }
-  // A lambda's 3rd 'array' callback param (`.map((el, i, arr) => arr.length)`)
-  // is provably an array — you can only iterate an array — so its `.length` is
-  // a clean `$size`, not the runtime `$isArray` guard used for unknown receivers.
-  if (object.type === "ParamRef" && ctx.bindingTypes?.get(object.name) === "array") {
-    const v = _generate(object, ctx);
-    return sizeOf(optional ? wrapIfNull(v, []) : v);
-  }
   const rawObj = _generate(object, ctx);
-  if (isStringProducing(object)) return strLenOf(rawObj);
-  if (isArrayProducing(object)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
+  if (isStringProducing(object, ctx)) return strLenOf(rawObj);
+  if (isArrayProducing(object, ctx)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
   const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
   // Only the string branch needs coercing: an absent field is already routed to
   // `$size([])` by the `[]` neutral when the chain is optional, and reaches the
@@ -2109,11 +2283,11 @@ const OPTIONAL_ARRAY_METHODS = methodsWhere((m) => m.optional === "array");
 // returns the same sensible empty-array result the JS short-circuit would.
 const OPTIONAL_EITHER_METHODS = methodsWhere((m) => m.optional === "either");
 
-function neutralForMethod(method: string, object: Expr): unknown | undefined {
+function neutralForMethod(method: string, object: Expr, ctx: GenerateCtx): unknown | undefined {
   if (OPTIONAL_STRING_METHODS.has(method)) return "";
   if (OPTIONAL_ARRAY_METHODS.has(method)) return [];
   if (OPTIONAL_EITHER_METHODS.has(method)) {
-    if (isStringProducing(object)) return "";
+    if (isStringProducing(object, ctx)) return "";
     return [];
   }
   return undefined;
@@ -2408,7 +2582,7 @@ function generateAdd(left: Expr, right: Expr, ctx: GenerateCtx): unknown {
   collectExprChain("+", left, exprs);
   exprs.push(right);
 
-  const isString = exprs.some((e) => isStringProducing(e));
+  const isString = exprs.some((e) => isStringProducing(e, ctx));
   if (isString) {
     // `$concat` returns null on any null operand, poisoning the whole string.
     // Wrap optional-chain operands with $ifNull(v, "") so `?.` operands match
@@ -2968,7 +3142,7 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
     // would collapse the whole template). JS would produce `"undefined"` here;
     // `""` is the saner empty for templates.
     const wrappedGen = chainHasOptional(expr) ? wrapIfNull(gen, "") : gen;
-    parts.push(isStringProducing(expr) ? wrappedGen : { $toString: wrappedGen });
+    parts.push(isStringProducing(expr, ctx) ? wrappedGen : { $toString: wrappedGen });
   }
   const tail = quasis[expressions.length];
   if (tail !== "") parts.push(tail);
@@ -3294,7 +3468,7 @@ function generateMethodCall(
   // (which would either error or poison downstream callers).
   const rawObj = _generate(object, ctx);
   const wrapReceiver = optional || chainHasOptional(object);
-  const neutral = wrapReceiver ? neutralForMethod(method, object) : undefined;
+  const neutral = wrapReceiver ? neutralForMethod(method, object, ctx) : undefined;
   const genObj = neutral !== undefined ? wrapIfNull(rawObj, neutral) : rawObj;
 
   // Date methods require a date receiver — reject a literal non-date at compile
@@ -3310,7 +3484,7 @@ function generateMethodCall(
   // Guarded by `method in METHODS` so an unknown method falls through to the
   // "did you mean?" path below rather than this receiver-shape error.
   if (method in METHODS) {
-    const recv = certainReceiverType(object);
+    const recv = certainReceiverType(object, ctx);
     if (recv !== null) rejectIncompatibleChain(recv, method, object);
   }
 
@@ -3410,10 +3584,10 @@ function generateMethodCall(
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
       // unknown → runtime $cond on $isArray so the right form runs at query time.
-      if (isArrayProducing(object)) {
+      if (isArrayProducing(object, ctx)) {
         return { $indexOfArray: [genObj, needle] };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return { $indexOfCP: [genObj, needle] };
       }
       return cond({ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] });
@@ -3421,7 +3595,7 @@ function generateMethodCall(
     case "lastIndexOf": {
       const exprArgs = exprArgsOnly(args, "lastIndexOf");
       checkArity("lastIndexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         throw new CodegenError(
           `.lastIndexOf() on strings isn't supported — MongoDB's \$indexOfCP is forward-only. Use \$op($indexOfCP, str, needle) for first-match indexing.`,
           callPos,
@@ -3465,10 +3639,10 @@ function generateMethodCall(
       const needle = _generate(exprArgs[0], ctx);
       // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
       // unknown → runtime $cond so a bare $.field works for either type.
-      if (isArrayProducing(object)) {
+      if (isArrayProducing(object, ctx)) {
         return { $in: [needle, genObj] };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
       }
       return cond({ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] });
@@ -3568,7 +3742,15 @@ function generateMethodCall(
     case "at": {
       const exprArgs = exprArgsOnly(args, "at");
       checkArity("at", { sig: "index", exact: 1 }, exprArgs.length, callPos);
-      return { $arrayElemAt: [genObj, _generate(exprArgs[0], ctx)] };
+      // `.at()` is JS's index-from-the-end reader on BOTH arrays and strings, and
+      // it is the *only* way to spell a negative index (brackets reject one — see
+      // `generateNumericIndexAccess`). Receiver-type dispatch as usual, except the
+      // two branches need different index expressions: `$arrayElemAt` takes a
+      // negative index natively, while `$substrCP` refuses one outright ("the
+      // starting index must be nonnegative integer"), so the string side resolves
+      // it against the length via `normaliseSliceIndex` — the same helper
+      // `.slice`/`.substr` use.
+      return generateIndexFromEitherEnd(object, genObj, exprArgs[0], ctx);
     }
     case "slice": {
       const exprArgs = exprArgsOnly(args, "slice");
@@ -3576,8 +3758,8 @@ function generateMethodCall(
       // Receiver-type dispatch: known array → $slice (native negative-index support);
       // known string → $substrCP (with compile-time/runtime normalisation of negatives);
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
-      if (isStringProducing(object)) return sliceString(genObj, exprArgs, ctx);
-      if (isArrayProducing(object)) return sliceArray(genObj, exprArgs, ctx);
+      if (isStringProducing(object, ctx)) return sliceString(genObj, exprArgs, ctx);
+      if (isArrayProducing(object, ctx)) return sliceArray(genObj, exprArgs, ctx);
       return cond({ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx));
     }
     case "toReversed": {
@@ -3760,10 +3942,10 @@ function generateMethodCall(
       // unknown → runtime $cond on $isArray so the right form runs at query time.
       checkArity("concat", { sig: "...items", atLeast: 1 }, args.length, callPos);
       const tail = args.map((a) => (a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx)));
-      if (isArrayProducing(object)) {
+      if (isArrayProducing(object, ctx)) {
         return { $concatArrays: [genObj, ...tail] };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return { $concat: [genObj, ...tail] };
       }
       return cond({ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] });
@@ -3771,7 +3953,7 @@ function generateMethodCall(
     case "join": {
       const exprArgs = exprArgsOnly(args, "join");
       checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
-      rejectNestedArrayStringify(object, "join", callPos);
+      rejectNestedArrayStringify(object, "join", callPos, ctx);
       const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
       // Reduce: concatenate elements with the separator, omitting it for the first element.
       // The accumulator carries the running string; an empty start lets us detect "first".
@@ -3792,8 +3974,8 @@ function generateMethodCall(
       // JS Array.prototype.toString is `.join(",")`. For known string receivers
       // this is a no-op. For other scalars MongoDB's $toString covers it
       // (numbers, dates → ISO string, booleans, ObjectId, etc.).
-      if (isArrayProducing(object)) {
-        rejectNestedArrayStringify(object, "toString", callPos);
+      if (isArrayProducing(object, ctx)) {
+        rejectNestedArrayStringify(object, "toString", callPos, ctx);
         return {
           $reduce: {
             input: genObj,
@@ -3806,7 +3988,7 @@ function generateMethodCall(
           },
         };
       }
-      if (isStringProducing(object)) {
+      if (isStringProducing(object, ctx)) {
         return genObj;
       }
       return { $toString: genObj };
@@ -4276,15 +4458,17 @@ function generateMethodCall(
     case "nth": {
       const exprArgs = exprArgsOnly(args, "nth");
       checkArity("nth", { sig: "[n=0]", allowed: [0, 1] }, exprArgs.length, callPos);
-      // $arrayElemAt supports negative indices, matching lodash's nth.
-      return { $arrayElemAt: [genObj, exprArgs[0] !== undefined ? _generate(exprArgs[0], ctx) : 0] };
+      // lodash's `_.nth` reads array-LIKE, strings included (`_.nth("abc", 1) === "b"`),
+      // so it shares `.at`'s receiver dispatch. Emitting a bare `$arrayElemAt` aborted
+      // the query on a string receiver ("first argument must be an array, but is string").
+      return generateIndexFromEitherEnd(object, genObj, exprArgs[0], ctx);
     }
     case "size": {
       checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
       // lodash size counts array elements OR object keys. Arrays → $size; objects →
       // key count via $objectToArray. Strings should use `.length` (see docs).
-      if (isArrayProducing(object)) return sizeOf(genObj);
-      if (isObjectProducing(object)) return sizeOf({ $objectToArray: genObj });
+      if (isArrayProducing(object, ctx)) return sizeOf(genObj);
+      if (isObjectProducing(object, ctx)) return sizeOf({ $objectToArray: genObj });
       return cond({ $isArray: genObj }, sizeOf(genObj), sizeOf({ $objectToArray: genObj }));
     }
     case "takeWhile":

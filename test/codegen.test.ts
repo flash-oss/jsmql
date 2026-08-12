@@ -10,6 +10,43 @@ const truthy = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
 });
 
+// Mirror of `generateNumericIndexAccess`'s unknown-receiver branch: `v[i]` where
+// the receiver type can't be proven means all three JS readings are live, so the
+// dispatch is array position → string character → document field named `"i"`.
+const indexAt = (v: unknown, i: number) => ({
+  $cond: {
+    if: { $isArray: v },
+    then: { $arrayElemAt: [v, i] },
+    else: {
+      $cond: {
+        if: { $eq: [{ $type: v }, "string"] },
+        then: { $substrCP: [v, i, 1] },
+        else: { $getField: { field: String(i), input: v } },
+      },
+    },
+  },
+});
+
+// Mirror of the unknown-receiver `.at()` dispatch. Unlike brackets there is no
+// document reading — JS has no `.at()` on a number or a document — so the third
+// branch is missing. It must be `$$REMOVE` rather than falling into the string
+// branch: `$substrCP` of a missing value is `""`, and `""` is not null, which
+// would poison an enclosing `??`. `strIndex` is the index the string branch uses
+// ($substrCP refuses a negative start, so a negative resolves against the length).
+const atOf = (v: unknown, i: unknown, strIndex: unknown = i) => ({
+  $cond: {
+    if: { $isArray: v },
+    then: { $arrayElemAt: [v, i] },
+    else: { $cond: { if: { $eq: [{ $type: v }, "string"] }, then: { $substrCP: [v, strIndex, 1] }, else: "$$REMOVE" } },
+  },
+});
+
+/** Mirror of `coerceFieldKey`: the coercion an unprovable `$getField` key gets. */
+const keyOf = (k: unknown) => ({ $toString: { $ifNull: [k, ""] } });
+
+/** The `$substrCP` start a negative `.at(-n)` resolves to on a string receiver. */
+const fromEnd = (v: unknown, n: number) => ({ $max: [0, { $subtract: [{ $strLenCP: { $ifNull: [v, ""] } }, n] }] });
+
 describe("basic literals", () => {
   it("passes number through", () => {
     expect(jsmql.expr("$abs(42)")).toEqual({ $abs: 42 });
@@ -640,7 +677,7 @@ describe("object spread", () => {
                 [
                   {
                     k: "$$this",
-                    v: { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] },
+                    v: { $add: [{ $ifNull: [{ $getField: { field: keyOf("$$this"), input: "$$value" } }, 0] }, 1] },
                   },
                 ],
               ],
@@ -1419,23 +1456,81 @@ describe("string-context +", () => {
 });
 
 describe("bracket access", () => {
-  it("constant index on bare field → runtime $cond on $isArray", () => {
-    // Bare $.items receiver — type unknown — dispatch at runtime to handle
-    // either array (numeric index) or object (dynamic key) at query time.
-    expect(jsmql.expr("$.items[0]")).toEqual({
+  it("constant index on bare field → runtime three-way dispatch", () => {
+    // Bare $.items receiver — type unknown — and an INTEGER key, which has three
+    // live JS readings, so all three run at query time: array position, string
+    // character, document field named "0". Verified on a live server against a
+    // doc holding each of the three types (see the note on `indexAt`); the
+    // `$getField` field is the STRING "0" because mongod refuses `field: 0`
+    // ("requires 'field' to evaluate to type String, but got int").
+    expect(jsmql.expr("$.items[0]")).toEqual(indexAt("$items", 0));
+  });
+  it("negative constant index is rejected — brackets never count from the end", () => {
+    // JS `arr[-1]` reads a property named "-1" (undefined); only `.at(-1)` counts
+    // from the end. $arrayElemAt WOULD return the last element, so emitting it
+    // would silently disagree with JavaScript.
+    expect(() => jsmql.expr("$.items[-1]")).toThrow(/Negative bracket index '\[-1\]' isn't allowed/);
+    expect(() => jsmql.expr("$.items[-1]")).toThrow(/Use '\.at\(-1\)' to index from the end/);
+    // Same for a provably-string receiver, and for a provably-array one.
+    expect(() => jsmql.pipeline("const s = $.name.trim(); $set({ v: s[-1] });")).toThrow(/Negative bracket index/);
+    expect(() => jsmql.expr("$.tags.uniq()[-2]")).toThrow(/Negative bracket index '\[-2\]'/);
+  });
+  it("a known-string receiver reads one character — $substrCP, not a field lookup", () => {
+    const p = jsmql.pipeline("const s = $.name.trim(); $set({ a: s[0], b: s[2] });");
+    expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
+      a: { $substrCP: ["$__jsmql.var.s", 0, 1] },
+      b: { $substrCP: ["$__jsmql.var.s", 2, 1] },
+    });
+  });
+  it("an unprovable computed key is coerced — $getField.field must be a String", () => {
+    // Live-verified: without the coercion, `$.doc[$.k]` aborted the whole command
+    // ("$getField requires 'field' to evaluate to type String") on every document
+    // where `$.k` held a number — and, far more commonly, where `$.k` was ABSENT
+    // (missing reaches $getField as null). Stringifying is what JS does too: a
+    // property key always coerces, so `obj[0]` is `obj["0"]`.
+    expect(jsmql.expr("$.doc[$.k]")).toEqual({
       $cond: {
-        if: { $isArray: "$items" },
-        then: { $arrayElemAt: ["$items", 0] },
-        else: { $getField: { field: 0, input: "$items" } },
+        if: { $isArray: "$doc" },
+        then: { $arrayElemAt: ["$doc", "$k"] },
+        else: { $getField: { field: keyOf("$k"), input: "$doc" } },
       },
     });
+    // A PROVABLE string key needs no coercion and keeps the lean shape.
+    expect(jsmql.expr('$.doc["host"]')).toEqual({ $getField: { field: "host", input: "$doc" } });
+    expect(jsmql.expr("$.doc[$.k.toLowerCase()]")).toEqual({ $getField: { field: { $toLower: "$k" }, input: "$doc" } });
+    expect(jsmql.pipeline('const k = "host"; $set({ v: $.doc[k] });')).toEqual([
+      { $set: { v: { $getField: { field: "host", input: "$doc" } } } },
+    ]);
+  });
+  it("a numeric object KEY builds the stringified field name, as JavaScript does", () => {
+    // `({ 0: 1, 1.5: 2, 0x10: 3 })` in JS has the keys "0", "1.5", "16" — the
+    // numeric VALUE stringified, not the source text. This is the write-side
+    // counterpart of reading `doc[0]`.
+    expect(jsmql.expr("({ 0: 1, 1.5: 2, 0x10: 3 })")).toEqual({ "0": 1, "1.5": 2, "16": 3 });
+    // An ObjectId literal is not a field name, and JS would read the 24-hex as a
+    // precision-losing number — neither reading is useful, so name the one that is.
+    expect(() => jsmql.expr("({ 0x507f1f77bcf86cd799439011: 1 })")).toThrow(
+      /An ObjectId literal can't be an object key.*Quote it/s,
+    );
+  });
+  it("a known-object receiver stringifies the integer key ($getField needs a String field)", () => {
+    // The bare root is a structural object, so no dispatch at all.
+    expect(jsmql.expr("$[0]")).toEqual({ $getField: { field: "0", input: "$$ROOT" } });
+    // Same for an object-typed `const`.
+    const p = jsmql.pipeline('const o = { "0": $.first }; $set({ v: o[0] });');
+    expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
+      v: { $getField: { field: "0", input: "$__jsmql.var.o" } },
+    });
+    // `$.doc["a"]` is NOT provably an object — a `$getField` result can be any
+    // type — so a following `[0]` keeps the three-way dispatch.
+    expect(jsmql.expr('$.doc["a"][0]')).toEqual(indexAt({ $getField: { field: "a", input: "$doc" } }, 0));
   });
   it("field index on bare field → runtime $cond", () => {
     expect(jsmql.expr("$.items[$.idx]")).toEqual({
       $cond: {
         if: { $isArray: "$items" },
         then: { $arrayElemAt: ["$items", "$idx"] },
-        else: { $getField: { field: "$idx", input: "$items" } },
+        else: { $getField: { field: keyOf("$idx"), input: "$items" } },
       },
     });
   });
@@ -1477,20 +1572,20 @@ describe("bracket access", () => {
     // array index; a non-numeric index there is rejected at *pipeline-
     // optimization* time ("$arrayElemAt's second argument must be a numeric
     // value, but is string") on engines that don't prune unreachable branches.
-    expect(jsmql.expr("$[$.fieldName]")).toEqual({ $getField: { field: "$fieldName", input: "$$ROOT" } });
+    expect(jsmql.expr("$[$.fieldName]")).toEqual({ $getField: { field: keyOf("$fieldName"), input: "$$ROOT" } });
     // The reported case: indexing the root by a value read from a const map
     // (`$[SSTM_PROP[party]]`). The const map folds and inlines; both getters
     // still resolve to a string field name.
     expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toEqual([
       {
         $replaceWith: {
-          v: { $getField: { field: { $getField: { field: "k", input: { a: "x" } } }, input: "$$ROOT" } },
+          v: { $getField: { field: keyOf({ $getField: { field: "k", input: { a: "x" } } }), input: "$$ROOT" } },
         },
       },
     ]);
   });
   it("computed key on an object literal → $getField (object literals are never arrays)", () => {
-    expect(jsmql.expr("({ a: 1, b: 2 })[$.k]")).toEqual({ $getField: { field: "$k", input: { a: 1, b: 2 } } });
+    expect(jsmql.expr("({ a: 1, b: 2 })[$.k]")).toEqual({ $getField: { field: keyOf("$k"), input: { a: 1, b: 2 } } });
   });
   it("chained bracket access on bare field → nested $cond", () => {
     expect(jsmql.expr("$.m[$.r][$.c]")).toEqual({
@@ -1500,7 +1595,7 @@ describe("bracket access", () => {
             $cond: {
               if: { $isArray: "$m" },
               then: { $arrayElemAt: ["$m", "$r"] },
-              else: { $getField: { field: "$r", input: "$m" } },
+              else: { $getField: { field: keyOf("$r"), input: "$m" } },
             },
           },
         },
@@ -1510,7 +1605,7 @@ describe("bracket access", () => {
               $cond: {
                 if: { $isArray: "$m" },
                 then: { $arrayElemAt: ["$m", "$r"] },
-                else: { $getField: { field: "$r", input: "$m" } },
+                else: { $getField: { field: keyOf("$r"), input: "$m" } },
               },
             },
             "$c",
@@ -1518,12 +1613,12 @@ describe("bracket access", () => {
         },
         else: {
           $getField: {
-            field: "$c",
+            field: keyOf("$c"),
             input: {
               $cond: {
                 if: { $isArray: "$m" },
                 then: { $arrayElemAt: ["$m", "$r"] },
-                else: { $getField: { field: "$r", input: "$m" } },
+                else: { $getField: { field: keyOf("$r"), input: "$m" } },
               },
             },
           },
@@ -1589,7 +1684,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
   });
   it("object-literal elements type the element as object → element[k] → $getField", () => {
     expect(jsmql.expr("[{ a: 1 }, { b: 2 }].map(o => o[$.k])")).toEqual({
-      $map: { input: [{ a: 1 }, { b: 2 }], as: "o", in: { $getField: { field: "$k", input: "$$o" } } },
+      $map: { input: [{ a: 1 }, { b: 2 }], as: "o", in: { $getField: { field: keyOf("$k"), input: "$$o" } } },
     });
   });
   it("NON-string element type (numbers) keeps the runtime $isArray guard", () => {
@@ -1602,7 +1697,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
           $cond: {
             if: { $isArray: "$m" },
             then: { $arrayElemAt: ["$m", "$$i"] },
-            else: { $getField: { field: "$$i", input: "$m" } },
+            else: { $getField: { field: keyOf("$$i"), input: "$m" } },
           },
         },
       },
@@ -1617,7 +1712,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
           $cond: {
             if: { $isArray: "$m" },
             then: { $arrayElemAt: ["$m", "$$t"] },
-            else: { $getField: { field: "$$t", input: "$m" } },
+            else: { $getField: { field: keyOf("$$t"), input: "$m" } },
           },
         },
       },
@@ -1640,7 +1735,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
               $cond: {
                 if: { $isArray: "$m" },
                 then: { $arrayElemAt: ["$m", "$$i"] },
-                else: { $getField: { field: "$$i", input: "$m" } },
+                else: { $getField: { field: keyOf("$$i"), input: "$m" } },
               },
             },
           },
@@ -1705,18 +1800,7 @@ describe("field path regression (FieldRef stops at first segment)", () => {
     expect(jsmql.expr("$.a.b.c")).toEqual("$a.b.c");
   });
   it("$.items[0].name produces $getField on bracket-access result", () => {
-    expect(jsmql.expr("$.items[0].name")).toEqual({
-      $getField: {
-        field: "name",
-        input: {
-          $cond: {
-            if: { $isArray: "$items" },
-            then: { $arrayElemAt: ["$items", 0] },
-            else: { $getField: { field: 0, input: "$items" } },
-          },
-        },
-      },
-    });
+    expect(jsmql.expr("$.items[0].name")).toEqual({ $getField: { field: "name", input: indexAt("$items", 0) } });
   });
   it("rejects numeric field segments — $.items.0 is not valid JS syntax", () => {
     expect(() => jsmql.expr("$.items.0")).toThrow(/Expected property name after '\.'/);
@@ -1900,11 +1984,29 @@ describe("method arg-count errors (standardized via checkArity)", () => {
 });
 
 describe("array methods (no lambda)", () => {
-  it("at(n)", () => {
-    expect(jsmql.expr("$.items.at(0)")).toEqual({ $arrayElemAt: ["$items", 0] });
+  // `.at()` is dual-type in JS ("abc".at(-1) === "c"), and it is the only way to
+  // spell a negative index — brackets reject one. So a bare-field receiver
+  // dispatches on `$isArray` like `.slice`/`.includes` do.
+  it("at(n) on bare $.field → runtime three-way dispatch", () => {
+    expect(jsmql.expr("$.items.at(0)")).toEqual(atOf("$items", 0));
   });
-  it("at(-1)", () => {
-    expect(jsmql.expr("$.items.at(-1)")).toEqual({ $arrayElemAt: ["$items", -1] });
+  it("at(-1) — $arrayElemAt takes the negative natively, $substrCP needs it resolved", () => {
+    // `$substrCP` refuses a negative start ("must be nonnegative integer"), so the
+    // string branch resolves -1 against the length, as `.slice`/`.substr` do.
+    expect(jsmql.expr("$.items.at(-1)")).toEqual(atOf("$items", -1, fromEnd("$items", 1)));
+  });
+  it("at() on a provably-typed receiver skips the dispatch", () => {
+    expect(jsmql.expr("$.tags.uniq().at(-1)")).toEqual({ $arrayElemAt: [expect.anything(), -1] });
+    const p = jsmql.pipeline("const s = $.name.trim(); $set({ v: s.at(-1) });");
+    expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
+      v: { $substrCP: ["$__jsmql.var.s", fromEnd("$__jsmql.var.s", 1), 1] },
+    });
+  });
+  it("at() on neither an array nor a string is MISSING, so it can't poison ??", () => {
+    // Live-verified: on a doc with no `aliases`, this yields "anonymous". A loose
+    // "not an array means string" else-branch gave `$substrCP(missing) === ""`,
+    // which is not null, so `$ifNull` returned "" and swallowed the fallback.
+    expect(jsmql.expr('$.aliases.at(0) ?? "anonymous"')).toEqual({ $ifNull: [atOf("$aliases", 0), "anonymous"] });
   });
   it("slice(start) on bare $.field → runtime $cond on $isArray", () => {
     // Array branch: JS `slice(start)` = drop the first `start` — position + a
@@ -2060,7 +2162,7 @@ describe("reduce accumulator type narrowing", () => {
         in: {
           $mergeObjects: [
             "$$value",
-            { $arrayToObject: [[{ k: "$$this", v: { $getField: { field: "$$this", input: "$$value" } } }]] },
+            { $arrayToObject: [[{ k: "$$this", v: { $getField: { field: keyOf("$$this"), input: "$$value" } } }]] },
           ],
         },
       },
@@ -2084,17 +2186,7 @@ describe("reduce accumulator type narrowing", () => {
     // When the body returns a member-access on the element, the accumulator
     // is not narrowed, so a bracket access on it still emits the cond.
     expect(jsmql.expr("$.xs.reduce((a, x) => a[0], {})")).toEqual({
-      $reduce: {
-        input: "$xs",
-        initialValue: {},
-        in: {
-          $cond: {
-            if: { $isArray: "$$value" },
-            then: { $arrayElemAt: ["$$value", 0] },
-            else: { $getField: { field: 0, input: "$$value" } },
-          },
-        },
-      },
+      $reduce: { input: "$xs", initialValue: {}, in: indexAt("$$value", 0) },
     });
   });
 
@@ -2103,20 +2195,7 @@ describe("reduce accumulator type narrowing", () => {
       $reduce: {
         input: "$xs",
         initialValue: "$seed",
-        in: {
-          $mergeObjects: [
-            "$$value",
-            {
-              k: {
-                $cond: {
-                  if: { $isArray: "$$value" },
-                  then: { $arrayElemAt: ["$$value", 0] },
-                  else: { $getField: { field: 0, input: "$$value" } },
-                },
-              },
-            },
-          ],
-        },
+        in: { $mergeObjects: ["$$value", { k: indexAt("$$value", 0) }] },
       },
     });
   });
@@ -2125,24 +2204,7 @@ describe("reduce accumulator type narrowing", () => {
     // `x[0]` should keep the cond — `x` is the element binding and could be
     // anything; only `a` is narrowed to object.
     expect(jsmql.expr("$.xs.reduce((a, x) => ({ ...a, k: x[0] }), {})")).toEqual({
-      $reduce: {
-        input: "$xs",
-        initialValue: {},
-        in: {
-          $mergeObjects: [
-            "$$value",
-            {
-              k: {
-                $cond: {
-                  if: { $isArray: "$$this" },
-                  then: { $arrayElemAt: ["$$this", 0] },
-                  else: { $getField: { field: 0, input: "$$this" } },
-                },
-              },
-            },
-          ],
-        },
-      },
+      $reduce: { input: "$xs", initialValue: {}, in: { $mergeObjects: ["$$value", { k: indexAt("$$this", 0) }] } },
     });
   });
 
@@ -2187,13 +2249,205 @@ describe("reduce accumulator type narrowing", () => {
             "$$value",
             {
               $arrayToObject: [
-                [{ k: "$$this", v: { $getField: { field: "$$this", input: { $ifNull: ["$$value", {}] } } } }],
+                [{ k: "$$this", v: { $getField: { field: keyOf("$$this"), input: { $ifNull: ["$$value", {}] } } } }],
               ],
             },
           ],
         },
       },
     });
+  });
+});
+
+// A `const` whose initialiser has a provable static type is recorded in
+// `ctx.bindingTypes`, and every receiver-type dispatch reads it — so a method on
+// that binding picks its branch at compile time instead of emitting a runtime
+// `$cond` on `$isArray` whose other branch can never run. A `let` stays
+// conservative on purpose: it can be reassigned, so its type can drift.
+describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
+  const setOf = (pipeline: unknown[], i: number) => (pipeline[i] as { $set: Record<string, unknown> }).$set;
+
+  it("array-typed const: every dual-dispatch method picks the array branch", () => {
+    const p = jsmql.pipeline(
+      `const a = $.tags.uniq();
+       $set({ inc: a.includes("b"), idx: a.indexOf("b"), sl: a.slice(0, 2), cc: a.concat(["z"]),
+              sz: a.size(), len: a.length, str: a.toString() });`,
+    );
+    expect(setOf(p, 1)).toEqual({
+      inc: { $in: ["b", "$__jsmql.var.a"] },
+      idx: { $indexOfArray: ["$__jsmql.var.a", "b"] },
+      sl: { $slice: ["$__jsmql.var.a", 2] },
+      cc: { $concatArrays: ["$__jsmql.var.a", ["z"]] },
+      sz: { $size: "$__jsmql.var.a" },
+      len: { $size: "$__jsmql.var.a" },
+      // JS `[…].toString()` is `.join(",")`. Before the receiver was typed this
+      // emitted `$toString` of an array, which mongod rejects outright
+      // ("Unsupported conversion from array to string") — an HR3 break.
+      str: {
+        $reduce: {
+          input: "$__jsmql.var.a",
+          initialValue: "",
+          in: {
+            $cond: {
+              if: { $eq: ["$$value", ""] },
+              then: { $toString: "$$this" },
+              else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("string-typed const: the same methods pick the string branch", () => {
+    const p = jsmql.pipeline(
+      `const s = $.name.trim();
+       const t = $.other.trim();
+       $set({ inc: s.includes("x"), idx: s.indexOf("x"), sl: s.slice(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
+    );
+    expect(setOf(p, 2)).toEqual({
+      inc: { $gte: [{ $indexOfCP: ["$__jsmql.var.s", "x"] }, 0] },
+      idx: { $indexOfCP: ["$__jsmql.var.s", "x"] },
+      sl: { $substrCP: ["$__jsmql.var.s", 1, 2] },
+      // Two string-typed bindings and nothing else: `$concat`, not `$add`.
+      sum: { $concat: ["$__jsmql.var.s", "$__jsmql.var.t"] },
+      // No redundant `$toString` around an already-string interpolation.
+      tpl: { $concat: ["$__jsmql.var.s", "-", "$__jsmql.var.t"] },
+    });
+  });
+
+  it("`let` keeps the runtime guard — a reassignment could change its type", () => {
+    const p = jsmql.pipeline(`let a = $.tags.uniq(); $set({ inc: a.includes("b") });`);
+    expect(setOf(p, 1)).toEqual({
+      inc: {
+        $cond: {
+          if: { $isArray: "$__jsmql.var.a" },
+          then: { $in: ["b", "$__jsmql.var.a"] },
+          else: { $gte: [{ $indexOfCP: ["$__jsmql.var.a", "b"] }, 0] },
+        },
+      },
+    });
+  });
+
+  it("a chained const inherits the type it was derived from", () => {
+    // `.slice` preserves the receiver type, so `b` is array-typed through `a`.
+    const p = jsmql.pipeline(`const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes("b") });`);
+    expect(setOf(p, 1)).toEqual({
+      "__jsmql.var.b": {
+        $let: {
+          vars: { jsmqlArr: "$__jsmql.var.a" },
+          in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+        },
+      },
+    });
+    expect(setOf(p, 2)).toEqual({ inc: { $in: ["b", "$__jsmql.var.b"] } });
+  });
+
+  it("jsmql's OWN materialised lookup slot is typed, so a chained method resolves at compile time", () => {
+    // The rewritten receiver is a plain field path (`__jsmql.tmp.N`), but jsmql
+    // filled it from `$lookup.as` and records that in `ctx.slotTypes` — so a method
+    // chained onto it needs no runtime guard over the compiler's own scratch.
+    const setOfLast = (src: string) => {
+      const p = jsmql.pipeline(src);
+      return (p[p.length - 2] as { $set: Record<string, unknown> }).$set;
+    };
+    const lk = "$$$.users.filter(u => u._id === $._id)";
+    expect(setOfLast(`$.u = ${lk}.at(0);`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.1", 0] } });
+    expect(setOfLast(`$.u = ${lk}[0];`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.1", 0] } });
+    expect(setOfLast(`$.b = ${lk}.includes(1);`)).toEqual({ b: { $in: [1, "$__jsmql.tmp.1"] } });
+    expect(setOfLast(`$.s = ${lk}.size();`)).toEqual({ s: { $size: "$__jsmql.tmp.1" } });
+    expect(setOfLast(`$.i = ${lk}.indexOf(1);`)).toEqual({ i: { $indexOfArray: ["$__jsmql.tmp.1", 1] } });
+    // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
+    // so the registry records "object" and `.size()` counts keys.
+    expect(setOfLast(`$.k = ${lk}.countBy("tier").size();`)).toEqual({
+      k: { $size: { $objectToArray: "$__jsmql.tmp.1" } },
+    });
+  });
+
+  it("a `$$$.<coll>` lookup const is an array — `.filter` / `.aggregate` keep the `as` array", () => {
+    const p = jsmql.pipeline(
+      `const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.includes(1) });`,
+    );
+    expect(setOf(p, 1)).toEqual({ any: { $in: [1, "$__jsmql.var.orders"] } });
+  });
+
+  it("a `.find()` lookup const stays untyped — its `$first` is a doc on a match, null on none", () => {
+    const p = jsmql.pipeline(`const one = $$$.orders.find(o => o.userId === $._id); $set({ any: one.includes(1) });`);
+    expect(setOf(p, 2)).toEqual({
+      any: {
+        $cond: {
+          if: { $isArray: "$__jsmql.var.one" },
+          then: { $in: [1, "$__jsmql.var.one"] },
+          else: { $gte: [{ $indexOfCP: ["$__jsmql.var.one", 1] }, 0] },
+        },
+      },
+    });
+  });
+
+  it("the chain type-check reads binding types too", () => {
+    expect(() => jsmql.pipeline(`const s = $.name.trim(); $set({ x: s.map(c => c) });`)).toThrow(
+      /'\.map\(\.\.\.\)' expects an array receiver, but the value before it returns a string/,
+    );
+    expect(() => jsmql.pipeline(`const a = $.tags.uniq(); $set({ x: a.toUpperCase() });`)).toThrow(
+      /'\.toUpperCase\(\.\.\.\)' expects a string receiver, but the value before it returns an array/,
+    );
+  });
+});
+
+// A `$lookup.let` var that captures a WHOLE outer binding holds exactly what the
+// binding holds, so the sub-pipeline inherits its type — see
+// docs/specs/lookup-stage.md § Correlation-var types.
+describe("$lookup.let correlation vars inherit the outer binding's type", () => {
+  it("expression-body predicate: `.includes` on a captured array const is a plain $in", () => {
+    const p = jsmql.pipeline(
+      `const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.includes(p)));`,
+    );
+    expect((p[1] as { $lookup: { let: unknown; pipeline: unknown[] } }).$lookup.let).toEqual({
+      jsmql_v0_ids: "$__jsmql.var.ids",
+    });
+    expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
+      {
+        $match: {
+          $expr: { $anyElementTrue: { $map: { input: "$pid", as: "p", in: { $in: ["$$p", "$$jsmql_v0_ids"] } } } },
+        },
+      },
+    ]);
+  });
+
+  it("a nested lookup inherits the ancestor's correlation-var type", () => {
+    // The inner `$lookup` reads the OUTER level's `$$jsmql_v0_ids` (MQL `$$` vars
+    // are lexically scoped through sub-pipeline boundaries), so it allocates no
+    // `let` of its own — the type has to travel down with `inScopeLetNames`.
+    const p = jsmql.pipeline(
+      `const ids = $.tags.uniq();
+       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });`,
+    );
+    expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline[0]).toEqual({
+      $lookup: {
+        from: "items",
+        pipeline: [{ $match: { $expr: { $in: ["$pid", "$$jsmql_v0_ids"] } } }],
+        as: "__jsmql.var.inner",
+      },
+    });
+  });
+
+  it("a SUB-PATH capture stays untyped — the binding's type says nothing about a member of it", () => {
+    const p = jsmql.pipeline(
+      `const cfg = Object.assign({}, $.cfg); const r = $$$.orders.filter(o => cfg.ids.includes(o.pid));`,
+    );
+    expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
+      {
+        $match: {
+          $expr: {
+            $cond: {
+              if: { $isArray: "$$jsmql_v0_ids" },
+              then: { $in: ["$pid", "$$jsmql_v0_ids"] },
+              else: { $gte: [{ $indexOfCP: ["$$jsmql_v0_ids", "$pid"] }, 0] },
+            },
+          },
+        },
+      },
+    ]);
   });
 });
 
@@ -3723,9 +3977,13 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.head()")).toEqual({ $first: "$a" });
     expect(jsmql.expr("$.a.first()")).toEqual({ $first: "$a" });
     expect(jsmql.expr("$.a.last()")).toEqual({ $last: "$a" });
-    expect(jsmql.expr("$.a.nth(2)")).toEqual({ $arrayElemAt: ["$a", 2] });
-    expect(jsmql.expr("$.a.nth(-1)")).toEqual({ $arrayElemAt: ["$a", -1] });
-    expect(jsmql.expr("$.a.nth()")).toEqual({ $arrayElemAt: ["$a", 0] });
+    // lodash's `_.nth` reads array-LIKE — `_.nth("abc", 1) === "b"` — so it shares
+    // `.at`'s receiver dispatch. A bare `$arrayElemAt` aborted the query whenever
+    // the receiver turned out to be a string.
+    expect(jsmql.expr("$.a.nth(2)")).toEqual(atOf("$a", 2));
+    expect(jsmql.expr("$.a.nth(-1)")).toEqual(atOf("$a", -1, fromEnd("$a", 1)));
+    expect(jsmql.expr("$.a.nth()")).toEqual(atOf("$a", 0));
+    expect(jsmql.expr("$.a.uniq().nth(-1)")).toEqual({ $arrayElemAt: [expect.anything(), -1] });
   });
   it(".tail()/.initial() → $slice (all but first / all but last); count guards empty/n≥size → []", () => {
     // tail: 3-arg $slice with count max(1, size) so an empty array → $slice:[[],1,1] → []
@@ -5024,8 +5282,8 @@ describe("optional chaining (?.)", () => {
       $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" },
     });
   });
-  it(".at on optional receiver wraps with []", () => {
-    expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$user.posts", []] }, 0] });
+  it(".at on optional receiver wraps with [] then runtime-dispatches", () => {
+    expect(jsmql.expr("$.user?.posts.at(0)")).toEqual(atOf({ $ifNull: ["$user.posts", []] }, 0));
   });
   it(".toReversed on optional receiver wraps with []", () => {
     expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$user.posts", []] } });
@@ -5126,7 +5384,7 @@ describe("optional chaining (?.)", () => {
       $cond: {
         if: { $isArray: { $ifNull: ["$scoresByLevel", []] } },
         then: { $arrayElemAt: [{ $ifNull: ["$scoresByLevel", []] }, "$level"] },
-        else: { $getField: { field: "$level", input: { $ifNull: ["$scoresByLevel", []] } } },
+        else: { $getField: { field: keyOf("$level"), input: { $ifNull: ["$scoresByLevel", []] } } },
       },
     });
   });

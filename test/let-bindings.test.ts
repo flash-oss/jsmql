@@ -411,8 +411,9 @@ describe("let bindings — member / method / index access", () => {
   });
 
   it("index access on a let resolves the receiver to its field path", () => {
-    // The let's value type is unknown at compile time, so codegen emits the
-    // standard runtime array-vs-object dispatch for `xs[0]`.
+    // A `let` is never statically typed (it can be reassigned), and `$.items`
+    // isn't provable anyway, so `xs[0]` emits the runtime three-way dispatch for
+    // an integer key: array position, string character, field named "0".
     expect(jsmql("let xs = $.items; $project({ first: xs[0] })")).toEqual([
       { $set: { "__jsmql.var.xs": "$items" } },
       {
@@ -421,7 +422,14 @@ describe("let bindings — member / method / index access", () => {
             $cond: {
               if: { $isArray: "$__jsmql.var.xs" },
               then: { $arrayElemAt: ["$__jsmql.var.xs", 0] },
-              else: { $getField: { field: 0, input: "$__jsmql.var.xs" } },
+              else: {
+                $cond: {
+                  if: { $eq: [{ $type: "$__jsmql.var.xs" }, "string"] },
+                  then: { $substrCP: ["$__jsmql.var.xs", 0, 1] },
+                  // The STRING "0" — mongod refuses `field: 0` outright.
+                  else: { $getField: { field: "0", input: "$__jsmql.var.xs" } },
+                },
+              },
             },
           },
         },
