@@ -2386,6 +2386,77 @@ describe("date truncation (.startOf)", () => {
   });
 });
 
+describe("inclusive bucket end (.endOf)", () => {
+  // MongoDB has no ceiling operator, so this is truncate → add one unit → −1 ms.
+  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
+  // month → 2026-08-31T23:59:59.999Z, day in America/New_York →
+  // 2026-08-13T03:59:59.999Z (= 23:59:59.999 local), minute binSize 15 →
+  // 15:59:59.999Z, week starting Monday → 2026-08-16T23:59:59.999Z (Sunday).
+  it("endOf(unit) → $dateTrunc + $dateAdd − 1 ms", () => {
+    expect(jsmql.expr('$.createdAt.endOf("month")')).toEqual({
+      $dateSubtract: {
+        startDate: {
+          $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } }, unit: "month", amount: 1 },
+        },
+        unit: "millisecond",
+        amount: 1,
+      },
+    });
+  });
+  it("carries the timezone to the $dateAdd too, so the step is DST-aware", () => {
+    expect(jsmql.expr('$.createdAt.endOf("day", "America/New_York")')).toEqual({
+      $dateSubtract: {
+        startDate: {
+          $dateAdd: {
+            startDate: { $dateTrunc: { date: "$createdAt", unit: "day", timezone: "America/New_York" } },
+            unit: "day",
+            amount: 1,
+            timezone: "America/New_York",
+          },
+        },
+        unit: "millisecond",
+        amount: 1,
+      },
+    });
+  });
+  it("steps by the whole bin when binSize is given — the end of the bin, not of one unit", () => {
+    expect(jsmql.expr('$.createdAt.endOf("minute", { binSize: 15 })')).toEqual({
+      $dateSubtract: {
+        startDate: {
+          $dateAdd: {
+            startDate: { $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 } },
+            unit: "minute",
+            amount: 15,
+          },
+        },
+        unit: "millisecond",
+        amount: 1,
+      },
+    });
+  });
+  it("keeps startOfWeek on the $dateTrunc alone ($dateAdd has no such field)", () => {
+    expect(jsmql.expr('$.createdAt.endOf("week", { startOfWeek: "monday" })')).toEqual({
+      $dateSubtract: {
+        startDate: {
+          $dateAdd: {
+            startDate: { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } },
+            unit: "week",
+            amount: 1,
+          },
+        },
+        unit: "millisecond",
+        amount: 1,
+      },
+    });
+  });
+  it("rejects the wrong argument count and an unknown unit", () => {
+    expect(() => jsmql.expr("$.createdAt.endOf()")).toThrow(
+      /\.endOf\(unit\[, timezone\]\) requires 1 or 2 arguments, got 0/,
+    );
+    expect(() => jsmql.expr('$.createdAt.endOf("months")')).toThrow(/'\.endOf' unit must be one of: .*'month'\?/);
+  });
+});
+
 describe("date difference (.diff)", () => {
   // Verified on a live mongod: start = 2026-08-12T15:47:03.123Z,
   // end = 2026-11-30T01:02:03Z → day 110, week (Monday) 16.

@@ -2146,6 +2146,28 @@ $.createdAt.startOf("week", { startOfWeek: "monday" })
 // { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } }
 ```
 
+**The inclusive end of the bucket** — `.endOf(unit)` gives the last instant that still belongs to the same bucket, Moment's `23:59:59.999`:
+
+```js
+$.createdAt.endOf("month")
+// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } },
+//                                            unit: "month", amount: 1 } },
+//                    unit: "millisecond", amount: 1 } }
+//                                        → 2026-08-31T23:59:59.999Z for any August date
+```
+
+MongoDB has no ceiling operator, so this is three operators: truncate, add one unit, step back a millisecond. It takes the same options as `.startOf`; with `binSize` the step is the whole bin, so `.endOf("minute", { binSize: 15 })` on `15:47` gives `15:59:59.999`. A `timezone` also carries to the addition, so the step stays DST-aware.
+
+**Prefer a half-open range for date filtering.** `.endOf` is the right answer when you need the last instant itself, but a range test reads better — and emits two operators instead of four — as a half-open interval:
+
+```js
+// Recommended: half-open, no millisecond edge to reason about
+$.createdAt >= $.t.startOf("month") && $.createdAt < $.t.startOf("month").plus(1, "month")
+
+// Equivalent, but pays for .endOf twice and depends on millisecond precision
+$.createdAt >= $.t.startOf("month") && $.createdAt <= $.t.endOf("month")
+```
+
 **Note — the week starts on Sunday.** That is MongoDB's default (and Moment's in an English locale), so `.startOf("week")` on a Wednesday goes back to the preceding Sunday. Luxon's `startOf('week')` uses the ISO Monday instead; pass `{ startOfWeek: "monday" }` when you want that. The weekday name is case-insensitive, and a typo is rejected with a suggestion.
 
 #### The trailing `timezone` / options argument

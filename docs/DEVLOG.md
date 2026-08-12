@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: `.endOf(unit)` — the inclusive end of a bucket
+
+```
+$.createdAt.endOf("month")
+// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt",
+//                                                                       unit: "month" } },
+//                                            unit: "month", amount: 1 } },
+//                    unit: "millisecond", amount: 1 } }
+//                                     → 2026-08-31T23:59:59.999Z
+```
+
+MongoDB has no date ceiling, so `.endOf` is the first date method that composes more than
+one operator: truncate, add one unit, step back a millisecond. That lands on Moment's
+`23:59:59.999` exactly, which is what a developer reaching for `endOf` expects.
+
+Three details make the composition correct rather than merely plausible, each verified on a
+live mongod. `binSize` becomes the `$dateAdd` amount, so `.endOf("minute", { binSize: 15 })`
+on `15:47` gives `15:59:59.999` — the end of the *bin*, not of the minute. Only `timezone`
+carries to the `$dateAdd`; `$dateAdd` has no `binSize` or `startOfWeek` field and mongod
+rejects an unknown one, so those stay on the `$dateTrunc`. And the timezone genuinely has to
+carry, or the addition would not be DST-aware: `.endOf("day", "America/New_York")` returns
+`2026-08-13T03:59:59.999Z`, which is local `23:59:59.999`.
+
+[docs/LANGUAGE.md](LANGUAGE.md) recommends the half-open range for date *filtering* —
+`>= .startOf(u) && < .startOf(u).plus(1, u)` — which is two operators against four and has
+no millisecond edge to reason about. `.endOf` is for when the last instant is the value you
+actually want.
+
+---
+
 ## 2026-08-12 — feat: `.startOf(unit)` → `$dateTrunc`
 
 ```

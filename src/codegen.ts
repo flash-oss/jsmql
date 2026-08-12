@@ -626,6 +626,7 @@ const METHODS: Record<string, MethodMeta> = {
   minus: { receiver: "date" },
   diff: { returns: "number", receiver: "date" },
   startOf: { receiver: "date" },
+  endOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
@@ -4132,6 +4133,24 @@ function generateMethodCall(
           ...dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx),
         },
       };
+    }
+    case "endOf": {
+      // `d.endOf(unit)` — MongoDB has no ceiling operator, so this is the
+      // truncate → add one unit → step back 1 ms composition, which lands on
+      // Moment's 23:59:59.999-style inclusive end. `binSize` makes the step the
+      // whole bin; only `timezone` carries to the $dateAdd ($dateAdd has no
+      // binSize/startOfWeek field), and the final millisecond is absolute.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkEnum(".endOf", "unit", exprArgs[0], TIME_UNIT);
+      const opts = dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx);
+      const step: Record<string, unknown> = {
+        startDate: { $dateTrunc: { date: genObj, unit: _generate(exprArgs[0], ctx), ...opts } },
+        unit: _generate(exprArgs[0], ctx),
+        amount: opts.binSize ?? 1,
+      };
+      if (opts.timezone !== undefined) step.timezone = opts.timezone;
+      return { $dateSubtract: { startDate: { $dateAdd: step }, unit: "millisecond", amount: 1 } };
     }
     case "diff": {
       // `end.diff(start, unit)` → $dateDiff. The receiver is the LATER date (the
