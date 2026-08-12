@@ -633,6 +633,9 @@ const METHODS: Record<string, MethodMeta> = {
   isoWeekday: { returns: "number", receiver: "date" },
   dayOfYear: { returns: "number", receiver: "date" },
   quarter: { returns: "number", receiver: "date" },
+  isSame: { returns: "bool", receiver: "date" },
+  isBefore: { returns: "bool", receiver: "date" },
+  isAfter: { returns: "bool", receiver: "date" },
   endOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
@@ -4232,6 +4235,34 @@ function generateMethodCall(
           ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
         },
       };
+    }
+    case "isSame":
+    case "isBefore":
+    case "isAfter": {
+      // Compare two dates at a granularity: truncate both to the unit, then
+      // compare. The unit is what earns the method — without one these are `===`,
+      // `<` and `>`, which JSMQL already has, so a unit-less call points there.
+      const exprArgs = exprArgsOnly(args, method);
+      if (exprArgs.length === 1) {
+        const jsOp = method === "isSame" ? "===" : method === "isBefore" ? "<" : ">";
+        throw new CodegenError(
+          `.${method}(other) without a unit is just '${jsOp}' — write 'a ${jsOp} b'. ` +
+            `Pass a unit to compare at that granularity instead: .${method}(other, "day").`,
+          callPos,
+        );
+      }
+      checkArity(method, { sig: "other, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      checkArgType(`.${method}`, "other", exprArgs[0], "date");
+      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
+      const bucketOf = (date: unknown): unknown => ({
+        $dateTrunc: {
+          date,
+          unit: _generate(exprArgs[1], ctx),
+          ...dateOptions(method, exprArgs[2], ["binSize", "timezone", "startOfWeek"], ctx),
+        },
+      });
+      const cmp = method === "isSame" ? "$eq" : method === "isBefore" ? "$lt" : "$gt";
+      return { [cmp]: [bucketOf(genObj), bucketOf(_generate(exprArgs[0], ctx))] };
     }
     case "week":
     case "isoWeek":

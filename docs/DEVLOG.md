@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: `.isSame` / `.isBefore` / `.isAfter` compare at a granularity
+
+```
+$.a.isSame($.b, "day")
+// { $eq: [{ $dateTrunc: { date: "$a", unit: "day" } },
+//         { $dateTrunc: { date: "$b", unit: "day" } }] }
+
+$.a.isSame($.b)
+// ✗ .isSame(other) without a unit is just '===' — write 'a === b'. Pass a unit to
+//   compare at that granularity instead: .isSame(other, "day").
+```
+
+Moment's three predicates, and the **unit is what earns them**: truncate both sides, then
+compare. "Same day" ignoring the time of day has no one-operator spelling in MQL, and
+writing it out by hand is two `$dateTrunc`s a developer has to keep in sync.
+
+Without a unit all three are `===`, `<` and `>`, which JSMQL already lowers — so a
+one-argument call is refused with the operator named, ahead of the generic arity check,
+because "requires 2 or 3 arguments" would not tell the user what is actually wrong. This is
+deliberately not a second spelling of comparison; it is the granularity that is new.
+
+The options reach both truncations. A timezone or `startOfWeek` on one side only would
+compare two different calendars, which is a silently wrong answer rather than an error — the
+kind of bug this method exists to prevent.
+
+---
+
 ## 2026-08-12 — feat: the date parts JavaScript has no getter for
 
 ```

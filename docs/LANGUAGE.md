@@ -2210,6 +2210,20 @@ $.createdAt >= $.t.startOf("month") && $.createdAt <= $.t.endOf("month")
 
 **Note — the week starts on Sunday.** That is MongoDB's default (and Moment's in an English locale), so `.startOf("week")` on a Wednesday goes back to the preceding Sunday. Luxon's `startOf('week')` uses the ISO Monday instead; pass `{ startOfWeek: "monday" }` when you want that. The weekday name is case-insensitive, and a typo is rejected with a suggestion.
 
+**Compare at a granularity** — `.isSame(other, unit)`, `.isBefore(other, unit)` and `.isAfter(other, unit)` truncate both sides to `unit` and then compare, so "same day" ignores the time of day:
+
+```js
+$.a.isSame($.b, "day")
+// { $eq: [{ $dateTrunc: { date: "$a", unit: "day" } },
+//         { $dateTrunc: { date: "$b", unit: "day" } }] }
+
+$.a.isBefore($.b, "month")           // strictly an earlier calendar month
+// { $lt: [{ $dateTrunc: { date: "$a", unit: "month" } },
+//         { $dateTrunc: { date: "$b", unit: "month" } }] }
+```
+
+**The unit is required.** Without one these three are exactly `===`, `<` and `>`, which JSMQL already has — so a unit-less call is rejected and points at the operator: `$.a.isSame($.b)` → *".isSame(other) without a unit is just '==='"*. Options apply to both sides (a one-sided timezone would compare two different calendars).
+
 #### The trailing `timezone` / options argument
 
 Every date method takes the same optional last argument: a **timezone string**, or an **object literal** whose keys are the underlying operator's remaining fields.

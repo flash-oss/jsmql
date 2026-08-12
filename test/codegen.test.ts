@@ -2340,6 +2340,44 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
+  // Verified on a live mongod with a = 2026-08-12T15:47:03.123Z,
+  // b = 2026-11-30T01:02:03Z → sameDay false, sameYear true, beforeMonth true,
+  // afterMonth false, sameMonth in America/New_York false.
+  it("isSame(other, unit) truncates both sides, then compares", () => {
+    expect(jsmql.expr('$.a.isSame($.b, "day")')).toEqual({
+      $eq: [{ $dateTrunc: { date: "$a", unit: "day" } }, { $dateTrunc: { date: "$b", unit: "day" } }],
+    });
+  });
+  it("isBefore / isAfter are the same shape with $lt / $gt", () => {
+    expect(jsmql.expr('$.a.isBefore($.b, "month")')).toEqual({
+      $lt: [{ $dateTrunc: { date: "$a", unit: "month" } }, { $dateTrunc: { date: "$b", unit: "month" } }],
+    });
+    expect(jsmql.expr('$.a.isAfter($.b, "month")')).toEqual({
+      $gt: [{ $dateTrunc: { date: "$a", unit: "month" } }, { $dateTrunc: { date: "$b", unit: "month" } }],
+    });
+  });
+  it("applies the options to both sides — a one-sided timezone would compare different calendars", () => {
+    expect(jsmql.expr('$.a.isSame($.b, "week", { startOfWeek: "monday" })')).toEqual({
+      $eq: [
+        { $dateTrunc: { date: "$a", unit: "week", startOfWeek: "monday" } },
+        { $dateTrunc: { date: "$b", unit: "week", startOfWeek: "monday" } },
+      ],
+    });
+  });
+  it("points a unit-less call at the JavaScript operator it duplicates", () => {
+    expect(() => jsmql.expr("$.a.isSame($.b)")).toThrow(/\.isSame\(other\) without a unit is just '==='/);
+    expect(() => jsmql.expr("$.a.isBefore($.b)")).toThrow(/\.isBefore\(other\) without a unit is just '<'/);
+    expect(() => jsmql.expr("$.a.isAfter($.b)")).toThrow(/\.isAfter\(other\) without a unit is just '>'/);
+  });
+  it("rejects an unknown unit and a literal non-date argument", () => {
+    expect(() => jsmql.expr('$.a.isSame($.b, "days")')).toThrow(/'\.isSame' unit must be one of: .*'day'\?/);
+    expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow(
+      /'\.isSame' other expects a date, but got a string\./,
+    );
+  });
+});
+
 describe("date parts JavaScript has no getter for", () => {
   // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
   // week 32, isoWeek 33, isoWeekYear 2026, isoWeekday 3, dayOfYear 224,

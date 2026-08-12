@@ -360,6 +360,9 @@ const VALUE_METHOD_SKIP = {
     "isoWeekday",
     "dayOfYear",
     "quarter",
+    "isSame",
+    "isBefore",
+    "isAfter",
     "endOf",
   ]),
   // Object-receiver — no safe interface (Object is the base of everything).
