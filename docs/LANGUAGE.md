@@ -2099,6 +2099,21 @@ $.createdAt.getUTCSeconds()        // { $second: { date: "$createdAt", timezone:
 $.createdAt.getUTCMilliseconds()   // { $millisecond: { date: "$createdAt", timezone: "UTC" } }
 ```
 
+**Parts JavaScript has no getter for.** MongoDB counts weeks, ISO weeks and days of the year; JavaScript's `Date` does not, so these carry Moment's method names and MQL's own numbering:
+
+```js
+$.t.week()                         // { $week: "$t" }             → 32   (weeks start Sunday, 0–53)
+$.t.isoWeek()                      // { $isoWeek: "$t" }          → 33   (ISO 8601, 1–53)
+$.t.isoWeekYear()                  // { $isoWeekYear: "$t" }      → 2026 (the year the ISO week belongs to)
+$.t.isoWeekday()                   // { $isoDayOfWeek: "$t" }     → 3    (1 = Monday … 7 = Sunday)
+$.t.dayOfYear()                    // { $dayOfYear: "$t" }        → 224
+$.t.quarter()                      // { $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } }   → 3
+
+$.t.week("America/New_York")       // { $week: { date: "$t", timezone: "America/New_York" } }
+```
+
+Each takes the optional `timezone` argument, which switches the operator to its `{ date, timezone }` form. `.quarter()` is the one derived value — MongoDB has no `$quarter` operator, and the `$toInt` keeps the result an integer like every other getter (`$ceil` of a division is a double). For grouping *by* quarter, prefer `.startOf("quarter")`, which is one operator and sorts as a date.
+
 **Date arithmetic** — add or subtract a span of time with `.plus(amount, unit)` and `.minus(amount, unit)`, with an optional third `timezone` argument:
 
 ```js

@@ -323,6 +323,12 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.getUTCMinutes()` | `{ $minute: { date: expr, timezone: "UTC" } }` | UTC |
 | `.getUTCSeconds()` | `{ $second: { date: expr, timezone: "UTC" } }` | UTC |
 | `.getUTCMilliseconds()` | `{ $millisecond: { date: expr, timezone: "UTC" } }` | UTC |
+| `.week([tz])` | `{ $week: expr }` / `{ $week: { date: expr, timezone } }` | Sunday-based, 0–53 |
+| `.isoWeek([tz])` | `{ $isoWeek: … }` | ISO 8601, 1–53 |
+| `.isoWeekYear([tz])` | `{ $isoWeekYear: … }` | |
+| `.isoWeekday([tz])` | `{ $isoDayOfWeek: … }` | 1 = Monday … 7 = Sunday, as Moment's `.isoWeekday()` |
+| `.dayOfYear([tz])` | `{ $dayOfYear: … }` | |
+| `.quarter([tz])` | `{ $toInt: { $ceil: { $divide: [{ $month: … }, 3] } } }` | no `$quarter` operator exists |
 | `.getTime()` | `{ $toLong: expr }` | ms since epoch (matches JS; already UTC, no `getUTCTime`) |
 | `.toISOString()` | `{ $dateToString: { date: expr, format: "%Y-%m-%dT%H:%M:%S.%LZ" } }` | |
 | `.plus(amount, unit[, tz])` | `{ $dateAdd: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
@@ -337,6 +343,8 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 `.plus` / `.minus` take Temporal/Luxon's method name with Moment's `(amount, unit)` argument order — the receiver is the `startDate`, `amount` first, `unit` second, and an optional third `timezone`. Argument count is checked by `checkArity` (2 or 3 args); the literal slots are gated to the same shapes the `$dateAdd` / `$dateSubtract` operator path rejects, reusing its own helpers so both spellings error identically: `checkEnum` against `TIME_UNIT` (the shared time-unit enum in `operator-validation.ts`) for `unit`, and `checkArgType` for `amount` (`int-or-long`) and `timezone` (`string`). All three are literal-gated — a field-path or parameter in any slot passes through unchecked.
 
 `.diff` puts the receiver in the operator's `endDate` slot and the argument in `startDate`, so the result is `receiver − other`. That is the direction Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` share, and it is the one thing about the method a reader has to know. The `unit` enum and the literal date-ness of `other` are gated exactly as the `$dateDiff` operator path gates them. `$dateDiff` counts *unit boundaries crossed*, not elapsed time — a divergence from Moment/Luxon that [LANGUAGE.md](../LANGUAGE.md#date-operations) states for users; nothing in the lowering compensates for it (D2: the semantics are MongoDB's).
+
+**The MQL-only date parts.** The six parts JavaScript's `Date` cannot report share one prelude (arity 0–1, `timezone`-only options) and then map through `DATE_PART_OPERATOR`. With no timezone the operator takes the bare date — its single-argument form — and with one it takes `{ date, timezone }`; the presence of `opts.timezone` is what picks between them, so the output never carries an empty options object. Because JavaScript has no counterpart, there is no JS convention to honour and the numbering is MQL's throughout, which is also Moment's for the ISO parts. `.quarter()` is the one derivation (no `$quarter` operator exists) and the `$toInt` is load-bearing: `$ceil` of a `$divide` returns a **double** on mongod, which would make `.quarter()` the only date getter returning a non-integer. `.startOf("quarter")` remains the better shape for grouping — one operator, and it sorts as a date.
 
 **`.format` and the two format dialects.** `checkDateFormat` runs two literal-gated checks on the format string. The first walks it for `%X` pairs and rejects any `X` outside `DATE_FORMAT_SPECIFIERS` (`dGHjLmMSuUVwYzZ%`, confirmed against mongod, which fails an unknown one at execution with "Invalid format character"), suggesting the opposite case first because `%y` for `%Y` is the likeliest slip. The second is the interesting one: a string with **no** `%` at all that matches `MOMENT_FORMAT_RE` is rejected as a Moment/Luxon token string. That shape is *valid* MQL — `$dateToString` renders it as its own literal text — so nothing at runtime reveals the mistake, which makes a compile-time rejection the only place a user can learn about it.
 

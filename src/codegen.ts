@@ -627,6 +627,12 @@ const METHODS: Record<string, MethodMeta> = {
   diff: { returns: "number", receiver: "date" },
   startOf: { receiver: "date" },
   format: { returns: "string", receiver: "date" },
+  week: { returns: "number", receiver: "date" },
+  isoWeek: { returns: "number", receiver: "date" },
+  isoWeekYear: { returns: "number", receiver: "date" },
+  isoWeekday: { returns: "number", receiver: "date" },
+  dayOfYear: { returns: "number", receiver: "date" },
+  quarter: { returns: "number", receiver: "date" },
   endOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
@@ -3278,6 +3284,17 @@ const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek"] as const;
 
 type DateOptionKey = (typeof DATE_OPTION_ORDER)[number];
 
+// The MQL date parts JavaScript's `Date` has no getter for, under the method
+// names Moment gives them. Each operator takes a bare date, or the
+// `{ date, timezone }` form when a timezone is passed.
+const DATE_PART_OPERATOR: Record<string, string> = {
+  week: "$week",
+  isoWeek: "$isoWeek",
+  isoWeekYear: "$isoWeekYear",
+  isoWeekday: "$isoDayOfWeek",
+  dayOfYear: "$dayOfYear",
+};
+
 // ── .format(): MongoDB's own format specifiers ────────────────────────────────
 // The characters `$dateToString` accepts after a `%`. Verified against mongod,
 // which fails an unknown one at execution time ("Invalid format character
@@ -4215,6 +4232,24 @@ function generateMethodCall(
           ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
         },
       };
+    }
+    case "week":
+    case "isoWeek":
+    case "isoWeekYear":
+    case "isoWeekday":
+    case "dayOfYear":
+    case "quarter": {
+      // Date parts JavaScript has no getter for, so there is no JS convention to
+      // honour: these follow MQL's own numbering, which is also Moment's for the
+      // ISO parts (.isoWeekday → 1 = Monday … 7 = Sunday).
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "[timezone]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const opts = dateOptions(method, exprArgs[0], ["timezone"], ctx);
+      const operand = opts.timezone === undefined ? genObj : { date: genObj, ...opts };
+      const op = DATE_PART_OPERATOR[method];
+      // MongoDB has no $quarter. `$ceil` of a `$divide` is a double, so `$toInt`
+      // keeps the result an int like every other date getter.
+      return op === undefined ? { $toInt: { $ceil: { $divide: [{ $month: operand }, 3] } } } : { [op]: operand };
     }
     case "format": {
       // `d.format(fmt)` → $dateToString. Moment's method name with MongoDB's own

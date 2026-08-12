@@ -2340,6 +2340,37 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("date parts JavaScript has no getter for", () => {
+  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
+  // week 32, isoWeek 33, isoWeekYear 2026, isoWeekday 3, dayOfYear 224,
+  // quarter 3 (and `$type` of it is "int", not "double").
+  it("week / isoWeek / isoWeekYear / isoWeekday / dayOfYear map to their operators", () => {
+    expect(jsmql.expr("$.t.week()")).toEqual({ $week: "$t" });
+    expect(jsmql.expr("$.t.isoWeek()")).toEqual({ $isoWeek: "$t" });
+    expect(jsmql.expr("$.t.isoWeekYear()")).toEqual({ $isoWeekYear: "$t" });
+    expect(jsmql.expr("$.t.isoWeekday()")).toEqual({ $isoDayOfWeek: "$t" });
+    expect(jsmql.expr("$.t.dayOfYear()")).toEqual({ $dayOfYear: "$t" });
+  });
+  it("quarter derives from $month, kept an int — MongoDB has no $quarter", () => {
+    // $ceil of a $divide is a double on its own, which would make this the one
+    // date getter returning a non-integer.
+    expect(jsmql.expr("$.t.quarter()")).toEqual({ $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } });
+  });
+  it("a timezone switches the operator to its { date, timezone } form", () => {
+    expect(jsmql.expr('$.t.week("America/New_York")')).toEqual({ $week: { date: "$t", timezone: "America/New_York" } });
+    expect(jsmql.expr('$.t.quarter({ timezone: "UTC" })')).toEqual({
+      $toInt: { $ceil: { $divide: [{ $month: { date: "$t", timezone: "UTC" } }, 3] } },
+    });
+  });
+  it("rejects extra arguments, unknown options and a literal non-date receiver", () => {
+    expect(() => jsmql.expr('$.t.week("UTC", 1)')).toThrow(/\.week\(\[timezone\]\) requires 0 or 1 arguments, got 2/);
+    expect(() => jsmql.expr("$.t.quarter({ binSize: 2 })")).toThrow(
+      /\.quarter\(…\) has no option 'binSize'\. Valid options: timezone\./,
+    );
+    expect(() => jsmql.expr('"x".week()')).toThrow(/'\.week' expects a date, but got a string\./);
+  });
+});
+
 describe("date formatting (.format)", () => {
   // Verified on a live mongod: t = 2026-08-12T15:47:03.123Z formats as
   // "2026-08-12" under "%Y-%m-%d", and .startOf("month").format("%Y-%m") → "2026-08".

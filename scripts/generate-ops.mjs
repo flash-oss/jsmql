@@ -354,6 +354,12 @@ const VALUE_METHOD_SKIP = {
     "diff",
     "startOf",
     "format",
+    "week",
+    "isoWeek",
+    "isoWeekYear",
+    "isoWeekday",
+    "dayOfYear",
+    "quarter",
     "endOf",
   ]),
   // Object-receiver — no safe interface (Object is the base of everything).

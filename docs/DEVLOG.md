@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: the date parts JavaScript has no getter for
+
+```
+$.t.week()        // { $week: "$t" }          → 32     (Sunday-based, 0–53)
+$.t.isoWeek()     // { $isoWeek: "$t" }       → 33
+$.t.isoWeekday()  // { $isoDayOfWeek: "$t" }  → 3      (1 = Monday … 7 = Sunday)
+$.t.dayOfYear()   // { $dayOfYear: "$t" }     → 224
+$.t.quarter()     // { $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } }   → 3
+```
+
+`$week`, `$isoWeek`, `$isoWeekYear`, `$isoDayOfWeek` and `$dayOfYear` are ordinary MongoDB
+date accessors that had no JavaScript spelling, because JavaScript's `Date` has no
+counterpart to any of them. That absence makes the naming easy — there is no JS convention
+to honour, so these take Moment's method names and MQL's own numbering, which for the ISO
+parts is the same thing (`.isoWeekday()` is 1 = Monday, exactly like Moment's).
+
+`.quarter()` is the one derived value: MongoDB has no `$quarter`, so it is
+`ceil(month / 3)`. The `$toInt` is load-bearing rather than decorative — mongod returns a
+**double** from `$ceil` of a `$divide`, which would have made `.quarter()` the only date
+getter whose result isn't an integer. `$type` on a live server confirms `"int"` with the
+wrap and `"double"` without. For grouping *by* quarter, `.startOf("quarter")` is still the
+better shape: one operator, and it sorts as a date.
+
+All six take the same optional timezone, which switches the operator to its
+`{ date, timezone }` form. The bare-date form is kept when no timezone is passed, so the
+output stays the shape a developer would have written by hand.
+
+---
+
 ## 2026-08-12 — feat: `.format(spec)` → `$dateToString`, with the Moment-token trap closed
 
 ```
