@@ -351,6 +351,7 @@ const VALUE_METHOD_SKIP = {
     "toISOString",
     "plus",
     "minus",
+    "diff",
   ]),
   // Object-receiver — no safe interface (Object is the base of everything).
   object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs"]),

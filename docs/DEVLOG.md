@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: `.diff(other, unit)` and one trailing options argument for every date method
+
+```
+$.end.diff($.start, "day")
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+
+$.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week",
+//                timezone: "Europe/Kyiv", startOfWeek: "monday" } }
+```
+
+`$dateDiff` was reachable only through the `$dateDiff(…)` operator form. `.diff` is the
+name Moment, Luxon and date-fns all use, and the receiver goes in the operator's `endDate`
+slot so the result is `receiver − other` — the direction all three libraries (and
+Temporal's `.since`) agree on. `other` and the receiver may be a date, a BSON timestamp or
+an ObjectId, so `new Date().diff($._id, "day")` reports a document's age from its `_id`.
+
+Two things the docs now say out loud rather than paper over. `$dateDiff` counts **unit
+boundaries crossed**, not elapsed time: 23:00 → 01:00 the next morning is 1 day, and 00:30
+→ 23:30 the same day is 0. Moment reports the opposite in both cases. The semantics stay
+MongoDB's — jsmql compensating for them would mean a `$dateDiff` that doesn't behave like
+`$dateDiff`. For raw elapsed milliseconds, `$.end - $.start` already lowers to
+`{ $subtract: [...] }`, which mongod returns as a long.
+
+`$dateDiff` also brought the second field-bearing slot to the family (`startOfWeek`
+alongside `timezone`), and `$dateTrunc` will bring a third (`binSize`), so a third and
+fourth positional argument per method was not going to scale. One rule instead, applied
+across the family: the last optional argument is a timezone string **or** an object literal
+whose keys are that operator's remaining fields. `dateOptions` in
+[src/codegen.ts](../src/codegen.ts) resolves both forms, rejects a key the operator has no
+slot for (with a `didYouMean` over the valid set), emits keys in the operators' own field
+order, and gates each value with the same helpers the operator path uses — so
+`.diff(…, { startOfWeek: "moonday" })` and `$dateDiff({ startOfWeek: "moonday" })` produce
+the same message. `.plus` / `.minus` route through it too and now take `{ timezone }`.
+
+The options form has to be written out as a literal, and a spread or computed key is
+rejected: MongoDB reads these fields by *name* out of the operator document, so the key set
+must exist in source. The values are unrestricted — `{ timezone: $.tz }` passes a path
+through. That also settles what a bare non-object argument means: it is always the timezone.
+
+---
+
 ## 2026-08-12 — feat!: `getMonth()` / `getUTCMonth()` are 1-based
 
 ```

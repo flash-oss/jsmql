@@ -2110,6 +2110,37 @@ $.t.plus(2, "hour", "America/New_York")
 
 `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below); a literal typo is rejected with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer and a literal `timezone` must be a string — otherwise you get the same compile-time error the `$dateAdd(…)` operator form gives; a field path or parameter in either slot passes through unchecked. The method name follows Temporal/Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)` — `amount` first, `unit` second.
 
+**Date difference** — `.diff(other, unit)` gives the whole number of `unit`s between two dates:
+
+```js
+$.end.diff($.start, "day")
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+
+new Date().diff($._id, "day")      // how old is this document?
+// { $dateDiff: { startDate: "$_id", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+```
+
+**The receiver is the later date**, so the result is `receiver − other` — the direction Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
+
+**Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` semantics and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates, so 23:00 to 01:00 the next morning is **1 day** (one midnight crossed) and 00:30 to 23:30 the same day is **0 days**. Moment's elapsed-time subtraction reports the opposite in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
+
+#### The trailing `timezone` / options argument
+
+Every date method takes the same optional last argument: a **timezone string**, or an **object literal** whose keys are the underlying operator's remaining fields.
+
+```js
+$.end.diff($.start, "week", "UTC")
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "UTC" } }
+
+$.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week",
+//                timezone: "Europe/Kyiv", startOfWeek: "monday" } }
+```
+
+Which options a method accepts is exactly the set of fields its operator has left over — `.diff` takes `timezone` and `startOfWeek`, `.plus` / `.minus` take `timezone` alone. An unknown key is rejected at compile time with a suggestion and the valid set. Keys are emitted in the operator's own field order, not the order you wrote them, so the output reads like the MongoDB manual.
+
+The options form must be **written out** as an object literal: MongoDB reads these fields by name from the operator document, so the key names have to exist in your source. Their *values* are free to be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`), and any non-object argument in this slot is the timezone shorthand.
+
 **Months are 1-based — January is `1`.** `getMonth()` / `getUTCMonth()` return MongoDB's `$month` unchanged, so the month base is the same in JSMQL as it is in the MQL you read back: the getters, `$month`, and `$dateFromParts` all count January as `1`. This is the one place a date getter deliberately diverges from JavaScript, whose `Date.prototype.getMonth()` is 0-based. `getDay()` / `getUTCDay()` stay 0-based (Sunday = 0) to match JS. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
 
 **Note:** the multi-argument `new Date(y, m, d, …)` constructor keeps JavaScript's 0-based month on the *input* side, so `new Date(2024, 0, 15)` is 15 January. A round trip through the getters therefore needs the adjustment written out: `new Date($.t.getFullYear(), $.t.getMonth() - 1, 1)`.

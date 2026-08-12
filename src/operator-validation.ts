@@ -68,7 +68,7 @@ const BSON_TYPE_NAME = [
 const REGEX_FLAGS = "imxs"; // MongoDB allows only these regex option flags (a JS 'g'/'y' is rejected).
 
 /** Validate a literal-string slot against an enum ref. No-op on a non-literal (gate). */
-function checkArgEnum(name: string, key: string, value: Expr, ref: EnumRef): void {
+export function checkArgEnum(name: string, key: string, value: Expr, ref: EnumRef): void {
   // HR1: a source `"$x"` is the field reference `$x` (a runtime value), not a
   // literal enum value — these slots accept a runtime expression, so no-op.
   const lit = litString(value);

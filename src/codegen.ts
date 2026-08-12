@@ -1,6 +1,6 @@
 import { lookupOperator } from "./operators.ts";
-import { checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
-import { checkEnum } from "./literal-gate.ts";
+import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
+import { checkEnum, objectInfo } from "./literal-gate.ts";
 import { callbackBlockToValue } from "./callback-block.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
@@ -624,6 +624,7 @@ const METHODS: Record<string, MethodMeta> = {
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
+  diff: { returns: "number", receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
@@ -3253,6 +3254,79 @@ function utcDate(date: unknown): { date: unknown; timezone: string } {
   return { date, timezone: "UTC" };
 }
 
+// ── The trailing options argument of a date method ────────────────────────────
+// Every date method takes the same optional last argument: a timezone string
+// (the shorthand, which is what `.plus(2, "hour", "America/New_York")` uses), or
+// an object literal whose keys are the operator's own remaining fields. One rule
+// across the family, so a method that grows a field needs no new argument slot.
+// See docs/specs/method-dispatch.md § Date methods.
+
+/** Per-key literal gate, reusing the operator path's helpers so both spellings
+ *  error identically. Every entry no-ops on a non-literal. */
+const DATE_OPTION_CHECK: Record<string, (label: string, value: Expr) => void> = {
+  binSize: (l, v) => checkArgType(l, "binSize", v, "number"),
+  timezone: (l, v) => checkArgType(l, "timezone", v, "string"),
+  startOfWeek: (l, v) => checkArgEnum(l, "startOfWeek", v, "weekday"),
+  onNull: () => {}, // any expression is valid — it's the value substituted for null
+};
+
+/** Emit order: the operators' own field order, so output reads like the manual.
+ *  No operator carries more than three of these, so one total order serves all. */
+const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek", "onNull"] as const;
+
+type DateOptionKey = (typeof DATE_OPTION_ORDER)[number];
+
+/**
+ * Resolve a date method's trailing options argument into the operator fields it
+ * contributes. `allowed` is the subset that method's operator accepts; an
+ * unknown key is rejected with a suggestion rather than passed to mongod.
+ *
+ * A written-out object literal is the options form; **anything else** is the
+ * timezone shorthand. That split is on what the argument *means*, not merely its
+ * node type: MongoDB reads these fields by name from the operator document, so a
+ * document of options only ever exists as source the compiler can read — a field
+ * path or parameter in this slot can only be a runtime timezone string. Values
+ * inside the literal stay free to be paths or parameters.
+ */
+function dateOptions(
+  method: string,
+  arg: Expr | undefined,
+  allowed: readonly DateOptionKey[],
+  ctx: GenerateCtx,
+): Record<string, unknown> {
+  if (arg === undefined) return {};
+  const label = `.${method}`;
+  if (arg.type !== "ObjectLiteral") {
+    checkArgType(label, "timezone", arg, "string");
+    return { timezone: _generate(arg, ctx) };
+  }
+  const info = objectInfo(arg);
+  if (info === null || info.hasSpread) {
+    throw new CodegenError(
+      `${label}(…) options must be an object literal with plain keys (${allowed.join(", ")}) — ` +
+        `a spread or computed key can't be read at compile time, and MongoDB needs these field names ` +
+        `written out. Spell the keys and pass field paths or parameters as their values.`,
+      arg.pos,
+    );
+  }
+  for (const [key, value] of info.byKey) {
+    if (allowed.includes(key as DateOptionKey)) continue;
+    throw new CodegenError(
+      `${label}(…) has no option '${key}'.${didYouMean(key, allowed, (s) => s)} ` +
+        `Valid options: ${allowed.join(", ")}.`,
+      value.pos,
+    );
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of DATE_OPTION_ORDER) {
+    const value = info.byKey.get(key);
+    if (value === undefined) continue;
+    DATE_OPTION_CHECK[key](label, value);
+    out[key] = _generate(value, ctx);
+  }
+  return out;
+}
+
 function generateMethodCall(
   object: Expr,
   method: string,
@@ -4031,18 +4105,35 @@ function generateMethodCall(
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
       // Gate the literal slots to the same shapes the $dateAdd/$dateSubtract
-      // operator path rejects (unit enum, integer amount, string timezone) so
-      // both spellings error identically; each no-ops on a non-literal.
+      // operator path rejects (unit enum, integer amount) so both spellings error
+      // identically; each no-ops on a non-literal.
       checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
       checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
-      if (exprArgs.length === 3) checkArgType(`.${method}`, "timezone", exprArgs[2], "string");
-      const spec: Record<string, unknown> = {
-        startDate: genObj,
-        unit: _generate(exprArgs[1], ctx),
-        amount: _generate(exprArgs[0], ctx),
+      return {
+        [method === "plus" ? "$dateAdd" : "$dateSubtract"]: {
+          startDate: genObj,
+          unit: _generate(exprArgs[1], ctx),
+          amount: _generate(exprArgs[0], ctx),
+          ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
+        },
       };
-      if (exprArgs.length === 3) spec.timezone = _generate(exprArgs[2], ctx);
-      return { [method === "plus" ? "$dateAdd" : "$dateSubtract"]: spec };
+    }
+    case "diff": {
+      // `end.diff(start, unit)` → $dateDiff. The receiver is the LATER date (the
+      // operator's endDate), so the result is receiver − argument — the direction
+      // Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all agree on.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      checkArgType(".diff", "other", exprArgs[0], "date");
+      checkEnum(".diff", "unit", exprArgs[1], TIME_UNIT);
+      return {
+        $dateDiff: {
+          startDate: _generate(exprArgs[0], ctx),
+          endDate: genObj,
+          unit: _generate(exprArgs[1], ctx),
+          ...dateOptions(method, exprArgs[2], ["timezone", "startOfWeek"], ctx),
+        },
+      };
     }
 
     // ── DX shims: mutating Array methods ────────────────────────────────────

@@ -2340,6 +2340,87 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("date difference (.diff)", () => {
+  // Verified on a live mongod: start = 2026-08-12T15:47:03.123Z,
+  // end = 2026-11-30T01:02:03Z → day 110, week (Monday) 16.
+  it("diff(other, unit) → $dateDiff, receiver is the endDate", () => {
+    expect(jsmql.expr('$.end.diff($.start, "day")')).toEqual({
+      $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" },
+    });
+  });
+  it("a bare third argument is the timezone", () => {
+    expect(jsmql.expr('$.end.diff($.start, "week", "UTC")')).toEqual({
+      $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "UTC" },
+    });
+  });
+  it("an object third argument carries timezone and startOfWeek, in the operator's field order", () => {
+    expect(jsmql.expr('$.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })')).toEqual({
+      $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "Europe/Kyiv", startOfWeek: "monday" },
+    });
+  });
+  it("accepts an ObjectId receiver and argument (mongod reads their timestamps)", () => {
+    expect(jsmql.expr('new Date().diff($._id, "day")')).toEqual({
+      $dateDiff: { startDate: "$_id", endDate: { $toDate: "$$NOW" }, unit: "day" },
+    });
+  });
+  it("rejects the wrong argument count, naming the parameters", () => {
+    expect(() => jsmql.expr("$.end.diff($.start)")).toThrow(
+      /\.diff\(other, unit\[, timezone\]\) requires 2 or 3 arguments, got 1/,
+    );
+  });
+  it("rejects an unknown unit with a suggestion", () => {
+    expect(() => jsmql.expr('$.end.diff($.start, "days")')).toThrow(
+      /'\.diff' unit must be one of: .* — got 'days'\. Did you mean 'day'\?/,
+    );
+  });
+  it("rejects a literal non-date argument", () => {
+    expect(() => jsmql.expr('$.end.diff("2020-01-01", "day")')).toThrow(
+      /'\.diff' other expects a date, but got a string\./,
+    );
+  });
+  it("a non-literal unit / other is not checked (literal-gating)", () => {
+    expect(jsmql.expr("$.end.diff($.start, $.unit)")).toEqual({
+      $dateDiff: { startDate: "$start", endDate: "$end", unit: "$unit" },
+    });
+  });
+});
+
+describe("date-method trailing options argument", () => {
+  it("rejects an unknown option with a suggestion and the valid set", () => {
+    expect(() => jsmql.expr('$.end.diff($.start, "day", { startofweek: "monday" })')).toThrow(
+      /\.diff\(…\) has no option 'startofweek'\. Did you mean 'startOfWeek'\? Valid options: timezone, startOfWeek\./,
+    );
+  });
+  it("rejects an option the method's operator has no field for", () => {
+    expect(() => jsmql.expr('$.t.plus(1, "day", { binSize: 2 })')).toThrow(
+      /\.plus\(…\) has no option 'binSize'\. Valid options: timezone\./,
+    );
+  });
+  it("rejects a spread or computed key — MongoDB needs the field names written out", () => {
+    expect(() => jsmql.expr('$.end.diff($.start, "day", { ...$.o })')).toThrow(
+      /\.diff\(…\) options must be an object literal with plain keys \(timezone, startOfWeek\)/,
+    );
+  });
+  it("gates option value types the same way the operator form does", () => {
+    expect(() => jsmql.expr('$.end.diff($.start, "day", { timezone: 5 })')).toThrow(
+      /'\.diff' timezone expects a string, but got a number\./,
+    );
+    expect(() => jsmql.expr('$.end.diff($.start, "week", { startOfWeek: "moonday" })')).toThrow(
+      /'\.diff' startOfWeek must be a weekday \(monday, .*\) — got 'moonday'\. Did you mean 'monday'\?/,
+    );
+  });
+  it("passes option values that are field paths through unchecked (literal-gating)", () => {
+    expect(jsmql.expr('$.end.diff($.start, "week", { timezone: $.tz, startOfWeek: $.wk })')).toEqual({
+      $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "$tz", startOfWeek: "$wk" },
+    });
+  });
+  it("takes the timezone shorthand on .plus / .minus too", () => {
+    expect(jsmql.expr('$.t.plus(2, "hour", { timezone: "America/New_York" })')).toEqual({
+      $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" },
+    });
+  });
+});
+
 describe("date-method receiver type-check", () => {
   it("rejects a literal non-date receiver, consistent with the operator form", () => {
     expect(() => jsmql.expr('"2020-01-01".getFullYear()')).toThrow(
