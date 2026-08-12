@@ -2340,6 +2340,52 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("date truncation (.startOf)", () => {
+  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
+  // month → 2026-08-01T00:00Z, quarter → 2026-07-01T00:00Z,
+  // week → 2026-08-09 (Sunday, MQL's default), week/monday → 2026-08-10,
+  // minute binSize 15 → 15:45Z, day in America/New_York → 2026-08-12T04:00Z.
+  it("startOf(unit) → $dateTrunc", () => {
+    expect(jsmql.expr('$.createdAt.startOf("month")')).toEqual({ $dateTrunc: { date: "$createdAt", unit: "month" } });
+  });
+  it("truncates to a quarter, which no date getter exposes", () => {
+    expect(jsmql.expr('$.createdAt.startOf("quarter")')).toEqual({
+      $dateTrunc: { date: "$createdAt", unit: "quarter" },
+    });
+  });
+  it("a bare second argument is the timezone", () => {
+    expect(jsmql.expr('$.createdAt.startOf("day", "America/New_York")')).toEqual({
+      $dateTrunc: { date: "$createdAt", unit: "day", timezone: "America/New_York" },
+    });
+  });
+  it("takes binSize and startOfWeek as options", () => {
+    expect(jsmql.expr('$.createdAt.startOf("minute", { binSize: 15 })')).toEqual({
+      $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 },
+    });
+    expect(jsmql.expr('$.createdAt.startOf("week", { startOfWeek: "monday" })')).toEqual({
+      $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" },
+    });
+  });
+  it("chains, since the result is a date", () => {
+    expect(jsmql.expr('$.createdAt.startOf("month").plus(1, "month")')).toEqual({
+      $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } }, unit: "month", amount: 1 },
+    });
+  });
+  it("rejects the wrong argument count, naming the parameters", () => {
+    expect(() => jsmql.expr("$.createdAt.startOf()")).toThrow(
+      /\.startOf\(unit\[, timezone\]\) requires 1 or 2 arguments, got 0/,
+    );
+  });
+  it("rejects an unknown unit with a suggestion", () => {
+    expect(() => jsmql.expr('$.createdAt.startOf("months")')).toThrow(
+      /'\.startOf' unit must be one of: .* — got 'months'\. Did you mean 'month'\?/,
+    );
+  });
+  it("rejects a literal non-date receiver", () => {
+    expect(() => jsmql.expr('"2020-01-01".startOf("day")')).toThrow(/'\.startOf' expects a date, but got a string\./);
+  });
+});
+
 describe("date difference (.diff)", () => {
   // Verified on a live mongod: start = 2026-08-12T15:47:03.123Z,
   // end = 2026-11-30T01:02:03Z → day 110, week (Monday) 16.

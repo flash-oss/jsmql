@@ -328,6 +328,7 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.plus(amount, unit[, tz])` | `{ $dateAdd: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
 | `.minus(amount, unit[, tz])` | `{ $dateSubtract: { startDate: expr, unit, amount[, timezone] } }` | `unit` enum-checked when a literal |
 | `.diff(other, unit[, opts])` | `{ $dateDiff: { startDate: other, endDate: expr, unit[, timezone][, startOfWeek] } }` | receiver is the `endDate` |
+| `.startOf(unit[, opts])` | `{ $dateTrunc: { date: expr, unit[, binSize][, timezone][, startOfWeek] } }` | returns a date, so it chains |
 
 **Month base.** `.getMonth()` / `.getUTCMonth()` pass MongoDB's 1-based `$month` through unchanged, so JSMQL has exactly one month base — the MQL one — across the getters, `$month`, and `$dateFromParts`. JavaScript's `Date.prototype.getMonth()` is 0-based, and this is the deliberate divergence. `.getDay()` / `.getUTCDay()` keep JS's 0-based weekday (Sunday = 0); the 0-based `new Date(y, m, d)` *input* side is unchanged too, so a getter → constructor round trip needs the `- 1` written out.
 

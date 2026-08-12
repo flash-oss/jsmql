@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: `.startOf(unit)` → `$dateTrunc`
+
+```
+$group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) });
+// { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } },
+//             revenue: { $sum: "$total" } } }
+
+$.createdAt.startOf("minute", { binSize: 15 })
+// { $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 } }
+```
+
+`$dateTrunc` is the operator behind every time-series rollup, and it had no JavaScript
+spelling — a developer had to leave the JS surface for `$dateTrunc({ date: …, unit: … })`
+in the one place JSMQL is most often used. `.startOf(unit)` is what Moment, Luxon and
+date-fns all call it. The result is a date, so it sorts, compares and chains:
+`.startOf("month").plus(1, "month")` is the exclusive end of the same bucket, which is the
+half-open range shape a `$match` on an indexed date field wants.
+
+`binSize` and `startOfWeek` ride in the trailing options argument, and `"quarter"` works
+even though no getter returns a quarter number. The week still starts on **Sunday** —
+MongoDB's default and Moment's in an English locale, but not Luxon's ISO Monday (D3: keep
+MQL's). [docs/LANGUAGE.md](LANGUAGE.md) states that where a Luxon user will look for it.
+
+The new [realistic example](../test/realistic.test.ts) is the canonical rollup — bucket paid
+orders by month and store, newest twelve — and it carries a timezone on purpose. Verified on
+a live mongod: an order at 02:10 UTC on 1 August lands in the **July** bucket under
+`America/New_York`, because locally it is 22:10 on 31 July. That is the whole reason the
+option exists, so the example is the one place it shows.
+
+---
+
 ## 2026-08-12 — feat: `.diff(other, unit)` and one trailing options argument for every date method
 
 ```

@@ -770,6 +770,40 @@ $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.ex
   });
 });
 
+describe("monthly revenue rollup per store (`.startOf` as a `$group` key)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // The canonical time-series rollup: bucket paid orders by calendar month and
+    // store, then read the newest twelve buckets. `.startOf(unit)` → $dateTrunc,
+    // which is the bucket key MongoDB wants in `$group._id` — the alternative
+    // (grouping on a { year, month } pair) sorts wrong and can't be compared to
+    // a date. The timezone decides which bucket a boundary order lands in: an
+    // order at 02:10 UTC on 1 August is 22:10 on 31 July in New York, so it
+    // counts toward the July revenue.
+    expect(
+      jsmql`
+$$.filter({ status: "paid" });
+$group({ _id: { month: $.createdAt.startOf("month", "America/New_York"), store: $.storeId }, revenue: $sum($.total), orders: $sum(1) });
+$sort({ "_id.month": -1 });
+$limit(12);
+      `,
+    ).toEqual([
+      { $match: { status: "paid" } },
+      {
+        $group: {
+          _id: {
+            month: { $dateTrunc: { date: "$createdAt", unit: "month", timezone: "America/New_York" } },
+            store: "$storeId",
+          },
+          revenue: { $sum: "$total" },
+          orders: { $sum: 1 },
+        },
+      },
+      { $sort: { "_id.month": -1 } },
+      { $limit: 12 },
+    ]);
+  });
+});
+
 describe("explode order line-items into per-item documents (`$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Flatten each paid order into one document per line item, carrying the

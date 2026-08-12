@@ -2124,6 +2124,30 @@ new Date().diff($._id, "day")      // how old is this document?
 
 **Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` semantics and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates, so 23:00 to 01:00 the next morning is **1 day** (one midnight crossed) and 00:30 to 23:30 the same day is **0 days**. Moment's elapsed-time subtraction reports the opposite in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
 
+**Truncate to a unit** — `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key a time-series `$group` wants:
+
+```js
+$.createdAt.startOf("month")
+// { $dateTrunc: { date: "$createdAt", unit: "month" } }
+
+$group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) });
+// { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } }, revenue: { $sum: "$total" } } }
+```
+
+Because the result is a date, it sorts and compares like one and chains like one — `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here even though no getter returns a quarter number.
+
+Two options refine it. `binSize` groups several units into one bucket, and `startOfWeek` moves the week boundary:
+
+```js
+$.createdAt.startOf("minute", { binSize: 15 })    // 15-minute buckets
+// { $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 } }
+
+$.createdAt.startOf("week", { startOfWeek: "monday" })
+// { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } }
+```
+
+**Note — the week starts on Sunday.** That is MongoDB's default (and Moment's in an English locale), so `.startOf("week")` on a Wednesday goes back to the preceding Sunday. Luxon's `startOf('week')` uses the ISO Monday instead; pass `{ startOfWeek: "monday" }` when you want that. The weekday name is case-insensitive, and a typo is rejected with a suggestion.
+
 #### The trailing `timezone` / options argument
 
 Every date method takes the same optional last argument: a **timezone string**, or an **object literal** whose keys are the underlying operator's remaining fields.

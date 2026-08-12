@@ -5937,6 +5937,8 @@ var METHODS = {
   toISOString: { returns: "string", receiver: "date" },
   plus: { receiver: "date" },
   minus: { receiver: "date" },
+  diff: { returns: "number", receiver: "date" },
+  startOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
@@ -7413,6 +7415,45 @@ function pickKeys(arg, method) {
 function utcDate(date) {
   return { date, timezone: "UTC" };
 }
+var DATE_OPTION_CHECK = {
+  binSize: (l, v) => checkArgType(l, "binSize", v, "number"),
+  timezone: (l, v) => checkArgType(l, "timezone", v, "string"),
+  startOfWeek: (l, v) => checkArgEnum(l, "startOfWeek", v, "weekday"),
+  onNull: () => {
+  }
+  // any expression is valid — it's the value substituted for null
+};
+var DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek", "onNull"];
+function dateOptions(method, arg, allowed, ctx) {
+  if (arg === void 0) return {};
+  const label = `.${method}`;
+  if (arg.type !== "ObjectLiteral") {
+    checkArgType(label, "timezone", arg, "string");
+    return { timezone: _generate(arg, ctx) };
+  }
+  const info = objectInfo(arg);
+  if (info === null || info.hasSpread) {
+    throw new CodegenError(
+      `${label}(\u2026) options must be an object literal with plain keys (${allowed.join(", ")}) \u2014 a spread or computed key can't be read at compile time, and MongoDB needs these field names written out. Spell the keys and pass field paths or parameters as their values.`,
+      arg.pos
+    );
+  }
+  for (const [key, value] of info.byKey) {
+    if (allowed.includes(key)) continue;
+    throw new CodegenError(
+      `${label}(\u2026) has no option '${key}'.${didYouMean(key, allowed, (s) => s)} Valid options: ${allowed.join(", ")}.`,
+      value.pos
+    );
+  }
+  const out = {};
+  for (const key of DATE_OPTION_ORDER) {
+    const value = info.byKey.get(key);
+    if (value === void 0) continue;
+    DATE_OPTION_CHECK[key](label, value);
+    out[key] = _generate(value, ctx);
+  }
+  return out;
+}
 function generateMethodCall(object, method, args, ctx, callPos, optional = false) {
   if (method.startsWith("$")) {
     throw new CodegenError(
@@ -7992,7 +8033,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "getFullYear":
       return { $year: genObj };
     case "getMonth":
-      return { $subtract: [{ $month: genObj }, 1] };
+      return { $month: genObj };
     case "getDate":
       return { $dayOfMonth: genObj };
     case "getDay":
@@ -8009,7 +8050,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "getUTCFullYear":
       return { $year: utcDate(genObj) };
     case "getUTCMonth":
-      return { $subtract: [{ $month: utcDate(genObj) }, 1] };
+      return { $month: utcDate(genObj) };
     case "getUTCDate":
       return { $dayOfMonth: utcDate(genObj) };
     case "getUTCDay":
@@ -8032,14 +8073,40 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
       checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
       checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
-      if (exprArgs.length === 3) checkArgType(`.${method}`, "timezone", exprArgs[2], "string");
-      const spec = {
-        startDate: genObj,
-        unit: _generate(exprArgs[1], ctx),
-        amount: _generate(exprArgs[0], ctx)
+      return {
+        [method === "plus" ? "$dateAdd" : "$dateSubtract"]: {
+          startDate: genObj,
+          unit: _generate(exprArgs[1], ctx),
+          amount: _generate(exprArgs[0], ctx),
+          ...dateOptions(method, exprArgs[2], ["timezone"], ctx)
+        }
       };
-      if (exprArgs.length === 3) spec.timezone = _generate(exprArgs[2], ctx);
-      return { [method === "plus" ? "$dateAdd" : "$dateSubtract"]: spec };
+    }
+    case "startOf": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkEnum(".startOf", "unit", exprArgs[0], TIME_UNIT);
+      return {
+        $dateTrunc: {
+          date: genObj,
+          unit: _generate(exprArgs[0], ctx),
+          ...dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx)
+        }
+      };
+    }
+    case "diff": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      checkArgType(".diff", "other", exprArgs[0], "date");
+      checkEnum(".diff", "unit", exprArgs[1], TIME_UNIT);
+      return {
+        $dateDiff: {
+          startDate: _generate(exprArgs[0], ctx),
+          endDate: genObj,
+          unit: _generate(exprArgs[1], ctx),
+          ...dateOptions(method, exprArgs[2], ["timezone", "startOfWeek"], ctx)
+        }
+      };
     }
     // ── DX shims: mutating Array methods ────────────────────────────────────
     // These all mutate the receiver in JavaScript. In expression position

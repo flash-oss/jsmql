@@ -625,6 +625,7 @@ const METHODS: Record<string, MethodMeta> = {
   plus: { receiver: "date" },
   minus: { receiver: "date" },
   diff: { returns: "number", receiver: "date" },
+  startOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
@@ -4115,6 +4116,20 @@ function generateMethodCall(
           unit: _generate(exprArgs[1], ctx),
           amount: _generate(exprArgs[0], ctx),
           ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
+        },
+      };
+    }
+    case "startOf": {
+      // `d.startOf(unit)` → $dateTrunc: the bucket key every time-series $group
+      // wants. Moment / Luxon / date-fns all spell it this way.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkEnum(".startOf", "unit", exprArgs[0], TIME_UNIT);
+      return {
+        $dateTrunc: {
+          date: genObj,
+          unit: _generate(exprArgs[0], ctx),
+          ...dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx),
         },
       };
     }
