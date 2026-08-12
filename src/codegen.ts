@@ -1,6 +1,6 @@
 import { lookupOperator } from "./operators.ts";
 import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
-import { checkEnum, objectInfo } from "./literal-gate.ts";
+import { checkEnum, litString, objectInfo } from "./literal-gate.ts";
 import { callbackBlockToValue } from "./callback-block.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
@@ -626,6 +626,7 @@ const METHODS: Record<string, MethodMeta> = {
   minus: { receiver: "date" },
   diff: { returns: "number", receiver: "date" },
   startOf: { receiver: "date" },
+  format: { returns: "string", receiver: "date" },
   endOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
@@ -3269,14 +3270,109 @@ const DATE_OPTION_CHECK: Record<string, (label: string, value: Expr) => void> = 
   binSize: (l, v) => checkArgType(l, "binSize", v, "number"),
   timezone: (l, v) => checkArgType(l, "timezone", v, "string"),
   startOfWeek: (l, v) => checkArgEnum(l, "startOfWeek", v, "weekday"),
-  onNull: () => {}, // any expression is valid — it's the value substituted for null
 };
 
 /** Emit order: the operators' own field order, so output reads like the manual.
  *  No operator carries more than three of these, so one total order serves all. */
-const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek", "onNull"] as const;
+const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek"] as const;
 
 type DateOptionKey = (typeof DATE_OPTION_ORDER)[number];
+
+// ── .format(): MongoDB's own format specifiers ────────────────────────────────
+// The characters `$dateToString` accepts after a `%`. Verified against mongod,
+// which fails an unknown one at execution time ("Invalid format character
+// '%Q'"), so a literal typo is a certain error and belongs at compile time.
+const DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
+
+// Moment / Luxon format tokens paired with the MQL specifier that does the same
+// job, or `null` where MongoDB has none. Scanned longest-first and left to right,
+// so `MMM` is consumed whole rather than leaving an `M` behind after `MM`.
+const MOMENT_FORMAT_TOKENS: readonly (readonly [string, string | null])[] = [
+  ["YYYY", "%Y"],
+  ["MMMM", null], // month name
+  ["dddd", null], // weekday name
+  ["MMM", null],
+  ["ddd", null],
+  ["DDD", "%j"],
+  ["SSS", "%L"],
+  ["YY", null], // 2-digit year
+  ["MM", "%m"],
+  ["DD", "%d"],
+  ["HH", "%H"],
+  ["hh", null], // 12-hour clock
+  ["ZZ", "%z"],
+  ["mm", "%M"],
+  ["ss", "%S"],
+  ["Do", null], // ordinal day
+];
+
+// Does this look like a Moment/Luxon format rather than an MQL one? Such a
+// string IS valid MQL — it formats as its own literal text — so nothing but the
+// token spelling reveals the mistake, and the mistake is silent otherwise.
+const MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
+
+/**
+ * Translate a Moment/Luxon format to MQL specifiers for the error message —
+ * never for output. Offers the translation only when nothing is left
+ * untranslated: what survives the scan is found by stripping the `%X` pairs and
+ * looking for remaining letters, so a token MongoDB has no specifier for gets
+ * named rather than silently dropped from a suggestion.
+ */
+function momentFormatHint(fmt: string): string {
+  let out = "";
+  let i = 0;
+  outer: while (i < fmt.length) {
+    for (const [token, spec] of MOMENT_FORMAT_TOKENS) {
+      if (!fmt.startsWith(token, i)) continue;
+      out += spec ?? token;
+      i += token.length;
+      continue outer;
+    }
+    out += fmt[i];
+    i++;
+  }
+  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
+  if (missing === null) return ` Did you mean '${out}'?`;
+  return (
+    ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}: it outputs no ` +
+    `month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts ` +
+    `(e.g. ["Jan", …][$.t.getMonth() - 1]).`
+  );
+}
+
+/** Reject a literal `.format` string MongoDB would refuse, or one written in
+ *  Moment's token dialect (valid MQL, but it formats as its own text). */
+function checkDateFormat(label: string, arg: Expr): void {
+  const fmt = litString(arg);
+  if (fmt === null) return;
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") continue;
+    const spec = fmt[i + 1];
+    if (spec === undefined || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
+      // The likeliest slip is the wrong case (`%y` for `%Y`), so try that first.
+      const flip = spec === undefined ? undefined : flipCase(spec);
+      const hint = flip !== undefined && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
+      throw new CodegenError(
+        `'${label}' format has an invalid specifier '%${spec ?? ""}'.${hint} MongoDB accepts ` +
+          `%Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
+        arg.pos,
+      );
+    }
+    i++; // consume the specifier character
+  }
+  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
+    throw new CodegenError(
+      `'${label}' takes MongoDB's date format specifiers, not Moment/Luxon tokens — ` +
+        `'${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      arg.pos,
+    );
+  }
+}
+
+function flipCase(ch: string): string {
+  const up = ch.toUpperCase();
+  return ch === up ? ch.toLowerCase() : up;
+}
 
 /**
  * Resolve a date method's trailing options argument into the operator fields it
@@ -4117,6 +4213,23 @@ function generateMethodCall(
           unit: _generate(exprArgs[1], ctx),
           amount: _generate(exprArgs[0], ctx),
           ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
+        },
+      };
+    }
+    case "format": {
+      // `d.format(fmt)` → $dateToString. Moment's method name with MongoDB's own
+      // format specifiers (`%Y-%m-%d`): translating Moment's token dialect would
+      // dead-end on the tokens MQL has no equivalent for, so the specifiers stay
+      // MQL's and a token-dialect string is rejected with the translation.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "format[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkArgType(".format", "format", exprArgs[0], "string");
+      checkDateFormat(".format", exprArgs[0]);
+      return {
+        $dateToString: {
+          date: genObj,
+          format: _generate(exprArgs[0], ctx),
+          ...dateOptions(method, exprArgs[1], ["timezone"], ctx),
         },
       };
     }

@@ -2340,6 +2340,71 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("date formatting (.format)", () => {
+  // Verified on a live mongod: t = 2026-08-12T15:47:03.123Z formats as
+  // "2026-08-12" under "%Y-%m-%d", and .startOf("month").format("%Y-%m") → "2026-08".
+  it("format(spec) → $dateToString", () => {
+    expect(jsmql.expr('$.createdAt.format("%Y-%m-%d")')).toEqual({
+      $dateToString: { date: "$createdAt", format: "%Y-%m-%d" },
+    });
+  });
+  it("chains onto .startOf, which is the month-label idiom", () => {
+    expect(jsmql.expr('$.createdAt.startOf("month").format("%Y-%m")')).toEqual({
+      $dateToString: { date: { $dateTrunc: { date: "$createdAt", unit: "month" } }, format: "%Y-%m" },
+    });
+  });
+  it("takes the timezone as its second argument", () => {
+    expect(jsmql.expr('$.createdAt.format("%H:%M", "America/New_York")')).toEqual({
+      $dateToString: { date: "$createdAt", format: "%H:%M", timezone: "America/New_York" },
+    });
+  });
+  it("produces a string, so `+` concatenates", () => {
+    expect(jsmql.expr('$.t.format("%Y") + "-x"')).toEqual({
+      $concat: [{ $dateToString: { date: "$t", format: "%Y" } }, "-x"],
+    });
+  });
+  it("rejects a specifier MongoDB has no format character for", () => {
+    expect(() => jsmql.expr('$.createdAt.format("%Q")')).toThrow(
+      /'\.format' format has an invalid specifier '%Q'\. MongoDB accepts %Y %G/,
+    );
+  });
+  it("suggests the right case, the likeliest slip", () => {
+    expect(() => jsmql.expr('$.createdAt.format("%y-%m")')).toThrow(/invalid specifier '%y'\. Did you mean '%Y'\?/);
+  });
+  it("rejects a Moment/Luxon token string and translates it", () => {
+    // Valid MQL — it formats as its own literal text — so nothing but the token
+    // spelling reveals the mistake. Hence the compile-time rejection.
+    expect(() => jsmql.expr('$.createdAt.format("YYYY-MM-DD HH:mm:ss")')).toThrow(
+      /not Moment\/Luxon tokens .* Did you mean '%Y-%m-%d %H:%M:%S'\?/,
+    );
+  });
+  it("names the untranslatable tokens instead of dropping them from a suggestion", () => {
+    expect(() => jsmql.expr('$.createdAt.format("dddd, DD MMM YYYY")')).toThrow(
+      /no format specifier for 'dddd', 'MMM': it outputs no month name/,
+    );
+    expect(() => jsmql.expr('$.createdAt.format("hh:mm A")')).toThrow(/no format specifier for 'hh', 'A'/);
+  });
+  it("passes literal text with no tokens through — that is valid MQL", () => {
+    expect(jsmql.expr('$.createdAt.format("Report")')).toEqual({
+      $dateToString: { date: "$createdAt", format: "Report" },
+    });
+  });
+  it("does not check a non-literal format (literal-gating)", () => {
+    expect(jsmql.expr("$.createdAt.format($.fmt)")).toEqual({ $dateToString: { date: "$createdAt", format: "$fmt" } });
+  });
+  it("rejects a non-string literal format and the wrong argument count", () => {
+    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow(/'\.format' format expects a string, but got a number\./);
+    expect(() => jsmql.expr("$.createdAt.format()")).toThrow(
+      /\.format\(format\[, timezone\]\) requires 1 or 2 arguments, got 0/,
+    );
+  });
+  it("takes timezone only — $dateToString's onNull stays on the operator form", () => {
+    expect(() => jsmql.expr('$.createdAt.format("%Y", { onNull: "" })')).toThrow(
+      /\.format\(…\) has no option 'onNull'\. Valid options: timezone\./,
+    );
+  });
+});
+
 describe("date truncation (.startOf)", () => {
   // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
   // month → 2026-08-01T00:00Z, quarter → 2026-07-01T00:00Z,

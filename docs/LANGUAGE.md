@@ -2146,6 +2146,31 @@ $.createdAt.startOf("week", { startOfWeek: "monday" })
 // { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } }
 ```
 
+**Format a date as a string** — `.format(spec)` takes MongoDB's own format specifiers:
+
+```js
+$.createdAt.format("%Y-%m-%d")
+// { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }        → "2026-08-12"
+
+$.createdAt.startOf("month").format("%Y-%m")
+// { $dateToString: { date: { $dateTrunc: { date: "$createdAt", unit: "month" } }, format: "%Y-%m" } }
+//                                                                     → "2026-08"
+
+$.createdAt.format("%H:%M", "America/New_York")
+// { $dateToString: { date: "$createdAt", format: "%H:%M", timezone: "America/New_York" } }
+```
+
+| | | | |
+|---|---|---|---|
+| `%Y` year | `%m` month | `%d` day of month | `%j` day of year |
+| `%G` ISO year | `%V` ISO week | `%U` week (Sunday-based) | `%u` `%w` weekday (ISO / Sunday-based) |
+| `%H` hour (24) | `%M` minute | `%S` second | `%L` millisecond |
+| `%z` UTC offset | `%Z` offset in minutes | `%%` a literal `%` | |
+
+**The specifiers are MongoDB's, not Moment's.** `.format` borrows Moment's method *name*, but a Moment token string is rejected at compile time with the translation — `"YYYY-MM-DD"` → *"Did you mean '%Y-%m-%d'?"*. This matters because such a string is perfectly valid MQL: `$dateToString` formats it as its own literal text, so every document would come back reading `"YYYY-MM-DD"` with nothing to indicate the mistake. A wrong specifier (`%y` for `%Y`) is rejected too, with the case fixed in the suggestion. Translating Moment tokens for real is not on offer: MongoDB has no month-name, weekday-name, 12-hour or 2-digit-year output at all, so a translator would dead-end on `dddd` and `MMM`. Derive those from the numeric parts instead — `["Jan", "Feb", …][$.t.getMonth() - 1]` → `{ $arrayElemAt: [["Jan", "Feb", …], { $subtract: [{ $month: "$t" }, 1] }] }`.
+
+`$dateToString`'s `onNull` is not an option here (the method's result is invariantly a string, which is what makes `$.t.format("%Y") + "-x"` compile to `$concat`); reach for `$dateToString({ date: …, format: …, onNull: … })` when you need it.
+
 **The inclusive end of the bucket** — `.endOf(unit)` gives the last instant that still belongs to the same bucket, Moment's `23:59:59.999`:
 
 ```js

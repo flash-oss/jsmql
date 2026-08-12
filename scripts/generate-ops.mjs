@@ -353,6 +353,7 @@ const VALUE_METHOD_SKIP = {
     "minus",
     "diff",
     "startOf",
+    "format",
     "endOf",
   ]),
   // Object-receiver — no safe interface (Object is the base of everything).

@@ -10,6 +10,51 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: `.format(spec)` → `$dateToString`, with the Moment-token trap closed
+
+```
+$.createdAt.startOf("month").format("%Y-%m")
+// { $dateToString: { date: { $dateTrunc: { date: "$createdAt", unit: "month" } },
+//                    format: "%Y-%m" } }                                → "2026-08"
+
+$.createdAt.format("YYYY-MM-DD")
+// ✗ '.format' takes MongoDB's date format specifiers, not Moment/Luxon tokens —
+//   'YYYY-MM-DD' formats as that literal text, never a date. Did you mean '%Y-%m-%d'?
+```
+
+`.toISOString()` was the only formatting on offer, and its format is hard-coded. `.format`
+is Moment's method name, and it chains — which is the point, because the useful shape is
+`.startOf("month").format("%Y-%m")` as a group label, not a bare field format.
+
+The specifiers stay **MongoDB's**. A Moment-token translator was the alternative and it
+dead-ends: MQL outputs no month name, weekday name, 12-hour clock or 2-digit year, so
+`dddd` and `MMM` have no target at all and a translator would have to silently drop them.
+So the name is Moment's and the dialect is MQL's.
+
+That decision creates a trap worth more than the feature. `"YYYY-MM-DD"` is *valid* MQL —
+`$dateToString` renders a format with no `%` as its own literal text — so a Moment user gets
+back the string `"YYYY-MM-DD"` on every document with nothing anywhere to indicate the
+mistake. A compile-time rejection is the only place they can learn about it, so a
+`%`-free string that matches a Moment token is refused and translated in the error.
+`momentFormatHint` scans longest-match left to right, because `MM` → `%m` applied to `MMM`
+leaves a stray `M` and would name a token the user never wrote; it offers a translation only
+when nothing untranslated survives, and otherwise names what has no specifier and points at
+`["Jan", …][$.t.getMonth() - 1]`. The translation is never used for output — jsmql does not
+guess a format.
+
+An unknown `%X` is rejected too, with the opposite case suggested first (`%y` → `%Y` is the
+likeliest slip). The specifier set was read off a live mongod rather than the manual: all
+fifteen plus `%%` are accepted, and `%Q` fails with "Invalid format character".
+
+`$dateToString`'s `onNull` is deliberately not an option on `.format`. The method declares an
+invariant `returns: "string"`, which is what makes `$.t.format("%Y") + "-x"` compile to
+`$concat` rather than `$add`, and an `onNull` of another type would make that inference a
+lie. Gating `onNull` to strings instead would invent a restriction the `$dateToString(…)`
+operator form doesn't have, and the two spellings must not disagree — so the field stays on
+the operator form, and the spec says why.
+
+---
+
 ## 2026-08-12 — feat: `.endOf(unit)` — the inclusive end of a bucket
 
 ```
